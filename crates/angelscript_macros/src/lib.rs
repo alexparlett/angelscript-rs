@@ -76,7 +76,7 @@ pub fn as_function(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let wrapper = quote! {
 
         #[unsafe(no_mangle)]
-        pub extern "C" fn #wrapper_name(ctx: *mut crate::asIScriptGeneric) {
+        pub extern "C" fn #wrapper_name(ctx: *mut angelscript::ffi::asIScriptGeneric) {
             #(#arg_vars)*
             #ret_block
         }

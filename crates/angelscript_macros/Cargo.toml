@@ -3,10 +3,9 @@ name = "angelscript_macros"
 version = "0.1.0"
 edition = "2024"
 
-[dependencies]
-syn = { version = "2", features = ["full", "extra-traits"] }
-quote = "1"
-proc-macro2 = "1.0.95"
-
 [lib]
 proc-macro = true
+
+[dependencies]
+quote = "1"
+syn = { version = "2" }

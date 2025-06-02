@@ -1,3 +1,15 @@
+[package]
+name = "angelscript"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+angelscript_macros = { path = "crates/angelscript_macros", optional = true }
+angelscript_bindings = { path = "crates/angelscript_bindings" }
+
+[features]
+default = ["macros"]
+macros = ["dep:angelscript_macros"]
+
 [workspace]
-members = ["crates/angelscript_macros", "crates/angelscript", "examples"]
-resolver = "2"
+members = ["crates/angelscript_bindings", "crates/angelscript_macros", "examples"]

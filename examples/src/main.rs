@@ -1,10 +1,6 @@
-use angelscript::asIScriptGeneric;
+use angelscript::macros::as_function;
 use angelscript::FromScriptGeneric;
-use angelscript::{
-    CallConvTypes, Engine, GMFlags
-    ,
-};
-use angelscript_macros::as_function;
+use angelscript::{CallConvTypes, Engine, GMFlags};
 
 #[as_function]
 fn print(msg: &str) {
@@ -22,7 +18,7 @@ fn main() {
         })
         .ok();
 
-    engine.register_std();
+    engine.register_std().expect("Failed to register std");
 
     engine
         .register_global_function(
@@ -39,11 +35,15 @@ fn main() {
 
     // Add a simple script without strings for now
     let script = r#"
+        void say(const string &in msg) {
+            print(msg);
+        }
+    
         void main() {
             int x = 5;
             int y = 10;
             int result = x + y;
-            print("" + result);
+            print("carl");
         }
     "#;
 
@@ -62,6 +62,16 @@ fn main() {
     // Create a context and execute
     let ctx = engine.create_context().expect("Failed to create context");
     ctx.prepare(&main_func).expect("Failed to prepare context");
+    ctx.execute().expect("Failed to execute script");
+
+    let print_func = module
+        .get_function_by_name("say")
+        .expect("Failed to find print function");
+
+    let name = "Cat";
+
+    ctx.prepare(&print_func).expect("Failed to prepare context");
+    ctx.set_arg_str(0, name).expect("Failed to bind str");
     ctx.execute().expect("Failed to execute script");
 
     println!("Script execution completed!");

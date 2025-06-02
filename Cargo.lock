@@ -15,7 +15,14 @@ dependencies = [
 name = "angelscript"
 version = "0.1.0"
 dependencies = [
+ "angelscript_bindings",
  "angelscript_macros",
+]
+
+[[package]]
+name = "angelscript_bindings"
+version = "0.1.0"
+dependencies = [
  "bindgen",
  "cc",
 ]
@@ -24,7 +31,6 @@ dependencies = [
 name = "angelscript_macros"
 version = "0.1.0"
 dependencies = [
- "proc-macro2",
  "quote",
  "syn",
 ]
@@ -101,7 +107,6 @@ name = "example"
 version = "0.1.0"
 dependencies = [
  "angelscript",
- "angelscript_macros",
 ]
 
 [[package]]

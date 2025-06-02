@@ -5,5 +5,4 @@ edition = "2024"
 publish = false
 
 [dependencies]
-angelscript = { path = "../crates/angelscript" }
-angelscript_macros = { path = "../crates/angelscript_macros" }
+angelscript = { path = "../" }

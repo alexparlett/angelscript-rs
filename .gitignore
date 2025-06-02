@@ -1,5 +1,5 @@
 /target
 .DS_Store
 .idea/
-crates/angelscript/vendor/angelscript/sdk/samples/
+vendor/angelscript/sdk/samples/
 target/
