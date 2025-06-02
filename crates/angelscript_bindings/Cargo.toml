@@ -9,4 +9,4 @@ bindgen = "0.71"
 cc = "1.2"
 
 [lib]
-crate-type = ["rlib", "cdylib"]
+crate-type = ["lib", "staticlib"]

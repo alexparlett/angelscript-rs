@@ -136,6 +136,9 @@ asITypeInfo* asEngine_GetObjectTypeByIndex(asIScriptEngine *engine, asUINT index
 void* asEngine_GetUserData(asIScriptEngine *engine, asPWORD type);
 void* asEngine_SetUserData(asIScriptEngine *engine, void *data, asPWORD type);
 
+int asEngine_GetLastFunctionId(asIScriptEngine *engine);
+asIScriptFunction* asEngine_GetFunctionById(asIScriptEngine *engine, int funcId);
+
 #ifdef __cplusplus
 }
 #endif

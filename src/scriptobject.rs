@@ -11,6 +11,7 @@ use crate::utils::FromCVoidPtr;
 use crate::{Engine, UserData, WeakRef};
 use std::ffi::CStr;
 use std::os::raw::c_void;
+use angelscript_bindings::{asContext_GetUserData, asContext_SetUserData};
 
 pub struct ScriptObject {
     object: *mut asIScriptObject,
@@ -88,19 +89,23 @@ impl ScriptObject {
     }
 
     // User data
-    // User data
-    pub fn get_user_data<'a, T: UserData>(&self) -> &'a mut T {
+    pub fn get_user_data<'a, T: UserData>(&self) -> Result<&'a mut T> {
         unsafe {
             let ptr = asScriptObject_GetUserData(self.object, T::TypeId);
-            T::from_mut(ptr)
+            if ptr.is_null() {
+                return Err(Error::NullPointer)
+            }
+            Ok(T::from_mut(ptr))
         }
     }
 
-    pub fn set_user_data<'a, T: UserData>(&self, data: &mut T) -> &'a mut T {
+    pub fn set_user_data<'a, T: UserData>(&self, data: &mut T) -> Option<&'a mut T> {
         unsafe {
-            let ptr =
-                asScriptObject_SetUserData(self.object, data as *mut _ as *mut c_void, T::TypeId);
-            T::from_mut(ptr)
+            let ptr = asScriptObject_SetUserData(self.object, data as *mut _ as *mut c_void, T::TypeId);
+            if ptr.is_null() {
+                return None
+            }
+            Some(T::from_mut(ptr))
         }
     }
 
@@ -144,11 +149,11 @@ impl ScriptObject {
     }
 
     // Convenience method to get property info
-    pub fn get_property_info(&self, prop: u32) -> Result<PropertyInfo> {
+    pub fn get_property_info(&self, prop: u32) -> Result<ObjectPropertyInfo> {
         let name = self.get_property_name(prop)?;
         let type_id = self.get_property_type_id(prop);
 
-        Ok(PropertyInfo {
+        Ok(ObjectPropertyInfo {
             index: prop,
             name: name.to_string(),
             type_id,
@@ -156,7 +161,7 @@ impl ScriptObject {
     }
 
     // Get all properties
-    pub fn get_all_properties(&self) -> Vec<PropertyInfo> {
+    pub fn get_all_properties(&self) -> Vec<ObjectPropertyInfo> {
         let count = self.get_property_count();
         let mut properties = Vec::with_capacity(count as usize);
 
@@ -171,7 +176,7 @@ impl ScriptObject {
 }
 
 #[derive(Debug, Clone)]
-pub struct PropertyInfo {
+pub struct ObjectPropertyInfo {
     pub index: u32,
     pub name: String,
     pub type_id: i32,

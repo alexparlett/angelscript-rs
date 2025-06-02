@@ -19,7 +19,7 @@ use crate::module::Module;
 use crate::typeinfo::TypeInfo;
 use crate::types::*;
 use crate::Engine;
-use std::ffi::CStr;
+use std::ffi::{c_void, CStr};
 use std::os::raw::c_char;
 use std::ptr;
 use crate::utils::{as_bool, from_as_bool, FromCVoidPtr};
@@ -367,21 +367,27 @@ impl Function {
     }
 
     // User data
-    pub fn get_user_data<'a, T: UserData>(&self) -> &'a mut T {
+    pub fn get_user_data<'a, T: UserData>(&self) -> Result<&'a mut T> {
         unsafe {
             let ptr = asFunction_GetUserData(self.function, T::TypeId);
-            T::from_mut(ptr)
+            if ptr.is_null() {
+                return Err(Error::NullPointer);
+            }
+            Ok(T::from_mut(ptr))
         }
     }
 
-    pub fn set_user_data<'a, T: UserData>(&self, data: &mut T) -> &'a mut T {
+    pub fn set_user_data<'a, T: UserData>(&self, data: &mut T) -> Option<&'a mut T> {
         unsafe {
             let ptr = asFunction_SetUserData(
                 self.function,
-                data as *mut _ as *mut std::os::raw::c_void,
+                data as *mut _ as *mut c_void,
                 T::TypeId,
             );
-            T::from_mut(ptr)
+            if ptr.is_null() {
+                return None;
+            }
+            Some(T::from_mut(ptr))
         }
     }
 

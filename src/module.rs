@@ -1,14 +1,24 @@
 use crate::context::Context;
 use crate::error::{Error, Result};
-use crate::ffi::{asBOOL, asFALSE, asIScriptFunction, asIScriptModule, asModule_AddScriptSection, asModule_Build, asModule_CompileFunction, asModule_CompileGlobalVar, asModule_Discard, asModule_GetDefaultNamespace, asModule_GetEngine, asModule_GetFunctionByDecl, asModule_GetFunctionByIndex, asModule_GetFunctionByName, asModule_GetFunctionCount, asModule_GetGlobalVar, asModule_GetGlobalVarCount, asModule_GetGlobalVarDeclaration, asModule_GetGlobalVarIndexByDecl, asModule_GetGlobalVarIndexByName, asModule_GetName, asModule_GetObjectTypeByIndex, asModule_GetObjectTypeCount, asModule_GetTypeIdByDecl, asModule_GetTypeInfoByDecl, asModule_GetTypeInfoByName, asModule_RemoveFunction, asModule_RemoveGlobalVar, asModule_ResetGlobalVars, asModule_SetDefaultNamespace, asModule_SetName};
+use crate::ffi::{
+    asBOOL, asFALSE, asIScriptFunction, asIScriptModule, asModule_AddScriptSection, asModule_Build,
+    asModule_CompileFunction, asModule_CompileGlobalVar, asModule_Discard,
+    asModule_GetDefaultNamespace, asModule_GetEngine, asModule_GetFunctionByDecl,
+    asModule_GetFunctionByIndex, asModule_GetFunctionByName, asModule_GetFunctionCount,
+    asModule_GetGlobalVar, asModule_GetGlobalVarCount, asModule_GetGlobalVarDeclaration,
+    asModule_GetGlobalVarIndexByDecl, asModule_GetGlobalVarIndexByName, asModule_GetName,
+    asModule_GetObjectTypeByIndex, asModule_GetObjectTypeCount, asModule_GetTypeIdByDecl,
+    asModule_GetTypeInfoByDecl, asModule_GetTypeInfoByName, asModule_RemoveFunction,
+    asModule_RemoveGlobalVar, asModule_ResetGlobalVars, asModule_SetDefaultNamespace,
+    asModule_SetName,
+};
 use crate::function::Function;
 use crate::typeinfo::TypeInfo;
+use crate::utils::{as_bool, from_as_bool};
+use crate::{Engine, GlobalVarInfo};
 use std::ffi::{CStr, CString};
-use std::marker::PhantomData;
 use std::os::raw::c_char;
 use std::ptr;
-use crate::{Engine, GlobalVarInfo};
-use crate::utils::{as_bool, from_as_bool};
 
 pub struct Module {
     module: *mut asIScriptModule,
@@ -16,9 +26,7 @@ pub struct Module {
 
 impl Module {
     pub(crate) fn from_raw(module: *mut asIScriptModule) -> Self {
-        Module {
-            module,
-        }
+        Module { module }
     }
 
     pub fn get_engine(&self) -> Engine {

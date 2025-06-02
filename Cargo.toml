@@ -11,5 +11,8 @@ angelscript_bindings = { path = "crates/angelscript_bindings" }
 default = ["macros"]
 macros = ["dep:angelscript_macros"]
 
+[[example]]
+name = "basic"
+
 [workspace]
-members = ["crates/angelscript_bindings", "crates/angelscript_macros", "examples"]
+members = ["crates/angelscript_bindings", "crates/angelscript_macros"]

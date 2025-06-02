@@ -14,19 +14,20 @@ pub(crate) fn from_as_bool(value: asBOOL) -> bool {
 pub(crate) trait FromCVoidPtr {
     /// # Safety
     /// Caller must guarantee the pointer is valid, properly aligned, and no aliasing rules are violated.
-    unsafe fn from_mut<'a>(ptr: *mut c_void) -> &'a mut Self;
+    fn from_mut<'a>(ptr: *mut c_void) -> &'a mut Self;
     /// # Safety
     /// Caller must guarantee the pointer is valid, properly aligned, and no aliasing rules are violated.
-    unsafe fn from_const<'a>(ptr: *mut c_void) -> &'a Self;
+    fn from_const<'a>(ptr: *mut c_void) -> &'a Self;
 }
 
 impl<T> FromCVoidPtr for T {
-    unsafe fn from_mut<'a>(ptr: *mut c_void) -> &'a mut Self {
-        &mut *(ptr as *mut T)
+    fn from_mut<'a>(ptr: *mut c_void) -> &'a mut Self {
+        
+        unsafe  { &mut *(ptr as *mut T) }
     }
 
-    unsafe fn from_const<'a>(ptr: *mut c_void) -> &'a Self {
-        &*(ptr as *const T)
+    fn from_const<'a>(ptr: *mut c_void) -> &'a Self {
+        unsafe  { &*(ptr as *const T) }
     }
 }
 

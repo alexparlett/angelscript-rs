@@ -122,7 +122,7 @@ impl Context {
     }
 
     pub fn set_arg_str(&self, arg: u32, str: &str) -> Result<()> {
-        let mut c_string = CString::new(str)?;
+        let c_string = CString::new(str)?;
         unsafe {
             Error::from_code(asContext_SetArgObject(
                 self.context,
@@ -310,17 +310,23 @@ impl Context {
     }
 
     // User data
-    pub fn get_user_data<'a, T: UserData>(&self) -> &'a mut T {
+    pub fn get_user_data<'a, T: UserData>(&self) -> Result<&'a mut T> {
         unsafe {
             let ptr = asContext_GetUserData(self.context, T::TypeId);
-            T::from_mut(ptr)
+            if ptr.is_null() {
+                return Err(Error::NullPointer)
+            }
+            Ok(T::from_mut(ptr))
         }
     }
 
-    pub fn set_user_data<'a, T: UserData>(&self, data: &mut T) -> &'a mut T {
+    pub fn set_user_data<'a, T: UserData>(&self, data: &mut T) -> Option<&'a mut T> {
         unsafe {
             let ptr = asContext_SetUserData(self.context, data as *mut _ as *mut c_void, T::TypeId);
-            T::from_mut(ptr)
+            if ptr.is_null() {
+                return None
+            }
+            Some(T::from_mut(ptr))
         }
     }
 

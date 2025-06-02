@@ -1,11 +1,11 @@
 use crate::ffi::{
-    asContext_SetException, asEngine_RegisterStringFactory, asGetActiveContext, asIScriptGeneric,
+    asContext_SetException, asEngine_RegisterStringFactory, asGetActiveContext,
     asIScriptGeneric_GetAddressOfArg, asIScriptGeneric_GetAddressOfReturnLocation,
     asIScriptGeneric_GetArgAddress, asIScriptGeneric_GetArgDWord, asIScriptGeneric_GetArgObject,
     asIScriptGeneric_GetObject, asIScriptGeneric_SetReturnAddress,
     asIScriptGeneric_SetReturnObject, asIStringFactory, asIStringFactory__bindgen_vtable, asUINT,
 };
-use crate::{Behaviours, CallConvTypes, Engine, Error, ObjTypeFlags, TypeInfo};
+use crate::{Behaviours, CallConvTypes, Engine, Error, ObjTypeFlags, ScriptGeneric};
 use std::collections::HashMap;
 use std::ffi::CString;
 use std::os::raw::{c_char, c_int, c_void};
@@ -22,13 +22,6 @@ unsafe impl Sync for VoidPtr {}
 struct StringConstant {
     cstring: CString,
     refs: usize,
-}
-
-impl StringConstant {
-    fn from_generic(g: *mut asIScriptGeneric) -> StringConstant {
-        let cstring = unsafe { CString::from_raw(asIScriptGeneric_GetObject(g) as *mut c_char) };
-        StringConstant { cstring, refs: 1 }
-    }
 }
 
 struct InnerCache {
@@ -67,7 +60,7 @@ impl StringFactory {
         length: asUINT,
     ) -> *const c_void {
         let factory = StringFactory::singleton();
-        let slice = std::slice::from_raw_parts(data as *const u8, length as usize);
+        let slice = unsafe { std::slice::from_raw_parts(data as *const u8, length as usize) };
 
         let s = match std::str::from_utf8(slice) {
             Ok(s) => s,
@@ -150,10 +143,14 @@ impl StringFactory {
         if let Some((entry, _)) = cache.map.get(&VoidPtr(str_)) {
             let buf = entry.cstring.as_bytes();
             if !length.is_null() {
-                *length = buf.len() as asUINT;
+                unsafe {
+                    *length = buf.len() as asUINT;
+                }
             }
             if !data.is_null() {
-                std::ptr::copy_nonoverlapping(buf.as_ptr() as *const c_char, data, buf.len());
+                unsafe {
+                    std::ptr::copy_nonoverlapping(buf.as_ptr() as *const c_char, data, buf.len())
+                };
             }
             0
         } else {
@@ -168,6 +165,12 @@ impl StringFactory {
             cache.map.is_empty(),
             "StringConstant cache is not empty on shutdown!"
         );
+    }
+}
+
+impl Drop for StringFactory {
+    fn drop(&mut self) {
+        self.assert_cache_empty();
     }
 }
 
@@ -186,13 +189,13 @@ pub fn get_string_factory_instance() -> &'static asIStringFactory {
     })
 }
 
-extern "C" fn construct_string(g: *mut asIScriptGeneric) {
+fn construct_string(g: &ScriptGeneric) {
     use std::ffi::CString;
     use std::os::raw::c_char;
 
     unsafe {
         // AngelScript will provide where to write the *mut c_char (pointer to buffer)
-        let obj_ptr = asIScriptGeneric_GetObject(g) as *mut *mut c_char;
+        let obj_ptr = asIScriptGeneric_GetObject(g.as_ptr()) as *mut *mut c_char;
         if obj_ptr.is_null() {
             return;
         }
@@ -205,15 +208,15 @@ extern "C" fn construct_string(g: *mut asIScriptGeneric) {
     }
 }
 
-extern "C" fn copy_construct_string(g: *mut asIScriptGeneric) {
+fn copy_construct_string(g: &ScriptGeneric) {
     use std::ffi::{CStr, CString};
     use std::os::raw::c_char;
 
     unsafe {
         // 1. Get source string pointer
-        let src = asIScriptGeneric_GetArgObject(g, 0) as *const c_char;
+        let src = asIScriptGeneric_GetArgObject(g.as_ptr(), 0) as *const c_char;
         // 2. Get destination pointer (output pointer-to-pointer)
-        let dst = asIScriptGeneric_GetObject(g) as *mut *mut c_char;
+        let dst = asIScriptGeneric_GetObject(g.as_ptr()) as *mut *mut c_char;
 
         if !dst.is_null() && !src.is_null() {
             // 3. Clone the content: create a new CString
@@ -223,19 +226,19 @@ extern "C" fn copy_construct_string(g: *mut asIScriptGeneric) {
             // Convert CString to raw pointer (leak it for AngelScript to manage)
             *dst = new_cstring.into_raw();
         } else if !dst.is_null() {
-            // If src is null, set output to null
+            // If basic is null, set output to null
             *dst = std::ptr::null_mut();
         }
     }
 }
 
-extern "C" fn destruct_string(g: *mut asIScriptGeneric) {
+fn destruct_string(g: &ScriptGeneric) {
     use std::ffi::CString;
     use std::os::raw::c_char;
 
     unsafe {
         // The object is a pointer to a heap-allocated C string
-        let obj_ptr = asIScriptGeneric_GetObject(g) as *mut *mut c_char;
+        let obj_ptr = asIScriptGeneric_GetObject(g.as_ptr()) as *mut *mut c_char;
         if obj_ptr.is_null() || (*obj_ptr).is_null() {
             return;
         }
@@ -248,15 +251,15 @@ extern "C" fn destruct_string(g: *mut asIScriptGeneric) {
     }
 }
 
-extern "C" fn assign_string(g: *mut asIScriptGeneric) {
+fn assign_string(g: &ScriptGeneric) {
     use std::ffi::{CStr, CString};
     use std::os::raw::c_char;
 
     unsafe {
         // Get source string pointer
-        let a_ptr = asIScriptGeneric_GetArgObject(g, 0) as *mut c_char;
+        let a_ptr = asIScriptGeneric_GetArgObject(g.as_ptr(), 0) as *mut c_char;
         // Get self string pointer location
-        let self_ptr = asIScriptGeneric_GetObject(g) as *mut *mut c_char;
+        let self_ptr = asIScriptGeneric_GetObject(g.as_ptr()) as *mut *mut c_char;
 
         if self_ptr.is_null() {
             return;
@@ -279,19 +282,19 @@ extern "C" fn assign_string(g: *mut asIScriptGeneric) {
         *self_ptr = new_cstring.unwrap().into_raw();
 
         // Set return address to self (AngelScript expects this)
-        asIScriptGeneric_SetReturnAddress(g, self_ptr as *mut std::ffi::c_void);
+        asIScriptGeneric_SetReturnAddress(g.as_ptr(), self_ptr as *mut std::ffi::c_void);
     }
 }
 
-extern "C" fn add_assign_string(g: *mut asIScriptGeneric) {
+fn add_assign_string(g: &ScriptGeneric) {
     use std::ffi::{CStr, CString};
     use std::os::raw::c_char;
 
     unsafe {
         // Get pointer to source string
-        let a_ptr = asIScriptGeneric_GetArgObject(g, 0) as *const c_char;
+        let a_ptr = asIScriptGeneric_GetArgObject(g.as_ptr(), 0) as *const c_char;
         // Get pointer to self's location (to modify in place)
-        let self_ptr = asIScriptGeneric_GetObject(g) as *mut *mut c_char;
+        let self_ptr = asIScriptGeneric_GetObject(g.as_ptr()) as *mut *mut c_char;
 
         if self_ptr.is_null() {
             return;
@@ -322,19 +325,19 @@ extern "C" fn add_assign_string(g: *mut asIScriptGeneric) {
         *self_ptr = new_cstring.into_raw();
 
         // Set return address to self for AngelScript
-        asIScriptGeneric_SetReturnAddress(g, self_ptr as *mut std::ffi::c_void);
+        asIScriptGeneric_SetReturnAddress(g.as_ptr(), self_ptr as *mut std::ffi::c_void);
     }
 }
 
-extern "C" fn string_equals(g: *mut asIScriptGeneric) {
+fn string_equals(g: &ScriptGeneric) {
     use std::ffi::CStr;
     use std::os::raw::c_char;
 
     unsafe {
         // Get self string
-        let a_ptr = asIScriptGeneric_GetObject(g) as *const c_char;
+        let a_ptr = asIScriptGeneric_GetObject(g.as_ptr()) as *const c_char;
         // Get other string (parameter)
-        let b_ptr = asIScriptGeneric_GetArgAddress(g, 0) as *const c_char;
+        let b_ptr = asIScriptGeneric_GetArgAddress(g.as_ptr(), 0) as *const c_char;
 
         // CStr::from_ptr expects non-null, so handle null pointers
         let a_str = if !a_ptr.is_null() {
@@ -353,22 +356,22 @@ extern "C" fn string_equals(g: *mut asIScriptGeneric) {
         let is_equal = a_str == b_str;
 
         // Get the location to write the return value (expects a bool)
-        let ret_ptr = asIScriptGeneric_GetAddressOfReturnLocation(g) as *mut bool;
+        let ret_ptr = asIScriptGeneric_GetAddressOfReturnLocation(g.as_ptr()) as *mut bool;
         if !ret_ptr.is_null() {
             *ret_ptr = is_equal;
         }
     }
 }
 
-extern "C" fn string_cmp(g: *mut asIScriptGeneric) {
+fn string_cmp(g: &ScriptGeneric) {
     use std::ffi::CStr;
     use std::os::raw::c_char;
 
     unsafe {
         // Get the first string (`self`)
-        let a_ptr = asIScriptGeneric_GetObject(g) as *const c_char;
+        let a_ptr = asIScriptGeneric_GetObject(g.as_ptr()) as *const c_char;
         // Get the second string (argument)
-        let b_ptr = asIScriptGeneric_GetArgAddress(g, 0) as *const c_char;
+        let b_ptr = asIScriptGeneric_GetArgAddress(g.as_ptr(), 0) as *const c_char;
 
         let a_str = if !a_ptr.is_null() {
             CStr::from_ptr(a_ptr).to_bytes()
@@ -392,21 +395,21 @@ extern "C" fn string_cmp(g: *mut asIScriptGeneric) {
         };
 
         // Write the result to the return location
-        let ret_ptr = asIScriptGeneric_GetAddressOfReturnLocation(g) as *mut i32;
+        let ret_ptr = asIScriptGeneric_GetAddressOfReturnLocation(g.as_ptr()) as *mut i32;
         if !ret_ptr.is_null() {
             *ret_ptr = cmp;
         }
     }
 }
 
-extern "C" fn string_add(g: *mut asIScriptGeneric) {
+fn string_add(g: &ScriptGeneric) {
     use std::ffi::{CStr, CString};
     use std::os::raw::c_char;
 
     unsafe {
         // Get first and second string pointers
-        let a_ptr = asIScriptGeneric_GetObject(g) as *const c_char;
-        let b_ptr = asIScriptGeneric_GetArgAddress(g, 0) as *const c_char;
+        let a_ptr = asIScriptGeneric_GetObject(g.as_ptr()) as *const c_char;
+        let b_ptr = asIScriptGeneric_GetArgAddress(g.as_ptr(), 0) as *const c_char;
 
         // Convert C strings to Rust &str slices (handle null pointers)
         let a_str = if !a_ptr.is_null() {
@@ -428,17 +431,17 @@ extern "C" fn string_add(g: *mut asIScriptGeneric) {
         let result_ptr = result_cstring.into_raw();
 
         // Set the return object to the new string pointer
-        asIScriptGeneric_SetReturnObject(g, result_ptr as *mut std::ffi::c_void);
+        asIScriptGeneric_SetReturnObject(g.as_ptr(), result_ptr as *mut std::ffi::c_void);
     }
 }
 
-extern "C" fn string_length(g: *mut asIScriptGeneric) {
+fn string_length(g: &ScriptGeneric) {
     use std::ffi::CStr;
     use std::os::raw::{c_char, c_uint};
 
     unsafe {
         // Get the pointer to the string
-        let self_ptr = asIScriptGeneric_GetObject(g) as *const c_char;
+        let self_ptr = asIScriptGeneric_GetObject(g.as_ptr()) as *const c_char;
 
         // Get the string length (handle null pointer gracefully)
         let len = if !self_ptr.is_null() {
@@ -448,19 +451,19 @@ extern "C" fn string_length(g: *mut asIScriptGeneric) {
         };
 
         // Set the return value
-        let ret_ptr = asIScriptGeneric_GetAddressOfReturnLocation(g) as *mut c_uint;
+        let ret_ptr = asIScriptGeneric_GetAddressOfReturnLocation(g.as_ptr()) as *mut c_uint;
         if !ret_ptr.is_null() {
             *ret_ptr = len;
         }
     }
 }
 
-extern "C" fn string_resize(g: *mut asIScriptGeneric) {
+fn string_resize(g: &ScriptGeneric) {
     unsafe {
         // Get the pointer to the string (assume mutable, represented as CString or Vec<u8>)
-        let self_ptr = asIScriptGeneric_GetObject(g) as *mut String;
+        let self_ptr = asIScriptGeneric_GetObject(g.as_ptr()) as *mut String;
         // Get the pointer to the desired new length (asUINT)
-        let len_ptr = asIScriptGeneric_GetAddressOfArg(g, 0) as *const u32;
+        let len_ptr = asIScriptGeneric_GetAddressOfArg(g.as_ptr(), 0) as *const u32;
 
         if !self_ptr.is_null() && !len_ptr.is_null() {
             let self_str = &mut *self_ptr;
@@ -477,13 +480,13 @@ extern "C" fn string_resize(g: *mut asIScriptGeneric) {
     }
 }
 
-extern "C" fn string_is_empty(g: *mut asIScriptGeneric) {
+fn string_is_empty(g: &ScriptGeneric) {
     use std::ffi::CStr;
     use std::os::raw::c_char;
 
     unsafe {
         // Get the string pointer
-        let self_ptr = asIScriptGeneric_GetObject(g) as *const c_char;
+        let self_ptr = asIScriptGeneric_GetObject(g.as_ptr()) as *const c_char;
 
         // Check if it's empty (handle null pointer)
         let is_empty = if !self_ptr.is_null() {
@@ -494,24 +497,24 @@ extern "C" fn string_is_empty(g: *mut asIScriptGeneric) {
         };
 
         // Write to the return location
-        let ret_ptr = asIScriptGeneric_GetAddressOfReturnLocation(g) as *mut bool;
+        let ret_ptr = asIScriptGeneric_GetAddressOfReturnLocation(g.as_ptr()) as *mut bool;
         if !ret_ptr.is_null() {
             *ret_ptr = is_empty;
         }
     }
 }
 
-extern "C" fn string_char_at(g: *mut asIScriptGeneric) {
+fn string_char_at(g: &ScriptGeneric) {
     use std::os::raw::c_void;
 
     unsafe {
         // Get the requested index
-        let index = asIScriptGeneric_GetArgDWord(g, 0);
+        let index = asIScriptGeneric_GetArgDWord(g.as_ptr(), 0);
 
         // Get the string object; assumed to be a mutable pointer to String
-        let self_ptr = asIScriptGeneric_GetObject(g) as *mut String;
+        let self_ptr = asIScriptGeneric_GetObject(g.as_ptr()) as *mut String;
         if self_ptr.is_null() {
-            asIScriptGeneric_SetReturnAddress(g, std::ptr::null_mut());
+            asIScriptGeneric_SetReturnAddress(g.as_ptr(), std::ptr::null_mut());
             return;
         }
 
@@ -522,11 +525,11 @@ extern "C" fn string_char_at(g: *mut asIScriptGeneric) {
             if !ctx.is_null() {
                 asContext_SetException(ctx, b"Out of range\0".as_ptr() as *const i8);
             }
-            asIScriptGeneric_SetReturnAddress(g, std::ptr::null_mut());
+            asIScriptGeneric_SetReturnAddress(g.as_ptr(), std::ptr::null_mut());
         } else {
             // Safe mutable access to the character at index as u8
             let char_ptr = self_str.as_mut_ptr().add(index as usize) as *mut c_void;
-            asIScriptGeneric_SetReturnAddress(g, char_ptr);
+            asIScriptGeneric_SetReturnAddress(g.as_ptr(), char_ptr);
         }
     }
 }

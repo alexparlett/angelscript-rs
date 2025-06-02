@@ -23,6 +23,7 @@ mod typeinfo;
 mod types;
 mod utils;
 mod stringfactory;
+mod scriptgeneric;
 
 // Re-export main types
 pub use context::*;
@@ -31,6 +32,7 @@ pub use enums::*;
 pub use error::{Error, Result};
 pub use function::*;
 pub use module::*;
+pub use scriptgeneric::*;
 pub use scriptobject::*;
 pub use typeinfo::*;
 pub use types::*;

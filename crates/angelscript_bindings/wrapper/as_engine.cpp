@@ -442,4 +442,14 @@ void* asEngine_SetUserData(asIScriptEngine *engine, void *data, asPWORD type) {
     return static_cast<::asIScriptEngine*>(engine)->SetUserData(data, type);
 }
 
+int asEngine_GetLastFunctionId(asIScriptEngine *engine) {
+    if (!engine) return asINVALID_ARG;
+    return static_cast<::asIScriptEngine*>(engine)->GetLastFunctionId();
+}
+
+asIScriptFunction* asEngine_GetFunctionById(asIScriptEngine *engine, int funcId) {
+    if (!engine) return nullptr;
+    return static_cast<::asIScriptEngine*>(engine)->GetFunctionById(funcId);
+}
+
 } // extern "C"

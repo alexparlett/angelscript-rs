@@ -16,11 +16,12 @@ use crate::ffi::{
 };
 use crate::function::Function;
 use crate::module::Module;
-use crate::utils::{as_bool, from_as_bool};
-use crate::Engine;
+use crate::utils::{as_bool, from_as_bool, FromCVoidPtr};
+use crate::{Engine, UserData};
 use std::ffi::{c_void, CStr, CString};
 use std::os::raw::c_char;
 use std::ptr;
+use angelscript_bindings::{asContext_GetUserData, asContext_SetUserData};
 
 pub struct TypeInfo {
     type_info: *mut asITypeInfo,
@@ -242,7 +243,7 @@ impl TypeInfo {
         unsafe { asTypeInfo_GetPropertyCount(self.type_info) }
     }
 
-    pub fn get_property(&self, index: u32) -> Result<PropertyInfo> {
+    pub fn get_property(&self, index: u32) -> Result<TypePropertyInfo> {
         let mut name: *const c_char = ptr::null();
         let mut type_id: i32 = 0;
         let mut is_private: asBOOL = asFALSE;
@@ -268,7 +269,7 @@ impl TypeInfo {
                 &mut is_composite_indirect,
             ))?;
 
-            Ok(PropertyInfo {
+            Ok(TypePropertyInfo {
                 name: if name.is_null() {
                     None
                 } else {
@@ -390,12 +391,24 @@ impl TypeInfo {
     }
 
     // User data
-    pub fn get_user_data(&self, type_: usize) -> *mut c_void {
-        unsafe { asTypeInfo_GetUserData(self.type_info, type_) }
+    pub fn get_user_data<'a, T: UserData>(&self) -> Result<&'a mut T> {
+        unsafe {
+            let ptr = asTypeInfo_GetUserData(self.type_info, T::TypeId);
+            if ptr.is_null() {
+                return Err(Error::NullPointer)
+            }
+            Ok(T::from_mut(ptr))
+        }
     }
 
-    pub fn set_user_data(&self, data: *mut c_void, type_: usize) -> *mut c_void {
-        unsafe { asTypeInfo_SetUserData(self.type_info, data, type_) }
+    pub fn set_user_data<'a, T: UserData>(&self, data: &mut T) -> Option<&'a mut T> {
+        unsafe {
+            let ptr = asTypeInfo_SetUserData(self.type_info, data as *mut _ as *mut c_void, T::TypeId);
+            if ptr.is_null() {
+                return None
+            }
+            Some(T::from_mut(ptr))
+        }
     }
 
     pub(crate) fn as_ptr(&self) -> *mut asITypeInfo {
@@ -404,7 +417,7 @@ impl TypeInfo {
 }
 
 #[derive(Debug, Clone)]
-pub struct PropertyInfo {
+pub struct TypePropertyInfo {
     pub name: Option<&'static str>,
     pub type_id: i32,
     pub is_private: bool,

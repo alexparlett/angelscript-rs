@@ -17,8 +17,13 @@ use crate::function::Function;
 use crate::module::Module;
 use crate::stringfactory::register_cstring;
 use crate::typeinfo::TypeInfo;
+use crate::types::GenericFnUserData;
 use crate::utils::read_cstring;
-use crate::{GenericFn, MessageCallbackFn, MessageInfo};
+use crate::{GenericFn, MessageCallbackFn, MessageInfo, ScriptGeneric};
+use angelscript_bindings::{
+    asEngine_GetFunctionById, asEngine_GetLastFunctionId, asIScriptGeneric,
+    asIScriptGeneric_GetFunction,
+};
 use std::ffi::{CStr, CString};
 use std::os::raw::c_void;
 
@@ -93,10 +98,10 @@ impl Engine {
     }
 
     unsafe extern "C" fn cvoid_msg_callback(msg_ptr: *const asSMessageInfo, params: *const c_void) {
-        let c_msg = msg_ptr.as_ref().expect("asSMessageInfo null");
-        let _c_eng = params.as_ref().expect("engine params null");
+        let c_msg = unsafe { msg_ptr.as_ref().expect("asSMessageInfo null") };
+        let _c_eng = unsafe { params.as_ref().expect("engine params null") };
 
-        let script_engine: &mut Engine = &mut *(params as *mut Engine);
+        let script_engine: &mut Engine = unsafe { &mut *(params as *mut Engine) };
 
         if let Some(callback) = script_engine.callback {
             let info = MessageInfo {
@@ -159,11 +164,21 @@ impl Engine {
         }
     }
 
+    unsafe extern "C" fn thunk(ptr: *mut asIScriptGeneric) {
+        let func = asIScriptGeneric_GetFunction(ptr);
+        let user_data = Function::from_raw(func).get_user_data::<GenericFnUserData>();
+
+        if let Ok(f) = user_data {
+            let s = ScriptGeneric::from_raw(ptr);
+            f.call(&s);
+        }
+    }
+
     // Global functions
     pub fn register_global_function(
         &self,
         declaration: &str,
-        func: GenericFn,
+        func_ptr: GenericFn,
         call_conv: CallConvTypes,
     ) -> Result<()> {
         let c_decl = CString::new(declaration)?;
@@ -172,23 +187,30 @@ impl Engine {
             Error::from_code(asEngine_RegisterGlobalFunction(
                 self.engine,
                 c_decl.as_ptr(),
-                Some(func),
+                Some(Engine::thunk),
                 call_conv as u32,
             ))
-        }
+        }?;
+
+        let func_obj = self.get_global_function_by_decl(declaration)?; // or similar method
+        let user_data = Box::new(GenericFnUserData(func_ptr));
+        // Store pointer as user data, leaking the Box for FFI safety
+        func_obj.set_user_data(Box::leak(user_data));
+
+        Ok(())
     }
 
     pub fn get_global_function_count(&self) -> u32 {
         unsafe { asEngine_GetGlobalFunctionCount(self.engine) }
     }
 
-    pub fn get_global_function_by_index(&self, index: u32) -> Option<Function> {
+    pub fn get_global_function_by_index(&self, index: u32) -> Result<Function> {
         unsafe {
             let func = asEngine_GetGlobalFunctionByIndex(self.engine, index);
             if func.is_null() {
-                None
+                Err(Error::NullPointer)
             } else {
-                Some(Function::from_raw(func))
+                Ok(Function::from_raw(func))
             }
         }
     }
@@ -254,15 +276,24 @@ impl Engine {
         let c_obj = CString::new(obj)?;
         let c_decl = CString::new(declaration)?;
 
-        unsafe {
-            Error::from_code(asEngine_RegisterObjectMethod(
+        let func_id = unsafe {
+            let result = asEngine_RegisterObjectMethod(
                 self.engine,
                 c_obj.as_ptr(),
                 c_decl.as_ptr(),
-                Some(std::mem::transmute(func_ptr)),
+                Some(Engine::thunk),
                 call_conv as u32,
-            ))
-        }
+            );
+            
+            Error::from_code(result).map(|_| result)
+        }?;
+
+        let func_obj = self.get_function_by_id(func_id)?; // or similar method
+        let user_data = Box::new(GenericFnUserData(func_ptr));
+        // Store pointer as user data, leaking the Box for FFI safety
+        func_obj.set_user_data(Box::leak(user_data));
+
+        Ok(())
     }
 
     pub fn register_object_behaviour(
@@ -275,18 +306,26 @@ impl Engine {
     ) -> Result<()> {
         let c_obj = CString::new(obj)?;
         let c_decl = CString::new(declaration)?;
-        let c_decl = CString::new(declaration)?;
 
-        unsafe {
-            Error::from_code(asEngine_RegisterObjectBehaviour(
+        let func_id = unsafe {
+            let result = asEngine_RegisterObjectBehaviour(
                 self.engine,
                 c_obj.as_ptr(),
                 behaviour,
                 c_decl.as_ptr(),
-                Some(func_ptr),
+                Some(Engine::thunk),
                 call_conv as u32,
-            ))
-        }
+            );
+            
+            Error::from_code(result).map(|_| result)
+        }?;
+
+        let func_obj = self.get_function_by_id(func_id)?; // or similar method
+        let user_data = Box::new(GenericFnUserData(func_ptr));
+        // Store pointer as user data, leaking the Box for FFI safety
+        func_obj.set_user_data(Box::leak(user_data));
+
+        Ok(())
     }
 
     // Modules
@@ -381,6 +420,14 @@ impl Engine {
 
     pub fn register_std(&self) -> Result<()> {
         unsafe { register_cstring(self) }
+    }
+
+    pub fn get_function_by_id(&self, func_id: i32) -> Result<Function> {
+        let func_ptr = unsafe { asEngine_GetFunctionById(self.engine, func_id) };
+        if func_ptr.is_null() {
+            return Err(Error::NullPointer);
+        }
+        Ok(Function::from_raw(func_ptr))
     }
 }
 
