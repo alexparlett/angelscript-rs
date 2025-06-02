@@ -1,0 +1,3 @@
+[workspace]
+members = ["crates/angelscript_macros", "crates/angelscript", "examples"]
+resolver = "2"

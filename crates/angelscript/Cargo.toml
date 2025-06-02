@@ -1,0 +1,16 @@
+[package]
+name = "angelscript"
+version = "0.1.0"
+edition = "2024"
+build = "build.rs"
+
+[dependencies]
+
+[build-dependencies]
+bindgen = "0.71"
+cc = "1.2"
+angelscript_macros = { path = "../angelscript_macros" }
+
+[lib]
+name = "angelscript"
+crate-type = ["rlib", "cdylib"]
