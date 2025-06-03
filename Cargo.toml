@@ -6,6 +6,10 @@ edition = "2024"
 [dependencies]
 angelscript_macros = { path = "crates/angelscript_macros", optional = true }
 angelscript_bindings = { path = "crates/angelscript_bindings" }
+itoa = "1"
+ryu = "1"
+ustr = "1.1"
+
 
 [features]
 default = ["macros"]

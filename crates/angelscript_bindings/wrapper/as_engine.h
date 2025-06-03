@@ -43,7 +43,7 @@ asIScriptFunction* asEngine_GetGlobalFunctionByDecl(asIScriptEngine *engine, con
 // Global properties
 int asEngine_RegisterGlobalProperty(asIScriptEngine *engine, const char *declaration, void *pointer);
 asUINT asEngine_GetGlobalPropertyCount(asIScriptEngine *engine);
-int asEngine_GetGlobalPropertyByIndex(asIScriptEngine *engine, asUINT index, const char **name, const char **nameSpace, int *typeId, asBOOL *isConst, const char **configGroup, void **pointer, asDWORD *accessMask);
+int asEngine_GetGlobalPropertyByIndex(asIScriptEngine *engine, asUINT index, const char **name, const char **nameSpace, int *typeId, bool *isConst, const char **configGroup, void **pointer, asDWORD *accessMask);
 int asEngine_GetGlobalPropertyIndexByName(asIScriptEngine *engine, const char *name);
 int asEngine_GetGlobalPropertyIndexByDecl(asIScriptEngine *engine, const char *decl);
 
@@ -104,7 +104,7 @@ asIScriptFunction* asEngine_CreateDelegate(asIScriptEngine *engine, asIScriptFun
 int asEngine_AssignScriptObject(asIScriptEngine *engine, void *dstObj, void *srcObj, const asITypeInfo *type);
 void asEngine_ReleaseScriptObject(asIScriptEngine *engine, void *obj, const asITypeInfo *type);
 void asEngine_AddRefScriptObject(asIScriptEngine *engine, void *obj, const asITypeInfo *type);
-int asEngine_RefCastObject(asIScriptEngine *engine, void *obj, asITypeInfo *fromType, asITypeInfo *toType, void **newPtr, asBOOL useOnlyImplicitCast);
+int asEngine_RefCastObject(asIScriptEngine *engine, void *obj, asITypeInfo *fromType, asITypeInfo *toType, void **newPtr, bool useOnlyImplicitCast);
 asILockableSharedBool* asEngine_GetWeakRefFlagOfScriptObject(asIScriptEngine *engine, void *obj, const asITypeInfo *type);
 
 // Context pooling
@@ -126,7 +126,7 @@ void asEngine_SetCircularRefDetectedCallback(asIScriptEngine *engine, asCIRCULAR
 asITypeInfo* asEngine_GetTypeInfoByName(asIScriptEngine *engine, const char *name);
 asITypeInfo* asEngine_GetTypeInfoByDecl(asIScriptEngine *engine, const char *decl);
 int asEngine_GetTypeIdByDecl(asIScriptEngine *engine, const char *decl);
-const char* asEngine_GetTypeDeclaration(asIScriptEngine *engine, int typeId, asBOOL includeNamespace);
+const char* asEngine_GetTypeDeclaration(asIScriptEngine *engine, int typeId, bool includeNamespace);
 int asEngine_GetSizeOfPrimitiveType(asIScriptEngine *engine, int typeId);
 asITypeInfo* asEngine_GetTypeInfoById(asIScriptEngine *engine, int typeId);
 asUINT asEngine_GetObjectTypeCount(asIScriptEngine *engine);

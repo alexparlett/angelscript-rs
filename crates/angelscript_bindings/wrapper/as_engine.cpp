@@ -96,11 +96,11 @@ asUINT asEngine_GetGlobalPropertyCount(asIScriptEngine *engine) {
     return static_cast<::asIScriptEngine*>(engine)->GetGlobalPropertyCount();
 }
 
-int asEngine_GetGlobalPropertyByIndex(asIScriptEngine *engine, asUINT index, const char **name, const char **nameSpace, int *typeId, asBOOL *isConst, const char **configGroup, void **pointer, asDWORD *accessMask) {
+int asEngine_GetGlobalPropertyByIndex(asIScriptEngine *engine, asUINT index, const char **name, const char **nameSpace, int *typeId, bool *isConst, const char **configGroup, void **pointer, asDWORD *accessMask) {
     if (!engine) return asINVALID_ARG;
     bool constFlag;
     int result = static_cast<::asIScriptEngine*>(engine)->GetGlobalPropertyByIndex(index, name, nameSpace, typeId, &constFlag, configGroup, pointer, accessMask);
-    if (isConst) *isConst = constFlag ? asTRUE : asFALSE;
+    if (isConst) *isConst = constFlag ? true : false;
     return result;
 }
 
@@ -314,7 +314,7 @@ void asEngine_AddRefScriptObject(asIScriptEngine *engine, void *obj, const asITy
     static_cast<::asIScriptEngine*>(engine)->AddRefScriptObject(obj, static_cast<const ::asITypeInfo*>(type));
 }
 
-int asEngine_RefCastObject(asIScriptEngine *engine, void *obj, asITypeInfo *fromType, asITypeInfo *toType, void **newPtr, asBOOL useOnlyImplicitCast) {
+int asEngine_RefCastObject(asIScriptEngine *engine, void *obj, asITypeInfo *fromType, asITypeInfo *toType, void **newPtr, bool useOnlyImplicitCast) {
     if (!engine || !obj || !fromType || !toType || !newPtr) return asINVALID_ARG;
     bool implicitCast = useOnlyImplicitCast ? true : false;
     return static_cast<::asIScriptEngine*>(engine)->RefCastObject(obj, static_cast<::asITypeInfo*>(fromType), static_cast<::asITypeInfo*>(toType), newPtr, implicitCast);
@@ -405,7 +405,7 @@ int asEngine_GetTypeIdByDecl(asIScriptEngine *engine, const char *decl) {
     return static_cast<::asIScriptEngine*>(engine)->GetTypeIdByDecl(decl);
 }
 
-const char* asEngine_GetTypeDeclaration(asIScriptEngine *engine, int typeId, asBOOL includeNamespace) {
+const char* asEngine_GetTypeDeclaration(asIScriptEngine *engine, int typeId, bool includeNamespace) {
     if (!engine) return nullptr;
     bool includeNs = includeNamespace ? true : false;
     return static_cast<::asIScriptEngine*>(engine)->GetTypeDeclaration(typeId, includeNs);

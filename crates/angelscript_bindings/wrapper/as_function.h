@@ -31,15 +31,15 @@ asITypeInfo* asFunction_GetObjectType(asIScriptFunction *f);
 const char* asFunction_GetObjectName(asIScriptFunction *f);
 const char* asFunction_GetName(asIScriptFunction *f);
 const char* asFunction_GetNamespace(asIScriptFunction *f);
-const char* asFunction_GetDeclaration(asIScriptFunction *f, asBOOL includeObjectName, asBOOL includeNamespace, asBOOL includeParamNames);
-asBOOL asFunction_IsReadOnly(asIScriptFunction *f);
-asBOOL asFunction_IsPrivate(asIScriptFunction *f);
-asBOOL asFunction_IsProtected(asIScriptFunction *f);
-asBOOL asFunction_IsFinal(asIScriptFunction *f);
-asBOOL asFunction_IsOverride(asIScriptFunction *f);
-asBOOL asFunction_IsShared(asIScriptFunction *f);
-asBOOL asFunction_IsExplicit(asIScriptFunction *f);
-asBOOL asFunction_IsProperty(asIScriptFunction *f);
+const char* asFunction_GetDeclaration(asIScriptFunction *f, bool includeObjectName, bool includeNamespace, bool includeParamNames);
+bool asFunction_IsReadOnly(asIScriptFunction *f);
+bool asFunction_IsPrivate(asIScriptFunction *f);
+bool asFunction_IsProtected(asIScriptFunction *f);
+bool asFunction_IsFinal(asIScriptFunction *f);
+bool asFunction_IsOverride(asIScriptFunction *f);
+bool asFunction_IsShared(asIScriptFunction *f);
+bool asFunction_IsExplicit(asIScriptFunction *f);
+bool asFunction_IsProperty(asIScriptFunction *f);
 
 // Parameters
 asUINT asFunction_GetParamCount(asIScriptFunction *f);
@@ -50,7 +50,7 @@ int asFunction_GetReturnTypeId(asIScriptFunction *f, asDWORD *flags);
 
 // Type id for function pointers
 int asFunction_GetTypeId(asIScriptFunction *f);
-asBOOL asFunction_IsCompatibleWithTypeId(asIScriptFunction *f, int typeId);
+bool asFunction_IsCompatibleWithTypeId(asIScriptFunction *f, int typeId);
 
 // Delegates
 void* asFunction_GetDelegateObject(asIScriptFunction *f);
@@ -60,7 +60,7 @@ asIScriptFunction* asFunction_GetDelegateFunction(asIScriptFunction *f);
 // Debug info
 asUINT asFunction_GetVarCount(asIScriptFunction *f);
 int asFunction_GetVar(asIScriptFunction *f, asUINT index, const char **name, int *typeId);
-const char* asFunction_GetVarDecl(asIScriptFunction *f, asUINT index, asBOOL includeNamespace);
+const char* asFunction_GetVarDecl(asIScriptFunction *f, asUINT index, bool includeNamespace);
 int asFunction_FindNextLineWithCode(asIScriptFunction *f, int line);
 
 // For JIT compilation

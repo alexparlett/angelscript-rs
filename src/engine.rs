@@ -22,7 +22,7 @@ use crate::utils::read_cstring;
 use crate::{GenericFn, MessageCallbackFn, MessageInfo, ScriptGeneric};
 use angelscript_bindings::{
     asEngine_GetFunctionById, asEngine_GetLastFunctionId, asIScriptGeneric,
-    asIScriptGeneric_GetFunction,
+    asScriptGeneric_GetFunction,
 };
 use std::ffi::{CStr, CString};
 use std::os::raw::c_void;
@@ -164,8 +164,8 @@ impl Engine {
         }
     }
 
-    unsafe extern "C" fn thunk(ptr: *mut asIScriptGeneric) {
-        let func = asIScriptGeneric_GetFunction(ptr);
+    unsafe extern "C" fn generic_callback_thunk(ptr: *mut asIScriptGeneric) {
+        let func = asScriptGeneric_GetFunction(ptr);
         let user_data = Function::from_raw(func).get_user_data::<GenericFnUserData>();
 
         if let Ok(f) = user_data {
@@ -187,7 +187,7 @@ impl Engine {
             Error::from_code(asEngine_RegisterGlobalFunction(
                 self.engine,
                 c_decl.as_ptr(),
-                Some(Engine::thunk),
+                Some(Engine::generic_callback_thunk),
                 call_conv as u32,
             ))
         }?;
@@ -281,10 +281,10 @@ impl Engine {
                 self.engine,
                 c_obj.as_ptr(),
                 c_decl.as_ptr(),
-                Some(Engine::thunk),
+                Some(Engine::generic_callback_thunk),
                 call_conv as u32,
             );
-            
+
             Error::from_code(result).map(|_| result)
         }?;
 
@@ -313,10 +313,10 @@ impl Engine {
                 c_obj.as_ptr(),
                 behaviour,
                 c_decl.as_ptr(),
-                Some(Engine::thunk),
+                Some(Engine::generic_callback_thunk),
                 call_conv as u32,
             );
-            
+
             Error::from_code(result).map(|_| result)
         }?;
 

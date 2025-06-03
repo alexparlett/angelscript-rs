@@ -65,12 +65,12 @@ int asContext_PopState(asIScriptContext *c) {
     return static_cast<::asIScriptContext*>(c)->PopState();
 }
 
-asBOOL asContext_IsNested(asIScriptContext *c, asUINT *nestCount) {
-    if (!c || !nestCount) return asFALSE;
+bool asContext_IsNested(asIScriptContext *c, asUINT *nestCount) {
+    if (!c || !nestCount) return false;
     asUINT count = 0;
     bool isNested = static_cast<::asIScriptContext*>(c)->IsNested(&count);
     *nestCount = count;
-    return isNested ? asTRUE : asFALSE;
+    return isNested ? true : false;
 }
 
 // Object pointer for calling class methods
@@ -225,7 +225,7 @@ int asContext_GetVarCount(asIScriptContext *c, asUINT stackLevel) {
     if (!c) return 0;
     return static_cast<::asIScriptContext*>(c)->GetVarCount(stackLevel);
 }
-const char* asContext_GetVarDeclaration(asIScriptContext *c, asUINT varIndex, asUINT stackLevel, asBOOL includeNamespace) {
+const char* asContext_GetVarDeclaration(asIScriptContext *c, asUINT varIndex, asUINT stackLevel, bool includeNamespace) {
     if (!c) return nullptr;
     return static_cast<::asIScriptContext*>(c)->GetVarDeclaration(varIndex, stackLevel, includeNamespace != 0);
 }
@@ -233,9 +233,9 @@ void* asContext_GetAddressOfVar(asIScriptContext *c, asUINT varIndex, asUINT sta
     if (!c) return nullptr;
     return static_cast<::asIScriptContext*>(c)->GetAddressOfVar(varIndex, stackLevel);
 }
-asBOOL asContext_IsVarInScope(asIScriptContext *c, asUINT varIndex, asUINT stackLevel) {
-    if (!c) return asFALSE;
-    return static_cast<::asIScriptContext*>(c)->IsVarInScope(varIndex, stackLevel) ? asTRUE : asFALSE;
+bool asContext_IsVarInScope(asIScriptContext *c, asUINT varIndex, asUINT stackLevel) {
+    if (!c) return false;
+    return static_cast<::asIScriptContext*>(c)->IsVarInScope(varIndex, stackLevel) ? true : false;
 }
 
 // This pointer

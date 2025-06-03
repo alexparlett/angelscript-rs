@@ -1,53 +1,9 @@
-// Re-export basic types from raw bindings
-use crate::ffi::{
-    asILockableSharedBool, asIScriptGeneric_GetArgDWord, asIScriptGeneric_GetArgDouble,
-    asIScriptGeneric_GetArgFloat, asIScriptGeneric_GetArgQWord, asIScriptGeneric_GetArgString,
-};
+use crate::ffi::asILockableSharedBool;
 use crate::scriptgeneric::ScriptGeneric;
-use crate::{utils, MsgType};
+// Re-export basic types from raw bindings
+use crate::MsgType;
 use angelscript_bindings::asIScriptGeneric;
-
-pub trait FromScriptGeneric: Sized {
-    /// Extract an argument of this type from the context at the given index.
-    /// Returns Self or panics if extraction/conversion fails.
-    fn from_script_generic(ctx: &ScriptGeneric, arg_idx: u32) -> Self;
-}
-
-impl FromScriptGeneric for u32 {
-    fn from_script_generic(ctx: &ScriptGeneric, arg_idx: u32) -> Self {
-        unsafe { asIScriptGeneric_GetArgDWord(ctx.as_ptr(), arg_idx) }
-    }
-}
-
-impl FromScriptGeneric for u64 {
-    fn from_script_generic(ctx: &ScriptGeneric, arg_idx: u32) -> Self {
-        unsafe { asIScriptGeneric_GetArgQWord(ctx.as_ptr(), arg_idx) }
-    }
-}
-
-impl FromScriptGeneric for f32 {
-    fn from_script_generic(ctx: &ScriptGeneric, arg_idx: u32) -> Self {
-        unsafe { asIScriptGeneric_GetArgFloat(ctx.as_ptr(), arg_idx) }
-    }
-}
-
-impl FromScriptGeneric for f64 {
-    fn from_script_generic(ctx: &ScriptGeneric, arg_idx: u32) -> Self {
-        unsafe { asIScriptGeneric_GetArgDouble(ctx.as_ptr(), arg_idx) }
-    }
-}
-
-// ...and for reference types
-impl FromScriptGeneric for &str {
-    fn from_script_generic(ctx: &ScriptGeneric, arg_idx: u32) -> Self {
-        // Get the char pointer and length
-        let c_str_ptr = unsafe { asIScriptGeneric_GetArgString(ctx.as_ptr(), arg_idx) };
-
-        // Construct a `&str` from the pointer and length (assumes UTF-8)
-        utils::read_cstring(c_str_ptr)
-    }
-}
-
+use std::ffi::c_void;
 pub trait UserData {
     const TypeId: usize;
 }
@@ -91,7 +47,7 @@ pub(crate) type GenericFn = fn(&ScriptGeneric);
 pub(crate) struct GenericFnUserData(pub GenericFn);
 
 impl GenericFnUserData {
-    pub fn call(& self, ctx: &ScriptGeneric) {
+    pub fn call(&self, ctx: &ScriptGeneric) {
         (self.0)(ctx)
     }
 }
@@ -100,5 +56,83 @@ impl UserData for GenericFnUserData {
     const TypeId: usize = 0x129032719; // Must be unique!
 }
 
-
 pub type ScriptGenericFn = unsafe extern "C" fn(ctx: *mut asIScriptGeneric);
+
+#[derive(Hash, PartialEq, Eq, Copy, Clone, Debug)]
+pub struct Ptr<T>(*mut T);
+
+impl<T> Ptr<T> {
+    pub fn is_null(&self) -> bool {
+        self.0.is_null()
+    }
+
+    pub fn null() -> Self {
+        Ptr(std::ptr::null_mut())
+    }
+    pub fn from_raw(ptr: *mut c_void) -> Self {
+        Ptr(ptr as *mut T)
+    }
+    pub fn as_ptr(&self) -> *const T {
+        self.0
+    }
+    pub fn as_mut_ptr(&mut self) -> *mut T {
+        self.0
+    }
+
+    pub fn set(&mut self, value: T) {
+        unsafe {
+            *self.0 = value;
+        }
+    }
+
+    pub fn as_void_ptr(&self) -> VoidPtr {
+        VoidPtr(self.0 as *mut c_void)
+    }
+
+    pub fn as_ref(&self) -> &T {
+        unsafe { &*self.0 }
+    }
+}
+
+unsafe impl<T> Send for Ptr<T> {}
+unsafe impl<T> Sync for Ptr<T> {}
+
+#[derive(Hash, PartialEq, Eq, Copy, Clone, Debug)]
+pub struct VoidPtr(*mut c_void);
+
+impl VoidPtr {
+    pub fn is_null(&self) -> bool {
+        self.0.is_null()
+    }
+
+    pub fn null() -> Self {
+        VoidPtr(std::ptr::null_mut())
+    }
+    pub fn from_mut_raw(ptr: *mut c_void) -> Self {
+        VoidPtr(ptr)
+    }
+    pub fn from_const_raw(ptr: *const c_void) -> Self {
+        VoidPtr(ptr as *mut c_void)
+    }
+    pub fn as_ptr(&self) -> *const c_void {
+        self.0
+    }
+    pub fn as_mut_ptr(&mut self) -> *mut c_void {
+        self.0
+    }
+}
+
+impl<T> Into<VoidPtr> for *const T {
+    fn into(self) -> VoidPtr {
+        VoidPtr::from_mut_raw(self as *mut c_void)
+    }
+}
+
+impl<T> Into<VoidPtr> for *mut T {
+    fn into(self) -> VoidPtr {
+        VoidPtr::from_mut_raw(self as *mut c_void)
+    }
+}
+
+unsafe impl Send for VoidPtr {}
+unsafe impl Sync for VoidPtr {}

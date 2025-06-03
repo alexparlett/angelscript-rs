@@ -80,7 +80,7 @@ const char* asFunction_GetNamespace(asIScriptFunction *f) {
     return static_cast<::asIScriptFunction*>(f)->GetNamespace();
 }
 
-const char* asFunction_GetDeclaration(asIScriptFunction *f, asBOOL includeObjectName, asBOOL includeNamespace, asBOOL includeParamNames) {
+const char* asFunction_GetDeclaration(asIScriptFunction *f, bool includeObjectName, bool includeNamespace, bool includeParamNames) {
     if (!f) return nullptr;
     bool inclObjName = includeObjectName ? true : false;
     bool inclNs = includeNamespace ? true : false;
@@ -88,44 +88,44 @@ const char* asFunction_GetDeclaration(asIScriptFunction *f, asBOOL includeObject
     return static_cast<::asIScriptFunction*>(f)->GetDeclaration(inclObjName, inclNs, inclParamNames);
 }
 
-asBOOL asFunction_IsReadOnly(asIScriptFunction *f) {
-    if (!f) return asFALSE;
-    return static_cast<::asIScriptFunction*>(f)->IsReadOnly() ? asTRUE : asFALSE;
+bool asFunction_IsReadOnly(asIScriptFunction *f) {
+    if (!f) return false;
+    return static_cast<::asIScriptFunction*>(f)->IsReadOnly() ? true : false;
 }
 
-asBOOL asFunction_IsPrivate(asIScriptFunction *f) {
-    if (!f) return asFALSE;
-    return static_cast<::asIScriptFunction*>(f)->IsPrivate() ? asTRUE : asFALSE;
+bool asFunction_IsPrivate(asIScriptFunction *f) {
+    if (!f) return false;
+    return static_cast<::asIScriptFunction*>(f)->IsPrivate() ? true : false;
 }
 
-asBOOL asFunction_IsProtected(asIScriptFunction *f) {
-    if (!f) return asFALSE;
-    return static_cast<::asIScriptFunction*>(f)->IsProtected() ? asTRUE : asFALSE;
+bool asFunction_IsProtected(asIScriptFunction *f) {
+    if (!f) return false;
+    return static_cast<::asIScriptFunction*>(f)->IsProtected() ? true : false;
 }
 
-asBOOL asFunction_IsFinal(asIScriptFunction *f) {
-    if (!f) return asFALSE;
-    return static_cast<::asIScriptFunction*>(f)->IsFinal() ? asTRUE : asFALSE;
+bool asFunction_IsFinal(asIScriptFunction *f) {
+    if (!f) return false;
+    return static_cast<::asIScriptFunction*>(f)->IsFinal() ? true : false;
 }
 
-asBOOL asFunction_IsOverride(asIScriptFunction *f) {
-    if (!f) return asFALSE;
-    return static_cast<::asIScriptFunction*>(f)->IsOverride() ? asTRUE : asFALSE;
+bool asFunction_IsOverride(asIScriptFunction *f) {
+    if (!f) return false;
+    return static_cast<::asIScriptFunction*>(f)->IsOverride() ? true : false;
 }
 
-asBOOL asFunction_IsShared(asIScriptFunction *f) {
-    if (!f) return asFALSE;
-    return static_cast<::asIScriptFunction*>(f)->IsShared() ? asTRUE : asFALSE;
+bool asFunction_IsShared(asIScriptFunction *f) {
+    if (!f) return false;
+    return static_cast<::asIScriptFunction*>(f)->IsShared() ? true : false;
 }
 
-asBOOL asFunction_IsExplicit(asIScriptFunction *f) {
-    if (!f) return asFALSE;
-    return static_cast<::asIScriptFunction*>(f)->IsExplicit() ? asTRUE : asFALSE;
+bool asFunction_IsExplicit(asIScriptFunction *f) {
+    if (!f) return false;
+    return static_cast<::asIScriptFunction*>(f)->IsExplicit() ? true : false;
 }
 
-asBOOL asFunction_IsProperty(asIScriptFunction *f) {
-    if (!f) return asFALSE;
-    return static_cast<::asIScriptFunction*>(f)->IsProperty() ? asTRUE : asFALSE;
+bool asFunction_IsProperty(asIScriptFunction *f) {
+    if (!f) return false;
+    return static_cast<::asIScriptFunction*>(f)->IsProperty() ? true : false;
 }
 
 // Parameters
@@ -151,9 +151,9 @@ int asFunction_GetTypeId(asIScriptFunction *f) {
     return static_cast<::asIScriptFunction*>(f)->GetTypeId();
 }
 
-asBOOL asFunction_IsCompatibleWithTypeId(asIScriptFunction *f, int typeId) {
-    if (!f) return asFALSE;
-    return static_cast<::asIScriptFunction*>(f)->IsCompatibleWithTypeId(typeId) ? asTRUE : asFALSE;
+bool asFunction_IsCompatibleWithTypeId(asIScriptFunction *f, int typeId) {
+    if (!f) return false;
+    return static_cast<::asIScriptFunction*>(f)->IsCompatibleWithTypeId(typeId) ? true : false;
 }
 
 // Delegates
@@ -183,7 +183,7 @@ int asFunction_GetVar(asIScriptFunction *f, asUINT index, const char **name, int
     return static_cast<::asIScriptFunction*>(f)->GetVar(index, name, typeId);
 }
 
-const char* asFunction_GetVarDecl(asIScriptFunction *f, asUINT index, asBOOL includeNamespace) {
+const char* asFunction_GetVarDecl(asIScriptFunction *f, asUINT index, bool includeNamespace) {
     if (!f) return nullptr;
     bool inclNs = includeNamespace ? true : false;
     return static_cast<::asIScriptFunction*>(f)->GetVarDecl(index, inclNs);

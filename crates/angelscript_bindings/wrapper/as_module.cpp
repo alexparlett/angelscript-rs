@@ -103,17 +103,17 @@ int asModule_GetGlobalVarIndexByDecl(asIScriptModule *m, const char *decl) {
     return static_cast<::asIScriptModule*>(m)->GetGlobalVarIndexByDecl(decl);
 }
 
-const char* asModule_GetGlobalVarDeclaration(asIScriptModule *m, asUINT index, asBOOL includeNamespace) {
+const char* asModule_GetGlobalVarDeclaration(asIScriptModule *m, asUINT index, bool includeNamespace) {
     if (!m) return nullptr;
     bool includeNs = includeNamespace ? true : false;
     return static_cast<::asIScriptModule*>(m)->GetGlobalVarDeclaration(index, includeNs);
 }
 
-int asModule_GetGlobalVar(asIScriptModule *m, asUINT index, const char **name, const char **nameSpace, int *typeId, asBOOL *isConst) {
+int asModule_GetGlobalVar(asIScriptModule *m, asUINT index, const char **name, const char **nameSpace, int *typeId, bool *isConst) {
     if (!m) return asINVALID_ARG;
     bool constFlag;
     int result = static_cast<::asIScriptModule*>(m)->GetGlobalVar(index, name, nameSpace, typeId, &constFlag);
-    if (isConst) *isConst = constFlag ? asTRUE : asFALSE;
+    if (isConst) *isConst = constFlag ? true : false;
     return result;
 }
 
@@ -217,17 +217,17 @@ int asModule_UnbindAllImportedFunctions(asIScriptModule *m) {
 }
 
 // Bytecode
-int asModule_SaveByteCode(asIScriptModule *m, asIBinaryStream *out, asBOOL stripDebugInfo) {
+int asModule_SaveByteCode(asIScriptModule *m, asIBinaryStream *out, bool stripDebugInfo) {
     if (!m || !out) return asINVALID_ARG;
     bool strip = stripDebugInfo ? true : false;
     return static_cast<::asIScriptModule*>(m)->SaveByteCode(static_cast<::asIBinaryStream*>(out), strip);
 }
 
-int asModule_LoadByteCode(asIScriptModule *m, asIBinaryStream *in, asBOOL *wasDebugInfoStripped) {
+int asModule_LoadByteCode(asIScriptModule *m, asIBinaryStream *in, bool *wasDebugInfoStripped) {
     if (!m || !in) return asINVALID_ARG;
     bool stripped;
     int result = static_cast<::asIScriptModule*>(m)->LoadByteCode(static_cast<::asIBinaryStream*>(in), &stripped);
-    if (wasDebugInfoStripped) *wasDebugInfoStripped = stripped ? asTRUE : asFALSE;
+    if (wasDebugInfoStripped) *wasDebugInfoStripped = stripped ? true : false;
     return result;
 }
 

@@ -41,8 +41,8 @@ int asModule_ResetGlobalVars(asIScriptModule *m, asIScriptContext *ctx);
 asUINT asModule_GetGlobalVarCount(asIScriptModule *m);
 int asModule_GetGlobalVarIndexByName(asIScriptModule *m, const char *name);
 int asModule_GetGlobalVarIndexByDecl(asIScriptModule *m, const char *decl);
-const char* asModule_GetGlobalVarDeclaration(asIScriptModule *m, asUINT index, asBOOL includeNamespace);
-int asModule_GetGlobalVar(asIScriptModule *m, asUINT index, const char **name, const char **nameSpace, int *typeId, asBOOL *isConst);
+const char* asModule_GetGlobalVarDeclaration(asIScriptModule *m, asUINT index, bool includeNamespace);
+int asModule_GetGlobalVar(asIScriptModule *m, asUINT index, const char **name, const char **nameSpace, int *typeId, bool *isConst);
 void* asModule_GetAddressOfGlobalVar(asIScriptModule *m, asUINT index);
 int asModule_RemoveGlobalVar(asIScriptModule *m, asUINT index);
 
@@ -72,8 +72,8 @@ int asModule_BindAllImportedFunctions(asIScriptModule *m);
 int asModule_UnbindAllImportedFunctions(asIScriptModule *m);
 
 // Bytecode
-int asModule_SaveByteCode(asIScriptModule *m, asIBinaryStream *out, asBOOL stripDebugInfo);
-int asModule_LoadByteCode(asIScriptModule *m, asIBinaryStream *in, asBOOL *wasDebugInfoStripped);
+int asModule_SaveByteCode(asIScriptModule *m, asIBinaryStream *out, bool stripDebugInfo);
+int asModule_LoadByteCode(asIScriptModule *m, asIBinaryStream *in, bool *wasDebugInfoStripped);
 
 // User data
 void* asModule_GetUserData(asIScriptModule *m, asPWORD type);

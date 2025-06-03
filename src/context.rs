@@ -17,7 +17,7 @@ use crate::ffi::{
 };
 use crate::function::Function;
 use crate::types::*;
-use crate::utils::{as_bool, from_as_bool, FromCVoidPtr};
+use crate::utils::FromCVoidPtr;
 use crate::Engine;
 use std::ffi::{CStr, CString};
 use std::os::raw::{c_char, c_void};
@@ -82,7 +82,7 @@ impl Context {
         let mut nest_count: u32 = 0;
         unsafe {
             let is_nested = asContext_IsNested(self.context, &mut nest_count);
-            (from_as_bool(is_nested), nest_count)
+            (is_nested, nest_count)
         }
     }
 
@@ -271,7 +271,7 @@ impl Context {
                 self.context,
                 var_index,
                 stack_level,
-                as_bool(include_namespace),
+                include_namespace,
             );
             if decl.is_null() {
                 None
@@ -282,7 +282,7 @@ impl Context {
     }
 
     pub fn is_var_in_scope(&self, var_index: u32, stack_level: u32) -> bool {
-        unsafe { from_as_bool(asContext_IsVarInScope(self.context, var_index, stack_level)) }
+        unsafe { asContext_IsVarInScope(self.context, var_index, stack_level) }
     }
 
     // This pointer
@@ -314,7 +314,7 @@ impl Context {
         unsafe {
             let ptr = asContext_GetUserData(self.context, T::TypeId);
             if ptr.is_null() {
-                return Err(Error::NullPointer)
+                return Err(Error::NullPointer);
             }
             Ok(T::from_mut(ptr))
         }
@@ -324,7 +324,7 @@ impl Context {
         unsafe {
             let ptr = asContext_SetUserData(self.context, data as *mut _ as *mut c_void, T::TypeId);
             if ptr.is_null() {
-                return None
+                return None;
             }
             Some(T::from_mut(ptr))
         }

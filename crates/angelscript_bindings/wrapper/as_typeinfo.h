@@ -23,7 +23,7 @@ int asTypeInfo_Release(asITypeInfo *ti);
 const char* asTypeInfo_GetName(asITypeInfo *ti);
 const char* asTypeInfo_GetNamespace(asITypeInfo *ti);
 asITypeInfo* asTypeInfo_GetBaseType(asITypeInfo *ti);
-asBOOL asTypeInfo_DerivesFrom(asITypeInfo *ti, const asITypeInfo *objType);
+bool asTypeInfo_DerivesFrom(asITypeInfo *ti, const asITypeInfo *objType);
 asDWORD asTypeInfo_GetFlags(asITypeInfo *ti);
 asUINT asTypeInfo_GetSize(asITypeInfo *ti);
 int asTypeInfo_GetTypeId(asITypeInfo *ti);
@@ -34,7 +34,7 @@ asUINT asTypeInfo_GetSubTypeCount(asITypeInfo *ti);
 // Interfaces
 asUINT asTypeInfo_GetInterfaceCount(asITypeInfo *ti);
 asITypeInfo* asTypeInfo_GetInterface(asITypeInfo *ti, asUINT index);
-asBOOL asTypeInfo_Implements(asITypeInfo *ti, const asITypeInfo *objType);
+bool asTypeInfo_Implements(asITypeInfo *ti, const asITypeInfo *objType);
 
 // Factories
 asUINT asTypeInfo_GetFactoryCount(asITypeInfo *ti);
@@ -43,14 +43,14 @@ asIScriptFunction* asTypeInfo_GetFactoryByDecl(asITypeInfo *ti, const char *decl
 
 // Methods
 asUINT asTypeInfo_GetMethodCount(asITypeInfo *ti);
-asIScriptFunction* asTypeInfo_GetMethodByIndex(asITypeInfo *ti, asUINT index, asBOOL getVirtual);
-asIScriptFunction* asTypeInfo_GetMethodByName(asITypeInfo *ti, const char *name, asBOOL getVirtual);
-asIScriptFunction* asTypeInfo_GetMethodByDecl(asITypeInfo *ti, const char *decl, asBOOL getVirtual);
+asIScriptFunction* asTypeInfo_GetMethodByIndex(asITypeInfo *ti, asUINT index, bool getVirtual);
+asIScriptFunction* asTypeInfo_GetMethodByName(asITypeInfo *ti, const char *name, bool getVirtual);
+asIScriptFunction* asTypeInfo_GetMethodByDecl(asITypeInfo *ti, const char *decl, bool getVirtual);
 
 // Properties
 asUINT asTypeInfo_GetPropertyCount(asITypeInfo *ti);
-int asTypeInfo_GetProperty(asITypeInfo *ti, asUINT index, const char **name, int *typeId, asBOOL *isPrivate, asBOOL *isProtected, int *offset, asBOOL *isReference, asDWORD *accessMask, int *compositeOffset, asBOOL *isCompositeIndirect);
-const char* asTypeInfo_GetPropertyDeclaration(asITypeInfo *ti, asUINT index, asBOOL includeNamespace);
+int asTypeInfo_GetProperty(asITypeInfo *ti, asUINT index, const char **name, int *typeId, bool *isPrivate, bool *isProtected, int *offset, bool *isReference, asDWORD *accessMask, int *compositeOffset, bool *isCompositeIndirect);
+const char* asTypeInfo_GetPropertyDeclaration(asITypeInfo *ti, asUINT index, bool includeNamespace);
 
 // Behaviours
 asUINT asTypeInfo_GetBehaviourCount(asITypeInfo *ti);

@@ -1,42 +1,60 @@
-use crate::ffi::{
-    asContext_SetException, asEngine_RegisterStringFactory, asGetActiveContext,
-    asIScriptGeneric_GetAddressOfArg, asIScriptGeneric_GetAddressOfReturnLocation,
-    asIScriptGeneric_GetArgAddress, asIScriptGeneric_GetArgDWord, asIScriptGeneric_GetArgObject,
-    asIScriptGeneric_GetObject, asIScriptGeneric_SetReturnAddress,
-    asIScriptGeneric_SetReturnObject, asIStringFactory, asIStringFactory__bindgen_vtable, asUINT,
+use crate::{Behaviours, Engine, Error, ObjTypeFlags, Ptr, ScriptGeneric, VoidPtr};
+use angelscript_bindings::asECallConvTypes::asCALL_GENERIC;
+use angelscript_bindings::{
+    asContext_SetException, asEngine_RegisterStringFactory, asGetActiveContext, asINT32, asINT64,
+    asIStringFactory, asIStringFactory__bindgen_vtable, asQWORD, asUINT,
 };
-use crate::{Behaviours, CallConvTypes, Engine, Error, ObjTypeFlags, ScriptGeneric};
 use std::collections::HashMap;
-use std::ffi::CString;
-use std::os::raw::{c_char, c_int, c_void};
+use std::ffi::{c_char, c_int, c_void, CString};
 use std::sync::{Arc, Mutex, OnceLock};
-
-#[derive(Hash, PartialEq, Eq, Copy, Clone, Debug)]
-struct VoidPtr(*const c_void);
-
-unsafe impl Send for VoidPtr {}
-unsafe impl Sync for VoidPtr {}
-
-// Cache entry (keeps CString alive and reference count)
-#[derive(Debug, Clone)]
-struct StringConstant {
-    cstring: CString,
-    refs: usize,
-}
+use ustr::{Ustr, UstrMap};
 
 struct InnerCache {
-    // Key: pointer to the internal C data, as AngelScript will use the pointer as handle
-    map: HashMap<VoidPtr, (StringConstant, String)>,
-    // For lookup to avoid duplicate allocations (Rust string to handle)
-    str_lookup: HashMap<String, VoidPtr>,
+    // From Ustr to pointer handle AngelScript uses
+    ustr_to_ptr: UstrMap<VoidPtr>,
+    // From pointer to Ustr, to retrieve string from the handle
+    ptr_to_ustr: HashMap<VoidPtr, Ustr>,
 }
 
 impl InnerCache {
     fn new() -> Self {
         Self {
-            map: HashMap::new(),
-            str_lookup: HashMap::new(),
+            ustr_to_ptr: UstrMap::default(),
+            ptr_to_ustr: HashMap::new(),
         }
+    }
+
+    fn get_or_intern(&mut self, bytes: &[u8]) -> (VoidPtr, Ustr) {
+        // Only at FFI boundary: decode from &[u8] to Ustr directly
+        let us = match std::str::from_utf8(bytes) {
+            Ok(s) => Ustr::from(s),
+            Err(_) => Ustr::from("�"), // fallback for invalid utf-8
+        };
+        if let Some(&ptr) = self.ustr_to_ptr.get(&us) {
+            (ptr, us)
+        } else {
+            let boxed = Box::into_raw(Box::new(us.clone())) as *const c_void;
+            let ptr = VoidPtr::from_const_raw(boxed);
+            self.ustr_to_ptr.insert(us, ptr);
+            self.ptr_to_ustr.insert(ptr, us.clone());
+            (ptr, us)
+        }
+    }
+
+    fn remove(&mut self, ptr: VoidPtr) -> bool {
+        if let Some(us) = self.ptr_to_ustr.remove(&ptr) {
+            self.ustr_to_ptr.remove(&us);
+            unsafe {
+                let _ = Box::from_raw(ptr.as_ptr() as *mut Ustr);
+            }
+            true
+        } else {
+            false
+        }
+    }
+
+    fn get_ustr(&self, ptr: VoidPtr) -> Option<Ustr> {
+        self.ptr_to_ustr.get(&ptr).cloned()
     }
 }
 
@@ -53,118 +71,58 @@ impl StringFactory {
         })
     }
 
-    // C API: get string constant (returns pointer to string memory)
     pub unsafe extern "C" fn get_string_constant(
-        this: *mut asIStringFactory,
+        _this: *mut asIStringFactory,
         data: *const c_char,
         length: asUINT,
     ) -> *const c_void {
-        let factory = StringFactory::singleton();
+        // FFI boundary: Only use &str for safe decode
+        let sf = StringFactory::singleton();
         let slice = unsafe { std::slice::from_raw_parts(data as *const u8, length as usize) };
-
-        let s = match std::str::from_utf8(slice) {
-            Ok(s) => s,
-            Err(_) => return std::ptr::null(), // or handle error
-        };
-
-        let mut cache = factory.cache.lock().unwrap();
-
-        // Pull out the pointer to break the borrow
-        let ptr_opt = cache.str_lookup.get(s).copied();
-
-        if let Some(ptr) = ptr_opt {
-            if let Some((string_constant, _)) = cache.map.get_mut(&ptr) {
-                string_constant.refs += 1;
-            }
-            return ptr.0;
-        }
-
-        // Not in cache, allocate new CString
-        let cstring = match CString::new(s) {
-            Ok(cs) => cs,
-            Err(_) => return std::ptr::null(),
-        };
-        let ptr = VoidPtr(cstring.as_ptr() as *const c_void);
-        let cache_entry = StringConstant { cstring, refs: 1 };
-        cache.map.insert(ptr, (cache_entry, s.to_owned()));
-        cache.str_lookup.insert(s.to_owned(), ptr);
-        ptr.0
+        let mut cache = sf.cache.lock().unwrap();
+        let (ptr, _) = cache.get_or_intern(slice);
+        ptr.as_ptr()
     }
 
-    // C API: release string constant (decrements refcount, or frees if last)
     pub unsafe extern "C" fn release_string_constant(
-        this: *mut asIStringFactory,
+        _this: *mut asIStringFactory,
         str_: *const c_void,
     ) -> c_int {
-        if str_.is_null() {
-            return -1; // error
-        }
-        let factory = StringFactory::singleton();
-        let mut cache = factory.cache.lock().unwrap();
-
-        let entry_removed = {
-            if let Some((entry, rust_str)) = cache.map.get_mut(&VoidPtr(str_)) {
-                if entry.refs == 0 {
-                    return -1;
-                }
-                entry.refs -= 1;
-                if entry.refs == 0 {
-                    // Copy the key for later removal, and rust_str too if not Copy
-                    Some((VoidPtr(str_), rust_str.clone()))
-                } else {
-                    return 0;
-                }
-            } else {
-                return -1;
-            }
-        };
-
-        if let Some((ptr, rust_str)) = entry_removed {
-            // Now we have no outstanding borrows
-            cache.str_lookup.remove(&rust_str);
-            cache.map.remove(&ptr);
-        }
-
-        0
+        let sf = StringFactory::singleton();
+        let mut cache = sf.cache.lock().unwrap();
+        let ptr = VoidPtr::from_const_raw(str_);
+        if cache.remove(ptr) { 1 } else { 0 }
     }
 
-    // C API: get raw string data
     pub unsafe extern "C" fn get_raw_string_data(
-        this: *const asIStringFactory,
+        _this: *const asIStringFactory,
         str_: *const c_void,
         data: *mut c_char,
         length: *mut asUINT,
     ) -> c_int {
-        if str_.is_null() {
-            return -1;
-        }
-        let factory = StringFactory::singleton();
-        let cache = factory.cache.lock().unwrap();
-        if let Some((entry, _)) = cache.map.get(&VoidPtr(str_)) {
-            let buf = entry.cstring.as_bytes();
-            if !length.is_null() {
-                unsafe {
-                    *length = buf.len() as asUINT;
-                }
-            }
+        let sf = StringFactory::singleton();
+        let cache = sf.cache.lock().unwrap();
+        let ptr = VoidPtr::from_const_raw(str_);
+        if let Some(us) = cache.get_ustr(ptr) {
+            let bytes = us.as_bytes();
             if !data.is_null() {
                 unsafe {
-                    std::ptr::copy_nonoverlapping(buf.as_ptr() as *const c_char, data, buf.len())
+                    std::ptr::copy_nonoverlapping(bytes.as_ptr(), data as *mut u8, bytes.len())
                 };
             }
-            0
+            if !length.is_null() {
+                unsafe { *length = bytes.len() as asUINT };
+            }
+            1
         } else {
-            -1
+            0
         }
     }
 
-    // Clean shutdown/debug: ensures all references released
-    pub fn assert_cache_empty(&self) {
+    fn assert_cache_empty(&self) {
         let cache = self.cache.lock().unwrap();
-        assert!(
-            cache.map.is_empty(),
-            "StringConstant cache is not empty on shutdown!"
-        );
+        assert!(cache.ptr_to_ustr.is_empty());
+        assert!(cache.ustr_to_ptr.is_empty());
     }
 }
 
@@ -174,14 +132,16 @@ impl Drop for StringFactory {
     }
 }
 
-// VTable instance (must remain alive)
+unsafe impl Send for StringFactory {}
+unsafe impl Sync for StringFactory {}
+
+// VTable instance must remain alive
 static STRING_FACTORY_VTABLE: asIStringFactory__bindgen_vtable = asIStringFactory__bindgen_vtable {
     asIStringFactory_GetStringConstant: StringFactory::get_string_constant,
     asIStringFactory_ReleaseStringConstant: StringFactory::release_string_constant,
     asIStringFactory_GetRawStringData: StringFactory::get_raw_string_data,
 };
 
-// Factory singleton accessor for FFI
 pub fn get_string_factory_instance() -> &'static asIStringFactory {
     static INSTANCE: OnceLock<asIStringFactory> = OnceLock::new();
     INSTANCE.get_or_init(|| asIStringFactory {
@@ -189,355 +149,423 @@ pub fn get_string_factory_instance() -> &'static asIStringFactory {
     })
 }
 
+fn generic_error(msg: &str) {
+    unsafe {
+        let ctx = asGetActiveContext();
+        asContext_SetException(ctx, Ustr::from(msg).as_char_ptr());
+    };
+}
+
+// Constructor from &str (used from AngelScript generics)
 fn construct_string(g: &ScriptGeneric) {
-    use std::ffi::CString;
-    use std::os::raw::c_char;
-
-    unsafe {
-        // AngelScript will provide where to write the *mut c_char (pointer to buffer)
-        let obj_ptr = asIScriptGeneric_GetObject(g.as_ptr()) as *mut *mut c_char;
-        if obj_ptr.is_null() {
-            return;
-        }
-
-        // Allocate a new empty string
-        let cstring = CString::new("").unwrap();
-
-        // Convert to raw pointer (leak it, AngelScript is now responsible)
-        *obj_ptr = cstring.into_raw();
-    }
+    let ustr = Ustr::from("");
+    g.get_object::<Ustr>().set(ustr);
 }
 
+// Copy constructor for Ustr "string"
 fn copy_construct_string(g: &ScriptGeneric) {
-    use std::ffi::{CStr, CString};
-    use std::os::raw::c_char;
-
-    unsafe {
-        // 1. Get source string pointer
-        let src = asIScriptGeneric_GetArgObject(g.as_ptr(), 0) as *const c_char;
-        // 2. Get destination pointer (output pointer-to-pointer)
-        let dst = asIScriptGeneric_GetObject(g.as_ptr()) as *mut *mut c_char;
-
-        if !dst.is_null() && !src.is_null() {
-            // 3. Clone the content: create a new CString
-            let cstr = CStr::from_ptr(src);
-            // Allocate new C string (with null termination)
-            let new_cstring = CString::new(cstr.to_bytes()).unwrap();
-            // Convert CString to raw pointer (leak it for AngelScript to manage)
-            *dst = new_cstring.into_raw();
-        } else if !dst.is_null() {
-            // If basic is null, set output to null
-            *dst = std::ptr::null_mut();
-        }
-    }
+    let src_ptr = g.get_arg_object::<Ustr>(0);
+    let new_ustr = Ustr::from(src_ptr.as_ref());
+    g.get_object::<Ustr>().set(new_ustr);
 }
 
+// Destructor: free the storage.
 fn destruct_string(g: &ScriptGeneric) {
-    use std::ffi::CString;
-    use std::os::raw::c_char;
-
-    unsafe {
-        // The object is a pointer to a heap-allocated C string
-        let obj_ptr = asIScriptGeneric_GetObject(g.as_ptr()) as *mut *mut c_char;
-        if obj_ptr.is_null() || (*obj_ptr).is_null() {
-            return;
+    let ptr = g.get_object::<Ustr>().as_mut_ptr();
+    if !ptr.is_null() {
+        unsafe {
+            // Run the destructor in place; does nothing for Ustr,
+            // but is correct for idiomatic Rust memory management
+            std::ptr::drop_in_place(ptr);
         }
-
-        // Take ownership and free the memory
-        let _ = CString::from_raw(*obj_ptr);
-
-        // Not strictly required, but clears the pointer in case
-        *obj_ptr = std::ptr::null_mut();
     }
 }
 
+// Assignment from another string.
 fn assign_string(g: &ScriptGeneric) {
-    use std::ffi::{CStr, CString};
-    use std::os::raw::c_char;
-
+    let mut this = g.get_object::<Ustr>();
+    let mut src_ptr = g.get_arg_object::<Ustr>(0);
     unsafe {
-        // Get source string pointer
-        let a_ptr = asIScriptGeneric_GetArgObject(g.as_ptr(), 0) as *mut c_char;
-        // Get self string pointer location
-        let self_ptr = asIScriptGeneric_GetObject(g.as_ptr()) as *mut *mut c_char;
-
-        if self_ptr.is_null() {
-            return;
-        }
-
-        // Free the old string if it exists
-        if !(*self_ptr).is_null() {
-            let _ = CString::from_raw(*self_ptr);
-        }
-
-        // Duplicate the source string into a new allocation
-        let new_cstring = if !a_ptr.is_null() {
-            let c_str = CStr::from_ptr(a_ptr);
-            Some(CString::new(c_str.to_bytes()).unwrap())
-        } else {
-            Some(CString::new("").unwrap())
-        };
-
-        // Assign new pointer to self
-        *self_ptr = new_cstring.unwrap().into_raw();
-
-        // Set return address to self (AngelScript expects this)
-        asIScriptGeneric_SetReturnAddress(g.as_ptr(), self_ptr as *mut std::ffi::c_void);
+        *this.as_mut_ptr() = *src_ptr.as_mut_ptr();
     }
+    g.set_return_address(&mut this.as_void_ptr());
 }
 
+// Add/assign (+=) - concatenation, using Ustr.
 fn add_assign_string(g: &ScriptGeneric) {
-    use std::ffi::{CStr, CString};
-    use std::os::raw::c_char;
-
+    let mut this = g.get_object::<Ustr>();
+    let a = g.get_arg_object::<Ustr>(0);
+    let this_str = this.as_ref().as_str();
+    let a_str = a.as_ref().as_str();
+    let mut s = String::with_capacity(this_str.len() + a_str.len());
+    s.push_str(this_str);
+    s.push_str(a_str);
+    let joined = Ustr::from(&s);
     unsafe {
-        // Get pointer to source string
-        let a_ptr = asIScriptGeneric_GetArgObject(g.as_ptr(), 0) as *const c_char;
-        // Get pointer to self's location (to modify in place)
-        let self_ptr = asIScriptGeneric_GetObject(g.as_ptr()) as *mut *mut c_char;
-
-        if self_ptr.is_null() {
-            return;
-        }
-
-        // Prepare concatenation
-        let mut result = String::new();
-
-        // Add self's string if not null
-        if !(*self_ptr).is_null() {
-            let self_cstr = CStr::from_ptr(*self_ptr);
-            result.push_str(self_cstr.to_str().unwrap_or(""));
-        }
-
-        // Add the right-hand side if not null
-        if !a_ptr.is_null() {
-            let a_cstr = CStr::from_ptr(a_ptr);
-            result.push_str(a_cstr.to_str().unwrap_or(""));
-        }
-
-        // Release old string
-        if !(*self_ptr).is_null() {
-            let _ = CString::from_raw(*self_ptr);
-        }
-
-        // Store new concatenated value as CString
-        let new_cstring = CString::new(result).unwrap();
-        *self_ptr = new_cstring.into_raw();
-
-        // Set return address to self for AngelScript
-        asIScriptGeneric_SetReturnAddress(g.as_ptr(), self_ptr as *mut std::ffi::c_void);
+        this.set(joined);
     }
+    g.set_return_address(&mut this.as_void_ptr());
 }
 
+// String equality.
 fn string_equals(g: &ScriptGeneric) {
-    use std::ffi::CStr;
-    use std::os::raw::c_char;
-
-    unsafe {
-        // Get self string
-        let a_ptr = asIScriptGeneric_GetObject(g.as_ptr()) as *const c_char;
-        // Get other string (parameter)
-        let b_ptr = asIScriptGeneric_GetArgAddress(g.as_ptr(), 0) as *const c_char;
-
-        // CStr::from_ptr expects non-null, so handle null pointers
-        let a_str = if !a_ptr.is_null() {
-            CStr::from_ptr(a_ptr).to_bytes()
-        } else {
-            b""
-        };
-
-        let b_str = if !b_ptr.is_null() {
-            CStr::from_ptr(b_ptr).to_bytes()
-        } else {
-            b""
-        };
-
-        // Do byte comparison (safe for C strings)
-        let is_equal = a_str == b_str;
-
-        // Get the location to write the return value (expects a bool)
-        let ret_ptr = asIScriptGeneric_GetAddressOfReturnLocation(g.as_ptr()) as *mut bool;
-        if !ret_ptr.is_null() {
-            *ret_ptr = is_equal;
-        }
-    }
+    let lhs_ptr = g.get_object::<Ustr>();
+    let rhs_ptr = g.get_arg_address::<Ustr>(0);
+    let equal = lhs_ptr.as_ref().eq(rhs_ptr.as_ref());
+    g.get_address_of_return_location::<bool>().set(equal);
 }
 
+// Compare two strings (-1/0/1).
 fn string_cmp(g: &ScriptGeneric) {
-    use std::ffi::CStr;
-    use std::os::raw::c_char;
-
-    unsafe {
-        // Get the first string (`self`)
-        let a_ptr = asIScriptGeneric_GetObject(g.as_ptr()) as *const c_char;
-        // Get the second string (argument)
-        let b_ptr = asIScriptGeneric_GetArgAddress(g.as_ptr(), 0) as *const c_char;
-
-        let a_str = if !a_ptr.is_null() {
-            CStr::from_ptr(a_ptr).to_bytes()
-        } else {
-            b""
-        };
-
-        let b_str = if !b_ptr.is_null() {
-            CStr::from_ptr(b_ptr).to_bytes()
-        } else {
-            b""
-        };
-
-        // Perform comparison
-        let cmp = if a_str < b_str {
-            -1
-        } else if a_str > b_str {
-            1
-        } else {
-            0
-        };
-
-        // Write the result to the return location
-        let ret_ptr = asIScriptGeneric_GetAddressOfReturnLocation(g.as_ptr()) as *mut i32;
-        if !ret_ptr.is_null() {
-            *ret_ptr = cmp;
-        }
-    }
+    let lhs_ptr = g.get_object::<Ustr>();
+    let rhs_ptr = g.get_arg_address::<Ustr>(0);
+    let ordering = lhs_ptr.as_ref().cmp(rhs_ptr.as_ref());
+    let result = match ordering {
+        std::cmp::Ordering::Less => -1,
+        std::cmp::Ordering::Equal => 0,
+        std::cmp::Ordering::Greater => 1,
+    };
+    g.get_address_of_return_location::<asINT32>()
+        .set(result as asINT32);
 }
 
+// String addition (returns new Ustr*).
 fn string_add(g: &ScriptGeneric) {
-    use std::ffi::{CStr, CString};
-    use std::os::raw::c_char;
+    let lhs_ptr = g.get_object::<Ustr>();
+    let rhs_ptr = g.get_arg_address::<Ustr>(0);
+    // Assuming lhs_ptr and rhs_ptr are *const Ustr and valid.
+    let lhs = lhs_ptr.as_ref().as_str();
+    let rhs = rhs_ptr.as_ref().as_str();
 
-    unsafe {
-        // Get first and second string pointers
-        let a_ptr = asIScriptGeneric_GetObject(g.as_ptr()) as *const c_char;
-        let b_ptr = asIScriptGeneric_GetArgAddress(g.as_ptr(), 0) as *const c_char;
+    // Preallocate the String with exact size and append manually.
+    let mut buf = String::with_capacity(lhs.len() + rhs.len());
+    buf.push_str(lhs);
+    buf.push_str(rhs);
 
-        // Convert C strings to Rust &str slices (handle null pointers)
-        let a_str = if !a_ptr.is_null() {
-            CStr::from_ptr(a_ptr).to_str().unwrap_or("")
-        } else {
-            ""
-        };
-        let b_str = if !b_ptr.is_null() {
-            CStr::from_ptr(b_ptr).to_str().unwrap_or("")
-        } else {
-            ""
-        };
-
-        // Concatenate the two strings
-        let result = format!("{}{}", a_str, b_str);
-
-        // Allocate a new CString to hold the result
-        let result_cstring = CString::new(result).unwrap();
-        let result_ptr = result_cstring.into_raw();
-
-        // Set the return object to the new string pointer
-        asIScriptGeneric_SetReturnObject(g.as_ptr(), result_ptr as *mut std::ffi::c_void);
-    }
+    // Now intern.
+    let new_ustr = Ustr::from(&buf);
+    g.set_return_object(&mut new_ustr.as_char_ptr().into());
 }
 
+// String length
 fn string_length(g: &ScriptGeneric) {
-    use std::ffi::CStr;
-    use std::os::raw::{c_char, c_uint};
-
-    unsafe {
-        // Get the pointer to the string
-        let self_ptr = asIScriptGeneric_GetObject(g.as_ptr()) as *const c_char;
-
-        // Get the string length (handle null pointer gracefully)
-        let len = if !self_ptr.is_null() {
-            CStr::from_ptr(self_ptr).to_string_lossy().chars().count() as c_uint
-        } else {
-            0
-        };
-
-        // Set the return value
-        let ret_ptr = asIScriptGeneric_GetAddressOfReturnLocation(g.as_ptr()) as *mut c_uint;
-        if !ret_ptr.is_null() {
-            *ret_ptr = len;
-        }
-    }
+    let self_ptr = g.get_object::<Ustr>();
+    let len = unsafe { self_ptr.as_ref().len() };
+    g.get_address_of_return_location::<asUINT>()
+        .set(len as asUINT);
 }
 
-fn string_resize(g: &ScriptGeneric) {
-    unsafe {
-        // Get the pointer to the string (assume mutable, represented as CString or Vec<u8>)
-        let self_ptr = asIScriptGeneric_GetObject(g.as_ptr()) as *mut String;
-        // Get the pointer to the desired new length (asUINT)
-        let len_ptr = asIScriptGeneric_GetAddressOfArg(g.as_ptr(), 0) as *const u32;
-
-        if !self_ptr.is_null() && !len_ptr.is_null() {
-            let self_str = &mut *self_ptr;
-            let new_len = *len_ptr as usize;
-
-            let curr_len = self_str.len();
-            if new_len > curr_len {
-                // Pad with '\0' or spaces to match C++'s std::string behavior
-                self_str.push_str(&"\0".repeat(new_len - curr_len));
-            } else {
-                self_str.truncate(new_len);
-            }
-        }
-    }
-}
-
+// String is_empty
 fn string_is_empty(g: &ScriptGeneric) {
-    use std::ffi::CStr;
-    use std::os::raw::c_char;
-
-    unsafe {
-        // Get the string pointer
-        let self_ptr = asIScriptGeneric_GetObject(g.as_ptr()) as *const c_char;
-
-        // Check if it's empty (handle null pointer)
-        let is_empty = if !self_ptr.is_null() {
-            let s = CStr::from_ptr(self_ptr).to_bytes();
-            s.is_empty()
-        } else {
-            true
-        };
-
-        // Write to the return location
-        let ret_ptr = asIScriptGeneric_GetAddressOfReturnLocation(g.as_ptr()) as *mut bool;
-        if !ret_ptr.is_null() {
-            *ret_ptr = is_empty;
-        }
-    }
+    let self_ptr = g.get_object::<Ustr>();
+    g.get_address_of_return_location::<bool>()
+        .set(self_ptr.as_ref().is_empty());
 }
 
+// Get character at index
 fn string_char_at(g: &ScriptGeneric) {
-    use std::os::raw::c_void;
+    let self_ptr = g.get_object::<Ustr>();
+    let idx = g.get_arg_dword(0);
 
-    unsafe {
-        // Get the requested index
-        let index = asIScriptGeneric_GetArgDWord(g.as_ptr(), 0);
-
-        // Get the string object; assumed to be a mutable pointer to String
-        let self_ptr = asIScriptGeneric_GetObject(g.as_ptr()) as *mut String;
-        if self_ptr.is_null() {
-            asIScriptGeneric_SetReturnAddress(g.as_ptr(), std::ptr::null_mut());
-            return;
-        }
-
-        let self_str = &mut *self_ptr;
-        if (index as usize) >= self_str.len() {
-            // Set a script exception
-            let ctx = asGetActiveContext();
-            if !ctx.is_null() {
-                asContext_SetException(ctx, b"Out of range\0".as_ptr() as *const i8);
-            }
-            asIScriptGeneric_SetReturnAddress(g.as_ptr(), std::ptr::null_mut());
-        } else {
-            // Safe mutable access to the character at index as u8
-            let char_ptr = self_str.as_mut_ptr().add(index as usize) as *mut c_void;
-            asIScriptGeneric_SetReturnAddress(g.as_ptr(), char_ptr);
-        }
+    if let Some(ch) = self_ptr.as_ref().chars().nth(idx as usize) {
+        g.get_address_of_return_location::<u8>().set(ch as u8);
+    } else {
+        generic_error("String index out of range");
+        g.get_address_of_return_location().set(0);
     }
 }
+
+// Additional assign/add for primitive types--convert to str and use Ustr.
+fn string_assign_int(g: &ScriptGeneric) {
+    let mut self_ptr = g.get_object::<Ustr>();
+    let value: Ptr<asINT64> = g.get_address_of_arg::<asINT64>(0);
+    self_ptr.set(Ustr::from(itoa::Buffer::new().format(*value.as_ref())));
+    g.set_return_address(&mut self_ptr.as_void_ptr())
+}
+fn string_assign_uint(g: &ScriptGeneric) {
+    let mut self_ptr = g.get_object::<Ustr>();
+    let value: Ptr<asQWORD> = g.get_address_of_arg::<asQWORD>(0);
+    self_ptr.set(Ustr::from(itoa::Buffer::new().format(*value.as_ref())));
+    g.set_return_address(&mut self_ptr.as_void_ptr())
+}
+fn string_assign_double(g: &ScriptGeneric) {
+    let mut self_ptr = g.get_object::<Ustr>();
+    let value: Ptr<f64> = g.get_address_of_arg::<f64>(0);
+    self_ptr.set(Ustr::from(ryu::Buffer::new().format(*value.as_ref())));
+    g.set_return_address(&mut self_ptr.as_void_ptr())
+}
+fn string_assign_float(g: &ScriptGeneric) {
+    let mut self_ptr = g.get_object::<Ustr>();
+    let value: Ptr<f32> = g.get_address_of_arg::<f32>(0);
+    self_ptr.set(Ustr::from(ryu::Buffer::new().format(*value.as_ref())));
+    g.set_return_address(&mut self_ptr.as_void_ptr())
+}
+fn string_assign_bool(g: &ScriptGeneric) {
+    let mut self_ptr = g.get_object::<Ustr>();
+    let value: Ptr<bool> = g.get_address_of_arg::<bool>(0);
+    let s = if *value.as_ref() {
+        Ustr::from("true")
+    } else {
+        Ustr::from("false")
+    };
+    self_ptr.set(s);
+    g.set_return_address(&mut self_ptr.as_void_ptr());
+}
+
+// Add-assign for primitive types (converts to Ustr and concatenates)
+fn string_add_assign_double(g: &ScriptGeneric) {
+    let mut self_ptr = g.get_object::<Ustr>();
+    let value: Ptr<f64> = g.get_address_of_arg::<f64>(0);
+    let orig = self_ptr.as_ref().as_str();
+    let mut buf = ryu::Buffer::new();
+    let suffix = buf.format_finite(*value.as_ref());
+
+    let mut s = String::with_capacity(orig.len() + suffix.len());
+    s.push_str(orig);
+    s.push_str(suffix);
+
+    self_ptr.set(Ustr::from(s.as_str()));
+    g.set_return_address(&mut self_ptr.as_void_ptr());
+}
+
+fn string_add_assign_float(g: &ScriptGeneric) {
+    let mut self_ptr = g.get_object::<Ustr>();
+    let value: Ptr<f32> = g.get_address_of_arg::<f32>(0);
+    let orig = self_ptr.as_ref().as_str();
+    let mut buf = ryu::Buffer::new();
+    let suffix = buf.format_finite(*value.as_ref());
+
+    let mut s = String::with_capacity(orig.len() + suffix.len());
+    s.push_str(orig);
+    s.push_str(suffix);
+
+    self_ptr.set(Ustr::from(s.as_str()));
+    g.set_return_address(&mut self_ptr.as_void_ptr());
+}
+
+fn string_add_assign_int(g: &ScriptGeneric) {
+    let mut self_ptr = g.get_object::<Ustr>();
+    let value: Ptr<asINT64> = g.get_address_of_arg::<asINT64>(0);
+    let orig = self_ptr.as_ref().as_str();
+    let mut buf = itoa::Buffer::new();
+    let suffix = buf.format(*value.as_ref());
+
+    let mut s = String::with_capacity(orig.len() + suffix.len());
+    s.push_str(orig);
+    s.push_str(suffix);
+
+    self_ptr.set(Ustr::from(s.as_str()));
+    g.set_return_address(&mut self_ptr.as_void_ptr());
+}
+
+fn string_add_assign_uint(g: &ScriptGeneric) {
+    let mut self_ptr = g.get_object::<Ustr>();
+    let value: Ptr<asQWORD> = g.get_address_of_arg::<asQWORD>(0);
+    let orig = self_ptr.as_ref().as_str();
+    let mut buf = itoa::Buffer::new();
+    let suffix = buf.format(*value.as_ref());
+
+    let mut s = String::with_capacity(orig.len() + suffix.len());
+    s.push_str(orig);
+    s.push_str(suffix);
+
+    self_ptr.set(Ustr::from(s.as_str()));
+    g.set_return_address(&mut self_ptr.as_void_ptr());
+}
+
+fn string_add_assign_bool(g: &ScriptGeneric) {
+    let mut self_ptr = g.get_object::<Ustr>();
+    let value: Ptr<bool> = g.get_address_of_arg::<bool>(0);
+    let orig = self_ptr.as_ref().as_str();
+    let suffix = if *value.as_ref() {
+        "true"
+    } else {
+        "false"
+    };
+
+    let mut s = String::with_capacity(orig.len() + suffix.len());
+    s.push_str(orig);
+    s.push_str(suffix);
+
+    self_ptr.set(Ustr::from(s.as_str()));
+    g.set_return_address(&mut self_ptr.as_void_ptr());
+}
+
+fn string_add_double(g: &ScriptGeneric) {
+    let mut self_ptr = g.get_object::<Ustr>();
+    let value: Ptr<f64> = g.get_address_of_arg::<f64>(0);
+    let orig = self_ptr.as_ref().as_str();
+    let mut buf = ryu::Buffer::new();
+    let suffix = buf.format_finite(*value.as_ref());
+
+    let mut s = String::with_capacity(orig.len() + suffix.len());
+    s.push_str(orig);
+    s.push_str(suffix);
+
+    let new_ustr = Ustr::from(s.as_str());
+    g.set_return_object(&mut new_ustr.as_char_ptr().into());
+}
+
+fn double_add_string(g: &ScriptGeneric) {
+    let mut self_ptr = g.get_object::<Ustr>();
+    let value: Ptr<f64> = g.get_address_of_arg::<f64>(0);
+    let orig = self_ptr.as_ref().as_str();
+    let mut buf = ryu::Buffer::new();
+    let prefix = buf.format_finite(*value.as_ref());
+
+    let mut s = String::with_capacity(orig.len() + prefix.len());
+    s.push_str(prefix);
+    s.push_str(orig);
+
+    let new_ustr = Ustr::from(s.as_str());
+    g.set_return_object(&mut new_ustr.as_char_ptr().into());
+}
+
+fn string_add_float(g: &ScriptGeneric) {
+    let mut self_ptr = g.get_object::<Ustr>();
+    let value: Ptr<f32> = g.get_address_of_arg::<f32>(0);
+    let orig = self_ptr.as_ref().as_str();
+    let mut buf = ryu::Buffer::new();
+    let suffix = buf.format_finite(*value.as_ref());
+
+    let mut s = String::with_capacity(orig.len() + suffix.len());
+    s.push_str(orig);
+    s.push_str(suffix);
+
+    let new_ustr = Ustr::from(s.as_str());
+    g.set_return_object(&mut new_ustr.as_char_ptr().into());
+}
+
+fn float_add_string(g: &ScriptGeneric) {
+    let mut self_ptr = g.get_object::<Ustr>();
+    let value: Ptr<f32> = g.get_address_of_arg::<f32>(0);
+    let orig = self_ptr.as_ref().as_str();
+    let mut buf = ryu::Buffer::new();
+    let prefix = buf.format_finite(*value.as_ref());
+
+    let mut s = String::with_capacity(orig.len() + prefix.len());
+    s.push_str(prefix);
+    s.push_str(orig);
+
+    let new_ustr = Ustr::from(s.as_str());
+    g.set_return_object(&mut new_ustr.as_char_ptr().into());
+}
+
+fn string_add_int(g: &ScriptGeneric) {
+    let mut self_ptr = g.get_object::<Ustr>();
+    let value: Ptr<asINT64> = g.get_address_of_arg::<asINT64>(0);
+    let orig = self_ptr.as_ref().as_str();
+    let mut buf = itoa::Buffer::new();
+    let suffix = buf.format(*value.as_ref());
+
+    let mut s = String::with_capacity(orig.len() + suffix.len());
+    s.push_str(orig);
+    s.push_str(suffix);
+
+    let new_ustr = Ustr::from(s.as_str());
+    g.set_return_object(&mut new_ustr.as_char_ptr().into());
+}
+
+fn int_add_string(g: &ScriptGeneric) {
+    let mut self_ptr = g.get_object::<Ustr>();
+    let value: Ptr<asINT64> = g.get_address_of_arg::<asINT64>(0);
+    let orig = self_ptr.as_ref().as_str();
+    let mut buf = itoa::Buffer::new();
+    let prefix = buf.format(*value.as_ref());
+
+    let mut s = String::with_capacity(orig.len() + prefix.len());
+    s.push_str(prefix);
+    s.push_str(orig);
+
+    let new_ustr = Ustr::from(s.as_str());
+    g.set_return_object(&mut new_ustr.as_char_ptr().into());
+}
+
+fn string_add_uint(g: &ScriptGeneric) {
+    let mut self_ptr = g.get_object::<Ustr>();
+    let value: Ptr<asQWORD> = g.get_address_of_arg::<asQWORD>(0);
+    let orig = self_ptr.as_ref().as_str();
+    let mut buf = itoa::Buffer::new();
+    let suffix = buf.format(*value.as_ref());
+
+    let mut s = String::with_capacity(orig.len() + suffix.len());
+    s.push_str(orig);
+    s.push_str(suffix);
+
+    let new_ustr = Ustr::from(s.as_str());
+    g.set_return_object(&mut new_ustr.as_char_ptr().into());
+}
+
+fn uint_add_string(g: &ScriptGeneric) {
+    let mut self_ptr = g.get_object::<Ustr>();
+    let value: Ptr<asQWORD> = g.get_address_of_arg::<asQWORD>(0);
+    let orig = self_ptr.as_ref().as_str();
+    let mut buf = itoa::Buffer::new();
+    let prefix = buf.format(*value.as_ref());
+
+    let mut s = String::with_capacity(orig.len() + prefix.len());
+    s.push_str(prefix);
+    s.push_str(orig);
+
+    let new_ustr = Ustr::from(s.as_str());
+    g.set_return_object(&mut new_ustr.as_char_ptr().into());
+}
+
+fn string_add_bool(g: &ScriptGeneric) {
+    let mut self_ptr = g.get_object::<Ustr>();
+    let value: Ptr<bool> = g.get_address_of_arg::<bool>(0);
+    let orig = self_ptr.as_ref().as_str();
+    let suffix = if *value.as_ref() {
+        "true"
+    } else {
+        "false"
+    };
+
+    let mut s = String::with_capacity(orig.len() + suffix.len());
+    s.push_str(orig);
+    s.push_str(suffix);
+
+    let new_ustr = Ustr::from(s.as_str());
+    g.set_return_object(&mut new_ustr.as_char_ptr().into());
+}
+
+fn bool_add_string(g: &ScriptGeneric) {
+    let mut self_ptr = g.get_object::<Ustr>();
+    let value: Ptr<bool> = g.get_address_of_arg::<bool>(0);
+    let orig = self_ptr.as_ref().as_str();
+    let prefix = if *value.as_ref() {
+        "true"
+    } else {
+        "false"
+    };
+
+    let mut s = String::with_capacity(orig.len() + prefix.len());
+    s.push_str(prefix);
+    s.push_str(orig);
+
+    let new_ustr = Ustr::from(s.as_str());
+    g.set_return_object(&mut new_ustr.as_char_ptr().into());
+}
+
+// Substring
+fn string_substring(g: &ScriptGeneric) {
+    let mut self_ptr = g.get_object::<Ustr>();
+    let start_ptr: Ptr<asUINT> = g.get_address_of_arg::<asUINT>(0);
+    let len_ptr: Ptr<i32> = g.get_address_of_arg::<i32>(1);
+    let start = *start_ptr.as_ref() as usize;
+    let len = *len_ptr.as_ref() as usize;
+    let substr = self_ptr.as_ref().get(start..start + len).unwrap_or("");
+    let ret_ustr = Ustr::from(substr);
+    g.get_address_of_return_location::<Ustr>().set(ret_ustr)
+}
+
+// FFI assumed available (replace with real prototype as needed):
+// extern "C" fn asScriptGeneric_GetAddressOfReturnLocation(g: *mut asIScriptGeneric) -> *mut std::ffi::c_void;
 
 pub unsafe fn register_cstring(engine: &Engine) -> crate::error::Result<()> {
     engine.register_object_type(
         "string",
-        std::mem::size_of::<*const c_char>(),
+        size_of::<*const c_char>(),
         vec![
             ObjTypeFlags::asOBJ_VALUE,
             ObjTypeFlags::asOBJ_APP_CLASS_CDAK,
@@ -562,7 +590,7 @@ pub unsafe fn register_cstring(engine: &Engine) -> crate::error::Result<()> {
         Behaviours::asBEHAVE_CONSTRUCT,
         "void f()",
         construct_string,
-        CallConvTypes::asCALL_GENERIC,
+        asCALL_GENERIC,
     )?;
 
     engine.register_object_behaviour(
@@ -570,7 +598,7 @@ pub unsafe fn register_cstring(engine: &Engine) -> crate::error::Result<()> {
         Behaviours::asBEHAVE_CONSTRUCT,
         "void f(const string &in)",
         copy_construct_string,
-        CallConvTypes::asCALL_GENERIC,
+        asCALL_GENERIC,
     )?;
 
     engine.register_object_behaviour(
@@ -578,42 +606,42 @@ pub unsafe fn register_cstring(engine: &Engine) -> crate::error::Result<()> {
         Behaviours::asBEHAVE_DESTRUCT,
         "void f()",
         destruct_string,
-        CallConvTypes::asCALL_GENERIC,
+        asCALL_GENERIC,
     )?;
 
     engine.register_object_method(
         "string",
         "string &opAssign(const string &in)",
         assign_string,
-        CallConvTypes::asCALL_GENERIC,
+        asCALL_GENERIC,
     )?;
 
     engine.register_object_method(
         "string",
         "string &opAddAssign(const string &in)",
         add_assign_string,
-        CallConvTypes::asCALL_GENERIC,
+        asCALL_GENERIC,
     )?;
 
     engine.register_object_method(
         "string",
         "bool opEquals(const string &in) const",
         string_equals,
-        CallConvTypes::asCALL_GENERIC,
+        asCALL_GENERIC,
     )?;
 
     engine.register_object_method(
         "string",
         "int opCmp(const string &in) const",
         string_cmp,
-        CallConvTypes::asCALL_GENERIC,
+        asCALL_GENERIC,
     )?;
 
     engine.register_object_method(
         "string",
         "string opAdd(const string &in) const",
         string_add,
-        CallConvTypes::asCALL_GENERIC,
+        asCALL_GENERIC,
     )?;
 
     // String methods. Add conditional methods as needed; here, the default.
@@ -621,21 +649,14 @@ pub unsafe fn register_cstring(engine: &Engine) -> crate::error::Result<()> {
         "string",
         "uint length() const",
         string_length,
-        CallConvTypes::asCALL_GENERIC,
-    )?;
-
-    engine.register_object_method(
-        "string",
-        "void resize(uint)",
-        string_resize,
-        CallConvTypes::asCALL_GENERIC,
+        asCALL_GENERIC,
     )?;
 
     engine.register_object_method(
         "string",
         "bool isEmpty() const",
         string_is_empty,
-        CallConvTypes::asCALL_GENERIC,
+        asCALL_GENERIC,
     )?;
 
     // Indexing (mutator & inspector)
@@ -643,72 +664,157 @@ pub unsafe fn register_cstring(engine: &Engine) -> crate::error::Result<()> {
         "string",
         "uint8 &opIndex(uint)",
         string_char_at,
-        CallConvTypes::asCALL_GENERIC,
+        asCALL_GENERIC,
     )?;
 
     engine.register_object_method(
         "string",
         "uint8 &opIndex(uint) const",
         string_char_at,
-        CallConvTypes::asCALL_GENERIC,
+        asCALL_GENERIC,
     )?;
 
-    // Optionally implement the rest of the overloads as required
-
-    // PRIMITIVE & PROPERTY OPs OMITTED (add if needed)
-
-    // Register additional string methods (example)
-    // chk!(asEngine_RegisterObjectMethod(
-    //     engine,
-    //     cstr("string"),
-    //     cstr("string substr(uint start = 0, int count = -1) const"),
-    //     Some(StringSubString_Generic),
-    //     CallConvTypes::asCALL_GENERIC,
-    // ));
-    // // ...add additional methods in the same style...
+    engine.register_object_method(
+        "string",
+        "string &opAssign(double)",
+        string_assign_double,
+        asCALL_GENERIC,
+    )?;
+    engine.register_object_method(
+        "string",
+        "string &opAddAssign(double)",
+        string_add_assign_double,
+        asCALL_GENERIC,
+    )?;
+    engine.register_object_method(
+        "string",
+        "string opAdd(double) const",
+        string_add_double,
+        asCALL_GENERIC,
+    )?;
+    engine.register_object_method(
+        "string",
+        "string opAdd_r(double) const",
+        double_add_string,
+        asCALL_GENERIC,
+    )?;
+    engine.register_object_method(
+        "string",
+        "string &opAssign(float)",
+        string_assign_float,
+        asCALL_GENERIC,
+    )?;
+    engine.register_object_method(
+        "string",
+        "string &opAddAssign(float)",
+        string_add_assign_float,
+        asCALL_GENERIC,
+    )?;
+    engine.register_object_method(
+        "string",
+        "string opAdd(float) const",
+        string_add_float,
+        asCALL_GENERIC,
+    )?;
+    engine.register_object_method(
+        "string",
+        "string opAdd_r(float) const",
+        float_add_string,
+        asCALL_GENERIC,
+    )?;
+    engine.register_object_method(
+        "string",
+        "string &opAssign(int64)",
+        string_assign_int,
+        asCALL_GENERIC,
+    )?;
+    engine.register_object_method(
+        "string",
+        "string &opAddAssign(int64)",
+        string_add_assign_int,
+        asCALL_GENERIC,
+    )?;
+    engine.register_object_method(
+        "string",
+        "string opAdd(int64) const",
+        string_add_int,
+        asCALL_GENERIC,
+    )?;
+    engine.register_object_method(
+        "string",
+        "string opAdd_r(int64) const",
+        int_add_string,
+        asCALL_GENERIC,
+    )?;
+    engine.register_object_method(
+        "string",
+        "string &opAssign(uint64)",
+        string_assign_uint,
+        asCALL_GENERIC,
+    )?;
+    engine.register_object_method(
+        "string",
+        "string &opAddAssign(uint64)",
+        string_add_assign_uint,
+        asCALL_GENERIC,
+    )?;
+    engine.register_object_method(
+        "string",
+        "string opAdd(uint64) const",
+        string_add_uint,
+        asCALL_GENERIC,
+    )?;
+    engine.register_object_method(
+        "string",
+        "string opAdd_r(uint64) const",
+        uint_add_string,
+        asCALL_GENERIC,
+    )?;
+    engine.register_object_method(
+        "string",
+        "string &opAssign(bool)",
+        string_assign_bool,
+        asCALL_GENERIC,
+    )?;
+    engine.register_object_method(
+        "string",
+        "string &opAddAssign(bool)",
+        string_add_assign_bool,
+        asCALL_GENERIC,
+    )?;
+    engine.register_object_method(
+        "string",
+        "string opAdd(bool) const",
+        string_add_bool,
+        asCALL_GENERIC,
+    )?;
+    engine.register_object_method(
+        "string",
+        "string opAdd_r(bool) const",
+        bool_add_string,
+        asCALL_GENERIC,
+    )?;
+    engine.register_object_method(
+        "string",
+        "string substr(uint start = 0, int count = -1) const",
+        string_substring,
+        asCALL_GENERIC,
+    )?;
+    // engine.register_object_method("string", "int findFirst(const string &in, uint start = 0) const", string_find_first, asCALL_GENERIC)?;
+    // engine.register_object_method("string", "int findFirstOf(const string &in, uint start = 0) const", string_find_first_of, asCALL_GENERIC)?;
+    // engine.register_object_method("string", "int findFirstNotOf(const string &in, uint start = 0) const", string_find_first_not_of, asCALL_GENERIC)?;
+    // engine.register_object_method("string", "int findLast(const string &in, int start = -1) const", string_find_last, asCALL_GENERIC)?;
+    // engine.register_object_method("string", "int findLastOf(const string &in, int start = -1) const", string_find_last_of, asCALL_GENERIC)?;
+    // engine.register_object_method("string", "int findLastNotOf(const string &in, int start = -1) const", string_find_last_not_of, asCALL_GENERIC)?;
+    // engine.register_object_method("string", "void insert(uint pos, const string &in other)", string_insert, asCALL_GENERIC)?;
+    // engine.register_object_method("string", "void erase(uint pos, int count = -1)", string_erase, asCALL_GENERIC)?;
     //
-    // // Register global functions
-    // chk!(asEngine_RegisterGlobalFunction(
-    //     engine,
-    //     cstr("string formatInt(int64 val, const string &in options = \"\", uint width = 0)"),
-    //     Some(formatInt_Generic),
-    //     CallConvTypes::asCALL_GENERIC,
-    // ));
-    // chk!(asEngine_RegisterGlobalFunction(
-    //     engine,
-    //     cstr("string formatUInt(uint64 val, const string &in options = \"\", uint width = 0)"),
-    //     Some(formatUInt_Generic),
-    //     CallConvTypes::asCALL_GENERIC,
-    // ));
-    // chk!(asEngine_RegisterGlobalFunction(
-    //     engine,
-    //     cstr(
-    //         "string formatFloat(double val, const string &in options = \"\", uint width = 0, uint precision = 0)"
-    //     ),
-    //     Some(formatFloat_Generic),
-    //     CallConvTypes::asCALL_GENERIC,
-    // ));
-    // chk!(asEngine_RegisterGlobalFunction(
-    //     engine,
-    //     cstr("int64 parseInt(const string &in, uint base = 10, uint &out byteCount = 0)"),
-    //     Some(parseInt_Generic),
-    //     CallConvTypes::asCALL_GENERIC,
-    // ));
-    // chk!(asEngine_RegisterGlobalFunction(
-    //     engine,
-    //     cstr("uint64 parseUInt(const string &in, uint base = 10, uint &out byteCount = 0)"),
-    //     Some(parseUInt_Generic),
-    //     CallConvTypes::asCALL_GENERIC,
-    // ));
-    // chk!(asEngine_RegisterGlobalFunction(
-    //     engine,
-    //     cstr("double parseFloat(const string &in, uint &out byteCount = 0)"),
-    //     Some(parseFloat_Generic),
-    //     CallConvTypes::asCALL_GENERIC,
-    // ));
+    // engine.register_global_function("string formatInt(int64 val, const string &in options = \"\", uint width = 0)", format_int, asCALL_GENERIC)?;
+    // engine.register_global_function("string formatUInt(uint64 val, const string &in options = \"\", uint width = 0)", format_uint, asCALL_GENERIC)?;
+    // engine.register_global_function("string formatFloat(double val, const string &in options = \"\", uint width = 0, uint precision = 0)", format_float, asCALL_GENERIC)?;
+    // engine.register_global_function("int64 parseInt(const string &in, uint base = 10, uint &out byteCount = 0)", parse_int, asCALL_GENERIC)?;
+    // engine.register_global_function("uint64 parseUInt(const string &in, uint base = 10, uint &out byteCount = 0)", parse_u_int, asCALL_GENERIC)?;
+    // engine.register_global_function("double parseFloat(const string &in, uint &out byteCount = 0)", parse_float, asCALL_GENERIC)?;
 
     Ok(())
 }
-
-unsafe impl Send for StringFactory {}
-unsafe impl Sync for StringFactory {}

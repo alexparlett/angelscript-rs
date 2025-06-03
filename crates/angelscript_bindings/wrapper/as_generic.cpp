@@ -2,66 +2,71 @@
 #include <string>
 
 extern "C" {
-    unsigned int asIScriptGeneric_GetArgDWord(asIScriptGeneric* g, asUINT idx) {
+    asWORD asScriptGeneric_GetArgWord(asIScriptGeneric* g, asUINT idx) {
+        return g->GetArgWord(idx);
+    }
+    asBYTE asScriptGeneric_GetArgByte(asIScriptGeneric* g, asUINT idx) {
+        return g->GetArgByte(idx);
+    }
+    unsigned int asScriptGeneric_GetArgDWord(asIScriptGeneric* g, asUINT idx) {
         return g->GetArgDWord(idx);
     }
-    asQWORD asIScriptGeneric_GetArgQWord(asIScriptGeneric* g, asUINT idx) {
+    asQWORD asScriptGeneric_GetArgQWord(asIScriptGeneric* g, asUINT idx) {
         return g->GetArgQWord(idx);
     }
-    float asIScriptGeneric_GetArgFloat(asIScriptGeneric* g, asUINT idx) {
+    float asScriptGeneric_GetArgFloat(asIScriptGeneric* g, asUINT idx) {
         return g->GetArgFloat(idx);
     }
-    double asIScriptGeneric_GetArgDouble(asIScriptGeneric* g, asUINT idx) {
+    double asScriptGeneric_GetArgDouble(asIScriptGeneric* g, asUINT idx) {
         return g->GetArgDouble(idx);
     }
-    void* asIScriptGeneric_GetArgAddress(asIScriptGeneric* g, asUINT idx) {
+    void* asScriptGeneric_GetArgAddress(asIScriptGeneric* g, asUINT idx) {
         return g->GetArgAddress(idx);
     }
-    void* asIScriptGeneric_GetArgObject(asIScriptGeneric* g, asUINT idx) {
+    void* asScriptGeneric_GetArgObject(asIScriptGeneric* g, asUINT idx) {
         return g->GetArgObject(idx);
     }
-    const char*  asIScriptGeneric_GetArgString(asIScriptGeneric* g, asUINT idx) {
-        std::string* a = static_cast<std::string*>(g->GetArgObject(idx));
-        return a->c_str();
-    }
-    void* asIScriptGeneric_GetAddressOfReturnLocation(asIScriptGeneric* g) {
+    void* asScriptGeneric_GetAddressOfReturnLocation(asIScriptGeneric* g) {
         return g->GetAddressOfReturnLocation();
     }
-    void* asIScriptGeneric_GetAddressOfArg(asIScriptGeneric* g, asUINT idx) {
+    void* asScriptGeneric_GetAddressOfArg(asIScriptGeneric* g, asUINT idx) {
         return g->GetAddressOfArg(idx);
     }
-    void asIScriptGeneric_SetReturnDWord(asIScriptGeneric* g, asUINT val) {
+    void asScriptGeneric_SetReturnDWord(asIScriptGeneric* g, asUINT val) {
         g->SetReturnDWord(val);
     }
-    void asIScriptGeneric_SetReturnQWord(asIScriptGeneric* g, asQWORD val) {
+    void asScriptGeneric_SetReturnQWord(asIScriptGeneric* g, asQWORD val) {
         g->SetReturnQWord(val);
     }
-    void asIScriptGeneric_SetReturnFloat(asIScriptGeneric* g, float val) {
+    void asScriptGeneric_SetReturnFloat(asIScriptGeneric* g, float val) {
         g->SetReturnFloat(val);
     }
-    void asIScriptGeneric_SetReturnDouble(asIScriptGeneric* g, double val) {
+    void asScriptGeneric_SetReturnDouble(asIScriptGeneric* g, double val) {
         g->SetReturnDouble(val);
     }
-    void asIScriptGeneric_SetReturnAddress(asIScriptGeneric* g, void* addr) {
+    void asScriptGeneric_SetReturnAddress(asIScriptGeneric* g, void* addr) {
         g->SetReturnAddress(addr);
     }
-    void asIScriptGeneric_SetReturnObject(asIScriptGeneric* g, void* obj) {
+    void asScriptGeneric_SetReturnObject(asIScriptGeneric* g, void* obj) {
         g->SetReturnObject(obj);
     }
-    void* asIScriptGeneric_GetObject(asIScriptGeneric* g) {
+    void asScriptGeneric_SetReturnByte(asIScriptGeneric* g, asBYTE val) {
+        g->SetReturnByte(val);
+    }
+    void* asScriptGeneric_GetObject(asIScriptGeneric* g) {
         return g->GetObject();
     }
-    int asIScriptGeneric_GetObjectTypeId(asIScriptGeneric* g) {
+    int asScriptGeneric_GetObjectTypeId(asIScriptGeneric* g) {
         return g->GetObjectTypeId();
     }
-    int asIScriptGeneric_GetArgTypeId(asIScriptGeneric* g, asUINT idx) {
+    int asScriptGeneric_GetArgTypeId(asIScriptGeneric* g, asUINT idx) {
         return g->GetArgTypeId(idx);
     }
-    asIScriptFunction* asIScriptGeneric_GetFunction(asIScriptGeneric* g) {
+    asIScriptFunction* asScriptGeneric_GetFunction(asIScriptGeneric* g) {
         if (!g) return nullptr;
         return const_cast<asIScriptFunction*>(g->GetFunction());
     }
-    asIScriptEngine* asIScriptGeneric_GetEngine(asIScriptGeneric* g) {
+    asIScriptEngine* asScriptGeneric_GetEngine(asIScriptGeneric* g) {
         if (!g) return nullptr;
         return g->GetEngine();
     }

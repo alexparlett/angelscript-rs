@@ -1,6 +1,6 @@
 use crate::error::{Error, Result};
 use crate::ffi::{
-    asBOOL, asEBehaviours, asFALSE, asITypeInfo, asTypeInfo_AddRef, asTypeInfo_DerivesFrom,
+    asEBehaviours, asITypeInfo, asTypeInfo_AddRef, asTypeInfo_DerivesFrom,
     asTypeInfo_GetAccessMask, asTypeInfo_GetBaseType, asTypeInfo_GetBehaviourByIndex,
     asTypeInfo_GetBehaviourCount, asTypeInfo_GetChildFuncdef, asTypeInfo_GetChildFuncdefCount,
     asTypeInfo_GetConfigGroup, asTypeInfo_GetEngine, asTypeInfo_GetEnumValueByIndex,
@@ -16,12 +16,11 @@ use crate::ffi::{
 };
 use crate::function::Function;
 use crate::module::Module;
-use crate::utils::{as_bool, from_as_bool, FromCVoidPtr};
 use crate::{Engine, UserData};
 use std::ffi::{c_void, CStr, CString};
 use std::os::raw::c_char;
 use std::ptr;
-use angelscript_bindings::{asContext_GetUserData, asContext_SetUserData};
+use crate::utils::FromCVoidPtr;
 
 pub struct TypeInfo {
     type_info: *mut asITypeInfo,
@@ -111,7 +110,7 @@ impl TypeInfo {
     }
 
     pub fn derives_from(&self, obj_type: &TypeInfo) -> bool {
-        unsafe { from_as_bool(asTypeInfo_DerivesFrom(self.type_info, obj_type.type_info)) }
+        unsafe { asTypeInfo_DerivesFrom(self.type_info, obj_type.type_info) }
     }
 
     pub fn get_flags(&self) -> u32 {
@@ -162,7 +161,7 @@ impl TypeInfo {
     }
 
     pub fn implements(&self, obj_type: &TypeInfo) -> bool {
-        unsafe { from_as_bool(asTypeInfo_Implements(self.type_info, obj_type.type_info)) }
+        unsafe { asTypeInfo_Implements(self.type_info, obj_type.type_info) }
     }
 
     // Factories
@@ -201,7 +200,7 @@ impl TypeInfo {
 
     pub fn get_method_by_index(&self, index: u32, get_virtual: bool) -> Result<Function> {
         unsafe {
-            let func = asTypeInfo_GetMethodByIndex(self.type_info, index, as_bool(get_virtual));
+            let func = asTypeInfo_GetMethodByIndex(self.type_info, index, get_virtual);
             if func.is_null() {
                 Err(Error::NullPointer)
             } else {
@@ -215,7 +214,7 @@ impl TypeInfo {
 
         unsafe {
             let func =
-                asTypeInfo_GetMethodByName(self.type_info, c_name.as_ptr(), as_bool(get_virtual));
+                asTypeInfo_GetMethodByName(self.type_info, c_name.as_ptr(), get_virtual);
             if func.is_null() {
                 Err(Error::NullPointer)
             } else {
@@ -229,7 +228,7 @@ impl TypeInfo {
 
         unsafe {
             let func =
-                asTypeInfo_GetMethodByDecl(self.type_info, c_decl.as_ptr(), as_bool(get_virtual));
+                asTypeInfo_GetMethodByDecl(self.type_info, c_decl.as_ptr(), get_virtual);
             if func.is_null() {
                 Err(Error::NullPointer)
             } else {
@@ -246,13 +245,13 @@ impl TypeInfo {
     pub fn get_property(&self, index: u32) -> Result<TypePropertyInfo> {
         let mut name: *const c_char = ptr::null();
         let mut type_id: i32 = 0;
-        let mut is_private: asBOOL = asFALSE;
-        let mut is_protected: asBOOL = asFALSE;
+        let mut is_private: bool = false;
+        let mut is_protected: bool = false;
         let mut offset: i32 = 0;
-        let mut is_reference: asBOOL = asFALSE;
+        let mut is_reference: bool = false;
         let mut access_mask: u32 = 0;
         let mut composite_offset: i32 = 0;
-        let mut is_composite_indirect: asBOOL = asFALSE;
+        let mut is_composite_indirect: bool = false;
 
         unsafe {
             Error::from_code(asTypeInfo_GetProperty(
@@ -276,13 +275,13 @@ impl TypeInfo {
                     CStr::from_ptr(name).to_str().ok()
                 },
                 type_id,
-                is_private: from_as_bool(is_private),
-                is_protected: from_as_bool(is_protected),
+                is_private,
+                is_protected,
                 offset,
-                is_reference: from_as_bool(is_reference),
+                is_reference,
                 access_mask,
                 composite_offset,
-                is_composite_indirect: from_as_bool(is_composite_indirect),
+                is_composite_indirect,
             })
         }
     }
@@ -292,7 +291,7 @@ impl TypeInfo {
             let decl = asTypeInfo_GetPropertyDeclaration(
                 self.type_info,
                 index,
-                as_bool(include_namespace),
+                include_namespace,
             );
             if decl.is_null() {
                 Err(Error::NullPointer)
@@ -395,7 +394,7 @@ impl TypeInfo {
         unsafe {
             let ptr = asTypeInfo_GetUserData(self.type_info, T::TypeId);
             if ptr.is_null() {
-                return Err(Error::NullPointer)
+                return Err(Error::NullPointer);
             }
             Ok(T::from_mut(ptr))
         }
@@ -405,7 +404,7 @@ impl TypeInfo {
         unsafe {
             let ptr = asTypeInfo_SetUserData(self.type_info, data as *mut _ as *mut c_void, T::TypeId);
             if ptr.is_null() {
-                return None
+                return None;
             }
             Some(T::from_mut(ptr))
         }

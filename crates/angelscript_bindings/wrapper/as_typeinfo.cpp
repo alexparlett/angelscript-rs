@@ -49,9 +49,9 @@ asITypeInfo* asTypeInfo_GetBaseType(asITypeInfo *ti) {
     return static_cast<::asITypeInfo*>(ti)->GetBaseType();
 }
 
-asBOOL asTypeInfo_DerivesFrom(asITypeInfo *ti, const asITypeInfo *objType) {
-    if (!ti || !objType) return asFALSE;
-    return static_cast<::asITypeInfo*>(ti)->DerivesFrom(static_cast<const ::asITypeInfo*>(objType)) ? asTRUE : asFALSE;
+bool asTypeInfo_DerivesFrom(asITypeInfo *ti, const asITypeInfo *objType) {
+    if (!ti || !objType) return false;
+    return static_cast<::asITypeInfo*>(ti)->DerivesFrom(static_cast<const ::asITypeInfo*>(objType)) ? true : false;
 }
 
 asDWORD asTypeInfo_GetFlags(asITypeInfo *ti) {
@@ -95,9 +95,9 @@ asITypeInfo* asTypeInfo_GetInterface(asITypeInfo *ti, asUINT index) {
     return static_cast<::asITypeInfo*>(ti)->GetInterface(index);
 }
 
-asBOOL asTypeInfo_Implements(asITypeInfo *ti, const asITypeInfo *objType) {
-    if (!ti || !objType) return asFALSE;
-    return static_cast<::asITypeInfo*>(ti)->Implements(static_cast<const ::asITypeInfo*>(objType)) ? asTRUE : asFALSE;
+bool asTypeInfo_Implements(asITypeInfo *ti, const asITypeInfo *objType) {
+    if (!ti || !objType) return false;
+    return static_cast<::asITypeInfo*>(ti)->Implements(static_cast<const ::asITypeInfo*>(objType)) ? true : false;
 }
 
 // Factories
@@ -123,19 +123,19 @@ asUINT asTypeInfo_GetMethodCount(asITypeInfo *ti) {
     return static_cast<::asITypeInfo*>(ti)->GetMethodCount();
 }
 
-asIScriptFunction* asTypeInfo_GetMethodByIndex(asITypeInfo *ti, asUINT index, asBOOL getVirtual) {
+asIScriptFunction* asTypeInfo_GetMethodByIndex(asITypeInfo *ti, asUINT index, bool getVirtual) {
     if (!ti) return nullptr;
     bool getVirt = getVirtual ? true : false;
     return static_cast<::asITypeInfo*>(ti)->GetMethodByIndex(index, getVirt);
 }
 
-asIScriptFunction* asTypeInfo_GetMethodByName(asITypeInfo *ti, const char *name, asBOOL getVirtual) {
+asIScriptFunction* asTypeInfo_GetMethodByName(asITypeInfo *ti, const char *name, bool getVirtual) {
     if (!ti || !name) return nullptr;
     bool getVirt = getVirtual ? true : false;
     return static_cast<::asITypeInfo*>(ti)->GetMethodByName(name, getVirt);
 }
 
-asIScriptFunction* asTypeInfo_GetMethodByDecl(asITypeInfo *ti, const char *decl, asBOOL getVirtual) {
+asIScriptFunction* asTypeInfo_GetMethodByDecl(asITypeInfo *ti, const char *decl, bool getVirtual) {
     if (!ti || !decl) return nullptr;
     bool getVirt = getVirtual ? true : false;
     return static_cast<::asITypeInfo*>(ti)->GetMethodByDecl(decl, getVirt);
@@ -147,21 +147,21 @@ asUINT asTypeInfo_GetPropertyCount(asITypeInfo *ti) {
     return static_cast<::asITypeInfo*>(ti)->GetPropertyCount();
 }
 
-int asTypeInfo_GetProperty(asITypeInfo *ti, asUINT index, const char **name, int *typeId, asBOOL *isPrivate, asBOOL *isProtected, int *offset, asBOOL *isReference, asDWORD *accessMask, int *compositeOffset, asBOOL *isCompositeIndirect) {
+int asTypeInfo_GetProperty(asITypeInfo *ti, asUINT index, const char **name, int *typeId, bool *isPrivate, bool *isProtected, int *offset, bool *isReference, asDWORD *accessMask, int *compositeOffset, bool *isCompositeIndirect) {
     if (!ti) return asINVALID_ARG;
 
     bool privFlag, protFlag, refFlag, compIndFlag;
     int result = static_cast<::asITypeInfo*>(ti)->GetProperty(index, name, typeId, &privFlag, &protFlag, offset, &refFlag, accessMask, compositeOffset, &compIndFlag);
 
-    if (isPrivate) *isPrivate = privFlag ? asTRUE : asFALSE;
-    if (isProtected) *isProtected = protFlag ? asTRUE : asFALSE;
-    if (isReference) *isReference = refFlag ? asTRUE : asFALSE;
-    if (isCompositeIndirect) *isCompositeIndirect = compIndFlag ? asTRUE : asFALSE;
+    if (isPrivate) *isPrivate = privFlag ? true : false;
+    if (isProtected) *isProtected = protFlag ? true : false;
+    if (isReference) *isReference = refFlag ? true : false;
+    if (isCompositeIndirect) *isCompositeIndirect = compIndFlag ? true : false;
 
     return result;
 }
 
-const char* asTypeInfo_GetPropertyDeclaration(asITypeInfo *ti, asUINT index, asBOOL includeNamespace) {
+const char* asTypeInfo_GetPropertyDeclaration(asITypeInfo *ti, asUINT index, bool includeNamespace) {
     if (!ti) return nullptr;
     bool inclNs = includeNamespace ? true : false;
     return static_cast<::asITypeInfo*>(ti)->GetPropertyDeclaration(index, inclNs);

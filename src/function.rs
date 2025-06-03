@@ -18,11 +18,11 @@ use crate::ffi::{
 use crate::module::Module;
 use crate::typeinfo::TypeInfo;
 use crate::types::*;
+use crate::utils::FromCVoidPtr;
 use crate::Engine;
 use std::ffi::{c_void, CStr};
 use std::os::raw::c_char;
 use std::ptr;
-use crate::utils::{as_bool, from_as_bool, FromCVoidPtr};
 
 pub struct Function {
     function: *mut asIScriptFunction,
@@ -175,9 +175,9 @@ impl Function {
         unsafe {
             let decl = asFunction_GetDeclaration(
                 self.function,
-                as_bool(include_object_name),
-                as_bool(include_namespace),
-                as_bool(include_param_names),
+                include_object_name,
+                include_namespace,
+                include_param_names,
             );
             if decl.is_null() {
                 Err(Error::NoFunction)
@@ -190,35 +190,35 @@ impl Function {
     }
 
     pub fn is_read_only(&self) -> bool {
-        unsafe { from_as_bool(asFunction_IsReadOnly(self.function)) }
+        unsafe { asFunction_IsReadOnly(self.function) }
     }
 
     pub fn is_private(&self) -> bool {
-        unsafe { from_as_bool(asFunction_IsPrivate(self.function)) }
+        unsafe { asFunction_IsPrivate(self.function) }
     }
 
     pub fn is_protected(&self) -> bool {
-        unsafe { from_as_bool(asFunction_IsProtected(self.function)) }
+        unsafe { asFunction_IsProtected(self.function) }
     }
 
     pub fn is_final(&self) -> bool {
-        unsafe { from_as_bool(asFunction_IsFinal(self.function)) }
+        unsafe { asFunction_IsFinal(self.function) }
     }
 
     pub fn is_override(&self) -> bool {
-        unsafe { from_as_bool(asFunction_IsOverride(self.function)) }
+        unsafe { asFunction_IsOverride(self.function) }
     }
 
     pub fn is_shared(&self) -> bool {
-        unsafe { from_as_bool(asFunction_IsShared(self.function)) }
+        unsafe { asFunction_IsShared(self.function) }
     }
 
     pub fn is_explicit(&self) -> bool {
-        unsafe { from_as_bool(asFunction_IsExplicit(self.function)) }
+        unsafe { asFunction_IsExplicit(self.function) }
     }
 
     pub fn is_property(&self) -> bool {
-        unsafe { from_as_bool(asFunction_IsProperty(self.function)) }
+        unsafe { asFunction_IsProperty(self.function) }
     }
 
     // Parameters
@@ -274,7 +274,7 @@ impl Function {
     }
 
     pub fn is_compatible_with_type_id(&self, type_id: i32) -> bool {
-        unsafe { from_as_bool(asFunction_IsCompatibleWithTypeId(self.function, type_id)) }
+        unsafe { asFunction_IsCompatibleWithTypeId(self.function, type_id) }
     }
 
     // Delegates
@@ -337,7 +337,7 @@ impl Function {
 
     pub fn get_var_decl(&self, index: u32, include_namespace: bool) -> Result<&str> {
         unsafe {
-            let decl = asFunction_GetVarDecl(self.function, index, as_bool(include_namespace));
+            let decl = asFunction_GetVarDecl(self.function, index, include_namespace);
             if decl.is_null() {
                 Err(Error::InvalidName)
             } else {
@@ -379,11 +379,8 @@ impl Function {
 
     pub fn set_user_data<'a, T: UserData>(&self, data: &mut T) -> Option<&'a mut T> {
         unsafe {
-            let ptr = asFunction_SetUserData(
-                self.function,
-                data as *mut _ as *mut c_void,
-                T::TypeId,
-            );
+            let ptr =
+                asFunction_SetUserData(self.function, data as *mut _ as *mut c_void, T::TypeId);
             if ptr.is_null() {
                 return None;
             }

@@ -1,7 +1,7 @@
 use crate::context::Context;
 use crate::error::{Error, Result};
 use crate::ffi::{
-    asBOOL, asFALSE, asIScriptFunction, asIScriptModule, asModule_AddScriptSection, asModule_Build,
+    asIScriptFunction, asIScriptModule, asModule_AddScriptSection, asModule_Build,
     asModule_CompileFunction, asModule_CompileGlobalVar, asModule_Discard,
     asModule_GetDefaultNamespace, asModule_GetEngine, asModule_GetFunctionByDecl,
     asModule_GetFunctionByIndex, asModule_GetFunctionByName, asModule_GetFunctionCount,
@@ -14,7 +14,6 @@ use crate::ffi::{
 };
 use crate::function::Function;
 use crate::typeinfo::TypeInfo;
-use crate::utils::{as_bool, from_as_bool};
 use crate::{Engine, GlobalVarInfo};
 use std::ffi::{CStr, CString};
 use std::os::raw::c_char;
@@ -243,8 +242,7 @@ impl Module {
 
     pub fn get_global_var_declaration(&self, index: u32, include_namespace: bool) -> &str {
         unsafe {
-            let decl =
-                asModule_GetGlobalVarDeclaration(self.module, index, as_bool(include_namespace));
+            let decl = asModule_GetGlobalVarDeclaration(self.module, index, include_namespace);
             if decl.is_null() {
                 ""
             } else {
@@ -257,7 +255,7 @@ impl Module {
         let mut name: *const c_char = ptr::null();
         let mut namespace: *const c_char = ptr::null();
         let mut type_id: i32 = 0;
-        let mut is_const: asBOOL = asFALSE;
+        let mut is_const: bool = false;
 
         unsafe {
             asModule_GetGlobalVar(
@@ -281,7 +279,7 @@ impl Module {
                     CStr::from_ptr(namespace).to_str().unwrap_or("")
                 },
                 type_id,
-                is_const: from_as_bool(is_const),
+                is_const,
             }
         }
     }

@@ -28,7 +28,7 @@ asEContextState asContext_GetStateOfExecution(asIScriptContext *c);
 // State management
 int asContext_PushState(asIScriptContext *c);
 int asContext_PopState(asIScriptContext *c);
-asBOOL asContext_IsNested(asIScriptContext *c, asUINT *nestCount);
+bool asContext_IsNested(asIScriptContext *c, asUINT *nestCount);
 
 // Object pointer for calling class methods
 int asContext_SetObject(asIScriptContext *c, void *obj);
@@ -75,9 +75,9 @@ int asContext_GetLineNumber(asIScriptContext *c, asUINT stackLevel, int *column,
 
 // Variables
 int asContext_GetVarCount(asIScriptContext *c, asUINT stackLevel);
-const char* asContext_GetVarDeclaration(asIScriptContext *c, asUINT varIndex, asUINT stackLevel, asBOOL includeNamespace);
+const char* asContext_GetVarDeclaration(asIScriptContext *c, asUINT varIndex, asUINT stackLevel, bool includeNamespace);
 void* asContext_GetAddressOfVar(asIScriptContext *c, asUINT varIndex, asUINT stackLevel);
-asBOOL asContext_IsVarInScope(asIScriptContext *c, asUINT varIndex, asUINT stackLevel);
+bool asContext_IsVarInScope(asIScriptContext *c, asUINT varIndex, asUINT stackLevel);
 
 // This pointer
 int asContext_GetThisTypeId(asIScriptContext *c, asUINT stackLevel);

@@ -21,9 +21,9 @@ mod module;
 mod scriptobject;
 mod typeinfo;
 mod types;
-mod utils;
 mod stringfactory;
 mod scriptgeneric;
+mod utils;
 
 // Re-export main types
 pub use context::*;

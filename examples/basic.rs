@@ -1,10 +1,9 @@
-use angelscript::macros::as_function;
-use angelscript::FromScriptGeneric;
-use angelscript::{CallConvTypes, Engine, GMFlags};
+use angelscript::{CallConvTypes, Engine, GMFlags, ScriptGeneric};
+use ustr::Ustr;
 
-#[as_function]
-fn print(msg: &str) {
-    println!("Hello {}", msg);
+fn print(g: &ScriptGeneric) {
+   let msg = g.get_arg_object::<Ustr>(0);
+    println!("Hello {}", msg.as_ref());
 }
 
 fn main() {
@@ -23,7 +22,7 @@ fn main() {
     engine
         .register_global_function(
             "void print(const string &in)",
-            print_as_generic,
+            print,
             CallConvTypes::asCALL_GENERIC,
         )
         .unwrap();
