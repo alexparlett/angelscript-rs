@@ -1,194 +1,384 @@
+use crate::engine::Engine;
 use crate::error::{Error, Result};
-use crate::ffi::{
-    asIScriptObject, asScriptObject_AddRef, asScriptObject_CopyFrom,
-    asScriptObject_GetAddressOfProperty, asScriptObject_GetEngine, asScriptObject_GetObjectType,
-    asScriptObject_GetPropertyCount, asScriptObject_GetPropertyName,
-    asScriptObject_GetPropertyTypeId, asScriptObject_GetUserData, asScriptObject_GetWeakRefFlag,
-    asScriptObject_Release, asScriptObject_SetUserData,
-};
+use crate::lockable_shared_bool::LockableSharedBool;
 use crate::typeinfo::TypeInfo;
-use crate::utils::FromCVoidPtr;
-use crate::{Engine, UserData, WeakRef};
-use std::ffi::CStr;
-use std::os::raw::c_void;
-use angelscript_bindings::{asContext_GetUserData, asContext_SetUserData};
+use crate::types::*;
+use crate::user_data::UserData;
+use angelscript_bindings::{asIScriptObject, asIScriptObject__bindgen_vtable, asPWORD, asUINT};
+use std::ffi::{c_void, CStr};
 
+/// Wrapper for AngelScript's script object interface
+///
+/// This represents an instance of a script class. It provides access to
+/// the object's properties, type information, and reference counting.
+#[derive(Debug, Clone)]
 pub struct ScriptObject {
-    object: *mut asIScriptObject,
+    inner: *mut asIScriptObject,
 }
 
 impl ScriptObject {
-    pub fn from_raw(object: *mut asIScriptObject) -> Self {
-        ScriptObject { object }
+    /// Creates a ScriptObject wrapper from a raw pointer
+    ///
+    /// # Safety
+    /// The pointer must be valid and point to a properly initialized asIScriptObject
+    pub(crate) fn from_raw(ptr: *mut asIScriptObject) -> Self {
+        let wrapper = Self { inner: ptr };
+        wrapper
+            .add_ref()
+            .expect("Failed to add reference to script object");
+        wrapper
     }
 
-    pub fn get_engine(&self) -> Engine {
-        unsafe { Engine::from_raw(asScriptObject_GetEngine(self.object)) }
+    /// Checks if the script object pointer is null
+    pub fn is_null(&self) -> bool {
+        self.inner.is_null()
     }
 
+    // ========== VTABLE ORDER (matches asIScriptObject__bindgen_vtable) ==========
+
+    // 1. AddRef
     pub fn add_ref(&self) -> Result<()> {
-        unsafe { Error::from_code(asScriptObject_AddRef(self.object)) }
+        unsafe { Error::from_code((self.as_vtable().asIScriptObject_AddRef)(self.inner)) }
     }
 
+    // 2. Release
     pub fn release(&self) -> Result<()> {
-        unsafe { Error::from_code(asScriptObject_Release(self.object)) }
+        unsafe { Error::from_code((self.as_vtable().asIScriptObject_Release)(self.inner)) }
     }
 
-    pub fn get_weak_ref_flag(&self) -> Result<WeakRef> {
+    // 3. GetWeakRefFlag
+    pub fn get_weak_ref_flag(&self) -> Option<LockableSharedBool> {
         unsafe {
-            let flag = asScriptObject_GetWeakRefFlag(self.object);
-            if flag.is_null() {
-                Err(Error::IllegalBehaviourForType)
+            let ptr = (self.as_vtable().asIScriptObject_GetWeakRefFlag)(self.inner);
+            if ptr.is_null() {
+                None
             } else {
-                Ok(WeakRef(flag))
+                Some(LockableSharedBool::from_raw(ptr))
             }
         }
     }
 
-    // Type info
-    pub fn get_object_type(&self) -> Result<TypeInfo> {
+    // 4. GetTypeId
+    pub fn get_type_id(&self) -> i32 {
+        unsafe { (self.as_vtable().asIScriptObject_GetTypeId)(self.inner) }
+    }
+
+    // 5. GetObjectType
+    pub fn get_object_type(&self) -> TypeInfo {
+        unsafe { TypeInfo::from_raw((self.as_vtable().asIScriptObject_GetObjectType)(self.inner)) }
+    }
+
+    // 6. GetPropertyCount
+    pub fn get_property_count(&self) -> asUINT {
+        unsafe { (self.as_vtable().asIScriptObject_GetPropertyCount)(self.inner) }
+    }
+
+    // 7. GetPropertyTypeId
+    pub fn get_property_type_id(&self, prop: asUINT) -> i32 {
+        unsafe { (self.as_vtable().asIScriptObject_GetPropertyTypeId)(self.inner, prop) }
+    }
+
+    // 8. GetPropertyName
+    pub fn get_property_name(&self, prop: asUINT) -> Option<&str> {
         unsafe {
-            let type_info = asScriptObject_GetObjectType(self.object);
-            if type_info.is_null() {
-                Err(Error::InvalidObject)
-            } else {
-                Ok(TypeInfo::from_raw(type_info))
-            }
-        }
-    }
-
-    // Properties
-    pub fn get_property_count(&self) -> u32 {
-        unsafe { asScriptObject_GetPropertyCount(self.object) }
-    }
-
-    pub fn get_property_type_id(&self, prop: u32) -> i32 {
-        unsafe { asScriptObject_GetPropertyTypeId(self.object, prop) }
-    }
-
-    pub fn get_property_name(&self, prop: u32) -> Result<&str> {
-        unsafe {
-            let name = asScriptObject_GetPropertyName(self.object, prop);
+            let name = (self.as_vtable().asIScriptObject_GetPropertyName)(self.inner, prop);
             if name.is_null() {
-                Err(Error::InvalidArg)
+                None
             } else {
-                CStr::from_ptr(name)
-                    .to_str()
-                    .map_err(|e| Error::Utf8Conversion(e))
+                CStr::from_ptr(name).to_str().ok()
             }
         }
     }
 
-    pub fn get_address_of_property(&self, prop: u32) -> *mut c_void {
-        unsafe { asScriptObject_GetAddressOfProperty(self.object, prop) }
+    // 9. GetAddressOfProperty
+    pub fn get_address_of_property<T>(&self, prop: asUINT) -> Option<Ptr<T>> {
+        unsafe {
+            let ptr = (self.as_vtable().asIScriptObject_GetAddressOfProperty)(self.inner, prop);
+            if ptr.is_null() {
+                None
+            } else {
+                Some(Ptr::<T>::from_raw(ptr))
+            }
+        }
     }
 
-    // Object copying
+    // 10. GetEngine
+    pub fn get_engine(&self) -> Engine {
+        unsafe { Engine::from_raw((self.as_vtable().asIScriptObject_GetEngine)(self.inner)) }
+    }
+
+    // 11. CopyFrom
     pub fn copy_from(&self, other: &ScriptObject) -> Result<()> {
-        unsafe { Error::from_code(asScriptObject_CopyFrom(self.object, other.object)) }
+        unsafe {
+            Error::from_code((self.as_vtable().asIScriptObject_CopyFrom)(
+                self.inner,
+                other.inner,
+            ))
+        }
     }
 
-    // User data
-    pub fn get_user_data<'a, T: UserData>(&self) -> Result<&'a mut T> {
+    // 12. SetUserData
+    pub fn set_user_data<T: UserData>(&self, data: &mut T) -> Option<Ptr<T>> {
         unsafe {
-            let ptr = asScriptObject_GetUserData(self.object, T::TypeId);
+            let ptr = (self.as_vtable().asIScriptObject_SetUserData)(
+                self.inner,
+                data as *mut _ as *mut c_void,
+                T::TypeId as asPWORD,
+            );
             if ptr.is_null() {
-                return Err(Error::NullPointer)
+                None
+            } else {
+                Some(Ptr::<T>::from_raw(ptr))
             }
-            Ok(T::from_mut(ptr))
         }
     }
 
-    pub fn set_user_data<'a, T: UserData>(&self, data: &mut T) -> Option<&'a mut T> {
+    // 13. GetUserData
+    pub fn get_user_data<T: UserData>(&self) -> Option<Ptr<T>> {
         unsafe {
-            let ptr = asScriptObject_SetUserData(self.object, data as *mut _ as *mut c_void, T::TypeId);
+            let ptr =
+                (self.as_vtable().asIScriptObject_GetUserData)(self.inner, T::TypeId as asPWORD);
             if ptr.is_null() {
-                return None
-            }
-            Some(T::from_mut(ptr))
-        }
-    }
-
-    pub fn as_ptr(&self) -> *mut asIScriptObject {
-        self.object
-    }
-
-    // Helper methods for property access
-    pub fn get_property_value<'a, T>(&self, prop: u32) -> Result<&'a T> {
-        unsafe {
-            let addr = self.get_address_of_property(prop);
-            if addr.is_null() {
-                Err(Error::NullPointer)
+                None
             } else {
-                Ok(T::from_const(addr))
+                Some(Ptr::<T>::from_raw(ptr))
             }
         }
     }
 
-    pub fn get_property_value_mut<'a, T>(&self, prop: u32) -> Result<&'a mut T> {
-        unsafe {
-            let addr = self.get_address_of_property(prop);
-            if addr.is_null() {
-                Err(Error::NullPointer)
-            } else {
-                Ok(T::from_mut(addr))
-            }
-        }
+    fn as_vtable(&self) -> &asIScriptObject__bindgen_vtable {
+        unsafe { &*(*self.inner).vtable_ }
     }
-
-    pub fn set_property_value<T>(&self, prop: u32, value: T) -> Result<()> {
-        unsafe {
-            let addr = self.get_address_of_property(prop);
-            if addr.is_null() {
-                Err(Error::InvalidArg)
-            } else {
-                *(addr as *mut T) = value;
-                Ok(())
-            }
-        }
-    }
-
-    // Convenience method to get property info
-    pub fn get_property_info(&self, prop: u32) -> Result<ObjectPropertyInfo> {
-        let name = self.get_property_name(prop)?;
-        let type_id = self.get_property_type_id(prop);
-
-        Ok(ObjectPropertyInfo {
-            index: prop,
-            name: name.to_string(),
-            type_id,
-        })
-    }
-
-    // Get all properties
-    pub fn get_all_properties(&self) -> Vec<ObjectPropertyInfo> {
-        let count = self.get_property_count();
-        let mut properties = Vec::with_capacity(count as usize);
-
-        for i in 0..count {
-            if let Ok(info) = self.get_property_info(i) {
-                properties.push(info);
-            }
-        }
-
-        properties
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct ObjectPropertyInfo {
-    pub index: u32,
-    pub name: String,
-    pub type_id: i32,
 }
 
 impl Drop for ScriptObject {
     fn drop(&mut self) {
-        unsafe {
-            asScriptObject_Release(self.object);
-        }
+        self.release().expect("Failed to release script object");
     }
 }
 
 unsafe impl Send for ScriptObject {}
 unsafe impl Sync for ScriptObject {}
+
+// ========== CONVENIENCE METHODS ==========
+
+impl ScriptObject {
+    /// Gets a property value by index with type safety
+    pub fn get_property<T>(&self, prop: asUINT) -> Option<T> {
+        let ptr = self.get_address_of_property::<T>(prop)?;
+        if ptr.is_null() {
+            None
+        } else {
+            Some(ptr.read())
+        }
+    }
+
+    /// Sets a property value by index with type safety
+    pub fn set_property<T>(&self, prop: asUINT, value: T) -> bool {
+        if let Some(mut ptr) = self.get_address_of_property::<T>(prop) {
+            if !ptr.is_null() {
+                ptr.set(value);
+                true
+            } else {
+                false
+            }
+        } else {
+            false
+        }
+    }
+
+    /// Gets a property by name
+    pub fn get_property_by_name<T>(&self, name: &str) -> Option<T>
+    where
+        T: Copy,
+    {
+        let prop_index = self.find_property_by_name(name)?;
+        self.get_property(prop_index)
+    }
+
+    /// Sets a property by name
+    pub fn set_property_by_name<T>(&self, name: &str, value: T) -> bool
+    where
+        T: Copy,
+    {
+        if let Some(prop_index) = self.find_property_by_name(name) {
+            self.set_property(prop_index, value)
+        } else {
+            false
+        }
+    }
+
+    /// Finds a property index by name
+    pub fn find_property_by_name(&self, name: &str) -> Option<asUINT> {
+        let count = self.get_property_count();
+        for i in 0..count {
+            if let Some(prop_name) = self.get_property_name(i) {
+                if prop_name == name {
+                    return Some(i);
+                }
+            }
+        }
+        None
+    }
+
+    /// Gets all properties as a vector of PropertyInfo
+    pub fn get_all_properties(&self) -> Vec<PropertyInfo> {
+        let count = self.get_property_count();
+        (0..count)
+            .map(|i| PropertyInfo {
+                index: i,
+                name: self.get_property_name(i).map(|s| s.to_string()),
+                type_id: self.get_property_type_id(i),
+                address: self
+                    .get_address_of_property::<c_void>(i)
+                    .map(|ptr| ptr.as_void_ptr())
+                    .unwrap_or(VoidPtr::null()),
+            })
+            .collect()
+    }
+
+    /// Checks if this object is of a specific type
+    pub fn is_type(&self, type_name: &str) -> bool {
+        let type_info = self.get_object_type();
+        if let Some(name) = type_info.get_name() {
+            name == type_name
+        } else {
+            false
+        }
+    }
+
+    /// Creates a weak reference to this object
+    pub fn create_weak_ref(&self) -> Option<WeakScriptObjectRef> {
+        let weak_flag = self.get_weak_ref_flag()?;
+        Some(WeakScriptObjectRef {
+            object_ptr: self.clone(),
+            weak_flag,
+        })
+    }
+}
+
+// ========== ADDITIONAL TYPES ==========
+
+/// Information about a script object property
+#[derive(Debug, Clone)]
+pub struct PropertyInfo {
+    pub index: asUINT,
+    pub name: Option<String>,
+    pub type_id: i32,
+    pub address: VoidPtr,
+}
+
+/// Weak reference to a script object
+///
+/// This allows checking if the object is still alive without keeping it alive
+#[derive(Debug)]
+pub struct WeakScriptObjectRef {
+    object_ptr: ScriptObject,
+    weak_flag: LockableSharedBool,
+}
+
+impl WeakScriptObjectRef {
+    /// Checks if the referenced object is still alive
+    pub fn is_alive(&self) -> bool {
+        !self.weak_flag.get()
+    }
+
+    /// Attempts to get a strong reference to the object
+    ///
+    /// Returns None if the object has been destroyed
+    pub fn upgrade(&self) -> Option<ScriptObject> {
+        if self.is_alive() {
+            // Try to add a reference - this might fail if the object
+            // is in the process of being destroyed
+            unsafe {
+                let vtable = self.object_ptr.as_vtable();
+                if (vtable.asIScriptObject_AddRef)(self.object_ptr.inner) >= 0 {
+                    Some(ScriptObject::from_raw(self.object_ptr.inner))
+                } else {
+                    None
+                }
+            }
+        } else {
+            None
+        }
+    }
+}
+
+unsafe impl Send for WeakScriptObjectRef {}
+unsafe impl Sync for WeakScriptObjectRef {}
+
+// ========== TRAIT IMPLEMENTATIONS ==========
+
+/// Trait for types that can be extracted from script object properties
+pub trait FromScriptProperty: Sized {
+    fn from_property(obj: &ScriptObject, prop_index: asUINT) -> Option<Self>;
+    fn from_property_by_name(obj: &ScriptObject, prop_name: &str) -> Option<Self> {
+        let index = obj.find_property_by_name(prop_name)?;
+        Self::from_property(obj, index)
+    }
+}
+
+/// Trait for types that can be set as script object properties
+pub trait ToScriptProperty {
+    fn to_property(self, obj: &ScriptObject, prop_index: asUINT) -> bool;
+    fn to_property_by_name(self, obj: &ScriptObject, prop_name: &str) -> bool
+    where
+        Self: Sized,
+    {
+        if let Some(index) = obj.find_property_by_name(prop_name) {
+            self.to_property(obj, index)
+        } else {
+            false
+        }
+    }
+}
+
+// Implementations for basic types
+impl FromScriptProperty for i32 {
+    fn from_property(obj: &ScriptObject, prop_index: asUINT) -> Option<Self> {
+        obj.get_property(prop_index)
+    }
+}
+
+impl ToScriptProperty for i32 {
+    fn to_property(self, obj: &ScriptObject, prop_index: asUINT) -> bool {
+        obj.set_property(prop_index, self)
+    }
+}
+
+impl FromScriptProperty for f32 {
+    fn from_property(obj: &ScriptObject, prop_index: asUINT) -> Option<Self> {
+        obj.get_property(prop_index)
+    }
+}
+
+impl ToScriptProperty for f32 {
+    fn to_property(self, obj: &ScriptObject, prop_index: asUINT) -> bool {
+        obj.set_property(prop_index, self)
+    }
+}
+
+impl FromScriptProperty for bool {
+    fn from_property(obj: &ScriptObject, prop_index: asUINT) -> Option<Self> {
+        obj.get_property::<bool>(prop_index)
+    }
+}
+
+impl ToScriptProperty for bool {
+    fn to_property(self, obj: &ScriptObject, prop_index: asUINT) -> bool {
+        obj.set_property(prop_index, if self { 1u8 } else { 0u8 })
+    }
+}
+
+// String handling (more complex due to AngelScript string objects)
+impl FromScriptProperty for String {
+    fn from_property(obj: &ScriptObject, prop_index: asUINT) -> Option<Self> {
+        obj.get_property::<String>(prop_index)
+    }
+}
+
+impl ToScriptProperty for String {
+    fn to_property(self, obj: &ScriptObject, prop_index: asUINT) -> bool {
+        obj.set_property(prop_index, self)
+    }
+}

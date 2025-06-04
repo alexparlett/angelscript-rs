@@ -1,79 +1,69 @@
 use crate::context::Context;
+use crate::engine::Engine;
 use crate::error::{Error, Result};
-use crate::ffi::{
-    asIScriptFunction, asIScriptModule, asModule_AddScriptSection, asModule_Build,
-    asModule_CompileFunction, asModule_CompileGlobalVar, asModule_Discard,
-    asModule_GetDefaultNamespace, asModule_GetEngine, asModule_GetFunctionByDecl,
-    asModule_GetFunctionByIndex, asModule_GetFunctionByName, asModule_GetFunctionCount,
-    asModule_GetGlobalVar, asModule_GetGlobalVarCount, asModule_GetGlobalVarDeclaration,
-    asModule_GetGlobalVarIndexByDecl, asModule_GetGlobalVarIndexByName, asModule_GetName,
-    asModule_GetObjectTypeByIndex, asModule_GetObjectTypeCount, asModule_GetTypeIdByDecl,
-    asModule_GetTypeInfoByDecl, asModule_GetTypeInfoByName, asModule_RemoveFunction,
-    asModule_RemoveGlobalVar, asModule_ResetGlobalVars, asModule_SetDefaultNamespace,
-    asModule_SetName,
-};
+use crate::ffi::{asIBinaryStream, asIScriptModule};
 use crate::function::Function;
 use crate::typeinfo::TypeInfo;
-use crate::{Engine, GlobalVarInfo};
+use crate::types::*;
+use crate::user_data::UserData;
+use angelscript_bindings::{asDWORD, asIScriptModule__bindgen_vtable, asUINT};
 use std::ffi::{CStr, CString};
-use std::os::raw::c_char;
+use std::os::raw::{c_char, c_void};
 use std::ptr;
 
+#[derive(Debug, Clone)]
 pub struct Module {
-    module: *mut asIScriptModule,
+    inner: *mut asIScriptModule,
 }
 
 impl Module {
     pub(crate) fn from_raw(module: *mut asIScriptModule) -> Self {
-        Module { module }
+        Self { inner: module }
     }
 
+    // ========== VTABLE ORDER (matches asIScriptModule__bindgen_vtable) ==========
+
+    // 1. GetEngine
     pub fn get_engine(&self) -> Engine {
-        unsafe { Engine::from_raw(asModule_GetEngine(self.module)) }
+        unsafe { Engine::from_raw((self.as_vtable().asIScriptModule_GetEngine)(self.inner)) }
     }
 
+    // 2. SetName
     pub fn set_name(&self, name: &str) -> Result<()> {
         let c_name = CString::new(name)?;
         unsafe {
-            asModule_SetName(self.module, c_name.as_ptr());
-            Ok(())
+            (self.as_vtable().asIScriptModule_SetName)(self.inner, c_name.as_ptr());
         }
+        Ok(())
     }
 
-    pub fn get_name(&self) -> &str {
+    // 3. GetName
+    pub fn get_name(&self) -> Option<&str> {
         unsafe {
-            let name = asModule_GetName(self.module);
+            let name = (self.as_vtable().asIScriptModule_GetName)(self.inner);
             if name.is_null() {
-                ""
+                None
             } else {
-                CStr::from_ptr(name).to_str().unwrap_or("")
+                CStr::from_ptr(name).to_str().ok()
             }
         }
     }
 
+    // 4. Discard
     pub fn discard(&self) {
         unsafe {
-            asModule_Discard(self.module);
+            (self.as_vtable().asIScriptModule_Discard)(self.inner);
         }
     }
 
-    // Script sections
-    pub fn add_script_section(&self, name: &str, code: &str) -> Result<()> {
-        self.add_script_section_with_offset(name, code, 0)
-    }
-
-    pub fn add_script_section_with_offset(
-        &self,
-        name: &str,
-        code: &str,
-        line_offset: i32,
-    ) -> Result<()> {
+    // 5. AddScriptSection
+    pub fn add_script_section(&self, name: &str, code: &str, line_offset: i32) -> Result<()> {
         let c_name = CString::new(name)?;
         let c_code = CString::new(code)?;
 
         unsafe {
-            Error::from_code(asModule_AddScriptSection(
-                self.module,
+            Error::from_code((self.as_vtable().asIScriptModule_AddScriptSection)(
+                self.inner,
                 c_name.as_ptr(),
                 c_code.as_ptr(),
                 code.len(),
@@ -82,26 +72,27 @@ impl Module {
         }
     }
 
-    // Build
+    // 6. Build
     pub fn build(&self) -> Result<()> {
-        unsafe { Error::from_code(asModule_Build(self.module)) }
+        unsafe { Error::from_code((self.as_vtable().asIScriptModule_Build)(self.inner)) }
     }
 
+    // 7. CompileFunction
     pub fn compile_function(
         &self,
         section_name: &str,
         code: &str,
         line_offset: i32,
-        compile_flags: u32,
+        compile_flags: asDWORD,
     ) -> Result<Function> {
-        let c_section = CString::new(section_name)?;
+        let c_section_name = CString::new(section_name)?;
         let c_code = CString::new(code)?;
-        let mut out_func: *mut asIScriptFunction = ptr::null_mut();
+        let mut out_func: *mut crate::ffi::asIScriptFunction = ptr::null_mut();
 
         unsafe {
-            Error::from_code(asModule_CompileFunction(
-                self.module,
-                c_section.as_ptr(),
+            Error::from_code((self.as_vtable().asIScriptModule_CompileFunction)(
+                self.inner,
+                c_section_name.as_ptr(),
                 c_code.as_ptr(),
                 line_offset,
                 compile_flags,
@@ -109,63 +100,70 @@ impl Module {
             ))?;
 
             if out_func.is_null() {
-                Err(Error::NoFunction)
+                Err(Error::NullPointer)
             } else {
                 Ok(Function::from_raw(out_func))
             }
         }
     }
 
+    // 8. CompileGlobalVar
     pub fn compile_global_var(
         &self,
         section_name: &str,
         code: &str,
         line_offset: i32,
     ) -> Result<()> {
-        let c_section = CString::new(section_name)?;
+        let c_section_name = CString::new(section_name)?;
         let c_code = CString::new(code)?;
 
         unsafe {
-            Error::from_code(asModule_CompileGlobalVar(
-                self.module,
-                c_section.as_ptr(),
+            Error::from_code((self.as_vtable().asIScriptModule_CompileGlobalVar)(
+                self.inner,
+                c_section_name.as_ptr(),
                 c_code.as_ptr(),
                 line_offset,
             ))
         }
     }
 
-    // Namespaces
+    // 9. SetAccessMask
+    pub fn set_access_mask(&self, access_mask: asDWORD) -> asDWORD {
+        unsafe { (self.as_vtable().asIScriptModule_SetAccessMask)(self.inner, access_mask) }
+    }
+
+    // 10. SetDefaultNamespace
     pub fn set_default_namespace(&self, namespace: &str) -> Result<()> {
         let c_namespace = CString::new(namespace)?;
-
         unsafe {
-            Error::from_code(asModule_SetDefaultNamespace(
-                self.module,
+            Error::from_code((self.as_vtable().asIScriptModule_SetDefaultNamespace)(
+                self.inner,
                 c_namespace.as_ptr(),
             ))
         }
     }
 
-    pub fn get_default_namespace(&self) -> &str {
+    // 11. GetDefaultNamespace
+    pub fn get_default_namespace(&self) -> Option<&str> {
         unsafe {
-            let namespace = asModule_GetDefaultNamespace(self.module);
+            let namespace = (self.as_vtable().asIScriptModule_GetDefaultNamespace)(self.inner);
             if namespace.is_null() {
-                ""
+                None
             } else {
-                CStr::from_ptr(namespace).to_str().unwrap_or("")
+                CStr::from_ptr(namespace).to_str().ok()
             }
         }
     }
 
-    // Functions
-    pub fn get_function_count(&self) -> u32 {
-        unsafe { asModule_GetFunctionCount(self.module) }
+    // 12. GetFunctionCount
+    pub fn get_function_count(&self) -> asUINT {
+        unsafe { (self.as_vtable().asIScriptModule_GetFunctionCount)(self.inner) }
     }
 
-    pub fn get_function_by_index(&self, index: u32) -> Option<Function> {
+    // 13. GetFunctionByIndex
+    pub fn get_function_by_index(&self, index: asUINT) -> Option<Function> {
         unsafe {
-            let func = asModule_GetFunctionByIndex(self.module, index);
+            let func = (self.as_vtable().asIScriptModule_GetFunctionByIndex)(self.inner, index);
             if func.is_null() {
                 None
             } else {
@@ -174,179 +172,521 @@ impl Module {
         }
     }
 
-    pub fn get_function_by_decl(&self, decl: &str) -> Result<Function> {
-        let c_decl = CString::new(decl)?;
+    // 14. GetFunctionByDecl
+    pub fn get_function_by_decl(&self, decl: &str) -> Option<Function> {
+        let c_decl = match CString::new(decl) {
+            Ok(s) => s,
+            Err(_) => return None,
+        };
 
         unsafe {
-            let func = asModule_GetFunctionByDecl(self.module, c_decl.as_ptr());
+            let func =
+                (self.as_vtable().asIScriptModule_GetFunctionByDecl)(self.inner, c_decl.as_ptr());
             if func.is_null() {
-                Err(Error::NoFunction)
+                None
             } else {
-                Ok(Function::from_raw(func))
+                Some(Function::from_raw(func))
             }
         }
     }
 
-    pub fn get_function_by_name(&self, name: &str) -> Result<Function> {
-        let c_name = CString::new(name)?;
+    // 15. GetFunctionByName
+    pub fn get_function_by_name(&self, name: &str) -> Option<Function> {
+        let c_name = match CString::new(name) {
+            Ok(s) => s,
+            Err(_) => return None,
+        };
 
         unsafe {
-            let func = asModule_GetFunctionByName(self.module, c_name.as_ptr());
+            let func =
+                (self.as_vtable().asIScriptModule_GetFunctionByName)(self.inner, c_name.as_ptr());
             if func.is_null() {
-                Err(Error::NoFunction)
+                None
             } else {
-                Ok(Function::from_raw(func))
+                Some(Function::from_raw(func))
             }
         }
     }
 
+    // 16. RemoveFunction
     pub fn remove_function(&self, func: &Function) -> Result<()> {
-        unsafe { Error::from_code(asModule_RemoveFunction(self.module, func.as_ptr())) }
+        unsafe {
+            Error::from_code((self.as_vtable().asIScriptModule_RemoveFunction)(
+                self.inner,
+                func.as_raw(),
+            ))
+        }
     }
 
-    // Global variables
+    // 17. ResetGlobalVars
     pub fn reset_global_vars(&self, ctx: Option<&Context>) -> Result<()> {
         unsafe {
-            let ctx_ptr = ctx.map(|c| c.as_ptr()).unwrap_or(ptr::null_mut());
-            Error::from_code(asModule_ResetGlobalVars(self.module, ctx_ptr))
+            let ctx_ptr = match ctx {
+                Some(context) => context.as_ptr(),
+                None => ptr::null_mut(),
+            };
+            Error::from_code((self.as_vtable().asIScriptModule_ResetGlobalVars)(
+                self.inner, ctx_ptr,
+            ))
         }
     }
 
-    pub fn get_global_var_count(&self) -> u32 {
-        unsafe { asModule_GetGlobalVarCount(self.module) }
+    // 18. GetGlobalVarCount
+    pub fn get_global_var_count(&self) -> asUINT {
+        unsafe { (self.as_vtable().asIScriptModule_GetGlobalVarCount)(self.inner) }
     }
 
-    pub fn get_global_var_index_by_name(&self, name: &str) -> Result<i32> {
-        let c_name = CString::new(name)?;
+    // 19. GetGlobalVarIndexByName
+    pub fn get_global_var_index_by_name(&self, name: &str) -> Option<i32> {
+        let c_name = match CString::new(name) {
+            Ok(s) => s,
+            Err(_) => return None,
+        };
 
         unsafe {
-            let index = asModule_GetGlobalVarIndexByName(self.module, c_name.as_ptr());
-            if index < 0 {
-                Error::from_code(index)?;
-            }
-            Ok(index)
+            let index = (self.as_vtable().asIScriptModule_GetGlobalVarIndexByName)(
+                self.inner,
+                c_name.as_ptr(),
+            );
+            if index < 0 { None } else { Some(index) }
         }
     }
 
-    pub fn get_global_var_index_by_decl(&self, decl: &str) -> Result<i32> {
-        let c_decl = CString::new(decl)?;
+    // 20. GetGlobalVarIndexByDecl
+    pub fn get_global_var_index_by_decl(&self, decl: &str) -> Option<i32> {
+        let c_decl = match CString::new(decl) {
+            Ok(s) => s,
+            Err(_) => return None,
+        };
 
         unsafe {
-            let index = asModule_GetGlobalVarIndexByDecl(self.module, c_decl.as_ptr());
-            if index < 0 {
-                Error::from_code(index)?;
-            }
-            Ok(index)
+            let index = (self.as_vtable().asIScriptModule_GetGlobalVarIndexByDecl)(
+                self.inner,
+                c_decl.as_ptr(),
+            );
+            if index < 0 { None } else { Some(index) }
         }
     }
 
-    pub fn get_global_var_declaration(&self, index: u32, include_namespace: bool) -> &str {
+    // 21. GetGlobalVarDeclaration
+    pub fn get_global_var_declaration(
+        &self,
+        index: asUINT,
+        include_namespace: bool,
+    ) -> Option<&str> {
         unsafe {
-            let decl = asModule_GetGlobalVarDeclaration(self.module, index, include_namespace);
+            let decl = (self.as_vtable().asIScriptModule_GetGlobalVarDeclaration)(
+                self.inner,
+                index,
+                include_namespace,
+            );
             if decl.is_null() {
-                ""
+                None
             } else {
-                CStr::from_ptr(decl).to_str().unwrap_or("")
+                CStr::from_ptr(decl).to_str().ok()
             }
         }
     }
 
-    pub fn get_global_var(&self, index: u32) -> GlobalVarInfo {
+    // 22. GetGlobalVar
+    pub fn get_global_var(&self, index: asUINT) -> Result<ModuleGlobalVarInfo> {
         let mut name: *const c_char = ptr::null();
         let mut namespace: *const c_char = ptr::null();
         let mut type_id: i32 = 0;
         let mut is_const: bool = false;
 
         unsafe {
-            asModule_GetGlobalVar(
-                self.module,
+            Error::from_code((self.as_vtable().asIScriptModule_GetGlobalVar)(
+                self.inner,
                 index,
                 &mut name,
                 &mut namespace,
                 &mut type_id,
                 &mut is_const,
-            );
+            ))?;
 
-            GlobalVarInfo {
+            Ok(ModuleGlobalVarInfo {
                 name: if name.is_null() {
-                    ""
+                    None
                 } else {
-                    CStr::from_ptr(name).to_str().unwrap_or("")
+                    CStr::from_ptr(name).to_str().ok().map(|s| s.to_string())
                 },
                 namespace: if namespace.is_null() {
-                    ""
+                    None
                 } else {
-                    CStr::from_ptr(namespace).to_str().unwrap_or("")
+                    CStr::from_ptr(namespace)
+                        .to_str()
+                        .ok()
+                        .map(|s| s.to_string())
                 },
                 type_id,
                 is_const,
-            }
+            })
         }
     }
 
-    pub fn remove_global_var(&self, index: u32) -> Result<()> {
-        unsafe { Error::from_code(asModule_RemoveGlobalVar(self.module, index)) }
-    }
-
-    // Type identification
-    pub fn get_object_type_count(&self) -> u32 {
-        unsafe { asModule_GetObjectTypeCount(self.module) }
-    }
-
-    pub fn get_object_type_by_index(&self, index: u32) -> Result<TypeInfo> {
+    // 23. GetAddressOfGlobalVar
+    pub fn get_address_of_global_var<T>(&self, index: asUINT) -> Option<Ptr<T>> {
         unsafe {
-            let type_info = asModule_GetObjectTypeByIndex(self.module, index);
-            if type_info.is_null() {
-                Err(Error::InvalidType)
+            let ptr = (self.as_vtable().asIScriptModule_GetAddressOfGlobalVar)(self.inner, index);
+            if ptr.is_null() {
+                None
             } else {
-                Ok(TypeInfo::from_raw(type_info))
+                Some(Ptr::<T>::from_raw(ptr))
             }
         }
     }
 
-    pub fn get_type_id_by_decl(&self, decl: &str) -> Result<i32> {
-        let c_decl = CString::new(decl)?;
-
+    // 24. RemoveGlobalVar
+    pub fn remove_global_var(&self, index: asUINT) -> Result<()> {
         unsafe {
-            let type_id = asModule_GetTypeIdByDecl(self.module, c_decl.as_ptr());
-            if type_id < 0 {
-                Error::from_code(type_id)?;
-            }
-            Ok(type_id)
+            Error::from_code((self.as_vtable().asIScriptModule_RemoveGlobalVar)(
+                self.inner, index,
+            ))
         }
     }
 
-    pub fn get_type_info_by_name(&self, name: &str) -> Result<TypeInfo> {
-        let c_name = CString::new(name)?;
+    // 25. GetObjectTypeCount
+    pub fn get_object_type_count(&self) -> asUINT {
+        unsafe { (self.as_vtable().asIScriptModule_GetObjectTypeCount)(self.inner) }
+    }
 
+    // 26. GetObjectTypeByIndex
+    pub fn get_object_type_by_index(&self, index: asUINT) -> Option<TypeInfo> {
         unsafe {
-            let type_info = asModule_GetTypeInfoByName(self.module, c_name.as_ptr());
+            let type_info =
+                (self.as_vtable().asIScriptModule_GetObjectTypeByIndex)(self.inner, index);
             if type_info.is_null() {
-                Err(Error::InvalidName)
+                None
             } else {
-                Ok(TypeInfo::from_raw(type_info))
+                Some(TypeInfo::from_raw(type_info))
             }
         }
     }
 
-    pub fn get_type_info_by_decl(&self, decl: &str) -> Result<TypeInfo> {
-        let c_decl = CString::new(decl)?;
+    // 27. GetTypeIdByDecl
+    pub fn get_type_id_by_decl(&self, decl: &str) -> Option<i32> {
+        let c_decl = match CString::new(decl) {
+            Ok(s) => s,
+            Err(_) => return None,
+        };
 
         unsafe {
-            let type_info = asModule_GetTypeInfoByDecl(self.module, c_decl.as_ptr());
+            let type_id =
+                (self.as_vtable().asIScriptModule_GetTypeIdByDecl)(self.inner, c_decl.as_ptr());
+            if type_id < 0 { None } else { Some(type_id) }
+        }
+    }
+
+    // 28. GetTypeInfoByName
+    pub fn get_type_info_by_name(&self, name: &str) -> Option<TypeInfo> {
+        let c_name = match CString::new(name) {
+            Ok(s) => s,
+            Err(_) => return None,
+        };
+
+        unsafe {
+            let type_info =
+                (self.as_vtable().asIScriptModule_GetTypeInfoByName)(self.inner, c_name.as_ptr());
             if type_info.is_null() {
-                Err(Error::InvalidDeclaration)
+                None
             } else {
-                Ok(TypeInfo::from_raw(type_info))
+                Some(TypeInfo::from_raw(type_info))
             }
         }
     }
 
-    pub fn as_ptr(&self) -> *mut asIScriptModule {
-        self.module
+    // 29. GetTypeInfoByDecl
+    pub fn get_type_info_by_decl(&self, decl: &str) -> Option<TypeInfo> {
+        let c_decl = match CString::new(decl) {
+            Ok(s) => s,
+            Err(_) => return None,
+        };
+
+        unsafe {
+            let type_info =
+                (self.as_vtable().asIScriptModule_GetTypeInfoByDecl)(self.inner, c_decl.as_ptr());
+            if type_info.is_null() {
+                None
+            } else {
+                Some(TypeInfo::from_raw(type_info))
+            }
+        }
+    }
+
+    // 30. GetEnumCount
+    pub fn get_enum_count(&self) -> asUINT {
+        unsafe { (self.as_vtable().asIScriptModule_GetEnumCount)(self.inner) }
+    }
+
+    // 31. GetEnumByIndex
+    pub fn get_enum_by_index(&self, index: asUINT) -> Option<TypeInfo> {
+        unsafe {
+            let type_info = (self.as_vtable().asIScriptModule_GetEnumByIndex)(self.inner, index);
+            if type_info.is_null() {
+                None
+            } else {
+                Some(TypeInfo::from_raw(type_info))
+            }
+        }
+    }
+
+    // 32. GetTypedefCount
+    pub fn get_typedef_count(&self) -> asUINT {
+        unsafe { (self.as_vtable().asIScriptModule_GetTypedefCount)(self.inner) }
+    }
+
+    // 33. GetTypedefByIndex
+    pub fn get_typedef_by_index(&self, index: asUINT) -> Option<TypeInfo> {
+        unsafe {
+            let type_info = (self.as_vtable().asIScriptModule_GetTypedefByIndex)(self.inner, index);
+            if type_info.is_null() {
+                None
+            } else {
+                Some(TypeInfo::from_raw(type_info))
+            }
+        }
+    }
+
+    // 34. GetImportedFunctionCount
+    pub fn get_imported_function_count(&self) -> asUINT {
+        unsafe { (self.as_vtable().asIScriptModule_GetImportedFunctionCount)(self.inner) }
+    }
+
+    // 35. GetImportedFunctionIndexByDecl
+    pub fn get_imported_function_index_by_decl(&self, decl: &str) -> Option<i32> {
+        let c_decl = match CString::new(decl) {
+            Ok(s) => s,
+            Err(_) => return None,
+        };
+
+        unsafe {
+            let index = (self
+                .as_vtable()
+                .asIScriptModule_GetImportedFunctionIndexByDecl)(
+                self.inner, c_decl.as_ptr()
+            );
+            if index < 0 { None } else { Some(index) }
+        }
+    }
+
+    // 36. GetImportedFunctionDeclaration
+    pub fn get_imported_function_declaration(&self, import_index: asUINT) -> Option<&str> {
+        unsafe {
+            let decl = (self
+                .as_vtable()
+                .asIScriptModule_GetImportedFunctionDeclaration)(
+                self.inner, import_index
+            );
+            if decl.is_null() {
+                None
+            } else {
+                CStr::from_ptr(decl).to_str().ok()
+            }
+        }
+    }
+
+    // 37. GetImportedFunctionSourceModule
+    pub fn get_imported_function_source_module(&self, import_index: asUINT) -> Option<&str> {
+        unsafe {
+            let module = (self
+                .as_vtable()
+                .asIScriptModule_GetImportedFunctionSourceModule)(
+                self.inner, import_index
+            );
+            if module.is_null() {
+                None
+            } else {
+                CStr::from_ptr(module).to_str().ok()
+            }
+        }
+    }
+
+    // 38. BindImportedFunction
+    pub fn bind_imported_function(&self, import_index: asUINT, func: &Function) -> Result<()> {
+        unsafe {
+            Error::from_code((self.as_vtable().asIScriptModule_BindImportedFunction)(
+                self.inner,
+                import_index,
+                func.as_raw(),
+            ))
+        }
+    }
+
+    // 39. UnbindImportedFunction
+    pub fn unbind_imported_function(&self, import_index: asUINT) -> Result<()> {
+        unsafe {
+            Error::from_code((self.as_vtable().asIScriptModule_UnbindImportedFunction)(
+                self.inner,
+                import_index,
+            ))
+        }
+    }
+
+    // 40. BindAllImportedFunctions
+    pub fn bind_all_imported_functions(&self) -> Result<()> {
+        unsafe {
+            Error::from_code((self.as_vtable().asIScriptModule_BindAllImportedFunctions)(
+                self.inner,
+            ))
+        }
+    }
+
+    // 41. UnbindAllImportedFunctions
+    pub fn unbind_all_imported_functions(&self) -> Result<()> {
+        unsafe {
+            Error::from_code((self
+                .as_vtable()
+                .asIScriptModule_UnbindAllImportedFunctions)(
+                self.inner
+            ))
+        }
+    }
+
+    // 42. SaveByteCode
+    pub fn save_byte_code(&self, out: &mut BinaryStream, strip_debug_info: bool) -> Result<()> {
+        unsafe {
+            Error::from_code((self.as_vtable().asIScriptModule_SaveByteCode)(
+                self.inner,
+                out.as_ptr(),
+                strip_debug_info,
+            ))
+        }
+    }
+
+    // 43. LoadByteCode
+    pub fn load_byte_code(&self, input: &mut BinaryStream) -> Result<bool> {
+        let mut was_debug_info_stripped: bool = false;
+
+        unsafe {
+            Error::from_code((self.as_vtable().asIScriptModule_LoadByteCode)(
+                self.inner,
+                input.as_ptr(),
+                &mut was_debug_info_stripped,
+            ))?;
+        }
+
+        Ok(was_debug_info_stripped)
+    }
+
+    // 44. SetUserData
+    pub fn set_user_data<T: UserData>(&self, data: &mut T) -> Option<Ptr<T>> {
+        unsafe {
+            let ptr = (self.as_vtable().asIScriptModule_SetUserData)(
+                self.inner,
+                data as *mut _ as *mut c_void,
+                T::TypeId,
+            );
+            if ptr.is_null() {
+                None
+            } else {
+                Some(Ptr::<T>::from_raw(ptr))
+            }
+        }
+    }
+
+    // 45. GetUserData
+    pub fn get_user_data<T: UserData>(&self) -> Option<Ptr<T>> {
+        unsafe {
+            let ptr = (self.as_vtable().asIScriptModule_GetUserData)(self.inner, T::TypeId);
+            if ptr.is_null() {
+                None
+            } else {
+                Some(Ptr::<T>::from_raw(ptr))
+            }
+        }
+    }
+
+    fn as_vtable(&self) -> &asIScriptModule__bindgen_vtable {
+        unsafe { &*(*self.inner).vtable_ }
     }
 }
 
-// Module doesn't need manual drop as it's managed by the engine
+// Module doesn't manage its own lifetime - the engine does
 unsafe impl Send for Module {}
 unsafe impl Sync for Module {}
+
+// ========== ADDITIONAL TYPES ==========
+
+#[derive(Debug, Clone)]
+pub struct ModuleGlobalVarInfo {
+    pub name: Option<String>,
+    pub namespace: Option<String>,
+    pub type_id: i32,
+    pub is_const: bool,
+}
+
+/// Wrapper for binary stream operations
+#[derive(Debug)]
+pub struct BinaryStream {
+    inner: *mut asIBinaryStream,
+}
+
+impl BinaryStream {
+    pub(crate) fn from_raw(ptr: *mut asIBinaryStream) -> Self {
+        Self { inner: ptr }
+    }
+
+    pub(crate) fn as_ptr(&self) -> *mut asIBinaryStream {
+        self.inner
+    }
+}
+
+// ========== CONVENIENCE METHODS ==========
+
+impl Module {
+    /// Adds a script section with default line offset of 0
+    pub fn add_script_section_simple(&self, name: &str, code: &str) -> Result<()> {
+        self.add_script_section(name, code, 0)
+    }
+
+    /// Compiles a function with default flags
+    pub fn compile_function_simple(&self, section_name: &str, code: &str) -> Result<Function> {
+        self.compile_function(section_name, code, 0, 0)
+    }
+
+    /// Compiles a global variable with default line offset
+    pub fn compile_global_var_simple(&self, section_name: &str, code: &str) -> Result<()> {
+        self.compile_global_var(section_name, code, 0)
+    }
+
+    /// Gets all functions in the module
+    pub fn get_all_functions(&self) -> Vec<Function> {
+        let count = self.get_function_count();
+        (0..count)
+            .filter_map(|i| self.get_function_by_index(i))
+            .collect()
+    }
+
+    /// Gets all global variables in the module
+    pub fn get_all_global_vars(&self) -> Vec<ModuleGlobalVarInfo> {
+        let count = self.get_global_var_count();
+        (0..count)
+            .filter_map(|i| self.get_global_var(i).ok())
+            .collect()
+    }
+
+    /// Gets all object types in the module
+    pub fn get_all_object_types(&self) -> Vec<TypeInfo> {
+        let count = self.get_object_type_count();
+        (0..count)
+            .filter_map(|i| self.get_object_type_by_index(i))
+            .collect()
+    }
+
+    /// Gets all enums in the module
+    pub fn get_all_enums(&self) -> Vec<TypeInfo> {
+        let count = self.get_enum_count();
+        (0..count)
+            .filter_map(|i| self.get_enum_by_index(i))
+            .collect()
+    }
+
+    /// Gets all typedefs in the module
+    pub fn get_all_typedefs(&self) -> Vec<TypeInfo> {
+        let count = self.get_typedef_count();
+        (0..count)
+            .filter_map(|i| self.get_typedef_by_index(i))
+            .collect()
+    }
+}

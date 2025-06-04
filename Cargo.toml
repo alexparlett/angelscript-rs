@@ -8,15 +8,17 @@ angelscript_macros = { path = "crates/angelscript_macros", optional = true }
 angelscript_bindings = { path = "crates/angelscript_bindings" }
 itoa = "1"
 ryu = "1"
-ustr = "1.1"
+bitflags = "2.9.1"
 
+[dev-dependencies]
 
 [features]
-default = ["macros"]
+default = ["macros", "string"]
 macros = ["dep:angelscript_macros"]
+string = []
 
 [[example]]
 name = "basic"
 
 [workspace]
-members = ["crates/angelscript_bindings", "crates/angelscript_macros"]
+members = ["crates/angelscript_bindings", "crates/angelscript_macros", "crates/angelscript_modules"]

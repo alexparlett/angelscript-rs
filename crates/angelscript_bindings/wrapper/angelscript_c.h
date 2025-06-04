@@ -7,28 +7,20 @@
 #include <angelscript.h>
 #endif
 
-// Include our minimal types
-#include "as_types.h"
-
-// Include our function declarations
-#include "as_engine.h"
-#include "as_module.h"
-#include "as_context.h"
-#include "as_function.h"
-#include "as_typeinfo.h"
-#include "as_scriptobject.h"
-#include "as_generic.h"
-#include "as_stringfactory.h"
-
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-// Core functions that need C linkage
-asIScriptEngine* asCreateScriptEngine(asUINT version);
-const char* asGetLibraryVersion();
-const char* asGetLibraryOptions();
+typedef void (*asMESSAGEINFOFUNC_t)(const asSMessageInfo *msg, void *param);
+typedef void (*asSCRIPTCONTEXTFUNC_t)(asIScriptContext *msg, void *param);
 
+// Core functions that need C linkage
+asSFuncPtr asGenericFunction(asGENFUNC_t func);
+asSFuncPtr asFunction(asFUNCTION_t func);
+asSFuncPtr asMessageInfoFunction(asMESSAGEINFOFUNC_t func);
+asSFuncPtr asScriptContextFunction(asSCRIPTCONTEXTFUNC_t func);
+
+// (const asSMessageInfo *msg, void *param)
 #ifdef __cplusplus
 }
 #endif

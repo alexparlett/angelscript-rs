@@ -1,12 +1,12 @@
 use std::env;
 use std::path::PathBuf;
+use bindgen::MacroTypeVariation;
 
 fn main() {
     // Build AngelScript first
     let angelscript_dir = "vendor/angelscript/sdk/angelscript/source";
 
     // Determine the target architecture
-    let target_arch = env::var("CARGO_CFG_TARGET_ARCH").unwrap();
     let target_os = env::var("CARGO_CFG_TARGET_OS").unwrap();
 
     // Build AngelScript library
@@ -51,17 +51,8 @@ fn main() {
         .file(format!("{}/as_tokenizer.cpp", angelscript_dir))
         .file(format!("{}/as_typeinfo.cpp", angelscript_dir))
         .file(format!("{}/as_variablescope.cpp", angelscript_dir))
-        .flag_if_supported("-std=c++11");
-
-    // Add architecture-specific files and flags
-    if target_arch == "aarch64" && target_os == "macos" {
-        // Use portable mode for ARM64 macOS to avoid assembly issues
-        build.define("AS_MAX_PORTABILITY", Some("1"));
-    } else if target_arch == "x86_64" {
-        if target_os == "macos" {
-            build.define("AS_APPLE", None);
-        }
-    }
+        .flag_if_supported("-std=c++11")
+        .define("AS_MAX_PORTABILITY", Some("1"));
 
     // macOS specific flags
     if target_os == "macos" {
@@ -83,15 +74,7 @@ fn main() {
         .flag_if_supported("-std=c++11");
 
     // Add all wrapper implementation files
-    wrapper_build
-        .file("wrapper/as_engine.cpp")
-        .file("wrapper/as_module.cpp")
-        .file("wrapper/as_context.cpp")
-        .file("wrapper/as_function.cpp")
-        .file("wrapper/as_typeinfo.cpp")
-        .file("wrapper/as_generic.cpp")
-        .file("wrapper/as_stringfactory.cpp")
-        .file("wrapper/as_scriptobject.cpp");
+    wrapper_build.file("wrapper/angelscript_c.cpp");
 
     if target_os == "macos" {
         wrapper_build.flag("-mmacosx-version-min=10.15");
@@ -112,25 +95,21 @@ fn main() {
         .impl_debug(true)
         .impl_partialeq(true)
         .wrap_unsafe_ops(true)
+        .generate_comments(true)
+        .generate_block(true)
+        .generate_cstr(true)
         // Whitelist what we want
         .allowlist_function("as.*")
         .allowlist_type("as.*")
         .allowlist_var("as.*")
-        .rustified_enum("as.*")
+        .allowlist_item("as.*")
+        .constified_enum("as.*")
+        .wrap_static_fns(true)
+        .conservative_inline_namespaces()
+        .default_macro_constant_type(MacroTypeVariation::Signed)
+        .emit_builtins()
 
         .allowlist_var("ANGELSCRIPT_VERSION")
-        // Opaque types for C++ classes
-        .opaque_type("asIScriptEngine")
-        .opaque_type("asIScriptModule")
-        .opaque_type("asIScriptContext")
-        .opaque_type("asIScriptGeneric")
-        .opaque_type("asIScriptObject")
-        .opaque_type("asIScriptFunction")
-        .opaque_type("asITypeInfo")
-        .opaque_type("asIBinaryStream")
-        .opaque_type("asIJITCompiler")
-        .opaque_type("asIThreadManager")
-        .opaque_type("asILockableSharedBool")
         .vtable_generation(true)
         // Use core types
         .use_core()
