@@ -1,6 +1,6 @@
 #[cfg(test)]
 mod tests {
-    use angelscript::{AngelScript, GetModuleFlags};
+    use angelscript::{AngelScript, ContextState, GetModuleFlags};
 
     #[test]
     fn test_op_assign() {
@@ -39,106 +39,306 @@ mod tests {
         ctx.prepare(&func).expect("Failed to prepare context");
         ctx.execute().expect("Failed to execute script");
 
-        println!("Got result: {:?}", ctx.get_return_object::<String>());
-
         let result = ctx.get_return_object::<String>();
         assert_eq!(result.unwrap().read(), "World");
-
-        println!("End of test");
     }
 
-    // #[test]
-    // fn test_op_add_assign() {
-    //     let script = r#"
-    //         void test() {
-    //             string a = "Hello";
-    //             a += " World";
-    //             assert(a == "Hello World");
-    //         }
-    //     "#;
-    //
-    //     let result = execute_script(script, "void test()");
-    //     assert!(result.is_ok());
-    // }
-    //
-    // #[test]
-    // fn test_op_equals() {
-    //     let script = r#"
-    //         void test() {
-    //             string a = "test";
-    //             string b = "test";
-    //             string c = "different";
-    //             assert(a == b);
-    //             assert(!(a == c));
-    //         }
-    //     "#;
-    //
-    //     let result = execute_script(script, "void test()");
-    //     assert!(result.is_ok());
-    // }
-    //
-    // #[test]
-    // fn test_op_cmp() {
-    //     let script = r#"
-    //         void test() {
-    //             string a = "abc";
-    //             string b = "bcd";
-    //             string c = "abc";
-    //             assert(a < b);
-    //             assert(!(b < a));
-    //             assert(a == c);
-    //         }
-    //     "#;
-    //
-    //     let result = execute_script(script, "void test()");
-    //     assert!(result.is_ok());
-    // }
-    //
-    // #[test]
-    // fn test_string_length() {
-    //     let script = r#"
-    //         void test() {
-    //             string a = "Hello";
-    //             assert(a.length() == 5);
-    //             string b = "";
-    //             assert(b.length() == 0);
-    //         }
-    //     "#;
-    //
-    //     let result = execute_script(script, "void test()");
-    //     assert!(result.is_ok());
-    // }
-    //
-    // #[test]
-    // fn test_string_is_empty() {
-    //     let script = r#"
-    //         void test() {
-    //             string a = "Hello";
-    //             assert(!a.isEmpty());
-    //             string b = "";
-    //             assert(b.isEmpty());
-    //         }
-    //     "#;
-    //
-    //     let result = execute_script(script, "void test()");
-    //     assert!(result.is_ok());
-    // }
-    //
-    // #[test]
-    // fn test_string_index() {
-    //     let script = r#"
-    //         void test() {
-    //             string a = "Hello";
-    //             assert(a[0] == 'H');
-    //             assert(a[4] == 'o');
-    //             // Ensure out-of-bounds access is handled (requires specific code setup)
-    //         }
-    //     "#;
-    //
-    //     let result = execute_script(script, "void test()");
-    //     assert!(result.is_ok());
-    // }
-    //
+    #[test]
+    fn test_op_add_assign() {
+        let script = r#"
+            string test() {
+                string a = "Hello";
+                a += " World";
+                return a;
+            }
+        "#;
+
+        let mut engine = AngelScript::create_script_engine().expect("Failed to create engine");
+        engine
+            .with_default_modules()
+            .expect("Failed to register std");
+        engine
+            .set_message_callback(|msg| {
+                println!("AngelScript: {}", msg.message);
+            })
+            .expect("Failed to set message callback");
+
+        // Create or reuse a module for the test script
+        let module = engine
+            .get_module("TestModule", GetModuleFlags::CreateIfNotExists)
+            .expect("Failed to get module");
+        module
+            .add_script_section_simple("test_script", script)
+            .expect("Failed to add script section");
+        module.build().expect("Failed to build module");
+
+        let func = module
+            .get_function_by_decl("string test()")
+            .expect("Failed to get function");
+        let ctx = engine.create_context().expect("Failed to create context");
+        ctx.prepare(&func).expect("Failed to prepare context");
+        ctx.execute().expect("Failed to execute script");
+
+        let result = ctx.get_return_object::<String>();
+        assert_eq!(result.unwrap().read(), "Hello World");
+    }
+
+    #[test]
+    fn test_op_equals() {
+        let script = r#"
+            bool equal() {
+                string a = "test";
+                string b = "test";
+                return a == b;
+            }
+
+            bool not_equal() {
+                string a = "test";
+                string b = "different";
+                return a == b;
+            }
+        "#;
+
+        let mut engine = AngelScript::create_script_engine().expect("Failed to create engine");
+        engine
+            .with_default_modules()
+            .expect("Failed to register std");
+        engine
+            .set_message_callback(|msg| {
+                println!("AngelScript: {}", msg.message);
+            })
+            .expect("Failed to set message callback");
+
+        // Create or reuse a module for the test script
+        let module = engine
+            .get_module("TestModule", GetModuleFlags::CreateIfNotExists)
+            .expect("Failed to get module");
+        module
+            .add_script_section_simple("test_script", script)
+            .expect("Failed to add script section");
+        module.build().expect("Failed to build module");
+
+        let func = module
+            .get_function_by_decl("bool equal()")
+            .expect("Failed to get function");
+        let ctx = engine.create_context().expect("Failed to create context");
+        ctx.prepare(&func).expect("Failed to prepare context");
+        ctx.execute().expect("Failed to execute script");
+
+        let result = ctx.get_address_of_return_value::<bool>();
+        assert_eq!(result.unwrap().read(), true);
+
+        let func = module
+            .get_function_by_decl("bool not_equal()")
+            .expect("Failed to get function");
+        let ctx = engine.create_context().expect("Failed to create context");
+        ctx.prepare(&func).expect("Failed to prepare context");
+        ctx.execute().expect("Failed to execute script");
+
+        let result = ctx.get_address_of_return_value::<bool>();
+        assert_eq!(result.unwrap().read(), false);
+    }
+
+    #[test]
+    fn test_op_cmp() {
+        let script = r#"
+            bool lt() {
+                string a = "abc";
+                string b = "bcd";
+                return a < b;
+            }
+            bool gt() {
+                string a = "abc";
+                string b = "bcd";
+                return b > a;
+            }
+        "#;
+
+        let mut engine = AngelScript::create_script_engine().expect("Failed to create engine");
+        engine
+            .with_default_modules()
+            .expect("Failed to register std");
+        engine
+            .set_message_callback(|msg| {
+                println!("AngelScript: {}", msg.message);
+            })
+            .expect("Failed to set message callback");
+
+        // Create or reuse a module for the test script
+        let module = engine
+            .get_module("TestModule", GetModuleFlags::CreateIfNotExists)
+            .expect("Failed to get module");
+        module
+            .add_script_section_simple("test_script", script)
+            .expect("Failed to add script section");
+        module.build().expect("Failed to build module");
+
+        let func = module
+            .get_function_by_decl("bool lt()")
+            .expect("Failed to get function");
+        let ctx = engine.create_context().expect("Failed to create context");
+        ctx.prepare(&func).expect("Failed to prepare context");
+        ctx.execute().expect("Failed to execute script");
+
+        let result = ctx.get_address_of_return_value::<bool>();
+        assert_eq!(result.unwrap().read(), true);
+
+        let func = module
+            .get_function_by_decl("bool gt()")
+            .expect("Failed to get function");
+        let ctx = engine.create_context().expect("Failed to create context");
+        ctx.prepare(&func).expect("Failed to prepare context");
+        ctx.execute().expect("Failed to execute script");
+
+
+        let result = ctx.get_address_of_return_value::<bool>();
+        assert_eq!(result.unwrap().read(), true);
+    }
+
+    #[test]
+    fn test_string_length() {
+        let script = r#"
+            uint test() {
+                string a = "Hello";
+                return a.length();
+            }
+        "#;
+
+        let mut engine = AngelScript::create_script_engine().expect("Failed to create engine");
+        engine
+            .with_default_modules()
+            .expect("Failed to register std");
+        engine
+            .set_message_callback(|msg| {
+                println!("AngelScript: {}", msg.message);
+            })
+            .expect("Failed to set message callback");
+
+        // Create or reuse a module for the test script
+        let module = engine
+            .get_module("TestModule", GetModuleFlags::CreateIfNotExists)
+            .expect("Failed to get module");
+        module
+            .add_script_section_simple("test_script", script)
+            .expect("Failed to add script section");
+        module.build().expect("Failed to build module");
+
+        let func = module
+            .get_function_by_decl("uint test()")
+            .expect("Failed to get function");
+        let ctx = engine.create_context().expect("Failed to create context");
+        ctx.prepare(&func).expect("Failed to prepare context");
+        ctx.execute().expect("Failed to execute script");
+
+        let result = ctx.get_return_dword();
+        assert_eq!(result, 5);
+    }
+
+    #[test]
+    fn test_string_is_empty() {
+        let script = r#"
+            bool not_empty() {
+                string a = "Hello";
+                return a.isEmpty();
+            }
+            bool empty() {
+                string b = "";
+                return b.isEmpty();
+            }
+        "#;
+
+        let mut engine = AngelScript::create_script_engine().expect("Failed to create engine");
+        engine
+            .with_default_modules()
+            .expect("Failed to register std");
+        engine
+            .set_message_callback(|msg| {
+                println!("AngelScript: {}", msg.message);
+            })
+            .expect("Failed to set message callback");
+
+        // Create or reuse a module for the test script
+        let module = engine
+            .get_module("TestModule", GetModuleFlags::CreateIfNotExists)
+            .expect("Failed to get module");
+        module
+            .add_script_section_simple("test_script", script)
+            .expect("Failed to add script section");
+        module.build().expect("Failed to build module");
+
+        let func = module
+            .get_function_by_decl("bool not_empty()")
+            .expect("Failed to get function");
+        let ctx = engine.create_context().expect("Failed to create context");
+        ctx.prepare(&func).expect("Failed to prepare context");
+        ctx.execute().expect("Failed to execute script");
+
+        let result = ctx.get_address_of_return_value::<bool>();
+        assert_eq!(result.unwrap().read(), false);
+
+        let func = module
+            .get_function_by_decl("bool empty()")
+            .expect("Failed to get function");
+        let ctx = engine.create_context().expect("Failed to create context");
+        ctx.prepare(&func).expect("Failed to prepare context");
+        ctx.execute().expect("Failed to execute script");
+
+        let result = ctx.get_address_of_return_value::<bool>();
+        assert_eq!(result.unwrap().read(), true);
+    }
+
+    #[test]
+    fn test_string_index() {
+        let script = r#"
+            uint8 test() {
+                string a = "Hello";
+                return a[0];
+            }
+            uint8 oob() {
+                string a = "Hello";
+                return a[6];
+            }
+        "#;
+
+        let mut engine = AngelScript::create_script_engine().expect("Failed to create engine");
+        engine
+            .with_default_modules()
+            .expect("Failed to register std");
+        engine
+            .set_message_callback(|msg| {
+                println!("AngelScript: {}", msg.message);
+            })
+            .expect("Failed to set message callback");
+
+        // Create or reuse a module for the test script
+        let module = engine
+            .get_module("TestModule", GetModuleFlags::CreateIfNotExists)
+            .expect("Failed to get module");
+        module
+            .add_script_section_simple("test_script", script)
+            .expect("Failed to add script section");
+        module.build().expect("Failed to build module");
+
+        let func = module
+            .get_function_by_decl("uint8 test()")
+            .expect("Failed to get function");
+        let ctx = engine.create_context().expect("Failed to create context");
+        ctx.prepare(&func).expect("Failed to prepare context");
+        ctx.execute().expect("Failed to execute script");
+
+        let result = ctx.get_return_byte();
+        assert_eq!(result as char, 'H');
+
+        let func = module
+            .get_function_by_decl("uint8 oob()")
+            .expect("Failed to get function");
+        let ctx = engine.create_context().expect("Failed to create context");
+        ctx.prepare(&func).expect("Failed to prepare context");
+        let state = ctx.execute().expect("Failed to execute script");
+        
+        assert_eq!(state, ContextState::Exception);
+    }
+
     // #[test]
     // fn test_op_add() {
     //     let script = r#"

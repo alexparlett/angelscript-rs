@@ -2,11 +2,15 @@ use crate::context::Context;
 use crate::engine::Engine;
 use crate::error::{Error, Result};
 use crate::lockable_shared_bool::LockableSharedBool;
-use crate::thread_manager::ThreadManager;
+use crate::thread_manager::{ThreadManager, ExclusiveLockGuard, SharedLockGuard};
 use crate::VoidPtr;
-use angelscript_bindings::{asALLOCFUNC_t, asAcquireExclusiveLock, asAcquireSharedLock, asAllocMem, asAtomicDec, asAtomicInc, asCreateLockableSharedBool, asCreateScriptEngine, asDWORD, asFREEFUNC_t, asFreeMem, asGetActiveContext, asGetLibraryOptions, asGetLibraryVersion, asGetThreadManager, asPrepareMultithread, asReleaseExclusiveLock, asReleaseSharedLock, asResetGlobalMemoryFunctions, asSetGlobalMemoryFunctions, asThreadCleanup, asUnprepareMultithread, ANGELSCRIPT_VERSION};
+use angelscript_bindings::{
+    asALLOCFUNC_t, asAllocMem, asAtomicDec, asAtomicInc, asCreateLockableSharedBool,
+    asCreateScriptEngine, asDWORD, asFREEFUNC_t, asFreeMem, asGetActiveContext,
+    asGetLibraryOptions, asGetLibraryVersion, asGetThreadManager, asResetGlobalMemoryFunctions,
+    asSetGlobalMemoryFunctions, ANGELSCRIPT_VERSION
+};
 use std::ffi::CStr;
-use std::ptr;
 
 /// Wrapper for AngelScript global functions
 pub struct AngelScript;
@@ -15,12 +19,6 @@ impl AngelScript {
     // ========== ENGINE MANAGEMENT ==========
 
     /// Creates a new script engine
-    ///
-    /// # Arguments
-    /// * `version` - The AngelScript version to use (use ANGELSCRIPT_VERSION constant)
-    ///
-    /// # Returns
-    /// A new Engine instance or None if creation failed
     pub fn create_script_engine() -> Result<Engine> {
         unsafe {
             let engine_ptr = asCreateScriptEngine(ANGELSCRIPT_VERSION as asDWORD);
@@ -47,9 +45,6 @@ impl AngelScript {
     // ========== CONTEXT MANAGEMENT ==========
 
     /// Gets the currently active script context
-    ///
-    /// # Returns
-    /// The active Context or None if no context is active
     pub fn get_active_context() -> Option<Context> {
         unsafe {
             let context_ptr = asGetActiveContext();
@@ -65,32 +60,19 @@ impl AngelScript {
 
     /// Prepares AngelScript for multithreaded use
     ///
-    /// # Arguments
-    /// * `external_mgr` - Optional external thread manager
-    ///
-    /// # Returns
-    /// Result indicating success or failure
-    pub fn prepare_multithread(external_mgr: Option<&mut ThreadManager>) -> Result<()> {
-        unsafe {
-            let mgr_ptr = match external_mgr {
-                Some(mgr) => mgr.as_ptr(),
-                None => ptr::null_mut(),
-            };
-            Error::from_code(asPrepareMultithread(mgr_ptr))
-        }
+    /// The implementation used depends on the compile-time feature:
+    /// - Default: Uses AngelScript's built-in C++ thread manager
+    /// - `rust-threading`: Uses a pure Rust implementation
+    pub fn prepare_multithread() -> Result<ThreadManager> {
+        ThreadManager::prepare()
     }
 
     /// Unprepares AngelScript from multithreaded use
     pub fn unprepare_multithread() {
-        unsafe {
-            asUnprepareMultithread();
-        }
+        ThreadManager::unprepare()
     }
 
     /// Gets the current thread manager
-    ///
-    /// # Returns
-    /// The ThreadManager or None if not available
     pub fn get_thread_manager() -> Option<ThreadManager> {
         unsafe {
             let mgr_ptr = asGetThreadManager();
@@ -106,52 +88,42 @@ impl AngelScript {
 
     /// Acquires an exclusive lock for thread synchronization
     pub fn acquire_exclusive_lock() {
-        unsafe {
-            asAcquireExclusiveLock();
-        }
+        ThreadManager::acquire_exclusive_lock()
     }
 
     /// Releases an exclusive lock
     pub fn release_exclusive_lock() {
-        unsafe {
-            asReleaseExclusiveLock();
-        }
+        ThreadManager::release_exclusive_lock()
     }
 
     /// Acquires a shared lock for thread synchronization
     pub fn acquire_shared_lock() {
-        unsafe {
-            asAcquireSharedLock();
-        }
+        ThreadManager::acquire_shared_lock()
     }
 
     /// Releases a shared lock
     pub fn release_shared_lock() {
-        unsafe {
-            asReleaseSharedLock();
-        }
+        ThreadManager::release_shared_lock()
+    }
+
+    /// Creates an exclusive lock guard for RAII locking
+    pub fn exclusive_lock() -> ExclusiveLockGuard {
+        ExclusiveLockGuard::new()
+    }
+
+    /// Creates a shared lock guard for RAII locking
+    pub fn shared_lock() -> SharedLockGuard {
+        SharedLockGuard::new()
     }
 
     // ========== ATOMIC OPERATIONS ==========
 
     /// Atomically increments an integer value
-    ///
-    /// # Arguments
-    /// * `value` - Mutable reference to the value to increment
-    ///
-    /// # Returns
-    /// The new value after increment
     pub fn atomic_inc(value: &mut i32) -> i32 {
         unsafe { asAtomicInc(value as *mut i32) }
     }
 
     /// Atomically decrements an integer value
-    ///
-    /// # Arguments
-    /// * `value` - Mutable reference to the value to decrement
-    ///
-    /// # Returns
-    /// The new value after decrement
     pub fn atomic_dec(value: &mut i32) -> i32 {
         unsafe { asAtomicDec(value as *mut i32) }
     }
@@ -159,23 +131,13 @@ impl AngelScript {
     // ========== THREAD CLEANUP ==========
 
     /// Performs thread-specific cleanup
-    ///
-    /// # Returns
-    /// Result indicating success or failure
     pub fn thread_cleanup() -> Result<()> {
-        unsafe { Error::from_code(asThreadCleanup()) }
+        ThreadManager::cleanup_local_data()
     }
 
     // ========== MEMORY MANAGEMENT ==========
 
     /// Sets custom global memory allocation functions
-    ///
-    /// # Arguments
-    /// * `alloc_func` - Custom allocation function
-    /// * `free_func` - Custom deallocation function
-    ///
-    /// # Returns
-    /// Result indicating success or failure
     pub fn set_global_memory_functions(
         alloc_func: asALLOCFUNC_t,
         free_func: asFREEFUNC_t,
@@ -184,34 +146,16 @@ impl AngelScript {
     }
 
     /// Resets global memory functions to default
-    ///
-    /// # Returns
-    /// Result indicating success or failure
     pub fn reset_global_memory_functions() -> Result<()> {
         unsafe { Error::from_code(asResetGlobalMemoryFunctions()) }
     }
 
     /// Allocates memory using AngelScript's allocator
-    ///
-    /// # Arguments
-    /// * `size` - Size in bytes to allocate
-    ///
-    /// # Returns
-    /// Raw pointer to allocated memory or null on failure
-    ///
-    /// # Safety
-    /// The returned pointer must be freed with `free_mem()`
     pub fn alloc_mem(size: usize) -> VoidPtr {
         unsafe { VoidPtr::from_mut_raw(asAllocMem(size)) }
     }
 
     /// Frees memory allocated by AngelScript's allocator
-    ///
-    /// # Arguments
-    /// * `mem` - Pointer to memory to free
-    ///
-    /// # Safety
-    /// The pointer must have been allocated with `alloc_mem()`
     pub fn free_mem(mut mem: VoidPtr) {
         unsafe {
             asFreeMem(mem.as_mut_ptr());
@@ -221,9 +165,6 @@ impl AngelScript {
     // ========== UTILITY OBJECTS ==========
 
     /// Creates a new lockable shared boolean
-    ///
-    /// # Returns
-    /// A new LockableSharedBool instance or None if creation failed
     pub fn create_lockable_shared_bool() -> Option<LockableSharedBool> {
         unsafe {
             let ptr = asCreateLockableSharedBool();
@@ -235,48 +176,36 @@ impl AngelScript {
         }
     }
 
-    pub fn exclusive_lock() -> ExclusiveLockGuard {
-        ExclusiveLockGuard::new()
+    // ========== CONVENIENCE METHODS ==========
+
+    /// Executes a closure with an exclusive lock held
+    pub fn with_exclusive_lock<F, R>(f: F) -> R
+    where
+        F: FnOnce() -> R,
+    {
+        let _guard = Self::exclusive_lock();
+        f()
     }
 
-    /// Creates a shared lock guard for RAII locking
-    pub fn shared_lock() -> SharedLockGuard {
-        SharedLockGuard::new()
+    /// Executes a closure with a shared lock held
+    pub fn with_shared_lock<F, R>(f: F) -> R
+    where
+        F: FnOnce() -> R,
+    {
+        let _guard = Self::shared_lock();
+        f()
     }
-}
 
-// ========== RAII LOCK GUARDS ==========
-
-/// RAII guard for exclusive locks
-pub struct ExclusiveLockGuard;
-
-impl ExclusiveLockGuard {
-    /// Acquires an exclusive lock and returns a guard
-    pub fn new() -> Self {
-        AngelScript::acquire_exclusive_lock();
-        Self
+    /// Checks if AngelScript is prepared for multithreading
+    pub fn is_multithreading_prepared() -> bool {
+        Self::get_thread_manager().is_some()
     }
-}
 
-impl Drop for ExclusiveLockGuard {
-    fn drop(&mut self) {
-        AngelScript::release_exclusive_lock();
-    }
-}
-
-/// RAII guard for shared locks
-pub struct SharedLockGuard;
-
-impl SharedLockGuard {
-    /// Acquires a shared lock and returns a guard
-    pub fn new() -> Self {
-        AngelScript::acquire_shared_lock();
-        Self
-    }
-}
-
-impl Drop for SharedLockGuard {
-    fn drop(&mut self) {
-        AngelScript::release_shared_lock();
+    /// Gets information about the current threading setup
+    pub fn get_threading_info() -> String {
+        match Self::get_thread_manager() {
+            Some(manager) => manager.info(),
+            None => "No thread manager (single-threaded mode)".to_string(),
+        }
     }
 }

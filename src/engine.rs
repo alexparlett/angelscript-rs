@@ -7,20 +7,19 @@ use crate::callback_manager::{
 use crate::context::Context;
 use crate::enums::*;
 use crate::error::{Error, Result};
-use crate::ffi::{
-    asGetLibraryOptions, asGetLibraryVersion,
-    asIScriptEngine,
-};
+use crate::ffi::{asGetLibraryOptions, asGetLibraryVersion, asIScriptEngine};
 use crate::function::Function;
 use crate::jit_compiler::JITCompiler;
 use crate::module::Module;
-use crate::string::register_cstring;
+use crate::string::with_string_module;
 use crate::typeinfo::TypeInfo;
 use crate::user_data::UserData;
-use crate::{
-    GCObjectInfo, GCStatistics, GlobalPropertyInfo, LockableSharedBool, Ptr, ScriptGeneric,
+use crate::{LockableSharedBool, Ptr, ScriptGeneric};
+use angelscript_bindings::{
+    asDWORD, asECallConvTypes_asCALL_GENERIC, asEMsgType, asGENFUNC_t, asGenericFunction,
+    asIScriptEngine__bindgen_vtable, asIScriptGeneric, asIStringFactory, asITypeInfo,
+    asMessageInfoFunction, asPWORD, asScriptContextFunction, asUINT,
 };
-use angelscript_bindings::{asDWORD, asECallConvTypes_asCALL_GENERIC, asEMsgType, asGENFUNC_t, asGenericFunction, asIScriptEngine__bindgen_vtable, asIScriptGeneric, asIStringFactory, asITypeInfo, asMessageInfoFunction, asPWORD, asScriptContextFunction, asUINT};
 use std::ffi::{c_char, CStr, CString};
 use std::os::raw::c_void;
 use std::ptr;
@@ -100,7 +99,9 @@ impl Engine {
     pub fn set_engine_property(&self, property: EngineProperty, value: usize) -> Result<()> {
         unsafe {
             Error::from_code((self.as_vtable().asIScriptEngine_SetEngineProperty)(
-                self.inner, property.into(), value,
+                self.inner,
+                property.into(),
+                value,
             ))
         }
     }
@@ -203,7 +204,9 @@ impl Engine {
                 c_decl.as_ptr(),
                 &mut asGenericFunction(base_func),
                 CallingConvention::Generic.into(),
-                auxiliary.map(|aux| aux as *mut _ as *mut c_void).unwrap_or_else(|| std::ptr::null_mut()),
+                auxiliary
+                    .map(|aux| aux as *mut _ as *mut c_void)
+                    .unwrap_or_else(|| std::ptr::null_mut()),
             ))
         }?;
 
@@ -323,7 +326,7 @@ impl Engine {
             let index = (self
                 .as_vtable()
                 .asIScriptEngine_GetGlobalPropertyIndexByName)(
-                self.inner, c_name.as_ptr(),
+                self.inner, c_name.as_ptr()
             );
             if index < 0 {
                 Error::from_code(index)?;
@@ -339,7 +342,7 @@ impl Engine {
             let index = (self
                 .as_vtable()
                 .asIScriptEngine_GetGlobalPropertyIndexByDecl)(
-                self.inner, c_decl.as_ptr(),
+                self.inner, c_decl.as_ptr()
             );
             if index < 0 {
                 Error::from_code(index)?;
@@ -411,7 +414,9 @@ impl Engine {
                 c_decl.as_ptr(),
                 &mut asGenericFunction(base_func),
                 CallingConvention::Generic.into(),
-                auxiliary.map(|aux| aux as *mut _ as *mut c_void).unwrap_or_else(|| std::ptr::null_mut()),
+                auxiliary
+                    .map(|aux| aux as *mut _ as *mut c_void)
+                    .unwrap_or_else(|| std::ptr::null_mut()),
                 composite_offset.unwrap_or_else(|| 0),
                 is_composite_indirect.unwrap_or_else(|| false),
             );
@@ -448,7 +453,7 @@ impl Engine {
                 c_obj.as_ptr(),
                 behaviour.into(),
                 c_decl.as_ptr(),
-                &mut asGenericFunction(base_func), 
+                &mut asGenericFunction(base_func),
                 asECallConvTypes_asCALL_GENERIC,
                 auxiliary.map_or_else(|| ptr::null_mut(), |aux| aux as *mut _ as *mut c_void),
                 composite_offset.unwrap_or_else(|| 0),
@@ -531,7 +536,7 @@ impl Engine {
             let type_id = (self
                 .as_vtable()
                 .asIScriptEngine_GetStringFactoryReturnTypeId)(
-                self.inner, &mut flags,
+                self.inner, &mut flags
             );
             if type_id < 0 {
                 Error::from_code(type_id)?;
@@ -723,8 +728,11 @@ impl Engine {
         let c_name = CString::new(name)?;
 
         unsafe {
-            let module =
-                (self.as_vtable().asIScriptEngine_GetModule)(self.inner, c_name.as_ptr(), flag.into());
+            let module = (self.as_vtable().asIScriptEngine_GetModule)(
+                self.inner,
+                c_name.as_ptr(),
+                flag.into(),
+            );
             if module.is_null() {
                 Err(Error::NullPointer)
             } else {
@@ -905,7 +913,7 @@ impl Engine {
             let obj = (self
                 .as_vtable()
                 .asIScriptEngine_CreateUninitializedScriptObject)(
-                self.inner, type_info.as_ptr(),
+                self.inner, type_info.as_ptr()
             );
             if obj.is_null() {
                 None
@@ -1368,7 +1376,7 @@ impl Engine {
 
     pub fn with_default_modules(&self) -> Result<()> {
         #[cfg(feature = "string")]
-        register_cstring(self)?;
+        with_string_module(self)?;
 
         Ok(())
     }
@@ -1414,4 +1422,31 @@ unsafe impl Sync for GenericFnUserData {}
 
 impl UserData for GenericFnUserData {
     const TypeId: usize = 0x129032719; // Must be unique!
+}
+
+#[derive(Debug)]
+pub struct GlobalPropertyInfo {
+    pub name: Option<String>,
+    pub name_space: Option<String>,
+    pub type_id: i32,
+    pub is_const: bool,
+    pub config_group: Option<String>,
+    pub pointer: Ptr<std::os::raw::c_void>,
+    pub access_mask: asDWORD,
+}
+
+#[derive(Debug)]
+pub struct GCStatistics {
+    pub current_size: asUINT,
+    pub total_destroyed: asUINT,
+    pub total_detected: asUINT,
+    pub new_objects: asUINT,
+    pub total_new_destroyed: asUINT,
+}
+
+#[derive(Debug)]
+pub struct GCObjectInfo {
+    pub seq_nbr: asUINT,
+    pub obj: Ptr<std::os::raw::c_void>,
+    pub type_info: Option<TypeInfo>,
 }

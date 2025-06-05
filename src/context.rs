@@ -6,7 +6,11 @@ use crate::function::Function;
 use crate::types::*;
 use crate::user_data::UserData;
 use crate::{Engine, TypeInfo};
-use angelscript_bindings::{asBYTE, asDWORD, asETypeModifiers, asETypeModifiers_asTM_NONE, asFUNCTION_t, asFunction, asIScriptContext__bindgen_vtable, asIScriptFunction, asITypeInfo, asQWORD, asScriptContextFunction, asUINT, asWORD};
+use angelscript_bindings::{
+    asBYTE, asDWORD, asETypeModifiers, asETypeModifiers_asTM_NONE, asFUNCTION_t, asFunction,
+    asIScriptContext__bindgen_vtable, asIScriptFunction, asITypeInfo, asQWORD,
+    asScriptContextFunction, asUINT, asWORD,
+};
 use std::ffi::{CStr, CString};
 use std::os::raw::{c_char, c_void};
 use std::ptr;
@@ -54,8 +58,13 @@ impl Context {
         unsafe { Error::from_code((self.as_vtable().asIScriptContext_Unprepare)(self.context)) }
     }
 
-    pub fn execute(&self) -> Result<()> {
-        unsafe { Error::from_code((self.as_vtable().asIScriptContext_Execute)(self.context)) }
+    pub fn execute(&self) -> Result<ContextState> {
+        unsafe {
+            let result = (self.as_vtable().asIScriptContext_Execute)(self.context);
+            Error::from_code(result) ?;
+            Ok(ContextState::from(result as u32))
+        }
+
     }
 
     pub fn abort(&self) -> Result<()> {
@@ -330,7 +339,7 @@ impl Context {
                 self.context,
                 asFunction(c_func),
                 std::ptr::null_mut(),
-                CallingConvention::Cdecl as i32, 
+                CallingConvention::Cdecl as i32,
             ))
         }
     }
@@ -351,7 +360,7 @@ impl Context {
                 self.context,
                 asScriptContextFunction(Some(CallbackManager::cvoid_line_callback)),
                 param as *mut _ as *mut c_void,
-                CallingConvention::Cdecl as i32
+                CallingConvention::Cdecl as i32,
             ))
         }
     }
@@ -765,3 +774,39 @@ impl Drop for Context {
 
 unsafe impl Send for Context {}
 unsafe impl Sync for Context {}
+
+#[derive(Debug, Clone)]
+pub struct VariableInfo {
+    pub name: Option<String>,
+    pub type_id: i32,
+    pub type_modifiers: TypeModifiers,
+    pub is_var_on_heap: bool,
+    pub stack_offset: i32,
+}
+
+#[derive(Debug)]
+pub struct StateRegisters {
+    pub calling_system_function: Option<Function>,
+    pub initial_function: Option<Function>,
+    pub orig_stack_pointer: asDWORD,
+    pub arguments_size: asDWORD,
+    pub value_register: asQWORD,
+    pub object_register: Option<Ptr<std::os::raw::c_void>>,
+    pub object_type_register: Option<TypeInfo>,
+}
+
+#[derive(Debug)]
+pub struct CallStateRegisters {
+    pub stack_frame_pointer: asDWORD,
+    pub current_function: Option<Function>,
+    pub program_pointer: asDWORD,
+    pub stack_pointer: asDWORD,
+    pub stack_index: asDWORD,
+}
+
+#[derive(Debug)]
+pub struct StackArgument<T> {
+    pub type_id: i32,
+    pub flags: asUINT,
+    pub address: Option<Ptr<T>>,
+}

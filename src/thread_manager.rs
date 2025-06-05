@@ -1,377 +1,564 @@
+//! Thread management for AngelScript integration
+//!
+//! This module provides a `ThreadManager` type that switches implementation
+//! based on compile-time features:
+//! - Default (when `rust-threading` is not enabled): Uses AngelScript's C++ manager
+//! - `rust-threading`: Uses a pure Rust implementation
+
 use crate::error::{Error, Result};
 use crate::ReturnCode;
-use angelscript_bindings::{asIThreadManager, asIThreadManager__bindgen_vtable};
-use std::collections::HashMap;
-use std::marker::PhantomData;
-use std::sync::{Arc, Mutex, RwLock};
+use angelscript_bindings::{
+    asIThreadManager, asIThreadManager__bindgen_vtable,
+    asPrepareMultithread, asUnprepareMultithread, asGetThreadManager, asThreadCleanup,
+    asAcquireExclusiveLock, asReleaseExclusiveLock, asAcquireSharedLock, asReleaseSharedLock,
+};
+use std::ptr;
 
-/// Wrapper for AngelScript's thread manager interface
-///
-/// This is an abstract interface that can be implemented by applications
-/// to provide custom thread management. AngelScript provides its own
-/// default implementation internally.
-#[derive(Debug)]
-pub struct ThreadManager {
-    inner: *mut asIThreadManager,
-    _phantom: PhantomData<asIThreadManager>,
-}
+// ========== C++ IMPLEMENTATION (DEFAULT) ==========
 
-impl ThreadManager {
-    /// Creates a ThreadManager wrapper from a raw pointer
-    ///
-    /// # Safety
-    /// The pointer must be valid and point to a properly initialized asIThreadManager
-    pub(crate) fn from_raw(ptr: *mut asIThreadManager) -> Self {
-        Self {
-            inner: ptr,
-            _phantom: PhantomData,
-        }
+#[cfg(not(feature = "rust-threading"))]
+mod cpp_impl {
+    use super::*;
+
+    /// Lightweight wrapper around AngelScript's C++ thread manager
+    #[derive(Debug)]
+    pub struct ThreadManager {
+        inner: *mut asIThreadManager,
     }
 
-    /// Returns the raw pointer to the thread manager
-    pub(crate) fn as_ptr(&self) -> *mut asIThreadManager {
-        self.inner
-    }
+    impl ThreadManager {
+        /// Prepares AngelScript for multithreading and returns the manager
+        pub fn prepare() -> Result<Self> {
+            unsafe {
+                let result = asPrepareMultithread(ptr::null_mut());
+                Error::from_code(result)?;
 
-    /// Checks if the thread manager pointer is null
-    pub fn is_null(&self) -> bool {
-        self.inner.is_null()
-    }
-
-    // Note: The vtable is empty because asIThreadManager is a pure abstract interface
-    // Applications implement this interface and AngelScript calls the implementation
-    // through virtual function calls in C++
-
-    fn as_vtable(&self) -> &asIThreadManager__bindgen_vtable {
-        unsafe { &*(*self.inner).vtable_ }
-    }
-}
-
-unsafe impl Send for ThreadManager {}
-unsafe impl Sync for ThreadManager {}
-
-/// Thread-local data structure that mirrors asCThreadLocalData
-#[derive(Debug)]
-pub struct ThreadLocalData {
-    /// Active script contexts in this thread
-    pub active_contexts: Vec<*mut crate::ffi::asIScriptContext>,
-    /// Thread-local string buffer for temporary operations
-    pub string_buffer: String,
-}
-
-impl ThreadLocalData {
-    /// Creates new thread-local data
-    pub fn new() -> Self {
-        Self {
-            active_contexts: Vec::new(),
-            string_buffer: String::new(),
-        }
-    }
-
-    /// Adds an active context to this thread
-    pub fn add_active_context(&mut self, context: *mut crate::ffi::asIScriptContext) {
-        self.active_contexts.push(context);
-    }
-
-    /// Removes an active context from this thread
-    pub fn remove_active_context(&mut self, context: *mut crate::ffi::asIScriptContext) {
-        self.active_contexts.retain(|&ctx| ctx != context);
-    }
-
-    /// Checks if there are any active contexts
-    pub fn has_active_contexts(&self) -> bool {
-        !self.active_contexts.is_empty()
-    }
-
-    /// Gets the number of active contexts
-    pub fn active_context_count(&self) -> usize {
-        self.active_contexts.len()
-    }
-}
-
-impl Default for ThreadLocalData {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-/// Critical section implementation that mirrors asCThreadCriticalSection
-#[derive(Debug)]
-pub struct ThreadCriticalSection {
-    mutex: Mutex<()>,
-}
-
-impl ThreadCriticalSection {
-    /// Creates a new critical section
-    pub fn new() -> Self {
-        Self {
-            mutex: Mutex::new(()),
-        }
-    }
-
-    /// Enters the critical section (blocks until acquired)
-    pub fn enter(&self) -> ThreadCriticalSectionGuard {
-        let guard = self.mutex.lock().expect("Critical section poisoned");
-        ThreadCriticalSectionGuard { _guard: guard }
-    }
-
-    /// Tries to enter the critical section without blocking
-    pub fn try_enter(&self) -> Option<ThreadCriticalSectionGuard> {
-        self.mutex
-            .try_lock()
-            .ok()
-            .map(|guard| ThreadCriticalSectionGuard { _guard: guard })
-    }
-}
-
-impl Default for ThreadCriticalSection {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-/// RAII guard for critical section
-pub struct ThreadCriticalSectionGuard<'a> {
-    _guard: std::sync::MutexGuard<'a, ()>,
-}
-
-// The guard automatically releases the lock when dropped
-
-/// Read-write lock implementation that mirrors asCThreadReadWriteLock
-#[derive(Debug)]
-pub struct ThreadReadWriteLock {
-    lock: RwLock<()>,
-}
-
-impl ThreadReadWriteLock {
-    /// Creates a new read-write lock
-    pub fn new() -> Self {
-        Self {
-            lock: RwLock::new(()),
-        }
-    }
-
-    /// Acquires an exclusive (write) lock
-    pub fn acquire_exclusive(&self) -> ThreadWriteLockGuard {
-        let guard = self.lock.write().expect("RwLock poisoned");
-        ThreadWriteLockGuard { _guard: guard }
-    }
-
-    /// Acquires a shared (read) lock
-    pub fn acquire_shared(&self) -> ThreadReadLockGuard {
-        let guard = self.lock.read().expect("RwLock poisoned");
-        ThreadReadLockGuard { _guard: guard }
-    }
-
-    /// Tries to acquire an exclusive lock without blocking
-    pub fn try_acquire_exclusive(&self) -> Option<ThreadWriteLockGuard> {
-        self.lock
-            .try_write()
-            .ok()
-            .map(|guard| ThreadWriteLockGuard { _guard: guard })
-    }
-
-    /// Tries to acquire a shared lock without blocking
-    pub fn try_acquire_shared(&self) -> Option<ThreadReadLockGuard> {
-        self.lock
-            .try_read()
-            .ok()
-            .map(|guard| ThreadReadLockGuard { _guard: guard })
-    }
-}
-
-impl Default for ThreadReadWriteLock {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-/// RAII guard for exclusive (write) lock
-pub struct ThreadWriteLockGuard<'a> {
-    _guard: std::sync::RwLockWriteGuard<'a, ()>,
-}
-
-/// RAII guard for shared (read) lock
-pub struct ThreadReadLockGuard<'a> {
-    _guard: std::sync::RwLockReadGuard<'a, ()>,
-}
-
-/// Rust implementation of thread manager functionality
-///
-/// This provides the same functionality as AngelScript's internal asCThreadManager
-/// but implemented in safe Rust. This can be used as a reference or as a basis
-/// for custom thread manager implementations.
-#[derive(Debug)]
-pub struct RustThreadManager {
-    /// Reference count for the thread manager
-    ref_count: Arc<Mutex<i32>>,
-    /// Thread-local storage for each thread
-    thread_local_storage: Arc<Mutex<HashMap<std::thread::ThreadId, ThreadLocalData>>>,
-    /// Application-level read-write lock (equivalent to appRWLock in C++)
-    app_rw_lock: Arc<ThreadReadWriteLock>,
-    /// Critical section for internal synchronization
-    critical_section: Arc<ThreadCriticalSection>,
-}
-
-impl RustThreadManager {
-    /// Creates a new Rust-based thread manager
-    pub fn new() -> Self {
-        Self {
-            ref_count: Arc::new(Mutex::new(1)),
-            thread_local_storage: Arc::new(Mutex::new(HashMap::new())),
-            app_rw_lock: Arc::new(ThreadReadWriteLock::new()),
-            critical_section: Arc::new(ThreadCriticalSection::new()),
-        }
-    }
-
-    /// Gets the thread-local data for the current thread
-    pub fn get_local_data(&self) -> Result<Arc<Mutex<ThreadLocalData>>> {
-        let thread_id = std::thread::current().id();
-        let mut storage = self.thread_local_storage.lock().map_err(|_| {
-            Error::External(Box::new(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                "Thread storage lock poisoned",
-            )))
-        })?;
-
-        if !storage.contains_key(&thread_id) {
-            storage.insert(thread_id, ThreadLocalData::new());
-        }
-
-        // This is a bit awkward - we need to return a reference to the data
-        // In the real implementation, this would be handled by TLS
-        Ok(Arc::new(Mutex::new(ThreadLocalData::new())))
-    }
-
-    /// Cleans up thread-local data for the current thread
-    pub fn cleanup_local_data(&self) -> Result<()> {
-        let thread_id = std::thread::current().id();
-        let mut storage = self.thread_local_storage.lock().map_err(|_| {
-            Error::External(Box::new(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                "Thread storage lock poisoned",
-            )))
-        })?;
-
-        if let Some(data) = storage.get(&thread_id) {
-            if data.has_active_contexts() {
-                return Err(Error::AngelScript(ReturnCode::ContextActive));
+                let mgr_ptr = asGetThreadManager();
+                if mgr_ptr.is_null() {
+                    Err(Error::AngelScript(ReturnCode::Error))
+                } else {
+                    Ok(Self { inner: mgr_ptr })
+                }
             }
         }
 
-        storage.remove(&thread_id);
-        Ok(())
-    }
-
-    /// Increments the reference count
-    pub fn add_ref(&self) -> Result<()> {
-        let _guard = self.critical_section.enter();
-        let mut count = self.ref_count.lock().map_err(|_| {
-            Error::External(Box::new(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                "Reference count lock poisoned",
-            )))
-        })?;
-        *count += 1;
-        Ok(())
-    }
-
-    /// Decrements the reference count and returns true if it reached zero
-    pub fn release(&self) -> Result<bool> {
-        let _guard = self.critical_section.enter();
-        let mut count = self.ref_count.lock().map_err(|_| {
-            Error::External(Box::new(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                "Reference count lock poisoned",
-            )))
-        })?;
-        *count -= 1;
-        Ok(*count == 0)
-    }
-
-    /// Gets the application read-write lock
-    pub fn app_rw_lock(&self) -> &ThreadReadWriteLock {
-        &self.app_rw_lock
-    }
-
-    /// Gets the critical section
-    pub fn critical_section(&self) -> &ThreadCriticalSection {
-        &self.critical_section
-    }
-}
-
-impl Default for RustThreadManager {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-unsafe impl Send for RustThreadManager {}
-
-unsafe impl Sync for RustThreadManager {}
-
-/// Global thread manager instance (mirrors the singleton in C++)
-static THREAD_MANAGER: std::sync::OnceLock<Arc<RustThreadManager>> = std::sync::OnceLock::new();
-
-/// Thread manager utilities that mirror the C++ global functions
-pub struct ThreadManagerUtils;
-
-impl ThreadManagerUtils {
-    /// Prepares the global thread manager (equivalent to asPrepareMultithread)
-    pub fn prepare(external_mgr: Option<ThreadManager>) -> Result<()> {
-        if external_mgr.is_some() && THREAD_MANAGER.get().is_some() {
-            return Err(Error::AngelScript(ReturnCode::InvalidArg));
+        /// Creates a wrapper from a raw pointer
+        pub(crate) fn from_raw(ptr: *mut asIThreadManager) -> Self {
+            Self { inner: ptr }
         }
 
-        if external_mgr.is_none() && THREAD_MANAGER.get().is_none() {
-            let manager = Arc::new(RustThreadManager::new());
-            THREAD_MANAGER.set(manager).map_err(|_| {
+        /// Returns the raw pointer
+        pub(crate) fn as_ptr(&self) -> *mut asIThreadManager {
+            self.inner
+        }
+
+        /// Checks if the pointer is null
+        pub fn is_null(&self) -> bool {
+            self.inner.is_null()
+        }
+
+        /// Gets information about this thread manager
+        pub fn info(&self) -> String {
+            "AngelScript C++ thread manager".to_string()
+        }
+
+        /// Gets the implementation type
+        pub fn implementation_type(&self) -> &'static str {
+            "cpp"
+        }
+
+        /// Unprepares the thread manager
+        pub fn unprepare() {
+            unsafe {
+                asUnprepareMultithread();
+            }
+        }
+
+        /// Cleans up thread-local data
+        pub fn cleanup_local_data() -> Result<()> {
+            unsafe {
+                Error::from_code(asThreadCleanup())
+            }
+        }
+
+        /// Acquires exclusive lock
+        pub fn acquire_exclusive_lock() {
+            unsafe {
+                asAcquireExclusiveLock();
+            }
+        }
+
+        /// Releases exclusive lock
+        pub fn release_exclusive_lock() {
+            unsafe {
+                asReleaseExclusiveLock();
+            }
+        }
+
+        /// Acquires shared lock
+        pub fn acquire_shared_lock() {
+            unsafe {
+                asAcquireSharedLock();
+            }
+        }
+
+        /// Releases shared lock
+        pub fn release_shared_lock() {
+            unsafe {
+                asReleaseSharedLock();
+            }
+        }
+    }
+
+    unsafe impl Send for ThreadManager {}
+    unsafe impl Sync for ThreadManager {}
+}
+
+// ========== RUST IMPLEMENTATION ==========
+
+#[cfg(feature = "rust-threading")]
+mod rust_impl {
+    use super::*;
+    use std::collections::HashMap;
+    use std::sync::{Mutex, RwLock};
+    use std::thread::{self, ThreadId};
+
+    /// Thread-local data structure that mirrors asCThreadLocalData
+    #[derive(Debug, Clone)]
+    pub struct ThreadLocalData {
+        pub active_contexts: Vec<*mut crate::ffi::asIScriptContext>,
+        pub string_buffer: String,
+    }
+
+    impl ThreadLocalData {
+        pub fn new() -> Self {
+            Self {
+                active_contexts: Vec::new(),
+                string_buffer: String::new(),
+            }
+        }
+
+        pub fn add_active_context(&mut self, context: *mut crate::ffi::asIScriptContext) {
+            if !context.is_null() {
+                self.active_contexts.push(context);
+            }
+        }
+
+        pub fn remove_active_context(&mut self, context: *mut crate::ffi::asIScriptContext) {
+            self.active_contexts.retain(|&ctx| ctx != context);
+        }
+
+        pub fn has_active_contexts(&self) -> bool {
+            !self.active_contexts.is_empty()
+        }
+
+        pub fn active_context_count(&self) -> usize {
+            self.active_contexts.len()
+        }
+
+        pub fn clear_string_buffer(&mut self) {
+            self.string_buffer.clear();
+        }
+    }
+
+    impl Default for ThreadLocalData {
+        fn default() -> Self {
+            Self::new()
+        }
+    }
+
+    /// Critical section implementation using std::sync::Mutex
+    #[derive(Debug)]
+    pub struct ThreadCriticalSection {
+        mutex: Mutex<()>,
+    }
+
+    impl ThreadCriticalSection {
+        pub fn new() -> Self {
+            Self {
+                mutex: Mutex::new(()),
+            }
+        }
+
+        pub fn enter(&self) -> ThreadCriticalSectionGuard {
+            let guard = self.mutex.lock().expect("Critical section poisoned");
+            ThreadCriticalSectionGuard { _guard: guard }
+        }
+
+        pub fn try_enter(&self) -> Option<ThreadCriticalSectionGuard> {
+            self.mutex
+                .try_lock()
+                .ok()
+                .map(|guard| ThreadCriticalSectionGuard { _guard: guard })
+        }
+    }
+
+    pub struct ThreadCriticalSectionGuard<'a> {
+        _guard: std::sync::MutexGuard<'a, ()>,
+    }
+
+    /// Read-write lock implementation using std::sync::RwLock
+    #[derive(Debug)]
+    pub struct ThreadReadWriteLock {
+        lock: RwLock<()>,
+    }
+
+    impl ThreadReadWriteLock {
+        pub fn new() -> Self {
+            Self {
+                lock: RwLock::new(()),
+            }
+        }
+
+        pub fn acquire_exclusive(&self) -> ThreadWriteLockGuard {
+            let guard = self.lock.write().expect("RwLock poisoned");
+            ThreadWriteLockGuard { _guard: guard }
+        }
+
+        pub fn acquire_shared(&self) -> ThreadReadLockGuard {
+            let guard = self.lock.read().expect("RwLock poisoned");
+            ThreadReadLockGuard { _guard: guard }
+        }
+
+        pub fn try_acquire_exclusive(&self) -> Option<ThreadWriteLockGuard> {
+            self.lock
+                .try_write()
+                .ok()
+                .map(|guard| ThreadWriteLockGuard { _guard: guard })
+        }
+
+        pub fn try_acquire_shared(&self) -> Option<ThreadReadLockGuard> {
+            self.lock
+                .try_read()
+                .ok()
+                .map(|guard| ThreadReadLockGuard { _guard: guard })
+        }
+    }
+
+    pub struct ThreadWriteLockGuard<'a> {
+        _guard: std::sync::RwLockWriteGuard<'a, ()>,
+    }
+
+    pub struct ThreadReadLockGuard<'a> {
+        _guard: std::sync::RwLockReadGuard<'a, ()>,
+    }
+
+    /// Thread-local storage manager
+    #[derive(Debug)]
+    struct ThreadLocalStorage {
+        storage: Mutex<HashMap<ThreadId, ThreadLocalData>>,
+    }
+
+    impl ThreadLocalStorage {
+        fn new() -> Self {
+            Self {
+                storage: Mutex::new(HashMap::new()),
+            }
+        }
+
+        fn get_local_data(&self) -> Result<ThreadLocalData> {
+            let thread_id = thread::current().id();
+            let mut storage = self.storage.lock().map_err(|_| {
                 Error::External(Box::new(std::io::Error::new(
                     std::io::ErrorKind::Other,
-                    "Failed to set global thread manager",
+                    "Thread storage lock poisoned",
                 )))
             })?;
+
+            Ok(storage
+                .entry(thread_id)
+                .or_insert_with(ThreadLocalData::new)
+                .clone())
         }
 
-        if let Some(manager) = THREAD_MANAGER.get() {
-            manager.add_ref()?;
+        fn update_local_data<F>(&self, f: F) -> Result<()>
+        where
+            F: FnOnce(&mut ThreadLocalData),
+        {
+            let thread_id = thread::current().id();
+            let mut storage = self.storage.lock().map_err(|_| {
+                Error::External(Box::new(std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    "Thread storage lock poisoned",
+                )))
+            })?;
+
+            let data = storage.entry(thread_id).or_insert_with(ThreadLocalData::new);
+            f(data);
+            Ok(())
         }
 
-        Ok(())
-    }
+        fn cleanup_local_data(&self) -> Result<()> {
+            let thread_id = thread::current().id();
+            let mut storage = self.storage.lock().map_err(|_| {
+                Error::External(Box::new(std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    "Thread storage lock poisoned",
+                )))
+            })?;
 
-    /// Unprepares the global thread manager (equivalent to asUnprepareMultithread)
-    pub fn unprepare() -> Result<()> {
-        if let Some(manager) = THREAD_MANAGER.get() {
-            if manager.release()? {
-                // In the C++ version, the manager would be deleted here
-                // In Rust, it will be dropped when the last Arc reference is dropped
+            if let Some(data) = storage.get(&thread_id) {
+                if data.has_active_contexts() {
+                    return Err(Error::AngelScript(ReturnCode::ContextActive));
+                }
             }
-        }
-        Ok(())
-    }
 
-    /// Cleans up thread-local data (equivalent to asThreadCleanup)
-    pub fn cleanup_local_data() -> Result<()> {
-        if let Some(manager) = THREAD_MANAGER.get() {
-            manager.cleanup_local_data()
-        } else {
+            storage.remove(&thread_id);
             Ok(())
         }
     }
 
-    /// Gets the global thread manager
-    pub fn get_thread_manager() -> Option<Arc<RustThreadManager>> {
-        THREAD_MANAGER.get().cloned()
+    /// Core Rust thread manager implementation
+    #[derive(Debug)]
+    struct RustThreadManagerCore {
+        ref_count: Mutex<i32>,
+        thread_local_storage: ThreadLocalStorage,
+        app_rw_lock: ThreadReadWriteLock,
+        critical_section: ThreadCriticalSection,
     }
 
-    /// Acquires the application exclusive lock
-    pub fn acquire_exclusive_lock() -> Option<ThreadWriteLockGuard<'static>> {
-        THREAD_MANAGER.get()?.app_rw_lock().try_acquire_exclusive()
+    impl RustThreadManagerCore {
+        fn new() -> Self {
+            Self {
+                ref_count: Mutex::new(1),
+                thread_local_storage: ThreadLocalStorage::new(),
+                app_rw_lock: ThreadReadWriteLock::new(),
+                critical_section: ThreadCriticalSection::new(),
+            }
+        }
     }
 
-    /// Acquires the application shared lock
-    pub fn acquire_shared_lock() -> Option<ThreadReadLockGuard<'static>> {
-        THREAD_MANAGER.get()?.app_rw_lock().try_acquire_shared()
+    /// FFI-compatible thread manager that implements asIThreadManager interface
+    #[repr(C)]
+    struct RustThreadManagerFFI {
+        vtable: *const asIThreadManager__bindgen_vtable,
+        ref_count: i32,
+        core: Box<RustThreadManagerCore>,
+    }
+
+    impl RustThreadManagerFFI {
+        fn new() -> Box<Self> {
+            Box::new(Self {
+                vtable: &RUST_THREAD_MANAGER_VTABLE,
+                ref_count: 1,
+                core: Box::new(RustThreadManagerCore::new()),
+            })
+        }
+
+        fn as_interface_ptr(boxed: Box<Self>) -> *mut asIThreadManager {
+            Box::into_raw(boxed) as *mut asIThreadManager
+        }
+
+        unsafe fn from_interface_ptr(ptr: *mut asIThreadManager) -> Box<Self> {
+            Box::from_raw(ptr as *mut Self)
+        }
+    }
+
+    static RUST_THREAD_MANAGER_VTABLE: asIThreadManager__bindgen_vtable =
+        asIThreadManager__bindgen_vtable {};
+
+    /// Pure Rust thread manager implementation
+    #[derive(Debug)]
+    pub struct ThreadManager {
+        /// The FFI interface pointer for AngelScript
+        interface_ptr: *mut asIThreadManager,
+        /// Reference to the core implementation (for safe access)
+        core: *const RustThreadManagerCore,
+    }
+
+    impl ThreadManager {
+        /// Prepares AngelScript for multithreading with Rust implementation
+        pub fn prepare() -> Result<Self> {
+            let ffi_manager = RustThreadManagerFFI::new();
+            let core_ptr = ffi_manager.core.as_ref() as *const RustThreadManagerCore;
+            let interface_ptr = RustThreadManagerFFI::as_interface_ptr(ffi_manager);
+
+            unsafe {
+                let result = asPrepareMultithread(interface_ptr);
+                if result != 0 {
+                    // Clean up on failure
+                    let _recovered = RustThreadManagerFFI::from_interface_ptr(interface_ptr);
+                    return Err(Error::from_code(result));
+                }
+            }
+
+            Ok(Self {
+                interface_ptr,
+                core: core_ptr,
+            })
+        }
+
+        /// Creates a wrapper from a raw pointer (for compatibility)
+        pub(crate) fn from_raw(ptr: *mut asIThreadManager) -> Self {
+            // For Rust implementation, we assume this is our own pointer
+            unsafe {
+                let ffi_manager = &*(ptr as *const RustThreadManagerFFI);
+                let core_ptr = ffi_manager.core.as_ref() as *const RustThreadManagerCore;
+
+                Self {
+                    interface_ptr: ptr,
+                    core: core_ptr,
+                }
+            }
+        }
+
+        /// Returns the raw pointer for AngelScript
+        pub(crate) fn as_ptr(&self) -> *mut asIThreadManager {
+            self.interface_ptr
+        }
+
+        /// Checks if the pointer is null
+        pub fn is_null(&self) -> bool {
+            self.interface_ptr.is_null()
+        }
+
+        /// Gets the core implementation safely
+        fn core(&self) -> &RustThreadManagerCore {
+            unsafe { &*self.core }
+        }
+
+        /// Gets thread-local data for the current thread
+        pub fn get_local_data(&self) -> Result<ThreadLocalData> {
+            self.core().thread_local_storage.get_local_data()
+        }
+
+        /// Updates thread-local data for the current thread
+        pub fn update_local_data<F>(&self, f: F) -> Result<()>
+        where
+            F: FnOnce(&mut ThreadLocalData),
+        {
+            self.core().thread_local_storage.update_local_data(f)
+        }
+
+        /// Gets the application read-write lock
+        pub fn app_rw_lock(&self) -> &ThreadReadWriteLock {
+            &self.core().app_rw_lock
+        }
+
+        /// Gets the critical section
+        pub fn critical_section(&self) -> &ThreadCriticalSection {
+            &self.core().critical_section
+        }
+
+        /// Gets information about this thread manager
+        pub fn info(&self) -> String {
+            format!("Rust thread manager (active threads: {})",
+                    self.core().thread_local_storage.storage.lock()
+                        .map(|s| s.len())
+                        .unwrap_or(0))
+        }
+
+        /// Gets the implementation type
+        pub fn implementation_type(&self) -> &'static str {
+            "rust"
+        }
+
+        /// Unprepares the thread manager
+        pub fn unprepare() {
+            unsafe {
+                asUnprepareMultithread();
+            }
+        }
+
+        /// Cleans up thread-local data
+        pub fn cleanup_local_data() -> Result<()> {
+            // For Rust implementation, we need to clean up both AngelScript and our data
+            unsafe {
+                Error::from_code(asThreadCleanup())?;
+            }
+
+            // Additional Rust-specific cleanup could go here if needed
+            Ok(())
+        }
+
+        /// Acquires exclusive lock (delegates to AngelScript's global lock)
+        pub fn acquire_exclusive_lock() {
+            unsafe {
+                asAcquireExclusiveLock();
+            }
+        }
+
+        /// Releases exclusive lock
+        pub fn release_exclusive_lock() {
+            unsafe {
+                asReleaseExclusiveLock();
+            }
+        }
+
+        /// Acquires shared lock
+        pub fn acquire_shared_lock() {
+            unsafe {
+                asAcquireSharedLock();
+            }
+        }
+
+        /// Releases shared lock
+        pub fn release_shared_lock() {
+            unsafe {
+                asReleaseSharedLock();
+            }
+        }
+    }
+
+    impl Drop for ThreadManager {
+        fn drop(&mut self) {
+            // Clean up the FFI manager when the Rust wrapper is dropped
+            if !self.interface_ptr.is_null() {
+                unsafe {
+                    let _ffi_manager = RustThreadManagerFFI::from_interface_ptr(self.interface_ptr);
+                    // Box will be dropped automatically
+                }
+            }
+        }
+    }
+
+    unsafe impl Send for ThreadManager {}
+    unsafe impl Sync for ThreadManager {}
+
+    // Re-export types that are only available with rust-threading
+    pub use ThreadLocalData;
+    pub use ThreadCriticalSection;
+    pub use ThreadReadWriteLock;
+    pub use ThreadWriteLockGuard;
+    pub use ThreadReadLockGuard;
+}
+
+// ========== CONDITIONAL EXPORTS ==========
+
+#[cfg(not(feature = "rust-threading"))]
+pub use cpp_impl::ThreadManager;
+
+#[cfg(feature = "rust-threading")]
+pub use rust_impl::*;
+
+/// RAII guard for AngelScript's exclusive lock
+pub struct ExclusiveLockGuard;
+
+impl ExclusiveLockGuard {
+    pub fn new() -> Self {
+        ThreadManager::acquire_exclusive_lock();
+        Self
+    }
+}
+
+impl Drop for ExclusiveLockGuard {
+    fn drop(&mut self) {
+        ThreadManager::release_exclusive_lock();
+    }
+}
+
+/// RAII guard for AngelScript's shared lock
+pub struct SharedLockGuard;
+
+impl SharedLockGuard {
+    pub fn new() -> Self {
+        ThreadManager::acquire_shared_lock();
+        Self
+    }
+}
+
+impl Drop for SharedLockGuard {
+    fn drop(&mut self) {
+        ThreadManager::release_shared_lock();
     }
 }

@@ -15,7 +15,7 @@ fn main() {
         .set_message_callback(|msg| {
             println!("AngelScript: {}", msg.message);
         })
-        .ok();
+        .expect("Failed to set message callback");
 
     engine
         .with_default_modules()

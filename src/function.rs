@@ -26,7 +26,7 @@ impl Function {
             .expect("Failed to add reference to function");
         wrapper
     }
-    
+
     pub(crate) fn as_raw(&self) -> *mut asIScriptFunction {
         self.inner
     }
@@ -474,8 +474,33 @@ impl Function {
 impl Drop for Function {
     fn drop(&mut self) {
         self.release().expect("Failed to release function");
+        println!("Dropping function");
     }
 }
 
 unsafe impl Send for Function {}
 unsafe impl Sync for Function {}
+
+#[derive(Debug, Clone)]
+pub struct DeclaredAtInfo {
+    pub script_section: Option<&'static str>,
+    pub row: i32,
+    pub col: i32,
+}
+
+#[derive(Debug, Clone)]
+pub struct VarInfo {
+    pub name: Option<&'static str>,
+    pub type_id: i32,
+}
+
+#[derive(Debug, Clone)]
+pub struct ParamInfo {
+    pub type_id: i32,
+    pub flags: u32,
+    pub name: Option<&'static str>,
+    pub default_arg: Option<&'static str>,
+}
+
+// Re-export JIT function type
+pub type JITFunction = asJITFunction;

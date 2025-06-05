@@ -1,6 +1,6 @@
 use crate::engine::Engine;
 use crate::function::Function;
-use crate::script_generic::types::ScriptValue;
+use crate::script_value::ScriptValue;
 use crate::types::*;
 use crate::{FromScriptValue, ScriptArg, TypeIdFlags};
 use angelscript_bindings::{
@@ -210,6 +210,16 @@ impl ScriptGeneric {
     }
 
     // 24. SetReturnAddress
+    pub fn set_return_address_raw(&self, mut addr: VoidPtr) -> crate::error::Result<()> {
+        unsafe {
+            crate::error::Error::from_code((self.as_vtable().asIScriptGeneric_SetReturnAddress)(
+                self.inner,
+                addr.as_mut_ptr(),
+            ))
+        }
+    }
+
+    // 24. SetReturnAddress
     pub fn set_return_address<T>(&self, addr: &mut T) -> crate::error::Result<()> {
         unsafe {
             crate::error::Error::from_code((self.as_vtable().asIScriptGeneric_SetReturnAddress)(
@@ -241,18 +251,6 @@ impl ScriptGeneric {
         }
     }
 
-    fn as_vtable(&self) -> &asIScriptGeneric__bindgen_vtable {
-        unsafe { &*(*self.inner).vtable_ }
-    }
-}
-
-// ScriptGeneric doesn't manage its own lifetime
-unsafe impl Send for ScriptGeneric {}
-unsafe impl Sync for ScriptGeneric {}
-
-// ========== CONVENIENCE METHODS ==========
-
-impl ScriptGeneric {
     /// Gets all arguments as a vector of GenericValue
     pub fn get_all_args(&self) -> Vec<ScriptArg> {
         let count = self.get_arg_count();
@@ -283,4 +281,12 @@ impl ScriptGeneric {
         let value_data = ScriptValue::from_generic(self, arg, flags);
         T::from_script_value(&value_data)
     }
+
+    fn as_vtable(&self) -> &asIScriptGeneric__bindgen_vtable {
+        unsafe { &*(*self.inner).vtable_ }
+    }
 }
+
+// ScriptGeneric doesn't manage its own lifetime
+unsafe impl Send for ScriptGeneric {}
+unsafe impl Sync for ScriptGeneric {}

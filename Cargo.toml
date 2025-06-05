@@ -16,9 +16,10 @@ bitflags = "2.9.1"
 default = ["macros", "string"]
 macros = ["dep:angelscript_macros"]
 string = []
+rust-threading = []
 
 [[example]]
 name = "basic"
 
 [workspace]
-members = ["crates/angelscript_bindings", "crates/angelscript_macros", "crates/angelscript_modules"]
+members = ["crates/angelscript_bindings", "crates/angelscript_macros"]

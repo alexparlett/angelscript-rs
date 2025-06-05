@@ -1,5 +1,5 @@
 use crate::stringfactory::get_string_factory_instance;
-use crate::{Behaviour, Engine, ObjectTypeFlags, Ptr, ScriptGeneric, VoidPtr};
+use crate::{AngelScript, Behaviour, Engine, ObjectTypeFlags, Ptr, ScriptGeneric, VoidPtr};
 use angelscript_bindings::{asINT64, asIStringFactory, asQWORD, asUINT};
 use std::ffi::c_void;
 
@@ -95,34 +95,60 @@ fn assign_string(g: &ScriptGeneric) {
         dest.as_ref()
     );
 
-    g.set_return_object(&mut dest.as_void_ptr());
+    g.set_return_object(&mut dest.as_void_ptr())
+        .expect("Failed to return string");
 }
 
 fn add_assign_string(g: &ScriptGeneric) {
     let src = g.get_arg_address::<String>(0).unwrap();
     let mut dest = g.get_object::<String>().unwrap();
+
+    eprintln!(
+        "[String::add_assign_string] Copy value from source {:p} to destination {:p}.",
+        src.as_ptr(),
+        dest.as_ptr()
+    );
+
+    // Ensure the source is valid before copying
+    if src.is_null() {
+        eprintln!("[String::add_assign_string] Source pointer is null. Aborting assignment.");
+        return;
+    }
+
+    // Add Assign the source value to the destination object
     dest.as_ref_mut().push_str(src.as_ref());
-    g.set_return_object(&mut dest.as_void_ptr());
+
+    // Log pointers and their values after assignment
+    eprintln!(
+        "[String::add_assign_string] Final values - Source Pointer {:p}: value = {:?}, Destination Pointer {:p}: value = {:?}.",
+        src.as_ptr(),
+        src.as_ref(),
+        dest.as_ptr(),
+        dest.as_ref()
+    );
+
+    g.set_return_object(&mut dest.as_void_ptr())
+        .expect("Failed to return string");
 }
 
 fn string_equals(g: &ScriptGeneric) {
     let lhs = g.get_object::<String>().unwrap();
     let rhs = g.get_arg_address::<String>(0).unwrap();
-    let mut ret = g.get_address_of_return_location::<bool>().unwrap();
-    ret.set(lhs.as_ref() == rhs.as_ref());
+    let equal = lhs.as_ref() == rhs.as_ref();
+    g.set_return_byte(equal.into()).unwrap();
 }
 
 fn string_cmp(g: &ScriptGeneric) {
     let lhs = g.get_object::<String>().unwrap();
     let rhs = g.get_arg_address::<String>(0).unwrap();
-    let mut ret = g.get_address_of_return_location::<i32>().unwrap();
-    ret.set(if lhs.as_ref() < rhs.as_ref() {
+    g.set_return_dword(if lhs.as_ref() < rhs.as_ref() {
         -1
     } else if lhs.as_ref() > rhs.as_ref() {
         1
     } else {
         0
-    });
+    } as u32)
+        .unwrap();
 }
 
 fn string_add(g: &ScriptGeneric) {
@@ -134,21 +160,30 @@ fn string_add(g: &ScriptGeneric) {
 
 fn string_length(g: &ScriptGeneric) {
     let obj = g.get_object::<String>().unwrap();
-    let mut ret = g.get_address_of_return_location::<u32>().unwrap();
-    ret.set(obj.as_ref().len() as u32);
+    g.set_return_dword(obj.as_ref().len() as u32).unwrap();
 }
 
 fn string_is_empty(g: &ScriptGeneric) {
     let obj = g.get_object::<String>().unwrap();
-    let mut ret = g.get_address_of_return_location::<bool>().unwrap();
-    ret.set(obj.as_ref().is_empty());
+    g.set_return_byte(obj.as_ref().is_empty().into()).unwrap();
 }
 
 fn string_char_at(g: &ScriptGeneric) {
     let idx = g.get_arg_dword(0) as usize;
-    let obj = g.get_object::<String>().unwrap();
-    let mut ret = g.get_address_of_return_location::<u8>().unwrap();
-    ret.set(obj.as_ref().as_bytes().get(idx).copied().unwrap_or(0));
+    let mut obj = g.get_object::<String>().unwrap();
+
+    let str = obj.as_ref_mut();
+    if idx >= str.len() {
+        let ctx = AngelScript::get_active_context().unwrap();
+        ctx.set_exception("Index out of bounds", true).unwrap();
+        g.set_return_address_raw(VoidPtr::null()).unwrap();
+        return;
+    }
+
+    unsafe {
+        g.set_return_address(str.as_bytes_mut().get_mut(idx).unwrap())
+            .unwrap();
+    }
 }
 
 // Additional assign/add for primitive types--convert to str and use Ustr.
@@ -329,13 +364,15 @@ fn string_substring(g: &ScriptGeneric) {
         .unwrap_or("")
         .to_string();
 
-    g.get_address_of_return_location::<String>().unwrap().set(substring);
+    g.get_address_of_return_location::<String>()
+        .unwrap()
+        .set(substring);
 }
 
 // FFI assumed available (replace with real prototype as needed):
 // extern "C" fn asScriptGeneric_GetAddressOfReturnLocation(g: *mut asIScriptGeneric) -> *mut std::ffi::c_void;
 
-pub fn register_cstring(engine: &Engine) -> crate::error::Result<()> {
+pub fn with_string_module(engine: &Engine) -> crate::error::Result<()> {
     engine.register_object_type(
         "string",
         size_of::<String>(),
@@ -387,64 +424,78 @@ pub fn register_cstring(engine: &Engine) -> crate::error::Result<()> {
         None,
     )?;
 
-    // engine.register_object_method(
-    //     "string",
-    //     "string &opAddAssign(const string &in)",
-    //     add_assign_string,
-    //     asCALL_GENERIC,
-    // )?;
-    //
-    // engine.register_object_method(
-    //     "string",
-    //     "bool opEquals(const string &in) const",
-    //     string_equals,
-    //     asCALL_GENERIC,
-    // )?;
-    //
-    // engine.register_object_method(
-    //     "string",
-    //     "int opCmp(const string &in) const",
-    //     string_cmp,
-    //     asCALL_GENERIC,
-    // )?;
-    //
+    engine.register_object_method::<c_void>(
+        "string",
+        "string &opAddAssign(const string &in)",
+        add_assign_string,
+        None,
+        None,
+        None,
+    )?;
+
+    engine.register_object_method::<c_void>(
+        "string",
+        "bool opEquals(const string &in) const",
+        string_equals,
+        None,
+        None,
+        None,
+    )?;
+
+    engine.register_object_method::<c_void>(
+        "string",
+        "int opCmp(const string &in) const",
+        string_cmp,
+        None,
+        None,
+        None,
+    )?;
+
     // engine.register_object_method(
     //     "string",
     //     "string opAdd(const string &in) const",
     //     string_add,
     //     asCALL_GENERIC,
     // )?;
-    //
-    // // String methods. Add conditional methods as needed; here, the default.
-    // engine.register_object_method(
-    //     "string",
-    //     "uint length() const",
-    //     string_length,
-    //     asCALL_GENERIC,
-    // )?;
-    //
-    // engine.register_object_method(
-    //     "string",
-    //     "bool isEmpty() const",
-    //     string_is_empty,
-    //     asCALL_GENERIC,
-    // )?;
-    //
-    // // Indexing (mutator & inspector)
-    // engine.register_object_method(
-    //     "string",
-    //     "uint8 &opIndex(uint)",
-    //     string_char_at,
-    //     asCALL_GENERIC,
-    // )?;
-    //
-    // engine.register_object_method(
-    //     "string",
-    //     "uint8 &opIndex(uint) const",
-    //     string_char_at,
-    //     asCALL_GENERIC,
-    // )?;
-    //
+
+    // String methods. Add conditional methods as needed; here, the default.
+    engine.register_object_method::<c_void>(
+        "string",
+        "uint length() const",
+        string_length,
+        None,
+        None,
+        None,
+    )?;
+
+    engine.register_object_method::<c_void>(
+        "string",
+        "bool isEmpty() const",
+        string_is_empty,
+        None,
+        None,
+        None,
+    )?;
+
+    // Indexing (mutator & inspector)
+    engine.register_object_method::<c_void>(
+        "string",
+        "uint8 &opIndex(uint)",
+        string_char_at,
+        None,
+        None,
+        None,
+    )?;
+
+    engine.register_object_method::<c_void>(
+        "string",
+        "uint8 &opIndex(uint) const",
+        string_char_at,
+        None,
+        None,
+        None,
+    )?;
+
     // engine.register_object_method(
     //     "string",
     //     "string &opAssign(double)",

@@ -1,6 +1,6 @@
 use crate::utils::read_cstring;
 use crate::{
-    Context, Engine, Function, MessageInfo, MessageType, Module, Result, ScriptGeneric,
+    Context, Engine, Function, MessageType, Module, Result, ScriptGeneric,
     ScriptObject, TypeInfo, VoidPtr,
 };
 use angelscript_bindings::{
@@ -395,6 +395,15 @@ impl CallbackManager {
             callback(&wrapper, VoidPtr::from_mut_raw(params));
         }
     }
+}
+
+#[derive(Debug)]
+pub struct MessageInfo {
+    pub section: String,
+    pub row: u32,
+    pub col: u32,
+    pub msg_type: MessageType,
+    pub message: String,
 }
 
 pub type MessageCallbackFn = fn(&MessageInfo);
