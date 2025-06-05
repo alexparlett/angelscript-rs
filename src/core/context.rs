@@ -1,19 +1,21 @@
-use crate::callback_manager::{CallbackManager, ExceptionCallbackFn, LineCallbackFn};
-use crate::enums::*;
-use crate::error::{Error, Result};
-use crate::ffi::asIScriptContext;
-use crate::function::Function;
-use crate::types::*;
-use crate::user_data::UserData;
-use crate::{Engine, TypeInfo};
-use angelscript_bindings::{
+use crate::core::engine::Engine;
+use crate::core::enums::*;
+use crate::core::error::{ScriptError, ScriptResult};
+use crate::core::function::Function;
+use crate::core::typeinfo::TypeInfo;
+use crate::internal::callback_manager::{CallbackManager, ExceptionCallbackFn, LineCallbackFn};
+use crate::internal::pointers::Ptr;
+use crate::plugins::plugin::ScriptData;
+use crate::types::user_data::UserData;
+use angelscript_sys::{
     asBYTE, asDWORD, asETypeModifiers, asETypeModifiers_asTM_NONE, asFUNCTION_t, asFunction,
-    asIScriptContext__bindgen_vtable, asIScriptFunction, asITypeInfo, asQWORD,
-    asScriptContextFunction, asUINT, asWORD,
+    asIScriptContext, asIScriptContext__bindgen_vtable, asIScriptEngine, asIScriptFunction,
+    asITypeInfo, asQWORD, asScriptContextFunction, asUINT, asWORD,
 };
 use std::ffi::{CStr, CString};
 use std::os::raw::{c_char, c_void};
 use std::ptr;
+use std::ptr::NonNull;
 
 type InternalCallback = Option<unsafe extern "C" fn(*mut asIScriptContext, *const c_void)>;
 
@@ -32,47 +34,53 @@ impl Context {
     }
 
     // Reference counting (matches vtable order)
-    pub fn add_ref(&self) -> Result<()> {
-        unsafe { Error::from_code((self.as_vtable().asIScriptContext_AddRef)(self.context)) }
+    pub fn add_ref(&self) -> ScriptResult<()> {
+        unsafe { ScriptError::from_code((self.as_vtable().asIScriptContext_AddRef)(self.context)) }
     }
 
-    pub fn release(&self) -> Result<()> {
-        unsafe { Error::from_code((self.as_vtable().asIScriptContext_Release)(self.context)) }
+    pub fn release(&self) -> ScriptResult<()> {
+        unsafe { ScriptError::from_code((self.as_vtable().asIScriptContext_Release)(self.context)) }
     }
 
-    pub fn get_engine(&self) -> Engine {
-        unsafe { Engine::from_raw((self.as_vtable().asIScriptContext_GetEngine)(self.context)) }
+    pub fn get_engine(&self) -> ScriptResult<Engine> {
+        unsafe {
+            let result: *mut asIScriptEngine =
+                (self.as_vtable().asIScriptContext_GetEngine)(self.context);
+            let ptr = NonNull::new(result).ok_or(ScriptError::NullPointer)?;
+            Ok(Engine::from_raw(NonNull::from(ptr)))
+        }
     }
 
     // Execution control
-    pub fn prepare(&self, func: &Function) -> Result<()> {
+    pub fn prepare(&self, func: &Function) -> ScriptResult<()> {
         unsafe {
-            Error::from_code((self.as_vtable().asIScriptContext_Prepare)(
+            ScriptError::from_code((self.as_vtable().asIScriptContext_Prepare)(
                 self.context,
                 func.as_raw(),
             ))
         }
     }
 
-    pub fn unprepare(&self) -> Result<()> {
-        unsafe { Error::from_code((self.as_vtable().asIScriptContext_Unprepare)(self.context)) }
+    pub fn unprepare(&self) -> ScriptResult<()> {
+        unsafe {
+            ScriptError::from_code((self.as_vtable().asIScriptContext_Unprepare)(self.context))
+        }
     }
 
-    pub fn execute(&self) -> Result<ContextState> {
+    pub fn execute(&self) -> ScriptResult<ContextState> {
         unsafe {
             let result = (self.as_vtable().asIScriptContext_Execute)(self.context);
-            Error::from_code(result) ?;
+            ScriptError::from_code(result)?;
             Ok(ContextState::from(result as u32))
         }
-
     }
 
-    pub fn abort(&self) -> Result<()> {
-        unsafe { Error::from_code((self.as_vtable().asIScriptContext_Abort)(self.context)) }
+    pub fn abort(&self) -> ScriptResult<()> {
+        unsafe { ScriptError::from_code((self.as_vtable().asIScriptContext_Abort)(self.context)) }
     }
 
-    pub fn suspend(&self) -> Result<()> {
-        unsafe { Error::from_code((self.as_vtable().asIScriptContext_Suspend)(self.context)) }
+    pub fn suspend(&self) -> ScriptResult<()> {
+        unsafe { ScriptError::from_code((self.as_vtable().asIScriptContext_Suspend)(self.context)) }
     }
 
     pub fn get_state(&self) -> ContextState {
@@ -80,12 +88,16 @@ impl Context {
     }
 
     // State management
-    pub fn push_state(&self) -> Result<()> {
-        unsafe { Error::from_code((self.as_vtable().asIScriptContext_PushState)(self.context)) }
+    pub fn push_state(&self) -> ScriptResult<()> {
+        unsafe {
+            ScriptError::from_code((self.as_vtable().asIScriptContext_PushState)(self.context))
+        }
     }
 
-    pub fn pop_state(&self) -> Result<()> {
-        unsafe { Error::from_code((self.as_vtable().asIScriptContext_PopState)(self.context)) }
+    pub fn pop_state(&self) -> ScriptResult<()> {
+        unsafe {
+            ScriptError::from_code((self.as_vtable().asIScriptContext_PopState)(self.context))
+        }
     }
 
     pub fn is_nested(&self) -> (bool, u32) {
@@ -98,19 +110,19 @@ impl Context {
     }
 
     // Object context
-    pub fn set_object<T>(&self, obj: &mut T) -> Result<()> {
+    pub fn set_object<T: ScriptData>(&self, obj: &mut T) -> ScriptResult<()> {
         unsafe {
-            Error::from_code((self.as_vtable().asIScriptContext_SetObject)(
+            ScriptError::from_code((self.as_vtable().asIScriptContext_SetObject)(
                 self.context,
-                obj as *mut _ as *mut c_void,
+                obj.to_script_ptr(),
             ))
         }
     }
 
     // Arguments (in vtable order)
-    pub fn set_arg_byte(&self, arg: asUINT, value: asBYTE) -> Result<()> {
+    pub fn set_arg_byte(&self, arg: asUINT, value: asBYTE) -> ScriptResult<()> {
         unsafe {
-            Error::from_code((self.as_vtable().asIScriptContext_SetArgByte)(
+            ScriptError::from_code((self.as_vtable().asIScriptContext_SetArgByte)(
                 self.context,
                 arg,
                 value,
@@ -118,9 +130,9 @@ impl Context {
         }
     }
 
-    pub fn set_arg_word(&self, arg: asUINT, value: asWORD) -> Result<()> {
+    pub fn set_arg_word(&self, arg: asUINT, value: asWORD) -> ScriptResult<()> {
         unsafe {
-            Error::from_code((self.as_vtable().asIScriptContext_SetArgWord)(
+            ScriptError::from_code((self.as_vtable().asIScriptContext_SetArgWord)(
                 self.context,
                 arg,
                 value,
@@ -128,9 +140,9 @@ impl Context {
         }
     }
 
-    pub fn set_arg_dword(&self, arg: asUINT, value: asDWORD) -> Result<()> {
+    pub fn set_arg_dword(&self, arg: asUINT, value: asDWORD) -> ScriptResult<()> {
         unsafe {
-            Error::from_code((self.as_vtable().asIScriptContext_SetArgDWord)(
+            ScriptError::from_code((self.as_vtable().asIScriptContext_SetArgDWord)(
                 self.context,
                 arg,
                 value,
@@ -138,9 +150,9 @@ impl Context {
         }
     }
 
-    pub fn set_arg_qword(&self, arg: asUINT, value: asQWORD) -> Result<()> {
+    pub fn set_arg_qword(&self, arg: asUINT, value: asQWORD) -> ScriptResult<()> {
         unsafe {
-            Error::from_code((self.as_vtable().asIScriptContext_SetArgQWord)(
+            ScriptError::from_code((self.as_vtable().asIScriptContext_SetArgQWord)(
                 self.context,
                 arg,
                 value,
@@ -148,9 +160,9 @@ impl Context {
         }
     }
 
-    pub fn set_arg_float(&self, arg: asUINT, value: f32) -> Result<()> {
+    pub fn set_arg_float(&self, arg: asUINT, value: f32) -> ScriptResult<()> {
         unsafe {
-            Error::from_code((self.as_vtable().asIScriptContext_SetArgFloat)(
+            ScriptError::from_code((self.as_vtable().asIScriptContext_SetArgFloat)(
                 self.context,
                 arg,
                 value,
@@ -158,9 +170,9 @@ impl Context {
         }
     }
 
-    pub fn set_arg_double(&self, arg: asUINT, value: f64) -> Result<()> {
+    pub fn set_arg_double(&self, arg: asUINT, value: f64) -> ScriptResult<()> {
         unsafe {
-            Error::from_code((self.as_vtable().asIScriptContext_SetArgDouble)(
+            ScriptError::from_code((self.as_vtable().asIScriptContext_SetArgDouble)(
                 self.context,
                 arg,
                 value,
@@ -168,44 +180,44 @@ impl Context {
         }
     }
 
-    pub fn set_arg_address<T>(&self, arg: asUINT, addr: &mut T) -> Result<()> {
+    pub fn set_arg_address<T: ScriptData>(&self, arg: asUINT, addr: &mut T) -> ScriptResult<()> {
         unsafe {
-            Error::from_code((self.as_vtable().asIScriptContext_SetArgAddress)(
+            ScriptError::from_code((self.as_vtable().asIScriptContext_SetArgAddress)(
                 self.context,
                 arg,
-                addr as *mut _ as *mut c_void,
+                addr.to_script_ptr(),
             ))
         }
     }
 
-    pub fn set_arg_object<T>(&self, arg: asUINT, obj: &mut T) -> Result<()> {
+    pub fn set_arg_object<T: ScriptData>(&self, arg: asUINT, obj: &mut T) -> ScriptResult<()> {
         unsafe {
-            Error::from_code((self.as_vtable().asIScriptContext_SetArgObject)(
+            ScriptError::from_code((self.as_vtable().asIScriptContext_SetArgObject)(
                 self.context,
                 arg,
-                obj as *mut _ as *mut c_void,
+                obj.to_script_ptr(),
             ))
         }
     }
 
-    pub fn set_arg_var_type<T>(&self, arg: asUINT, ptr: &mut T, type_id: i32) -> Result<()> {
+    pub fn set_arg_var_type<T: ScriptData>(&self, arg: asUINT, ptr: &mut T, type_id: i32) -> ScriptResult<()> {
         unsafe {
-            Error::from_code((self.as_vtable().asIScriptContext_SetArgVarType)(
+            ScriptError::from_code((self.as_vtable().asIScriptContext_SetArgVarType)(
                 self.context,
                 arg,
-                ptr as *mut _ as *mut c_void,
+                ptr.to_script_ptr(),
                 type_id,
             ))
         }
     }
 
-    pub fn get_address_of_arg<T>(&self, arg: asUINT) -> Option<Ptr<T>> {
+    pub fn get_address_of_arg<T: ScriptData>(&self, arg: asUINT) -> Option<T> {
         unsafe {
             let ptr = (self.as_vtable().asIScriptContext_GetAddressOfArg)(self.context, arg);
             if ptr.is_null() {
                 None
             } else {
-                Some(Ptr::<T>::from_raw(ptr))
+                Some(ScriptData::from_script_ptr(ptr))
             }
         }
     }
@@ -235,45 +247,45 @@ impl Context {
         unsafe { (self.as_vtable().asIScriptContext_GetReturnDouble)(self.context) }
     }
 
-    pub fn get_return_address<T>(&self) -> Option<Ptr<T>> {
+    pub fn get_return_address<T: ScriptData>(&self) -> Option<T> {
         unsafe {
             let ptr = (self.as_vtable().asIScriptContext_GetReturnAddress)(self.context);
             if ptr.is_null() {
                 None
             } else {
-                Some(Ptr::<T>::from_raw(ptr))
+                Some(ScriptData::from_script_ptr(ptr))
             }
         }
     }
 
-    pub fn get_return_object<T>(&self) -> Option<Ptr<T>> {
+    pub fn get_return_object<T: ScriptData>(&self) -> Option<T> {
         unsafe {
             let ptr = (self.as_vtable().asIScriptContext_GetReturnObject)(self.context);
             if ptr.is_null() {
                 None
             } else {
-                Some(Ptr::<T>::from_raw(ptr))
+                Some(ScriptData::from_script_ptr(ptr))
             }
         }
     }
 
-    pub fn get_address_of_return_value<T>(&self) -> Option<Ptr<T>> {
+    pub fn get_address_of_return_value<T: ScriptData>(&self) -> Option<T> {
         unsafe {
             let ptr = (self.as_vtable().asIScriptContext_GetAddressOfReturnValue)(self.context);
             if ptr.is_null() {
                 None
             } else {
-                Some(Ptr::<T>::from_raw(ptr))
+                Some(ScriptData::from_script_ptr(ptr))
             }
         }
     }
 
     // Exception handling
-    pub fn set_exception(&self, string: &str, allow_catch: bool) -> Result<()> {
+    pub fn set_exception(&self, string: &str, allow_catch: bool) -> ScriptResult<()> {
         let c_string = CString::new(string)?;
 
         unsafe {
-            Error::from_code((self.as_vtable().asIScriptContext_SetException)(
+            ScriptError::from_code((self.as_vtable().asIScriptContext_SetException)(
                 self.context,
                 c_string.as_ptr(),
                 allow_catch,
@@ -328,14 +340,14 @@ impl Context {
         unsafe { (self.as_vtable().asIScriptContext_WillExceptionBeCaught)(self.context) }
     }
 
-    pub fn set_exception_callback(&self, callback: ExceptionCallbackFn) -> Result<()> {
+    pub fn set_exception_callback(&self, callback: ExceptionCallbackFn) -> ScriptResult<()> {
         CallbackManager::set_exception_callback(Some(callback))?;
 
         let base_func: InternalCallback = Some(CallbackManager::cvoid_exception_callback);
         let c_func = unsafe { std::mem::transmute::<InternalCallback, asFUNCTION_t>(base_func) };
 
         unsafe {
-            Error::from_code((self.as_vtable().asIScriptContext_SetExceptionCallback)(
+            ScriptError::from_code((self.as_vtable().asIScriptContext_SetExceptionCallback)(
                 self.context,
                 asFunction(c_func),
                 std::ptr::null_mut(),
@@ -344,7 +356,7 @@ impl Context {
         }
     }
 
-    pub fn clear_exception_callback(&self) -> Result<()> {
+    pub fn clear_exception_callback(&self) -> ScriptResult<()> {
         CallbackManager::set_exception_callback(None)?;
         unsafe {
             (self.as_vtable().asIScriptContext_ClearExceptionCallback)(self.context);
@@ -352,20 +364,24 @@ impl Context {
         Ok(())
     }
 
-    pub fn set_line_callback<T>(&mut self, callback: LineCallbackFn, param: &mut T) -> Result<()> {
+    pub fn set_line_callback<T: ScriptData>(
+        &mut self,
+        callback: LineCallbackFn,
+        param: &mut T,
+    ) -> ScriptResult<()> {
         CallbackManager::set_line_callback(Some(callback))?;
 
         unsafe {
-            Error::from_code((self.as_vtable().asIScriptContext_SetLineCallback)(
+            ScriptError::from_code((self.as_vtable().asIScriptContext_SetLineCallback)(
                 self.context,
                 asScriptContextFunction(Some(CallbackManager::cvoid_line_callback)),
-                param as *mut _ as *mut c_void,
+                param.to_script_ptr(),
                 CallingConvention::Cdecl as i32,
             ))
         }
     }
 
-    pub fn clear_line_callback(&mut self) -> Result<()> {
+    pub fn clear_line_callback(&mut self) -> ScriptResult<()> {
         CallbackManager::set_line_callback(None)?;
         unsafe {
             (self.as_vtable().asIScriptContext_ClearLineCallback)(self.context);
@@ -416,7 +432,7 @@ impl Context {
         unsafe { (self.as_vtable().asIScriptContext_GetVarCount)(self.context, stack_level) }
     }
 
-    pub fn get_var(&self, var_index: u32, stack_level: u32) -> Result<VariableInfo> {
+    pub fn get_var(&self, var_index: u32, stack_level: u32) -> ScriptResult<VariableInfo> {
         let mut name: *const c_char = ptr::null();
         let mut type_id: i32 = 0;
         let mut type_modifiers: asETypeModifiers = asETypeModifiers_asTM_NONE;
@@ -424,7 +440,7 @@ impl Context {
         let mut stack_offset: i32 = 0;
 
         unsafe {
-            Error::from_code((self.as_vtable().asIScriptContext_GetVar)(
+            ScriptError::from_code((self.as_vtable().asIScriptContext_GetVar)(
                 self.context,
                 var_index,
                 stack_level,
@@ -472,13 +488,13 @@ impl Context {
         }
     }
 
-    pub fn get_address_of_var<T>(
+    pub fn get_address_of_var<T: ScriptData>(
         &self,
         var_index: u32,
         stack_level: u32,
         dont_dereference: bool,
         return_address_of_uninitialized_objects: bool,
-    ) -> Option<Ptr<T>> {
+    ) -> Option<T> {
         unsafe {
             let ptr = (self.as_vtable().asIScriptContext_GetAddressOfVar)(
                 self.context,
@@ -490,7 +506,7 @@ impl Context {
             if ptr.is_null() {
                 None
             } else {
-                Some(Ptr::<T>::from_raw(ptr))
+                Some(ScriptData::from_script_ptr(ptr))
             }
         }
     }
@@ -506,13 +522,13 @@ impl Context {
         unsafe { (self.as_vtable().asIScriptContext_GetThisTypeId)(self.context, stack_level) }
     }
 
-    pub fn get_this_pointer<T>(&self, stack_level: u32) -> Option<Ptr<T>> {
+    pub fn get_this_pointer<T: ScriptData>(&self, stack_level: u32) -> Option<T> {
         unsafe {
             let ptr = (self.as_vtable().asIScriptContext_GetThisPointer)(self.context, stack_level);
             if ptr.is_null() {
                 None
             } else {
-                Some(Ptr::<T>::from_raw(ptr))
+                Some(ScriptData::from_script_ptr(ptr))
             }
         }
     }
@@ -530,56 +546,56 @@ impl Context {
     }
 
     // User data
-    pub fn set_user_data<T: UserData>(&self, data: &mut T) -> Option<Ptr<T>> {
+    pub fn set_user_data<T: UserData + ScriptData>(&self, data: &mut T) -> Option<T> {
         unsafe {
             let ptr = (self.as_vtable().asIScriptContext_SetUserData)(
                 self.context,
-                data as *mut _ as *mut c_void,
+                data.to_script_ptr(),
                 T::TypeId,
             );
             if ptr.is_null() {
                 None
             } else {
-                Some(Ptr::<T>::from_raw(ptr))
+                Some(ScriptData::from_script_ptr(ptr))
             }
         }
     }
 
-    pub fn get_user_data<T: UserData>(&self) -> Result<Ptr<T>> {
+    pub fn get_user_data<T: UserData + ScriptData>(&self) -> ScriptResult<T> {
         unsafe {
             let ptr = (self.as_vtable().asIScriptContext_GetUserData)(self.context, T::TypeId);
             if ptr.is_null() {
-                Err(Error::NullPointer)
+                Err(ScriptError::NullPointer)
             } else {
-                Ok(Ptr::<T>::from_raw(ptr))
+                Ok(ScriptData::from_script_ptr(ptr))
             }
         }
     }
 
     // Serialization
-    pub fn start_deserialization(&self) -> Result<()> {
+    pub fn start_deserialization(&self) -> ScriptResult<()> {
         unsafe {
-            Error::from_code((self.as_vtable().asIScriptContext_StartDeserialization)(
+            ScriptError::from_code((self.as_vtable().asIScriptContext_StartDeserialization)(
                 self.context,
             ))
         }
     }
 
-    pub fn finish_deserialization(&self) -> Result<()> {
+    pub fn finish_deserialization(&self) -> ScriptResult<()> {
         unsafe {
-            Error::from_code((self.as_vtable().asIScriptContext_FinishDeserialization)(
+            ScriptError::from_code((self.as_vtable().asIScriptContext_FinishDeserialization)(
                 self.context,
             ))
         }
     }
 
-    pub fn push_function<T>(&self, func: &Function, object: Option<&mut T>) -> Result<()> {
+    pub fn push_function<T: ScriptData>(&self, func: &Function, object: Option<&mut T>) -> ScriptResult<()> {
         unsafe {
             let obj_ptr = match object {
-                Some(obj) => obj as *mut _ as *mut c_void,
+                Some(obj) => obj.to_script_ptr(),
                 None => ptr::null_mut(),
             };
-            Error::from_code((self.as_vtable().asIScriptContext_PushFunction)(
+            ScriptError::from_code((self.as_vtable().asIScriptContext_PushFunction)(
                 self.context,
                 func.as_raw(),
                 obj_ptr,
@@ -588,7 +604,7 @@ impl Context {
     }
 
     // Advanced debugging - state registers
-    pub fn get_state_registers(&self, stack_level: u32) -> Result<StateRegisters> {
+    pub fn get_state_registers(&self, stack_level: u32) -> ScriptResult<StateRegisters> {
         let mut calling_system_function: *mut asIScriptFunction = ptr::null_mut();
         let mut initial_function: *mut asIScriptFunction = ptr::null_mut();
         let mut orig_stack_pointer: asDWORD = 0;
@@ -598,7 +614,7 @@ impl Context {
         let mut object_type_register: *mut asITypeInfo = ptr::null_mut();
 
         unsafe {
-            Error::from_code((self.as_vtable().asIScriptContext_GetStateRegisters)(
+            ScriptError::from_code((self.as_vtable().asIScriptContext_GetStateRegisters)(
                 self.context,
                 stack_level,
                 &mut calling_system_function,
@@ -638,7 +654,7 @@ impl Context {
         }
     }
 
-    pub fn get_call_state_registers(&self, stack_level: u32) -> Result<CallStateRegisters> {
+    pub fn get_call_state_registers(&self, stack_level: u32) -> ScriptResult<CallStateRegisters> {
         let mut stack_frame_pointer: asDWORD = 0;
         let mut current_function: *mut asIScriptFunction = ptr::null_mut();
         let mut program_pointer: asDWORD = 0;
@@ -646,7 +662,7 @@ impl Context {
         let mut stack_index: asDWORD = 0;
 
         unsafe {
-            Error::from_code((self.as_vtable().asIScriptContext_GetCallStateRegisters)(
+            ScriptError::from_code((self.as_vtable().asIScriptContext_GetCallStateRegisters)(
                 self.context,
                 stack_level,
                 &mut stack_frame_pointer,
@@ -670,7 +686,7 @@ impl Context {
         }
     }
 
-    pub fn set_state_registers<T>(
+    pub fn set_state_registers(
         &self,
         stack_level: u32,
         calling_system_function: Option<&Function>,
@@ -678,11 +694,11 @@ impl Context {
         orig_stack_pointer: asDWORD,
         arguments_size: asDWORD,
         value_register: asQWORD,
-        object_register: Option<&mut T>,
+        object_register: Option<Box<dyn ScriptData>>,
         object_type_register: Option<&TypeInfo>,
-    ) -> Result<()> {
+    ) -> ScriptResult<()> {
         unsafe {
-            Error::from_code((self.as_vtable().asIScriptContext_SetStateRegisters)(
+            ScriptError::from_code((self.as_vtable().asIScriptContext_SetStateRegisters)(
                 self.context,
                 stack_level,
                 calling_system_function.map_or_else(|| ptr::null_mut(), |f| f.as_raw()),
@@ -690,7 +706,7 @@ impl Context {
                 orig_stack_pointer,
                 arguments_size,
                 value_register,
-                object_register.map_or(ptr::null_mut(), |p| p as *mut _ as *mut c_void),
+                object_register.map_or(ptr::null_mut(), |mut p| p.to_script_ptr()),
                 object_type_register.map_or(ptr::null_mut(), |t| t.as_ptr()),
             ))
         }
@@ -704,9 +720,9 @@ impl Context {
         program_pointer: asDWORD,
         stack_pointer: asDWORD,
         stack_index: asDWORD,
-    ) -> Result<()> {
+    ) -> ScriptResult<()> {
         unsafe {
-            Error::from_code((self.as_vtable().asIScriptContext_SetCallStateRegisters)(
+            ScriptError::from_code((self.as_vtable().asIScriptContext_SetCallStateRegisters)(
                 self.context,
                 stack_level,
                 stack_frame_pointer,
@@ -719,24 +735,28 @@ impl Context {
     }
 
     // Stack argument inspection
-    pub fn get_args_on_stack_count(&self, stack_level: u32) -> Result<i32> {
+    pub fn get_args_on_stack_count(&self, stack_level: u32) -> ScriptResult<i32> {
         unsafe {
             let count =
                 (self.as_vtable().asIScriptContext_GetArgsOnStackCount)(self.context, stack_level);
             if count < 0 {
-                Error::from_code(count)?;
+                ScriptError::from_code(count)?;
             }
             Ok(count)
         }
     }
 
-    pub fn get_arg_on_stack<T>(&self, stack_level: u32, arg: u32) -> Result<StackArgument<T>> {
+    pub fn get_arg_on_stack<T: ScriptData>(
+        &self,
+        stack_level: u32,
+        arg: u32,
+    ) -> ScriptResult<StackArgument<T>> {
         let mut type_id: i32 = 0;
         let mut flags: asUINT = 0;
         let mut address: *mut c_void = ptr::null_mut();
 
         unsafe {
-            Error::from_code((self.as_vtable().asIScriptContext_GetArgOnStack)(
+            ScriptError::from_code((self.as_vtable().asIScriptContext_GetArgOnStack)(
                 self.context,
                 stack_level,
                 arg,
@@ -751,7 +771,7 @@ impl Context {
                 address: if address.is_null() {
                     None
                 } else {
-                    Some(Ptr::<T>::from_raw(address))
+                    Some(ScriptData::from_script_ptr(address))
                 },
             })
         }
@@ -808,5 +828,5 @@ pub struct CallStateRegisters {
 pub struct StackArgument<T> {
     pub type_id: i32,
     pub flags: asUINT,
-    pub address: Option<Ptr<T>>,
+    pub address: Option<T>,
 }

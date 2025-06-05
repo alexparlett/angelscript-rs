@@ -1,16 +1,13 @@
-use crate::engine::Engine;
-use crate::enums::*;
-use crate::error::{Error, Result};
-use crate::function::Function;
-use crate::module::Module;
-use crate::types::*;
-use crate::user_data::UserData;
-use angelscript_bindings::{
-    asDWORD, asEBehaviours, asEBehaviours_asBEHAVE_CONSTRUCT, asITypeInfo,
-    asITypeInfo__bindgen_vtable, asPWORD, asUINT,
-};
-use bitflags::Flags;
+use crate::core::engine::Engine;
+use crate::core::enums::*;
+use crate::core::error::{ScriptError, ScriptResult};
+use crate::core::function::Function;
+use crate::core::module::Module;
+use crate::types::user_data::UserData;
+use angelscript_sys::{asDWORD, asEBehaviours, asEBehaviours_asBEHAVE_CONSTRUCT, asIScriptEngine, asITypeInfo, asITypeInfo__bindgen_vtable, asPWORD, asUINT};
 use std::ffi::{c_void, CStr};
+use std::ptr::NonNull;
+use crate::internal::pointers::Ptr;
 
 /// Wrapper for AngelScript's type information interface
 ///
@@ -47,8 +44,13 @@ impl TypeInfo {
     // ========== VTABLE ORDER (matches asITypeInfo__bindgen_vtable) ==========
 
     // 1. GetEngine
-    pub fn get_engine(&self) -> Engine {
-        unsafe { Engine::from_raw((self.as_vtable().asITypeInfo_GetEngine)(self.inner)) }
+    pub fn get_engine(&self) -> ScriptResult<Engine> {
+        unsafe {
+            let result: *mut asIScriptEngine =
+                (self.as_vtable().asITypeInfo_GetEngine)(self.inner);
+            let ptr = NonNull::new(result).ok_or(ScriptError::NullPointer)?;
+            Ok(Engine::from_raw(NonNull::from(ptr)))
+        }
     }
 
     // 2. GetConfigGroup
@@ -81,13 +83,13 @@ impl TypeInfo {
     }
 
     // 5. AddRef
-    pub fn add_ref(&self) -> Result<()> {
-        unsafe { Error::from_code((self.as_vtable().asITypeInfo_AddRef)(self.inner)) }
+    pub fn add_ref(&self) -> ScriptResult<()> {
+        unsafe { ScriptError::from_code((self.as_vtable().asITypeInfo_AddRef)(self.inner)) }
     }
 
     // 6. Release
-    pub fn release(&self) -> Result<()> {
-        unsafe { Error::from_code((self.as_vtable().asITypeInfo_Release)(self.inner)) }
+    pub fn release(&self) -> ScriptResult<()> {
+        unsafe { ScriptError::from_code((self.as_vtable().asITypeInfo_Release)(self.inner)) }
     }
 
     // 7. GetName
@@ -291,7 +293,7 @@ impl TypeInfo {
     }
 
     // 28. GetProperty
-    pub fn get_property(&self, index: asUINT) -> Result<TypePropertyInfo> {
+    pub fn get_property(&self, index: asUINT) -> ScriptResult<TypePropertyInfo> {
         let mut name: *const std::os::raw::c_char = std::ptr::null();
         let mut type_id: i32 = 0;
         let mut is_private: bool = false;
@@ -303,7 +305,7 @@ impl TypeInfo {
         let mut is_composite_indirect: bool = false;
 
         unsafe {
-            Error::from_code((self.as_vtable().asITypeInfo_GetProperty)(
+            ScriptError::from_code((self.as_vtable().asITypeInfo_GetProperty)(
                 self.inner,
                 index,
                 &mut name,

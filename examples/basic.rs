@@ -1,5 +1,5 @@
-use std::ffi::c_void;
-use angelscript::{AngelScript, CallingConvention, Engine, GetModuleFlags, ScriptGeneric};
+use angelscript::core::engine::Engine;
+use angelscript::prelude::{GetModuleFlags, ScriptGeneric};
 
 fn print(g: &ScriptGeneric) {
     let arg_ptr = g.get_arg_object::<String>(0).unwrap();
@@ -8,7 +8,7 @@ fn print(g: &ScriptGeneric) {
 
 fn main() {
     // Create the script engine
-    let mut engine = AngelScript::create_script_engine().expect("Failed to create script engine");
+    let mut engine = Engine::create().expect("Failed to create script engine");
 
     // Set up message callback
     engine
@@ -22,11 +22,7 @@ fn main() {
         .expect("Failed to register std");
 
     engine
-        .register_global_function::<c_void>(
-            "void print(const string &in)",
-            print,
-            None,
-        )
+        .register_global_function("void print(const string &in)", print, None)
         .unwrap();
 
     // Create a module

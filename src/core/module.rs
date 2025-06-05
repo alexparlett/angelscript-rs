@@ -1,15 +1,15 @@
-use crate::context::Context;
-use crate::engine::Engine;
-use crate::error::{Error, Result};
-use crate::ffi::{asIBinaryStream, asIScriptModule};
-use crate::function::Function;
-use crate::typeinfo::TypeInfo;
-use crate::types::*;
-use crate::user_data::UserData;
-use angelscript_bindings::{asDWORD, asIScriptModule__bindgen_vtable, asUINT};
+use crate::core::context::Context;
+use crate::core::engine::Engine;
+use crate::core::error::{ScriptError, ScriptResult};
+use crate::core::function::Function;
+use crate::core::typeinfo::TypeInfo;
+use crate::internal::pointers::Ptr;
+use crate::types::user_data::UserData;
+use angelscript_sys::{asDWORD, asIBinaryStream, asIScriptEngine, asIScriptFunction, asIScriptModule, asIScriptModule__bindgen_vtable, asUINT};
 use std::ffi::{CStr, CString};
 use std::os::raw::{c_char, c_void};
 use std::ptr;
+use std::ptr::NonNull;
 
 #[derive(Debug, Clone)]
 pub struct Module {
@@ -24,12 +24,17 @@ impl Module {
     // ========== VTABLE ORDER (matches asIScriptModule__bindgen_vtable) ==========
 
     // 1. GetEngine
-    pub fn get_engine(&self) -> Engine {
-        unsafe { Engine::from_raw((self.as_vtable().asIScriptModule_GetEngine)(self.inner)) }
+    pub fn get_engine(&self) -> ScriptResult<Engine> {
+        unsafe {
+            let result: *mut asIScriptEngine =
+                (self.as_vtable().asIScriptModule_GetEngine)(self.inner);
+            let ptr = NonNull::new(result).ok_or(ScriptError::NullPointer)?;
+            Ok(Engine::from_raw(NonNull::from(ptr)))
+        }
     }
 
     // 2. SetName
-    pub fn set_name(&self, name: &str) -> Result<()> {
+    pub fn set_name(&self, name: &str) -> ScriptResult<()> {
         let c_name = CString::new(name)?;
         unsafe {
             (self.as_vtable().asIScriptModule_SetName)(self.inner, c_name.as_ptr());
@@ -57,12 +62,12 @@ impl Module {
     }
 
     // 5. AddScriptSection
-    pub fn add_script_section(&self, name: &str, code: &str, line_offset: i32) -> Result<()> {
+    pub fn add_script_section(&self, name: &str, code: &str, line_offset: i32) -> ScriptResult<()> {
         let c_name = CString::new(name)?;
         let c_code = CString::new(code)?;
 
         unsafe {
-            Error::from_code((self.as_vtable().asIScriptModule_AddScriptSection)(
+            ScriptError::from_code((self.as_vtable().asIScriptModule_AddScriptSection)(
                 self.inner,
                 c_name.as_ptr(),
                 c_code.as_ptr(),
@@ -73,8 +78,8 @@ impl Module {
     }
 
     // 6. Build
-    pub fn build(&self) -> Result<()> {
-        unsafe { Error::from_code((self.as_vtable().asIScriptModule_Build)(self.inner)) }
+    pub fn build(&self) -> ScriptResult<()> {
+        unsafe { ScriptError::from_code((self.as_vtable().asIScriptModule_Build)(self.inner)) }
     }
 
     // 7. CompileFunction
@@ -84,13 +89,13 @@ impl Module {
         code: &str,
         line_offset: i32,
         compile_flags: asDWORD,
-    ) -> Result<Function> {
+    ) -> ScriptResult<Function> {
         let c_section_name = CString::new(section_name)?;
         let c_code = CString::new(code)?;
-        let mut out_func: *mut crate::ffi::asIScriptFunction = ptr::null_mut();
+        let mut out_func: *mut asIScriptFunction = ptr::null_mut();
 
         unsafe {
-            Error::from_code((self.as_vtable().asIScriptModule_CompileFunction)(
+            ScriptError::from_code((self.as_vtable().asIScriptModule_CompileFunction)(
                 self.inner,
                 c_section_name.as_ptr(),
                 c_code.as_ptr(),
@@ -100,7 +105,7 @@ impl Module {
             ))?;
 
             if out_func.is_null() {
-                Err(Error::NullPointer)
+                Err(ScriptError::NullPointer)
             } else {
                 Ok(Function::from_raw(out_func))
             }
@@ -113,12 +118,12 @@ impl Module {
         section_name: &str,
         code: &str,
         line_offset: i32,
-    ) -> Result<()> {
+    ) -> ScriptResult<()> {
         let c_section_name = CString::new(section_name)?;
         let c_code = CString::new(code)?;
 
         unsafe {
-            Error::from_code((self.as_vtable().asIScriptModule_CompileGlobalVar)(
+            ScriptError::from_code((self.as_vtable().asIScriptModule_CompileGlobalVar)(
                 self.inner,
                 c_section_name.as_ptr(),
                 c_code.as_ptr(),
@@ -133,10 +138,10 @@ impl Module {
     }
 
     // 10. SetDefaultNamespace
-    pub fn set_default_namespace(&self, namespace: &str) -> Result<()> {
+    pub fn set_default_namespace(&self, namespace: &str) -> ScriptResult<()> {
         let c_namespace = CString::new(namespace)?;
         unsafe {
-            Error::from_code((self.as_vtable().asIScriptModule_SetDefaultNamespace)(
+            ScriptError::from_code((self.as_vtable().asIScriptModule_SetDefaultNamespace)(
                 self.inner,
                 c_namespace.as_ptr(),
             ))
@@ -209,9 +214,9 @@ impl Module {
     }
 
     // 16. RemoveFunction
-    pub fn remove_function(&self, func: &Function) -> Result<()> {
+    pub fn remove_function(&self, func: &Function) -> ScriptResult<()> {
         unsafe {
-            Error::from_code((self.as_vtable().asIScriptModule_RemoveFunction)(
+            ScriptError::from_code((self.as_vtable().asIScriptModule_RemoveFunction)(
                 self.inner,
                 func.as_raw(),
             ))
@@ -219,13 +224,13 @@ impl Module {
     }
 
     // 17. ResetGlobalVars
-    pub fn reset_global_vars(&self, ctx: Option<&Context>) -> Result<()> {
+    pub fn reset_global_vars(&self, ctx: Option<&Context>) -> ScriptResult<()> {
         unsafe {
             let ctx_ptr = match ctx {
                 Some(context) => context.as_ptr(),
                 None => ptr::null_mut(),
             };
-            Error::from_code((self.as_vtable().asIScriptModule_ResetGlobalVars)(
+            ScriptError::from_code((self.as_vtable().asIScriptModule_ResetGlobalVars)(
                 self.inner, ctx_ptr,
             ))
         }
@@ -289,14 +294,14 @@ impl Module {
     }
 
     // 22. GetGlobalVar
-    pub fn get_global_var(&self, index: asUINT) -> Result<ModuleGlobalVarInfo> {
+    pub fn get_global_var(&self, index: asUINT) -> ScriptResult<ModuleGlobalVarInfo> {
         let mut name: *const c_char = ptr::null();
         let mut namespace: *const c_char = ptr::null();
         let mut type_id: i32 = 0;
         let mut is_const: bool = false;
 
         unsafe {
-            Error::from_code((self.as_vtable().asIScriptModule_GetGlobalVar)(
+            ScriptError::from_code((self.as_vtable().asIScriptModule_GetGlobalVar)(
                 self.inner,
                 index,
                 &mut name,
@@ -338,9 +343,9 @@ impl Module {
     }
 
     // 24. RemoveGlobalVar
-    pub fn remove_global_var(&self, index: asUINT) -> Result<()> {
+    pub fn remove_global_var(&self, index: asUINT) -> ScriptResult<()> {
         unsafe {
-            Error::from_code((self.as_vtable().asIScriptModule_RemoveGlobalVar)(
+            ScriptError::from_code((self.as_vtable().asIScriptModule_RemoveGlobalVar)(
                 self.inner, index,
             ))
         }
@@ -503,9 +508,9 @@ impl Module {
     }
 
     // 38. BindImportedFunction
-    pub fn bind_imported_function(&self, import_index: asUINT, func: &Function) -> Result<()> {
+    pub fn bind_imported_function(&self, import_index: asUINT, func: &Function) -> ScriptResult<()> {
         unsafe {
-            Error::from_code((self.as_vtable().asIScriptModule_BindImportedFunction)(
+            ScriptError::from_code((self.as_vtable().asIScriptModule_BindImportedFunction)(
                 self.inner,
                 import_index,
                 func.as_raw(),
@@ -514,9 +519,9 @@ impl Module {
     }
 
     // 39. UnbindImportedFunction
-    pub fn unbind_imported_function(&self, import_index: asUINT) -> Result<()> {
+    pub fn unbind_imported_function(&self, import_index: asUINT) -> ScriptResult<()> {
         unsafe {
-            Error::from_code((self.as_vtable().asIScriptModule_UnbindImportedFunction)(
+            ScriptError::from_code((self.as_vtable().asIScriptModule_UnbindImportedFunction)(
                 self.inner,
                 import_index,
             ))
@@ -524,18 +529,18 @@ impl Module {
     }
 
     // 40. BindAllImportedFunctions
-    pub fn bind_all_imported_functions(&self) -> Result<()> {
+    pub fn bind_all_imported_functions(&self) -> ScriptResult<()> {
         unsafe {
-            Error::from_code((self.as_vtable().asIScriptModule_BindAllImportedFunctions)(
+            ScriptError::from_code((self.as_vtable().asIScriptModule_BindAllImportedFunctions)(
                 self.inner,
             ))
         }
     }
 
     // 41. UnbindAllImportedFunctions
-    pub fn unbind_all_imported_functions(&self) -> Result<()> {
+    pub fn unbind_all_imported_functions(&self) -> ScriptResult<()> {
         unsafe {
-            Error::from_code((self
+            ScriptError::from_code((self
                 .as_vtable()
                 .asIScriptModule_UnbindAllImportedFunctions)(
                 self.inner
@@ -544,9 +549,9 @@ impl Module {
     }
 
     // 42. SaveByteCode
-    pub fn save_byte_code(&self, out: &mut BinaryStream, strip_debug_info: bool) -> Result<()> {
+    pub fn save_byte_code(&self, out: &mut BinaryStream, strip_debug_info: bool) -> ScriptResult<()> {
         unsafe {
-            Error::from_code((self.as_vtable().asIScriptModule_SaveByteCode)(
+            ScriptError::from_code((self.as_vtable().asIScriptModule_SaveByteCode)(
                 self.inner,
                 out.as_ptr(),
                 strip_debug_info,
@@ -555,11 +560,11 @@ impl Module {
     }
 
     // 43. LoadByteCode
-    pub fn load_byte_code(&self, input: &mut BinaryStream) -> Result<bool> {
+    pub fn load_byte_code(&self, input: &mut BinaryStream) -> ScriptResult<bool> {
         let mut was_debug_info_stripped: bool = false;
 
         unsafe {
-            Error::from_code((self.as_vtable().asIScriptModule_LoadByteCode)(
+            ScriptError::from_code((self.as_vtable().asIScriptModule_LoadByteCode)(
                 self.inner,
                 input.as_ptr(),
                 &mut was_debug_info_stripped,
@@ -636,17 +641,17 @@ impl BinaryStream {
 
 impl Module {
     /// Adds a script section with default line offset of 0
-    pub fn add_script_section_simple(&self, name: &str, code: &str) -> Result<()> {
+    pub fn add_script_section_simple(&self, name: &str, code: &str) -> ScriptResult<()> {
         self.add_script_section(name, code, 0)
     }
 
     /// Compiles a function with default flags
-    pub fn compile_function_simple(&self, section_name: &str, code: &str) -> Result<Function> {
+    pub fn compile_function_simple(&self, section_name: &str, code: &str) -> ScriptResult<Function> {
         self.compile_function(section_name, code, 0, 0)
     }
 
     /// Compiles a global variable with default line offset
-    pub fn compile_global_var_simple(&self, section_name: &str, code: &str) -> Result<()> {
+    pub fn compile_global_var_simple(&self, section_name: &str, code: &str) -> ScriptResult<()> {
         self.compile_global_var(section_name, code, 0)
     }
 

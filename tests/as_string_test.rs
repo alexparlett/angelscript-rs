@@ -1,6 +1,7 @@
 #[cfg(test)]
 mod tests {
-    use angelscript::{AngelScript, ContextState, GetModuleFlags};
+    use angelscript::core::engine::Engine;
+    use angelscript::prelude::{ContextState, GetModuleFlags};
 
     #[test]
     fn test_op_assign() {
@@ -13,7 +14,7 @@ mod tests {
             }
         "#;
 
-        let mut engine = AngelScript::create_script_engine().expect("Failed to create engine");
+        let mut engine = Engine::create().expect("Failed to create engine");
         engine
             .with_default_modules()
             .expect("Failed to register std");
@@ -40,7 +41,7 @@ mod tests {
         ctx.execute().expect("Failed to execute script");
 
         let result = ctx.get_return_object::<String>();
-        assert_eq!(result.unwrap().read(), "World");
+        assert_eq!(result.unwrap(), "World");
     }
 
     #[test]
@@ -53,7 +54,7 @@ mod tests {
             }
         "#;
 
-        let mut engine = AngelScript::create_script_engine().expect("Failed to create engine");
+        let mut engine = Engine::create().expect("Failed to create engine");
         engine
             .with_default_modules()
             .expect("Failed to register std");
@@ -80,7 +81,7 @@ mod tests {
         ctx.execute().expect("Failed to execute script");
 
         let result = ctx.get_return_object::<String>();
-        assert_eq!(result.unwrap().read(), "Hello World");
+        assert_eq!(result.unwrap(), "Hello World");
     }
 
     #[test]
@@ -99,7 +100,7 @@ mod tests {
             }
         "#;
 
-        let mut engine = AngelScript::create_script_engine().expect("Failed to create engine");
+        let mut engine = Engine::create().expect("Failed to create engine");
         engine
             .with_default_modules()
             .expect("Failed to register std");
@@ -126,7 +127,7 @@ mod tests {
         ctx.execute().expect("Failed to execute script");
 
         let result = ctx.get_address_of_return_value::<bool>();
-        assert_eq!(result.unwrap().read(), true);
+        assert_eq!(result.unwrap(), true);
 
         let func = module
             .get_function_by_decl("bool not_equal()")
@@ -136,7 +137,7 @@ mod tests {
         ctx.execute().expect("Failed to execute script");
 
         let result = ctx.get_address_of_return_value::<bool>();
-        assert_eq!(result.unwrap().read(), false);
+        assert_eq!(result.unwrap(), false);
     }
 
     #[test]
@@ -154,7 +155,7 @@ mod tests {
             }
         "#;
 
-        let mut engine = AngelScript::create_script_engine().expect("Failed to create engine");
+        let mut engine = Engine::create().expect("Failed to create engine");
         engine
             .with_default_modules()
             .expect("Failed to register std");
@@ -181,7 +182,7 @@ mod tests {
         ctx.execute().expect("Failed to execute script");
 
         let result = ctx.get_address_of_return_value::<bool>();
-        assert_eq!(result.unwrap().read(), true);
+        assert_eq!(result.unwrap(), true);
 
         let func = module
             .get_function_by_decl("bool gt()")
@@ -190,9 +191,8 @@ mod tests {
         ctx.prepare(&func).expect("Failed to prepare context");
         ctx.execute().expect("Failed to execute script");
 
-
         let result = ctx.get_address_of_return_value::<bool>();
-        assert_eq!(result.unwrap().read(), true);
+        assert_eq!(result.unwrap(), true);
     }
 
     #[test]
@@ -204,7 +204,7 @@ mod tests {
             }
         "#;
 
-        let mut engine = AngelScript::create_script_engine().expect("Failed to create engine");
+        let mut engine = Engine::create().expect("Failed to create engine");
         engine
             .with_default_modules()
             .expect("Failed to register std");
@@ -247,7 +247,7 @@ mod tests {
             }
         "#;
 
-        let mut engine = AngelScript::create_script_engine().expect("Failed to create engine");
+        let mut engine = Engine::create().expect("Failed to create engine");
         engine
             .with_default_modules()
             .expect("Failed to register std");
@@ -274,7 +274,7 @@ mod tests {
         ctx.execute().expect("Failed to execute script");
 
         let result = ctx.get_address_of_return_value::<bool>();
-        assert_eq!(result.unwrap().read(), false);
+        assert_eq!(result.unwrap(), false);
 
         let func = module
             .get_function_by_decl("bool empty()")
@@ -284,7 +284,7 @@ mod tests {
         ctx.execute().expect("Failed to execute script");
 
         let result = ctx.get_address_of_return_value::<bool>();
-        assert_eq!(result.unwrap().read(), true);
+        assert_eq!(result.unwrap(), true);
     }
 
     #[test]
@@ -300,7 +300,7 @@ mod tests {
             }
         "#;
 
-        let mut engine = AngelScript::create_script_engine().expect("Failed to create engine");
+        let mut engine = Engine::create().expect("Failed to create engine");
         engine
             .with_default_modules()
             .expect("Failed to register std");
@@ -335,7 +335,7 @@ mod tests {
         let ctx = engine.create_context().expect("Failed to create context");
         ctx.prepare(&func).expect("Failed to prepare context");
         let state = ctx.execute().expect("Failed to execute script");
-        
+
         assert_eq!(state, ContextState::Exception);
     }
 

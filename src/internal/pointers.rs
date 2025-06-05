@@ -1,5 +1,3 @@
-use crate::{Function, MessageType, TypeInfo, TypeModifiers};
-use angelscript_bindings::{asDWORD, asJITFunction, asQWORD, asUINT};
 use std::ffi::c_void;
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug)]

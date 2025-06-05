@@ -2,49 +2,25 @@
 #![allow(non_camel_case_types)]
 #![allow(non_snake_case)]
 
-pub mod ffi {
-    pub use angelscript_bindings::*;
-}
-
 #[cfg(feature = "macros")]
 pub mod macros {
     pub use angelscript_macros::*;
 }
 
-// Public modules - aligned with wrapper files
-mod callback_manager;
-mod context;
-mod engine;
-mod enums;
-mod error;
-mod function;
-mod jit_compiler;
-mod lockable_shared_bool;
-mod module;
-mod script_object;
-mod string;
-mod stringfactory;
-mod typeinfo;
-mod types;
-mod user_data;
-mod utils;
-mod angelscript;
-mod thread_manager;
-mod script_value;
-mod script_generic;
+pub mod core;
+mod internal;
+pub mod plugins;
+pub mod types;
 
 // Re-export main types
-pub use context::*;
-pub use engine::*;
-pub use enums::*;
-pub use error::{Error, Result};
-pub use function::*;
-pub use lockable_shared_bool::*;
-pub use module::*;
-pub use script_generic::*;
-pub use script_value::*;
-pub use script_object::*;
-pub use typeinfo::*;
-pub use types::*;
-pub use angelscript::*;
-pub use user_data::*;
+pub mod prelude {
+    pub use crate::core::enums::*;
+    pub use crate::core::error::{ScriptError, ScriptResult};
+    pub use crate::core::function::*;
+    pub use crate::core::lockable_shared_bool::*;
+    pub use crate::core::script_generic::*;
+    pub use crate::core::script_object::*;
+    pub use crate::core::typeinfo::*;
+    pub use crate::types::script_value::*;
+    pub use crate::types::user_data::*;
+}

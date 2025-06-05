@@ -1,6 +1,6 @@
-use angelscript_bindings::{asIStringFactory, asIStringFactory__bindgen_vtable, asUINT};
+use angelscript_sys::{asIStringFactory, asIStringFactory__bindgen_vtable, asUINT};
 use std::collections::HashMap;
-use std::ffi::{c_char, c_void, CString};
+use std::ffi::{c_char, c_void};
 use std::sync::{Arc, Mutex, OnceLock};
 
 pub struct InnerCache {

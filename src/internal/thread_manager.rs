@@ -5,12 +5,11 @@
 //! - Default (when `rust-threading` is not enabled): Uses AngelScript's C++ manager
 //! - `rust-threading`: Uses a pure Rust implementation
 
-use crate::error::{Error, Result};
-use crate::ReturnCode;
-use angelscript_bindings::{
-    asIThreadManager, asIThreadManager__bindgen_vtable,
-    asPrepareMultithread, asUnprepareMultithread, asGetThreadManager, asThreadCleanup,
-    asAcquireExclusiveLock, asReleaseExclusiveLock, asAcquireSharedLock, asReleaseSharedLock,
+use crate::core::error::{ScriptError, ScriptResult};
+use angelscript_sys::{
+    asAcquireExclusiveLock, asAcquireSharedLock, asGetThreadManager, asIThreadManager,
+    asPrepareMultithread, asReleaseExclusiveLock, asReleaseSharedLock, asThreadCleanup,
+    asUnprepareMultithread,
 };
 use std::ptr;
 
@@ -18,6 +17,7 @@ use std::ptr;
 
 #[cfg(not(feature = "rust-threading"))]
 mod cpp_impl {
+    use crate::prelude::ReturnCode;
     use super::*;
 
     /// Lightweight wrapper around AngelScript's C++ thread manager
@@ -28,14 +28,14 @@ mod cpp_impl {
 
     impl ThreadManager {
         /// Prepares AngelScript for multithreading and returns the manager
-        pub fn prepare() -> Result<Self> {
+        pub fn prepare() -> ScriptResult<Self> {
             unsafe {
                 let result = asPrepareMultithread(ptr::null_mut());
-                Error::from_code(result)?;
+                ScriptError::from_code(result)?;
 
                 let mgr_ptr = asGetThreadManager();
                 if mgr_ptr.is_null() {
-                    Err(Error::AngelScript(ReturnCode::Error))
+                    Err(ScriptError::AngelScriptError(ReturnCode::Error))
                 } else {
                     Ok(Self { inner: mgr_ptr })
                 }
@@ -75,10 +75,8 @@ mod cpp_impl {
         }
 
         /// Cleans up thread-local data
-        pub fn cleanup_local_data() -> Result<()> {
-            unsafe {
-                Error::from_code(asThreadCleanup())
-            }
+        pub fn cleanup_local_data() -> ScriptResult<()> {
+            unsafe { ScriptError::from_code(asThreadCleanup()) }
         }
 
         /// Acquires exclusive lock
@@ -126,7 +124,7 @@ mod rust_impl {
     /// Thread-local data structure that mirrors asCThreadLocalData
     #[derive(Debug, Clone)]
     pub struct ThreadLocalData {
-        pub active_contexts: Vec<*mut crate::ffi::asIScriptContext>,
+        pub active_contexts: Vec<*mut asIScriptContext>,
         pub string_buffer: String,
     }
 
@@ -138,13 +136,13 @@ mod rust_impl {
             }
         }
 
-        pub fn add_active_context(&mut self, context: *mut crate::ffi::asIScriptContext) {
+        pub fn add_active_context(&mut self, context: *mut asIScriptContext) {
             if !context.is_null() {
                 self.active_contexts.push(context);
             }
         }
 
-        pub fn remove_active_context(&mut self, context: *mut crate::ffi::asIScriptContext) {
+        pub fn remove_active_context(&mut self, context: *mut asIScriptContext) {
             self.active_contexts.retain(|&ctx| ctx != context);
         }
 
@@ -256,10 +254,10 @@ mod rust_impl {
             }
         }
 
-        fn get_local_data(&self) -> Result<ThreadLocalData> {
+        fn get_local_data(&self) ->ScriptResult<ThreadLocalData> {
             let thread_id = thread::current().id();
             let mut storage = self.storage.lock().map_err(|_| {
-                Error::External(Box::new(std::io::Error::new(
+                ScriptError::External(Box::new(std::io::Error::new(
                     std::io::ErrorKind::Other,
                     "Thread storage lock poisoned",
                 )))
@@ -271,27 +269,29 @@ mod rust_impl {
                 .clone())
         }
 
-        fn update_local_data<F>(&self, f: F) -> Result<()>
+        fn update_local_data<F>(&self, f: F) ->ScriptResult<()>
         where
             F: FnOnce(&mut ThreadLocalData),
         {
             let thread_id = thread::current().id();
             let mut storage = self.storage.lock().map_err(|_| {
-                Error::External(Box::new(std::io::Error::new(
+                ScriptError::External(Box::new(std::io::Error::new(
                     std::io::ErrorKind::Other,
                     "Thread storage lock poisoned",
                 )))
             })?;
 
-            let data = storage.entry(thread_id).or_insert_with(ThreadLocalData::new);
+            let data = storage
+                .entry(thread_id)
+                .or_insert_with(ThreadLocalData::new);
             f(data);
             Ok(())
         }
 
-        fn cleanup_local_data(&self) -> Result<()> {
+        fn cleanup_local_data(&self) ->ScriptResult<()> {
             let thread_id = thread::current().id();
             let mut storage = self.storage.lock().map_err(|_| {
-                Error::External(Box::new(std::io::Error::new(
+                ScriptError::External(Box::new(std::io::Error::new(
                     std::io::ErrorKind::Other,
                     "Thread storage lock poisoned",
                 )))
@@ -299,7 +299,7 @@ mod rust_impl {
 
             if let Some(data) = storage.get(&thread_id) {
                 if data.has_active_contexts() {
-                    return Err(Error::AngelScript(ReturnCode::ContextActive));
+                    return Err(ScriptError::AngelScriptError(ReturnCode::ContextActive));
                 }
             }
 
@@ -368,7 +368,7 @@ mod rust_impl {
 
     impl ThreadManager {
         /// Prepares AngelScript for multithreading with Rust implementation
-        pub fn prepare() -> Result<Self> {
+        pub fn prepare() ->ScriptResult<Self> {
             let ffi_manager = RustThreadManagerFFI::new();
             let core_ptr = ffi_manager.core.as_ref() as *const RustThreadManagerCore;
             let interface_ptr = RustThreadManagerFFI::as_interface_ptr(ffi_manager);
@@ -378,7 +378,7 @@ mod rust_impl {
                 if result != 0 {
                     // Clean up on failure
                     let _recovered = RustThreadManagerFFI::from_interface_ptr(interface_ptr);
-                    return Err(Error::from_code(result));
+                    return Err(ScriptError::from_code(result));
                 }
             }
 
@@ -418,12 +418,12 @@ mod rust_impl {
         }
 
         /// Gets thread-local data for the current thread
-        pub fn get_local_data(&self) -> Result<ThreadLocalData> {
+        pub fn get_local_data(&self) ->ScriptResult<ThreadLocalData> {
             self.core().thread_local_storage.get_local_data()
         }
 
         /// Updates thread-local data for the current thread
-        pub fn update_local_data<F>(&self, f: F) -> Result<()>
+        pub fn update_local_data<F>(&self, f: F) ->ScriptResult<()>
         where
             F: FnOnce(&mut ThreadLocalData),
         {
@@ -442,10 +442,15 @@ mod rust_impl {
 
         /// Gets information about this thread manager
         pub fn info(&self) -> String {
-            format!("Rust thread manager (active threads: {})",
-                    self.core().thread_local_storage.storage.lock()
-                        .map(|s| s.len())
-                        .unwrap_or(0))
+            format!(
+                "Rust thread manager (active threads: {})",
+                self.core()
+                    .thread_local_storage
+                    .storage
+                    .lock()
+                    .map(|s| s.len())
+                    .unwrap_or(0)
+            )
         }
 
         /// Gets the implementation type
@@ -461,10 +466,10 @@ mod rust_impl {
         }
 
         /// Cleans up thread-local data
-        pub fn cleanup_local_data() -> Result<()> {
+        pub fn cleanup_local_data() ->ScriptResult<()> {
             // For Rust implementation, we need to clean up both AngelScript and our data
             unsafe {
-                Error::from_code(asThreadCleanup())?;
+                ScriptError::from_code(asThreadCleanup())?;
             }
 
             // Additional Rust-specific cleanup could go here if needed
@@ -516,11 +521,12 @@ mod rust_impl {
     unsafe impl Sync for ThreadManager {}
 
     // Re-export types that are only available with rust-threading
-    pub use ThreadLocalData;
     pub use ThreadCriticalSection;
+    pub use ThreadLocalData;
+    pub use ThreadReadLockGuard;
     pub use ThreadReadWriteLock;
     pub use ThreadWriteLockGuard;
-    pub use ThreadReadLockGuard;
+    use crate::prelude::ReturnCode;
 }
 
 // ========== CONDITIONAL EXPORTS ==========

@@ -1,17 +1,15 @@
-use crate::enums::*;
-use crate::error::{Error, Result};
-use crate::ffi::asIScriptFunction;
-use crate::module::Module;
-use crate::typeinfo::TypeInfo;
-use crate::types::*;
-use crate::user_data::UserData;
-use crate::Engine;
-use angelscript_bindings::{
-    asDWORD, asIScriptFunction__bindgen_vtable, asJITFunction, asPWORD, asUINT,
-};
+use crate::core::engine::Engine;
+use crate::core::enums::*;
+use crate::core::error::{ScriptError, ScriptResult};
+use crate::core::module::Module;
+use crate::core::typeinfo::TypeInfo;
+use crate::internal::pointers::Ptr;
+use crate::types::user_data::UserData;
+use angelscript_sys::{asDWORD, asIScriptEngine, asIScriptFunction, asIScriptFunction__bindgen_vtable, asJITFunction, asPWORD, asUINT};
 use std::ffi::CStr;
 use std::os::raw::{c_char, c_void};
 use std::ptr;
+use std::ptr::NonNull;
 
 #[derive(Debug, Clone)]
 pub struct Function {
@@ -34,18 +32,22 @@ impl Function {
     // ========== VTABLE ORDER (matches asIScriptFunction__bindgen_vtable) ==========
 
     // 1. GetEngine
-    pub fn get_engine(&self) -> Engine {
-        unsafe { Engine::from_raw((self.as_vtable().asIScriptFunction_GetEngine)(self.inner)) }
+    pub fn get_engine(&self) -> ScriptResult<Engine> {
+        unsafe {
+            let result: *mut asIScriptEngine =
+                (self.as_vtable().asIScriptFunction_GetEngine)(self.inner);
+            let ptr = NonNull::new(result).ok_or(ScriptError::NullPointer)?;
+            Ok(Engine::from_raw(NonNull::from(ptr)))
+        }
     }
-
     // 2. AddRef
-    pub fn add_ref(&self) -> Result<()> {
-        unsafe { Error::from_code((self.as_vtable().asIScriptFunction_AddRef)(self.inner)) }
+    pub fn add_ref(&self) -> ScriptResult<()> {
+        unsafe { ScriptError::from_code((self.as_vtable().asIScriptFunction_AddRef)(self.inner)) }
     }
 
     // 3. Release
-    pub fn release(&self) -> Result<()> {
-        unsafe { Error::from_code((self.as_vtable().asIScriptFunction_Release)(self.inner)) }
+    pub fn release(&self) -> ScriptResult<()> {
+        unsafe { ScriptError::from_code((self.as_vtable().asIScriptFunction_Release)(self.inner)) }
     }
 
     // 4. GetId
@@ -173,7 +175,7 @@ impl Function {
         include_object_name: bool,
         include_namespace: bool,
         include_param_names: bool,
-    ) -> Result<&str> {
+    ) -> ScriptResult<&str> {
         unsafe {
             let decl = (self.as_vtable().asIScriptFunction_GetDeclaration)(
                 self.inner,
@@ -182,11 +184,11 @@ impl Function {
                 include_param_names,
             );
             if decl.is_null() {
-                Err(Error::NullPointer)
+                Err(ScriptError::NullPointer)
             } else {
                 CStr::from_ptr(decl)
                     .to_str()
-                    .map_err(|e| Error::Utf8Conversion(e))
+                    .map_err(ScriptError::from)
             }
         }
     }
@@ -237,14 +239,14 @@ impl Function {
     }
 
     // 26. GetParam
-    pub fn get_param(&self, index: asUINT) -> Result<ParamInfo> {
+    pub fn get_param(&self, index: asUINT) -> ScriptResult<ParamInfo> {
         let mut type_id: i32 = 0;
         let mut flags: asDWORD = 0;
         let mut name: *const c_char = ptr::null();
         let mut default_arg: *const c_char = ptr::null();
 
         unsafe {
-            Error::from_code((self.as_vtable().asIScriptFunction_GetParam)(
+            ScriptError::from_code((self.as_vtable().asIScriptFunction_GetParam)(
                 self.inner,
                 index,
                 &mut type_id,
@@ -328,12 +330,12 @@ impl Function {
     }
 
     // 34. GetVar
-    pub fn get_var(&self, index: asUINT) -> Result<VarInfo> {
+    pub fn get_var(&self, index: asUINT) -> ScriptResult<VarInfo> {
         let mut name: *const c_char = ptr::null();
         let mut type_id: i32 = 0;
 
         unsafe {
-            Error::from_code((self.as_vtable().asIScriptFunction_GetVar)(
+            ScriptError::from_code((self.as_vtable().asIScriptFunction_GetVar)(
                 self.inner,
                 index,
                 &mut name,
@@ -352,7 +354,7 @@ impl Function {
     }
 
     // 35. GetVarDecl
-    pub fn get_var_decl(&self, index: asUINT, include_namespace: bool) -> Result<&str> {
+    pub fn get_var_decl(&self, index: asUINT, include_namespace: bool) -> ScriptResult<&str> {
         unsafe {
             let decl = (self.as_vtable().asIScriptFunction_GetVarDecl)(
                 self.inner,
@@ -360,35 +362,35 @@ impl Function {
                 include_namespace,
             );
             if decl.is_null() {
-                Err(Error::NullPointer)
+                Err(ScriptError::NullPointer)
             } else {
                 CStr::from_ptr(decl)
                     .to_str()
-                    .map_err(|e| Error::Utf8Conversion(e))
+                    .map_err(|e| ScriptError::Utf8Conversion(e))
             }
         }
     }
 
     // 36. FindNextLineWithCode
-    pub fn find_next_line_with_code(&self, line: i32) -> Result<i32> {
+    pub fn find_next_line_with_code(&self, line: i32) -> ScriptResult<i32> {
         unsafe {
             let result =
                 (self.as_vtable().asIScriptFunction_FindNextLineWithCode)(self.inner, line);
             if result < 0 {
-                Error::from_code(result)?;
+                ScriptError::from_code(result)?;
             }
             Ok(result)
         }
     }
 
     // 37. GetDeclaredAt
-    pub fn get_declared_at(&self) -> Result<DeclaredAtInfo> {
+    pub fn get_declared_at(&self) -> ScriptResult<DeclaredAtInfo> {
         let mut script_section: *const c_char = ptr::null();
         let mut row: i32 = 0;
         let mut col: i32 = 0;
 
         unsafe {
-            Error::from_code((self.as_vtable().asIScriptFunction_GetDeclaredAt)(
+            ScriptError::from_code((self.as_vtable().asIScriptFunction_GetDeclaredAt)(
                 self.inner,
                 &mut script_section,
                 &mut row,
@@ -421,9 +423,9 @@ impl Function {
     }
 
     // 39. SetJITFunction
-    pub fn set_jit_function(&self, jit_func: asJITFunction) -> Result<()> {
+    pub fn set_jit_function(&self, jit_func: asJITFunction) -> ScriptResult<()> {
         unsafe {
-            Error::from_code((self.as_vtable().asIScriptFunction_SetJITFunction)(
+            ScriptError::from_code((self.as_vtable().asIScriptFunction_SetJITFunction)(
                 self.inner, jit_func,
             ))
         }

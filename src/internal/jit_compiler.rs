@@ -1,4 +1,4 @@
-use angelscript_bindings::asIJITCompilerAbstract;
+use angelscript_sys::asIJITCompilerAbstract;
 
 pub struct JITCompiler {
     ptr: *mut asIJITCompilerAbstract,

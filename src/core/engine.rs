@@ -1,40 +1,313 @@
-use crate::callback_manager::{
+use crate::core::context::Context;
+use crate::core::enums::*;
+use crate::core::error::{ScriptError, ScriptResult};
+use crate::core::function::Function;
+use crate::core::lockable_shared_bool::LockableSharedBool;
+use crate::core::module::Module;
+use crate::core::script_generic::ScriptGeneric;
+use crate::core::typeinfo::TypeInfo;
+use crate::internal::callback_manager::{
     CallbackManager, CircularRefCallbackFn, CleanContextUserDataCallbackFn,
     CleanEngineUserDataCallbackFn, CleanFunctionUserDataCallbackFn, CleanModuleUserDataCallbackFn,
     CleanScriptObjectCallbackFn, CleanTypeInfoCallbackFn, GenericFn, MessageCallbackFn,
     RequestContextCallbackFn, ReturnContextCallbackFn, TranslateAppExceptionCallbackFn,
 };
-use crate::context::Context;
-use crate::enums::*;
-use crate::error::{Error, Result};
-use crate::ffi::{asGetLibraryOptions, asGetLibraryVersion, asIScriptEngine};
-use crate::function::Function;
-use crate::jit_compiler::JITCompiler;
-use crate::module::Module;
-use crate::string::with_string_module;
-use crate::typeinfo::TypeInfo;
-use crate::user_data::UserData;
-use crate::{LockableSharedBool, Ptr, ScriptGeneric};
-use angelscript_bindings::{
-    asDWORD, asECallConvTypes_asCALL_GENERIC, asEMsgType, asGENFUNC_t, asGenericFunction,
-    asIScriptEngine__bindgen_vtable, asIScriptGeneric, asIStringFactory, asITypeInfo,
-    asMessageInfoFunction, asPWORD, asScriptContextFunction, asUINT,
+use crate::internal::jit_compiler::JITCompiler;
+use crate::internal::pointers::{Ptr, VoidPtr};
+use crate::internal::stringfactory::get_string_factory_instance;
+use crate::internal::thread_manager::{ExclusiveLockGuard, SharedLockGuard, ThreadManager};
+use crate::plugins::plugin;
+use crate::plugins::plugin::{Plugin, ScriptData};
+use crate::types::user_data::UserData;
+use angelscript_sys::{
+    asALLOCFUNC_t, asAllocMem, asAtomicDec, asAtomicInc, asCreateLockableSharedBool,
+    asCreateScriptEngine, asDWORD, asECallConvTypes_asCALL_GENERIC, asEMsgType,
+    asFREEFUNC_t, asFreeMem, asGENFUNC_t, asGenericFunction, asGetActiveContext, asGetLibraryOptions,
+    asGetLibraryVersion, asGetThreadManager, asIScriptEngine, asIScriptEngine__bindgen_vtable,
+    asIScriptGeneric, asIStringFactory, asITypeInfo, asMessageInfoFunction,
+    asPWORD, asResetGlobalMemoryFunctions, asScriptContextFunction, asSetGlobalMemoryFunctions,
+    asUINT, ANGELSCRIPT_VERSION,
 };
 use std::ffi::{c_char, CStr, CString};
+use std::marker::PhantomData;
 use std::os::raw::c_void;
 use std::ptr;
+use std::ptr::NonNull;
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct Engine {
-    inner: *mut asIScriptEngine,
+    inner: NonNull<asIScriptEngine>,
     is_root: bool,
+    phantom_data: PhantomData<asIScriptEngine>,
 }
 
 impl Engine {
-    pub(crate) fn from_raw(engine: *mut asIScriptEngine) -> Self {
+    pub fn create() -> ScriptResult<Engine> {
+        unsafe {
+            let engine_ptr = asCreateScriptEngine(ANGELSCRIPT_VERSION as asDWORD);
+
+            let engine_wrapper = Engine {
+                inner: NonNull::new(engine_ptr).ok_or(ScriptError::FailedToCreateEngine)?,
+                is_root: true,
+                phantom_data: PhantomData,
+            };
+            Ok(engine_wrapper)
+        }
+    }
+
+    pub fn install(&self, plugin: Plugin) -> ScriptResult<()> {
+        for registration in plugin.registrations {
+            match registration {
+                plugin::Registration::GlobalFunction {
+                    declaration,
+                    function,
+                    auxiliary,
+                } => {
+                    self.register_global_function(&declaration, function, auxiliary)?;
+                }
+                plugin::Registration::GlobalProperty {
+                    declaration,
+                    property,
+                } => {
+                    self.register_global_property(&declaration, property)?;
+                }
+                plugin::Registration::ObjectType {
+                    name,
+                    size,
+                    flags,
+                    type_builder,
+                } => {
+                    self.register_object_type(&name, size, flags)?;
+
+                    // Apply methods
+                    for method in type_builder.methods {
+                        self.register_object_method(
+                            &name,
+                            &method.declaration,
+                            method.function,
+                            method.auxiliary.as_ref(),
+                            method.composite_offset,
+                            method.is_composite_indirect,
+                        )?;
+                    }
+
+                    // Apply properties
+                    for property in type_builder.properties {
+                        self.register_object_property(
+                            &name,
+                            &property.declaration,
+                            property.byte_offset.unwrap_or(0),
+                            property.composite_offset.unwrap_or(0),
+                            property.is_composite_indirect.unwrap_or(false),
+                        )?;
+                    }
+
+                    // Apply custom behaviors
+                    for behavior in type_builder.behaviors {
+                        self.register_object_behaviour(
+                            &name,
+                            behavior.behavior,
+                            &behavior.declaration,
+                            behavior.function,
+                            behavior.auxiliary.as_ref(),
+                            behavior.composite_offset,
+                            behavior.is_composite_indirect,
+                        )?;
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Gets the AngelScript library version string
+    pub fn get_library_version() -> &'static str {
+        unsafe {
+            let version_ptr = asGetLibraryVersion();
+            CStr::from_ptr(version_ptr).to_str().unwrap_or("Unknown")
+        }
+    }
+
+    /// Gets the AngelScript library compilation options
+    pub fn get_library_options() -> &'static str {
+        unsafe {
+            let options_ptr = asGetLibraryOptions();
+            CStr::from_ptr(options_ptr).to_str().unwrap_or("Unknown")
+        }
+    }
+
+    // ========== CONTEXT MANAGEMENT ==========
+
+    /// Gets the currently active script context
+    pub fn get_active_context() -> Option<Context> {
+        unsafe {
+            let context_ptr = asGetActiveContext();
+            if context_ptr.is_null() {
+                None
+            } else {
+                Some(Context::from_raw(context_ptr))
+            }
+        }
+    }
+
+    // ========== THREADING SUPPORT ==========
+
+    /// Prepares AngelScript for multithreaded use
+    ///
+    /// The implementation used depends on the compile-time feature:
+    /// - Default: Uses AngelScript's built-in C++ thread manager
+    /// - `rust-threading`: Uses a pure Rust implementation
+    pub fn prepare_multithread() -> ScriptResult<ThreadManager> {
+        ThreadManager::prepare()
+    }
+
+    /// Unprepares AngelScript from multithreaded use
+    pub fn unprepare_multithread() {
+        ThreadManager::unprepare()
+    }
+
+    /// Gets the current thread manager
+    pub fn get_thread_manager() -> Option<ThreadManager> {
+        unsafe {
+            let mgr_ptr = asGetThreadManager();
+            if mgr_ptr.is_null() {
+                None
+            } else {
+                Some(ThreadManager::from_raw(mgr_ptr))
+            }
+        }
+    }
+
+    // ========== THREAD SYNCHRONIZATION ==========
+
+    /// Acquires an exclusive lock for thread synchronization
+    pub fn acquire_exclusive_lock() {
+        ThreadManager::acquire_exclusive_lock()
+    }
+
+    /// Releases an exclusive lock
+    pub fn release_exclusive_lock() {
+        ThreadManager::release_exclusive_lock()
+    }
+
+    /// Acquires a shared lock for thread synchronization
+    pub fn acquire_shared_lock() {
+        ThreadManager::acquire_shared_lock()
+    }
+
+    /// Releases a shared lock
+    pub fn release_shared_lock() {
+        ThreadManager::release_shared_lock()
+    }
+
+    /// Creates an exclusive lock guard for RAII locking
+    pub fn exclusive_lock() -> ExclusiveLockGuard {
+        ExclusiveLockGuard::new()
+    }
+
+    /// Creates a shared lock guard for RAII locking
+    pub fn shared_lock() -> SharedLockGuard {
+        SharedLockGuard::new()
+    }
+
+    // ========== ATOMIC OPERATIONS ==========
+
+    /// Atomically increments an integer value
+    pub fn atomic_inc(value: &mut i32) -> i32 {
+        unsafe { asAtomicInc(value as *mut i32) }
+    }
+
+    /// Atomically decrements an integer value
+    pub fn atomic_dec(value: &mut i32) -> i32 {
+        unsafe { asAtomicDec(value as *mut i32) }
+    }
+
+    // ========== THREAD CLEANUP ==========
+
+    /// Performs thread-specific cleanup
+    pub fn thread_cleanup() -> ScriptResult<()> {
+        ThreadManager::cleanup_local_data()
+    }
+
+    // ========== MEMORY MANAGEMENT ==========
+
+    /// Sets custom global memory allocation functions
+    pub fn set_global_memory_functions(
+        alloc_func: asALLOCFUNC_t,
+        free_func: asFREEFUNC_t,
+    ) -> ScriptResult<()> {
+        unsafe { ScriptError::from_code(asSetGlobalMemoryFunctions(alloc_func, free_func)) }
+    }
+
+    /// Resets global memory functions to default
+    pub fn reset_global_memory_functions() -> ScriptResult<()> {
+        unsafe { ScriptError::from_code(asResetGlobalMemoryFunctions()) }
+    }
+
+    /// Allocates memory using AngelScript's allocator
+    pub fn alloc_mem(size: usize) -> VoidPtr {
+        unsafe { VoidPtr::from_mut_raw(asAllocMem(size)) }
+    }
+
+    /// Frees memory allocated by AngelScript's allocator
+    pub fn free_mem(mut mem: VoidPtr) {
+        unsafe {
+            asFreeMem(mem.as_mut_ptr());
+        }
+    }
+
+    // ========== UTILITY OBJECTS ==========
+
+    /// Creates a new lockable shared boolean
+    pub fn create_lockable_shared_bool() -> Option<LockableSharedBool> {
+        unsafe {
+            let ptr = asCreateLockableSharedBool();
+            if ptr.is_null() {
+                None
+            } else {
+                Some(LockableSharedBool::from_raw(ptr))
+            }
+        }
+    }
+
+    // ========== CONVENIENCE METHODS ==========
+
+    /// Executes a closure with an exclusive lock held
+    pub fn with_exclusive_lock<F, R>(f: F) -> R
+    where
+        F: FnOnce() -> R,
+    {
+        let _guard = Self::exclusive_lock();
+        f()
+    }
+
+    /// Executes a closure with a shared lock held
+    pub fn with_shared_lock<F, R>(f: F) -> R
+    where
+        F: FnOnce() -> R,
+    {
+        let _guard = Self::shared_lock();
+        f()
+    }
+
+    /// Checks if AngelScript is prepared for multithreading
+    pub fn is_multithreading_prepared() -> bool {
+        Self::get_thread_manager().is_some()
+    }
+
+    /// Gets information about the current threading setup
+    pub fn get_threading_info() -> String {
+        match Self::get_thread_manager() {
+            Some(manager) => manager.info(),
+            None => "No thread manager (single-threaded mode)".to_string(),
+        }
+    }
+
+    pub(crate) fn from_raw(engine: NonNull<asIScriptEngine>) -> Engine {
         let engine_wrapper = Engine {
             inner: engine,
             is_root: false,
+            phantom_data: PhantomData,
         };
         engine_wrapper
             .add_ref()
@@ -42,64 +315,36 @@ impl Engine {
         engine_wrapper
     }
 
-    pub(crate) fn new(engine_ptr: *mut asIScriptEngine) -> Result<Self> {
-        unsafe {
-            if engine_ptr.is_null() {
-                Err(Error::FailedToCreateEngine)
-            } else {
-                let engine_wrapper = Engine {
-                    inner: engine_ptr,
-                    is_root: true,
-                };
-                Ok(engine_wrapper)
-            }
-        }
-    }
-
-    pub fn get_library_version() -> &'static str {
-        unsafe {
-            let version = asGetLibraryVersion();
-            if version.is_null() {
-                ""
-            } else {
-                CStr::from_ptr(version).to_str().unwrap_or("")
-            }
-        }
-    }
-
-    pub fn get_library_options() -> &'static str {
-        unsafe {
-            let options = asGetLibraryOptions();
-            if options.is_null() {
-                ""
-            } else {
-                CStr::from_ptr(options).to_str().unwrap_or("")
-            }
-        }
-    }
-
     // Reference counting (following bindings order)
-    pub fn add_ref(&self) -> Result<()> {
-        unsafe { Error::from_code((self.as_vtable().asIScriptEngine_AddRef)(self.inner)) }
-    }
-
-    pub fn release(&self) -> Result<()> {
-        unsafe { Error::from_code((self.as_vtable().asIScriptEngine_Release)(self.inner)) }
-    }
-
-    pub fn shutdown_and_release(&self) -> Result<()> {
+    pub fn add_ref(&self) -> ScriptResult<()> {
         unsafe {
-            Error::from_code((self.as_vtable().asIScriptEngine_ShutDownAndRelease)(
-                self.inner,
+            ScriptError::from_code((self.as_vtable().asIScriptEngine_AddRef)(
+                self.inner.as_ptr(),
+            ))
+        }
+    }
+
+    pub fn release(&self) -> ScriptResult<()> {
+        unsafe {
+            ScriptError::from_code((self.as_vtable().asIScriptEngine_Release)(
+                self.inner.as_ptr(),
+            ))
+        }
+    }
+
+    pub fn shutdown_and_release(&self) -> ScriptResult<()> {
+        unsafe {
+            ScriptError::from_code((self.as_vtable().asIScriptEngine_ShutDownAndRelease)(
+                self.inner.as_ptr(),
             ))
         }
     }
 
     // Engine properties
-    pub fn set_engine_property(&self, property: EngineProperty, value: usize) -> Result<()> {
+    pub fn set_engine_property(&self, property: EngineProperty, value: usize) -> ScriptResult<()> {
         unsafe {
-            Error::from_code((self.as_vtable().asIScriptEngine_SetEngineProperty)(
-                self.inner,
+            ScriptError::from_code((self.as_vtable().asIScriptEngine_SetEngineProperty)(
+                self.inner.as_ptr(),
                 property.into(),
                 value,
             ))
@@ -107,15 +352,20 @@ impl Engine {
     }
 
     pub fn get_engine_property(&self, property: EngineProperty) -> asPWORD {
-        unsafe { (self.as_vtable().asIScriptEngine_GetEngineProperty)(self.inner, property.into()) }
+        unsafe {
+            (self.as_vtable().asIScriptEngine_GetEngineProperty)(
+                self.inner.as_ptr(),
+                property.into(),
+            )
+        }
     }
 
-    pub fn set_message_callback(&mut self, callback: MessageCallbackFn) -> Result<()> {
+    pub fn set_message_callback(&mut self, callback: MessageCallbackFn) -> ScriptResult<()> {
         CallbackManager::set_message_callback(Some(callback))?;
 
         unsafe {
-            Error::from_code((self.as_vtable().asIScriptEngine_SetMessageCallback)(
-                self.inner,
+            ScriptError::from_code((self.as_vtable().asIScriptEngine_SetMessageCallback)(
+                self.inner.as_ptr(),
                 &mut asMessageInfoFunction(Some(CallbackManager::cvoid_msg_callback)),
                 ptr::null_mut(),
                 CallingConvention::Cdecl.into(),
@@ -123,12 +373,12 @@ impl Engine {
         }
     }
 
-    pub fn clear_message_callback(&mut self) -> Result<()> {
+    pub fn clear_message_callback(&mut self) -> ScriptResult<()> {
         CallbackManager::set_message_callback(None)?;
 
         unsafe {
-            Error::from_code((self.as_vtable().asIScriptEngine_ClearMessageCallback)(
-                self.inner,
+            ScriptError::from_code((self.as_vtable().asIScriptEngine_ClearMessageCallback)(
+                self.inner.as_ptr(),
             ))
         }
     }
@@ -140,13 +390,13 @@ impl Engine {
         col: i32,
         msg_type: asEMsgType,
         message: &str,
-    ) -> Result<()> {
+    ) -> ScriptResult<()> {
         let c_section = CString::new(section)?;
         let c_message = CString::new(message)?;
 
         unsafe {
-            Error::from_code((self.as_vtable().asIScriptEngine_WriteMessage)(
-                self.inner,
+            ScriptError::from_code((self.as_vtable().asIScriptEngine_WriteMessage)(
+                self.inner.as_ptr(),
                 c_section.as_ptr(),
                 row,
                 col,
@@ -157,10 +407,10 @@ impl Engine {
     }
 
     // JIT compiler
-    pub fn set_jit_compiler(&self, compiler: &mut JITCompiler) -> Result<()> {
+    pub fn set_jit_compiler(&self, compiler: &mut JITCompiler) -> ScriptResult<()> {
         unsafe {
-            Error::from_code((self.as_vtable().asIScriptEngine_SetJITCompiler)(
-                self.inner,
+            ScriptError::from_code((self.as_vtable().asIScriptEngine_SetJITCompiler)(
+                self.inner.as_ptr(),
                 compiler.as_ptr(),
             ))
         }
@@ -168,7 +418,7 @@ impl Engine {
 
     pub fn get_jit_compiler(&self) -> Option<JITCompiler> {
         unsafe {
-            let compiler = (self.as_vtable().asIScriptEngine_GetJITCompiler)(self.inner);
+            let compiler = (self.as_vtable().asIScriptEngine_GetJITCompiler)(self.inner.as_ptr());
             if compiler.is_null() {
                 None
             } else {
@@ -188,24 +438,24 @@ impl Engine {
         }
     }
 
-    pub fn register_global_function<T>(
+    pub fn register_global_function(
         &self,
         declaration: &str,
         func_ptr: GenericFn,
-        auxiliary: Option<&mut T>,
-    ) -> Result<()> {
+        auxiliary: Option<Box<dyn ScriptData>>,
+    ) -> ScriptResult<()> {
         let c_decl = CString::new(declaration)?;
 
         let base_func: asGENFUNC_t = Some(Engine::generic_callback_thunk);
 
         unsafe {
-            Error::from_code((self.as_vtable().asIScriptEngine_RegisterGlobalFunction)(
-                self.inner,
+            ScriptError::from_code((self.as_vtable().asIScriptEngine_RegisterGlobalFunction)(
+                self.inner.as_ptr(),
                 c_decl.as_ptr(),
                 &mut asGenericFunction(base_func),
                 CallingConvention::Generic.into(),
                 auxiliary
-                    .map(|aux| aux as *mut _ as *mut c_void)
+                    .map(|mut aux| aux.to_script_ptr())
                     .unwrap_or_else(|| std::ptr::null_mut()),
             ))
         }?;
@@ -219,13 +469,15 @@ impl Engine {
     }
 
     pub fn get_global_function_count(&self) -> asUINT {
-        unsafe { (self.as_vtable().asIScriptEngine_GetGlobalFunctionCount)(self.inner) }
+        unsafe { (self.as_vtable().asIScriptEngine_GetGlobalFunctionCount)(self.inner.as_ptr()) }
     }
 
     pub fn get_global_function_by_index(&self, index: u32) -> Option<Function> {
         unsafe {
-            let func =
-                (self.as_vtable().asIScriptEngine_GetGlobalFunctionByIndex)(self.inner, index);
+            let func = (self.as_vtable().asIScriptEngine_GetGlobalFunctionByIndex)(
+                self.inner.as_ptr(),
+                index,
+            );
             if func.is_null() {
                 None
             } else {
@@ -239,7 +491,7 @@ impl Engine {
 
         unsafe {
             let func = (self.as_vtable().asIScriptEngine_GetGlobalFunctionByDecl)(
-                self.inner,
+                self.inner.as_ptr(),
                 c_decl.as_ptr(),
             );
             if func.is_null() {
@@ -251,23 +503,27 @@ impl Engine {
     }
 
     // Global properties
-    pub fn register_global_property<T>(&self, declaration: &str, pointer: &mut T) -> Result<()> {
+    pub fn register_global_property(
+        &self,
+        declaration: &str,
+        mut pointer: Box<dyn ScriptData>,
+    ) -> ScriptResult<()> {
         let c_decl = CString::new(declaration)?;
 
         unsafe {
-            Error::from_code((self.as_vtable().asIScriptEngine_RegisterGlobalProperty)(
-                self.inner,
+            ScriptError::from_code((self.as_vtable().asIScriptEngine_RegisterGlobalProperty)(
+                self.inner.as_ptr(),
                 c_decl.as_ptr(),
-                pointer as *mut _ as *mut c_void,
+                pointer.to_script_ptr(),
             ))
         }
     }
 
     pub fn get_global_property_count(&self) -> asUINT {
-        unsafe { (self.as_vtable().asIScriptEngine_GetGlobalPropertyCount)(self.inner) }
+        unsafe { (self.as_vtable().asIScriptEngine_GetGlobalPropertyCount)(self.inner.as_ptr()) }
     }
 
-    pub fn get_global_property_by_index(&self, index: asUINT) -> Result<GlobalPropertyInfo> {
+    pub fn get_global_property_by_index(&self, index: asUINT) -> ScriptResult<GlobalPropertyInfo> {
         let mut name: *const c_char = ptr::null();
         let mut name_space: *const c_char = ptr::null();
         let mut type_id: i32 = 0;
@@ -277,8 +533,8 @@ impl Engine {
         let mut access_mask: asDWORD = 0;
 
         unsafe {
-            Error::from_code((self.as_vtable().asIScriptEngine_GetGlobalPropertyByIndex)(
-                self.inner,
+            ScriptError::from_code((self.as_vtable().asIScriptEngine_GetGlobalPropertyByIndex)(
+                self.inner.as_ptr(),
                 index,
                 &mut name,
                 &mut name_space,
@@ -319,33 +575,35 @@ impl Engine {
         }
     }
 
-    pub fn get_global_property_index_by_name(&self, name: &str) -> Result<i32> {
+    pub fn get_global_property_index_by_name(&self, name: &str) -> ScriptResult<i32> {
         let c_name = CString::new(name)?;
 
         unsafe {
             let index = (self
                 .as_vtable()
                 .asIScriptEngine_GetGlobalPropertyIndexByName)(
-                self.inner, c_name.as_ptr()
+                self.inner.as_ptr(),
+                c_name.as_ptr(),
             );
             if index < 0 {
-                Error::from_code(index)?;
+                ScriptError::from_code(index)?;
             }
             Ok(index)
         }
     }
 
-    pub fn get_global_property_index_by_decl(&self, decl: &str) -> Result<i32> {
+    pub fn get_global_property_index_by_decl(&self, decl: &str) -> ScriptResult<i32> {
         let c_decl = CString::new(decl)?;
 
         unsafe {
             let index = (self
                 .as_vtable()
                 .asIScriptEngine_GetGlobalPropertyIndexByDecl)(
-                self.inner, c_decl.as_ptr()
+                self.inner.as_ptr(),
+                c_decl.as_ptr(),
             );
             if index < 0 {
-                Error::from_code(index)?;
+                ScriptError::from_code(index)?;
             }
             Ok(index)
         }
@@ -355,16 +613,16 @@ impl Engine {
     pub fn register_object_type(
         &self,
         name: &str,
-        byte_size: usize,
+        byte_size: i32,
         flags: ObjectTypeFlags,
-    ) -> Result<()> {
+    ) -> ScriptResult<()> {
         let c_name = CString::new(name)?;
 
         unsafe {
-            Error::from_code((self.as_vtable().asIScriptEngine_RegisterObjectType)(
-                self.inner,
+            ScriptError::from_code((self.as_vtable().asIScriptEngine_RegisterObjectType)(
+                self.inner.as_ptr(),
                 c_name.as_ptr(),
-                byte_size as i32,
+                byte_size,
                 flags.into(),
             ))
         }
@@ -377,13 +635,13 @@ impl Engine {
         byte_offset: i32,
         composite_offset: i32,
         is_composite_indirect: bool,
-    ) -> Result<()> {
+    ) -> ScriptResult<()> {
         let c_obj = CString::new(obj)?;
         let c_decl = CString::new(declaration)?;
 
         unsafe {
-            Error::from_code((self.as_vtable().asIScriptEngine_RegisterObjectProperty)(
-                self.inner,
+            ScriptError::from_code((self.as_vtable().asIScriptEngine_RegisterObjectProperty)(
+                self.inner.as_ptr(),
                 c_obj.as_ptr(),
                 c_decl.as_ptr(),
                 byte_offset,
@@ -393,15 +651,15 @@ impl Engine {
         }
     }
 
-    pub fn register_object_method<T>(
+    pub fn register_object_method(
         &self,
         obj: &str,
         declaration: &str,
         func_ptr: GenericFn,
-        auxiliary: Option<&mut T>,
+        auxiliary: Option<&Box<dyn ScriptData>>,
         composite_offset: Option<i32>,
         is_composite_indirect: Option<bool>,
-    ) -> Result<()> {
+    ) -> ScriptResult<()> {
         let c_obj = CString::new(obj)?;
         let c_decl = CString::new(declaration)?;
 
@@ -409,19 +667,19 @@ impl Engine {
 
         let func_id = unsafe {
             let result = (self.as_vtable().asIScriptEngine_RegisterObjectMethod)(
-                self.inner,
+                self.inner.as_ptr(),
                 c_obj.as_ptr(),
                 c_decl.as_ptr(),
                 &mut asGenericFunction(base_func),
                 CallingConvention::Generic.into(),
                 auxiliary
-                    .map(|aux| aux as *mut _ as *mut c_void)
+                    .map(|mut aux| aux.to_script_ptr())
                     .unwrap_or_else(|| std::ptr::null_mut()),
                 composite_offset.unwrap_or_else(|| 0),
                 is_composite_indirect.unwrap_or_else(|| false),
             );
 
-            Error::from_code(result).map(|_| result)
+            ScriptError::from_code(result).map(|_| result)
         }?;
 
         if let Some(func_obj) = self.get_function_by_id(func_id) {
@@ -432,16 +690,16 @@ impl Engine {
         Ok(())
     }
 
-    pub fn register_object_behaviour<T>(
+    pub fn register_object_behaviour(
         &self,
         obj: &str,
         behaviour: Behaviour,
         declaration: &str,
         func_ptr: GenericFn,
-        auxiliary: Option<&mut T>,
+        auxiliary: Option<&Box<dyn ScriptData>>,
         composite_offset: Option<i32>,
         is_composite_indirect: Option<bool>,
-    ) -> Result<()> {
+    ) -> ScriptResult<()> {
         let c_obj = CString::new(obj)?;
         let c_decl = CString::new(declaration)?;
 
@@ -449,18 +707,18 @@ impl Engine {
 
         let func_id = unsafe {
             let result = (self.as_vtable().asIScriptEngine_RegisterObjectBehaviour)(
-                self.inner,
+                self.inner.as_ptr(),
                 c_obj.as_ptr(),
                 behaviour.into(),
                 c_decl.as_ptr(),
                 &mut asGenericFunction(base_func),
                 asECallConvTypes_asCALL_GENERIC,
-                auxiliary.map_or_else(|| ptr::null_mut(), |aux| aux as *mut _ as *mut c_void),
+                auxiliary.map_or_else(|| ptr::null_mut(), |mut aux| aux.to_script_ptr()),
                 composite_offset.unwrap_or_else(|| 0),
                 is_composite_indirect.unwrap_or_else(|| false),
             );
 
-            Error::from_code(result).map(|_| result)
+            ScriptError::from_code(result).map(|_| result)
         }?;
 
         if let Some(func_obj) = self.get_function_by_id(func_id) {
@@ -472,24 +730,24 @@ impl Engine {
     }
 
     // Interfaces
-    pub fn register_interface(&self, name: &str) -> Result<()> {
+    pub fn register_interface(&self, name: &str) -> ScriptResult<()> {
         let c_name = CString::new(name)?;
 
         unsafe {
-            Error::from_code((self.as_vtable().asIScriptEngine_RegisterInterface)(
-                self.inner,
+            ScriptError::from_code((self.as_vtable().asIScriptEngine_RegisterInterface)(
+                self.inner.as_ptr(),
                 c_name.as_ptr(),
             ))
         }
     }
 
-    pub fn register_interface_method(&self, intf: &str, declaration: &str) -> Result<()> {
+    pub fn register_interface_method(&self, intf: &str, declaration: &str) -> ScriptResult<()> {
         let c_intf = CString::new(intf)?;
         let c_decl = CString::new(declaration)?;
 
         unsafe {
-            Error::from_code((self.as_vtable().asIScriptEngine_RegisterInterfaceMethod)(
-                self.inner,
+            ScriptError::from_code((self.as_vtable().asIScriptEngine_RegisterInterfaceMethod)(
+                self.inner.as_ptr(),
                 c_intf.as_ptr(),
                 c_decl.as_ptr(),
             ))
@@ -497,13 +755,13 @@ impl Engine {
     }
 
     pub fn get_object_type_count(&self) -> asUINT {
-        unsafe { (self.as_vtable().asIScriptEngine_GetObjectTypeCount)(self.inner) }
+        unsafe { (self.as_vtable().asIScriptEngine_GetObjectTypeCount)(self.inner.as_ptr()) }
     }
 
     pub fn get_object_type_by_index(&self, index: asUINT) -> Option<TypeInfo> {
         unsafe {
             let type_info =
-                (self.as_vtable().asIScriptEngine_GetObjectTypeByIndex)(self.inner, index);
+                (self.as_vtable().asIScriptEngine_GetObjectTypeByIndex)(self.inner.as_ptr(), index);
             if type_info.is_null() {
                 None
             } else {
@@ -516,76 +774,77 @@ impl Engine {
     pub(crate) fn register_string_factory(
         &self,
         datatype: &str,
-        factory: *mut asIStringFactory,
-    ) -> Result<()> {
+        factory: &asIStringFactory,
+    ) -> ScriptResult<()> {
         let c_datatype = CString::new(datatype)?;
 
         unsafe {
-            Error::from_code((self.as_vtable().asIScriptEngine_RegisterStringFactory)(
-                self.inner,
+            ScriptError::from_code((self.as_vtable().asIScriptEngine_RegisterStringFactory)(
+                self.inner.as_ptr(),
                 c_datatype.as_ptr(),
-                factory,
+                factory as *const _ as *mut asIStringFactory,
             ))
         }
     }
 
-    pub fn get_string_factory_return_type_id(&self) -> Result<(i32, asDWORD)> {
+    pub fn get_string_factory_return_type_id(&self) -> ScriptResult<(i32, asDWORD)> {
         let mut flags: asDWORD = 0;
 
         unsafe {
             let type_id = (self
                 .as_vtable()
                 .asIScriptEngine_GetStringFactoryReturnTypeId)(
-                self.inner, &mut flags
+                self.inner.as_ptr(), &mut flags
             );
             if type_id < 0 {
-                Error::from_code(type_id)?;
+                ScriptError::from_code(type_id)?;
             }
             Ok((type_id, flags))
         }
     }
 
     // Default array
-    pub fn register_default_array_type(&self, type_name: &str) -> Result<()> {
+    pub fn register_default_array_type(&self, type_name: &str) -> ScriptResult<()> {
         let c_type = CString::new(type_name)?;
 
         unsafe {
-            Error::from_code((self.as_vtable().asIScriptEngine_RegisterDefaultArrayType)(
-                self.inner,
+            ScriptError::from_code((self.as_vtable().asIScriptEngine_RegisterDefaultArrayType)(
+                self.inner.as_ptr(),
                 c_type.as_ptr(),
             ))
         }
     }
 
-    pub fn get_default_array_type_id(&self) -> Result<i32> {
+    pub fn get_default_array_type_id(&self) -> ScriptResult<i32> {
         unsafe {
-            let type_id = (self.as_vtable().asIScriptEngine_GetDefaultArrayTypeId)(self.inner);
+            let type_id =
+                (self.as_vtable().asIScriptEngine_GetDefaultArrayTypeId)(self.inner.as_ptr());
             if type_id < 0 {
-                Error::from_code(type_id)?;
+                ScriptError::from_code(type_id)?;
             }
             Ok(type_id)
         }
     }
 
     // Enums
-    pub fn register_enum(&self, type_name: &str) -> Result<()> {
+    pub fn register_enum(&self, type_name: &str) -> ScriptResult<()> {
         let c_type = CString::new(type_name)?;
 
         unsafe {
-            Error::from_code((self.as_vtable().asIScriptEngine_RegisterEnum)(
-                self.inner,
+            ScriptError::from_code((self.as_vtable().asIScriptEngine_RegisterEnum)(
+                self.inner.as_ptr(),
                 c_type.as_ptr(),
             ))
         }
     }
 
-    pub fn register_enum_value(&self, type_name: &str, name: &str, value: i32) -> Result<()> {
+    pub fn register_enum_value(&self, type_name: &str, name: &str, value: i32) -> ScriptResult<()> {
         let c_type = CString::new(type_name)?;
         let c_name = CString::new(name)?;
 
         unsafe {
-            Error::from_code((self.as_vtable().asIScriptEngine_RegisterEnumValue)(
-                self.inner,
+            ScriptError::from_code((self.as_vtable().asIScriptEngine_RegisterEnumValue)(
+                self.inner.as_ptr(),
                 c_type.as_ptr(),
                 c_name.as_ptr(),
                 value,
@@ -594,12 +853,13 @@ impl Engine {
     }
 
     pub fn get_enum_count(&self) -> asUINT {
-        unsafe { (self.as_vtable().asIScriptEngine_GetEnumCount)(self.inner) }
+        unsafe { (self.as_vtable().asIScriptEngine_GetEnumCount)(self.inner.as_ptr()) }
     }
 
     pub fn get_enum_by_index(&self, index: asUINT) -> Option<TypeInfo> {
         unsafe {
-            let type_info = (self.as_vtable().asIScriptEngine_GetEnumByIndex)(self.inner, index);
+            let type_info =
+                (self.as_vtable().asIScriptEngine_GetEnumByIndex)(self.inner.as_ptr(), index);
             if type_info.is_null() {
                 None
             } else {
@@ -609,24 +869,25 @@ impl Engine {
     }
 
     // Funcdefs
-    pub fn register_funcdef(&self, decl: &str) -> Result<()> {
+    pub fn register_funcdef(&self, decl: &str) -> ScriptResult<()> {
         let c_decl = CString::new(decl)?;
 
         unsafe {
-            Error::from_code((self.as_vtable().asIScriptEngine_RegisterFuncdef)(
-                self.inner,
+            ScriptError::from_code((self.as_vtable().asIScriptEngine_RegisterFuncdef)(
+                self.inner.as_ptr(),
                 c_decl.as_ptr(),
             ))
         }
     }
 
     pub fn get_funcdef_count(&self) -> asUINT {
-        unsafe { (self.as_vtable().asIScriptEngine_GetFuncdefCount)(self.inner) }
+        unsafe { (self.as_vtable().asIScriptEngine_GetFuncdefCount)(self.inner.as_ptr()) }
     }
 
     pub fn get_funcdef_by_index(&self, index: asUINT) -> Option<TypeInfo> {
         unsafe {
-            let type_info = (self.as_vtable().asIScriptEngine_GetFuncdefByIndex)(self.inner, index);
+            let type_info =
+                (self.as_vtable().asIScriptEngine_GetFuncdefByIndex)(self.inner.as_ptr(), index);
             if type_info.is_null() {
                 None
             } else {
@@ -636,13 +897,13 @@ impl Engine {
     }
 
     // Typedefs
-    pub fn register_typedef(&self, type_name: &str, decl: &str) -> Result<()> {
+    pub fn register_typedef(&self, type_name: &str, decl: &str) -> ScriptResult<()> {
         let c_type = CString::new(type_name)?;
         let c_decl = CString::new(decl)?;
 
         unsafe {
-            Error::from_code((self.as_vtable().asIScriptEngine_RegisterTypedef)(
-                self.inner,
+            ScriptError::from_code((self.as_vtable().asIScriptEngine_RegisterTypedef)(
+                self.inner.as_ptr(),
                 c_type.as_ptr(),
                 c_decl.as_ptr(),
             ))
@@ -650,12 +911,13 @@ impl Engine {
     }
 
     pub fn get_typedef_count(&self) -> asUINT {
-        unsafe { (self.as_vtable().asIScriptEngine_GetTypedefCount)(self.inner) }
+        unsafe { (self.as_vtable().asIScriptEngine_GetTypedefCount)(self.inner.as_ptr()) }
     }
 
     pub fn get_typedef_by_index(&self, index: asUINT) -> Option<TypeInfo> {
         unsafe {
-            let type_info = (self.as_vtable().asIScriptEngine_GetTypedefByIndex)(self.inner, index);
+            let type_info =
+                (self.as_vtable().asIScriptEngine_GetTypedefByIndex)(self.inner.as_ptr(), index);
             if type_info.is_null() {
                 None
             } else {
@@ -665,31 +927,31 @@ impl Engine {
     }
 
     // Configuration groups
-    pub fn begin_config_group(&self, group_name: &str) -> Result<()> {
+    pub fn begin_config_group(&self, group_name: &str) -> ScriptResult<()> {
         let c_group = CString::new(group_name)?;
 
         unsafe {
-            Error::from_code((self.as_vtable().asIScriptEngine_BeginConfigGroup)(
-                self.inner,
+            ScriptError::from_code((self.as_vtable().asIScriptEngine_BeginConfigGroup)(
+                self.inner.as_ptr(),
                 c_group.as_ptr(),
             ))
         }
     }
 
-    pub fn end_config_group(&self) -> Result<()> {
+    pub fn end_config_group(&self) -> ScriptResult<()> {
         unsafe {
-            Error::from_code((self.as_vtable().asIScriptEngine_EndConfigGroup)(
-                self.inner,
+            ScriptError::from_code((self.as_vtable().asIScriptEngine_EndConfigGroup)(
+                self.inner.as_ptr(),
             ))
         }
     }
 
-    pub fn remove_config_group(&self, group_name: &str) -> Result<()> {
+    pub fn remove_config_group(&self, group_name: &str) -> ScriptResult<()> {
         let c_group = CString::new(group_name)?;
 
         unsafe {
-            Error::from_code((self.as_vtable().asIScriptEngine_RemoveConfigGroup)(
-                self.inner,
+            ScriptError::from_code((self.as_vtable().asIScriptEngine_RemoveConfigGroup)(
+                self.inner.as_ptr(),
                 c_group.as_ptr(),
             ))
         }
@@ -697,16 +959,21 @@ impl Engine {
 
     // Access control
     pub fn set_default_access_mask(&self, default_mask: asDWORD) -> asDWORD {
-        unsafe { (self.as_vtable().asIScriptEngine_SetDefaultAccessMask)(self.inner, default_mask) }
+        unsafe {
+            (self.as_vtable().asIScriptEngine_SetDefaultAccessMask)(
+                self.inner.as_ptr(),
+                default_mask,
+            )
+        }
     }
 
     // Namespaces
-    pub fn set_default_namespace(&self, name_space: &str) -> Result<()> {
+    pub fn set_default_namespace(&self, name_space: &str) -> ScriptResult<()> {
         let c_namespace = CString::new(name_space)?;
 
         unsafe {
-            Error::from_code((self.as_vtable().asIScriptEngine_SetDefaultNamespace)(
-                self.inner,
+            ScriptError::from_code((self.as_vtable().asIScriptEngine_SetDefaultNamespace)(
+                self.inner.as_ptr(),
                 c_namespace.as_ptr(),
             ))
         }
@@ -714,7 +981,8 @@ impl Engine {
 
     pub fn get_default_namespace(&self) -> Option<&str> {
         unsafe {
-            let namespace = (self.as_vtable().asIScriptEngine_GetDefaultNamespace)(self.inner);
+            let namespace =
+                (self.as_vtable().asIScriptEngine_GetDefaultNamespace)(self.inner.as_ptr());
             if namespace.is_null() {
                 None
             } else {
@@ -724,41 +992,42 @@ impl Engine {
     }
 
     // Modules
-    pub fn get_module(&self, name: &str, flag: GetModuleFlags) -> Result<Module> {
+    pub fn get_module(&self, name: &str, flag: GetModuleFlags) -> ScriptResult<Module> {
         let c_name = CString::new(name)?;
 
         unsafe {
             let module = (self.as_vtable().asIScriptEngine_GetModule)(
-                self.inner,
+                self.inner.as_ptr(),
                 c_name.as_ptr(),
                 flag.into(),
             );
             if module.is_null() {
-                Err(Error::NullPointer)
+                Err(ScriptError::NullPointer)
             } else {
                 Ok(Module::from_raw(module))
             }
         }
     }
 
-    pub fn discard_module(&self, name: &str) -> Result<()> {
+    pub fn discard_module(&self, name: &str) -> ScriptResult<()> {
         let c_name = CString::new(name)?;
 
         unsafe {
-            Error::from_code((self.as_vtable().asIScriptEngine_DiscardModule)(
-                self.inner,
+            ScriptError::from_code((self.as_vtable().asIScriptEngine_DiscardModule)(
+                self.inner.as_ptr(),
                 c_name.as_ptr(),
             ))
         }
     }
 
     pub fn get_module_count(&self) -> asUINT {
-        unsafe { (self.as_vtable().asIScriptEngine_GetModuleCount)(self.inner) }
+        unsafe { (self.as_vtable().asIScriptEngine_GetModuleCount)(self.inner.as_ptr()) }
     }
 
     pub fn get_module_by_index(&self, index: asUINT) -> Option<Module> {
         unsafe {
-            let module = (self.as_vtable().asIScriptEngine_GetModuleByIndex)(self.inner, index);
+            let module =
+                (self.as_vtable().asIScriptEngine_GetModuleByIndex)(self.inner.as_ptr(), index);
             if module.is_null() {
                 None
             } else {
@@ -769,12 +1038,13 @@ impl Engine {
 
     // Functions
     pub fn get_last_function_id(&self) -> i32 {
-        unsafe { (self.as_vtable().asIScriptEngine_GetLastFunctionId)(self.inner) }
+        unsafe { (self.as_vtable().asIScriptEngine_GetLastFunctionId)(self.inner.as_ptr()) }
     }
 
     pub fn get_function_by_id(&self, func_id: i32) -> Option<Function> {
         unsafe {
-            let func_ptr = (self.as_vtable().asIScriptEngine_GetFunctionById)(self.inner, func_id);
+            let func_ptr =
+                (self.as_vtable().asIScriptEngine_GetFunctionById)(self.inner.as_ptr(), func_id);
             if func_ptr.is_null() {
                 None
             } else {
@@ -784,14 +1054,16 @@ impl Engine {
     }
 
     // Type information
-    pub fn get_type_id_by_decl(&self, decl: &str) -> Result<i32> {
+    pub fn get_type_id_by_decl(&self, decl: &str) -> ScriptResult<i32> {
         let c_decl = CString::new(decl)?;
 
         unsafe {
-            let type_id =
-                (self.as_vtable().asIScriptEngine_GetTypeIdByDecl)(self.inner, c_decl.as_ptr());
+            let type_id = (self.as_vtable().asIScriptEngine_GetTypeIdByDecl)(
+                self.inner.as_ptr(),
+                c_decl.as_ptr(),
+            );
             if type_id < 0 {
-                Error::from_code(type_id)?;
+                ScriptError::from_code(type_id)?;
             }
             Ok(type_id)
         }
@@ -800,7 +1072,7 @@ impl Engine {
     pub fn get_type_declaration(&self, type_id: i32, include_namespace: bool) -> Option<&str> {
         unsafe {
             let decl = (self.as_vtable().asIScriptEngine_GetTypeDeclaration)(
-                self.inner,
+                self.inner.as_ptr(),
                 type_id,
                 include_namespace,
             );
@@ -812,12 +1084,14 @@ impl Engine {
         }
     }
 
-    pub fn get_size_of_primitive_type(&self, type_id: i32) -> Result<i32> {
+    pub fn get_size_of_primitive_type(&self, type_id: i32) -> ScriptResult<i32> {
         unsafe {
-            let size =
-                (self.as_vtable().asIScriptEngine_GetSizeOfPrimitiveType)(self.inner, type_id);
+            let size = (self.as_vtable().asIScriptEngine_GetSizeOfPrimitiveType)(
+                self.inner.as_ptr(),
+                type_id,
+            );
             if size < 0 {
-                Error::from_code(size)?;
+                ScriptError::from_code(size)?;
             }
             Ok(size)
         }
@@ -825,7 +1099,8 @@ impl Engine {
 
     pub fn get_type_info_by_id(&self, type_id: i32) -> Option<TypeInfo> {
         unsafe {
-            let type_info = (self.as_vtable().asIScriptEngine_GetTypeInfoById)(self.inner, type_id);
+            let type_info =
+                (self.as_vtable().asIScriptEngine_GetTypeInfoById)(self.inner.as_ptr(), type_id);
             if type_info.is_null() {
                 None
             } else {
@@ -838,8 +1113,10 @@ impl Engine {
         let c_name = CString::new(name).ok()?;
 
         unsafe {
-            let type_info =
-                (self.as_vtable().asIScriptEngine_GetTypeInfoByName)(self.inner, c_name.as_ptr());
+            let type_info = (self.as_vtable().asIScriptEngine_GetTypeInfoByName)(
+                self.inner.as_ptr(),
+                c_name.as_ptr(),
+            );
             if type_info.is_null() {
                 None
             } else {
@@ -852,8 +1129,10 @@ impl Engine {
         let c_decl = CString::new(decl).ok()?;
 
         unsafe {
-            let type_info =
-                (self.as_vtable().asIScriptEngine_GetTypeInfoByDecl)(self.inner, c_decl.as_ptr());
+            let type_info = (self.as_vtable().asIScriptEngine_GetTypeInfoByDecl)(
+                self.inner.as_ptr(),
+                c_decl.as_ptr(),
+            );
             if type_info.is_null() {
                 None
             } else {
@@ -863,11 +1142,11 @@ impl Engine {
     }
 
     // Context creation
-    pub fn create_context(&self) -> Result<Context> {
+    pub fn create_context(&self) -> ScriptResult<Context> {
         unsafe {
-            let ctx = (self.as_vtable().asIScriptEngine_CreateContext)(self.inner);
+            let ctx = (self.as_vtable().asIScriptEngine_CreateContext)(self.inner.as_ptr());
             if ctx.is_null() {
-                Err(Error::NullPointer)
+                Err(ScriptError::NullPointer)
             } else {
                 Ok(Context::from_raw(ctx))
             }
@@ -875,14 +1154,14 @@ impl Engine {
     }
 
     // Script objects
-    pub fn create_script_object(&self, type_info: &TypeInfo) -> Result<Ptr<c_void>> {
+    pub fn create_script_object(&self, type_info: &TypeInfo) -> ScriptResult<Ptr<c_void>> {
         unsafe {
             let obj = (self.as_vtable().asIScriptEngine_CreateScriptObject)(
-                self.inner,
+                self.inner.as_ptr(),
                 type_info.as_ptr(),
             );
             if obj.is_null() {
-                Err(Error::NullPointer)
+                Err(ScriptError::NullPointer)
             } else {
                 Ok(Ptr::<c_void>::from_raw(obj))
             }
@@ -896,7 +1175,7 @@ impl Engine {
     ) -> Option<Ptr<T>> {
         unsafe {
             let new_obj = (self.as_vtable().asIScriptEngine_CreateScriptObjectCopy)(
-                self.inner,
+                self.inner.as_ptr(),
                 obj as *mut _ as *mut c_void,
                 type_info.as_ptr(),
             );
@@ -913,7 +1192,8 @@ impl Engine {
             let obj = (self
                 .as_vtable()
                 .asIScriptEngine_CreateUninitializedScriptObject)(
-                self.inner, type_info.as_ptr()
+                self.inner.as_ptr(),
+                type_info.as_ptr(),
             );
             if obj.is_null() {
                 None
@@ -926,7 +1206,7 @@ impl Engine {
     pub fn create_delegate<T>(&self, func: &Function, obj: &mut T) -> Option<Function> {
         unsafe {
             let delegate = (self.as_vtable().asIScriptEngine_CreateDelegate)(
-                self.inner,
+                self.inner.as_ptr(),
                 func.as_raw(),
                 obj as *mut _ as *mut c_void,
             );
@@ -943,10 +1223,10 @@ impl Engine {
         dst_obj: &mut T,
         src_obj: &mut T,
         type_info: &TypeInfo,
-    ) -> Result<()> {
+    ) -> ScriptResult<()> {
         unsafe {
-            Error::from_code((self.as_vtable().asIScriptEngine_AssignScriptObject)(
-                self.inner,
+            ScriptError::from_code((self.as_vtable().asIScriptEngine_AssignScriptObject)(
+                self.inner.as_ptr(),
                 dst_obj as *mut _ as *mut c_void,
                 src_obj as *mut _ as *mut c_void,
                 type_info.as_ptr(),
@@ -957,7 +1237,7 @@ impl Engine {
     pub fn release_script_object<T>(&self, obj: &mut T, type_info: &TypeInfo) {
         unsafe {
             (self.as_vtable().asIScriptEngine_ReleaseScriptObject)(
-                self.inner,
+                self.inner.as_ptr(),
                 obj as *mut _ as *mut c_void,
                 type_info.as_ptr(),
             );
@@ -967,7 +1247,7 @@ impl Engine {
     pub fn add_ref_script_object<T>(&self, obj: &mut T, type_info: &TypeInfo) {
         unsafe {
             (self.as_vtable().asIScriptEngine_AddRefScriptObject)(
-                self.inner,
+                self.inner.as_ptr(),
                 obj as *mut _ as *mut c_void,
                 type_info.as_ptr(),
             );
@@ -980,12 +1260,12 @@ impl Engine {
         from_type: &mut TypeInfo,
         to_type: &mut TypeInfo,
         use_only_implicit_cast: bool,
-    ) -> Result<Option<Ptr<U>>> {
+    ) -> ScriptResult<Option<Ptr<U>>> {
         let mut new_ptr: *mut c_void = ptr::null_mut();
 
         unsafe {
-            Error::from_code((self.as_vtable().asIScriptEngine_RefCastObject)(
-                self.inner,
+            ScriptError::from_code((self.as_vtable().asIScriptEngine_RefCastObject)(
+                self.inner.as_ptr(),
                 obj as *mut _ as *mut c_void,
                 from_type.as_ptr(),
                 to_type.as_ptr(),
@@ -1010,7 +1290,7 @@ impl Engine {
             let flag = (self
                 .as_vtable()
                 .asIScriptEngine_GetWeakRefFlagOfScriptObject)(
-                self.inner,
+                self.inner.as_ptr(),
                 obj as *mut _ as *mut c_void,
                 type_info.as_ptr(),
             );
@@ -1025,7 +1305,7 @@ impl Engine {
     // Context management
     pub fn request_context(&self) -> Option<Context> {
         unsafe {
-            let ctx = (self.as_vtable().asIScriptEngine_RequestContext)(self.inner);
+            let ctx = (self.as_vtable().asIScriptEngine_RequestContext)(self.inner.as_ptr());
             if ctx.is_null() {
                 None
             } else {
@@ -1036,7 +1316,7 @@ impl Engine {
 
     pub fn return_context(&self, ctx: Context) {
         unsafe {
-            (self.as_vtable().asIScriptEngine_ReturnContext)(self.inner, ctx.as_ptr());
+            (self.as_vtable().asIScriptEngine_ReturnContext)(self.inner.as_ptr(), ctx.as_ptr());
         }
     }
 
@@ -1045,13 +1325,13 @@ impl Engine {
         request_ctx: RequestContextCallbackFn,
         return_ctx: ReturnContextCallbackFn,
         param: &mut T,
-    ) -> Result<()> {
+    ) -> ScriptResult<()> {
         CallbackManager::set_request_context_callback(Some(request_ctx))?;
         CallbackManager::set_return_context_callback(Some(return_ctx))?;
 
         unsafe {
-            Error::from_code((self.as_vtable().asIScriptEngine_SetContextCallbacks)(
-                self.inner,
+            ScriptError::from_code((self.as_vtable().asIScriptEngine_SetContextCallbacks)(
+                self.inner.as_ptr(),
                 Some(CallbackManager::cvoid_request_context_callback),
                 Some(CallbackManager::cvoid_return_context_callback),
                 param as *mut _ as *mut c_void,
@@ -1066,7 +1346,7 @@ impl Engine {
 
         unsafe {
             let token_class = (self.as_vtable().asIScriptEngine_ParseToken)(
-                self.inner,
+                self.inner.as_ptr(),
                 c_string.as_ptr() as *const c_char,
                 c_string.len(),
                 &mut token_length,
@@ -1076,10 +1356,10 @@ impl Engine {
     }
 
     // Garbage collection
-    pub fn garbage_collect(&self, flags: asDWORD, num_iterations: asUINT) -> Result<()> {
+    pub fn garbage_collect(&self, flags: asDWORD, num_iterations: asUINT) -> ScriptResult<()> {
         unsafe {
-            Error::from_code((self.as_vtable().asIScriptEngine_GarbageCollect)(
-                self.inner,
+            ScriptError::from_code((self.as_vtable().asIScriptEngine_GarbageCollect)(
+                self.inner.as_ptr(),
                 flags,
                 num_iterations,
             ))
@@ -1095,7 +1375,7 @@ impl Engine {
 
         unsafe {
             (self.as_vtable().asIScriptEngine_GetGCStatistics)(
-                self.inner,
+                self.inner.as_ptr(),
                 &mut current_size,
                 &mut total_destroyed,
                 &mut total_detected,
@@ -1117,12 +1397,12 @@ impl Engine {
         &self,
         obj: &mut T,
         type_info: &mut TypeInfo,
-    ) -> Result<()> {
+    ) -> ScriptResult<()> {
         unsafe {
-            Error::from_code((self
+            ScriptError::from_code((self
                 .as_vtable()
                 .asIScriptEngine_NotifyGarbageCollectorOfNewObject)(
-                self.inner,
+                self.inner.as_ptr(),
                 obj as *mut _ as *mut c_void,
                 type_info.as_ptr(),
             ))
@@ -1136,7 +1416,7 @@ impl Engine {
 
         unsafe {
             let result = (self.as_vtable().asIScriptEngine_GetObjectInGC)(
-                self.inner,
+                self.inner.as_ptr(),
                 idx,
                 &mut seq_nbr,
                 &mut obj,
@@ -1162,7 +1442,7 @@ impl Engine {
     pub fn gc_enum_callback<T>(&self, reference: &mut T) {
         unsafe {
             (self.as_vtable().asIScriptEngine_GCEnumCallback)(
-                self.inner,
+                self.inner.as_ptr(),
                 reference as *mut _ as *mut c_void,
             );
         }
@@ -1171,7 +1451,7 @@ impl Engine {
     pub fn forward_gc_enum_references<T>(&self, ref_obj: &mut T, type_info: &mut TypeInfo) {
         unsafe {
             (self.as_vtable().asIScriptEngine_ForwardGCEnumReferences)(
-                self.inner,
+                self.inner.as_ptr(),
                 ref_obj as *mut _ as *mut c_void,
                 type_info.as_ptr(),
             );
@@ -1181,7 +1461,7 @@ impl Engine {
     pub fn forward_gc_release_references<T>(&self, ref_obj: &mut T, type_info: &mut TypeInfo) {
         unsafe {
             (self.as_vtable().asIScriptEngine_ForwardGCReleaseReferences)(
-                self.inner,
+                self.inner.as_ptr(),
                 ref_obj as *mut _ as *mut c_void,
                 type_info.as_ptr(),
             );
@@ -1191,14 +1471,14 @@ impl Engine {
     pub fn set_circular_ref_detected_callback(
         &mut self,
         callback: CircularRefCallbackFn,
-    ) -> Result<()> {
+    ) -> ScriptResult<()> {
         CallbackManager::set_circular_ref_callback(Some(callback))?;
 
         unsafe {
             (self
                 .as_vtable()
                 .asIScriptEngine_SetCircularRefDetectedCallback)(
-                self.inner,
+                self.inner.as_ptr(),
                 Some(CallbackManager::cvoid_circular_ref_callback),
                 ptr::null_mut(),
             );
@@ -1211,7 +1491,7 @@ impl Engine {
     pub fn set_user_data<T: UserData>(&self, data: &mut T) -> Option<Ptr<T>> {
         unsafe {
             let ptr = (self.as_vtable().asIScriptEngine_SetUserData)(
-                self.inner,
+                self.inner.as_ptr(),
                 data as *mut _ as *mut c_void,
                 T::TypeId as asPWORD,
             );
@@ -1223,12 +1503,14 @@ impl Engine {
         }
     }
 
-    pub fn get_user_data<T: UserData>(&self) -> Result<Ptr<T>> {
+    pub fn get_user_data<T: UserData>(&self) -> ScriptResult<Ptr<T>> {
         unsafe {
-            let ptr =
-                (self.as_vtable().asIScriptEngine_GetUserData)(self.inner, T::TypeId as asPWORD);
+            let ptr = (self.as_vtable().asIScriptEngine_GetUserData)(
+                self.inner.as_ptr(),
+                T::TypeId as asPWORD,
+            );
             if ptr.is_null() {
-                Err(Error::NullPointer)
+                Err(ScriptError::NullPointer)
             } else {
                 Ok(Ptr::<T>::from_raw(ptr))
             }
@@ -1239,14 +1521,14 @@ impl Engine {
         &mut self,
         callback: CleanEngineUserDataCallbackFn,
         type_id: asPWORD,
-    ) -> Result<()> {
+    ) -> ScriptResult<()> {
         CallbackManager::add_engine_user_data_cleanup_callback(type_id, callback)?;
 
         unsafe {
             (self
                 .as_vtable()
                 .asIScriptEngine_SetEngineUserDataCleanupCallback)(
-                self.inner,
+                self.inner.as_ptr(),
                 Some(CallbackManager::cvoid_engine_user_data_cleanup_callback),
                 type_id,
             );
@@ -1259,13 +1541,13 @@ impl Engine {
         &mut self,
         callback: CleanModuleUserDataCallbackFn,
         type_id: asPWORD,
-    ) -> Result<()> {
+    ) -> ScriptResult<()> {
         CallbackManager::add_module_user_data_cleanup_callback(type_id, callback)?;
         unsafe {
             (self
                 .as_vtable()
                 .asIScriptEngine_SetModuleUserDataCleanupCallback)(
-                self.inner,
+                self.inner.as_ptr(),
                 Some(CallbackManager::cvoid_module_user_data_cleanup_callback),
                 type_id,
             );
@@ -1278,14 +1560,14 @@ impl Engine {
         &mut self,
         callback: CleanContextUserDataCallbackFn,
         type_id: asPWORD,
-    ) -> Result<()> {
+    ) -> ScriptResult<()> {
         CallbackManager::add_context_user_data_cleanup_callback(type_id, callback)?;
 
         unsafe {
             (self
                 .as_vtable()
                 .asIScriptEngine_SetContextUserDataCleanupCallback)(
-                self.inner,
+                self.inner.as_ptr(),
                 Some(CallbackManager::cvoid_context_user_data_cleanup_callback),
                 type_id,
             );
@@ -1298,14 +1580,14 @@ impl Engine {
         &mut self,
         callback: CleanFunctionUserDataCallbackFn,
         type_id: asPWORD,
-    ) -> Result<()> {
+    ) -> ScriptResult<()> {
         CallbackManager::add_function_user_data_cleanup_callback(type_id, callback)?;
 
         unsafe {
             (self
                 .as_vtable()
                 .asIScriptEngine_SetFunctionUserDataCleanupCallback)(
-                self.inner,
+                self.inner.as_ptr(),
                 Some(CallbackManager::cvoid_function_user_data_cleanup_callback),
                 type_id,
             );
@@ -1318,14 +1600,14 @@ impl Engine {
         &mut self,
         callback: CleanTypeInfoCallbackFn,
         type_id: asPWORD,
-    ) -> Result<()> {
+    ) -> ScriptResult<()> {
         CallbackManager::add_type_info_user_data_cleanup_callback(type_id, callback)?;
 
         unsafe {
             (self
                 .as_vtable()
                 .asIScriptEngine_SetTypeInfoUserDataCleanupCallback)(
-                self.inner,
+                self.inner.as_ptr(),
                 Some(CallbackManager::cvoid_type_info_user_data_cleanup_callback),
                 type_id,
             );
@@ -1338,13 +1620,13 @@ impl Engine {
         &mut self,
         callback: CleanScriptObjectCallbackFn,
         type_id: asPWORD,
-    ) -> Result<()> {
+    ) -> ScriptResult<()> {
         CallbackManager::add_script_object_user_data_cleanup_callback(type_id, callback)?;
         unsafe {
             (self
                 .as_vtable()
                 .asIScriptEngine_SetScriptObjectUserDataCleanupCallback)(
-                self.inner,
+                self.inner.as_ptr(),
                 Some(CallbackManager::cvoid_script_object_user_data_cleanup_callback),
                 type_id,
             );
@@ -1358,15 +1640,15 @@ impl Engine {
     pub fn set_translate_app_exception_callback(
         &mut self,
         callback: TranslateAppExceptionCallbackFn,
-    ) -> Result<()> {
+    ) -> ScriptResult<()> {
         CallbackManager::set_translate_exception_callback(Some(callback))?;
 
         let conv: u32 = CallingConvention::Cdecl.into();
         unsafe {
-            Error::from_code((self
+            ScriptError::from_code((self
                 .as_vtable()
                 .asIScriptEngine_SetTranslateAppExceptionCallback)(
-                self.inner,
+                self.inner.as_ptr(),
                 asScriptContextFunction(Some(CallbackManager::cvoid_translate_exception_callback)),
                 ptr::null_mut(),
                 conv as i32,
@@ -1374,15 +1656,18 @@ impl Engine {
         }
     }
 
-    pub fn with_default_modules(&self) -> Result<()> {
+    pub fn with_default_modules(&self) -> ScriptResult<()> {
         #[cfg(feature = "string")]
-        with_string_module(self)?;
+        {
+            self.install(crate::plugins::string::plugin()?)?;
+            self.register_string_factory("string", get_string_factory_instance())?;
+        }
 
         Ok(())
     }
 
     fn as_vtable(&self) -> &asIScriptEngine__bindgen_vtable {
-        unsafe { &*(*self.inner).vtable_ }
+        unsafe { &*(*self.inner.as_ptr()).vtable_ }
     }
 }
 

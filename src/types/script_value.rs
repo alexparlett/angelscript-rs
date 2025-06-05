@@ -1,6 +1,7 @@
-use crate::{script_generic::ScriptGeneric, TypeIdFlags, VoidPtr};
-use angelscript_bindings::{asBYTE, asDWORD, asQWORD, asUINT, asWORD};
+use crate::internal::pointers::VoidPtr;
+use angelscript_sys::{asBYTE, asDWORD, asQWORD, asUINT, asWORD};
 use std::ffi::c_void;
+use crate::prelude::{ScriptGeneric, TypeIdFlags};
 
 // Expand the GenericValueData enum to handle more cases
 #[derive(Debug, Clone)]
@@ -35,7 +36,7 @@ impl ScriptValue {
             TypeIdFlags::INT8 => ScriptValue::Byte(generic.get_arg_byte(arg)),
             TypeIdFlags::INT16 => ScriptValue::Word(generic.get_arg_word(arg)),
             TypeIdFlags::INT32 => ScriptValue::DWord(generic.get_arg_dword(arg)),
-            TypeIdFlags::INT16 => ScriptValue::QWord(generic.get_arg_qword(arg)),
+            TypeIdFlags::INT64 => ScriptValue::QWord(generic.get_arg_qword(arg)),
             TypeIdFlags::UINT8 => ScriptValue::Byte(generic.get_arg_byte(arg)),
             TypeIdFlags::UINT16 => ScriptValue::Word(generic.get_arg_word(arg)),
             TypeIdFlags::UINT32 => ScriptValue::DWord(generic.get_arg_dword(arg)),

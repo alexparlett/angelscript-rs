@@ -5,10 +5,12 @@ edition = "2024"
 
 [dependencies]
 angelscript_macros = { path = "crates/angelscript_macros", optional = true }
-angelscript_bindings = { path = "crates/angelscript_bindings" }
-itoa = "1"
-ryu = "1"
-bitflags = "2.9.1"
+angelscript_sys = { path = "crates/angelscript_sys" }
+itoa = "1.0"
+ryu = "1.0"
+bitflags = "2.9"
+thiserror = "2.0"
+anyhow = "1.0"
 
 [dev-dependencies]
 
@@ -22,4 +24,4 @@ rust-threading = []
 name = "basic"
 
 [workspace]
-members = ["crates/angelscript_bindings", "crates/angelscript_macros"]
+members = ["crates/angelscript_sys", "crates/angelscript_macros"]

@@ -1,5 +1,5 @@
-use crate::error::{Error, Result};
-use angelscript_bindings::{asILockableSharedBool, asILockableSharedBool__bindgen_vtable};
+use crate::core::error::{ScriptError, ScriptResult};
+use angelscript_sys::{asILockableSharedBool, asILockableSharedBool__bindgen_vtable};
 
 #[derive(Debug)]
 pub struct LockableSharedBool {
@@ -9,7 +9,9 @@ pub struct LockableSharedBool {
 impl LockableSharedBool {
     pub(crate) fn from_raw(ptr: *mut asILockableSharedBool) -> Self {
         let wrapper = Self { inner: ptr };
-        wrapper.add_ref().expect("Failed to add reference to LockableSharedBool");
+        wrapper
+            .add_ref()
+            .expect("Failed to add reference to LockableSharedBool");
         wrapper
     }
 
@@ -20,45 +22,33 @@ impl LockableSharedBool {
     // ========== VTABLE ORDER (matches asILockableSharedBool__bindgen_vtable) ==========
 
     // 1. AddRef
-    pub fn add_ref(&self) -> Result<()> {
-        unsafe {
-            Error::from_code((self.as_vtable().asILockableSharedBool_AddRef)(self.inner))
-        }
+    pub fn add_ref(&self) -> ScriptResult<()> {
+        unsafe { ScriptError::from_code((self.as_vtable().asILockableSharedBool_AddRef)(self.inner)) }
     }
 
     // 2. Release
-    pub fn release(&self) -> Result<()> {
-        unsafe {
-            Error::from_code((self.as_vtable().asILockableSharedBool_Release)(self.inner))
-        }
+    pub fn release(&self) -> ScriptResult<()> {
+        unsafe { ScriptError::from_code((self.as_vtable().asILockableSharedBool_Release)(self.inner)) }
     }
 
     // 3. Get
     pub fn get(&self) -> bool {
-        unsafe {
-            (self.as_vtable().asILockableSharedBool_Get)(self.inner)
-        }
+        unsafe { (self.as_vtable().asILockableSharedBool_Get)(self.inner) }
     }
 
     // 4. Set
     pub fn set(&self, value: bool) {
-        unsafe {
-            (self.as_vtable().asILockableSharedBool_Set)(self.inner, value)
-        }
+        unsafe { (self.as_vtable().asILockableSharedBool_Set)(self.inner, value) }
     }
 
     // 5. Lock
     pub fn lock(&self) {
-        unsafe {
-            (self.as_vtable().asILockableSharedBool_Lock)(self.inner)
-        }
+        unsafe { (self.as_vtable().asILockableSharedBool_Lock)(self.inner) }
     }
 
     // 6. Unlock
     pub fn unlock(&self) {
-        unsafe {
-            (self.as_vtable().asILockableSharedBool_Unlock)(self.inner)
-        }
+        unsafe { (self.as_vtable().asILockableSharedBool_Unlock)(self.inner) }
     }
 
     fn as_vtable(&self) -> &asILockableSharedBool__bindgen_vtable {
@@ -68,7 +58,8 @@ impl LockableSharedBool {
 
 impl Drop for LockableSharedBool {
     fn drop(&mut self) {
-        self.release().expect("Failed to release LockableSharedBool");
+        self.release()
+            .expect("Failed to release LockableSharedBool");
     }
 }
 

@@ -1,11 +1,12 @@
-use crate::engine::Engine;
-use crate::error::{Error, Result};
-use crate::lockable_shared_bool::LockableSharedBool;
-use crate::typeinfo::TypeInfo;
-use crate::types::*;
-use crate::user_data::UserData;
-use angelscript_bindings::{asIScriptObject, asIScriptObject__bindgen_vtable, asPWORD, asUINT};
+use crate::core::engine::Engine;
+use crate::core::error::{ScriptError, ScriptResult};
+use crate::core::lockable_shared_bool::LockableSharedBool;
+use crate::core::typeinfo::TypeInfo;
+use crate::types::user_data::UserData;
+use angelscript_sys::{asIScriptEngine, asIScriptObject, asIScriptObject__bindgen_vtable, asPWORD, asUINT};
 use std::ffi::{c_void, CStr};
+use std::ptr::NonNull;
+use crate::internal::pointers::{Ptr, VoidPtr};
 
 /// Wrapper for AngelScript's script object interface
 ///
@@ -37,13 +38,13 @@ impl ScriptObject {
     // ========== VTABLE ORDER (matches asIScriptObject__bindgen_vtable) ==========
 
     // 1. AddRef
-    pub fn add_ref(&self) -> Result<()> {
-        unsafe { Error::from_code((self.as_vtable().asIScriptObject_AddRef)(self.inner)) }
+    pub fn add_ref(&self) -> ScriptResult<()> {
+        unsafe { ScriptError::from_code((self.as_vtable().asIScriptObject_AddRef)(self.inner)) }
     }
 
     // 2. Release
-    pub fn release(&self) -> Result<()> {
-        unsafe { Error::from_code((self.as_vtable().asIScriptObject_Release)(self.inner)) }
+    pub fn release(&self) -> ScriptResult<()> {
+        unsafe { ScriptError::from_code((self.as_vtable().asIScriptObject_Release)(self.inner)) }
     }
 
     // 3. GetWeakRefFlag
@@ -103,14 +104,19 @@ impl ScriptObject {
     }
 
     // 10. GetEngine
-    pub fn get_engine(&self) -> Engine {
-        unsafe { Engine::from_raw((self.as_vtable().asIScriptObject_GetEngine)(self.inner)) }
+    pub fn get_engine(&self) -> ScriptResult<Engine> {
+        unsafe {
+            let result: *mut asIScriptEngine =
+                (self.as_vtable().asIScriptObject_GetEngine)(self.inner);
+            let ptr = NonNull::new(result).ok_or(ScriptError::NullPointer)?;
+            Ok(Engine::from_raw(NonNull::from(ptr)))
+        }
     }
 
     // 11. CopyFrom
-    pub fn copy_from(&self, other: &ScriptObject) -> Result<()> {
+    pub fn copy_from(&self, other: &ScriptObject) -> ScriptResult<()> {
         unsafe {
-            Error::from_code((self.as_vtable().asIScriptObject_CopyFrom)(
+            ScriptError::from_code((self.as_vtable().asIScriptObject_CopyFrom)(
                 self.inner,
                 other.inner,
             ))
@@ -306,79 +312,3 @@ impl WeakScriptObjectRef {
 
 unsafe impl Send for WeakScriptObjectRef {}
 unsafe impl Sync for WeakScriptObjectRef {}
-
-// ========== TRAIT IMPLEMENTATIONS ==========
-
-/// Trait for types that can be extracted from script object properties
-pub trait FromScriptProperty: Sized {
-    fn from_property(obj: &ScriptObject, prop_index: asUINT) -> Option<Self>;
-    fn from_property_by_name(obj: &ScriptObject, prop_name: &str) -> Option<Self> {
-        let index = obj.find_property_by_name(prop_name)?;
-        Self::from_property(obj, index)
-    }
-}
-
-/// Trait for types that can be set as script object properties
-pub trait ToScriptProperty {
-    fn to_property(self, obj: &ScriptObject, prop_index: asUINT) -> bool;
-    fn to_property_by_name(self, obj: &ScriptObject, prop_name: &str) -> bool
-    where
-        Self: Sized,
-    {
-        if let Some(index) = obj.find_property_by_name(prop_name) {
-            self.to_property(obj, index)
-        } else {
-            false
-        }
-    }
-}
-
-// Implementations for basic types
-impl FromScriptProperty for i32 {
-    fn from_property(obj: &ScriptObject, prop_index: asUINT) -> Option<Self> {
-        obj.get_property(prop_index)
-    }
-}
-
-impl ToScriptProperty for i32 {
-    fn to_property(self, obj: &ScriptObject, prop_index: asUINT) -> bool {
-        obj.set_property(prop_index, self)
-    }
-}
-
-impl FromScriptProperty for f32 {
-    fn from_property(obj: &ScriptObject, prop_index: asUINT) -> Option<Self> {
-        obj.get_property(prop_index)
-    }
-}
-
-impl ToScriptProperty for f32 {
-    fn to_property(self, obj: &ScriptObject, prop_index: asUINT) -> bool {
-        obj.set_property(prop_index, self)
-    }
-}
-
-impl FromScriptProperty for bool {
-    fn from_property(obj: &ScriptObject, prop_index: asUINT) -> Option<Self> {
-        obj.get_property::<bool>(prop_index)
-    }
-}
-
-impl ToScriptProperty for bool {
-    fn to_property(self, obj: &ScriptObject, prop_index: asUINT) -> bool {
-        obj.set_property(prop_index, if self { 1u8 } else { 0u8 })
-    }
-}
-
-// String handling (more complex due to AngelScript string objects)
-impl FromScriptProperty for String {
-    fn from_property(obj: &ScriptObject, prop_index: asUINT) -> Option<Self> {
-        obj.get_property::<String>(prop_index)
-    }
-}
-
-impl ToScriptProperty for String {
-    fn to_property(self, obj: &ScriptObject, prop_index: asUINT) -> bool {
-        obj.set_property(prop_index, self)
-    }
-}

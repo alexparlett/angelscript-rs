@@ -1,4 +1,4 @@
-use angelscript_bindings::asPWORD;
+use angelscript_sys::asPWORD;
 
 pub trait UserData {
     const TypeId: asPWORD;

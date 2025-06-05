@@ -1,12 +1,11 @@
-use crate::engine::Engine;
-use crate::function::Function;
-use crate::script_value::ScriptValue;
-use crate::types::*;
-use crate::{FromScriptValue, ScriptArg, TypeIdFlags};
-use angelscript_bindings::{
-    asBYTE, asDWORD, asIScriptGeneric, asIScriptGeneric__bindgen_vtable, asQWORD, asUINT, asWORD,
-};
+use crate::core::engine::Engine;
+use crate::core::function::Function;
+use crate::internal::pointers::{Ptr, VoidPtr};
+use crate::prelude::{FromScriptValue, ScriptArg, ScriptError, ScriptResult, TypeIdFlags};
+use crate::types::script_value::ScriptValue;
+use angelscript_sys::{asBYTE, asDWORD, asIScriptEngine, asIScriptGeneric, asIScriptGeneric__bindgen_vtable, asQWORD, asUINT, asWORD};
 use std::ffi::c_void;
+use std::ptr::NonNull;
 
 /// Wrapper for AngelScript's generic interface
 ///
@@ -29,8 +28,13 @@ impl ScriptGeneric {
     // ========== VTABLE ORDER (matches asIScriptGeneric__bindgen_vtable) ==========
 
     // 1. GetEngine
-    pub fn get_engine(&self) -> Engine {
-        unsafe { Engine::from_raw((self.as_vtable().asIScriptGeneric_GetEngine)(self.inner)) }
+    pub fn get_engine(&self) -> ScriptResult<Engine> {
+        unsafe {
+            let result: *mut asIScriptEngine =
+                (self.as_vtable().asIScriptGeneric_GetEngine)(self.inner);
+            let ptr = NonNull::new(result).ok_or(ScriptError::NullPointer)?;
+            Ok(Engine::from_raw(NonNull::from(ptr)))
+        }
     }
 
     // 2. GetFunction
@@ -156,85 +160,90 @@ impl ScriptGeneric {
     }
 
     // 18. SetReturnByte
-    pub fn set_return_byte(&self, val: asBYTE) -> crate::error::Result<()> {
+    pub fn set_return_byte(&self, val: asBYTE) -> crate::core::error::ScriptResult<()> {
         unsafe {
-            crate::error::Error::from_code((self.as_vtable().asIScriptGeneric_SetReturnByte)(
+            crate::core::error::ScriptError::from_code((self.as_vtable().asIScriptGeneric_SetReturnByte)(
                 self.inner, val,
             ))
         }
     }
 
     // 19. SetReturnWord
-    pub fn set_return_word(&self, val: asWORD) -> crate::error::Result<()> {
+    pub fn set_return_word(&self, val: asWORD) -> crate::core::error::ScriptResult<()> {
         unsafe {
-            crate::error::Error::from_code((self.as_vtable().asIScriptGeneric_SetReturnWord)(
+            crate::core::error::ScriptError::from_code((self.as_vtable().asIScriptGeneric_SetReturnWord)(
                 self.inner, val,
             ))
         }
     }
 
     // 20. SetReturnDWord
-    pub fn set_return_dword(&self, val: asDWORD) -> crate::error::Result<()> {
+    pub fn set_return_dword(&self, val: asDWORD) -> crate::core::error::ScriptResult<()> {
         unsafe {
-            crate::error::Error::from_code((self.as_vtable().asIScriptGeneric_SetReturnDWord)(
-                self.inner, val,
-            ))
+            crate::core::error::ScriptError::from_code(
+                (self.as_vtable().asIScriptGeneric_SetReturnDWord)(self.inner, val),
+            )
         }
     }
 
     // 21. SetReturnQWord
-    pub fn set_return_qword(&self, val: asQWORD) -> crate::error::Result<()> {
+    pub fn set_return_qword(&self, val: asQWORD) -> crate::core::error::ScriptResult<()> {
         unsafe {
-            crate::error::Error::from_code((self.as_vtable().asIScriptGeneric_SetReturnQWord)(
-                self.inner, val,
-            ))
+            crate::core::error::ScriptError::from_code(
+                (self.as_vtable().asIScriptGeneric_SetReturnQWord)(self.inner, val),
+            )
         }
     }
 
     // 22. SetReturnFloat
-    pub fn set_return_float(&self, val: f32) -> crate::error::Result<()> {
+    pub fn set_return_float(&self, val: f32) -> crate::core::error::ScriptResult<()> {
         unsafe {
-            crate::error::Error::from_code((self.as_vtable().asIScriptGeneric_SetReturnFloat)(
-                self.inner, val,
-            ))
+            crate::core::error::ScriptError::from_code(
+                (self.as_vtable().asIScriptGeneric_SetReturnFloat)(self.inner, val),
+            )
         }
     }
 
     // 23. SetReturnDouble
-    pub fn set_return_double(&self, val: f64) -> crate::error::Result<()> {
+    pub fn set_return_double(&self, val: f64) -> crate::core::error::ScriptResult<()> {
         unsafe {
-            crate::error::Error::from_code((self.as_vtable().asIScriptGeneric_SetReturnDouble)(
-                self.inner, val,
+            crate::core::error::ScriptError::from_code((self
+                .as_vtable()
+                .asIScriptGeneric_SetReturnDouble)(
+                self.inner, val
             ))
         }
     }
 
     // 24. SetReturnAddress
-    pub fn set_return_address_raw(&self, mut addr: VoidPtr) -> crate::error::Result<()> {
+    pub fn set_return_address_raw(&self, mut addr: VoidPtr) -> crate::core::error::ScriptResult<()> {
         unsafe {
-            crate::error::Error::from_code((self.as_vtable().asIScriptGeneric_SetReturnAddress)(
-                self.inner,
-                addr.as_mut_ptr(),
+            crate::core::error::ScriptError::from_code((self
+                .as_vtable()
+                .asIScriptGeneric_SetReturnAddress)(
+                self.inner, addr.as_mut_ptr()
             ))
         }
     }
 
     // 24. SetReturnAddress
-    pub fn set_return_address<T>(&self, addr: &mut T) -> crate::error::Result<()> {
+    pub fn set_return_address<T>(&self, addr: &mut T) -> crate::core::error::ScriptResult<()> {
         unsafe {
-            crate::error::Error::from_code((self.as_vtable().asIScriptGeneric_SetReturnAddress)(
-                self.inner,
-                addr as *mut _ as *mut c_void,
+            crate::core::error::ScriptError::from_code((self
+                .as_vtable()
+                .asIScriptGeneric_SetReturnAddress)(
+                self.inner, addr as *mut _ as *mut c_void
             ))
         }
     }
 
     // 25. SetReturnObject
-    pub fn set_return_object<T>(&self, obj: &mut T) -> crate::error::Result<()> {
+    pub fn set_return_object<T>(&self, obj: &mut T) -> crate::core::error::ScriptResult<()> {
         unsafe {
-            crate::error::Error::from_code((self.as_vtable().asIScriptGeneric_SetReturnObject)(
-                self.inner,
-                obj as *mut _ as *mut c_void,
+            crate::core::error::ScriptError::from_code((self
+                .as_vtable()
+                .asIScriptGeneric_SetReturnObject)(
+                self.inner, obj as *mut _ as *mut c_void
             ))
         }
     }

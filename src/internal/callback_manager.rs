@@ -1,15 +1,18 @@
-use crate::utils::read_cstring;
-use crate::{
-    Context, Engine, Function, MessageType, Module, Result, ScriptGeneric,
-    ScriptObject, TypeInfo, VoidPtr,
-};
-use angelscript_bindings::{
+use crate::core::context::Context;
+use crate::core::engine::Engine;
+use crate::core::error::ScriptResult;
+use crate::core::module::Module;
+use crate::internal::pointers::VoidPtr;
+use crate::internal::utils::read_cstring;
+use crate::prelude::{Function, MessageType, ScriptGeneric, ScriptObject, TypeInfo};
+use angelscript_sys::{
     asIScriptContext, asIScriptEngine, asIScriptFunction, asIScriptModule, asIScriptObject,
     asITypeInfo, asPWORD, asSMessageInfo,
 };
 use std::collections::HashMap;
 use std::ffi::c_void;
 use std::ptr;
+use std::ptr::NonNull;
 use std::sync::{Mutex, OnceLock};
 
 static CALLBACK_MANAGER: OnceLock<Mutex<CallbackManager>> = OnceLock::new();
@@ -52,13 +55,13 @@ impl CallbackManager {
         })
     }
 
-    pub fn set_message_callback(callback: Option<MessageCallbackFn>) -> Result<()> {
+    pub fn set_message_callback(callback: Option<MessageCallbackFn>) -> ScriptResult<()> {
         let mut manager = CallbackManager::global().lock()?;
         manager.message_callback = callback;
         Ok(())
     }
 
-    pub fn set_circular_ref_callback(callback: Option<CircularRefCallbackFn>) -> Result<()> {
+    pub fn set_circular_ref_callback(callback: Option<CircularRefCallbackFn>) -> ScriptResult<()> {
         let mut manager = CallbackManager::global().lock()?;
         manager.circular_ref_callback = callback;
         Ok(())
@@ -66,31 +69,35 @@ impl CallbackManager {
 
     pub fn set_translate_exception_callback(
         callback: Option<TranslateAppExceptionCallbackFn>,
-    ) -> Result<()> {
+    ) -> ScriptResult<()> {
         let mut manager = CallbackManager::global().lock()?;
         manager.translate_exception_callback = callback;
         Ok(())
     }
 
-    pub fn set_request_context_callback(callback: Option<RequestContextCallbackFn>) -> Result<()> {
+    pub fn set_request_context_callback(
+        callback: Option<RequestContextCallbackFn>,
+    ) -> ScriptResult<()> {
         let mut manager = CallbackManager::global().lock()?;
         manager.request_context_callback = callback;
         Ok(())
     }
 
-    pub fn set_return_context_callback(callback: Option<ReturnContextCallbackFn>) -> Result<()> {
+    pub fn set_return_context_callback(
+        callback: Option<ReturnContextCallbackFn>,
+    ) -> ScriptResult<()> {
         let mut manager = CallbackManager::global().lock()?;
         manager.return_context_callback = callback;
         Ok(())
     }
 
-    pub fn set_exception_callback(callback: Option<ExceptionCallbackFn>) -> Result<()> {
+    pub fn set_exception_callback(callback: Option<ExceptionCallbackFn>) -> ScriptResult<()> {
         let mut manager = CallbackManager::global().lock()?;
         manager.exception_callback = callback;
         Ok(())
     }
 
-    pub fn set_line_callback(callback: Option<LineCallbackFn>) -> Result<()> {
+    pub fn set_line_callback(callback: Option<LineCallbackFn>) -> ScriptResult<()> {
         let mut manager = CallbackManager::global().lock()?;
         manager.line_callback = callback;
         Ok(())
@@ -100,7 +107,7 @@ impl CallbackManager {
     pub fn add_engine_user_data_cleanup_callback(
         engine_id: asPWORD,
         callback: CleanEngineUserDataCallbackFn,
-    ) -> Result<()> {
+    ) -> ScriptResult<()> {
         let mut manager = CallbackManager::global().lock()?;
         manager
             .engine_user_data_cleanup_callbacks
@@ -108,7 +115,7 @@ impl CallbackManager {
         Ok(())
     }
 
-    pub fn remove_engine_user_data_cleanup_callback(engine_id: asPWORD) -> Result<()> {
+    pub fn remove_engine_user_data_cleanup_callback(engine_id: asPWORD) -> ScriptResult<()> {
         let mut manager = CallbackManager::global().lock()?;
         manager
             .engine_user_data_cleanup_callbacks
@@ -120,7 +127,7 @@ impl CallbackManager {
     pub fn add_module_user_data_cleanup_callback(
         module_id: asPWORD,
         callback: CleanModuleUserDataCallbackFn,
-    ) -> Result<()> {
+    ) -> ScriptResult<()> {
         let mut manager = CallbackManager::global().lock()?;
         manager
             .module_user_data_cleanup_callbacks
@@ -128,7 +135,7 @@ impl CallbackManager {
         Ok(())
     }
 
-    pub fn remove_module_user_data_cleanup_callback(module_id: asPWORD) -> Result<()> {
+    pub fn remove_module_user_data_cleanup_callback(module_id: asPWORD) -> ScriptResult<()> {
         let mut manager = CallbackManager::global().lock()?;
         manager
             .module_user_data_cleanup_callbacks
@@ -140,7 +147,7 @@ impl CallbackManager {
     pub fn add_context_user_data_cleanup_callback(
         context_id: asPWORD,
         callback: CleanContextUserDataCallbackFn,
-    ) -> Result<()> {
+    ) -> ScriptResult<()> {
         let mut manager = CallbackManager::global().lock()?;
         manager
             .context_user_data_cleanup_callbacks
@@ -148,7 +155,7 @@ impl CallbackManager {
         Ok(())
     }
 
-    pub fn remove_context_user_data_cleanup_callback(context_id: asPWORD) -> Result<()> {
+    pub fn remove_context_user_data_cleanup_callback(context_id: asPWORD) -> ScriptResult<()> {
         let mut manager = CallbackManager::global().lock()?;
         manager
             .context_user_data_cleanup_callbacks
@@ -160,7 +167,7 @@ impl CallbackManager {
     pub fn add_function_user_data_cleanup_callback(
         function_id: asPWORD,
         callback: CleanFunctionUserDataCallbackFn,
-    ) -> Result<()> {
+    ) -> ScriptResult<()> {
         let mut manager = CallbackManager::global().lock()?;
         manager
             .function_user_data_cleanup_callbacks
@@ -168,7 +175,7 @@ impl CallbackManager {
         Ok(())
     }
 
-    pub fn remove_function_user_data_cleanup_callback(function_id: asPWORD) -> Result<()> {
+    pub fn remove_function_user_data_cleanup_callback(function_id: asPWORD) -> ScriptResult<()> {
         let mut manager = CallbackManager::global().lock()?;
         manager
             .function_user_data_cleanup_callbacks
@@ -180,7 +187,7 @@ impl CallbackManager {
     pub fn add_type_info_user_data_cleanup_callback(
         type_id: asPWORD,
         callback: CleanTypeInfoCallbackFn,
-    ) -> Result<()> {
+    ) -> ScriptResult<()> {
         let mut manager = CallbackManager::global().lock()?;
         manager
             .type_info_user_data_cleanup_callbacks
@@ -188,7 +195,7 @@ impl CallbackManager {
         Ok(())
     }
 
-    pub fn remove_type_info_user_data_cleanup_callback(type_id: asPWORD) -> Result<()> {
+    pub fn remove_type_info_user_data_cleanup_callback(type_id: asPWORD) -> ScriptResult<()> {
         let mut manager = CallbackManager::global().lock()?;
         manager
             .type_info_user_data_cleanup_callbacks
@@ -200,7 +207,7 @@ impl CallbackManager {
     pub fn add_script_object_user_data_cleanup_callback(
         object_id: asPWORD,
         callback: CleanScriptObjectCallbackFn,
-    ) -> Result<()> {
+    ) -> ScriptResult<()> {
         let mut manager = CallbackManager::global().lock()?;
         manager
             .script_object_user_data_cleanup_callbacks
@@ -208,7 +215,7 @@ impl CallbackManager {
         Ok(())
     }
 
-    pub fn remove_script_object_user_data_cleanup_callback(object_id: asPWORD) -> Result<()> {
+    pub fn remove_script_object_user_data_cleanup_callback(object_id: asPWORD) -> ScriptResult<()> {
         let mut manager = CallbackManager::global().lock()?;
         manager
             .script_object_user_data_cleanup_callbacks
@@ -274,14 +281,14 @@ impl CallbackManager {
             .ok()
             .and_then(|lock| lock.request_context_callback)
         {
-            let engine_wrapper = Engine::from_raw(engine);
-            match callback(&engine_wrapper) {
-                None => ptr::null_mut(),
-                Some(ctx) => ctx.as_ptr(),
+            if let Some(engine_wrapper) = NonNull::new(engine).map(Engine::from_raw) {
+                return match callback(&engine_wrapper) {
+                    None => ptr::null_mut(),
+                    Some(ctx) => ctx.as_ptr(),
+                }
             }
-        } else {
-            ptr::null_mut()
         }
+        ptr::null_mut()
     }
 
     // Return context callback
@@ -295,9 +302,10 @@ impl CallbackManager {
             .ok()
             .and_then(|lock| lock.return_context_callback)
         {
-            let engine_wrapper = Engine::from_raw(engine);
-            let ctx_wrapper = Context::from_raw(ctx);
-            callback(&engine_wrapper, &ctx_wrapper);
+            if let Some(engine_wrapper) = NonNull::new(engine).map(Engine::from_raw) {
+                let ctx_wrapper = Context::from_raw(ctx);
+                callback(&engine_wrapper, &ctx_wrapper);
+            }
         }
     }
 
@@ -322,9 +330,10 @@ impl CallbackManager {
 
     pub unsafe extern "C" fn cvoid_engine_user_data_cleanup_callback(engine: *mut asIScriptEngine) {
         if let Ok(lock) = CallbackManager::global().lock() {
-            let engine_wrapper = Engine::from_raw(engine);
-            for callback in lock.engine_user_data_cleanup_callbacks.values() {
-                callback(&engine_wrapper);
+            if let Some(engine_wrapper) = NonNull::new(engine).map(Engine::from_raw) {
+                for callback in lock.engine_user_data_cleanup_callbacks.values() {
+                    callback(&engine_wrapper);
+                }
             }
         }
     }

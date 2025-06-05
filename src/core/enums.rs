@@ -217,7 +217,7 @@ impl From<CallingConvention> for asECallConvTypes {
 }
 
 // Object Type Flags (using bitflags for this one since it's a flag enum)
-use angelscript_bindings::*;
+use angelscript_sys::*;
 use bitflags::bitflags;
 
 bitflags! {
