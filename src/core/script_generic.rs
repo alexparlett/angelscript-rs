@@ -1,10 +1,13 @@
 use crate::core::engine::Engine;
 use crate::core::function::Function;
-use crate::internal::pointers::{Ptr, VoidPtr};
+use crate::types::script_memory::ScriptMemoryLocation;
+use crate::types::script_data::ScriptData;
 use crate::prelude::{FromScriptValue, ScriptArg, ScriptError, ScriptResult, TypeIdFlags};
 use crate::types::script_value::ScriptValue;
-use angelscript_sys::{asBYTE, asDWORD, asIScriptEngine, asIScriptGeneric, asIScriptGeneric__bindgen_vtable, asQWORD, asUINT, asWORD};
-use std::ffi::c_void;
+use angelscript_sys::{
+    asBYTE, asDWORD, asIScriptEngine, asIScriptGeneric, asIScriptGeneric__bindgen_vtable, asQWORD,
+    asUINT, asWORD,
+};
 use std::ptr::NonNull;
 
 /// Wrapper for AngelScript's generic interface
@@ -43,21 +46,21 @@ impl ScriptGeneric {
     }
 
     // 3. GetAuxiliary
-    pub fn get_auxiliary<T>(&self) -> Ptr<T> {
+    pub fn get_auxiliary<T: ScriptData>(&self) -> T {
         unsafe {
             let ptr = (self.as_vtable().asIScriptGeneric_GetAuxiliary)(self.inner);
-            Ptr::<T>::from_raw(ptr)
+            ScriptData::from_script_ptr(ptr)
         }
     }
 
     // 4. GetObject
-    pub fn get_object<T>(&self) -> Option<Ptr<T>> {
+    pub fn get_object(&self) -> Option<ScriptMemoryLocation> {
         unsafe {
             let ptr = (self.as_vtable().asIScriptGeneric_GetObject)(self.inner);
             if ptr.is_null() {
                 None
             } else {
-                Some(Ptr::<T>::from_raw(ptr))
+                Some(ScriptMemoryLocation::from_mut(ptr))
             }
         }
     }
@@ -114,37 +117,37 @@ impl ScriptGeneric {
     }
 
     // 14. GetArgAddress
-    pub fn get_arg_address<T>(&self, arg: asUINT) -> Option<Ptr<T>> {
+    pub fn get_arg_address(&self, arg: asUINT) -> Option<ScriptMemoryLocation> {
         unsafe {
             let ptr = (self.as_vtable().asIScriptGeneric_GetArgAddress)(self.inner, arg);
             if ptr.is_null() {
                 None
             } else {
-                Some(Ptr::<T>::from_raw(ptr))
+                Some(ScriptMemoryLocation::from_mut(ptr))
             }
         }
     }
 
     // 15. GetArgObject
-    pub fn get_arg_object<T>(&self, arg: asUINT) -> Option<Ptr<T>> {
+    pub fn get_arg_object(&self, arg: asUINT) -> Option<ScriptMemoryLocation> {
         unsafe {
             let ptr = (self.as_vtable().asIScriptGeneric_GetArgObject)(self.inner, arg);
             if ptr.is_null() {
                 None
             } else {
-                Some(Ptr::<T>::from_raw(ptr))
+                Some(ScriptMemoryLocation::from_mut(ptr))
             }
         }
     }
 
     // 16. GetAddressOfArg
-    pub fn get_address_of_arg<T>(&self, arg: asUINT) -> Option<Ptr<T>> {
+    pub fn get_address_of_arg(&self, arg: asUINT) -> Option<ScriptMemoryLocation> {
         unsafe {
             let ptr = (self.as_vtable().asIScriptGeneric_GetAddressOfArg)(self.inner, arg);
             if ptr.is_null() {
                 None
             } else {
-                Some(Ptr::<T>::from_raw(ptr))
+                Some(ScriptMemoryLocation::from_mut(ptr))
             }
         }
     }
@@ -162,8 +165,10 @@ impl ScriptGeneric {
     // 18. SetReturnByte
     pub fn set_return_byte(&self, val: asBYTE) -> crate::core::error::ScriptResult<()> {
         unsafe {
-            crate::core::error::ScriptError::from_code((self.as_vtable().asIScriptGeneric_SetReturnByte)(
-                self.inner, val,
+            crate::core::error::ScriptError::from_code((self
+                .as_vtable()
+                .asIScriptGeneric_SetReturnByte)(
+                self.inner, val
             ))
         }
     }
@@ -171,8 +176,10 @@ impl ScriptGeneric {
     // 19. SetReturnWord
     pub fn set_return_word(&self, val: asWORD) -> crate::core::error::ScriptResult<()> {
         unsafe {
-            crate::core::error::ScriptError::from_code((self.as_vtable().asIScriptGeneric_SetReturnWord)(
-                self.inner, val,
+            crate::core::error::ScriptError::from_code((self
+                .as_vtable()
+                .asIScriptGeneric_SetReturnWord)(
+                self.inner, val
             ))
         }
     }
@@ -180,27 +187,33 @@ impl ScriptGeneric {
     // 20. SetReturnDWord
     pub fn set_return_dword(&self, val: asDWORD) -> crate::core::error::ScriptResult<()> {
         unsafe {
-            crate::core::error::ScriptError::from_code(
-                (self.as_vtable().asIScriptGeneric_SetReturnDWord)(self.inner, val),
-            )
+            crate::core::error::ScriptError::from_code((self
+                .as_vtable()
+                .asIScriptGeneric_SetReturnDWord)(
+                self.inner, val
+            ))
         }
     }
 
     // 21. SetReturnQWord
     pub fn set_return_qword(&self, val: asQWORD) -> crate::core::error::ScriptResult<()> {
         unsafe {
-            crate::core::error::ScriptError::from_code(
-                (self.as_vtable().asIScriptGeneric_SetReturnQWord)(self.inner, val),
-            )
+            crate::core::error::ScriptError::from_code((self
+                .as_vtable()
+                .asIScriptGeneric_SetReturnQWord)(
+                self.inner, val
+            ))
         }
     }
 
     // 22. SetReturnFloat
     pub fn set_return_float(&self, val: f32) -> crate::core::error::ScriptResult<()> {
         unsafe {
-            crate::core::error::ScriptError::from_code(
-                (self.as_vtable().asIScriptGeneric_SetReturnFloat)(self.inner, val),
-            )
+            crate::core::error::ScriptError::from_code((self
+                .as_vtable()
+                .asIScriptGeneric_SetReturnFloat)(
+                self.inner, val
+            ))
         }
     }
 
@@ -216,7 +229,10 @@ impl ScriptGeneric {
     }
 
     // 24. SetReturnAddress
-    pub fn set_return_address_raw(&self, mut addr: VoidPtr) -> crate::core::error::ScriptResult<()> {
+    pub fn set_return_address_raw(
+        &self,
+        mut addr: ScriptMemoryLocation,
+    ) -> crate::core::error::ScriptResult<()> {
         unsafe {
             crate::core::error::ScriptError::from_code((self
                 .as_vtable()
@@ -227,35 +243,37 @@ impl ScriptGeneric {
     }
 
     // 24. SetReturnAddress
-    pub fn set_return_address<T>(&self, addr: &mut T) -> crate::core::error::ScriptResult<()> {
+    pub fn set_return_address<T: ScriptData>(
+        &self,
+        addr: &mut T,
+    ) -> crate::core::error::ScriptResult<()> {
         unsafe {
             crate::core::error::ScriptError::from_code((self
                 .as_vtable()
                 .asIScriptGeneric_SetReturnAddress)(
-                self.inner, addr as *mut _ as *mut c_void
+                self.inner, addr.to_script_ptr()
             ))
         }
     }
 
     // 25. SetReturnObject
-    pub fn set_return_object<T>(&self, obj: &mut T) -> crate::core::error::ScriptResult<()> {
+    pub fn set_return_object<T: ScriptData>(&self, obj: &mut T) -> ScriptResult<()> {
         unsafe {
-            crate::core::error::ScriptError::from_code((self
-                .as_vtable()
-                .asIScriptGeneric_SetReturnObject)(
-                self.inner, obj as *mut _ as *mut c_void
+            ScriptError::from_code((self.as_vtable().asIScriptGeneric_SetReturnObject)(
+                self.inner,
+                obj.to_script_ptr(),
             ))
         }
     }
 
     // 26. GetAddressOfReturnLocation
-    pub fn get_address_of_return_location<T>(&self) -> Option<Ptr<T>> {
+    pub fn get_address_of_return_location(&self) -> Option<ScriptMemoryLocation> {
         unsafe {
             let ptr = (self.as_vtable().asIScriptGeneric_GetAddressOfReturnLocation)(self.inner);
             if ptr.is_null() {
                 None
             } else {
-                Some(Ptr::<T>::from_raw(ptr))
+                Some(ScriptMemoryLocation::from_mut(ptr))
             }
         }
     }

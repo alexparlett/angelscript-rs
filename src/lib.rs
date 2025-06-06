@@ -14,7 +14,7 @@ pub mod types;
 
 // Re-export main types
 pub mod prelude {
-    pub use crate::core::enums::*;
+    pub use crate::types::enums::*;
     pub use crate::core::error::{ScriptError, ScriptResult};
     pub use crate::core::function::*;
     pub use crate::core::lockable_shared_bool::*;

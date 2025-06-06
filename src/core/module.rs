@@ -3,11 +3,11 @@ use crate::core::engine::Engine;
 use crate::core::error::{ScriptError, ScriptResult};
 use crate::core::function::Function;
 use crate::core::typeinfo::TypeInfo;
-use crate::internal::pointers::Ptr;
+use crate::types::script_data::ScriptData;
 use crate::types::user_data::UserData;
 use angelscript_sys::{asDWORD, asIBinaryStream, asIScriptEngine, asIScriptFunction, asIScriptModule, asIScriptModule__bindgen_vtable, asUINT};
 use std::ffi::{CStr, CString};
-use std::os::raw::{c_char, c_void};
+use std::os::raw::c_char;
 use std::ptr;
 use std::ptr::NonNull;
 
@@ -331,13 +331,13 @@ impl Module {
     }
 
     // 23. GetAddressOfGlobalVar
-    pub fn get_address_of_global_var<T>(&self, index: asUINT) -> Option<Ptr<T>> {
+    pub fn get_address_of_global_var<T: ScriptData>(&self, index: asUINT) -> Option<T> {
         unsafe {
             let ptr = (self.as_vtable().asIScriptModule_GetAddressOfGlobalVar)(self.inner, index);
             if ptr.is_null() {
                 None
             } else {
-                Some(Ptr::<T>::from_raw(ptr))
+                Some(ScriptData::from_script_ptr(ptr))
             }
         }
     }
@@ -575,29 +575,29 @@ impl Module {
     }
 
     // 44. SetUserData
-    pub fn set_user_data<T: UserData>(&self, data: &mut T) -> Option<Ptr<T>> {
+    pub fn set_user_data<T: UserData + ScriptData>(&self, data: &mut T) -> Option<T> {
         unsafe {
             let ptr = (self.as_vtable().asIScriptModule_SetUserData)(
                 self.inner,
-                data as *mut _ as *mut c_void,
+                data.to_script_ptr(),
                 T::TypeId,
             );
             if ptr.is_null() {
                 None
             } else {
-                Some(Ptr::<T>::from_raw(ptr))
+                Some(ScriptData::from_script_ptr(ptr))
             }
         }
     }
 
     // 45. GetUserData
-    pub fn get_user_data<T: UserData>(&self) -> Option<Ptr<T>> {
+    pub fn get_user_data<T: UserData + ScriptData>(&self) -> Option<T> {
         unsafe {
             let ptr = (self.as_vtable().asIScriptModule_GetUserData)(self.inner, T::TypeId);
             if ptr.is_null() {
                 None
             } else {
-                Some(Ptr::<T>::from_raw(ptr))
+                Some(ScriptData::from_script_ptr(ptr))
             }
         }
     }

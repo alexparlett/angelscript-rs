@@ -2,8 +2,8 @@ use angelscript::core::engine::Engine;
 use angelscript::prelude::{GetModuleFlags, ScriptGeneric};
 
 fn print(g: &ScriptGeneric) {
-    let arg_ptr = g.get_arg_object::<String>(0).unwrap();
-    println!("Hello, {}", arg_ptr.as_ref());
+    let arg_ptr = g.get_arg_object(0).unwrap();
+    println!("Hello, {}", arg_ptr.as_ref::<String>());
 }
 
 fn main() {
@@ -71,6 +71,4 @@ fn main() {
     ctx.set_arg_object(0, &mut name)
         .expect("Failed to bind str");
     ctx.execute().expect("Failed to execute script");
-
-    println!("Script execution completed!");
 }

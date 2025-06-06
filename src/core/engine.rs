@@ -1,5 +1,5 @@
 use crate::core::context::Context;
-use crate::core::enums::*;
+use crate::types::enums::*;
 use crate::core::error::{ScriptError, ScriptResult};
 use crate::core::function::Function;
 use crate::core::lockable_shared_bool::LockableSharedBool;
@@ -13,11 +13,11 @@ use crate::internal::callback_manager::{
     RequestContextCallbackFn, ReturnContextCallbackFn, TranslateAppExceptionCallbackFn,
 };
 use crate::internal::jit_compiler::JITCompiler;
-use crate::internal::pointers::{Ptr, VoidPtr};
+use crate::types::script_memory::ScriptMemoryLocation;
 use crate::internal::stringfactory::get_string_factory_instance;
 use crate::internal::thread_manager::{ExclusiveLockGuard, SharedLockGuard, ThreadManager};
 use crate::plugins::plugin;
-use crate::plugins::plugin::{Plugin, ScriptData};
+use crate::plugins::plugin::Plugin;
 use crate::types::user_data::UserData;
 use angelscript_sys::{
     asALLOCFUNC_t, asAllocMem, asAtomicDec, asAtomicInc, asCreateLockableSharedBool,
@@ -33,6 +33,7 @@ use std::marker::PhantomData;
 use std::os::raw::c_void;
 use std::ptr;
 use std::ptr::NonNull;
+use crate::types::script_data::ScriptData;
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct Engine {
@@ -245,12 +246,12 @@ impl Engine {
     }
 
     /// Allocates memory using AngelScript's allocator
-    pub fn alloc_mem(size: usize) -> VoidPtr {
-        unsafe { VoidPtr::from_mut_raw(asAllocMem(size)) }
+    pub fn alloc_mem(size: usize) -> ScriptMemoryLocation {
+        unsafe { ScriptMemoryLocation::from_mut(asAllocMem(size)) }
     }
 
     /// Frees memory allocated by AngelScript's allocator
-    pub fn free_mem(mut mem: VoidPtr) {
+    pub fn free_mem(mut mem: ScriptMemoryLocation) {
         unsafe {
             asFreeMem(mem.as_mut_ptr());
         }
@@ -434,7 +435,7 @@ impl Engine {
 
         if let Some(f) = user_data {
             let s = ScriptGeneric::from_raw(arg1);
-            f.as_ref().call(&s);
+            f.call(&s);
         }
     }
 
@@ -569,7 +570,7 @@ impl Engine {
                         .ok()
                         .map(|s| s.to_string())
                 },
-                pointer: Ptr::<c_void>::from_raw(pointer),
+                pointer: ScriptMemoryLocation::from_mut(pointer),
                 access_mask,
             })
         }
@@ -1154,7 +1155,7 @@ impl Engine {
     }
 
     // Script objects
-    pub fn create_script_object(&self, type_info: &TypeInfo) -> ScriptResult<Ptr<c_void>> {
+    pub fn create_script_object<T: ScriptData>(&self, type_info: &TypeInfo) -> ScriptResult<T> {
         unsafe {
             let obj = (self.as_vtable().asIScriptEngine_CreateScriptObject)(
                 self.inner.as_ptr(),
@@ -1163,31 +1164,34 @@ impl Engine {
             if obj.is_null() {
                 Err(ScriptError::NullPointer)
             } else {
-                Ok(Ptr::<c_void>::from_raw(obj))
+                Ok(ScriptData::from_script_ptr(obj))
             }
         }
     }
 
-    pub fn create_script_object_copy<T>(
+    pub fn create_script_object_copy<T: ScriptData>(
         &self,
         obj: &mut T,
         type_info: &TypeInfo,
-    ) -> Option<Ptr<T>> {
+    ) -> Option<T> {
         unsafe {
             let new_obj = (self.as_vtable().asIScriptEngine_CreateScriptObjectCopy)(
                 self.inner.as_ptr(),
-                obj as *mut _ as *mut c_void,
+                obj.to_script_ptr(),
                 type_info.as_ptr(),
             );
             if new_obj.is_null() {
                 None
             } else {
-                Some(Ptr::<T>::from_raw(new_obj))
+                Some(ScriptData::from_script_ptr(new_obj))
             }
         }
     }
 
-    pub fn create_uninitialized_script_object(&self, type_info: &TypeInfo) -> Option<Ptr<c_void>> {
+    pub fn create_uninitialized_script_object(
+        &self,
+        type_info: &TypeInfo,
+    ) -> Option<ScriptMemoryLocation> {
         unsafe {
             let obj = (self
                 .as_vtable()
@@ -1198,17 +1202,17 @@ impl Engine {
             if obj.is_null() {
                 None
             } else {
-                Some(Ptr::<c_void>::from_raw(obj))
+                Some(ScriptMemoryLocation::from_mut(obj))
             }
         }
     }
 
-    pub fn create_delegate<T>(&self, func: &Function, obj: &mut T) -> Option<Function> {
+    pub fn create_delegate<T: ScriptData>(&self, func: &Function, obj: &mut T) -> Option<Function> {
         unsafe {
             let delegate = (self.as_vtable().asIScriptEngine_CreateDelegate)(
                 self.inner.as_ptr(),
                 func.as_raw(),
-                obj as *mut _ as *mut c_void,
+                obj.to_script_ptr(),
             );
             if delegate.is_null() {
                 None
@@ -1218,55 +1222,56 @@ impl Engine {
         }
     }
 
-    pub fn assign_script_object<T>(
+    pub fn assign_script_object<T: ScriptData>(
         &self,
-        dst_obj: &mut T,
         src_obj: &mut T,
         type_info: &TypeInfo,
-    ) -> ScriptResult<()> {
+    ) -> ScriptResult<T> {
+        let ptr = std::ptr::null_mut();
         unsafe {
             ScriptError::from_code((self.as_vtable().asIScriptEngine_AssignScriptObject)(
                 self.inner.as_ptr(),
-                dst_obj as *mut _ as *mut c_void,
-                src_obj as *mut _ as *mut c_void,
+                ptr,
+                src_obj.to_script_ptr(),
                 type_info.as_ptr(),
-            ))
+            ))?;
         }
+        Ok(ScriptData::from_script_ptr(ptr))
     }
 
-    pub fn release_script_object<T>(&self, obj: &mut T, type_info: &TypeInfo) {
+    pub fn release_script_object<T: ScriptData>(&self, obj: &mut T, type_info: &TypeInfo) {
         unsafe {
             (self.as_vtable().asIScriptEngine_ReleaseScriptObject)(
                 self.inner.as_ptr(),
-                obj as *mut _ as *mut c_void,
+                obj.to_script_ptr(),
                 type_info.as_ptr(),
             );
         }
     }
 
-    pub fn add_ref_script_object<T>(&self, obj: &mut T, type_info: &TypeInfo) {
+    pub fn add_ref_script_object<T: ScriptData>(&self, obj: &mut T, type_info: &TypeInfo) {
         unsafe {
             (self.as_vtable().asIScriptEngine_AddRefScriptObject)(
                 self.inner.as_ptr(),
-                obj as *mut _ as *mut c_void,
+                obj.to_script_ptr(),
                 type_info.as_ptr(),
             );
         }
     }
 
-    pub fn ref_cast_object<T, U>(
+    pub fn ref_cast_object<T: ScriptData, U: ScriptData>(
         &self,
         obj: &mut T,
         from_type: &mut TypeInfo,
         to_type: &mut TypeInfo,
         use_only_implicit_cast: bool,
-    ) -> ScriptResult<Option<Ptr<U>>> {
+    ) -> ScriptResult<Option<U>> {
         let mut new_ptr: *mut c_void = ptr::null_mut();
 
         unsafe {
             ScriptError::from_code((self.as_vtable().asIScriptEngine_RefCastObject)(
                 self.inner.as_ptr(),
-                obj as *mut _ as *mut c_void,
+                obj.to_script_ptr(),
                 from_type.as_ptr(),
                 to_type.as_ptr(),
                 &mut new_ptr,
@@ -1276,12 +1281,12 @@ impl Engine {
             if new_ptr.is_null() {
                 Ok(None)
             } else {
-                Ok(Some(Ptr::<U>::from_raw(new_ptr)))
+                Ok(Some(ScriptData::from_script_ptr(new_ptr)))
             }
         }
     }
 
-    pub fn get_weak_ref_flag_of_script_object<T>(
+    pub fn get_weak_ref_flag_of_script_object<T: ScriptData>(
         &self,
         obj: &mut T,
         type_info: &TypeInfo,
@@ -1291,7 +1296,7 @@ impl Engine {
                 .as_vtable()
                 .asIScriptEngine_GetWeakRefFlagOfScriptObject)(
                 self.inner.as_ptr(),
-                obj as *mut _ as *mut c_void,
+                obj.to_script_ptr(),
                 type_info.as_ptr(),
             );
             if flag.is_null() {
@@ -1320,7 +1325,7 @@ impl Engine {
         }
     }
 
-    pub fn set_context_callbacks<T>(
+    pub fn set_context_callbacks<T: ScriptData>(
         &mut self,
         request_ctx: RequestContextCallbackFn,
         return_ctx: ReturnContextCallbackFn,
@@ -1334,7 +1339,7 @@ impl Engine {
                 self.inner.as_ptr(),
                 Some(CallbackManager::cvoid_request_context_callback),
                 Some(CallbackManager::cvoid_return_context_callback),
-                param as *mut _ as *mut c_void,
+                param.to_script_ptr(),
             ))
         }
     }
@@ -1393,7 +1398,7 @@ impl Engine {
         }
     }
 
-    pub fn notify_garbage_collector_of_new_object<T>(
+    pub fn notify_garbage_collector_of_new_object<T: ScriptData>(
         &self,
         obj: &mut T,
         type_info: &mut TypeInfo,
@@ -1403,7 +1408,7 @@ impl Engine {
                 .as_vtable()
                 .asIScriptEngine_NotifyGarbageCollectorOfNewObject)(
                 self.inner.as_ptr(),
-                obj as *mut _ as *mut c_void,
+                obj.to_script_ptr(),
                 type_info.as_ptr(),
             ))
         }
@@ -1428,7 +1433,7 @@ impl Engine {
             } else {
                 Some(GCObjectInfo {
                     seq_nbr,
-                    obj: Ptr::<c_void>::from_raw(obj),
+                    obj: ScriptMemoryLocation::from_mut(obj),
                     type_info: if type_info.is_null() {
                         None
                     } else {
@@ -1439,30 +1444,38 @@ impl Engine {
         }
     }
 
-    pub fn gc_enum_callback<T>(&self, reference: &mut T) {
+    pub fn gc_enum_callback<T: ScriptData>(&self, reference: &mut T) {
         unsafe {
             (self.as_vtable().asIScriptEngine_GCEnumCallback)(
                 self.inner.as_ptr(),
-                reference as *mut _ as *mut c_void,
+                reference.to_script_ptr(),
             );
         }
     }
 
-    pub fn forward_gc_enum_references<T>(&self, ref_obj: &mut T, type_info: &mut TypeInfo) {
+    pub fn forward_gc_enum_references<T: ScriptData>(
+        &self,
+        ref_obj: &mut T,
+        type_info: &mut TypeInfo,
+    ) {
         unsafe {
             (self.as_vtable().asIScriptEngine_ForwardGCEnumReferences)(
                 self.inner.as_ptr(),
-                ref_obj as *mut _ as *mut c_void,
+                ref_obj.to_script_ptr(),
                 type_info.as_ptr(),
             );
         }
     }
 
-    pub fn forward_gc_release_references<T>(&self, ref_obj: &mut T, type_info: &mut TypeInfo) {
+    pub fn forward_gc_release_references<T: ScriptData>(
+        &self,
+        ref_obj: &mut T,
+        type_info: &mut TypeInfo,
+    ) {
         unsafe {
             (self.as_vtable().asIScriptEngine_ForwardGCReleaseReferences)(
                 self.inner.as_ptr(),
-                ref_obj as *mut _ as *mut c_void,
+                ref_obj.to_script_ptr(),
                 type_info.as_ptr(),
             );
         }
@@ -1488,22 +1501,22 @@ impl Engine {
     }
 
     // User data
-    pub fn set_user_data<T: UserData>(&self, data: &mut T) -> Option<Ptr<T>> {
+    pub fn set_user_data<T: UserData + ScriptData>(&self, data: &mut T) -> Option<T> {
         unsafe {
             let ptr = (self.as_vtable().asIScriptEngine_SetUserData)(
                 self.inner.as_ptr(),
-                data as *mut _ as *mut c_void,
+                data.to_script_ptr(),
                 T::TypeId as asPWORD,
             );
             if ptr.is_null() {
                 None
             } else {
-                Some(Ptr::<T>::from_raw(ptr))
+                Some(ScriptData::from_script_ptr(ptr))
             }
         }
     }
 
-    pub fn get_user_data<T: UserData>(&self) -> ScriptResult<Ptr<T>> {
+    pub fn get_user_data<T: UserData + ScriptData>(&self) -> ScriptResult<T> {
         unsafe {
             let ptr = (self.as_vtable().asIScriptEngine_GetUserData)(
                 self.inner.as_ptr(),
@@ -1512,7 +1525,7 @@ impl Engine {
             if ptr.is_null() {
                 Err(ScriptError::NullPointer)
             } else {
-                Ok(Ptr::<T>::from_raw(ptr))
+                Ok(ScriptData::from_script_ptr(ptr))
             }
         }
     }
@@ -1697,7 +1710,7 @@ unsafe impl Sync for Engine {}
 struct GenericFnUserData(pub GenericFn);
 
 impl GenericFnUserData {
-    pub fn call(&self, ctx: &ScriptGeneric) {
+    pub fn call(self, ctx: &ScriptGeneric) {
         (self.0)(ctx)
     }
 }
@@ -1716,7 +1729,7 @@ pub struct GlobalPropertyInfo {
     pub type_id: i32,
     pub is_const: bool,
     pub config_group: Option<String>,
-    pub pointer: Ptr<std::os::raw::c_void>,
+    pub pointer: ScriptMemoryLocation,
     pub access_mask: asDWORD,
 }
 
@@ -1732,6 +1745,6 @@ pub struct GCStatistics {
 #[derive(Debug)]
 pub struct GCObjectInfo {
     pub seq_nbr: asUINT,
-    pub obj: Ptr<std::os::raw::c_void>,
+    pub obj: ScriptMemoryLocation,
     pub type_info: Option<TypeInfo>,
 }

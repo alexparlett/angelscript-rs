@@ -9,7 +9,6 @@ pub struct InnerCache {
 
 impl InnerCache {
     pub fn new() -> Self {
-        println!("[InnerCache] Initialized empty InnerCache.");
         Self {
             strings: HashMap::new(),
         }
@@ -17,18 +16,9 @@ impl InnerCache {
 
     /// Intern a string and return a stable pointer.
     pub fn intern(&mut self, string: &str) -> *const String {
-        println!(
-            "[InnerCache::intern] Attempting to intern string: '{}'",
-            string
-        );
-
         let arc_string = Arc::new(string.to_string());
         if let Some(count) = self.strings.get_mut(&arc_string) {
             *count += 1;
-            println!(
-                "[InnerCache::intern] String already exists in cache. Updated ref count: {}",
-                count
-            );
             // Ensure the pointer is derived from the current key in the cache,
             // as `arc_string` is a new Arc unrelated with previous instances in memory.
             for key in self.strings.keys() {
@@ -40,21 +30,12 @@ impl InnerCache {
 
         // Add the new string to the cache.
         self.strings.insert(arc_string.clone(), 1);
-        println!(
-            "[InnerCache::intern] Added new string to cache. Cache size: {}",
-            self.strings.len()
-        );
         Arc::as_ptr(&arc_string)
     }
 
     /// Release a string pointer and decrement its reference count.
     /// Frees the memory if the reference count drops to zero.
     pub fn release(&mut self, raw_ptr: *const String) -> bool {
-        println!(
-            "[InnerCache::release] Attempting to release string pointer: {:?}",
-            raw_ptr
-        );
-
         // Extract the key-value pair where the raw pointer matches
         let found_entry = self
             .strings
@@ -67,19 +48,13 @@ impl InnerCache {
                 // Decrement reference count
                 if let Some(current_count) = self.strings.get_mut(&key) {
                     *current_count -= 1;
-                    println!(
-                        "[InnerCache::release] Decremented ref count for string. New count: {}",
-                        current_count
-                    );
                 }
             } else {
                 // Remove the string if reference count is 0
                 self.strings.remove(&key);
-                println!("[InnerCache::release] Ref count reached 0. Removed string from cache.");
             }
             true
         } else {
-            println!("[InnerCache::release] Failed to release string. Pointer not found in cache.");
             true
         }
     }
@@ -92,7 +67,6 @@ pub struct StringFactory {
 
 impl StringFactory {
     pub(crate) fn new() -> Self {
-        println!("[StringFactory::new] Creating a new StringFactory instance.");
         Self {
             cache: Arc::new(Mutex::new(InnerCache::new())),
         }
@@ -100,23 +74,17 @@ impl StringFactory {
 
     pub(crate) fn reset(&self) {
         let mut cache = self.cache.lock().unwrap();
-        println!(
-            "[StringFactory::reset] Resetting string cache. Current cache size: {}",
-            cache.strings.len()
-        );
         cache.strings.clear();
     }
 
     pub fn singleton() -> &'static StringFactory {
         static INSTANCE: OnceLock<StringFactory> = OnceLock::new();
         INSTANCE.get_or_init(|| {
-            println!("[StringFactory] Creating a singleton instance.");
             StringFactory::new()
         })
     }
 
     pub fn cache(&self) -> Arc<Mutex<InnerCache>> {
-        println!("[StringFactory::cache] Returning reference to the cache.");
         self.cache.clone()
     }
 
@@ -128,31 +96,17 @@ impl StringFactory {
         let factory = StringFactory::singleton();
         let mut cache = factory.cache.lock().unwrap();
 
-        println!(
-            "[StringFactory::get_string_constant] Called with pointer: {:?}, length: {}",
-            data, length
-        );
-
         // Convert raw data to a Rust string
-        let slice = std::slice::from_raw_parts(data as *const u8, length as usize);
+        let slice = unsafe { std::slice::from_raw_parts(data as *const u8, length as usize) };
         let string = match std::str::from_utf8(slice) {
             Ok(s) => s,
             Err(_) => {
-                eprintln!("[StringFactory::get_string_constant] Invalid UTF-8 string.");
                 return std::ptr::null();
             }
         };
-        println!(
-            "[StringFactory::get_string_constant] Attempting to intern string: '{}'",
-            string
-        );
 
         // Intern the string and return a stable pointer
         let pointer = cache.intern(string) as *const c_void;
-        println!(
-            "[StringFactory::get_string_constant] Interned string. Pointer: {:?}",
-            pointer
-        );
 
         pointer
     }
@@ -165,20 +119,11 @@ impl StringFactory {
         let factory = StringFactory::singleton();
         let mut cache = factory.cache.lock().unwrap();
 
-        println!(
-            "[StringFactory::release_string_constant] Called with pointer: {:?}",
-            str_
-        );
-
         let str_ptr = str_ as *const String;
 
         if cache.release(str_ptr) {
-            println!("[StringFactory::release_string_constant] Successfully released string.");
             0 // Success
         } else {
-            eprintln!(
-                "[StringFactory::release_string_constant] Failed to release string. Pointer not found."
-            );
             -1 // Failure (unknown pointer)
         }
     }
@@ -190,38 +135,26 @@ impl StringFactory {
         data: *mut c_char,
         length: *mut asUINT,
     ) -> i32 {
-        println!(
-            "[StringFactory::get_raw_string_data] Called with str_: {:?}, data: {:?}, length: {:?}",
-            str_, data, length
-        );
-
         // Cast the input pointer to a String reference
         if str_.is_null() {
-            eprintln!("[StringFactory::get_raw_string_data] Null pointer error.");
             return -1; // Null pointer error
         }
 
         let str_ptr = str_ as *const String;
 
         // Use raw pointer dereference to avoid taking ownership
-        let string = &*str_ptr;
+        let string = unsafe { &*str_ptr };
 
         // Write the length of the string
         if !length.is_null() {
-            length.write(string.len() as asUINT);
-            println!(
-                "[StringFactory::get_raw_string_data] Wrote string length: {}",
-                string.len()
-            );
+            unsafe { length.write(string.len() as asUINT) };
         }
 
         // Write the string data
         if !data.is_null() {
-            std::ptr::copy_nonoverlapping(string.as_ptr() as *const c_char, data, string.len());
-            println!(
-                "[StringFactory::get_raw_string_data] Wrote string data: '{}'",
-                string
-            );
+            unsafe {
+                std::ptr::copy_nonoverlapping(string.as_ptr() as *const c_char, data, string.len())
+            };
         }
 
         0 // Success
@@ -414,12 +347,6 @@ mod tests {
             assert_eq!(
                 ptr_hello, ptr_hello_dup,
                 "Duplicate 'Hello' should return the same pointer as the original"
-            );
-
-            // Log the pointer values for debugging if needed
-            println!(
-                "Pointer for 'Hello': {:?}, Pointer for 'World': {:?}, Pointer for duplicate 'Hello': {:?}",
-                ptr_hello, ptr_world, ptr_hello_dup
             );
         }
     }

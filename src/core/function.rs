@@ -1,15 +1,16 @@
 use crate::core::engine::Engine;
-use crate::core::enums::*;
+use crate::types::enums::*;
 use crate::core::error::{ScriptError, ScriptResult};
 use crate::core::module::Module;
 use crate::core::typeinfo::TypeInfo;
-use crate::internal::pointers::Ptr;
 use crate::types::user_data::UserData;
 use angelscript_sys::{asDWORD, asIScriptEngine, asIScriptFunction, asIScriptFunction__bindgen_vtable, asJITFunction, asPWORD, asUINT};
 use std::ffi::CStr;
 use std::os::raw::{c_char, c_void};
 use std::ptr;
 use std::ptr::NonNull;
+use crate::types::script_memory::ScriptMemoryLocation;
+use crate::types::script_data::ScriptData;
 
 #[derive(Debug, Clone)]
 pub struct Function {
@@ -114,10 +115,10 @@ impl Function {
     }
 
     // 11. GetAuxiliary
-    pub fn get_auxiliary<T>(&self) -> Ptr<T> {
+    pub fn get_auxiliary<T: ScriptData>(&self) -> T {
         unsafe {
             let ptr = (self.as_vtable().asIScriptFunction_GetAuxiliary)(self.inner);
-            Ptr::<T>::from_raw(ptr)
+            ScriptData::from_script_ptr(ptr)
         }
     }
 
@@ -293,10 +294,10 @@ impl Function {
     }
 
     // 30. GetDelegateObject
-    pub fn get_delegate_object<T>(&self) -> Ptr<T> {
+    pub fn get_delegate_object<T: ScriptData>(&self) -> T {
         unsafe {
             let ptr = (self.as_vtable().asIScriptFunction_GetDelegateObject)(self.inner);
-            Ptr::<T>::from_raw(ptr)
+            ScriptData::from_script_ptr(ptr)
         }
     }
 
@@ -410,14 +411,14 @@ impl Function {
     }
 
     // 38. GetByteCode
-    pub fn get_byte_code(&self) -> Option<(Ptr<asDWORD>, asUINT)> {
+    pub fn get_byte_code(&self) -> Option<(ScriptMemoryLocation, asUINT)> {
         let mut length: asUINT = 0;
         unsafe {
             let ptr = (self.as_vtable().asIScriptFunction_GetByteCode)(self.inner, &mut length);
             if ptr.is_null() {
                 None
             } else {
-                Some((Ptr::<asDWORD>::from_raw(ptr as *mut c_void), length))
+                Some((ScriptMemoryLocation::from_mut(ptr as *mut c_void), length))
             }
         }
     }
@@ -440,30 +441,30 @@ impl Function {
     }
 
     // 41. SetUserData
-    pub fn set_user_data<T: UserData>(&self, data: &mut T) -> Option<Ptr<T>> {
+    pub fn set_user_data<T: UserData + ScriptData>(&self, data: &mut T) -> Option<T> {
         unsafe {
             let ptr = (self.as_vtable().asIScriptFunction_SetUserData)(
                 self.inner,
-                data as *mut _ as *mut c_void,
+                data.to_script_ptr(),
                 T::TypeId as asPWORD,
             );
             if ptr.is_null() {
                 None
             } else {
-                Some(Ptr::<T>::from_raw(ptr))
+                Some(ScriptData::from_script_ptr(ptr))
             }
         }
     }
 
     // 42. GetUserData
-    pub fn get_user_data<T: UserData>(&self) -> Option<Ptr<T>> {
+    pub fn get_user_data<T: UserData + ScriptData>(&self) -> Option<T> {
         unsafe {
             let ptr =
                 (self.as_vtable().asIScriptFunction_GetUserData)(self.inner, T::TypeId as asPWORD);
             if ptr.is_null() {
                 None
             } else {
-                Some(Ptr::<T>::from_raw(ptr))
+                Some(ScriptData::from_script_ptr(ptr))
             }
         }
     }
@@ -476,7 +477,6 @@ impl Function {
 impl Drop for Function {
     fn drop(&mut self) {
         self.release().expect("Failed to release function");
-        println!("Dropping function");
     }
 }
 

@@ -1,28 +1,7 @@
-use std::ffi::c_void;
-use crate::core::engine::Engine;
 use crate::internal::callback_manager::GenericFn;
-use crate::prelude::{Behaviour, ObjectTypeFlags, ScriptResult};
+use crate::prelude::{Behaviour, ObjectTypeFlags};
 use std::marker::PhantomData;
-use std::ops::Deref;
-
-/// Trait for types that can be used in AngelScript registrations
-pub trait ScriptData: Send + Sync {
-    /// Get a pointer to the data for AngelScript
-    fn to_script_ptr(&mut self) -> *mut std::ffi::c_void;
-    
-    fn from_script_ptr(ptr: *mut std::ffi::c_void) ->  Self where Self: Sized;
-}
-
-/// Implement ScriptData for common types
-impl<T: Sized + Send + Sync> ScriptData for T {
-    fn to_script_ptr(&mut self) -> *mut std::ffi::c_void {
-        self as *mut T as *mut std::ffi::c_void
-    }
-
-    fn from_script_ptr(ptr: *mut c_void) -> Self {
-        unsafe { (ptr as *mut T).read() }
-    }
-}
+use crate::types::script_data::ScriptData;
 
 /// A plugin that groups related AngelScript registrations
 pub struct Plugin {

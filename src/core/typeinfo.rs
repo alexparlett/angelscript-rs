@@ -1,13 +1,13 @@
 use crate::core::engine::Engine;
-use crate::core::enums::*;
+use crate::types::enums::*;
 use crate::core::error::{ScriptError, ScriptResult};
 use crate::core::function::Function;
 use crate::core::module::Module;
+use crate::types::script_data::ScriptData;
 use crate::types::user_data::UserData;
 use angelscript_sys::{asDWORD, asEBehaviours, asEBehaviours_asBEHAVE_CONSTRUCT, asIScriptEngine, asITypeInfo, asITypeInfo__bindgen_vtable, asPWORD, asUINT};
-use std::ffi::{c_void, CStr};
+use std::ffi::CStr;
 use std::ptr::NonNull;
-use crate::internal::pointers::Ptr;
 
 /// Wrapper for AngelScript's type information interface
 ///
@@ -449,29 +449,29 @@ impl TypeInfo {
     }
 
     // 39. SetUserData
-    pub fn set_user_data<T: UserData>(&self, data: &mut T) -> Option<Ptr<T>> {
+    pub fn set_user_data<T: UserData + ScriptData>(&self, data: &mut T) -> Option<T> {
         unsafe {
             let ptr = (self.as_vtable().asITypeInfo_SetUserData)(
                 self.inner,
-                data as *mut _ as *mut c_void,
+                data.to_script_ptr(),
                 T::TypeId as asPWORD,
             );
             if ptr.is_null() {
                 None
             } else {
-                Some(Ptr::<T>::from_raw(ptr))
+                Some(ScriptData::from_script_ptr(ptr))
             }
         }
     }
 
     // 40. GetUserData
-    pub fn get_user_data<T: UserData>(&self) -> Option<Ptr<T>> {
+    pub fn get_user_data<T: UserData + ScriptData>(&self) -> Option<T> {
         unsafe {
             let ptr = (self.as_vtable().asITypeInfo_GetUserData)(self.inner, T::TypeId as asPWORD);
             if ptr.is_null() {
                 None
             } else {
-                Some(Ptr::<T>::from_raw(ptr))
+                Some(ScriptData::from_script_ptr(ptr))
             }
         }
     }

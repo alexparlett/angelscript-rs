@@ -1,11 +1,11 @@
 use crate::core::engine::Engine;
-use crate::core::enums::*;
+use crate::types::enums::*;
 use crate::core::error::{ScriptError, ScriptResult};
 use crate::core::function::Function;
 use crate::core::typeinfo::TypeInfo;
 use crate::internal::callback_manager::{CallbackManager, ExceptionCallbackFn, LineCallbackFn};
-use crate::internal::pointers::Ptr;
-use crate::plugins::plugin::ScriptData;
+use crate::types::script_memory::ScriptMemoryLocation;
+use crate::types::script_data::ScriptData;
 use crate::types::user_data::UserData;
 use angelscript_sys::{
     asBYTE, asDWORD, asETypeModifiers, asETypeModifiers_asTM_NONE, asFUNCTION_t, asFunction,
@@ -200,7 +200,12 @@ impl Context {
         }
     }
 
-    pub fn set_arg_var_type<T: ScriptData>(&self, arg: asUINT, ptr: &mut T, type_id: i32) -> ScriptResult<()> {
+    pub fn set_arg_var_type<T: ScriptData>(
+        &self,
+        arg: asUINT,
+        ptr: &mut T,
+        type_id: i32,
+    ) -> ScriptResult<()> {
         unsafe {
             ScriptError::from_code((self.as_vtable().asIScriptContext_SetArgVarType)(
                 self.context,
@@ -589,7 +594,11 @@ impl Context {
         }
     }
 
-    pub fn push_function<T: ScriptData>(&self, func: &Function, object: Option<&mut T>) -> ScriptResult<()> {
+    pub fn push_function<T: ScriptData>(
+        &self,
+        func: &Function,
+        object: Option<&mut T>,
+    ) -> ScriptResult<()> {
         unsafe {
             let obj_ptr = match object {
                 Some(obj) => obj.to_script_ptr(),
@@ -643,7 +652,7 @@ impl Context {
                 object_register: if object_register.is_null() {
                     None
                 } else {
-                    Some(Ptr::<c_void>::from_raw(object_register))
+                    Some(ScriptMemoryLocation::from_mut(object_register))
                 },
                 object_type_register: if object_type_register.is_null() {
                     None
@@ -811,7 +820,7 @@ pub struct StateRegisters {
     pub orig_stack_pointer: asDWORD,
     pub arguments_size: asDWORD,
     pub value_register: asQWORD,
-    pub object_register: Option<Ptr<std::os::raw::c_void>>,
+    pub object_register: Option<ScriptMemoryLocation>,
     pub object_type_register: Option<TypeInfo>,
 }
 

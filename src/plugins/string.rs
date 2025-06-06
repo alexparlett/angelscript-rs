@@ -1,5 +1,5 @@
 use crate::core::engine::Engine;
-use crate::internal::pointers::{Ptr, VoidPtr};
+use crate::types::script_memory::ScriptMemoryLocation;
 use crate::plugins::plugin::Plugin;
 use crate::prelude::{Behaviour, ScriptResult};
 use crate::prelude::{ObjectTypeFlags, ScriptGeneric};
@@ -9,144 +9,70 @@ use std::ffi::c_void;
 // Constructor from &str (used from AngelScript generics)
 fn construct_string(g: &ScriptGeneric) {
     // Get the memory location for the string and set the value
-    let mut ptr = g.get_object::<String>().unwrap();
-
-    eprintln!("[String::construct_string] Pointer {:p}.", ptr.as_ptr());
-
+    let mut ptr = g.get_object().unwrap();
     ptr.set(String::new());
-
-    // Log the value of the pointer at the end of the method
-    eprintln!(
-        "[String::construct_string] Final value of pointer {:p}: value = {:?}.",
-        ptr.as_ptr(),
-        ptr.as_ref()
-    );
 }
 
 // Copy constructor for Ustr "string"
 fn copy_construct_string(g: &ScriptGeneric) {
-    let src_ptr = g.get_arg_object::<String>(0).unwrap();
-    let mut dest_ptr = g.get_object::<String>().unwrap();
+    let src_ptr = g.get_arg_object(0).unwrap();
+    let mut dest_ptr = g.get_object().unwrap();
 
-    // Log pointers involved in the operation
-    eprintln!(
-        "[String::copy_construct_string] Copy from {:p} to {:p}.",
-        src_ptr.as_ptr(),
-        dest_ptr.as_ptr()
-    );
-
-    // Ensure the source pointer is valid
     if src_ptr.is_null() {
-        eprintln!("[String::copy_construct_string] Source pointer is null. Aborting copy.");
         return;
     }
 
-    // Correctly copy the value from `src_ptr` to `dest_ptr`.
-    let source_value: String = src_ptr.as_ref().to_string();
+    let source_value: String = src_ptr.as_ref::<String>().to_string();
     dest_ptr.set(source_value);
-
-    // Log the final state after copying.
-    eprintln!(
-        "[String::copy_construct_string] Final values - Source Pointer {:p}: value = {:?}, Destination Pointer {:p}: value = {:?}.",
-        src_ptr.as_ptr(),
-        src_ptr.as_ref(),
-        dest_ptr.as_ptr(),
-        dest_ptr.as_ref()
-    );
 }
 
 // Destructor: free the storage.
 fn destruct_string(g: &ScriptGeneric) {
-    let mut ptr = g.get_object::<String>().unwrap();
-
-    eprintln!("[String::destruct_string] Pointer {:p}.", ptr.as_ptr());
-
-    ptr.as_ref_mut().clear();
-
-    // Log pointer after drop (note: the pointer is still valid, but memory has been dropped)
-    eprintln!(
-        "[String::destruct_string] After drop - Pointer {:p}. Memory should be considered invalid.",
-        ptr.as_ptr()
-    );
+    let mut ptr = g.get_object().unwrap();
+    ptr.as_ref_mut::<String>().clear();
 }
 
 fn assign_string(g: &ScriptGeneric) {
-    let src = g.get_arg_address::<String>(0).unwrap();
-    let mut dest = g.get_object::<String>().unwrap();
-
-    eprintln!(
-        "[String::assign] Copy value from source {:p} to destination {:p}.",
-        src.as_ptr(),
-        dest.as_ptr()
-    );
-
-    // Ensure the source is valid before copying
+    let src = g.get_arg_address(0).unwrap();
+    let mut dest = g.get_object().unwrap();
     if src.is_null() {
-        eprintln!("[String::assign] Source pointer is null. Aborting assignment.");
         return;
     }
-
-    // Assign the source value to the destination object
-    dest.set(src.as_ref().clone());
-
-    // Log pointers and their values after assignment
-    eprintln!(
-        "[String::assign] Final values - Source Pointer {:p}: value = {:?}, Destination Pointer {:p}: value = {:?}.",
-        src.as_ptr(),
-        src.as_ref(),
-        dest.as_ptr(),
-        dest.as_ref()
-    );
-
-    g.set_return_object(&mut dest.as_void_ptr())
+    dest.set(src.as_ref::<String>().clone());
+    g.set_return_object(&mut dest)
         .expect("Failed to return string");
 }
 
 fn add_assign_string(g: &ScriptGeneric) {
-    let src = g.get_arg_address::<String>(0).unwrap();
-    let mut dest = g.get_object::<String>().unwrap();
+    let src = g.get_arg_address(0).unwrap();
+    let mut dest = g.get_object().unwrap();
 
-    eprintln!(
-        "[String::add_assign_string] Copy value from source {:p} to destination {:p}.",
-        src.as_ptr(),
-        dest.as_ptr()
-    );
-
-    // Ensure the source is valid before copying
     if src.is_null() {
-        eprintln!("[String::add_assign_string] Source pointer is null. Aborting assignment.");
         return;
     }
 
     // Add Assign the source value to the destination object
-    dest.as_ref_mut().push_str(src.as_ref());
+    dest.as_ref_mut::<String>().push_str(src.as_ref::<String>());
 
-    // Log pointers and their values after assignment
-    eprintln!(
-        "[String::add_assign_string] Final values - Source Pointer {:p}: value = {:?}, Destination Pointer {:p}: value = {:?}.",
-        src.as_ptr(),
-        src.as_ref(),
-        dest.as_ptr(),
-        dest.as_ref()
-    );
-
-    g.set_return_object(&mut dest.as_void_ptr())
+    g.set_return_object(&mut dest)
         .expect("Failed to return string");
 }
 
 fn string_equals(g: &ScriptGeneric) {
-    let lhs = g.get_object::<String>().unwrap();
-    let rhs = g.get_arg_address::<String>(0).unwrap();
-    let equal = lhs.as_ref() == rhs.as_ref();
+    let lhs = g.get_object().unwrap();
+    let rhs = g.get_arg_address(0).unwrap();
+    let equal = lhs.as_ref::<String>() == rhs.as_ref::<String>();
     g.set_return_byte(equal.into()).unwrap();
 }
 
 fn string_cmp(g: &ScriptGeneric) {
-    let lhs = g.get_object::<String>().unwrap();
-    let rhs = g.get_arg_address::<String>(0).unwrap();
-    g.set_return_dword(if lhs.as_ref() < rhs.as_ref() {
+    let lhs = g.get_object().unwrap();
+    let rhs = g.get_arg_address(0).unwrap();
+    let lhs_str = lhs.as_ref::<String>();
+    let rhs_str = rhs.as_ref::<String>();
+    g.set_return_dword(if lhs_str < rhs_str {
         -1
-    } else if lhs.as_ref() > rhs.as_ref() {
+    } else if lhs_str > rhs_str {
         1
     } else {
         0
@@ -155,31 +81,34 @@ fn string_cmp(g: &ScriptGeneric) {
 }
 
 fn string_add(g: &ScriptGeneric) {
-    let lhs = g.get_object::<String>().unwrap();
-    let rhs = g.get_arg_address::<String>(0).unwrap();
-    let mut ret = g.get_address_of_return_location::<String>().unwrap();
-    ret.set(lhs.as_ref().clone() + rhs.as_ref());
+    let lhs = g.get_object().unwrap();
+    let rhs = g.get_arg_address(0).unwrap();
+    let mut ret = g.get_address_of_return_location().unwrap();
+    ret.set(lhs.as_ref::<String>().clone() + rhs.as_ref::<String>());
 }
 
 fn string_length(g: &ScriptGeneric) {
-    let obj = g.get_object::<String>().unwrap();
-    g.set_return_dword(obj.as_ref().len() as u32).unwrap();
+    let obj = g.get_object().unwrap();
+    g.set_return_dword(obj.as_ref::<String>().len() as u32)
+        .unwrap();
 }
 
 fn string_is_empty(g: &ScriptGeneric) {
-    let obj = g.get_object::<String>().unwrap();
-    g.set_return_byte(obj.as_ref().is_empty().into()).unwrap();
+    let obj = g.get_object().unwrap();
+    g.set_return_byte(obj.as_ref::<String>().is_empty().into())
+        .unwrap();
 }
 
 fn string_char_at(g: &ScriptGeneric) {
     let idx = g.get_arg_dword(0) as usize;
-    let mut obj = g.get_object::<String>().unwrap();
+    let mut obj = g.get_object().unwrap();
 
-    let str = obj.as_ref_mut();
+    let str = obj.as_ref_mut::<String>();
     if idx >= str.len() {
         let ctx = Engine::get_active_context().unwrap();
         ctx.set_exception("Index out of bounds", true).unwrap();
-        g.set_return_address_raw(VoidPtr::null()).unwrap();
+        g.set_return_address_raw(ScriptMemoryLocation::null())
+            .unwrap();
         return;
     }
 
@@ -191,185 +120,211 @@ fn string_char_at(g: &ScriptGeneric) {
 
 // Additional assign/add for primitive types--convert to str and use Ustr.
 fn string_assign_int(g: &ScriptGeneric) {
-    let mut self_ptr = g.get_object::<String>().unwrap();
-    let value: Ptr<asINT64> = g.get_address_of_arg::<asINT64>(0).unwrap();
-    self_ptr.set(value.as_ref().to_string());
-    g.set_return_address(&mut self_ptr.as_void_ptr());
+    let mut self_ptr = g.get_object().unwrap();
+    let value = g.get_address_of_arg(0).unwrap();
+    self_ptr.set(value.as_ref::<asINT64>().to_string());
+    g.set_return_address(&mut self_ptr);
 }
 
 fn string_assign_uint(g: &ScriptGeneric) {
-    let mut self_ptr = g.get_object::<String>().unwrap();
-    let value = g.get_address_of_arg::<asQWORD>(0).unwrap();
-    self_ptr.set(value.as_ref().to_string());
-    g.set_return_address(&mut self_ptr.as_void_ptr());
+    let mut self_ptr = g.get_object().unwrap();
+    let value = g.get_address_of_arg(0).unwrap();
+    self_ptr.set(value.as_ref::<asQWORD>().to_string());
+    g.set_return_address(&mut self_ptr);
 }
 
 fn string_assign_double(g: &ScriptGeneric) {
-    let mut self_ptr = g.get_object::<String>().unwrap();
-    let value: Ptr<f64> = g.get_address_of_arg::<f64>(0).unwrap();
-    self_ptr.set(value.as_ref().to_string());
-    g.set_return_address(&mut self_ptr.as_void_ptr());
+    let mut self_ptr = g.get_object().unwrap();
+    let value: ScriptMemoryLocation = g.get_address_of_arg(0).unwrap();
+    self_ptr.set(value.as_ref::<f64>().to_string());
+    g.set_return_address(&mut self_ptr);
 }
 
 fn string_assign_float(g: &ScriptGeneric) {
-    let mut self_ptr = g.get_object::<String>().unwrap();
-    let value: Ptr<f32> = g.get_address_of_arg::<f32>(0).unwrap();
-    self_ptr.set(value.as_ref().to_string());
-    g.set_return_address(&mut self_ptr.as_void_ptr());
+    let mut self_ptr = g.get_object().unwrap();
+    let value: ScriptMemoryLocation = g.get_address_of_arg(0).unwrap();
+    self_ptr.set(value.as_ref::<f32>().to_string());
+    g.set_return_address(&mut self_ptr);
 }
 
 fn string_assign_bool(g: &ScriptGeneric) {
-    let mut self_ptr = g.get_object::<String>().unwrap();
-    let value: Ptr<bool> = g.get_address_of_arg::<bool>(0).unwrap();
-    self_ptr.set(if *value.as_ref() { "true" } else { "false" }.to_string());
-    g.set_return_address(&mut self_ptr.as_void_ptr());
+    let mut self_ptr = g.get_object().unwrap();
+    let value: ScriptMemoryLocation = g.get_address_of_arg(0).unwrap();
+    self_ptr.set(
+        if *value.as_ref::<bool>() {
+            "true"
+        } else {
+            "false"
+        }
+        .to_string(),
+    );
+    g.set_return_address(&mut self_ptr);
 }
 
 // Add-assign for primitive types (converts to Ustr and concatenates)
 fn string_add_assign_double(g: &ScriptGeneric) {
-    let mut self_ptr = g.get_object::<String>().unwrap();
-    let value: Ptr<f64> = g.get_address_of_arg::<f64>(0).unwrap();
-    self_ptr.as_ref_mut().push_str(&value.as_ref().to_string());
-    g.set_return_address(&mut self_ptr.as_void_ptr());
+    let mut self_ptr = g.get_object().unwrap();
+    let value: ScriptMemoryLocation = g.get_address_of_arg(0).unwrap();
+    self_ptr
+        .as_ref_mut::<String>()
+        .push_str(&value.as_ref::<f64>().to_string());
+    g.set_return_address(&mut self_ptr);
 }
 
 fn string_add_assign_float(g: &ScriptGeneric) {
-    let mut self_ptr = g.get_object::<String>().unwrap();
-    let value: Ptr<f32> = g.get_address_of_arg::<f32>(0).unwrap();
-    self_ptr.as_ref_mut().push_str(&value.as_ref().to_string());
-    g.set_return_address(&mut self_ptr.as_void_ptr());
+    let mut self_ptr = g.get_object().unwrap();
+    let value: ScriptMemoryLocation = g.get_address_of_arg(0).unwrap();
+    self_ptr
+        .as_ref_mut::<String>()
+        .push_str(&value.as_ref::<f32>().to_string());
+    g.set_return_address(&mut self_ptr);
 }
 
 fn string_add_assign_int(g: &ScriptGeneric) {
-    let mut self_ptr = g.get_object::<String>().unwrap();
-    let value: Ptr<asINT64> = g.get_address_of_arg::<asINT64>(0).unwrap();
-    self_ptr.as_ref_mut().push_str(&value.as_ref().to_string());
-    g.set_return_address(&mut self_ptr.as_void_ptr());
+    let mut self_ptr = g.get_object().unwrap();
+    let value: ScriptMemoryLocation = g.get_address_of_arg(0).unwrap();
+    self_ptr
+        .as_ref_mut::<String>()
+        .push_str(&value.as_ref::<asINT64>().to_string());
+    g.set_return_address(&mut self_ptr);
 }
 
 fn string_add_assign_uint(g: &ScriptGeneric) {
-    let mut self_ptr = g.get_object::<String>().unwrap();
-    let value: Ptr<asQWORD> = g.get_address_of_arg::<asQWORD>(0).unwrap();
-    self_ptr.as_ref_mut().push_str(&value.as_ref().to_string());
-    g.set_return_address(&mut self_ptr.as_void_ptr());
+    let mut self_ptr = g.get_object().unwrap();
+    let value: ScriptMemoryLocation = g.get_address_of_arg(0).unwrap();
+    self_ptr
+        .as_ref_mut::<String>()
+        .push_str(&value.as_ref::<asQWORD>().to_string());
+    g.set_return_address(&mut self_ptr);
 }
 
 fn string_add_assign_bool(g: &ScriptGeneric) {
-    let mut self_ptr = g.get_object::<String>().unwrap();
-    let value: Ptr<bool> = g.get_address_of_arg::<bool>(0).unwrap();
-    let formatted = if *value.as_ref() { "true" } else { "false" }.to_string();
-    self_ptr.as_ref_mut().push_str(&formatted);
-    g.set_return_address(&mut self_ptr.as_void_ptr());
+    let mut self_ptr = g.get_object().unwrap();
+    let value: ScriptMemoryLocation = g.get_address_of_arg(0).unwrap();
+    let formatted = if *value.as_ref::<bool>() {
+        "true"
+    } else {
+        "false"
+    }
+    .to_string();
+    self_ptr.as_ref_mut::<String>().push_str(&formatted);
+    g.set_return_address(&mut self_ptr);
 }
 
 fn string_add_double(g: &ScriptGeneric) {
-    let self_ptr = g.get_object::<String>().unwrap();
-    let value: Ptr<f64> = g.get_address_of_arg::<f64>(0).unwrap();
-    let result = format!("{}{}", self_ptr.as_ref(), value.as_ref());
-    g.set_return_object(&mut VoidPtr::from_const_raw(
+    let self_ptr = g.get_object().unwrap();
+    let value: ScriptMemoryLocation = g.get_address_of_arg(0).unwrap();
+    let result = format!("{}{}", self_ptr.as_ref::<String>(), value.as_ref::<f64>());
+    g.set_return_object(&mut ScriptMemoryLocation::from_const(
         Box::into_raw(Box::new(result)) as *mut c_void,
     ));
 }
 
 fn double_add_string(g: &ScriptGeneric) {
-    let self_ptr = g.get_object::<String>().unwrap();
-    let value: Ptr<f64> = g.get_address_of_arg::<f64>(0).unwrap();
-    let result = format!("{}{}", value.as_ref(), self_ptr.as_ref());
-    g.set_return_object(&mut VoidPtr::from_const_raw(
+    let self_ptr = g.get_object().unwrap();
+    let value: ScriptMemoryLocation = g.get_address_of_arg(0).unwrap();
+    let result = format!("{}{}", value.as_ref::<f64>(), self_ptr.as_ref::<String>());
+    g.set_return_object(&mut ScriptMemoryLocation::from_const(
         Box::into_raw(Box::new(result)) as *mut c_void,
     ));
 }
 
 fn string_add_float(g: &ScriptGeneric) {
-    let self_ptr = g.get_object::<String>().unwrap();
-    let value: Ptr<f32> = g.get_address_of_arg::<f32>(0).unwrap();
-    let result = format!("{}{}", self_ptr.as_ref(), value.as_ref());
-    g.set_return_object(&mut VoidPtr::from_const_raw(
+    let self_ptr = g.get_object().unwrap();
+    let value: ScriptMemoryLocation = g.get_address_of_arg(0).unwrap();
+    let result = format!("{}{}", self_ptr.as_ref::<String>(), value.as_ref::<f32>());
+    g.set_return_object(&mut ScriptMemoryLocation::from_const(
         Box::into_raw(Box::new(result)) as *mut c_void,
     ));
 }
 
 fn float_add_string(g: &ScriptGeneric) {
-    let self_ptr = g.get_object::<String>().unwrap();
-    let value: Ptr<f32> = g.get_address_of_arg::<f32>(0).unwrap();
-    let result = format!("{}{}", value.as_ref(), self_ptr.as_ref());
-    g.set_return_object(&mut VoidPtr::from_const_raw(
+    let self_ptr = g.get_object().unwrap();
+    let value: ScriptMemoryLocation = g.get_address_of_arg(0).unwrap();
+    let result = format!("{}{}", value.as_ref::<f64>(), self_ptr.as_ref::<String>());
+    g.set_return_object(&mut ScriptMemoryLocation::from_const(
         Box::into_raw(Box::new(result)) as *mut c_void,
     ));
 }
 
 fn string_add_int(g: &ScriptGeneric) {
-    let self_ptr = g.get_object::<String>().unwrap();
-    let value: Ptr<asINT64> = g.get_address_of_arg::<asINT64>(0).unwrap();
-    let result = format!("{}{}", self_ptr.as_ref(), value.as_ref());
-    g.set_return_object(&mut VoidPtr::from_const_raw(
+    let self_ptr = g.get_object().unwrap();
+    let value: ScriptMemoryLocation = g.get_address_of_arg(0).unwrap();
+    let result = format!(
+        "{}{}",
+        self_ptr.as_ref::<String>(),
+        value.as_ref::<asINT64>()
+    );
+    g.set_return_object(&mut ScriptMemoryLocation::from_const(
         Box::into_raw(Box::new(result)) as *mut c_void,
     ));
 }
 
 fn int_add_string(g: &ScriptGeneric) {
-    let self_ptr = g.get_object::<String>().unwrap();
-    let value: Ptr<asINT64> = g.get_address_of_arg::<asINT64>(0).unwrap();
-    let result = format!("{}{}", value.as_ref(), self_ptr.as_ref());
-    g.set_return_object(&mut VoidPtr::from_const_raw(
+    let self_ptr = g.get_object().unwrap();
+    let value: ScriptMemoryLocation = g.get_address_of_arg(0).unwrap();
+    let result = format!("{}{}", value.as_ref::<f64>(), self_ptr.as_ref::<String>());
+    g.set_return_object(&mut ScriptMemoryLocation::from_const(
         Box::into_raw(Box::new(result)) as *mut c_void,
     ));
 }
 
 fn string_add_uint(g: &ScriptGeneric) {
-    let self_ptr = g.get_object::<String>().unwrap();
-    let value: Ptr<asQWORD> = g.get_address_of_arg::<asQWORD>(0).unwrap();
-    let result = format!("{}{}", self_ptr.as_ref(), value.as_ref());
-    g.set_return_object(&mut VoidPtr::from_const_raw(
+    let self_ptr = g.get_object().unwrap();
+    let value: ScriptMemoryLocation = g.get_address_of_arg(0).unwrap();
+    let result = format!(
+        "{}{}",
+        self_ptr.as_ref::<String>(),
+        value.as_ref::<asQWORD>()
+    );
+    g.set_return_object(&mut ScriptMemoryLocation::from_const(
         Box::into_raw(Box::new(result)) as *mut c_void,
     ));
 }
 
 fn uint_add_string(g: &ScriptGeneric) {
-    let self_ptr = g.get_object::<String>().unwrap();
-    let value: Ptr<asQWORD> = g.get_address_of_arg::<asQWORD>(0).unwrap();
-    let result = format!("{}{}", value.as_ref(), self_ptr.as_ref());
-    g.set_return_object(&mut VoidPtr::from_const_raw(
+    let self_ptr = g.get_object().unwrap();
+    let value: ScriptMemoryLocation = g.get_address_of_arg(0).unwrap();
+    let result = format!("{}{}", value.as_ref::<f64>(), self_ptr.as_ref::<String>());
+    g.set_return_object(&mut ScriptMemoryLocation::from_const(
         Box::into_raw(Box::new(result)) as *mut c_void,
     ));
 }
 
 fn string_add_bool(g: &ScriptGeneric) {
-    let self_ptr = g.get_object::<String>().unwrap();
-    let value: Ptr<bool> = g.get_address_of_arg::<bool>(0).unwrap();
+    let self_ptr = g.get_object().unwrap();
+    let value: ScriptMemoryLocation = g.get_address_of_arg(0).unwrap();
     let formatted = if *value.as_ref() { "true" } else { "false" };
-    let result = format!("{}{}", self_ptr.as_ref(), formatted);
-    g.set_return_object(&mut VoidPtr::from_const_raw(
+    let result = format!("{}{}", self_ptr.as_ref::<bool>(), formatted);
+    g.set_return_object(&mut ScriptMemoryLocation::from_const(
         Box::into_raw(Box::new(result)) as *mut c_void,
     ));
 }
 
 fn bool_add_string(g: &ScriptGeneric) {
-    let self_ptr = g.get_object::<String>().unwrap();
-    let value: Ptr<bool> = g.get_address_of_arg::<bool>(0).unwrap();
+    let self_ptr = g.get_object().unwrap();
+    let value: ScriptMemoryLocation = g.get_address_of_arg(0).unwrap();
     let formatted = if *value.as_ref() { "true" } else { "false" };
-    let result = format!("{}{}", formatted, self_ptr.as_ref());
-    let mut ptr = VoidPtr::from_const_raw(Box::into_raw(Box::new(result)) as *mut c_void);
+    let result = format!("{}{}", formatted, self_ptr.as_ref::<bool>());
+    let mut ptr = ScriptMemoryLocation::from_const(Box::into_raw(Box::new(result)) as *mut c_void);
     g.set_return_object(&mut ptr);
 }
 
 // Substring
 fn string_substring(g: &ScriptGeneric) {
-    let self_ptr = g.get_object::<String>().unwrap();
-    let start_ptr: Ptr<asUINT> = g.get_address_of_arg::<asUINT>(0).unwrap();
-    let len_ptr: Ptr<i32> = g.get_address_of_arg::<i32>(1).unwrap();
+    let self_ptr = g.get_object().unwrap();
+    let start_ptr: ScriptMemoryLocation = g.get_address_of_arg(0).unwrap();
+    let len_ptr: ScriptMemoryLocation = g.get_address_of_arg(1).unwrap();
 
-    let start = *start_ptr.as_ref() as usize;
-    let len = *len_ptr.as_ref() as usize;
+    let start = *start_ptr.as_ref::<asUINT>() as usize;
+    let len = *len_ptr.as_ref::<i32>() as usize;
     let substring = self_ptr
-        .as_ref()
+        .as_ref::<String>()
         .get(start..start + len)
         .unwrap_or("")
         .to_string();
 
-    g.get_address_of_return_location::<String>()
-        .unwrap()
-        .set(substring);
+    g.get_address_of_return_location().unwrap().set(substring);
 }
 
 // FFI assumed available (replace with real prototype as needed):
@@ -378,7 +333,7 @@ fn string_substring(g: &ScriptGeneric) {
 // pub fn with_string_module(engine: &Engine) -> crate::error::Result<()> {
 //     engine.register_object_type(
 //         "string",
-//         size_of::<String>(),
+//         size_of(),
 //         ObjectTypeFlags::VALUE | ObjectTypeFlags::APP_CLASS_CDAK,
 //     )?;
 //
@@ -388,7 +343,7 @@ fn string_substring(g: &ScriptGeneric) {
 //         get_string_factory_instance() as *const _ as *mut asIStringFactory,
 //     )?;
 //
-//     engine.register_object_behaviour::<c_void>(
+//     engine.register_object_behaviour::<Void>(
 //         "string",
 //         Behaviour::Construct,
 //         "void f()",
@@ -398,7 +353,7 @@ fn string_substring(g: &ScriptGeneric) {
 //         None,
 //     )?;
 //
-//     engine.register_object_behaviour::<c_void>(
+//     engine.register_object_behaviour::<Void>(
 //         "string",
 //         Behaviour::Construct,
 //         "void f(const string &in)",
@@ -408,7 +363,7 @@ fn string_substring(g: &ScriptGeneric) {
 //         None,
 //     )?;
 //
-//     engine.register_object_behaviour::<c_void>(
+//     engine.register_object_behaviour::<Void>(
 //         "string",
 //         Behaviour::Destruct,
 //         "void f()",
@@ -418,7 +373,7 @@ fn string_substring(g: &ScriptGeneric) {
 //         None,
 //     )?;
 //
-//     engine.register_object_method::<c_void>(
+//     engine.register_object_method::<Void>(
 //         "string",
 //         "string &opAssign(const string &in)",
 //         assign_string,
@@ -427,7 +382,7 @@ fn string_substring(g: &ScriptGeneric) {
 //         None,
 //     )?;
 //
-//     engine.register_object_method::<c_void>(
+//     engine.register_object_method::<Void>(
 //         "string",
 //         "string &opAddAssign(const string &in)",
 //         add_assign_string,
@@ -436,7 +391,7 @@ fn string_substring(g: &ScriptGeneric) {
 //         None,
 //     )?;
 //
-//     engine.register_object_method::<c_void>(
+//     engine.register_object_method::<Void>(
 //         "string",
 //         "bool opEquals(const string &in) const",
 //         string_equals,
@@ -445,7 +400,7 @@ fn string_substring(g: &ScriptGeneric) {
 //         None,
 //     )?;
 //
-//     engine.register_object_method::<c_void>(
+//     engine.register_object_method::<Void>(
 //         "string",
 //         "int opCmp(const string &in) const",
 //         string_cmp,
@@ -462,7 +417,7 @@ fn string_substring(g: &ScriptGeneric) {
 //     // )?;
 //
 //     // String methods. Add conditional methods as needed; here, the default.
-//     engine.register_object_method::<c_void>(
+//     engine.register_object_method::<Void>(
 //         "string",
 //         "uint length() const",
 //         string_length,
@@ -471,7 +426,7 @@ fn string_substring(g: &ScriptGeneric) {
 //         None,
 //     )?;
 //
-//     engine.register_object_method::<c_void>(
+//     engine.register_object_method::<Void>(
 //         "string",
 //         "bool isEmpty() const",
 //         string_is_empty,
@@ -481,7 +436,7 @@ fn string_substring(g: &ScriptGeneric) {
 //     )?;
 //
 //     // Indexing (mutator & inspector)
-//     engine.register_object_method::<c_void>(
+//     engine.register_object_method::<Void>(
 //         "string",
 //         "uint8 &opIndex(uint)",
 //         string_char_at,
@@ -490,7 +445,7 @@ fn string_substring(g: &ScriptGeneric) {
 //         None,
 //     )?;
 //
-//     engine.register_object_method::<c_void>(
+//     engine.register_object_method::<Void>(
 //         "string",
 //         "uint8 &opIndex(uint) const",
 //         string_char_at,

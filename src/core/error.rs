@@ -1,4 +1,4 @@
-use crate::core::enums::ReturnCode;
+use crate::types::enums::ReturnCode;
 use std::ffi::NulError;
 use std::str::Utf8Error;
 use std::sync::{MutexGuard, PoisonError};

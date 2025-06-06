@@ -2,7 +2,7 @@ use crate::core::context::Context;
 use crate::core::engine::Engine;
 use crate::core::error::ScriptResult;
 use crate::core::module::Module;
-use crate::internal::pointers::VoidPtr;
+use crate::types::script_memory::ScriptMemoryLocation;
 use crate::internal::utils::read_cstring;
 use crate::prelude::{Function, MessageType, ScriptGeneric, ScriptObject, TypeInfo};
 use angelscript_sys::{
@@ -234,7 +234,7 @@ impl CallbackManager {
             .and_then(|lock| lock.exception_callback)
         {
             let context = Context::from_raw(ctx);
-            callback(&context, VoidPtr::from_const_raw(_params));
+            callback(&context, ScriptMemoryLocation::from_const(_params));
         }
     }
 
@@ -245,7 +245,7 @@ impl CallbackManager {
             .and_then(|lock| lock.line_callback)
         {
             let context = Context::from_raw(ctx);
-            callback(&context, VoidPtr::from_const_raw(params));
+            callback(&context, ScriptMemoryLocation::from_const(params));
         }
     }
 
@@ -285,7 +285,7 @@ impl CallbackManager {
                 return match callback(&engine_wrapper) {
                     None => ptr::null_mut(),
                     Some(ctx) => ctx.as_ptr(),
-                }
+                };
             }
         }
         ptr::null_mut()
@@ -322,8 +322,8 @@ impl CallbackManager {
             let type_info_wrapper = TypeInfo::from_raw(type_info);
             callback(
                 &type_info_wrapper,
-                VoidPtr::from_const_raw(obj),
-                VoidPtr::from_mut_raw(params),
+                ScriptMemoryLocation::from_const(obj),
+                ScriptMemoryLocation::from_mut(params),
             );
         }
     }
@@ -401,7 +401,7 @@ impl CallbackManager {
             .and_then(|lock| lock.translate_exception_callback)
         {
             let wrapper = Context::from_raw(ctx);
-            callback(&wrapper, VoidPtr::from_mut_raw(params));
+            callback(&wrapper, ScriptMemoryLocation::from_mut(params));
         }
     }
 }
@@ -420,14 +420,14 @@ pub type MessageCallbackFn = fn(&MessageInfo);
 // Callback function types
 pub type RequestContextCallbackFn = fn(&Engine) -> Option<Context>;
 pub type ReturnContextCallbackFn = fn(&Engine, &Context);
-pub type CircularRefCallbackFn = fn(&TypeInfo, VoidPtr, VoidPtr);
-pub type TranslateAppExceptionCallbackFn = fn(&Context, VoidPtr);
+pub type CircularRefCallbackFn = fn(&TypeInfo, ScriptMemoryLocation, ScriptMemoryLocation);
+pub type TranslateAppExceptionCallbackFn = fn(&Context, ScriptMemoryLocation);
 pub type CleanEngineUserDataCallbackFn = fn(&Engine);
 pub type CleanModuleUserDataCallbackFn = fn(&Module);
 pub type CleanContextUserDataCallbackFn = fn(&Context);
 pub type CleanFunctionUserDataCallbackFn = fn(&Function);
 pub type CleanTypeInfoCallbackFn = fn(&TypeInfo);
 pub type CleanScriptObjectCallbackFn = fn(&ScriptObject);
-pub type ExceptionCallbackFn = fn(&Context, VoidPtr);
-pub type LineCallbackFn = fn(&Context, VoidPtr);
+pub type ExceptionCallbackFn = fn(&Context, ScriptMemoryLocation);
+pub type LineCallbackFn = fn(&Context, ScriptMemoryLocation);
 pub type GenericFn = fn(&ScriptGeneric);

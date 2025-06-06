@@ -2,11 +2,14 @@ use crate::core::engine::Engine;
 use crate::core::error::{ScriptError, ScriptResult};
 use crate::core::lockable_shared_bool::LockableSharedBool;
 use crate::core::typeinfo::TypeInfo;
+use crate::types::script_memory::ScriptMemoryLocation;
+use crate::types::script_data::ScriptData;
 use crate::types::user_data::UserData;
-use angelscript_sys::{asIScriptEngine, asIScriptObject, asIScriptObject__bindgen_vtable, asPWORD, asUINT};
-use std::ffi::{c_void, CStr};
+use angelscript_sys::{
+    asIScriptEngine, asIScriptObject, asIScriptObject__bindgen_vtable, asPWORD, asUINT,
+};
+use std::ffi::CStr;
 use std::ptr::NonNull;
-use crate::internal::pointers::{Ptr, VoidPtr};
 
 /// Wrapper for AngelScript's script object interface
 ///
@@ -92,13 +95,13 @@ impl ScriptObject {
     }
 
     // 9. GetAddressOfProperty
-    pub fn get_address_of_property<T>(&self, prop: asUINT) -> Option<Ptr<T>> {
+    pub fn get_address_of_property<T: ScriptData>(&self, prop: asUINT) -> Option<T> {
         unsafe {
             let ptr = (self.as_vtable().asIScriptObject_GetAddressOfProperty)(self.inner, prop);
             if ptr.is_null() {
                 None
             } else {
-                Some(Ptr::<T>::from_raw(ptr))
+                Some(ScriptData::from_script_ptr(ptr))
             }
         }
     }
@@ -124,30 +127,30 @@ impl ScriptObject {
     }
 
     // 12. SetUserData
-    pub fn set_user_data<T: UserData>(&self, data: &mut T) -> Option<Ptr<T>> {
+    pub fn set_user_data<T: UserData + ScriptData>(&self, data: &mut T) -> Option<T> {
         unsafe {
             let ptr = (self.as_vtable().asIScriptObject_SetUserData)(
                 self.inner,
-                data as *mut _ as *mut c_void,
+                data.to_script_ptr(),
                 T::TypeId as asPWORD,
             );
             if ptr.is_null() {
                 None
             } else {
-                Some(Ptr::<T>::from_raw(ptr))
+                Some(ScriptData::from_script_ptr(ptr))
             }
         }
     }
 
     // 13. GetUserData
-    pub fn get_user_data<T: UserData>(&self) -> Option<Ptr<T>> {
+    pub fn get_user_data<T: UserData + ScriptData>(&self) -> Option<T> {
         unsafe {
             let ptr =
                 (self.as_vtable().asIScriptObject_GetUserData)(self.inner, T::TypeId as asPWORD);
             if ptr.is_null() {
                 None
             } else {
-                Some(Ptr::<T>::from_raw(ptr))
+                Some(ScriptData::from_script_ptr(ptr))
             }
         }
     }
@@ -170,43 +173,32 @@ unsafe impl Sync for ScriptObject {}
 
 impl ScriptObject {
     /// Gets a property value by index with type safety
-    pub fn get_property<T>(&self, prop: asUINT) -> Option<T> {
-        let ptr = self.get_address_of_property::<T>(prop)?;
-        if ptr.is_null() {
-            None
-        } else {
-            Some(ptr.read())
-        }
+    pub fn get_property<T: ScriptData>(&self, prop: asUINT) -> Option<T> {
+        self.get_address_of_property::<T>(prop)
     }
 
     /// Sets a property value by index with type safety
-    pub fn set_property<T>(&self, prop: asUINT, value: T) -> bool {
-        if let Some(mut ptr) = self.get_address_of_property::<T>(prop) {
-            if !ptr.is_null() {
-                ptr.set(value);
-                true
-            } else {
+    pub fn set_property<T: Sized>(&self, prop: asUINT, value: T) -> bool {
+        unsafe {
+            let ptr =
+                (self.as_vtable().asIScriptObject_GetAddressOfProperty)(self.inner, prop) as *mut T;
+            if ptr.is_null() {
                 false
+            } else {
+                ptr.write(value);
+                true
             }
-        } else {
-            false
         }
     }
 
     /// Gets a property by name
-    pub fn get_property_by_name<T>(&self, name: &str) -> Option<T>
-    where
-        T: Copy,
-    {
+    pub fn get_property_by_name<T: ScriptData>(&self, name: &str) -> Option<T> {
         let prop_index = self.find_property_by_name(name)?;
-        self.get_property(prop_index)
+        self.get_property::<T>(prop_index)
     }
 
     /// Sets a property by name
-    pub fn set_property_by_name<T>(&self, name: &str, value: T) -> bool
-    where
-        T: Copy,
-    {
+    pub fn set_property_by_name<T: ScriptData + Copy>(&self, name: &str, value: T) -> bool {
         if let Some(prop_index) = self.find_property_by_name(name) {
             self.set_property(prop_index, value)
         } else {
@@ -236,9 +228,8 @@ impl ScriptObject {
                 name: self.get_property_name(i).map(|s| s.to_string()),
                 type_id: self.get_property_type_id(i),
                 address: self
-                    .get_address_of_property::<c_void>(i)
-                    .map(|ptr| ptr.as_void_ptr())
-                    .unwrap_or(VoidPtr::null()),
+                    .get_address_of_property::<ScriptMemoryLocation>(i)
+                    .unwrap_or(ScriptMemoryLocation::null()),
             })
             .collect()
     }
@@ -271,7 +262,7 @@ pub struct PropertyInfo {
     pub index: asUINT,
     pub name: Option<String>,
     pub type_id: i32,
-    pub address: VoidPtr,
+    pub address: ScriptMemoryLocation,
 }
 
 /// Weak reference to a script object

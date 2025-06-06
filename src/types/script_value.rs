@@ -1,7 +1,6 @@
-use crate::internal::pointers::VoidPtr;
-use angelscript_sys::{asBYTE, asDWORD, asQWORD, asUINT, asWORD};
-use std::ffi::c_void;
+use crate::types::script_memory::ScriptMemoryLocation;
 use crate::prelude::{ScriptGeneric, TypeIdFlags};
+use angelscript_sys::{asBYTE, asDWORD, asQWORD, asUINT, asWORD};
 
 // Expand the GenericValueData enum to handle more cases
 #[derive(Debug, Clone)]
@@ -15,11 +14,11 @@ pub enum ScriptValue {
     Double(f64),
 
     // Pointer types
-    Address(VoidPtr),      // Reference to primitive or object
-    Object(VoidPtr),       // Object by value
-    ObjectHandle(VoidPtr), // Object handle (pointer to object)
-    AppObject(VoidPtr),    // Application registered object
-    ScriptObject(VoidPtr), // Script object
+    Address(ScriptMemoryLocation), // Reference to primitive or object
+    Object(ScriptMemoryLocation),  // Object by value
+    ObjectHandle(ScriptMemoryLocation), // Object handle (pointer to object)
+    AppObject(ScriptMemoryLocation), // Application registered object
+    ScriptObject(ScriptMemoryLocation), // Script object
 
     // Special cases
     Null,         // Null pointer/handle
@@ -55,10 +54,10 @@ impl ScriptValue {
         // Check if it's a handle (pointer to object)
         if (flags & TypeIdFlags::OBJHANDLE) != TypeIdFlags::VOID {
             // It's an object handle
-            if let Some(ptr) = generic.get_arg_object::<c_void>(arg) {
-                ScriptValue::ObjectHandle(ptr.as_void_ptr())
+            if let Some(ptr) = generic.get_arg_object(arg) {
+                ScriptValue::ObjectHandle(ptr)
             } else {
-                ScriptValue::ObjectHandle(VoidPtr::null())
+                ScriptValue::ObjectHandle(ScriptMemoryLocation::null())
             }
         }
         // Check if it's an object (by value or reference)
@@ -66,36 +65,36 @@ impl ScriptValue {
             // Determine if it's an application object or script object
             if (flags & TypeIdFlags::APPOBJECT) != TypeIdFlags::VOID {
                 // Application registered object
-                if let Some(ptr) = generic.get_arg_address::<c_void>(arg) {
-                    ScriptValue::AppObject(ptr.as_void_ptr())
-                } else if let Some(ptr) = generic.get_arg_object::<c_void>(arg) {
-                    ScriptValue::AppObject(ptr.as_void_ptr())
+                if let Some(ptr) = generic.get_arg_address(arg) {
+                    ScriptValue::AppObject(ptr)
+                } else if let Some(ptr) = generic.get_arg_object(arg) {
+                    ScriptValue::AppObject(ptr)
                 } else {
-                    ScriptValue::AppObject(VoidPtr::null())
+                    ScriptValue::AppObject(ScriptMemoryLocation::null())
                 }
             } else if (flags & TypeIdFlags::SCRIPTOBJECT) != TypeIdFlags::VOID {
                 // Script object
-                if let Some(ptr) = generic.get_arg_object::<c_void>(arg) {
-                    ScriptValue::ScriptObject(ptr.as_void_ptr())
+                if let Some(ptr) = generic.get_arg_object(arg) {
+                    ScriptValue::ScriptObject(ptr)
                 } else {
-                    ScriptValue::ScriptObject(VoidPtr::null())
+                    ScriptValue::ScriptObject(ScriptMemoryLocation::null())
                 }
             } else {
                 // Generic object
-                if let Some(ptr) = generic.get_arg_address::<c_void>(arg) {
-                    ScriptValue::Address(ptr.as_void_ptr())
-                } else if let Some(ptr) = generic.get_arg_object::<c_void>(arg) {
-                    ScriptValue::Object(ptr.as_void_ptr())
+                if let Some(ptr) = generic.get_arg_address(arg) {
+                    ScriptValue::Address(ptr)
+                } else if let Some(ptr) = generic.get_arg_object(arg) {
+                    ScriptValue::Object(ptr)
                 } else {
-                    ScriptValue::Object(VoidPtr::null())
+                    ScriptValue::Object(ScriptMemoryLocation::null())
                 }
             }
         }
         // Handle references and other special cases
         else {
             // Try to get as address first (for references)
-            if let Some(ptr) = generic.get_arg_address::<c_void>(arg) {
-                ScriptValue::Address(ptr.as_void_ptr())
+            if let Some(ptr) = generic.get_arg_address(arg) {
+                ScriptValue::Address(ptr)
             } else {
                 // Fallback to treating as a primitive value
                 ScriptValue::DWord(generic.get_arg_dword(arg))
