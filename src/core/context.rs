@@ -47,7 +47,7 @@ impl Context {
             let result: *mut asIScriptEngine =
                 (self.as_vtable().asIScriptContext_GetEngine)(self.context);
             let ptr = NonNull::new(result).ok_or(ScriptError::NullPointer)?;
-            Ok(Engine::from_raw(NonNull::from(ptr)))
+            Ok(Engine::from_raw(ptr))
         }
     }
 
@@ -710,8 +710,8 @@ impl Context {
             ScriptError::from_code((self.as_vtable().asIScriptContext_SetStateRegisters)(
                 self.context,
                 stack_level,
-                calling_system_function.map_or_else(|| ptr::null_mut(), |f| f.as_raw()),
-                initial_function.map_or_else(|| ptr::null_mut(), |f| f.as_raw()),
+                calling_system_function.map_or_else(ptr::null_mut, |f| f.as_raw()),
+                initial_function.map_or_else(ptr::null_mut, |f| f.as_raw()),
                 orig_stack_pointer,
                 arguments_size,
                 value_register,
@@ -735,7 +735,7 @@ impl Context {
                 self.context,
                 stack_level,
                 stack_frame_pointer,
-                current_function.map_or_else(|| ptr::null_mut(), |f| f.as_raw()),
+                current_function.map_or_else(ptr::null_mut, |f| f.as_raw()),
                 program_pointer,
                 stack_pointer,
                 stack_index,

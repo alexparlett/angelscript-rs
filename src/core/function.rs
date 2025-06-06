@@ -38,7 +38,7 @@ impl Function {
             let result: *mut asIScriptEngine =
                 (self.as_vtable().asIScriptFunction_GetEngine)(self.inner);
             let ptr = NonNull::new(result).ok_or(ScriptError::NullPointer)?;
-            Ok(Engine::from_raw(NonNull::from(ptr)))
+            Ok(Engine::from_raw(ptr))
         }
     }
     // 2. AddRef
@@ -367,7 +367,7 @@ impl Function {
             } else {
                 CStr::from_ptr(decl)
                     .to_str()
-                    .map_err(|e| ScriptError::Utf8Conversion(e))
+                    .map_err(ScriptError::Utf8Conversion)
             }
         }
     }
@@ -435,8 +435,8 @@ impl Function {
     // 40. GetJITFunction
     pub fn get_jit_function(&self) -> JITFunction {
         unsafe {
-            let func = (self.as_vtable().asIScriptFunction_GetJITFunction)(self.inner);
-            func
+            
+            (self.as_vtable().asIScriptFunction_GetJITFunction)(self.inner)
         }
     }
 

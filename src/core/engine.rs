@@ -457,7 +457,7 @@ impl Engine {
                 CallingConvention::Generic.into(),
                 auxiliary
                     .map(|mut aux| aux.to_script_ptr())
-                    .unwrap_or_else(|| std::ptr::null_mut()),
+                    .unwrap_or_else(std::ptr::null_mut),
             ))
         }?;
 
@@ -675,9 +675,9 @@ impl Engine {
                 CallingConvention::Generic.into(),
                 auxiliary
                     .map(|mut aux| aux.to_script_ptr())
-                    .unwrap_or_else(|| std::ptr::null_mut()),
-                composite_offset.unwrap_or_else(|| 0),
-                is_composite_indirect.unwrap_or_else(|| false),
+                    .unwrap_or_else(std::ptr::null_mut),
+                composite_offset.unwrap_or(0),
+                is_composite_indirect.unwrap_or(false),
             );
 
             ScriptError::from_code(result).map(|_| result)
@@ -714,9 +714,9 @@ impl Engine {
                 c_decl.as_ptr(),
                 &mut asGenericFunction(base_func),
                 asECallConvTypes_asCALL_GENERIC,
-                auxiliary.map_or_else(|| ptr::null_mut(), |mut aux| aux.to_script_ptr()),
-                composite_offset.unwrap_or_else(|| 0),
-                is_composite_indirect.unwrap_or_else(|| false),
+                auxiliary.map_or_else(ptr::null_mut, |mut aux| aux.to_script_ptr()),
+                composite_offset.unwrap_or(0),
+                is_composite_indirect.unwrap_or(false),
             );
 
             ScriptError::from_code(result).map(|_| result)

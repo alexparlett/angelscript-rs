@@ -106,9 +106,9 @@ impl StringFactory {
         };
 
         // Intern the string and return a stable pointer
-        let pointer = cache.intern(string) as *const c_void;
+        
 
-        pointer
+        cache.intern(string) as *const c_void
     }
 
     /// Release a string constant

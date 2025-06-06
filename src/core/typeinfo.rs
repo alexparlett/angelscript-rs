@@ -49,7 +49,7 @@ impl TypeInfo {
             let result: *mut asIScriptEngine =
                 (self.as_vtable().asITypeInfo_GetEngine)(self.inner);
             let ptr = NonNull::new(result).ok_or(ScriptError::NullPointer)?;
-            Ok(Engine::from_raw(NonNull::from(ptr)))
+            Ok(Engine::from_raw(ptr))
         }
     }
 
@@ -504,7 +504,7 @@ impl TypeInfo {
 
     /// Checks if this type is a specific type by name
     pub fn is_type(&self, type_name: &str) -> bool {
-        self.get_name().map_or(false, |name| name == type_name)
+        self.get_name() == Some(type_name)
     }
 
     /// Checks if this type is a class

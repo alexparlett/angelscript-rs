@@ -127,7 +127,7 @@ mod tests {
         ctx.execute().expect("Failed to execute script");
 
         let result = ctx.get_address_of_return_value::<bool>();
-        assert_eq!(result.unwrap(), true);
+        assert!(result.unwrap());
 
         let func = module
             .get_function_by_decl("bool not_equal()")
@@ -137,7 +137,7 @@ mod tests {
         ctx.execute().expect("Failed to execute script");
 
         let result = ctx.get_address_of_return_value::<bool>();
-        assert_eq!(result.unwrap(), false);
+        assert!(!result.unwrap());
     }
 
     #[test]
@@ -182,7 +182,7 @@ mod tests {
         ctx.execute().expect("Failed to execute script");
 
         let result = ctx.get_address_of_return_value::<bool>();
-        assert_eq!(result.unwrap(), true);
+        assert!(result.unwrap());
 
         let func = module
             .get_function_by_decl("bool gt()")
@@ -192,7 +192,7 @@ mod tests {
         ctx.execute().expect("Failed to execute script");
 
         let result = ctx.get_address_of_return_value::<bool>();
-        assert_eq!(result.unwrap(), true);
+        assert!(result.unwrap());
     }
 
     #[test]
@@ -274,7 +274,7 @@ mod tests {
         ctx.execute().expect("Failed to execute script");
 
         let result = ctx.get_address_of_return_value::<bool>();
-        assert_eq!(result.unwrap(), false);
+        assert!(!result.unwrap());
 
         let func = module
             .get_function_by_decl("bool empty()")
@@ -284,7 +284,7 @@ mod tests {
         ctx.execute().expect("Failed to execute script");
 
         let result = ctx.get_address_of_return_value::<bool>();
-        assert_eq!(result.unwrap(), true);
+        assert!(result.unwrap());
     }
 
     #[test]

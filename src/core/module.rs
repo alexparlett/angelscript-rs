@@ -29,7 +29,7 @@ impl Module {
             let result: *mut asIScriptEngine =
                 (self.as_vtable().asIScriptModule_GetEngine)(self.inner);
             let ptr = NonNull::new(result).ok_or(ScriptError::NullPointer)?;
-            Ok(Engine::from_raw(NonNull::from(ptr)))
+            Ok(Engine::from_raw(ptr))
         }
     }
 

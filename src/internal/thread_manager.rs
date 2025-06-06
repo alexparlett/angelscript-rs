@@ -540,6 +540,12 @@ pub use rust_impl::*;
 /// RAII guard for AngelScript's exclusive lock
 pub struct ExclusiveLockGuard;
 
+impl Default for ExclusiveLockGuard {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ExclusiveLockGuard {
     pub fn new() -> Self {
         ThreadManager::acquire_exclusive_lock();
@@ -555,6 +561,12 @@ impl Drop for ExclusiveLockGuard {
 
 /// RAII guard for AngelScript's shared lock
 pub struct SharedLockGuard;
+
+impl Default for SharedLockGuard {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 impl SharedLockGuard {
     pub fn new() -> Self {
