@@ -1,23 +1,19 @@
 use crate::core::context::Context;
-use crate::types::enums::*;
 use crate::core::error::{ScriptError, ScriptResult};
 use crate::core::function::Function;
 use crate::core::lockable_shared_bool::LockableSharedBool;
 use crate::core::module::Module;
 use crate::core::script_generic::ScriptGeneric;
 use crate::core::typeinfo::TypeInfo;
-use crate::internal::callback_manager::{
-    CallbackManager, CircularRefCallbackFn, CleanContextUserDataCallbackFn,
-    CleanEngineUserDataCallbackFn, CleanFunctionUserDataCallbackFn, CleanModuleUserDataCallbackFn,
-    CleanScriptObjectCallbackFn, CleanTypeInfoCallbackFn, GenericFn, MessageCallbackFn,
-    RequestContextCallbackFn, ReturnContextCallbackFn, TranslateAppExceptionCallbackFn,
-};
+use crate::internal::callback_manager::CallbackManager;
 use crate::internal::jit_compiler::JITCompiler;
-use crate::types::script_memory::ScriptMemoryLocation;
 use crate::internal::stringfactory::get_string_factory_instance;
 use crate::internal::thread_manager::{ExclusiveLockGuard, SharedLockGuard, ThreadManager};
 use crate::plugins::plugin;
 use crate::plugins::plugin::Plugin;
+use crate::types::enums::*;
+use crate::types::script_data::ScriptData;
+use crate::types::script_memory::ScriptMemoryLocation;
 use crate::types::user_data::UserData;
 use angelscript_sys::{
     asALLOCFUNC_t, asAllocMem, asAtomicDec, asAtomicInc, asCreateLockableSharedBool,
@@ -33,7 +29,7 @@ use std::marker::PhantomData;
 use std::os::raw::c_void;
 use std::ptr;
 use std::ptr::NonNull;
-use crate::types::script_data::ScriptData;
+use crate::types::callbacks::{CircularRefCallbackFn, CleanContextUserDataCallbackFn, CleanEngineUserDataCallbackFn, CleanFunctionUserDataCallbackFn, CleanModuleUserDataCallbackFn, CleanScriptObjectCallbackFn, CleanTypeInfoCallbackFn, GenericFn, MessageCallbackFn, RequestContextCallbackFn, ReturnContextCallbackFn, TranslateAppExceptionCallbackFn};
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct Engine {
@@ -57,6 +53,12 @@ impl Engine {
     }
 
     pub fn install(&self, plugin: Plugin) -> ScriptResult<()> {
+        let was_namespaced = if let Some(namespace) = plugin.namespace() {
+            self.set_default_namespace(namespace)?;
+            true
+        } else {
+            false
+        };
         for registration in plugin.registrations {
             match registration {
                 plugin::Registration::GlobalFunction {
@@ -117,6 +119,9 @@ impl Engine {
                     }
                 }
             }
+        }
+        if was_namespaced {
+            self.set_default_namespace("")?;
         }
         Ok(())
     }
@@ -1669,7 +1674,7 @@ impl Engine {
         }
     }
 
-    pub fn with_default_modules(&self) -> ScriptResult<()> {
+    pub fn with_default_plugins(&self) -> ScriptResult<()> {
         #[cfg(feature = "string")]
         {
             self.install(crate::plugins::string::plugin()?)?;

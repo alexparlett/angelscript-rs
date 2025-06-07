@@ -2,9 +2,15 @@ use crate::core::context::Context;
 use crate::core::engine::Engine;
 use crate::core::error::ScriptResult;
 use crate::core::module::Module;
-use crate::types::script_memory::ScriptMemoryLocation;
 use crate::internal::utils::read_cstring;
-use crate::prelude::{Function, MessageType, ScriptGeneric, ScriptObject, TypeInfo};
+use crate::prelude::{Function, MessageType, ScriptObject, TypeInfo};
+use crate::types::callbacks::{
+    CircularRefCallbackFn, CleanContextUserDataCallbackFn, CleanEngineUserDataCallbackFn,
+    CleanFunctionUserDataCallbackFn, CleanModuleUserDataCallbackFn, CleanScriptObjectCallbackFn,
+    CleanTypeInfoCallbackFn, ExceptionCallbackFn, LineCallbackFn, MessageCallbackFn, MessageInfo,
+    RequestContextCallbackFn, ReturnContextCallbackFn, TranslateAppExceptionCallbackFn,
+};
+use crate::types::script_memory::ScriptMemoryLocation;
 use angelscript_sys::{
     asIScriptContext, asIScriptEngine, asIScriptFunction, asIScriptModule, asIScriptObject,
     asITypeInfo, asPWORD, asSMessageInfo,
@@ -405,29 +411,3 @@ impl CallbackManager {
         }
     }
 }
-
-#[derive(Debug)]
-pub struct MessageInfo {
-    pub section: String,
-    pub row: u32,
-    pub col: u32,
-    pub msg_type: MessageType,
-    pub message: String,
-}
-
-pub type MessageCallbackFn = fn(&MessageInfo);
-
-// Callback function types
-pub type RequestContextCallbackFn = fn(&Engine) -> Option<Context>;
-pub type ReturnContextCallbackFn = fn(&Engine, &Context);
-pub type CircularRefCallbackFn = fn(&TypeInfo, ScriptMemoryLocation, ScriptMemoryLocation);
-pub type TranslateAppExceptionCallbackFn = fn(&Context, ScriptMemoryLocation);
-pub type CleanEngineUserDataCallbackFn = fn(&Engine);
-pub type CleanModuleUserDataCallbackFn = fn(&Module);
-pub type CleanContextUserDataCallbackFn = fn(&Context);
-pub type CleanFunctionUserDataCallbackFn = fn(&Function);
-pub type CleanTypeInfoCallbackFn = fn(&TypeInfo);
-pub type CleanScriptObjectCallbackFn = fn(&ScriptObject);
-pub type ExceptionCallbackFn = fn(&Context, ScriptMemoryLocation);
-pub type LineCallbackFn = fn(&Context, ScriptMemoryLocation);
-pub type GenericFn = fn(&ScriptGeneric);

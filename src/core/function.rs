@@ -19,11 +19,7 @@ pub struct Function {
 
 impl Function {
     pub(crate) fn from_raw(function: *mut asIScriptFunction) -> Self {
-        let wrapper = Function { inner: function };
-        wrapper
-            .add_ref()
-            .expect("Failed to add reference to function");
-        wrapper
+        Function { inner: function }
     }
 
     pub(crate) fn as_raw(&self) -> *mut asIScriptFunction {
@@ -471,12 +467,6 @@ impl Function {
 
     fn as_vtable(&self) -> &asIScriptFunction__bindgen_vtable {
         unsafe { &*(*self.inner).vtable_ }
-    }
-}
-
-impl Drop for Function {
-    fn drop(&mut self) {
-        self.release().expect("Failed to release function");
     }
 }
 

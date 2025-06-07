@@ -1,14 +1,7 @@
-use crate::internal::callback_manager::GenericFn;
 use crate::prelude::{Behaviour, ObjectTypeFlags};
-use std::marker::PhantomData;
+use crate::types::callbacks::GenericFn;
 use crate::types::script_data::ScriptData;
-
-/// A plugin that groups related AngelScript registrations
-pub struct Plugin {
-    name: String,
-    namespace: Option<String>,
-    pub(crate) registrations: Vec<Registration>,
-}
+use std::marker::PhantomData;
 
 /// Internal representation of different registration types
 pub(crate) enum Registration {
@@ -60,19 +53,27 @@ pub(crate) struct BehaviorRegistration {
     pub(crate) is_composite_indirect: Option<bool>,
 }
 
+/// A plugin that groups related AngelScript registrations
+pub struct Plugin {
+    pub(crate) namespace: Option<String>,
+    pub(crate) registrations: Vec<Registration>,
+}
+
 impl Plugin {
-    /// Create a new plugin with the given name
-    pub fn new(name: impl Into<String>) -> Self {
+    /// Create a new plugin with no namespace (global namespace)
+    pub fn new() -> Self {
         Self {
-            name: name.into(),
             namespace: None,
             registrations: Vec::new(),
         }
     }
 
-    /// Get the plugin name
-    pub fn name(&self) -> &str {
-        &self.name
+    /// Create a new plugin with a specific namespace
+    pub fn in_namespace(namespace: impl Into<String>) -> Self {
+        Self {
+            namespace: Some(namespace.into()),
+            registrations: Vec::new(),
+        }
     }
 
     /// Set the namespace for all registrations in this plugin
@@ -82,7 +83,7 @@ impl Plugin {
     }
 
     /// Register a global function
-    pub fn with_global_function(
+    pub fn global_function(
         mut self,
         declaration: impl Into<String>,
         function: GenericFn,
@@ -100,7 +101,7 @@ impl Plugin {
     }
 
     /// Register a global property
-    pub fn with_global_property(
+    pub fn global_property(
         mut self,
         declaration: impl Into<String>,
         property: Box<dyn ScriptData>,
@@ -116,7 +117,7 @@ impl Plugin {
     }
 
     /// Register an object type and return a TypeRegistration for further configuration
-    pub fn with_type<T>(
+    pub fn ty<T>(
         self,
         name: impl Into<String>,
         configure: impl FnOnce(&mut TypeRegistration<T>),
@@ -129,8 +130,8 @@ impl Plugin {
         let mut type_registration = TypeRegistration {
             plugin: self,
             type_name: type_name.clone(),
-            size: std::mem::size_of::<T>() as i32,
-            flags: ObjectTypeFlags::VALUE, // asOBJ_VALUE as default
+            size: size_of::<T>() as i32,
+            flags: ObjectTypeFlags::REF, // Default
             type_builder: TypeBuilder {
                 methods: Vec::new(),
                 properties: Vec::new(),
@@ -145,9 +146,20 @@ impl Plugin {
         // Finish the type registration and return the updated plugin
         type_registration.register()
     }
+
+    pub(crate) fn namespace(&self) -> Option<&str> {
+        self.namespace.as_deref()
+    }
+}
+
+impl Default for Plugin {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 /// Builder for configuring object type registrations
+#[doc(hidden)]
 pub struct TypeRegistration<T> {
     plugin: Plugin,
     type_name: String,
@@ -160,19 +172,19 @@ pub struct TypeRegistration<T> {
 impl<T: 'static> TypeRegistration<T> {
     /// Mark this type as a value type
     pub fn as_value_type(&mut self) -> &mut Self {
-        self.flags = ObjectTypeFlags::VALUE; // asOBJ_VALUE
+        self.flags = ObjectTypeFlags::VALUE;
         self
     }
 
     /// Mark this type as a reference type
     pub fn as_reference_type(&mut self) -> &mut Self {
-        self.flags = ObjectTypeFlags::REF; // asOBJ_REF
+        self.flags = ObjectTypeFlags::REF;
         self
     }
 
     /// Add POD flag (Plain Old Data)
     pub fn with_pod_flag(&mut self) -> &mut Self {
-        self.flags |= ObjectTypeFlags::POD; // asOBJ_POD
+        self.flags |= ObjectTypeFlags::POD;
         self
     }
 

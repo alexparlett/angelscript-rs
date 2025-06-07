@@ -3,7 +3,7 @@ use crate::types::enums::*;
 use crate::core::error::{ScriptError, ScriptResult};
 use crate::core::function::Function;
 use crate::core::typeinfo::TypeInfo;
-use crate::internal::callback_manager::{CallbackManager, ExceptionCallbackFn, LineCallbackFn};
+use crate::internal::callback_manager::CallbackManager;
 use crate::types::script_memory::ScriptMemoryLocation;
 use crate::types::script_data::ScriptData;
 use crate::types::user_data::UserData;
@@ -16,6 +16,7 @@ use std::ffi::{CStr, CString};
 use std::os::raw::{c_char, c_void};
 use std::ptr;
 use std::ptr::NonNull;
+use crate::types::callbacks::{ExceptionCallbackFn, LineCallbackFn};
 
 type InternalCallback = Option<unsafe extern "C" fn(*mut asIScriptContext, *const c_void)>;
 

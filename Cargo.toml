@@ -11,12 +11,13 @@ ryu = "1.0"
 bitflags = "2.9"
 thiserror = "2.0"
 anyhow = "1.0"
+ctor = { version = "0.4.2", optional = true }
 
 [dev-dependencies]
 
 [features]
 default = ["macros", "string"]
-macros = ["dep:angelscript_macros"]
+macros = ["dep:angelscript_macros", "dep:ctor"]
 string = []
 rust-threading = []
 

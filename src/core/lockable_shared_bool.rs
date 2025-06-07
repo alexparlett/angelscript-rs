@@ -15,10 +15,6 @@ impl LockableSharedBool {
         wrapper
     }
 
-    pub(crate) fn as_ptr(&self) -> *mut asILockableSharedBool {
-        self.inner
-    }
-
     // ========== VTABLE ORDER (matches asILockableSharedBool__bindgen_vtable) ==========
 
     // 1. AddRef

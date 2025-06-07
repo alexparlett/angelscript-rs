@@ -628,9 +628,6 @@ pub struct BinaryStream {
 }
 
 impl BinaryStream {
-    pub(crate) fn from_raw(ptr: *mut asIBinaryStream) -> Self {
-        Self { inner: ptr }
-    }
 
     pub(crate) fn as_ptr(&self) -> *mut asIBinaryStream {
         self.inner

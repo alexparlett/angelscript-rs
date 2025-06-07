@@ -23,6 +23,9 @@ pub enum ScriptError {
     #[error("External error: {0}")]
     External(#[from] Box<dyn std::error::Error + Send + Sync>),
 
+    #[error("ScriptGeneric error: {0}")]
+    Generic(String),
+
     #[error("Unknown error code: {0}")]
     Unknown(i32),
 

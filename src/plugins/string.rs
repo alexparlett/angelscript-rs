@@ -603,7 +603,7 @@ fn string_substring(g: &ScriptGeneric) {
 
 /// Create a string plugin for AngelScript
 pub fn plugin() -> ScriptResult<Plugin> {
-    let plugin = Plugin::new("String").with_type::<String>("string", |ctx| {
+    let plugin = Plugin::new().ty::<String>("string", |ctx| {
         ctx.as_value_type()
             .with_flags(ObjectTypeFlags::VALUE | ObjectTypeFlags::APP_CLASS_CDAK)
             // Constructors

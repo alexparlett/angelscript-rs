@@ -16,7 +16,7 @@ mod tests {
 
         let mut engine = Engine::create().expect("Failed to create engine");
         engine
-            .with_default_modules()
+            .with_default_plugins()
             .expect("Failed to register std");
         engine
             .set_message_callback(|msg| {
@@ -56,7 +56,7 @@ mod tests {
 
         let mut engine = Engine::create().expect("Failed to create engine");
         engine
-            .with_default_modules()
+            .with_default_plugins()
             .expect("Failed to register std");
         engine
             .set_message_callback(|msg| {
@@ -102,7 +102,7 @@ mod tests {
 
         let mut engine = Engine::create().expect("Failed to create engine");
         engine
-            .with_default_modules()
+            .with_default_plugins()
             .expect("Failed to register std");
         engine
             .set_message_callback(|msg| {
@@ -157,7 +157,7 @@ mod tests {
 
         let mut engine = Engine::create().expect("Failed to create engine");
         engine
-            .with_default_modules()
+            .with_default_plugins()
             .expect("Failed to register std");
         engine
             .set_message_callback(|msg| {
@@ -206,7 +206,7 @@ mod tests {
 
         let mut engine = Engine::create().expect("Failed to create engine");
         engine
-            .with_default_modules()
+            .with_default_plugins()
             .expect("Failed to register std");
         engine
             .set_message_callback(|msg| {
@@ -249,7 +249,7 @@ mod tests {
 
         let mut engine = Engine::create().expect("Failed to create engine");
         engine
-            .with_default_modules()
+            .with_default_plugins()
             .expect("Failed to register std");
         engine
             .set_message_callback(|msg| {
@@ -302,7 +302,7 @@ mod tests {
 
         let mut engine = Engine::create().expect("Failed to create engine");
         engine
-            .with_default_modules()
+            .with_default_plugins()
             .expect("Failed to register std");
         engine
             .set_message_callback(|msg| {

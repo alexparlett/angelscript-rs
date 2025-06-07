@@ -47,11 +47,6 @@ mod cpp_impl {
             Self { inner: ptr }
         }
 
-        /// Returns the raw pointer
-        pub(crate) fn as_ptr(&self) -> *mut asIThreadManager {
-            self.inner
-        }
-
         /// Checks if the pointer is null
         pub fn is_null(&self) -> bool {
             self.inner.is_null()

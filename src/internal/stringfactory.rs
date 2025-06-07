@@ -84,10 +84,6 @@ impl StringFactory {
         })
     }
 
-    pub fn cache(&self) -> Arc<Mutex<InnerCache>> {
-        self.cache.clone()
-    }
-
     pub unsafe extern "C" fn get_string_constant(
         _this: *mut asIStringFactory,
         data: *const c_char,

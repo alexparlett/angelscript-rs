@@ -18,7 +18,7 @@ fn main() {
         .expect("Failed to set message callback");
 
     engine
-        .with_default_modules()
+        .with_default_plugins()
         .expect("Failed to register std");
 
     engine
