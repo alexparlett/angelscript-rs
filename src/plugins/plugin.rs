@@ -39,7 +39,7 @@ pub(crate) struct MethodRegistration {
 
 pub(crate) struct PropertyRegistration {
     pub(crate) declaration: String,
-    pub(crate) byte_offset: Option<i32>,
+    pub(crate) byte_offset: i32,
     pub(crate) composite_offset: Option<i32>,
     pub(crate) is_composite_indirect: Option<bool>,
 }
@@ -220,7 +220,7 @@ impl<T: 'static> TypeRegistration<T> {
     pub fn with_property(
         &mut self,
         declaration: impl Into<String>,
-        byte_offset: Option<i32>,
+        byte_offset: i32,
         composite_offset: Option<i32>,
         is_composite_indirect: Option<bool>,
     ) -> &mut Self {

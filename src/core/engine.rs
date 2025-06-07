@@ -99,7 +99,7 @@ impl Engine {
                         self.register_object_property(
                             &name,
                             &property.declaration,
-                            property.byte_offset.unwrap_or(0),
+                            property.byte_offset,
                             property.composite_offset.unwrap_or(0),
                             property.is_composite_indirect.unwrap_or(false),
                         )?;

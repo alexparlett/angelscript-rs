@@ -24,5 +24,8 @@ rust-threading = []
 [[example]]
 name = "basic"
 
+[[example]]
+name = "external_struct"
+
 [workspace]
 members = ["crates/angelscript_sys", "crates/angelscript_macros"]
