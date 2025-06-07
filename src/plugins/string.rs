@@ -358,7 +358,7 @@ fn string_find_last_not_of(g: &ScriptGeneric) {
 // Global parsing functions
 fn parse_int(g: &ScriptGeneric) {
     let string_ptr = g.get_arg_address(0).unwrap();
-    let base = g.get_arg_dword(1) as u32;
+    let base = g.get_arg_dword(1);
     let byte_count_ptr = g.get_arg_address(2); // Optional out parameter
 
     let string = string_ptr.as_ref::<String>();
@@ -408,7 +408,7 @@ fn parse_int(g: &ScriptGeneric) {
 
 fn parse_uint(g: &ScriptGeneric) {
     let string_ptr = g.get_arg_address(0).unwrap();
-    let base = g.get_arg_dword(1) as u32;
+    let base = g.get_arg_dword(1);
     let byte_count_ptr = g.get_arg_address(2); // Optional out parameter
 
     let string = string_ptr.as_ref::<String>();

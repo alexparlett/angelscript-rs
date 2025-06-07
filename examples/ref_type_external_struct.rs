@@ -79,13 +79,6 @@ fn entity_release(g: &ScriptGeneric) {
     }
 }
 
-fn entity_get_ref_count(g: &ScriptGeneric) {
-    let obj = g.get_object().unwrap();
-    let entity = obj.as_boxed_ref::<ComplexEntity>();
-    let count = entity.ref_count.load(Ordering::Relaxed);
-    g.set_return_dword(count as u32).unwrap();
-}
-
 // Method implementations - CLEANER
 fn entity_get_name(g: &ScriptGeneric) {
     let obj = g.get_object().unwrap();
@@ -286,16 +279,16 @@ fn setup_engine() -> ScriptResult<Engine> {
 }
 
 // AngelScript allocator functions (same as before)
-unsafe extern "C" fn unified_alloc(size: usize) -> *mut std::ffi::c_void {
+unsafe extern "C" fn unified_alloc(size: usize) -> *mut std::ffi::c_void { unsafe {
     let layout = Layout::from_size_align(size, 8).unwrap();
     alloc(layout) as *mut std::ffi::c_void
-}
+}}
 
-unsafe extern "C" fn unified_free(ptr: *mut std::ffi::c_void) {
+unsafe extern "C" fn unified_free(ptr: *mut std::ffi::c_void) { unsafe {
     if !ptr.is_null() {
         libc::free(ptr);
     }
-}
+}}
 
 // Print functions (same as your existing ones)
 fn print(g: &ScriptGeneric) {

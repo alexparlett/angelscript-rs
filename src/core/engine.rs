@@ -46,17 +46,17 @@ pub struct Engine {
 
 impl Engine {
     #[cfg(feature = "rust-alloc")]
-    pub unsafe extern "C" fn unified_alloc(size: usize) -> *mut std::ffi::c_void {
+    pub unsafe extern "C" fn unified_alloc(size: usize) -> *mut std::ffi::c_void { unsafe {
         let layout = Layout::from_size_align(size, 8).unwrap();
         alloc(layout) as *mut std::ffi::c_void
-    }
+    }}
 
     #[cfg(feature = "rust-alloc")]
-    pub unsafe extern "C" fn unified_free(ptr: *mut std::ffi::c_void) {
+    pub unsafe extern "C" fn unified_free(ptr: *mut std::ffi::c_void) { unsafe {
         if !ptr.is_null() {
             libc::free(ptr);
         }
-    }
+    }}
 
     pub fn create() -> ScriptResult<Engine> {
         unsafe {

@@ -28,16 +28,16 @@ impl ComplexPlayer {
 }
 
 // AngelScript allocator functions with correct signatures
-unsafe extern "C" fn unified_alloc(size: usize) -> *mut std::ffi::c_void {
+unsafe extern "C" fn unified_alloc(size: usize) -> *mut std::ffi::c_void { unsafe {
     let layout = Layout::from_size_align(size, 8).unwrap();
     alloc(layout) as *mut std::ffi::c_void
-}
+}}
 
-unsafe extern "C" fn unified_free(ptr: *mut std::ffi::c_void) {
+unsafe extern "C" fn unified_free(ptr: *mut std::ffi::c_void) { unsafe {
     if !ptr.is_null() {
         libc::free(ptr);
     }
-}
+}}
 
 // Constructor/destructor functions
 fn construct_complex_player(g: &ScriptGeneric) {

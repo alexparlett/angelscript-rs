@@ -39,7 +39,7 @@ impl ScriptMemoryLocation {
 
     /// Release the boxed value (for use in Release behavior)
     /// Returns true if the object was actually freed
-    pub unsafe fn release_boxed<T>(&self, ref_count: &std::sync::atomic::AtomicUsize) -> bool {
+    pub unsafe fn release_boxed<T>(&self, ref_count: &std::sync::atomic::AtomicUsize) -> bool { unsafe {
         let count = ref_count.fetch_sub(1, std::sync::atomic::Ordering::Relaxed) - 1;
 
         if count == 0 {
@@ -49,7 +49,7 @@ impl ScriptMemoryLocation {
         } else {
             false
         }
-    }
+    }}
 
     /// Add reference to a boxed value
     pub fn addref_boxed(&self, ref_count: &std::sync::atomic::AtomicUsize) -> usize {
