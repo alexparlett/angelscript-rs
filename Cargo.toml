@@ -12,20 +12,16 @@ bitflags = "2.9"
 thiserror = "2.0"
 anyhow = "1.0"
 ctor = { version = "0.4.2", optional = true }
+libc = { version = "1.0.0-alpha.1", optional = true }
 
 [dev-dependencies]
 
 [features]
-default = ["macros", "string"]
+default = ["macros", "string", "rust-alloc"]
 macros = ["dep:angelscript_macros", "dep:ctor"]
 string = []
-rust-threading = []
-
-[[example]]
-name = "basic"
-
-[[example]]
-name = "external_struct"
+rust-threads = []
+rust-alloc = ["dep:libc"]
 
 [workspace]
 members = ["crates/angelscript_sys", "crates/angelscript_macros"]

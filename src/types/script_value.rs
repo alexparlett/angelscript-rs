@@ -1,5 +1,5 @@
 use crate::types::script_memory::ScriptMemoryLocation;
-use crate::prelude::{ScriptGeneric, TypeIdFlags};
+use crate::prelude::{ScriptGeneric, TypeId, TypeModifiers};
 use angelscript_sys::{asBYTE, asDWORD, asQWORD, asUINT, asWORD};
 
 // Expand the GenericValueData enum to handle more cases
@@ -27,21 +27,21 @@ pub enum ScriptValue {
 
 impl ScriptValue {
     /// Creates a GenericValueData from a ScriptGeneric argument using proper AngelScript type IDs
-    pub fn from_generic(generic: &ScriptGeneric, arg: asUINT, flags: TypeIdFlags) -> Self {
+    pub fn from_generic(generic: &ScriptGeneric, arg: asUINT, flags: TypeId) -> Self {
         // Handle primitive types first
         match flags {
-            TypeIdFlags::VOID => ScriptValue::DWord(0), // void shouldn't happen for args
-            TypeIdFlags::BOOL => ScriptValue::Byte(generic.get_arg_byte(arg)),
-            TypeIdFlags::INT8 => ScriptValue::Byte(generic.get_arg_byte(arg)),
-            TypeIdFlags::INT16 => ScriptValue::Word(generic.get_arg_word(arg)),
-            TypeIdFlags::INT32 => ScriptValue::DWord(generic.get_arg_dword(arg)),
-            TypeIdFlags::INT64 => ScriptValue::QWord(generic.get_arg_qword(arg)),
-            TypeIdFlags::UINT8 => ScriptValue::Byte(generic.get_arg_byte(arg)),
-            TypeIdFlags::UINT16 => ScriptValue::Word(generic.get_arg_word(arg)),
-            TypeIdFlags::UINT32 => ScriptValue::DWord(generic.get_arg_dword(arg)),
-            TypeIdFlags::UINT64 => ScriptValue::QWord(generic.get_arg_qword(arg)),
-            TypeIdFlags::FLOAT => ScriptValue::Float(generic.get_arg_float(arg)),
-            TypeIdFlags::DOUBLE => ScriptValue::Double(generic.get_arg_double(arg)),
+            TypeId::Void => ScriptValue::DWord(0), // void shouldn't happen for args
+            TypeId::Bool => ScriptValue::Byte(generic.get_arg_byte(arg)),
+            TypeId::Int8 => ScriptValue::Byte(generic.get_arg_byte(arg)),
+            TypeId::Int16 => ScriptValue::Word(generic.get_arg_word(arg)),
+            TypeId::Int32 => ScriptValue::DWord(generic.get_arg_dword(arg)),
+            TypeId::Int64 => ScriptValue::QWord(generic.get_arg_qword(arg)),
+            TypeId::Uint8 => ScriptValue::Byte(generic.get_arg_byte(arg)),
+            TypeId::Uint16 => ScriptValue::Word(generic.get_arg_word(arg)),
+            TypeId::Uint32 => ScriptValue::DWord(generic.get_arg_dword(arg)),
+            TypeId::Uint64 => ScriptValue::QWord(generic.get_arg_qword(arg)),
+            TypeId::Float => ScriptValue::Float(generic.get_arg_float(arg)),
+            TypeId::Double => ScriptValue::Double(generic.get_arg_double(arg)),
             _ => {
                 // Handle complex types using type flags
                 Self::from_complex_type(generic, arg, flags)
@@ -50,9 +50,9 @@ impl ScriptValue {
     }
 
     /// Handles complex types (objects, handles, references, etc.)
-    fn from_complex_type(generic: &ScriptGeneric, arg: asUINT, flags: TypeIdFlags) -> Self {
+    fn from_complex_type(generic: &ScriptGeneric, arg: asUINT, type_id: TypeId) -> Self {
         // Check if it's a handle (pointer to object)
-        if (flags & TypeIdFlags::OBJHANDLE) != TypeIdFlags::VOID {
+        if type_id == TypeId::ObjHandle {
             // It's an object handle
             if let Some(ptr) = generic.get_arg_object(arg) {
                 ScriptValue::ObjectHandle(ptr)
@@ -61,9 +61,9 @@ impl ScriptValue {
             }
         }
         // Check if it's an object (by value or reference)
-        else if (flags & TypeIdFlags::MASK_OBJECT) != TypeIdFlags::VOID {
+        else if type_id == TypeId::MaskObject {
             // Determine if it's an application object or script object
-            if (flags & TypeIdFlags::APPOBJECT) != TypeIdFlags::VOID {
+            if type_id == TypeId::AppObject {
                 // Application registered object
                 if let Some(ptr) = generic.get_arg_address(arg) {
                     ScriptValue::AppObject(ptr)
@@ -72,7 +72,7 @@ impl ScriptValue {
                 } else {
                     ScriptValue::AppObject(ScriptMemoryLocation::null())
                 }
-            } else if (flags & TypeIdFlags::SCRIPTOBJECT) != TypeIdFlags::VOID {
+            } else if type_id == TypeId::ScriptObject {
                 // Script object
                 if let Some(ptr) = generic.get_arg_object(arg) {
                     ScriptValue::ScriptObject(ptr)
@@ -171,7 +171,7 @@ impl FromScriptValue for f64 {
 /// Represents a generic value with type information
 #[derive(Debug, Clone)]
 pub struct ScriptArg {
-    pub type_id: i32,
-    pub flags: TypeIdFlags,
+    pub type_id: TypeId,
+    pub flags: TypeModifiers,
     pub value: ScriptValue,
 }

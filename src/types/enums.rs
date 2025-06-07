@@ -219,6 +219,7 @@ impl From<CallingConvention> for asECallConvTypes {
 // Object Type Flags (using bitflags for this one since it's a flag enum)
 use angelscript_sys::*;
 use bitflags::bitflags;
+use crate::prelude::TypeId::Custom;
 
 bitflags! {
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -457,40 +458,82 @@ impl From<TokenClass> for asETokenClass {
 }
 
 // Type ID Flags
-bitflags! {
-    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-    pub struct TypeIdFlags: u32 {
-        const VOID = asETypeIdFlags_asTYPEID_VOID;
-        const BOOL = asETypeIdFlags_asTYPEID_BOOL;
-        const INT8 = asETypeIdFlags_asTYPEID_INT8;
-        const INT16 = asETypeIdFlags_asTYPEID_INT16;
-        const INT32 = asETypeIdFlags_asTYPEID_INT32;
-        const INT64 = asETypeIdFlags_asTYPEID_INT64;
-        const UINT8 = asETypeIdFlags_asTYPEID_UINT8;
-        const UINT16 = asETypeIdFlags_asTYPEID_UINT16;
-        const UINT32 = asETypeIdFlags_asTYPEID_UINT32;
-        const UINT64 = asETypeIdFlags_asTYPEID_UINT64;
-        const FLOAT = asETypeIdFlags_asTYPEID_FLOAT;
-        const DOUBLE = asETypeIdFlags_asTYPEID_DOUBLE;
-        const OBJHANDLE = asETypeIdFlags_asTYPEID_OBJHANDLE;
-        const HANDLETOCONST = asETypeIdFlags_asTYPEID_HANDLETOCONST;
-        const MASK_OBJECT = asETypeIdFlags_asTYPEID_MASK_OBJECT;
-        const APPOBJECT = asETypeIdFlags_asTYPEID_APPOBJECT;
-        const SCRIPTOBJECT = asETypeIdFlags_asTYPEID_SCRIPTOBJECT;
-        const TEMPLATE = asETypeIdFlags_asTYPEID_TEMPLATE;
-        const MASK_SEQNBR = asETypeIdFlags_asTYPEID_MASK_SEQNBR;
-    }
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u32)]
+pub enum TypeId {
+    Void = asETypeIdFlags_asTYPEID_VOID,
+    Bool = asETypeIdFlags_asTYPEID_BOOL,
+    Int8 = asETypeIdFlags_asTYPEID_INT8,
+    Int16 = asETypeIdFlags_asTYPEID_INT16,
+    Int32 = asETypeIdFlags_asTYPEID_INT32,
+    Int64 = asETypeIdFlags_asTYPEID_INT64,
+    Uint8 = asETypeIdFlags_asTYPEID_UINT8,
+    Uint16 = asETypeIdFlags_asTYPEID_UINT16,
+    Uint32 = asETypeIdFlags_asTYPEID_UINT32,
+    Uint64 = asETypeIdFlags_asTYPEID_UINT64,
+    Float = asETypeIdFlags_asTYPEID_FLOAT,
+    Double = asETypeIdFlags_asTYPEID_DOUBLE,
+    ObjHandle = asETypeIdFlags_asTYPEID_OBJHANDLE,
+    HandleToConst = asETypeIdFlags_asTYPEID_HANDLETOCONST,
+    MaskObject = asETypeIdFlags_asTYPEID_MASK_OBJECT,
+    AppObject = asETypeIdFlags_asTYPEID_APPOBJECT,
+    ScriptObject = asETypeIdFlags_asTYPEID_SCRIPTOBJECT,
+    Template = asETypeIdFlags_asTYPEID_TEMPLATE,
+    MaskSeqnr = asETypeIdFlags_asTYPEID_MASK_SEQNBR,
+    Custom(i32) = u32::MAX,
 }
 
-impl From<asETypeIdFlags> for TypeIdFlags {
+impl From<asETypeIdFlags> for TypeId {
     fn from(value: asETypeIdFlags) -> Self {
-        TypeIdFlags::from_bits_truncate(value)
+        match value {
+            asETypeIdFlags_asTYPEID_VOID => Self::Void,
+            asETypeIdFlags_asTYPEID_BOOL => Self::Bool,
+            asETypeIdFlags_asTYPEID_INT8 => Self::Int8,
+            asETypeIdFlags_asTYPEID_INT16 => Self::Int16,
+            asETypeIdFlags_asTYPEID_INT32 => Self::Int32,
+            asETypeIdFlags_asTYPEID_INT64 => Self::Int64,
+            asETypeIdFlags_asTYPEID_UINT8 => Self::Uint8,
+            asETypeIdFlags_asTYPEID_UINT16 => Self::Uint16,
+            asETypeIdFlags_asTYPEID_UINT32 => Self::Uint32,
+            asETypeIdFlags_asTYPEID_UINT64 => Self::Uint64,
+            asETypeIdFlags_asTYPEID_FLOAT => Self::Float,
+            asETypeIdFlags_asTYPEID_DOUBLE => Self::Double,
+            asETypeIdFlags_asTYPEID_OBJHANDLE => Self::ObjHandle,
+            asETypeIdFlags_asTYPEID_HANDLETOCONST => Self::HandleToConst,
+            asETypeIdFlags_asTYPEID_MASK_OBJECT => Self::MaskObject,
+            asETypeIdFlags_asTYPEID_APPOBJECT => Self::AppObject,
+            asETypeIdFlags_asTYPEID_SCRIPTOBJECT => Self::ScriptObject,
+            asETypeIdFlags_asTYPEID_TEMPLATE => Self::Template,
+            asETypeIdFlags_asTYPEID_MASK_SEQNBR => Self::MaskSeqnr,
+            _ => Custom(value as i32),
+        }
     }
 }
 
-impl From<TypeIdFlags> for asETypeIdFlags {
-    fn from(value: TypeIdFlags) -> Self {
-        value.bits()
+impl From<TypeId> for asETypeIdFlags {
+    fn from(value: TypeId) -> Self {
+        match value {
+            TypeId::Void => asETypeIdFlags_asTYPEID_VOID,
+            TypeId::Bool => asETypeIdFlags_asTYPEID_BOOL,
+            TypeId::Int8 => asETypeIdFlags_asTYPEID_INT8,
+            TypeId::Int16 => asETypeIdFlags_asTYPEID_INT16,
+            TypeId::Int32 => asETypeIdFlags_asTYPEID_INT32,
+            TypeId::Int64 => asETypeIdFlags_asTYPEID_INT64,
+            TypeId::Uint8 => asETypeIdFlags_asTYPEID_UINT8,
+            TypeId::Uint16 => asETypeIdFlags_asTYPEID_UINT16,
+            TypeId::Uint32 => asETypeIdFlags_asTYPEID_UINT32,
+            TypeId::Uint64 => asETypeIdFlags_asTYPEID_UINT64,
+            TypeId::Float => asETypeIdFlags_asTYPEID_FLOAT,
+            TypeId::Double => asETypeIdFlags_asTYPEID_DOUBLE,
+            TypeId::ObjHandle => asETypeIdFlags_asTYPEID_OBJHANDLE,
+            TypeId::HandleToConst => asETypeIdFlags_asTYPEID_HANDLETOCONST,
+            TypeId::MaskObject => asETypeIdFlags_asTYPEID_MASK_OBJECT,
+            TypeId::AppObject => asETypeIdFlags_asTYPEID_APPOBJECT,
+            TypeId::ScriptObject => asETypeIdFlags_asTYPEID_SCRIPTOBJECT,
+            TypeId::Template => asETypeIdFlags_asTYPEID_TEMPLATE,
+            TypeId::MaskSeqnr => asETypeIdFlags_asTYPEID_MASK_SEQNBR,
+            Custom(value) => value as asETypeIdFlags,
+        }
     }
 }
 

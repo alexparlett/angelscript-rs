@@ -1,8 +1,10 @@
 use crate::core::engine::Engine;
 use crate::core::function::Function;
-use crate::types::script_memory::ScriptMemoryLocation;
+use crate::prelude::{
+    FromScriptValue, ScriptArg, ScriptError, ScriptResult, TypeId, TypeModifiers,
+};
 use crate::types::script_data::ScriptData;
-use crate::prelude::{FromScriptValue, ScriptArg, ScriptError, ScriptResult, TypeIdFlags};
+use crate::types::script_memory::ScriptMemoryLocation;
 use crate::types::script_value::ScriptValue;
 use angelscript_sys::{
     asBYTE, asDWORD, asIScriptEngine, asIScriptGeneric, asIScriptGeneric__bindgen_vtable, asQWORD,
@@ -76,12 +78,13 @@ impl ScriptGeneric {
     }
 
     // 7. GetArgTypeId
-    pub fn get_arg_type_id(&self, arg: asUINT) -> (i32, TypeIdFlags) {
+    pub fn get_arg_type_id(&self, arg: asUINT) -> (TypeId, TypeModifiers) {
         let mut flags: asDWORD = 0;
         unsafe {
-            let type_id =
-                (self.as_vtable().asIScriptGeneric_GetArgTypeId)(self.inner, arg, &mut flags);
-            let typed_id_flags = TypeIdFlags::from_bits_truncate(flags);
+            let type_id = TypeId::from((self.as_vtable().asIScriptGeneric_GetArgTypeId)(
+                self.inner, arg, &mut flags,
+            ) as u32);
+            let typed_id_flags = TypeModifiers::from(flags);
             (type_id, typed_id_flags)
         }
     }
@@ -153,12 +156,15 @@ impl ScriptGeneric {
     }
 
     // 17. GetReturnTypeId
-    pub fn get_return_type_id(&self) -> (i32, TypeIdFlags) {
+    pub fn get_return_type_id(&self) -> (TypeId, TypeModifiers) {
         let mut flags: asDWORD = 0;
         unsafe {
             let type_id =
                 (self.as_vtable().asIScriptGeneric_GetReturnTypeId)(self.inner, &mut flags);
-            (type_id, TypeIdFlags::from_bits_truncate(flags))
+            (
+                TypeId::from(type_id as u32),
+                TypeModifiers::from(flags),
+            )
         }
     }
 
@@ -287,7 +293,7 @@ impl ScriptGeneric {
                 ScriptArg {
                     type_id,
                     flags,
-                    value: ScriptValue::from_generic(self, i, flags),
+                    value: ScriptValue::from_generic(self, i, type_id),
                 }
             })
             .collect()
@@ -296,7 +302,7 @@ impl ScriptGeneric {
     /// Checks if the function has a return value
     pub fn has_return_value(&self) -> bool {
         let (type_id, _) = self.get_return_type_id();
-        type_id != 0 // Assuming 0 is void
+        type_id != TypeId::Void // Assuming 0 is void
     }
 
     /// Gets an argument with proper type checking
@@ -304,8 +310,8 @@ impl ScriptGeneric {
     where
         T: FromScriptValue,
     {
-        let (_, flags) = self.get_arg_type_id(arg);
-        let value_data = ScriptValue::from_generic(self, arg, flags);
+        let (type_id, _) = self.get_arg_type_id(arg);
+        let value_data = ScriptValue::from_generic(self, arg, type_id);
         T::from_script_value(&value_data)
     }
 

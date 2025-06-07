@@ -1,34 +1,28 @@
 use angelscript::core::engine::Engine;
-use angelscript::prelude::{GetModuleFlags, ScriptGeneric};
+use angelscript::prelude::{
+    ContextState, GetModuleFlags, ReturnCode, ScriptError, ScriptGeneric, ScriptResult,
+};
 
 fn print(g: &ScriptGeneric) {
     let arg_ptr = g.get_arg_object(0).unwrap();
     println!("Hello, {}", arg_ptr.as_ref::<String>());
 }
 
-fn main() {
+fn main() -> ScriptResult<()> {
     // Create the script engine
     let mut engine = Engine::create().expect("Failed to create script engine");
 
     // Set up message callback
-    engine
-        .set_message_callback(|msg| {
-            println!("AngelScript: {}", msg.message);
-        })
-        .expect("Failed to set message callback");
+    engine.set_message_callback(|msg| {
+        println!("AngelScript: {}", msg.message);
+    })?;
 
-    engine
-        .with_default_plugins()
-        .expect("Failed to register std");
+    engine.with_default_plugins()?;
 
-    engine
-        .register_global_function("void print(const string &in)", print, None)
-        .unwrap();
+    engine.register_global_function("void print(const string &in)", print, None)?;
 
     // Create a module
-    let module = engine
-        .get_module("MyModule", GetModuleFlags::AlwaysCreate)
-        .expect("Failed to create module");
+    let module = engine.get_module("MyModule", GetModuleFlags::AlwaysCreate)?;
 
     // Add a simple script without strings for now
     let script = r#"
@@ -44,31 +38,41 @@ fn main() {
         }
     "#;
 
-    module
-        .add_script_section_simple("main", script)
-        .expect("Failed to add script");
+    module.add_script_section_simple("main", script)?;
 
     // Build the module
-    module.build().expect("Failed to build module");
+    module.build()?;
 
-    let ctx = engine.create_context().expect("Failed to create context");
+    let ctx = engine.create_context()?;
 
-    let main_func = module
-        .get_function_by_decl("void main()")
-        .expect("Failed to find main function");
+    let main_func = module.get_function_by_decl("void main()").unwrap();
 
     // Create a context and execute
-    ctx.prepare(&main_func).expect("Failed to prepare context");
-    ctx.execute().expect("Failed to execute script");
+    ctx.prepare(&main_func)?;
+    ctx.execute()?;
 
-    let print_func = module
-        .get_function_by_name("say")
-        .expect("Failed to find print function");
+    let print_func = module.get_function_by_name("say").unwrap();
 
     let mut name = "Cat".to_string();
 
-    ctx.prepare(&print_func).expect("Failed to prepare context");
-    ctx.set_arg_object(0, &mut name)
-        .expect("Failed to bind str");
-    ctx.execute().expect("Failed to execute script");
+    ctx.prepare(&print_func)?;
+    ctx.set_arg_object(0, &mut name)?;
+    let result = ctx.execute()?;
+
+    if result == ContextState::Exception {
+        let error = ctx.get_exception_string();
+        let (line, column, section) = ctx.get_exception_line_number();
+        println!(
+            "Exception {:?} at {}, {:?}, {:?}",
+            error, line, column, section
+        );
+
+        println!("Script execution failed");
+
+        Err(ScriptError::AngelScriptError(ReturnCode::Error))
+    } else {
+        println!("✅ Script execution completed");
+
+        Ok(())
+    }
 }

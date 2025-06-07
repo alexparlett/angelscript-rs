@@ -557,7 +557,7 @@ impl Context {
             let ptr = (self.as_vtable().asIScriptContext_SetUserData)(
                 self.context,
                 data.to_script_ptr(),
-                T::TypeId,
+                T::TYPE_ID,
             );
             if ptr.is_null() {
                 None
@@ -569,7 +569,7 @@ impl Context {
 
     pub fn get_user_data<T: UserData + ScriptData>(&self) -> ScriptResult<T> {
         unsafe {
-            let ptr = (self.as_vtable().asIScriptContext_GetUserData)(self.context, T::TypeId);
+            let ptr = (self.as_vtable().asIScriptContext_GetUserData)(self.context, T::TYPE_ID);
             if ptr.is_null() {
                 Err(ScriptError::NullPointer)
             } else {

@@ -83,7 +83,7 @@ impl Plugin {
     }
 
     /// Register a global function
-    pub fn global_function(
+    pub fn function(
         mut self,
         declaration: impl Into<String>,
         function: GenericFn,
@@ -101,7 +101,7 @@ impl Plugin {
     }
 
     /// Register a global property
-    pub fn global_property(
+    pub fn property(
         mut self,
         declaration: impl Into<String>,
         property: Box<dyn ScriptData>,

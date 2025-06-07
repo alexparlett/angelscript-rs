@@ -21,6 +21,7 @@ dependencies = [
  "bitflags",
  "ctor",
  "itoa",
+ "libc 1.0.0-alpha.1",
  "ryu",
  "thiserror",
 ]
@@ -104,7 +105,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0b023947811758c97c59bf9d1c188fd619ad4718dcaa767947df1cadb14f39f4"
 dependencies = [
  "glob",
- "libc",
+ "libc 0.2.172",
  "libloading",
 ]
 
@@ -171,6 +172,12 @@ name = "libc"
 version = "0.2.172"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d750af042f7ef4f724306de029d18836c26c1765a54a6a3f094cbd23a7267ffa"
+
+[[package]]
+name = "libc"
+version = "1.0.0-alpha.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7222002e5385b4d9327755661e3847c970e8fbf9dea6da8c57f16e8cfbff53a8"
 
 [[package]]
 name = "libloading"

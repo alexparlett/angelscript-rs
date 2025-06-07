@@ -2,8 +2,8 @@
 //!
 //! This module provides a `ThreadManager` type that switches implementation
 //! based on compile-time features:
-//! - Default (when `rust-threading` is not enabled): Uses AngelScript's C++ manager
-//! - `rust-threading`: Uses a pure Rust implementation
+//! - Default (when `rust-threads` is not enabled): Uses AngelScript's C++ manager
+//! - `rust-threads`: Uses a pure Rust implementation
 
 use crate::core::error::{ScriptError, ScriptResult};
 use angelscript_sys::{
@@ -15,7 +15,7 @@ use std::ptr;
 
 // ========== C++ IMPLEMENTATION (DEFAULT) ==========
 
-#[cfg(not(feature = "rust-threading"))]
+#[cfg(not(feature = "rust-threads"))]
 mod cpp_impl {
     use crate::prelude::ReturnCode;
     use super::*;
@@ -109,7 +109,7 @@ mod cpp_impl {
 
 // ========== RUST IMPLEMENTATION ==========
 
-#[cfg(feature = "rust-threading")]
+#[cfg(feature = "rust-threads")]
 mod rust_impl {
     use super::*;
     use std::collections::HashMap;
@@ -515,7 +515,7 @@ mod rust_impl {
     unsafe impl Send for ThreadManager {}
     unsafe impl Sync for ThreadManager {}
 
-    // Re-export types that are only available with rust-threading
+    // Re-export types that are only available with rust-threads
     pub use ThreadCriticalSection;
     pub use ThreadLocalData;
     pub use ThreadReadLockGuard;
@@ -526,10 +526,10 @@ mod rust_impl {
 
 // ========== CONDITIONAL EXPORTS ==========
 
-#[cfg(not(feature = "rust-threading"))]
+#[cfg(not(feature = "rust-threads"))]
 pub use cpp_impl::ThreadManager;
 
-#[cfg(feature = "rust-threading")]
+#[cfg(feature = "rust-threads")]
 pub use rust_impl::*;
 
 /// RAII guard for AngelScript's exclusive lock

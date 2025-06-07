@@ -11,6 +11,12 @@ use crate::internal::stringfactory::get_string_factory_instance;
 use crate::internal::thread_manager::{ExclusiveLockGuard, SharedLockGuard, ThreadManager};
 use crate::plugins::plugin;
 use crate::plugins::plugin::Plugin;
+use crate::types::callbacks::{
+    CircularRefCallbackFn, CleanContextUserDataCallbackFn, CleanEngineUserDataCallbackFn,
+    CleanFunctionUserDataCallbackFn, CleanModuleUserDataCallbackFn, CleanScriptObjectCallbackFn,
+    CleanTypeInfoCallbackFn, GenericFn, MessageCallbackFn, RequestContextCallbackFn,
+    ReturnContextCallbackFn, TranslateAppExceptionCallbackFn,
+};
 use crate::types::enums::*;
 use crate::types::script_data::ScriptData;
 use crate::types::script_memory::ScriptMemoryLocation;
@@ -18,18 +24,18 @@ use crate::types::user_data::UserData;
 use angelscript_sys::{
     asALLOCFUNC_t, asAllocMem, asAtomicDec, asAtomicInc, asCreateLockableSharedBool,
     asCreateScriptEngine, asDWORD, asECallConvTypes_asCALL_GENERIC, asEMsgType,
-    asFREEFUNC_t, asFreeMem, asGENFUNC_t, asGenericFunction, asGetActiveContext, asGetLibraryOptions,
-    asGetLibraryVersion, asGetThreadManager, asIScriptEngine, asIScriptEngine__bindgen_vtable,
-    asIScriptGeneric, asIStringFactory, asITypeInfo, asMessageInfoFunction,
-    asPWORD, asResetGlobalMemoryFunctions, asScriptContextFunction, asSetGlobalMemoryFunctions,
-    asUINT, ANGELSCRIPT_VERSION,
+    asETypeIdFlags, asFREEFUNC_t, asFreeMem, asGENFUNC_t, asGenericFunction, asGetActiveContext,
+    asGetLibraryOptions, asGetLibraryVersion, asGetThreadManager, asIScriptEngine,
+    asIScriptEngine__bindgen_vtable, asIScriptGeneric, asIStringFactory, asITypeInfo,
+    asMessageInfoFunction, asPWORD, asResetGlobalMemoryFunctions, asScriptContextFunction,
+    asSetGlobalMemoryFunctions, asUINT, ANGELSCRIPT_VERSION,
 };
+use std::alloc::{alloc, Layout};
 use std::ffi::{c_char, CStr, CString};
 use std::marker::PhantomData;
 use std::os::raw::c_void;
 use std::ptr;
 use std::ptr::NonNull;
-use crate::types::callbacks::{CircularRefCallbackFn, CleanContextUserDataCallbackFn, CleanEngineUserDataCallbackFn, CleanFunctionUserDataCallbackFn, CleanModuleUserDataCallbackFn, CleanScriptObjectCallbackFn, CleanTypeInfoCallbackFn, GenericFn, MessageCallbackFn, RequestContextCallbackFn, ReturnContextCallbackFn, TranslateAppExceptionCallbackFn};
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct Engine {
@@ -39,8 +45,24 @@ pub struct Engine {
 }
 
 impl Engine {
+    #[cfg(feature = "rust-alloc")]
+    pub unsafe extern "C" fn unified_alloc(size: usize) -> *mut std::ffi::c_void {
+        let layout = Layout::from_size_align(size, 8).unwrap();
+        alloc(layout) as *mut std::ffi::c_void
+    }
+
+    #[cfg(feature = "rust-alloc")]
+    pub unsafe extern "C" fn unified_free(ptr: *mut std::ffi::c_void) {
+        if !ptr.is_null() {
+            libc::free(ptr);
+        }
+    }
+
     pub fn create() -> ScriptResult<Engine> {
         unsafe {
+            #[cfg(feature = "rust-alloc")]
+            Self::set_global_memory_functions(Some(Self::unified_alloc), Some(Self::unified_free))?;
+
             let engine_ptr = asCreateScriptEngine(ANGELSCRIPT_VERSION as asDWORD);
 
             let engine_wrapper = Engine {
@@ -162,7 +184,7 @@ impl Engine {
     ///
     /// The implementation used depends on the compile-time feature:
     /// - Default: Uses AngelScript's built-in C++ thread manager
-    /// - `rust-threading`: Uses a pure Rust implementation
+    /// - `rust-threads`: Uses a pure Rust implementation
     pub fn prepare_multithread() -> ScriptResult<ThreadManager> {
         ThreadManager::prepare()
     }
@@ -1103,10 +1125,13 @@ impl Engine {
         }
     }
 
-    pub fn get_type_info_by_id(&self, type_id: i32) -> Option<TypeInfo> {
+    pub fn get_type_info_by_id(&self, type_id: TypeId) -> Option<TypeInfo> {
         unsafe {
-            let type_info =
-                (self.as_vtable().asIScriptEngine_GetTypeInfoById)(self.inner.as_ptr(), type_id);
+            let type_id: asETypeIdFlags = type_id.into();
+            let type_info = (self.as_vtable().asIScriptEngine_GetTypeInfoById)(
+                self.inner.as_ptr(),
+                type_id as i32,
+            );
             if type_info.is_null() {
                 None
             } else {
@@ -1511,7 +1536,7 @@ impl Engine {
             let ptr = (self.as_vtable().asIScriptEngine_SetUserData)(
                 self.inner.as_ptr(),
                 data.to_script_ptr(),
-                T::TypeId as asPWORD,
+                T::TYPE_ID as asPWORD,
             );
             if ptr.is_null() {
                 None
@@ -1525,7 +1550,7 @@ impl Engine {
         unsafe {
             let ptr = (self.as_vtable().asIScriptEngine_GetUserData)(
                 self.inner.as_ptr(),
-                T::TypeId as asPWORD,
+                T::TYPE_ID as asPWORD,
             );
             if ptr.is_null() {
                 Err(ScriptError::NullPointer)
@@ -1724,7 +1749,7 @@ unsafe impl Send for GenericFnUserData {}
 unsafe impl Sync for GenericFnUserData {}
 
 impl UserData for GenericFnUserData {
-    const TypeId: usize = 0x129032719; // Must be unique!
+    const TYPE_ID: usize = 0x129032719; // Must be unique!
 }
 
 #[derive(Debug)]

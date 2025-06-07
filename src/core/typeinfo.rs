@@ -454,7 +454,7 @@ impl TypeInfo {
             let ptr = (self.as_vtable().asITypeInfo_SetUserData)(
                 self.inner,
                 data.to_script_ptr(),
-                T::TypeId as asPWORD,
+                T::TYPE_ID as asPWORD,
             );
             if ptr.is_null() {
                 None
@@ -467,7 +467,7 @@ impl TypeInfo {
     // 40. GetUserData
     pub fn get_user_data<T: UserData + ScriptData>(&self) -> Option<T> {
         unsafe {
-            let ptr = (self.as_vtable().asITypeInfo_GetUserData)(self.inner, T::TypeId as asPWORD);
+            let ptr = (self.as_vtable().asITypeInfo_GetUserData)(self.inner, T::TYPE_ID as asPWORD);
             if ptr.is_null() {
                 None
             } else {

@@ -132,7 +132,7 @@ impl ScriptObject {
             let ptr = (self.as_vtable().asIScriptObject_SetUserData)(
                 self.inner,
                 data.to_script_ptr(),
-                T::TypeId as asPWORD,
+                T::TYPE_ID as asPWORD,
             );
             if ptr.is_null() {
                 None
@@ -146,7 +146,7 @@ impl ScriptObject {
     pub fn get_user_data<T: UserData + ScriptData>(&self) -> Option<T> {
         unsafe {
             let ptr =
-                (self.as_vtable().asIScriptObject_GetUserData)(self.inner, T::TypeId as asPWORD);
+                (self.as_vtable().asIScriptObject_GetUserData)(self.inner, T::TYPE_ID as asPWORD);
             if ptr.is_null() {
                 None
             } else {

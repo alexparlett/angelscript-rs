@@ -580,7 +580,7 @@ impl Module {
             let ptr = (self.as_vtable().asIScriptModule_SetUserData)(
                 self.inner,
                 data.to_script_ptr(),
-                T::TypeId,
+                T::TYPE_ID,
             );
             if ptr.is_null() {
                 None
@@ -593,7 +593,7 @@ impl Module {
     // 45. GetUserData
     pub fn get_user_data<T: UserData + ScriptData>(&self) -> Option<T> {
         unsafe {
-            let ptr = (self.as_vtable().asIScriptModule_GetUserData)(self.inner, T::TypeId);
+            let ptr = (self.as_vtable().asIScriptModule_GetUserData)(self.inner, T::TYPE_ID);
             if ptr.is_null() {
                 None
             } else {
