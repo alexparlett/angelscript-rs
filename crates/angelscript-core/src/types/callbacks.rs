@@ -1,4 +1,12 @@
-use crate::prelude::{Context, Engine, Function, MessageType, Module, ScriptGeneric, ScriptMemoryLocation, ScriptObject, TypeInfo};
+use crate::core::context::Context;
+use crate::core::engine::Engine;
+use crate::core::function::Function;
+use crate::core::module::Module;
+use crate::core::script_generic::ScriptGeneric;
+use crate::core::script_object::ScriptObject;
+use crate::core::typeinfo::TypeInfo;
+use crate::types::enums::MessageType;
+use crate::types::script_memory::ScriptMemoryLocation;
 
 // Callback function types
 pub type RequestContextCallbackFn = fn(&Engine) -> Option<Context>;

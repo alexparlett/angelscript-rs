@@ -1,7 +1,7 @@
-use angelscript::core::engine::Engine;
 use angelscript::prelude::{
     ContextState, GetModuleFlags, ReturnCode, ScriptError, ScriptGeneric, ScriptResult,
 };
+use angelscript_core::core::engine::Engine;
 
 fn print(g: &ScriptGeneric) {
     let arg_ptr = g.get_arg_object(0).unwrap();
@@ -17,7 +17,7 @@ fn main() -> ScriptResult<()> {
         println!("AngelScript: {}", msg.message);
     })?;
 
-    engine.with_default_plugins()?;
+    engine.install(angelscript::addons::string::addon())?;
 
     engine.register_global_function("void print(const string &in)", print, None)?;
 

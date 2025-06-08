@@ -27,18 +27,6 @@ impl ComplexPlayer {
     }
 }
 
-// AngelScript allocator functions with correct signatures
-unsafe extern "C" fn unified_alloc(size: usize) -> *mut std::ffi::c_void { unsafe {
-    let layout = Layout::from_size_align(size, 8).unwrap();
-    alloc(layout) as *mut std::ffi::c_void
-}}
-
-unsafe extern "C" fn unified_free(ptr: *mut std::ffi::c_void) { unsafe {
-    if !ptr.is_null() {
-        libc::free(ptr);
-    }
-}}
-
 // Constructor/destructor functions
 fn construct_complex_player(g: &ScriptGeneric) {
     let mut ptr = g.get_object().unwrap();
@@ -98,15 +86,10 @@ fn player_get_inventory_size(g: &ScriptGeneric) {
 }
 
 fn setup_engine() -> ScriptResult<Engine> {
-    // Set AngelScript to use our unified allocator
-    Engine::set_global_memory_functions(
-        Some(unified_alloc), // Option<unsafe extern "C" fn(usize) -> *mut c_void>
-        Some(unified_free),  // Option<unsafe extern "C" fn(*mut c_void)>
-    )?;
 
     let mut engine = Engine::create()?;
 
-    engine.with_default_plugins()?;
+    engine.install(angelscript::addons::string::addon())?;
 
     // Set up message callback
     engine.set_message_callback(|msg| {

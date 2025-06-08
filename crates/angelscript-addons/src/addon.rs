@@ -1,6 +1,8 @@
-use crate::prelude::{Behaviour, ObjectTypeFlags};
-use crate::types::callbacks::GenericFn;
-use crate::types::script_data::ScriptData;
+use angelscript_core::core::engine::{Engine, EngineInstallable};
+use angelscript_core::core::error::ScriptResult;
+use angelscript_core::types::callbacks::GenericFn;
+use angelscript_core::types::enums::{Behaviour, ObjectTypeFlags};
+use angelscript_core::types::script_data::ScriptData;
 use std::marker::PhantomData;
 
 /// Internal representation of different registration types
@@ -54,25 +56,19 @@ pub(crate) struct BehaviorRegistration {
 }
 
 /// A plugin that groups related AngelScript registrations
-pub struct Plugin {
+pub struct Addon {
     pub(crate) namespace: Option<String>,
     pub(crate) registrations: Vec<Registration>,
+    pub(crate) engine_configuration: Option<Box<dyn FnOnce(&Engine) -> ScriptResult<()>>>,
 }
 
-impl Plugin {
+impl Addon {
     /// Create a new plugin with no namespace (global namespace)
     pub fn new() -> Self {
         Self {
             namespace: None,
             registrations: Vec::new(),
-        }
-    }
-
-    /// Create a new plugin with a specific namespace
-    pub fn in_namespace(namespace: impl Into<String>) -> Self {
-        Self {
-            namespace: Some(namespace.into()),
-            registrations: Vec::new(),
+            engine_configuration: None,
         }
     }
 
@@ -128,7 +124,7 @@ impl Plugin {
         let type_name = name.into();
 
         let mut type_registration = TypeRegistration {
-            plugin: self,
+            addon: self,
             type_name: type_name.clone(),
             size: size_of::<T>() as i32,
             flags: ObjectTypeFlags::REF, // Default
@@ -152,7 +148,7 @@ impl Plugin {
     }
 }
 
-impl Default for Plugin {
+impl Default for Addon {
     fn default() -> Self {
         Self::new()
     }
@@ -161,7 +157,7 @@ impl Default for Plugin {
 /// Builder for configuring object type registrations
 #[doc(hidden)]
 pub struct TypeRegistration<T> {
-    plugin: Plugin,
+    addon: Addon,
     type_name: String,
     size: i32,
     flags: ObjectTypeFlags,
@@ -260,15 +256,102 @@ impl<T: 'static> TypeRegistration<T> {
         self
     }
 
+    pub fn with_engine_configuration(
+        &mut self,
+        configure: impl FnOnce(&Engine) -> ScriptResult<()> + 'static,
+    ) -> &mut Self {
+        self.addon.engine_configuration = Some(Box::new(configure));
+        self
+    }
+
     /// Finish type registration and return to plugin
-    fn register(mut self) -> Plugin {
-        self.plugin.registrations.push(Registration::ObjectType {
+    fn register(mut self) -> Addon {
+        self.addon.registrations.push(Registration::ObjectType {
             name: self.type_name,
             size: self.size,
             flags: self.flags,
             type_builder: self.type_builder,
         });
 
-        self.plugin
+        self.addon
+    }
+}
+
+impl EngineInstallable for Addon {
+    fn install(self, engine: &Engine) -> ScriptResult<()> {
+        let was_namespaced = if let Some(namespace) = self.namespace() {
+            engine.set_default_namespace(namespace)?;
+            true
+        } else {
+            false
+        };
+        for registration in self.registrations {
+            match registration {
+                Registration::GlobalFunction {
+                    declaration,
+                    function,
+                    auxiliary,
+                } => {
+                    engine.register_global_function(&declaration, function, auxiliary)?;
+                }
+                Registration::GlobalProperty {
+                    declaration,
+                    property,
+                } => {
+                    engine.register_global_property(&declaration, property)?;
+                }
+                Registration::ObjectType {
+                    name,
+                    size,
+                    flags,
+                    type_builder,
+                } => {
+                    engine.register_object_type(&name, size, flags)?;
+
+                    // Apply methods
+                    for method in type_builder.methods {
+                        engine.register_object_method(
+                            &name,
+                            &method.declaration,
+                            method.function,
+                            method.auxiliary.as_ref(),
+                            method.composite_offset,
+                            method.is_composite_indirect,
+                        )?;
+                    }
+
+                    // Apply properties
+                    for property in type_builder.properties {
+                        engine.register_object_property(
+                            &name,
+                            &property.declaration,
+                            property.byte_offset,
+                            property.composite_offset.unwrap_or(0),
+                            property.is_composite_indirect.unwrap_or(false),
+                        )?;
+                    }
+
+                    // Apply custom behaviors
+                    for behavior in type_builder.behaviors {
+                        engine.register_object_behaviour(
+                            &name,
+                            behavior.behavior,
+                            &behavior.declaration,
+                            behavior.function,
+                            behavior.auxiliary.as_ref(),
+                            behavior.composite_offset,
+                            behavior.is_composite_indirect,
+                        )?;
+                    }
+                }
+            }
+        }
+        if was_namespaced {
+            engine.set_default_namespace("")?;
+        }
+        if let Some(engine_configuration) = self.engine_configuration {
+            engine_configuration(engine)?;
+        }
+        Ok(())
     }
 }

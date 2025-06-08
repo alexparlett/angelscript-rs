@@ -1,15 +1,18 @@
 use crate::core::context::Context;
 use crate::core::engine::Engine;
 use crate::core::error::ScriptResult;
+use crate::core::function::Function;
 use crate::core::module::Module;
+use crate::core::script_object::ScriptObject;
+use crate::core::typeinfo::TypeInfo;
 use crate::internal::utils::read_cstring;
-use crate::prelude::{Function, MessageType, ScriptObject, TypeInfo};
 use crate::types::callbacks::{
     CircularRefCallbackFn, CleanContextUserDataCallbackFn, CleanEngineUserDataCallbackFn,
     CleanFunctionUserDataCallbackFn, CleanModuleUserDataCallbackFn, CleanScriptObjectCallbackFn,
     CleanTypeInfoCallbackFn, ExceptionCallbackFn, LineCallbackFn, MessageCallbackFn, MessageInfo,
     RequestContextCallbackFn, ReturnContextCallbackFn, TranslateAppExceptionCallbackFn,
 };
+use crate::types::enums::MessageType;
 use crate::types::script_memory::ScriptMemoryLocation;
 use angelscript_sys::{
     asIScriptContext, asIScriptEngine, asIScriptFunction, asIScriptModule, asIScriptObject,

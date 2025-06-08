@@ -1,0 +1,11 @@
+[package]
+name = "angelscript-addons"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+angelscript-core = { path = "../angelscript-core" }
+angelscript-sys = { path = "../angelscript-sys" }
+
+[features]
+string = []

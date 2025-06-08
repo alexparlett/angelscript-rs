@@ -1,0 +1,17 @@
+[package]
+name = "angelscript-core"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+angelscript-sys = { path = "../angelscript-sys" }
+itoa = "1.0"
+ryu = "1.0"
+bitflags = "2.9"
+thiserror = "2.0"
+anyhow = "1.0"
+libc = { version = "1.0.0-alpha.1", optional = true }
+
+[features]
+rust-threads = []
+rust-alloc = ["dep:libc"]

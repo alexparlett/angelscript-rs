@@ -1,34 +1,28 @@
-#[cfg(feature = "macros")]
-pub mod macros {
-    pub use angelscript_macros::*;
-}
-
-pub mod core;
-mod internal;
-
-pub mod types;
-pub mod plugins;
-
-// Add the inventory module
 // Re-export macros
 #[cfg(feature = "macros")]
 pub use angelscript_macros::*;
 
+#[cfg(feature = "addons")]
+pub mod addons {
+    pub use angelscript_addons::*;
+}
+
+pub use angelscript_core::*;
+
 // Re-export main types
 pub mod prelude {
-    pub use crate::core::context::*;
-    pub use crate::core::engine::*;
-    pub use crate::core::error::{ScriptError, ScriptResult};
-    pub use crate::core::function::*;
-    pub use crate::core::lockable_shared_bool::*;
-    pub use crate::core::module::*;
-    pub use crate::core::script_generic::*;
-    pub use crate::core::script_object::*;
-    pub use crate::core::typeinfo::*;
-    pub use crate::plugins::plugin::*;
-    pub use crate::types::enums::*;
-    pub use crate::types::script_data::*;
-    pub use crate::types::script_memory::*;
-    pub use crate::types::script_value::*;
-    pub use crate::types::user_data::*;
+    pub use angelscript_core::core::context::*;
+    pub use angelscript_core::core::engine::*;
+    pub use angelscript_core::core::error::{ScriptError, ScriptResult};
+    pub use angelscript_core::core::function::*;
+    pub use angelscript_core::core::lockable_shared_bool::*;
+    pub use angelscript_core::core::module::*;
+    pub use angelscript_core::core::script_generic::*;
+    pub use angelscript_core::core::script_object::*;
+    pub use angelscript_core::core::typeinfo::*;
+    pub use angelscript_core::types::enums::*;
+    pub use angelscript_core::types::script_data::*;
+    pub use angelscript_core::types::script_memory::*;
+    pub use angelscript_core::types::script_value::*;
+    pub use angelscript_core::types::user_data::*;
 }

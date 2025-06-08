@@ -1,11 +1,10 @@
 use crate::core::engine::Engine;
+use crate::core::error::{ScriptError, ScriptResult};
 use crate::core::function::Function;
-use crate::prelude::{
-    FromScriptValue, ScriptArg, ScriptError, ScriptResult, TypeId, TypeModifiers,
-};
+use crate::types::enums::{TypeId, TypeModifiers};
 use crate::types::script_data::ScriptData;
 use crate::types::script_memory::ScriptMemoryLocation;
-use crate::types::script_value::ScriptValue;
+use crate::types::script_value::{FromScriptValue, ScriptArg, ScriptValue};
 use angelscript_sys::{
     asBYTE, asDWORD, asIScriptEngine, asIScriptGeneric, asIScriptGeneric__bindgen_vtable, asQWORD,
     asUINT, asWORD,
@@ -161,10 +160,7 @@ impl ScriptGeneric {
         unsafe {
             let type_id =
                 (self.as_vtable().asIScriptGeneric_GetReturnTypeId)(self.inner, &mut flags);
-            (
-                TypeId::from(type_id as u32),
-                TypeModifiers::from(flags),
-            )
+            (TypeId::from(type_id as u32), TypeModifiers::from(flags))
         }
     }
 

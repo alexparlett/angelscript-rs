@@ -1,12 +1,4 @@
-use crate::core::engine::Engine;
-use crate::types::enums::*;
-use crate::core::error::{ScriptError, ScriptResult};
-use crate::core::function::Function;
-use crate::core::typeinfo::TypeInfo;
-use crate::internal::callback_manager::CallbackManager;
-use crate::types::script_memory::ScriptMemoryLocation;
-use crate::types::script_data::ScriptData;
-use crate::types::user_data::UserData;
+use crate::types::callbacks::{ExceptionCallbackFn, LineCallbackFn};
 use angelscript_sys::{
     asBYTE, asDWORD, asETypeModifiers, asETypeModifiers_asTM_NONE, asFUNCTION_t, asFunction,
     asIScriptContext, asIScriptContext__bindgen_vtable, asIScriptEngine, asIScriptFunction,
@@ -16,7 +8,15 @@ use std::ffi::{CStr, CString};
 use std::os::raw::{c_char, c_void};
 use std::ptr;
 use std::ptr::NonNull;
-use crate::types::callbacks::{ExceptionCallbackFn, LineCallbackFn};
+use crate::core::engine::Engine;
+use crate::core::error::{ScriptError, ScriptResult};
+use crate::core::function::Function;
+use crate::core::typeinfo::TypeInfo;
+use crate::internal::callback_manager::CallbackManager;
+use crate::types::enums::{CallingConvention, ContextState, TypeModifiers};
+use crate::types::script_data::ScriptData;
+use crate::types::script_memory::ScriptMemoryLocation;
+use crate::types::user_data::UserData;
 
 type InternalCallback = Option<unsafe extern "C" fn(*mut asIScriptContext, *const c_void)>;
 

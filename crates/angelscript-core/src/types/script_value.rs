@@ -1,5 +1,6 @@
+use crate::core::script_generic::ScriptGeneric;
+use crate::types::enums::{TypeId, TypeModifiers};
 use crate::types::script_memory::ScriptMemoryLocation;
-use crate::prelude::{ScriptGeneric, TypeId, TypeModifiers};
 use angelscript_sys::{asBYTE, asDWORD, asQWORD, asUINT, asWORD};
 
 // Expand the GenericValueData enum to handle more cases

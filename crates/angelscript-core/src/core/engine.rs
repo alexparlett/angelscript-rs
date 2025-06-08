@@ -7,10 +7,7 @@ use crate::core::script_generic::ScriptGeneric;
 use crate::core::typeinfo::TypeInfo;
 use crate::internal::callback_manager::CallbackManager;
 use crate::internal::jit_compiler::JITCompiler;
-use crate::internal::stringfactory::get_string_factory_instance;
 use crate::internal::thread_manager::{ExclusiveLockGuard, SharedLockGuard, ThreadManager};
-use crate::plugins::plugin;
-use crate::plugins::plugin::Plugin;
 use crate::types::callbacks::{
     CircularRefCallbackFn, CleanContextUserDataCallbackFn, CleanEngineUserDataCallbackFn,
     CleanFunctionUserDataCallbackFn, CleanModuleUserDataCallbackFn, CleanScriptObjectCallbackFn,
@@ -37,6 +34,10 @@ use std::os::raw::c_void;
 use std::ptr;
 use std::ptr::NonNull;
 
+pub trait EngineInstallable {
+    fn install(self, engine: &Engine) -> ScriptResult<()>;
+}
+
 #[derive(Debug, PartialEq, Eq)]
 pub struct Engine {
     inner: NonNull<asIScriptEngine>,
@@ -46,17 +47,21 @@ pub struct Engine {
 
 impl Engine {
     #[cfg(feature = "rust-alloc")]
-    pub unsafe extern "C" fn unified_alloc(size: usize) -> *mut std::ffi::c_void { unsafe {
-        let layout = Layout::from_size_align(size, 8).unwrap();
-        alloc(layout) as *mut std::ffi::c_void
-    }}
+    pub unsafe extern "C" fn unified_alloc(size: usize) -> *mut std::ffi::c_void {
+        unsafe {
+            let layout = Layout::from_size_align(size, 8).unwrap();
+            alloc(layout) as *mut std::ffi::c_void
+        }
+    }
 
     #[cfg(feature = "rust-alloc")]
-    pub unsafe extern "C" fn unified_free(ptr: *mut std::ffi::c_void) { unsafe {
-        if !ptr.is_null() {
-            libc::free(ptr);
+    pub unsafe extern "C" fn unified_free(ptr: *mut std::ffi::c_void) {
+        unsafe {
+            if !ptr.is_null() {
+                libc::free(ptr);
+            }
         }
-    }}
+    }
 
     pub fn create() -> ScriptResult<Engine> {
         unsafe {
@@ -74,78 +79,8 @@ impl Engine {
         }
     }
 
-    pub fn install(&self, plugin: Plugin) -> ScriptResult<()> {
-        let was_namespaced = if let Some(namespace) = plugin.namespace() {
-            self.set_default_namespace(namespace)?;
-            true
-        } else {
-            false
-        };
-        for registration in plugin.registrations {
-            match registration {
-                plugin::Registration::GlobalFunction {
-                    declaration,
-                    function,
-                    auxiliary,
-                } => {
-                    self.register_global_function(&declaration, function, auxiliary)?;
-                }
-                plugin::Registration::GlobalProperty {
-                    declaration,
-                    property,
-                } => {
-                    self.register_global_property(&declaration, property)?;
-                }
-                plugin::Registration::ObjectType {
-                    name,
-                    size,
-                    flags,
-                    type_builder,
-                } => {
-                    self.register_object_type(&name, size, flags)?;
-
-                    // Apply methods
-                    for method in type_builder.methods {
-                        self.register_object_method(
-                            &name,
-                            &method.declaration,
-                            method.function,
-                            method.auxiliary.as_ref(),
-                            method.composite_offset,
-                            method.is_composite_indirect,
-                        )?;
-                    }
-
-                    // Apply properties
-                    for property in type_builder.properties {
-                        self.register_object_property(
-                            &name,
-                            &property.declaration,
-                            property.byte_offset,
-                            property.composite_offset.unwrap_or(0),
-                            property.is_composite_indirect.unwrap_or(false),
-                        )?;
-                    }
-
-                    // Apply custom behaviors
-                    for behavior in type_builder.behaviors {
-                        self.register_object_behaviour(
-                            &name,
-                            behavior.behavior,
-                            &behavior.declaration,
-                            behavior.function,
-                            behavior.auxiliary.as_ref(),
-                            behavior.composite_offset,
-                            behavior.is_composite_indirect,
-                        )?;
-                    }
-                }
-            }
-        }
-        if was_namespaced {
-            self.set_default_namespace("")?;
-        }
-        Ok(())
+    pub fn install<T: EngineInstallable>(&self, installable: T) -> ScriptResult<()> {
+        installable.install(self)
     }
 
     /// Gets the AngelScript library version string
@@ -799,7 +734,7 @@ impl Engine {
     }
 
     // String factory
-    pub(crate) fn register_string_factory(
+    pub fn register_string_factory(
         &self,
         datatype: &str,
         factory: &asIStringFactory,
@@ -1697,16 +1632,6 @@ impl Engine {
                 conv as i32,
             ))
         }
-    }
-
-    pub fn with_default_plugins(&self) -> ScriptResult<()> {
-        #[cfg(feature = "string")]
-        {
-            self.install(crate::plugins::string::plugin()?)?;
-            self.register_string_factory("string", get_string_factory_instance())?;
-        }
-
-        Ok(())
     }
 
     fn as_vtable(&self) -> &asIScriptEngine__bindgen_vtable {

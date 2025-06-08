@@ -1,4 +1,3 @@
-use angelscript::prelude::*;
 use angelscript::prelude::{
     Behaviour, ContextState, Engine, GetModuleFlags, ObjectTypeFlags, ReturnCode, ScriptError,
     ScriptGeneric, ScriptResult, TypeId,
@@ -6,6 +5,8 @@ use angelscript::prelude::{
 use std::alloc::{alloc, Layout};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use angelscript_core::types::enums::TypeModifiers;
+use angelscript_core::types::script_memory::ScriptMemoryLocation;
 
 // Reference type - same as before
 #[repr(C)]
@@ -262,10 +263,8 @@ fn register_complex_entity(engine: &Engine) -> ScriptResult<()> {
 
 fn setup_engine() -> ScriptResult<Engine> {
     // Set AngelScript to use our unified allocator
-    Engine::set_global_memory_functions(Some(unified_alloc), Some(unified_free))?;
-
     let mut engine = Engine::create()?;
-    engine.with_default_plugins()?;
+    engine.install(angelscript::addons::string::addon())?;
 
     // Set up message callback
     engine.set_message_callback(|msg| {
@@ -278,18 +277,6 @@ fn setup_engine() -> ScriptResult<Engine> {
     Ok(engine)
 }
 
-// AngelScript allocator functions (same as before)
-unsafe extern "C" fn unified_alloc(size: usize) -> *mut std::ffi::c_void { unsafe {
-    let layout = Layout::from_size_align(size, 8).unwrap();
-    alloc(layout) as *mut std::ffi::c_void
-}}
-
-unsafe extern "C" fn unified_free(ptr: *mut std::ffi::c_void) { unsafe {
-    if !ptr.is_null() {
-        libc::free(ptr);
-    }
-}}
-
 // Print functions (same as your existing ones)
 fn print(g: &ScriptGeneric) {
     let (type_id, flags) = g.get_arg_type_id(0);
@@ -300,8 +287,6 @@ fn print(g: &ScriptGeneric) {
         print_object_type(g, type_id, &flags);
     } else if type_id == TypeId::Void {
         println!("void");
-    } else {
-        println!("Unknown type (ID: {:?}, flags: {:?})", type_id, flags);
     }
 }
 

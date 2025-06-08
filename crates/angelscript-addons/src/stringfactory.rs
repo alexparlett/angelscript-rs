@@ -84,7 +84,7 @@ impl StringFactory {
         })
     }
 
-    pub unsafe extern "C" fn get_string_constant(
+    unsafe extern "C" fn get_string_constant(
         _this: *mut asIStringFactory,
         data: *const c_char,
         length: u32,
@@ -108,7 +108,7 @@ impl StringFactory {
     }
 
     /// Release a string constant
-    pub unsafe extern "C" fn release_string_constant(
+    unsafe extern "C" fn release_string_constant(
         _this: *mut asIStringFactory,
         str_: *const c_void,
     ) -> i32 {
@@ -125,7 +125,7 @@ impl StringFactory {
     }
 
     /// Get raw string data
-    pub unsafe extern "C" fn get_raw_string_data(
+    unsafe extern "C" fn get_raw_string_data(
         _this: *const asIStringFactory,
         str_: *const c_void,
         data: *mut c_char,

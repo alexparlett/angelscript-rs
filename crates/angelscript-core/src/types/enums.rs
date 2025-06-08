@@ -1,3 +1,7 @@
+use crate::types::enums::TypeId::Custom;
+use angelscript_sys::*;
+use bitflags::bitflags;
+
 // Return Codes
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(i32)]
@@ -215,11 +219,6 @@ impl From<CallingConvention> for asECallConvTypes {
         value as asECallConvTypes
     }
 }
-
-// Object Type Flags (using bitflags for this one since it's a flag enum)
-use angelscript_sys::*;
-use bitflags::bitflags;
-use crate::prelude::TypeId::Custom;
 
 bitflags! {
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
