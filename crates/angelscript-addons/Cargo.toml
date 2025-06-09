@@ -6,6 +6,7 @@ edition = "2024"
 [dependencies]
 angelscript-core = { path = "../angelscript-core" }
 angelscript-sys = { path = "../angelscript-sys" }
+sprintf  = { version = "0.4.2", optional = true }
 
 [features]
-string = []
+string = ["dep:sprintf"]

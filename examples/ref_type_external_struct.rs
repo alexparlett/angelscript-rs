@@ -2,11 +2,10 @@ use angelscript::prelude::{
     Behaviour, ContextState, Engine, GetModuleFlags, ObjectTypeFlags, ReturnCode, ScriptError,
     ScriptGeneric, ScriptResult, TypeId,
 };
-use std::alloc::{alloc, Layout};
-use std::collections::HashMap;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use angelscript_core::types::enums::TypeModifiers;
 use angelscript_core::types::script_memory::ScriptMemoryLocation;
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 // Reference type - same as before
 #[repr(C)]

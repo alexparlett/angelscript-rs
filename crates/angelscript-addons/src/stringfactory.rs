@@ -79,9 +79,7 @@ impl StringFactory {
 
     pub fn singleton() -> &'static StringFactory {
         static INSTANCE: OnceLock<StringFactory> = OnceLock::new();
-        INSTANCE.get_or_init(|| {
-            StringFactory::new()
-        })
+        INSTANCE.get_or_init(|| StringFactory::new())
     }
 
     unsafe extern "C" fn get_string_constant(
@@ -102,7 +100,6 @@ impl StringFactory {
         };
 
         // Intern the string and return a stable pointer
-        
 
         cache.intern(string) as *const c_void
     }

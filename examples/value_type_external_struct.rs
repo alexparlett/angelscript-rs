@@ -2,7 +2,6 @@ use angelscript::prelude::{
     Behaviour, ContextState, Engine, GetModuleFlags, ObjectTypeFlags, ReturnCode, ScriptError,
     ScriptGeneric, ScriptResult, TypeId, TypeModifiers,
 };
-use std::alloc::{alloc, Layout};
 use std::collections::HashMap;
 
 #[repr(C)]
@@ -86,7 +85,6 @@ fn player_get_inventory_size(g: &ScriptGeneric) {
 }
 
 fn setup_engine() -> ScriptResult<Engine> {
-
     let mut engine = Engine::create()?;
 
     engine.install(angelscript::addons::string::addon())?;

@@ -26,6 +26,7 @@ version = "0.1.0"
 dependencies = [
  "angelscript-core",
  "angelscript-sys",
+ "sprintf",
 ]
 
 [[package]]
@@ -275,6 +276,15 @@ name = "shlex"
 version = "1.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0fda2ff0d084019ba4d7c6f371c95d8fd75ce3524c3cb8fb653a3023f6323e64"
+
+[[package]]
+name = "sprintf"
+version = "0.4.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "78222247fc55e10208ed1ba60f8296390bc67a489bc27a36231765d8d6f60ec5"
+dependencies = [
+ "thiserror",
+]
 
 [[package]]
 name = "syn"

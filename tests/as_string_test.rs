@@ -24,18 +24,7 @@ mod tests {
         get_result: impl FnOnce(&angelscript::core::context::Context) -> T,
     ) -> T {
         let engine = create_test_engine();
-
-        engine
-            .register_global_function(
-                "void print(const string &in)",
-                |g: &ScriptGeneric| {
-                    let arg_ptr = g.get_arg_object(0).unwrap();
-                    println!("Hello, {}", arg_ptr.as_ref::<String>());
-                },
-                None,
-            )
-            .expect("Failed to register print function");
-
+        
         let module = engine
             .get_module("TestModule", GetModuleFlags::CreateIfNotExists)
             .expect("Failed to get module");
@@ -51,7 +40,11 @@ mod tests {
         ctx.prepare(&func).expect("Failed to prepare context");
         ctx.execute().expect("Failed to execute script");
 
-        get_result(&ctx)
+        let result = get_result(&ctx);
+
+        ctx.release().expect("Failed to release context");
+
+        result
     }
 
     #[test]
@@ -173,7 +166,7 @@ mod tests {
         let script = r#"
             uint test() {
                 string a = "Hello";
-                return a.length();
+                return a.len();
             }
         "#;
 
@@ -187,11 +180,11 @@ mod tests {
         let script = r#"
             bool not_empty() {
                 string a = "Hello";
-                return a.isEmpty();
+                return a.is_empty();
             }
             bool empty() {
                 string b = "";
-                return b.isEmpty();
+                return b.is_empty();
             }
         "#;
 
@@ -299,12 +292,8 @@ mod tests {
         let script = r#"
             string test_int() {
                 string a;
-                print("created string");
                 int i = 42;
-                print("created int");
                 a = i;
-                print("assigned int to string");
-                print(a);
                 return a;
             }
             string test_float() {
@@ -368,164 +357,90 @@ mod tests {
         assert_eq!(result, "Number: 42, Float: 3.14, Bool: true");
     }
 
-    // #[test]
-    // fn test_string_find_methods() {
-    //     let script = r#"
-    //         int test_find_first() {
-    //             string text = "Hello World Hello";
-    //             return text.findFirst("Hello", 0);
-    //         }
-    //         int test_find_first_offset() {
-    //             string text = "Hello World Hello";
-    //             return text.findFirst("Hello", 1);
-    //         }
-    //         int test_find_first_not_found() {
-    //             string text = "Hello World";
-    //             return text.findFirst("xyz", 0);
-    //         }
-    //         int test_find_first_of() {
-    //             string text = "Hello World";
-    //             return text.findFirstOf("aeiou", 0);
-    //         }
-    //         int test_find_first_not_of() {
-    //             string text = "Hello World";
-    //             return text.findFirstNotOf("Helo ", 0);
-    //         }
-    //     "#;
-    //
-    //     let result = execute_script_with_return(script, "int test_find_first()", |ctx| {
-    //         ctx.get_return_dword() as i32
-    //     });
-    //     assert_eq!(result, 0);
-    //
-    //     let result = execute_script_with_return(script, "int test_find_first_offset()", |ctx| {
-    //         ctx.get_return_dword() as i32
-    //     });
-    //     assert_eq!(result, 12);
-    //
-    //     let result = execute_script_with_return(script, "int test_find_first_not_found()", |ctx| {
-    //         ctx.get_return_dword() as i32
-    //     });
-    //     assert_eq!(result, -1);
-    //
-    //     let result = execute_script_with_return(script, "int test_find_first_of()", |ctx| {
-    //         ctx.get_return_dword() as i32
-    //     });
-    //     assert_eq!(result, 1); // 'e' in "Hello"
-    //
-    //     let result = execute_script_with_return(script, "int test_find_first_not_of()", |ctx| {
-    //         ctx.get_return_dword() as i32
-    //     });
-    //     assert_eq!(result, 6); // 'W' in "World"
-    // }
-    //
-    // #[test]
-    // fn test_string_manipulation() {
-    //     let script = r#"
-    //         string test_insert() {
-    //             string text = "Hello World";
-    //             text.insert(6, "Beautiful ");
-    //             return text;
-    //         }
-    //         string test_erase() {
-    //             string text = "Hello Beautiful World";
-    //             text.erase(6, 10); // Remove "Beautiful "
-    //             return text;
-    //         }
-    //         string test_erase_to_end() {
-    //             string text = "Hello World";
-    //             text.erase(5, -1); // Remove from position 5 to end
-    //             return text;
-    //         }
-    //     "#;
-    //
-    //     let result = execute_script_with_return(script, "string test_insert()", |ctx| {
-    //         ctx.get_return_object::<String>().unwrap()
-    //     });
-    //     assert_eq!(result, "Hello Beautiful World");
-    //
-    //     let result = execute_script_with_return(script, "string test_erase()", |ctx| {
-    //         ctx.get_return_object::<String>().unwrap()
-    //     });
-    //     assert_eq!(result, "Hello World");
-    //
-    //     let result = execute_script_with_return(script, "string test_erase_to_end()", |ctx| {
-    //         ctx.get_return_object::<String>().unwrap()
-    //     });
-    //     assert_eq!(result, "Hello");
-    // }
-    //
-    // #[test]
-    // fn test_global_format_functions() {
-    //     let script = r#"
-    //         string test_format_int() {
-    //             return formatInt(255, "x", 8);
-    //         }
-    //         string test_format_uint() {
-    //             return formatUInt(255, "X", 4);
-    //         }
-    //         string test_format_float() {
-    //             return formatFloat(3.14159, "f", 0, 2);
-    //         }
-    //         string test_format_float_default() {
-    //             return formatFloat(3.14159, "", 0, 0);
-    //         }
-    //     "#;
-    //
-    //     let result = execute_script_with_return(script, "string test_format_int()", |ctx| {
-    //         ctx.get_return_object::<String>().unwrap()
-    //     });
-    //     assert_eq!(result, "000000ff");
-    //
-    //     let result = execute_script_with_return(script, "string test_format_uint()", |ctx| {
-    //         ctx.get_return_object::<String>().unwrap()
-    //     });
-    //     assert_eq!(result, "00FF");
-    //
-    //     let result = execute_script_with_return(script, "string test_format_float()", |ctx| {
-    //         ctx.get_return_object::<String>().unwrap()
-    //     });
-    //     assert_eq!(result, "3.14");
-    //
-    //     let result = execute_script_with_return(script, "string test_format_float_default()", |ctx| {
-    //         ctx.get_return_object::<String>().unwrap()
-    //     });
-    //     assert_eq!(result, "3.14159"); // ryu formatting
-    // }
-    //
-    // #[test]
-    // fn test_global_parse_functions() {
-    //     let script = r#"
-    //         int64 test_parse_int() {
-    //             uint byteCount;
-    //             return parseInt("123abc", 10, byteCount);
-    //         }
-    //         uint64 test_parse_uint_hex() {
-    //             uint byteCount;
-    //             return parseUInt("FF", 16, byteCount);
-    //         }
-    //         double test_parse_float() {
-    //             uint byteCount;
-    //             return parseFloat("3.14159", byteCount);
-    //         }
-    //     "#;
-    //
-    //     let result = execute_script_with_return(script, "int64 test_parse_int()", |ctx| {
-    //         ctx.get_return_qword() as i64
-    //     });
-    //     assert_eq!(result, 123);
-    //
-    //     let result = execute_script_with_return(script, "uint64 test_parse_uint_hex()", |ctx| {
-    //         ctx.get_return_qword()
-    //     });
-    //     assert_eq!(result, 255);
-    //
-    //     let result = execute_script_with_return(script, "double test_parse_float()", |ctx| {
-    //         ctx.get_return_double()
-    //     });
-    //     assert!((result - 3.14159).abs() < 0.00001);
-    // }
-    
+    #[test]
+    fn test_global_format_functions() {
+        let script = r#"
+            string test_format_int() {
+                return format("%08x", 255);
+            }
+            string test_format_uint() {
+                return format("%04X", 255);
+            }
+            string test_format_float() {
+                return format("%0.2f", 3.14159);
+            }
+            string test_format_float_default() {
+                return format("%f", 3.14159);
+            }
+        "#;
+
+        let result = execute_script_with_return(script, "string test_format_int()", |ctx| {
+            ctx.get_return_object::<String>().unwrap()
+        });
+        assert_eq!(result, "000000ff");
+
+        let result = execute_script_with_return(script, "string test_format_uint()", |ctx| {
+            ctx.get_return_object::<String>().unwrap()
+        });
+        assert_eq!(result, "00FF");
+
+        let result = execute_script_with_return(script, "string test_format_float()", |ctx| {
+            ctx.get_return_object::<String>().unwrap()
+        });
+        assert_eq!(result, "3.14");
+
+        let result = execute_script_with_return(script, "string test_format_float_default()", |ctx| {
+            ctx.get_return_object::<String>().unwrap()
+        });
+        assert_eq!(result, "3.141590");
+    }
+
+    #[test]
+    fn test_global_parse_functions() {
+        let script = r#"
+            int64 test_parse_int() {
+                return parse_int("123", 10);
+            }
+            uint64 test_parse_uint_hex() {
+                return parse_uint("FF", 16);
+            }
+            float test_parse_float() {
+                return parse_float("3.14159");
+            }
+            double test_parse_double() {
+                return parse_double("3.14153232283212329");
+            }
+            bool test_parse_bool() {
+                return parse_bool("true");
+            }
+        "#;
+
+        let result = execute_script_with_return(script, "int64 test_parse_int()", |ctx| {
+            ctx.get_return_qword() as i64
+        });
+        assert_eq!(result, 123);
+
+        let result = execute_script_with_return(script, "uint64 test_parse_uint_hex()", |ctx| {
+            ctx.get_return_qword()
+        });
+        assert_eq!(result, 255);
+
+        let result = execute_script_with_return(script, "float test_parse_float()", |ctx| {
+            ctx.get_return_float()
+        });
+        assert!((result - 3.14159).abs() < 0.00001);
+
+        let result = execute_script_with_return(script, "double test_parse_double()", |ctx| {
+            ctx.get_return_double()
+        });
+        assert!((result - 3.14153232283212329).abs() < 0.00001);
+
+        let result = execute_script_with_return(script, "bool test_parse_bool()", |ctx| {
+            ctx.get_return_byte()
+        });
+        assert_eq!(result, 1u8);
+    }
+
     #[test]
     fn test_reverse_operations() {
         let script = r#"
@@ -539,23 +454,23 @@ mod tests {
                 return true + " story";
             }
         "#;
-    
+
         let result = execute_script_with_return(script, "string test_int_add_string()", |ctx| {
             ctx.get_return_object::<String>().unwrap()
         });
         assert_eq!(result, "42 is the answer");
-    
+
         let result = execute_script_with_return(script, "string test_float_add_string()", |ctx| {
             ctx.get_return_object::<String>().unwrap()
         });
         assert_eq!(result, "3.14 is pi");
-    
+
         let result = execute_script_with_return(script, "string test_bool_add_string()", |ctx| {
             ctx.get_return_object::<String>().unwrap()
         });
         assert_eq!(result, "true story");
     }
-    
+
     #[test]
     fn test_complex_string_operations() {
         let script = r#"
@@ -566,17 +481,252 @@ mod tests {
                 result += 2.5f;
                 result += ", ";
                 result += true;
-    
+
                 string sub = result.substr(9, 1); // Extract "1"
                 result += " | First: " + sub;
-    
+
                 return result;
             }
         "#;
-    
+
         let result = execute_script_with_return(script, "string test()", |ctx| {
             ctx.get_return_object::<String>().unwrap()
         });
         assert_eq!(result, "Numbers: 1, 2.5, true | First: 1");
     }
+
+    #[test]
+    fn test_string_find() {
+        let script = r#"
+        int test_find_exists() {
+            string a = "Hello, world!";
+            return a.find("world");
+        }
+        int test_find_not_exists() {
+            string a = "Hello, world!";
+            return a.find("xyz");
+        }
+        int test_find_empty() {
+            string a = "Hello";
+            return a.find("");
+        }
+        int test_find_at_start() {
+            string a = "Hello, world!";
+            return a.find("Hello");
+        }
+        int test_find_at_end() {
+            string a = "Hello, world!";
+            return a.find("!");
+        }
+    "#;
+
+        let result = execute_script_with_return(script, "int test_find_exists()", |ctx| {
+            ctx.get_return_dword() as i32
+        });
+        assert_eq!(result, 7);
+
+        let result = execute_script_with_return(script, "int test_find_not_exists()", |ctx| {
+            ctx.get_return_dword() as i32
+        });
+        assert_eq!(result, -1);
+
+        let result = execute_script_with_return(script, "int test_find_empty()", |ctx| {
+            ctx.get_return_dword() as i32
+        });
+        assert_eq!(result, 0);
+
+        let result = execute_script_with_return(script, "int test_find_at_start()", |ctx| {
+            ctx.get_return_dword() as i32
+        });
+        assert_eq!(result, 0);
+
+        let result = execute_script_with_return(script, "int test_find_at_end()", |ctx| {
+            ctx.get_return_dword() as i32
+        });
+        assert_eq!(result, 12);
+    }
+
+    #[test]
+    fn test_string_rfind() {
+        let script = r#"
+        int test_rfind_exists() {
+            string a = "Hello, world, world!";
+            return a.rfind("world");
+        }
+        int test_rfind_not_exists() {
+            string a = "Hello, world!";
+            return a.rfind("xyz");
+        }
+        int test_rfind_single_occurrence() {
+            string a = "Hello, world!";
+            return a.rfind("Hello");
+        }
+        int test_rfind_empty() {
+            string a = "Hello";
+            return a.rfind("");
+        }
+    "#;
+
+        let result = execute_script_with_return(script, "int test_rfind_exists()", |ctx| {
+            ctx.get_return_dword() as i32
+        });
+        assert_eq!(result, 14); // Last occurrence of "world"
+
+        let result = execute_script_with_return(script, "int test_rfind_not_exists()", |ctx| {
+            ctx.get_return_dword() as i32
+        });
+        assert_eq!(result, -1);
+
+        let result = execute_script_with_return(script, "int test_rfind_single_occurrence()", |ctx| {
+            ctx.get_return_dword() as i32
+        });
+        assert_eq!(result, 0);
+
+        let result = execute_script_with_return(script, "int test_rfind_empty()", |ctx| {
+            ctx.get_return_dword() as i32
+        });
+        assert_eq!(result, 5); // Should return length of string for empty pattern
+    }
+
+    #[test]
+    fn test_string_insert_str() {
+        let script = r#"
+        string test_insert_beginning() {
+            string a = "world!";
+            a.insert_str(0, "Hello, ");
+            return a;
+        }
+        string test_insert_middle() {
+            string a = "Hello!";
+            a.insert_str(5, ", world");
+            return a;
+        }
+        string test_insert_end() {
+            string a = "Hello";
+            a.insert_str(5, ", world!");
+            return a;
+        }
+        string test_insert_empty() {
+            string a = "Hello, world!";
+            a.insert_str(7, "");
+            return a;
+        }
+    "#;
+
+        let result = execute_script_with_return(script, "string test_insert_beginning()", |ctx| {
+            ctx.get_return_object::<String>().unwrap()
+        });
+        assert_eq!(result, "Hello, world!");
+
+        let result = execute_script_with_return(script, "string test_insert_middle()", |ctx| {
+            ctx.get_return_object::<String>().unwrap()
+        });
+        assert_eq!(result, "Hello, world!");
+
+        let result = execute_script_with_return(script, "string test_insert_end()", |ctx| {
+            ctx.get_return_object::<String>().unwrap()
+        });
+        assert_eq!(result, "Hello, world!");
+
+        let result = execute_script_with_return(script, "string test_insert_empty()", |ctx| {
+            ctx.get_return_object::<String>().unwrap()
+        });
+        assert_eq!(result, "Hello, world!");
+    }
+
+    #[test]
+    fn test_string_push_str() {
+        let script = r#"
+        string test_push_str_basic() {
+            string a = "Hello";
+            a.push_str(", world!");
+            return a;
+        }
+        string test_push_str_empty_target() {
+            string a = "";
+            a.push_str("Hello, world!");
+            return a;
+        }
+        string test_push_str_empty_source() {
+            string a = "Hello, world!";
+            a.push_str("");
+            return a;
+        }
+        string test_push_str_multiple() {
+            string a = "Hello";
+            a.push_str(", ");
+            a.push_str("world");
+            a.push_str("!");
+            return a;
+        }
+    "#;
+
+        let result = execute_script_with_return(script, "string test_push_str_basic()", |ctx| {
+            ctx.get_return_object::<String>().unwrap()
+        });
+        assert_eq!(result, "Hello, world!");
+
+        let result = execute_script_with_return(script, "string test_push_str_empty_target()", |ctx| {
+            ctx.get_return_object::<String>().unwrap()
+        });
+        assert_eq!(result, "Hello, world!");
+
+        let result = execute_script_with_return(script, "string test_push_str_empty_source()", |ctx| {
+            ctx.get_return_object::<String>().unwrap()
+        });
+        assert_eq!(result, "Hello, world!");
+
+        let result = execute_script_with_return(script, "string test_push_str_multiple()", |ctx| {
+            ctx.get_return_object::<String>().unwrap()
+        });
+        assert_eq!(result, "Hello, world!");
+    }
+
+    #[test]
+    fn test_string_clear() {
+        let script = r#"
+        bool test_clear_non_empty() {
+            string a = "Hello, world!";
+            a.clear();
+            return a.is_empty();
+        }
+        bool test_clear_empty() {
+            string a = "";
+            a.clear();
+            return a.is_empty();
+        }
+        uint test_clear_length() {
+            string a = "Hello, world!";
+            a.clear();
+            return a.len();
+        }
+        string test_clear_and_assign() {
+            string a = "Hello, world!";
+            a.clear();
+            a = "New content";
+            return a;
+        }
+    "#;
+
+        let result = execute_script_with_return(script, "bool test_clear_non_empty()", |ctx| {
+            ctx.get_address_of_return_value::<bool>().unwrap()
+        });
+        assert!(result);
+
+        let result = execute_script_with_return(script, "bool test_clear_empty()", |ctx| {
+            ctx.get_address_of_return_value::<bool>().unwrap()
+        });
+        assert!(result);
+
+        let result = execute_script_with_return(script, "uint test_clear_length()", |ctx| {
+            ctx.get_return_dword()
+        });
+        assert_eq!(result, 0);
+
+        let result = execute_script_with_return(script, "string test_clear_and_assign()", |ctx| {
+            ctx.get_return_object::<String>().unwrap()
+        });
+        assert_eq!(result, "New content");
+    }
+
 }

@@ -1,10 +1,11 @@
-use crate::stringfactory::get_string_factory_instance;
 use crate::Addon;
+use crate::stringfactory::get_string_factory_instance;
 use angelscript_core::core::engine::Engine;
 use angelscript_core::core::script_generic::ScriptGeneric;
-use angelscript_core::types::enums::{Behaviour, ObjectTypeFlags};
+use angelscript_core::types::enums::{Behaviour, ObjectTypeFlags, TypeId};
 use angelscript_core::types::script_memory::ScriptMemoryLocation;
-use angelscript_sys::{asINT64, asUINT};
+use angelscript_sys::{asDWORD, asINT8, asINT16, asINT32, asINT64, asQWORD, asUINT};
+use sprintf::vsprintf;
 
 // Constructors
 fn construct_string(g: &ScriptGeneric) {
@@ -334,19 +335,6 @@ fn string_cmp(g: &ScriptGeneric) {
         .unwrap();
 }
 
-// String operations
-fn string_length(g: &ScriptGeneric) {
-    let obj = g.get_object().unwrap();
-    g.set_return_dword(obj.as_ref::<String>().len() as u32)
-        .unwrap();
-}
-
-fn string_is_empty(g: &ScriptGeneric) {
-    let obj = g.get_object().unwrap();
-    g.set_return_byte(obj.as_ref::<String>().is_empty().into())
-        .unwrap();
-}
-
 fn string_char_at(g: &ScriptGeneric) {
     let idx = g.get_arg_dword(0) as usize;
     let mut obj = g.get_object().unwrap();
@@ -399,250 +387,467 @@ fn string_substring(g: &ScriptGeneric) {
 
 /// Create a string plugin for AngelScript
 pub fn addon() -> Addon {
-    let addon = Addon::new().ty::<String>("string", |ctx| {
-        ctx.as_value_type()
-            .with_flags(ObjectTypeFlags::VALUE | ObjectTypeFlags::APP_CLASS_CDAK)
-            // Constructors
-            .with_behavior(
-                Behaviour::Construct,
-                "void f()",
-                construct_string,
-                None,
-                None,
-                None,
-            )
-            .with_behavior(
-                Behaviour::Construct,
-                "void f(const string &in)",
-                copy_construct_string,
-                None,
-                None,
-                None,
-            )
-            .with_behavior(
-                Behaviour::Destruct,
-                "void f()",
-                destruct_string,
-                None,
-                None,
-                None,
-            )
-            // opAssign methods
-            .with_method(
-                "string &opAssign(const string &in)",
-                string_assign,
-                None,
-                None,
-                None,
-            )
-            .with_method(
-                "string &opAssign(double)",
-                string_assign_double,
-                None,
-                None,
-                None,
-            )
-            .with_method(
-                "string &opAssign(float)",
-                string_assign_float,
-                None,
-                None,
-                None,
-            )
-            .with_method(
-                "string &opAssign(int64)",
-                string_assign_int,
-                None,
-                None,
-                None,
-            )
-            .with_method(
-                "string &opAssign(uint64)",
-                string_assign_uint,
-                None,
-                None,
-                None,
-            )
-            .with_method(
-                "string &opAssign(bool)",
-                string_assign_bool,
-                None,
-                None,
-                None,
-            )
-            // opAddAssign methods
-            .with_method(
-                "string &opAddAssign(const string &in)",
-                add_assign_string,
-                None,
-                None,
-                None,
-            )
-            .with_method(
-                "string &opAddAssign(double)",
-                string_add_assign_double,
-                None,
-                None,
-                None,
-            )
-            .with_method(
-                "string &opAddAssign(float)",
-                string_add_assign_float,
-                None,
-                None,
-                None,
-            )
-            .with_method(
-                "string &opAddAssign(int64)",
-                string_add_assign_int,
-                None,
-                None,
-                None,
-            )
-            .with_method(
-                "string &opAddAssign(uint64)",
-                string_add_assign_uint,
-                None,
-                None,
-                None,
-            )
-            .with_method(
-                "string &opAddAssign(bool)",
-                string_add_assign_bool,
-                None,
-                None,
-                None,
-            )
-            // opAdd methods
-            .with_method(
-                "string opAdd(const string &in) const",
-                string_add,
-                None,
-                None,
-                None,
-            )
-            .with_method(
-                "string opAdd(double) const",
-                string_add_double,
-                None,
-                None,
-                None,
-            )
-            .with_method(
-                "string opAdd_r(double) const",
-                double_add_string,
-                None,
-                None,
-                None,
-            )
-            .with_method(
-                "string opAdd(float) const",
-                string_add_float,
-                None,
-                None,
-                None,
-            )
-            .with_method(
-                "string opAdd_r(float) const",
-                float_add_string,
-                None,
-                None,
-                None,
-            )
-            .with_method(
-                "string opAdd(int64) const",
-                string_add_int,
-                None,
-                None,
-                None,
-            )
-            .with_method(
-                "string opAdd_r(int64) const",
-                int_add_string,
-                None,
-                None,
-                None,
-            )
-            .with_method(
-                "string opAdd(uint64) const",
-                string_add_uint,
-                None,
-                None,
-                None,
-            )
-            .with_method(
-                "string opAdd_r(uint64) const",
-                uint_add_string,
-                None,
-                None,
-                None,
-            )
-            .with_method(
-                "string opAdd(bool) const",
-                string_add_bool,
-                None,
-                None,
-                None,
-            )
-            .with_method(
-                "string opAdd_r(bool) const",
-                bool_add_string,
-                None,
-                None,
-                None,
-            )
-            // Comparison operators
-            .with_method(
-                "bool opEquals(const string &in) const",
-                string_equals,
-                None,
-                None,
-                None,
-            )
-            .with_method(
-                "int opCmp(const string &in) const",
-                string_cmp,
-                None,
-                None,
-                None,
-            )
-            // Other string methods
-            .with_method("uint length() const", string_length, None, None, None)
-            .with_method("bool isEmpty() const", string_is_empty, None, None, None)
-            .with_method("uint8 &opIndex(uint)", string_char_at, None, None, None)
-            .with_method(
-                "uint8 &opIndex(uint) const",
-                string_char_at,
-                None,
-                None,
-                None,
-            )
-            .with_method(
-                "string substr(uint start = 0, int count = -1) const",
-                string_substring,
-                None,
-                None,
-                None,
-            )
-            .with_engine_configuration(|e| {
-                e.register_string_factory("string", get_string_factory_instance())
-            });
-        //     // engine.register_object_method("string", "int findFirst(const string &in, uint start = 0) const", string_find_first, asCALL_GENERIC)?;
-        //     // engine.register_object_method("string", "int findFirstOf(const string &in, uint start = 0) const", string_find_first_of, asCALL_GENERIC)?;
-        //     // engine.register_object_method("string", "int findFirstNotOf(const string &in, uint start = 0) const", string_find_first_not_of, asCALL_GENERIC)?;
-        //     // engine.register_object_method("string", "int findLast(const string &in, int start = -1) const", string_find_last, asCALL_GENERIC)?;
-        //     // engine.register_object_method("string", "int findLastOf(const string &in, int start = -1) const", string_find_last_of, asCALL_GENERIC)?;
-        //     // engine.register_object_method("string", "int findLastNotOf(const string &in, int start = -1) const", string_find_last_not_of, asCALL_GENERIC)?;
-        //     // engine.register_object_method("string", "void insert(uint pos, const string &in other)", string_insert, asCALL_GENERIC)?;
-        //     // engine.register_object_method("string", "void erase(uint pos, int count = -1)", string_erase, asCALL_GENERIC)?;
-        //     //
-        //     // engine.register_global_function("string formatInt(int64 val, const string &in options = \"\", uint width = 0)", format_int, asCALL_GENERIC)?;
-        //     // engine.register_global_function("string formatUInt(uint64 val, const string &in options = \"\", uint width = 0)", format_uint, asCALL_GENERIC)?;
-        //     // engine.register_global_function("string formatFloat(double val, const string &in options = \"\", uint width = 0, uint precision = 0)", format_float, asCALL_GENERIC)?;
-        //     // engine.register_global_function("int64 parseInt(const string &in, uint base = 10, uint &out byteCount = 0)", parse_int, asCALL_GENERIC)?;
-        //     // engine.register_global_function("uint64 parseUInt(const string &in, uint base = 10, uint &out byteCount = 0)", parse_u_int, asCALL_GENERIC)?;
-        //     // engine.register_global_function("double parseFloat(const string &in, uint &out byteCount = 0)", parse_float, asCALL_GENERIC)?;
-    });
+    let addon = Addon::new()
+        .ty::<String>("string", |ctx| {
+            ctx.as_value_type()
+                .with_flags(ObjectTypeFlags::VALUE | ObjectTypeFlags::APP_CLASS_CDAK)
+                // Constructors
+                .with_behavior(
+                    Behaviour::Construct,
+                    "void f()",
+                    construct_string,
+                    None,
+                    None,
+                    None,
+                )
+                .with_behavior(
+                    Behaviour::Construct,
+                    "void f(const string &in)",
+                    copy_construct_string,
+                    None,
+                    None,
+                    None,
+                )
+                .with_behavior(
+                    Behaviour::Destruct,
+                    "void f()",
+                    destruct_string,
+                    None,
+                    None,
+                    None,
+                )
+                // opAssign methods
+                .with_method(
+                    "string &opAssign(const string &in)",
+                    string_assign,
+                    None,
+                    None,
+                    None,
+                )
+                .with_method(
+                    "string &opAssign(double)",
+                    string_assign_double,
+                    None,
+                    None,
+                    None,
+                )
+                .with_method(
+                    "string &opAssign(float)",
+                    string_assign_float,
+                    None,
+                    None,
+                    None,
+                )
+                .with_method(
+                    "string &opAssign(int64)",
+                    string_assign_int,
+                    None,
+                    None,
+                    None,
+                )
+                .with_method(
+                    "string &opAssign(uint64)",
+                    string_assign_uint,
+                    None,
+                    None,
+                    None,
+                )
+                .with_method(
+                    "string &opAssign(bool)",
+                    string_assign_bool,
+                    None,
+                    None,
+                    None,
+                )
+                // opAddAssign methods
+                .with_method(
+                    "string &opAddAssign(const string &in)",
+                    add_assign_string,
+                    None,
+                    None,
+                    None,
+                )
+                .with_method(
+                    "string &opAddAssign(double)",
+                    string_add_assign_double,
+                    None,
+                    None,
+                    None,
+                )
+                .with_method(
+                    "string &opAddAssign(float)",
+                    string_add_assign_float,
+                    None,
+                    None,
+                    None,
+                )
+                .with_method(
+                    "string &opAddAssign(int64)",
+                    string_add_assign_int,
+                    None,
+                    None,
+                    None,
+                )
+                .with_method(
+                    "string &opAddAssign(uint64)",
+                    string_add_assign_uint,
+                    None,
+                    None,
+                    None,
+                )
+                .with_method(
+                    "string &opAddAssign(bool)",
+                    string_add_assign_bool,
+                    None,
+                    None,
+                    None,
+                )
+                // opAdd methods
+                .with_method(
+                    "string opAdd(const string &in) const",
+                    string_add,
+                    None,
+                    None,
+                    None,
+                )
+                .with_method(
+                    "string opAdd(double) const",
+                    string_add_double,
+                    None,
+                    None,
+                    None,
+                )
+                .with_method(
+                    "string opAdd_r(double) const",
+                    double_add_string,
+                    None,
+                    None,
+                    None,
+                )
+                .with_method(
+                    "string opAdd(float) const",
+                    string_add_float,
+                    None,
+                    None,
+                    None,
+                )
+                .with_method(
+                    "string opAdd_r(float) const",
+                    float_add_string,
+                    None,
+                    None,
+                    None,
+                )
+                .with_method(
+                    "string opAdd(int64) const",
+                    string_add_int,
+                    None,
+                    None,
+                    None,
+                )
+                .with_method(
+                    "string opAdd_r(int64) const",
+                    int_add_string,
+                    None,
+                    None,
+                    None,
+                )
+                .with_method(
+                    "string opAdd(uint64) const",
+                    string_add_uint,
+                    None,
+                    None,
+                    None,
+                )
+                .with_method(
+                    "string opAdd_r(uint64) const",
+                    uint_add_string,
+                    None,
+                    None,
+                    None,
+                )
+                .with_method(
+                    "string opAdd(bool) const",
+                    string_add_bool,
+                    None,
+                    None,
+                    None,
+                )
+                .with_method(
+                    "string opAdd_r(bool) const",
+                    bool_add_string,
+                    None,
+                    None,
+                    None,
+                )
+                // Comparison operators
+                .with_method(
+                    "bool opEquals(const string &in) const",
+                    string_equals,
+                    None,
+                    None,
+                    None,
+                )
+                .with_method(
+                    "int opCmp(const string &in) const",
+                    string_cmp,
+                    None,
+                    None,
+                    None,
+                )
+                .with_method(
+                    "uint len() const",
+                    |g: &ScriptGeneric| {
+                        let obj = g.get_object().unwrap();
+                        g.set_return_dword(obj.as_ref::<String>().len() as u32)
+                            .unwrap();
+                    },
+                    None,
+                    None,
+                    None,
+                )
+                .with_method(
+                    "int find(const string &in) const",
+                    |g: &ScriptGeneric| {
+                        let obj = g.get_object().unwrap();
+                        let pattern = g.get_arg_address(0).unwrap();
+                        g.set_return_dword(
+                            obj.as_ref::<String>()
+                                .find(pattern.as_ref::<String>())
+                                .map(|v| v as i32)
+                                .unwrap_or(-1) as u32,
+                        )
+                        .unwrap();
+                    },
+                    None,
+                    None,
+                    None,
+                )
+                .with_method(
+                    "int rfind(const string &in) const",
+                    |g: &ScriptGeneric| {
+                        let obj = g.get_object().unwrap();
+                        let pattern = g.get_arg_address(0).unwrap();
+                        g.set_return_dword(
+                            obj.as_ref::<String>()
+                                .rfind(pattern.as_ref::<String>())
+                                .map(|v| v as i32)
+                                .unwrap_or(-1) as u32,
+                        )
+                        .unwrap();
+                    },
+                    None,
+                    None,
+                    None,
+                )
+                .with_method(
+                    "void insert_str(uint pos, const string &in)",
+                    |g: &ScriptGeneric| {
+                        let mut obj = g.get_object().unwrap();
+                        let pos = g.get_arg_dword(0);
+                        let rhs = g.get_arg_address(1).unwrap();
+                        obj.as_ref_mut::<String>()
+                            .insert_str(pos as usize, rhs.as_ref::<String>());
+                    },
+                    None,
+                    None,
+                    None,
+                )
+                .with_method(
+                    "void push_str(const string &in)",
+                    |g: &ScriptGeneric| {
+                        let mut obj = g.get_object().unwrap();
+                        let rhs = g.get_arg_address(0).unwrap();
+                        obj.as_ref_mut::<String>().push_str(rhs.as_ref::<String>());
+                    },
+                    None,
+                    None,
+                    None,
+                )
+                .with_method(
+                    "bool is_empty() const",
+                    |g: &ScriptGeneric| {
+                        let obj = g.get_object().unwrap();
+                        g.set_return_byte(obj.as_ref::<String>().is_empty().into())
+                            .unwrap();
+                    },
+                    None,
+                    None,
+                    None,
+                )
+                .with_method(
+                    "void clear()",
+                    |g: &ScriptGeneric| {
+                        let mut obj = g.get_object().unwrap();
+                        obj.as_ref_mut::<String>().clear();
+                    },
+                    None,
+                    None,
+                    None,
+                )
+                .with_method("uint8 &opIndex(uint)", string_char_at, None, None, None)
+                .with_method(
+                    "uint8 &opIndex(uint) const",
+                    string_char_at,
+                    None,
+                    None,
+                    None,
+                )
+                .with_method(
+                    "string substr(uint start = 0, int count = -1) const",
+                    string_substring,
+                    None,
+                    None,
+                    None,
+                );
+        })
+        .with_engine_configuration(|e| {
+            e.register_string_factory("string", get_string_factory_instance())
+        })
+        .function(
+            "bool parse_bool(const string &in val)",
+            |g: &ScriptGeneric| {
+                let in_ptr = g.get_arg_address(0).unwrap();
+                let str = in_ptr.as_ref::<String>();
+                let result = str.parse::<bool>().unwrap();
+                g.set_return_byte(result.into()).unwrap();
+            },
+            None,
+        )
+        .function(
+            "int parse_int(const string &in val, const uint radix = 10)",
+            |g: &ScriptGeneric| {
+                let in_ptr = g.get_arg_address(0).unwrap();
+                let str = in_ptr.as_ref::<String>();
+                let base = g.get_arg_dword(1);
+                let result = i32::from_str_radix(str, base).unwrap();
+                g.set_return_dword(result as asDWORD).unwrap();
+            },
+            None,
+        )
+        .function(
+            "uint parse_uint(const string &in val, const uint radix = 10)",
+            |g: &ScriptGeneric| {
+                let in_ptr = g.get_arg_address(0).unwrap();
+                let str = in_ptr.as_ref::<String>();
+                let base = g.get_arg_dword(1);
+                let result = u32::from_str_radix(str, base).unwrap();
+                g.set_return_dword(result as asDWORD).unwrap();
+            },
+            None,
+        )
+        .function(
+            "float parse_float(const string &in val)",
+            |g: &ScriptGeneric| {
+                let in_ptr = g.get_arg_address(0).unwrap();
+                let str = in_ptr.as_ref::<String>();
+                let result = str.parse::<f32>().unwrap();
+                g.set_return_float(result).unwrap();
+            },
+            None,
+        )
+        .function(
+            "double parse_double(const string &in val)",
+            |g: &ScriptGeneric| {
+                let in_ptr = g.get_arg_address(0).unwrap();
+                let str = in_ptr.as_ref::<String>();
+                let result = str.parse::<f64>().unwrap();
+                g.set_return_double(result).unwrap();
+            },
+            None,
+        )
+        .function(
+            "string format(const string &in options, const ?&in val)",
+            |g: &ScriptGeneric| {
+                let options_ptr = g.get_arg_address(0).unwrap();
+                let (type_id, _) = g.get_arg_type_id(1);
+
+                match type_id {
+                    TypeId::Int8 => {
+                        let val = g.get_arg_address(1).unwrap().read::<asINT8>();
+                        let options = options_ptr.as_ref::<String>();
+                        let output = vsprintf(options, &[&val]).unwrap();
+                        g.get_address_of_return_location()
+                            .unwrap()
+                            .set::<String>(output)
+                    }
+                    TypeId::Int16 => {
+                        let val = g.get_arg_address(1).unwrap().read::<asINT16>();
+                        let options = options_ptr.as_ref::<String>();
+                        let output = vsprintf(options, &[&val]).unwrap();
+                        g.get_address_of_return_location()
+                            .unwrap()
+                            .set::<String>(output)
+                    }
+                    TypeId::Int32 => {
+                        let val = g.get_arg_address(1).unwrap().read::<asINT32>();
+                        let options = options_ptr.as_ref::<String>();
+                        let output = vsprintf(options, &[&val]).unwrap();
+                        g.get_address_of_return_location()
+                            .unwrap()
+                            .set::<String>(output)
+                    }
+                    TypeId::Int64 => {
+                        let val = g.get_arg_address(1).unwrap().read::<asINT64>();
+                        let options = options_ptr.as_ref::<String>();
+                        let output = vsprintf(options, &[&val]).unwrap();
+                        g.get_address_of_return_location()
+                            .unwrap()
+                            .set::<String>(output)
+                    }
+                    TypeId::Uint8 => {
+                        let val = g.get_arg_address(1).unwrap().read::<asDWORD>();
+                        let options = options_ptr.as_ref::<String>();
+                        let output = vsprintf(options, &[&val]).unwrap();
+                        g.get_address_of_return_location()
+                            .unwrap()
+                            .set::<String>(output)
+                    }
+                    TypeId::Uint16 => {
+                        let val = g.get_arg_address(1).unwrap().read::<asDWORD>();
+                        let options = options_ptr.as_ref::<String>();
+                        let output = vsprintf(options, &[&val]).unwrap();
+                        g.get_address_of_return_location()
+                            .unwrap()
+                            .set::<String>(output)
+                    }
+                    TypeId::Uint32 => {
+                        let val = g.get_arg_address(1).unwrap().read::<asDWORD>();
+                        let options = options_ptr.as_ref::<String>();
+                        let output = vsprintf(options, &[&val]).unwrap();
+                        g.get_address_of_return_location()
+                            .unwrap()
+                            .set::<String>(output)
+                    }
+                    TypeId::Uint64 => {
+                        let val = g.get_arg_address(1).unwrap().read::<asQWORD>();
+                        let options = options_ptr.as_ref::<String>();
+                        let output = vsprintf(options, &[&val]).unwrap();
+                        g.get_address_of_return_location()
+                            .unwrap()
+                            .set::<String>(output)
+                    }
+                    TypeId::Float => {
+                        let val = g.get_arg_address(1).unwrap().read::<f32>();
+                        let options = options_ptr.as_ref::<String>();
+                        let output = vsprintf(options, &[&val]).unwrap();
+                        g.get_address_of_return_location()
+                            .unwrap()
+                            .set::<String>(output)
+                    }
+                    TypeId::Double => {
+                        let val = g.get_arg_address(1).unwrap().read::<f64>();
+                        let options = options_ptr.as_ref::<String>();
+                        let output = vsprintf(options, &[&val]).unwrap();
+                        g.get_address_of_return_location()
+                            .unwrap()
+                            .set::<String>(output)
+                    }
+                    _ => {}
+                };
+            },
+            None,
+        );
 
     addon
 }

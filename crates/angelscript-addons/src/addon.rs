@@ -16,6 +16,10 @@ pub(crate) enum Registration {
         declaration: String,
         property: Box<dyn ScriptData>,
     },
+    Enum {
+        name: String,
+        values: Vec<EnumRegistration>,
+    },
     ObjectType {
         name: String,
         size: i32,
@@ -55,6 +59,11 @@ pub(crate) struct BehaviorRegistration {
     pub(crate) is_composite_indirect: Option<bool>,
 }
 
+pub(crate) struct EnumRegistration {
+    pub(crate) name: String,
+    pub(crate) value: i32,
+}
+
 /// A plugin that groups related AngelScript registrations
 pub struct Addon {
     pub(crate) namespace: Option<String>,
@@ -75,6 +84,14 @@ impl Addon {
     /// Set the namespace for all registrations in this plugin
     pub fn with_namespace(mut self, namespace: impl Into<String>) -> Self {
         self.namespace = Some(namespace.into());
+        self
+    }
+
+    pub fn with_engine_configuration(
+        mut self,
+        configure: impl FnOnce(&Engine) -> ScriptResult<()> + 'static,
+    ) -> Self {
+        let _ = &self.engine_configuration.insert(Box::new(configure));
         self
     }
 
@@ -256,14 +273,6 @@ impl<T: 'static> TypeRegistration<T> {
         self
     }
 
-    pub fn with_engine_configuration(
-        &mut self,
-        configure: impl FnOnce(&Engine) -> ScriptResult<()> + 'static,
-    ) -> &mut Self {
-        self.addon.engine_configuration = Some(Box::new(configure));
-        self
-    }
-
     /// Finish type registration and return to plugin
     fn register(mut self) -> Addon {
         self.addon.registrations.push(Registration::ObjectType {
@@ -341,6 +350,16 @@ impl EngineInstallable for Addon {
                             behavior.auxiliary.as_ref(),
                             behavior.composite_offset,
                             behavior.is_composite_indirect,
+                        )?;
+                    }
+                }
+                Registration::Enum { name, values } => {
+                    engine.register_enum(name.as_str())?;
+                    for value in values {
+                        engine.register_enum_value(
+                            name.as_str(),
+                            value.name.as_str(),
+                            value.value,
                         )?;
                     }
                 }
