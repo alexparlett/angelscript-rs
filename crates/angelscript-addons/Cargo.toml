@@ -10,3 +10,7 @@ sprintf  = { version = "0.4.2", optional = true }
 
 [features]
 string = ["dep:sprintf"]
+
+[package.metadata.docs.rs]
+all-features = true
+no-deps = true

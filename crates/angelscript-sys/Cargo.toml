@@ -10,3 +10,7 @@ cc = "1.2"
 
 [lib]
 crate-type = ["lib", "staticlib"]
+
+[package.metadata.docs.rs]
+all-features = true
+no-deps = true

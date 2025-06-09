@@ -9,3 +9,7 @@ proc-macro = true
 [dependencies]
 quote = "1"
 syn = { version = "2" }
+
+[package.metadata.docs.rs]
+all-features = true
+no-deps = true

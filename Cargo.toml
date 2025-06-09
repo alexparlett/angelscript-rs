@@ -20,3 +20,7 @@ rust-alloc = ["angelscript-core/rust-alloc"]
 
 [workspace]
 members = ["crates/angelscript-sys", "crates/angelscript-macros", "crates/angelscript-core", "crates/angelscript-addons"]
+
+[package.metadata.docs.rs]
+all-features = true
+no-deps = true

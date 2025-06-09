@@ -23,6 +23,5 @@ pub mod prelude {
     pub use angelscript_core::types::enums::*;
     pub use angelscript_core::types::script_data::*;
     pub use angelscript_core::types::script_memory::*;
-    pub use angelscript_core::types::script_value::*;
     pub use angelscript_core::types::user_data::*;
 }

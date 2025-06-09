@@ -18,15 +18,7 @@ use crate::types::enums::*;
 use crate::types::script_data::ScriptData;
 use crate::types::script_memory::ScriptMemoryLocation;
 use crate::types::user_data::UserData;
-use angelscript_sys::{
-    asALLOCFUNC_t, asAllocMem, asAtomicDec, asAtomicInc, asCreateLockableSharedBool,
-    asCreateScriptEngine, asDWORD, asECallConvTypes_asCALL_GENERIC, asEMsgType,
-    asETypeIdFlags, asFREEFUNC_t, asFreeMem, asGENFUNC_t, asGenericFunction, asGetActiveContext,
-    asGetLibraryOptions, asGetLibraryVersion, asGetThreadManager, asIScriptEngine,
-    asIScriptEngine__bindgen_vtable, asIScriptGeneric, asIStringFactory, asITypeInfo,
-    asMessageInfoFunction, asPWORD, asResetGlobalMemoryFunctions, asScriptContextFunction,
-    asSetGlobalMemoryFunctions, asUINT, ANGELSCRIPT_VERSION,
-};
+use angelscript_sys::*;
 use std::alloc::{alloc, Layout};
 use std::ffi::{c_char, CStr, CString};
 use std::marker::PhantomData;
@@ -34,10 +26,52 @@ use std::os::raw::c_void;
 use std::ptr;
 use std::ptr::NonNull;
 
+/// Trait for types that can be installed into an AngelScript engine.
+///
+/// This trait allows for modular registration of functionality with the engine,
+/// such as types, functions, or entire modules.
 pub trait EngineInstallable {
+    /// Install this component into the given engine.
+    ///
+    /// # Arguments
+    /// * `engine` - The engine to install into
+    ///
+    /// # Returns
+    /// A result indicating success or failure of the installation
     fn install(self, engine: &Engine) -> ScriptResult<()>;
 }
 
+/// The main AngelScript engine wrapper.
+///
+/// This struct provides a safe Rust interface to the AngelScript scripting engine.
+/// It handles script compilation, execution, type registration, and memory management.
+///
+/// # Thread Safety
+/// The Engine is thread-safe when AngelScript is prepared for multithreading
+/// using [`Engine::prepare_multithread`].
+///
+/// # Examples
+///
+/// ```rust
+/// use angelscript_rs::Engine;
+///
+/// // Create a new engine
+/// let engine = Engine::create()?;
+///
+/// // Register a global function
+/// engine.register_global_function("void print(const string &in)", print_function, None)?;
+///
+/// // Get a module and add script code
+/// let module = engine.get_module("MyModule", GetModuleFlags::CreateIfNotExists)?;
+/// module.add_script_section("script", "void main() { print(\"Hello World!\"); }")?;
+/// module.build()?;
+///
+/// // Execute the script
+/// let context = engine.create_context()?;
+/// let function = module.get_function_by_name("main")?;
+/// context.prepare(function)?;
+/// context.execute()?;
+/// ```
 #[derive(Debug, PartialEq, Eq)]
 pub struct Engine {
     inner: NonNull<asIScriptEngine>,
@@ -46,6 +80,10 @@ pub struct Engine {
 }
 
 impl Engine {
+    /// Custom memory allocator that uses Rust's allocator.
+    ///
+    /// This function is used when the `rust-alloc` feature is enabled
+    /// to ensure all memory allocation goes through Rust's allocator.
     #[cfg(feature = "rust-alloc")]
     pub unsafe extern "C" fn unified_alloc(size: usize) -> *mut std::ffi::c_void {
         unsafe {
@@ -54,6 +92,9 @@ impl Engine {
         }
     }
 
+    /// Custom memory deallocator that uses libc's free.
+    ///
+    /// This function is used when the `rust-alloc` feature is enabled.
     #[cfg(feature = "rust-alloc")]
     pub unsafe extern "C" fn unified_free(ptr: *mut std::ffi::c_void) {
         unsafe {
@@ -63,6 +104,19 @@ impl Engine {
         }
     }
 
+    /// Creates a new AngelScript engine.
+    ///
+    /// This initializes the AngelScript engine and optionally sets up
+    /// custom memory allocation functions when the `rust-alloc` feature is enabled.
+    ///
+    /// # Returns
+    /// A new Engine instance or an error if creation failed
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// let engine = Engine::create()?;
+    /// ```
     pub fn create() -> ScriptResult<Engine> {
         unsafe {
             #[cfg(feature = "rust-alloc")]
@@ -79,11 +133,23 @@ impl Engine {
         }
     }
 
+    /// Installs a component that implements [`EngineInstallable`] into this engine.
+    ///
+    /// This is a convenience method for registering types, functions, or modules.
+    ///
+    /// # Arguments
+    /// * `installable` - The component to install
+    ///
+    /// # Returns
+    /// Result indicating success or failure
     pub fn install<T: EngineInstallable>(&self, installable: T) -> ScriptResult<()> {
         installable.install(self)
     }
 
-    /// Gets the AngelScript library version string
+    /// Gets the AngelScript library version string.
+    ///
+    /// # Returns
+    /// A string containing the AngelScript library version
     pub fn get_library_version() -> &'static str {
         unsafe {
             let version_ptr = asGetLibraryVersion();
@@ -91,7 +157,10 @@ impl Engine {
         }
     }
 
-    /// Gets the AngelScript library compilation options
+    /// Gets the AngelScript library compilation options.
+    ///
+    /// # Returns
+    /// A string containing the compilation options used when building AngelScript
     pub fn get_library_options() -> &'static str {
         unsafe {
             let options_ptr = asGetLibraryOptions();
@@ -101,7 +170,10 @@ impl Engine {
 
     // ========== CONTEXT MANAGEMENT ==========
 
-    /// Gets the currently active script context
+    /// Gets the currently active script context.
+    ///
+    /// # Returns
+    /// The active context, or None if no context is currently active
     pub fn get_active_context() -> Option<Context> {
         unsafe {
             let context_ptr = asGetActiveContext();
@@ -115,21 +187,29 @@ impl Engine {
 
     // ========== THREADING SUPPORT ==========
 
-    /// Prepares AngelScript for multithreaded use
+    /// Prepares AngelScript for multithreaded use.
     ///
     /// The implementation used depends on the compile-time feature:
     /// - Default: Uses AngelScript's built-in C++ thread manager
     /// - `rust-threads`: Uses a pure Rust implementation
+    ///
+    /// # Returns
+    /// A ThreadManager instance for managing thread synchronization
     pub fn prepare_multithread() -> ScriptResult<ThreadManager> {
         ThreadManager::prepare()
     }
 
-    /// Unprepares AngelScript from multithreaded use
+    /// Unprepares AngelScript from multithreaded use.
+    ///
+    /// This should be called when shutting down multithreaded operations.
     pub fn unprepare_multithread() {
         ThreadManager::unprepare()
     }
 
-    /// Gets the current thread manager
+    /// Gets the current thread manager.
+    ///
+    /// # Returns
+    /// The current ThreadManager, or None if not prepared for multithreading
     pub fn get_thread_manager() -> Option<ThreadManager> {
         unsafe {
             let mgr_ptr = asGetThreadManager();
@@ -143,58 +223,98 @@ impl Engine {
 
     // ========== THREAD SYNCHRONIZATION ==========
 
-    /// Acquires an exclusive lock for thread synchronization
+    /// Acquires an exclusive lock for thread synchronization.
+    ///
+    /// This should be paired with [`release_exclusive_lock`] or use
+    /// [`exclusive_lock`] for RAII-style locking.
     pub fn acquire_exclusive_lock() {
         ThreadManager::acquire_exclusive_lock()
     }
 
-    /// Releases an exclusive lock
+    /// Releases an exclusive lock.
     pub fn release_exclusive_lock() {
         ThreadManager::release_exclusive_lock()
     }
 
-    /// Acquires a shared lock for thread synchronization
+    /// Acquires a shared lock for thread synchronization.
+    ///
+    /// This should be paired with [`release_shared_lock`] or use
+    /// [`shared_lock`] for RAII-style locking.
     pub fn acquire_shared_lock() {
         ThreadManager::acquire_shared_lock()
     }
 
-    /// Releases a shared lock
+    /// Releases a shared lock.
     pub fn release_shared_lock() {
         ThreadManager::release_shared_lock()
     }
 
-    /// Creates an exclusive lock guard for RAII locking
+    /// Creates an exclusive lock guard for RAII locking.
+    ///
+    /// The lock is automatically released when the guard is dropped.
+    ///
+    /// # Returns
+    /// An exclusive lock guard
     pub fn exclusive_lock() -> ExclusiveLockGuard {
         ExclusiveLockGuard::new()
     }
 
-    /// Creates a shared lock guard for RAII locking
+    /// Creates a shared lock guard for RAII locking.
+    ///
+    /// The lock is automatically released when the guard is dropped.
+    ///
+    /// # Returns
+    /// A shared lock guard
     pub fn shared_lock() -> SharedLockGuard {
         SharedLockGuard::new()
     }
 
     // ========== ATOMIC OPERATIONS ==========
 
-    /// Atomically increments an integer value
+    /// Atomically increments an integer value.
+    ///
+    /// # Arguments
+    /// * `value` - The value to increment
+    ///
+    /// # Returns
+    /// The new value after incrementing
     pub fn atomic_inc(value: &mut i32) -> i32 {
         unsafe { asAtomicInc(value as *mut i32) }
     }
 
-    /// Atomically decrements an integer value
+    /// Atomically decrements an integer value.
+    ///
+    /// # Arguments
+    /// * `value` - The value to decrement
+    ///
+    /// # Returns
+    /// The new value after decrementing
     pub fn atomic_dec(value: &mut i32) -> i32 {
         unsafe { asAtomicDec(value as *mut i32) }
     }
 
     // ========== THREAD CLEANUP ==========
 
-    /// Performs thread-specific cleanup
+    /// Performs thread-specific cleanup.
+    ///
+    /// This should be called when a thread that has used AngelScript is about to terminate.
+    ///
+    /// # Returns
+    /// Result indicating success or failure
     pub fn thread_cleanup() -> ScriptResult<()> {
         ThreadManager::cleanup_local_data()
     }
 
     // ========== MEMORY MANAGEMENT ==========
 
-    /// Sets custom global memory allocation functions
+    /// Sets custom global memory allocation functions.
+    ///
+    /// # Arguments
+    /// * `alloc_func` - Custom allocation function
+    /// * `free_func` - Custom deallocation function
+    ///
+    /// # Returns
+    /// Result indicating success or failure
     pub fn set_global_memory_functions(
         alloc_func: asALLOCFUNC_t,
         free_func: asFREEFUNC_t,
@@ -202,17 +322,29 @@ impl Engine {
         unsafe { ScriptError::from_code(asSetGlobalMemoryFunctions(alloc_func, free_func)) }
     }
 
-    /// Resets global memory functions to default
+    /// Resets global memory functions to default.
+    ///
+    /// # Returns
+    /// Result indicating success or failure
     pub fn reset_global_memory_functions() -> ScriptResult<()> {
         unsafe { ScriptError::from_code(asResetGlobalMemoryFunctions()) }
     }
 
-    /// Allocates memory using AngelScript's allocator
+    /// Allocates memory using AngelScript's allocator.
+    ///
+    /// # Arguments
+    /// * `size` - The number of bytes to allocate
+    ///
+    /// # Returns
+    /// A memory location wrapper
     pub fn alloc_mem(size: usize) -> ScriptMemoryLocation {
         unsafe { ScriptMemoryLocation::from_mut(asAllocMem(size)) }
     }
 
-    /// Frees memory allocated by AngelScript's allocator
+    /// Frees memory allocated by AngelScript's allocator.
+    ///
+    /// # Arguments
+    /// * `mem` - The memory location to free
     pub fn free_mem(mut mem: ScriptMemoryLocation) {
         unsafe {
             asFreeMem(mem.as_mut_ptr());
@@ -221,7 +353,13 @@ impl Engine {
 
     // ========== UTILITY OBJECTS ==========
 
-    /// Creates a new lockable shared boolean
+    /// Creates a new lockable shared boolean.
+    ///
+    /// This is useful for implementing weak references and other
+    /// thread-safe boolean flags.
+    ///
+    /// # Returns
+    /// A new lockable shared boolean, or None if creation failed
     pub fn create_lockable_shared_bool() -> Option<LockableSharedBool> {
         unsafe {
             let ptr = asCreateLockableSharedBool();
@@ -235,7 +373,16 @@ impl Engine {
 
     // ========== CONVENIENCE METHODS ==========
 
-    /// Executes a closure with an exclusive lock held
+    /// Executes a closure with an exclusive lock held.
+    ///
+    /// This is a convenience method that automatically acquires and releases
+    /// an exclusive lock around the closure execution.
+    ///
+    /// # Arguments
+    /// * `f` - The closure to execute
+    ///
+    /// # Returns
+    /// The return value of the closure
     pub fn with_exclusive_lock<F, R>(f: F) -> R
     where
         F: FnOnce() -> R,
@@ -244,7 +391,16 @@ impl Engine {
         f()
     }
 
-    /// Executes a closure with a shared lock held
+    /// Executes a closure with a shared lock held.
+    ///
+    /// This is a convenience method that automatically acquires and releases
+    /// a shared lock around the closure execution.
+    ///
+    /// # Arguments
+    /// * `f` - The closure to execute
+    ///
+    /// # Returns
+    /// The return value of the closure
     pub fn with_shared_lock<F, R>(f: F) -> R
     where
         F: FnOnce() -> R,
@@ -253,12 +409,18 @@ impl Engine {
         f()
     }
 
-    /// Checks if AngelScript is prepared for multithreading
+    /// Checks if AngelScript is prepared for multithreading.
+    ///
+    /// # Returns
+    /// true if multithreading is prepared, false otherwise
     pub fn is_multithreading_prepared() -> bool {
         Self::get_thread_manager().is_some()
     }
 
-    /// Gets information about the current threading setup
+    /// Gets information about the current threading setup.
+    ///
+    /// # Returns
+    /// A string describing the current threading configuration
     pub fn get_threading_info() -> String {
         match Self::get_thread_manager() {
             Some(manager) => manager.info(),
@@ -266,6 +428,16 @@ impl Engine {
         }
     }
 
+    /// Creates an Engine wrapper from a raw AngelScript engine pointer.
+    ///
+    /// # Safety
+    /// The caller must ensure the pointer is valid and the engine is properly initialized.
+    ///
+    /// # Arguments
+    /// * `engine` - Raw pointer to AngelScript engine
+    ///
+    /// # Returns
+    /// A new Engine wrapper
     pub(crate) fn from_raw(engine: NonNull<asIScriptEngine>) -> Engine {
         let engine_wrapper = Engine {
             inner: engine,
@@ -279,6 +451,11 @@ impl Engine {
     }
 
     // Reference counting (following bindings order)
+
+    /// Increments the reference count of the engine.
+    ///
+    /// # Returns
+    /// Result indicating success or failure
     pub fn add_ref(&self) -> ScriptResult<()> {
         unsafe {
             ScriptError::from_code((self.as_vtable().asIScriptEngine_AddRef)(
@@ -287,6 +464,10 @@ impl Engine {
         }
     }
 
+    /// Decrements the reference count of the engine.
+    ///
+    /// # Returns
+    /// Result indicating success or failure
     pub fn release(&self) -> ScriptResult<()> {
         unsafe {
             ScriptError::from_code((self.as_vtable().asIScriptEngine_Release)(
@@ -295,6 +476,12 @@ impl Engine {
         }
     }
 
+    /// Shuts down and releases the engine.
+    ///
+    /// This should be called when the engine is no longer needed.
+    ///
+    /// # Returns
+    /// Result indicating success or failure
     pub fn shutdown_and_release(&self) -> ScriptResult<()> {
         unsafe {
             ScriptError::from_code((self.as_vtable().asIScriptEngine_ShutDownAndRelease)(
@@ -304,6 +491,15 @@ impl Engine {
     }
 
     // Engine properties
+
+    /// Sets an engine property.
+    ///
+    /// # Arguments
+    /// * `property` - The property to set
+    /// * `value` - The value to set
+    ///
+    /// # Returns
+    /// Result indicating success or failure
     pub fn set_engine_property(&self, property: EngineProperty, value: usize) -> ScriptResult<()> {
         unsafe {
             ScriptError::from_code((self.as_vtable().asIScriptEngine_SetEngineProperty)(
@@ -314,6 +510,13 @@ impl Engine {
         }
     }
 
+    /// Gets an engine property value.
+    ///
+    /// # Arguments
+    /// * `property` - The property to get
+    ///
+    /// # Returns
+    /// The property value
     pub fn get_engine_property(&self, property: EngineProperty) -> asPWORD {
         unsafe {
             (self.as_vtable().asIScriptEngine_GetEngineProperty)(
@@ -323,6 +526,13 @@ impl Engine {
         }
     }
 
+    /// Sets a message callback for compilation and runtime messages.
+    ///
+    /// # Arguments
+    /// * `callback` - The callback function to set
+    ///
+    /// # Returns
+    /// Result indicating success or failure
     pub fn set_message_callback(&mut self, callback: MessageCallbackFn) -> ScriptResult<()> {
         CallbackManager::set_message_callback(Some(callback))?;
 
@@ -336,6 +546,10 @@ impl Engine {
         }
     }
 
+    /// Clears the message callback.
+    ///
+    /// # Returns
+    /// Result indicating success or failure
     pub fn clear_message_callback(&mut self) -> ScriptResult<()> {
         CallbackManager::set_message_callback(None)?;
 
@@ -346,6 +560,17 @@ impl Engine {
         }
     }
 
+    /// Writes a message to the message callback.
+    ///
+    /// # Arguments
+    /// * `section` - The section name where the message originated
+    /// * `row` - The row number
+    /// * `col` - The column number
+    /// * `msg_type` - The type of message
+    /// * `message` - The message text
+    ///
+    /// # Returns
+    /// Result indicating success or failure
     pub fn write_message(
         &self,
         section: &str,
@@ -370,6 +595,14 @@ impl Engine {
     }
 
     // JIT compiler
+
+    /// Sets a JIT compiler for the engine.
+    ///
+    /// # Arguments
+    /// * `compiler` - The JIT compiler to set
+    ///
+    /// # Returns
+    /// Result indicating success or failure
     pub fn set_jit_compiler(&self, compiler: &mut JITCompiler) -> ScriptResult<()> {
         unsafe {
             ScriptError::from_code((self.as_vtable().asIScriptEngine_SetJITCompiler)(
@@ -379,6 +612,10 @@ impl Engine {
         }
     }
 
+    /// Gets the current JIT compiler.
+    ///
+    /// # Returns
+    /// The current JIT compiler, or None if none is set
     pub fn get_jit_compiler(&self) -> Option<JITCompiler> {
         unsafe {
             let compiler = (self.as_vtable().asIScriptEngine_GetJITCompiler)(self.inner.as_ptr());
@@ -391,6 +628,11 @@ impl Engine {
     }
 
     // Global functions
+
+    /// Internal thunk function for generic callbacks.
+    ///
+    /// # Safety
+    /// This function is called by AngelScript and must handle the generic interface correctly.
     unsafe extern "C" fn generic_callback_thunk(arg1: *mut asIScriptGeneric) {
         let func = ScriptGeneric::from_raw(arg1).get_function();
         let user_data = func.get_user_data::<GenericFnUserData>();
@@ -401,6 +643,28 @@ impl Engine {
         }
     }
 
+    /// Registers a global function with the engine.
+    ///
+    /// # Arguments
+    /// * `declaration` - The function declaration string
+    /// * `func_ptr` - The function pointer to register
+    /// * `auxiliary` - Optional auxiliary data
+    ///
+    /// # Returns
+    /// Result indicating success or failure
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// engine.register_global_function(
+    ///     "void print(const string &in)",
+    ///     |ctx: &ScriptGeneric| {
+    ///         let text: String = ctx.get_arg(0);
+    ///         println!("{}", text);
+    ///     },
+    ///     None
+    /// )?;
+    /// ```
     pub fn register_global_function(
         &self,
         declaration: &str,
@@ -431,10 +695,21 @@ impl Engine {
         Ok(())
     }
 
+    /// Gets the number of registered global functions.
+    ///
+    /// # Returns
+    /// The number of global functions
     pub fn get_global_function_count(&self) -> asUINT {
         unsafe { (self.as_vtable().asIScriptEngine_GetGlobalFunctionCount)(self.inner.as_ptr()) }
     }
 
+    /// Gets a global function by index.
+    ///
+    /// # Arguments
+    /// * `index` - The function index
+    ///
+    /// # Returns
+    /// The function, or None if the index is invalid
     pub fn get_global_function_by_index(&self, index: u32) -> Option<Function> {
         unsafe {
             let func = (self.as_vtable().asIScriptEngine_GetGlobalFunctionByIndex)(
@@ -449,6 +724,13 @@ impl Engine {
         }
     }
 
+    /// Gets a global function by declaration.
+    ///
+    /// # Arguments
+    /// * `decl` - The function declaration
+    ///
+    /// # Returns
+    /// The function, or None if not found
     pub fn get_global_function_by_decl(&self, decl: &str) -> Option<Function> {
         let c_decl = CString::new(decl).ok()?;
 
@@ -466,6 +748,15 @@ impl Engine {
     }
 
     // Global properties
+
+    /// Registers a global property with the engine.
+    ///
+    /// # Arguments
+    /// * `declaration` - The property declaration string
+    /// * `pointer` - Pointer to the property data
+    ///
+    /// # Returns
+    /// Result indicating success or failure
     pub fn register_global_property(
         &self,
         declaration: &str,
@@ -482,10 +773,21 @@ impl Engine {
         }
     }
 
+    /// Gets the number of registered global properties.
+    ///
+    /// # Returns
+    /// The number of global properties
     pub fn get_global_property_count(&self) -> asUINT {
         unsafe { (self.as_vtable().asIScriptEngine_GetGlobalPropertyCount)(self.inner.as_ptr()) }
     }
 
+    /// Gets information about a global property by index.
+    ///
+    /// # Arguments
+    /// * `index` - The property index
+    ///
+    /// # Returns
+    /// Property information, or an error if the index is invalid
     pub fn get_global_property_by_index(&self, index: asUINT) -> ScriptResult<GlobalPropertyInfo> {
         let mut name: *const c_char = ptr::null();
         let mut name_space: *const c_char = ptr::null();
@@ -538,6 +840,13 @@ impl Engine {
         }
     }
 
+    /// Gets the index of a global property by name.
+    ///
+    /// # Arguments
+    /// * `name` - The property name
+    ///
+    /// # Returns
+    /// The property index, or an error if not found
     pub fn get_global_property_index_by_name(&self, name: &str) -> ScriptResult<i32> {
         let c_name = CString::new(name)?;
 
@@ -555,6 +864,13 @@ impl Engine {
         }
     }
 
+    /// Gets the index of a global property by declaration.
+    ///
+    /// # Arguments
+    /// * `decl` - The property declaration
+    ///
+    /// # Returns
+    /// The property index, or an error if not found
     pub fn get_global_property_index_by_decl(&self, decl: &str) -> ScriptResult<i32> {
         let c_decl = CString::new(decl)?;
 
@@ -573,6 +889,16 @@ impl Engine {
     }
 
     // Object types
+
+    /// Registers an object type with the engine.
+    ///
+    /// # Arguments
+    /// * `name` - The type name
+    /// * `byte_size` - The size of the type in bytes
+    /// * `flags` - Object type flags
+    ///
+    /// # Returns
+    /// Result indicating success or failure
     pub fn register_object_type(
         &self,
         name: &str,
@@ -591,6 +917,17 @@ impl Engine {
         }
     }
 
+    /// Registers a property for an object type.
+    ///
+    /// # Arguments
+    /// * `obj` - The object type name
+    /// * `declaration` - The property declaration
+    /// * `byte_offset` - Byte offset of the property in the object
+    /// * `composite_offset` - Composite offset for complex types
+    /// * `is_composite_indirect` - Whether the composite is indirect
+    ///
+    /// # Returns
+    /// Result indicating success or failure
     pub fn register_object_property(
         &self,
         obj: &str,
@@ -614,6 +951,18 @@ impl Engine {
         }
     }
 
+    /// Registers a method for an object type.
+    ///
+    /// # Arguments
+    /// * `obj` - The object type name
+    /// * `declaration` - The method declaration
+    /// * `func_ptr` - The function pointer
+    /// * `auxiliary` - Optional auxiliary data
+    /// * `composite_offset` - Optional composite offset
+    /// * `is_composite_indirect` - Optional composite indirect flag
+    ///
+    /// # Returns
+    /// Result indicating success or failure
     pub fn register_object_method(
         &self,
         obj: &str,
@@ -653,6 +1002,19 @@ impl Engine {
         Ok(())
     }
 
+    /// Registers a behaviour for an object type.
+    ///
+    /// # Arguments
+    /// * `obj` - The object type name
+    /// * `behaviour` - The behaviour type
+    /// * `declaration` - The behaviour declaration
+    /// * `func_ptr` - The function pointer
+    /// * `auxiliary` - Optional auxiliary data
+    /// * `composite_offset` - Optional composite offset
+    /// * `is_composite_indirect` - Optional composite indirect flag
+    ///
+    /// # Returns
+    /// Result indicating success or failure
     pub fn register_object_behaviour(
         &self,
         obj: &str,
@@ -693,6 +1055,14 @@ impl Engine {
     }
 
     // Interfaces
+
+    /// Registers an interface with the engine.
+    ///
+    /// # Arguments
+    /// * `name` - The interface name
+    ///
+    /// # Returns
+    /// Result indicating success or failure
     pub fn register_interface(&self, name: &str) -> ScriptResult<()> {
         let c_name = CString::new(name)?;
 
@@ -704,6 +1074,14 @@ impl Engine {
         }
     }
 
+    /// Registers a method for an interface.
+    ///
+    /// # Arguments
+    /// * `intf` - The interface name
+    /// * `declaration` - The method declaration
+    ///
+    /// # Returns
+    /// Result indicating success or failure
     pub fn register_interface_method(&self, intf: &str, declaration: &str) -> ScriptResult<()> {
         let c_intf = CString::new(intf)?;
         let c_decl = CString::new(declaration)?;
@@ -717,10 +1095,21 @@ impl Engine {
         }
     }
 
+    /// Gets the number of registered object types.
+    ///
+    /// # Returns
+    /// The number of object types
     pub fn get_object_type_count(&self) -> asUINT {
         unsafe { (self.as_vtable().asIScriptEngine_GetObjectTypeCount)(self.inner.as_ptr()) }
     }
 
+    /// Gets an object type by index.
+    ///
+    /// # Arguments
+    /// * `index` - The type index
+    ///
+    /// # Returns
+    /// The type info, or None if the index is invalid
     pub fn get_object_type_by_index(&self, index: asUINT) -> Option<TypeInfo> {
         unsafe {
             let type_info =
@@ -734,6 +1123,15 @@ impl Engine {
     }
 
     // String factory
+
+    /// Registers a string factory with the engine.
+    ///
+    /// # Arguments
+    /// * `datatype` - The string datatype
+    /// * `factory` - The string factory
+    ///
+    /// # Returns
+    /// Result indicating success or failure
     pub fn register_string_factory(
         &self,
         datatype: &str,
@@ -750,6 +1148,10 @@ impl Engine {
         }
     }
 
+    /// Gets the string factory return type ID.
+    ///
+    /// # Returns
+    /// A tuple of (type_id, flags) or an error
     pub fn get_string_factory_return_type_id(&self) -> ScriptResult<(i32, asDWORD)> {
         let mut flags: asDWORD = 0;
 
@@ -767,6 +1169,14 @@ impl Engine {
     }
 
     // Default array
+
+    /// Registers the default array type.
+    ///
+    /// # Arguments
+    /// * `type_name` - The array type name
+    ///
+    /// # Returns
+    /// Result indicating success or failure
     pub fn register_default_array_type(&self, type_name: &str) -> ScriptResult<()> {
         let c_type = CString::new(type_name)?;
 
@@ -778,6 +1188,10 @@ impl Engine {
         }
     }
 
+    /// Gets the default array type ID.
+    ///
+    /// # Returns
+    /// The type ID or an error
     pub fn get_default_array_type_id(&self) -> ScriptResult<i32> {
         unsafe {
             let type_id =
@@ -790,6 +1204,14 @@ impl Engine {
     }
 
     // Enums
+
+    /// Registers an enum type.
+    ///
+    /// # Arguments
+    /// * `type_name` - The enum type name
+    ///
+    /// # Returns
+    /// Result indicating success or failure
     pub fn register_enum(&self, type_name: &str) -> ScriptResult<()> {
         let c_type = CString::new(type_name)?;
 
@@ -801,6 +1223,15 @@ impl Engine {
         }
     }
 
+    /// Registers an enum value.
+    ///
+    /// # Arguments
+    /// * `type_name` - The enum type name
+    /// * `name` - The enum value name
+    /// * `value` - The enum value
+    ///
+    /// # Returns
+    /// Result indicating success or failure
     pub fn register_enum_value(&self, type_name: &str, name: &str, value: i32) -> ScriptResult<()> {
         let c_type = CString::new(type_name)?;
         let c_name = CString::new(name)?;
@@ -815,10 +1246,21 @@ impl Engine {
         }
     }
 
+    /// Gets the number of registered enums.
+    ///
+    /// # Returns
+    /// The number of enums
     pub fn get_enum_count(&self) -> asUINT {
         unsafe { (self.as_vtable().asIScriptEngine_GetEnumCount)(self.inner.as_ptr()) }
     }
 
+    /// Gets an enum by index.
+    ///
+    /// # Arguments
+    /// * `index` - The enum index
+    ///
+    /// # Returns
+    /// The enum type info, or None if the index is invalid
     pub fn get_enum_by_index(&self, index: asUINT) -> Option<TypeInfo> {
         unsafe {
             let type_info =
@@ -832,6 +1274,14 @@ impl Engine {
     }
 
     // Funcdefs
+
+    /// Registers a function definition (funcdef).
+    ///
+    /// # Arguments
+    /// * `decl` - The function definition declaration
+    ///
+    /// # Returns
+    /// Result indicating success or failure
     pub fn register_funcdef(&self, decl: &str) -> ScriptResult<()> {
         let c_decl = CString::new(decl)?;
 
@@ -843,10 +1293,21 @@ impl Engine {
         }
     }
 
+    /// Gets the number of registered funcdefs.
+    ///
+    /// # Returns
+    /// The number of funcdefs
     pub fn get_funcdef_count(&self) -> asUINT {
         unsafe { (self.as_vtable().asIScriptEngine_GetFuncdefCount)(self.inner.as_ptr()) }
     }
 
+    /// Gets a funcdef by index.
+    ///
+    /// # Arguments
+    /// * `index` - The funcdef index
+    ///
+    /// # Returns
+    /// The funcdef type info, or None if the index is invalid
     pub fn get_funcdef_by_index(&self, index: asUINT) -> Option<TypeInfo> {
         unsafe {
             let type_info =
@@ -860,6 +1321,15 @@ impl Engine {
     }
 
     // Typedefs
+
+    /// Registers a typedef.
+    ///
+    /// # Arguments
+    /// * `type_name` - The typedef name
+    /// * `decl` - The typedef declaration
+    ///
+    /// # Returns
+    /// Result indicating success or failure
     pub fn register_typedef(&self, type_name: &str, decl: &str) -> ScriptResult<()> {
         let c_type = CString::new(type_name)?;
         let c_decl = CString::new(decl)?;
@@ -873,10 +1343,21 @@ impl Engine {
         }
     }
 
+    /// Gets the number of registered typedefs.
+    ///
+    /// # Returns
+    /// The number of typedefs
     pub fn get_typedef_count(&self) -> asUINT {
         unsafe { (self.as_vtable().asIScriptEngine_GetTypedefCount)(self.inner.as_ptr()) }
     }
 
+    /// Gets a typedef by index.
+    ///
+    /// # Arguments
+    /// * `index` - The typedef index
+    ///
+    /// # Returns
+    /// The typedef type info, or None if the index is invalid
     pub fn get_typedef_by_index(&self, index: asUINT) -> Option<TypeInfo> {
         unsafe {
             let type_info =
@@ -890,6 +1371,16 @@ impl Engine {
     }
 
     // Configuration groups
+
+    /// Begins a configuration group.
+    ///
+    /// Configuration groups allow you to remove related registrations together.
+    ///
+    /// # Arguments
+    /// * `group_name` - The group name
+    ///
+    /// # Returns
+    /// Result indicating success or failure
     pub fn begin_config_group(&self, group_name: &str) -> ScriptResult<()> {
         let c_group = CString::new(group_name)?;
 
@@ -901,6 +1392,10 @@ impl Engine {
         }
     }
 
+    /// Ends the current configuration group.
+    ///
+    /// # Returns
+    /// Result indicating success or failure
     pub fn end_config_group(&self) -> ScriptResult<()> {
         unsafe {
             ScriptError::from_code((self.as_vtable().asIScriptEngine_EndConfigGroup)(
@@ -909,6 +1404,13 @@ impl Engine {
         }
     }
 
+    /// Removes a configuration group and all its registrations.
+    ///
+    /// # Arguments
+    /// * `group_name` - The group name to remove
+    ///
+    /// # Returns
+    /// Result indicating success or failure
     pub fn remove_config_group(&self, group_name: &str) -> ScriptResult<()> {
         let c_group = CString::new(group_name)?;
 
@@ -921,6 +1423,14 @@ impl Engine {
     }
 
     // Access control
+
+    /// Sets the default access mask for registrations.
+    ///
+    /// # Arguments
+    /// * `default_mask` - The default access mask
+    ///
+    /// # Returns
+    /// The previous default access mask
     pub fn set_default_access_mask(&self, default_mask: asDWORD) -> asDWORD {
         unsafe {
             (self.as_vtable().asIScriptEngine_SetDefaultAccessMask)(
@@ -931,6 +1441,14 @@ impl Engine {
     }
 
     // Namespaces
+
+    /// Sets the default namespace for registrations.
+    ///
+    /// # Arguments
+    /// * `name_space` - The namespace name
+    ///
+    /// # Returns
+    /// Result indicating success or failure
     pub fn set_default_namespace(&self, name_space: &str) -> ScriptResult<()> {
         let c_namespace = CString::new(name_space)?;
 
@@ -942,6 +1460,10 @@ impl Engine {
         }
     }
 
+    /// Gets the current default namespace.
+    ///
+    /// # Returns
+    /// The current default namespace, or None if not set
     pub fn get_default_namespace(&self) -> Option<&str> {
         unsafe {
             let namespace =
@@ -955,6 +1477,15 @@ impl Engine {
     }
 
     // Modules
+
+    /// Gets or creates a module.
+    ///
+    /// # Arguments
+    /// * `name` - The module name
+    /// * `flag` - Flags controlling module creation
+    ///
+    /// # Returns
+    /// The module or an error
     pub fn get_module(&self, name: &str, flag: GetModuleFlags) -> ScriptResult<Module> {
         let c_name = CString::new(name)?;
 
@@ -972,6 +1503,13 @@ impl Engine {
         }
     }
 
+    /// Discards a module.
+    ///
+    /// # Arguments
+    /// * `name` - The module name to discard
+    ///
+    /// # Returns
+    /// Result indicating success or failure
     pub fn discard_module(&self, name: &str) -> ScriptResult<()> {
         let c_name = CString::new(name)?;
 
@@ -983,10 +1521,21 @@ impl Engine {
         }
     }
 
+    /// Gets the number of modules.
+    ///
+    /// # Returns
+    /// The number of modules
     pub fn get_module_count(&self) -> asUINT {
         unsafe { (self.as_vtable().asIScriptEngine_GetModuleCount)(self.inner.as_ptr()) }
     }
 
+    /// Gets a module by index.
+    ///
+    /// # Arguments
+    /// * `index` - The module index
+    ///
+    /// # Returns
+    /// The module, or None if the index is invalid
     pub fn get_module_by_index(&self, index: asUINT) -> Option<Module> {
         unsafe {
             let module =
@@ -1000,10 +1549,22 @@ impl Engine {
     }
 
     // Functions
+
+    /// Gets the ID of the last registered function.
+    ///
+    /// # Returns
+    /// The function ID
     pub fn get_last_function_id(&self) -> i32 {
         unsafe { (self.as_vtable().asIScriptEngine_GetLastFunctionId)(self.inner.as_ptr()) }
     }
 
+    /// Gets a function by its ID.
+    ///
+    /// # Arguments
+    /// * `func_id` - The function ID
+    ///
+    /// # Returns
+    /// The function, or None if the ID is invalid
     pub fn get_function_by_id(&self, func_id: i32) -> Option<Function> {
         unsafe {
             let func_ptr =
@@ -1017,6 +1578,14 @@ impl Engine {
     }
 
     // Type information
+
+    /// Gets a type ID by declaration.
+    ///
+    /// # Arguments
+    /// * `decl` - The type declaration
+    ///
+    /// # Returns
+    /// The type ID or an error
     pub fn get_type_id_by_decl(&self, decl: &str) -> ScriptResult<i32> {
         let c_decl = CString::new(decl)?;
 
@@ -1032,6 +1601,14 @@ impl Engine {
         }
     }
 
+    /// Gets the declaration string for a type ID.
+    ///
+    /// # Arguments
+    /// * `type_id` - The type ID
+    /// * `include_namespace` - Whether to include the namespace
+    ///
+    /// # Returns
+    /// The type declaration, or None if the type ID is invalid
     pub fn get_type_declaration(&self, type_id: i32, include_namespace: bool) -> Option<&str> {
         unsafe {
             let decl = (self.as_vtable().asIScriptEngine_GetTypeDeclaration)(
@@ -1047,6 +1624,13 @@ impl Engine {
         }
     }
 
+    /// Gets the size of a primitive type.
+    ///
+    /// # Arguments
+    /// * `type_id` - The type ID
+    ///
+    /// # Returns
+    /// The size in bytes, or an error if the type is not primitive
     pub fn get_size_of_primitive_type(&self, type_id: i32) -> ScriptResult<i32> {
         unsafe {
             let size = (self.as_vtable().asIScriptEngine_GetSizeOfPrimitiveType)(
@@ -1060,6 +1644,13 @@ impl Engine {
         }
     }
 
+    /// Gets type information by type ID.
+    ///
+    /// # Arguments
+    /// * `type_id` - The type ID
+    ///
+    /// # Returns
+    /// The type info, or None if the type ID is invalid
     pub fn get_type_info_by_id(&self, type_id: TypeId) -> Option<TypeInfo> {
         unsafe {
             let type_id: asETypeIdFlags = type_id.into();
@@ -1075,6 +1666,13 @@ impl Engine {
         }
     }
 
+    /// Gets type information by name.
+    ///
+    /// # Arguments
+    /// * `name` - The type name
+    ///
+    /// # Returns
+    /// The type info, or None if not found
     pub fn get_type_info_by_name(&self, name: &str) -> Option<TypeInfo> {
         let c_name = CString::new(name).ok()?;
 
@@ -1091,6 +1689,13 @@ impl Engine {
         }
     }
 
+    /// Gets type information by declaration.
+    ///
+    /// # Arguments
+    /// * `decl` - The type declaration
+    ///
+    /// # Returns
+    /// The type info, or None if not found
     pub fn get_type_info_by_decl(&self, decl: &str) -> Option<TypeInfo> {
         let c_decl = CString::new(decl).ok()?;
 
@@ -1108,6 +1713,11 @@ impl Engine {
     }
 
     // Context creation
+
+    /// Creates a new script context.
+    ///
+    /// # Returns
+    /// A new context or an error
     pub fn create_context(&self) -> ScriptResult<Context> {
         unsafe {
             let ctx = (self.as_vtable().asIScriptEngine_CreateContext)(self.inner.as_ptr());
@@ -1120,6 +1730,14 @@ impl Engine {
     }
 
     // Script objects
+
+    /// Creates a new script object of the given type.
+    ///
+    /// # Arguments
+    /// * `type_info` - The type information
+    ///
+    /// # Returns
+    /// The created object or an error
     pub fn create_script_object<T: ScriptData>(&self, type_info: &TypeInfo) -> ScriptResult<T> {
         unsafe {
             let obj = (self.as_vtable().asIScriptEngine_CreateScriptObject)(
@@ -1134,6 +1752,14 @@ impl Engine {
         }
     }
 
+    /// Creates a copy of a script object.
+    ///
+    /// # Arguments
+    /// * `obj` - The object to copy
+    /// * `type_info` - The type information
+    ///
+    /// # Returns
+    /// The copied object, or None if copying failed
     pub fn create_script_object_copy<T: ScriptData>(
         &self,
         obj: &mut T,
@@ -1153,6 +1779,13 @@ impl Engine {
         }
     }
 
+    /// Creates an uninitialized script object.
+    ///
+    /// # Arguments
+    /// * `type_info` - The type information
+    ///
+    /// # Returns
+    /// The uninitialized object memory, or None if creation failed
     pub fn create_uninitialized_script_object(
         &self,
         type_info: &TypeInfo,
@@ -1172,6 +1805,14 @@ impl Engine {
         }
     }
 
+    /// Creates a delegate function.
+    ///
+    /// # Arguments
+    /// * `func` - The function to create a delegate for
+    /// * `obj` - The object to bind to the delegate
+    ///
+    /// # Returns
+    /// The delegate function, or None if creation failed
     pub fn create_delegate<T: ScriptData>(&self, func: &Function, obj: &mut T) -> Option<Function> {
         unsafe {
             let delegate = (self.as_vtable().asIScriptEngine_CreateDelegate)(
@@ -1187,6 +1828,14 @@ impl Engine {
         }
     }
 
+    /// Assigns a script object to another.
+    ///
+    /// # Arguments
+    /// * `src_obj` - The source object
+    /// * `type_info` - The type information
+    ///
+    /// # Returns
+    /// The assigned object or an error
     pub fn assign_script_object<T: ScriptData>(
         &self,
         src_obj: &mut T,
@@ -1204,6 +1853,11 @@ impl Engine {
         Ok(ScriptData::from_script_ptr(ptr))
     }
 
+    /// Releases a script object.
+    ///
+    /// # Arguments
+    /// * `obj` - The object to release
+    /// * `type_info` - The type information
     pub fn release_script_object<T: ScriptData>(&self, obj: &mut T, type_info: &TypeInfo) {
         unsafe {
             (self.as_vtable().asIScriptEngine_ReleaseScriptObject)(
@@ -1214,6 +1868,11 @@ impl Engine {
         }
     }
 
+    /// Adds a reference to a script object.
+    ///
+    /// # Arguments
+    /// * `obj` - The object to add a reference to
+    /// * `type_info` - The type information
     pub fn add_ref_script_object<T: ScriptData>(&self, obj: &mut T, type_info: &TypeInfo) {
         unsafe {
             (self.as_vtable().asIScriptEngine_AddRefScriptObject)(
@@ -1224,6 +1883,16 @@ impl Engine {
         }
     }
 
+    /// Performs a reference cast on an object.
+    ///
+    /// # Arguments
+    /// * `obj` - The object to cast
+    /// * `from_type` - The source type
+    /// * `to_type` - The target type
+    /// * `use_only_implicit_cast` - Whether to use only implicit casts
+    ///
+    /// # Returns
+    /// The cast object, None if casting failed, or an error
     pub fn ref_cast_object<T: ScriptData, U: ScriptData>(
         &self,
         obj: &mut T,
@@ -1251,6 +1920,14 @@ impl Engine {
         }
     }
 
+    /// Gets the weak reference flag of a script object.
+    ///
+    /// # Arguments
+    /// * `obj` - The object
+    /// * `type_info` - The type information
+    ///
+    /// # Returns
+    /// The weak reference flag, or None if not available
     pub fn get_weak_ref_flag_of_script_object<T: ScriptData>(
         &self,
         obj: &mut T,
@@ -1273,6 +1950,11 @@ impl Engine {
     }
 
     // Context management
+
+    /// Requests a context from the context pool.
+    ///
+    /// # Returns
+    /// A context from the pool, or None if none available
     pub fn request_context(&self) -> Option<Context> {
         unsafe {
             let ctx = (self.as_vtable().asIScriptEngine_RequestContext)(self.inner.as_ptr());
@@ -1284,12 +1966,25 @@ impl Engine {
         }
     }
 
+    /// Returns a context to the context pool.
+    ///
+    /// # Arguments
+    /// * `ctx` - The context to return
     pub fn return_context(&self, ctx: Context) {
         unsafe {
             (self.as_vtable().asIScriptEngine_ReturnContext)(self.inner.as_ptr(), ctx.as_ptr());
         }
     }
 
+    /// Sets context callbacks for the context pool.
+    ///
+    /// # Arguments
+    /// * `request_ctx` - Callback for requesting contexts
+    /// * `return_ctx` - Callback for returning contexts
+    /// * `param` - Parameter to pass to callbacks
+    ///
+    /// # Returns
+    /// Result indicating success or failure
     pub fn set_context_callbacks<T: ScriptData>(
         &mut self,
         request_ctx: RequestContextCallbackFn,
@@ -1310,6 +2005,14 @@ impl Engine {
     }
 
     // Parsing
+
+    /// Parses a token from a string.
+    ///
+    /// # Arguments
+    /// * `string` - The string to parse
+    ///
+    /// # Returns
+    /// A tuple of (token_class, token_length)
     pub fn parse_token(&self, string: &str) -> (TokenClass, usize) {
         let c_string = string.as_bytes();
         let mut token_length: asUINT = 0;
@@ -1326,6 +2029,15 @@ impl Engine {
     }
 
     // Garbage collection
+
+    /// Performs garbage collection.
+    ///
+    /// # Arguments
+    /// * `flags` - Garbage collection flags
+    /// * `num_iterations` - Number of iterations to perform
+    ///
+    /// # Returns
+    /// Result indicating success or failure
     pub fn garbage_collect(&self, flags: asDWORD, num_iterations: asUINT) -> ScriptResult<()> {
         unsafe {
             ScriptError::from_code((self.as_vtable().asIScriptEngine_GarbageCollect)(
@@ -1336,6 +2048,10 @@ impl Engine {
         }
     }
 
+    /// Gets garbage collection statistics.
+    ///
+    /// # Returns
+    /// Garbage collection statistics
     pub fn get_gc_statistics(&self) -> GCStatistics {
         let mut current_size: asUINT = 0;
         let mut total_destroyed: asUINT = 0;
@@ -1363,6 +2079,14 @@ impl Engine {
         }
     }
 
+    /// Notifies the garbage collector of a new object.
+    ///
+    /// # Arguments
+    /// * `obj` - The new object
+    /// * `type_info` - The type information
+    ///
+    /// # Returns
+    /// Result indicating success or failure
     pub fn notify_garbage_collector_of_new_object<T: ScriptData>(
         &self,
         obj: &mut T,
@@ -1379,6 +2103,13 @@ impl Engine {
         }
     }
 
+    /// Gets information about an object in the garbage collector.
+    ///
+    /// # Arguments
+    /// * `idx` - The object index
+    ///
+    /// # Returns
+    /// Object information, or None if the index is invalid
     pub fn get_object_in_gc(&self, idx: asUINT) -> Option<GCObjectInfo> {
         let mut seq_nbr: asUINT = 0;
         let mut obj: *mut c_void = ptr::null_mut();
@@ -1409,6 +2140,10 @@ impl Engine {
         }
     }
 
+    /// Garbage collection enum callback.
+    ///
+    /// # Arguments
+    /// * `reference` - The reference to enumerate
     pub fn gc_enum_callback<T: ScriptData>(&self, reference: &mut T) {
         unsafe {
             (self.as_vtable().asIScriptEngine_GCEnumCallback)(
@@ -1418,6 +2153,11 @@ impl Engine {
         }
     }
 
+    /// Forwards garbage collection enum references.
+    ///
+    /// # Arguments
+    /// * `ref_obj` - The reference object
+    /// * `type_info` - The type information
     pub fn forward_gc_enum_references<T: ScriptData>(
         &self,
         ref_obj: &mut T,
@@ -1432,6 +2172,11 @@ impl Engine {
         }
     }
 
+    /// Forwards garbage collection release references.
+    ///
+    /// # Arguments
+    /// * `ref_obj` - The reference object
+    /// * `type_info` - The type information
     pub fn forward_gc_release_references<T: ScriptData>(
         &self,
         ref_obj: &mut T,
@@ -1446,6 +2191,13 @@ impl Engine {
         }
     }
 
+    /// Sets a callback for when circular references are detected.
+    ///
+    /// # Arguments
+    /// * `callback` - The callback function
+    ///
+    /// # Returns
+    /// Result indicating success or failure
     pub fn set_circular_ref_detected_callback(
         &mut self,
         callback: CircularRefCallbackFn,
@@ -1466,12 +2218,20 @@ impl Engine {
     }
 
     // User data
+
+    /// Sets user data on the engine.
+    ///
+    /// # Arguments
+    /// * `data` - The user data to set
+    ///
+    /// # Returns
+    /// The previous user data, or None if none was set
     pub fn set_user_data<T: UserData + ScriptData>(&self, data: &mut T) -> Option<T> {
         unsafe {
             let ptr = (self.as_vtable().asIScriptEngine_SetUserData)(
                 self.inner.as_ptr(),
                 data.to_script_ptr(),
-                T::TYPE_ID as asPWORD,
+                T::KEY as asPWORD,
             );
             if ptr.is_null() {
                 None
@@ -1481,11 +2241,15 @@ impl Engine {
         }
     }
 
+    /// Gets user data from the engine.
+    ///
+    /// # Returns
+    /// The user data or an error if not found
     pub fn get_user_data<T: UserData + ScriptData>(&self) -> ScriptResult<T> {
         unsafe {
             let ptr = (self.as_vtable().asIScriptEngine_GetUserData)(
                 self.inner.as_ptr(),
-                T::TYPE_ID as asPWORD,
+                T::KEY as asPWORD,
             );
             if ptr.is_null() {
                 Err(ScriptError::NullPointer)
@@ -1495,6 +2259,14 @@ impl Engine {
         }
     }
 
+    /// Sets a cleanup callback for engine user data.
+    ///
+    /// # Arguments
+    /// * `callback` - The cleanup callback
+    /// * `type_id` - The type ID for the user data
+    ///
+    /// # Returns
+    /// Result indicating success or failure
     pub fn set_engine_user_data_cleanup_callback(
         &mut self,
         callback: CleanEngineUserDataCallbackFn,
@@ -1515,6 +2287,14 @@ impl Engine {
         Ok(())
     }
 
+    /// Sets a cleanup callback for module user data.
+    ///
+    /// # Arguments
+    /// * `callback` - The cleanup callback
+    /// * `type_id` - The type ID for the user data
+    ///
+    /// # Returns
+    /// Result indicating success or failure
     pub fn set_module_user_data_cleanup_callback(
         &mut self,
         callback: CleanModuleUserDataCallbackFn,
@@ -1534,6 +2314,14 @@ impl Engine {
         Ok(())
     }
 
+    /// Sets a cleanup callback for context user data.
+    ///
+    /// # Arguments
+    /// * `callback` - The cleanup callback
+    /// * `type_id` - The type ID for the user data
+    ///
+    /// # Returns
+    /// Result indicating success or failure
     pub fn set_context_user_data_cleanup_callback(
         &mut self,
         callback: CleanContextUserDataCallbackFn,
@@ -1554,6 +2342,14 @@ impl Engine {
         Ok(())
     }
 
+    /// Sets a cleanup callback for function user data.
+    ///
+    /// # Arguments
+    /// * `callback` - The cleanup callback
+    /// * `type_id` - The type ID for the user data
+    ///
+    /// # Returns
+    /// Result indicating success or failure
     pub fn set_function_user_data_cleanup_callback(
         &mut self,
         callback: CleanFunctionUserDataCallbackFn,
@@ -1574,6 +2370,14 @@ impl Engine {
         Ok(())
     }
 
+    /// Sets a cleanup callback for type info user data.
+    ///
+    /// # Arguments
+    /// * `callback` - The cleanup callback
+    /// * `type_id` - The type ID for the user data
+    ///
+    /// # Returns
+    /// Result indicating success or failure
     pub fn set_type_info_user_data_cleanup_callback(
         &mut self,
         callback: CleanTypeInfoCallbackFn,
@@ -1594,6 +2398,14 @@ impl Engine {
         Ok(())
     }
 
+    /// Sets a cleanup callback for script object user data.
+    ///
+    /// # Arguments
+    /// * `callback` - The cleanup callback
+    /// * `type_id` - The type ID for the user data
+    ///
+    /// # Returns
+    /// Result indicating success or failure
     pub fn set_script_object_user_data_cleanup_callback(
         &mut self,
         callback: CleanScriptObjectCallbackFn,
@@ -1615,6 +2427,13 @@ impl Engine {
 
     // Translate app exception callback
 
+    /// Sets a callback for translating application exceptions.
+    ///
+    /// # Arguments
+    /// * `callback` - The translation callback
+    ///
+    /// # Returns
+    /// Result indicating success or failure
     pub fn set_translate_app_exception_callback(
         &mut self,
         callback: TranslateAppExceptionCallbackFn,
@@ -1634,6 +2453,10 @@ impl Engine {
         }
     }
 
+    /// Gets the vtable for the underlying AngelScript engine.
+    ///
+    /// # Safety
+    /// This function provides direct access to the AngelScript vtable.
     fn as_vtable(&self) -> &asIScriptEngine__bindgen_vtable {
         unsafe { &*(*self.inner.as_ptr()).vtable_ }
     }
@@ -1662,9 +2485,16 @@ impl Clone for Engine {
 unsafe impl Send for Engine {}
 unsafe impl Sync for Engine {}
 
+/// User data wrapper for generic function pointers.
+///
+/// This struct wraps a generic function pointer for storage as user data.
 struct GenericFnUserData(pub GenericFn);
 
 impl GenericFnUserData {
+    /// Calls the wrapped function.
+    ///
+    /// # Arguments
+    /// * `ctx` - The script context
     pub fn call(self, ctx: &ScriptGeneric) {
         (self.0)(ctx)
     }
@@ -1674,32 +2504,50 @@ unsafe impl Send for GenericFnUserData {}
 unsafe impl Sync for GenericFnUserData {}
 
 impl UserData for GenericFnUserData {
-    const TYPE_ID: usize = 0x129032719; // Must be unique!
+    const KEY: usize = 0x129032719; // Must be unique!
 }
 
+/// Information about a global property.
 #[derive(Debug)]
 pub struct GlobalPropertyInfo {
+    /// The property name
     pub name: Option<String>,
+    /// The namespace the property belongs to
     pub name_space: Option<String>,
+    /// The type ID of the property
     pub type_id: i32,
+    /// Whether the property is const
     pub is_const: bool,
+    /// The configuration group the property belongs to
     pub config_group: Option<String>,
+    /// Pointer to the property data
     pub pointer: ScriptMemoryLocation,
+    /// Access mask for the property
     pub access_mask: asDWORD,
 }
 
+/// Garbage collection statistics.
 #[derive(Debug)]
 pub struct GCStatistics {
+    /// Current number of objects in the garbage collector
     pub current_size: asUINT,
+    /// Total number of objects destroyed
     pub total_destroyed: asUINT,
+    /// Total number of circular references detected
     pub total_detected: asUINT,
+    /// Number of new objects since last collection
     pub new_objects: asUINT,
+    /// Total number of new objects destroyed
     pub total_new_destroyed: asUINT,
 }
 
+/// Information about an object in the garbage collector.
 #[derive(Debug)]
 pub struct GCObjectInfo {
+    /// Sequence number of the object
     pub seq_nbr: asUINT,
+    /// Pointer to the object
     pub obj: ScriptMemoryLocation,
+    /// Type information for the object
     pub type_info: Option<TypeInfo>,
 }
