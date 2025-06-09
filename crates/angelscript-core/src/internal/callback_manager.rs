@@ -260,7 +260,7 @@ impl CallbackManager {
 
     pub unsafe extern "C" fn cvoid_msg_callback(
         msg_ptr: *const asSMessageInfo,
-        _params: *mut c_void,
+        params: *mut c_void,
     ) {
         if let Some(callback) = CallbackManager::global()
             .lock()
@@ -276,8 +276,10 @@ impl CallbackManager {
                 msg_type: MessageType::from(c_msg.type_),
                 message: read_cstring(c_msg.message).to_string(),
             };
+            
+            let mut mem = ScriptMemoryLocation::from_const(params);
 
-            callback(&info);
+            callback(&info, &mut mem);
         }
     }
 

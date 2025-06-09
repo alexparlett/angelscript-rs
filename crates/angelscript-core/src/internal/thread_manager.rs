@@ -7,11 +7,9 @@
 
 use crate::core::error::{ScriptError, ScriptResult};
 use angelscript_sys::{
-    asAcquireExclusiveLock, asAcquireSharedLock, asGetThreadManager, asIThreadManager,
-    asPrepareMultithread, asReleaseExclusiveLock, asReleaseSharedLock, asThreadCleanup,
-    asUnprepareMultithread,
+    asAcquireExclusiveLock, asAcquireSharedLock, asIThreadManager, asPrepareMultithread,
+    asReleaseExclusiveLock, asReleaseSharedLock, asThreadCleanup, asUnprepareMultithread,
 };
-use std::ptr;
 
 // ========== C++ IMPLEMENTATION (DEFAULT) ==========
 
@@ -19,6 +17,7 @@ use std::ptr;
 mod cpp_impl {
     use super::*;
     use crate::types::enums::ReturnCode;
+    use angelscript_sys::asGetThreadManager;
 
     /// Lightweight wrapper around AngelScript's C++ thread manager
     #[derive(Debug)]
@@ -30,7 +29,7 @@ mod cpp_impl {
         /// Prepares AngelScript for multithreading and returns the manager
         pub fn prepare() -> ScriptResult<Self> {
             unsafe {
-                let result = asPrepareMultithread(ptr::null_mut());
+                let result = asPrepareMultithread(std::ptr::null_mut());
                 ScriptError::from_code(result)?;
 
                 let mgr_ptr = asGetThreadManager();
@@ -112,10 +111,11 @@ mod cpp_impl {
 #[cfg(feature = "rust-threads")]
 mod rust_impl {
     use super::*;
+    use crate::types::enums::ReturnCode;
+    use angelscript_sys::{asIScriptContext, asIThreadManager__bindgen_vtable};
     use std::collections::HashMap;
     use std::sync::{Mutex, RwLock};
     use std::thread::{self, ThreadId};
-    use angelscript_sys::{asIScriptContext, asIThreadManager__bindgen_vtable};
 
     /// Thread-local data structure that mirrors asCThreadLocalData
     #[derive(Debug, Clone)]
@@ -374,7 +374,7 @@ mod rust_impl {
                 if result != 0 {
                     // Clean up on failure
                     let _recovered = RustThreadManagerFFI::from_interface_ptr(interface_ptr);
-                    return Err(ScriptError::from_code(result));
+                    ScriptError::from_code(result)?;
                 }
             }
 
@@ -515,15 +515,6 @@ mod rust_impl {
 
     unsafe impl Send for ThreadManager {}
     unsafe impl Sync for ThreadManager {}
-
-    // Re-export types that are only available with rust-threads
-    use crate::prelude::ReturnCode;
-    pub use ThreadCriticalSection;
-    pub use ThreadLocalData;
-    pub use ThreadReadLockGuard;
-    pub use ThreadReadWriteLock;
-    pub use ThreadWriteLockGuard;
-    use crate::types::enums::ReturnCode;
 }
 
 // ========== CONDITIONAL EXPORTS ==========

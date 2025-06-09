@@ -12,6 +12,7 @@ pub use angelscript_core::*;
 // Re-export main types
 pub mod prelude {
     pub use angelscript_core::core::context::*;
+    pub use angelscript_core::core::diagnostics::*;
     pub use angelscript_core::core::engine::*;
     pub use angelscript_core::core::error::{ScriptError, ScriptResult};
     pub use angelscript_core::core::function::*;

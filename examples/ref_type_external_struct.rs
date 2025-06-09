@@ -3,7 +3,7 @@ use angelscript::prelude::{
     ScriptGeneric, ScriptResult, TypeId,
 };
 use angelscript_core::types::enums::TypeModifiers;
-use angelscript_core::types::script_memory::ScriptMemoryLocation;
+use angelscript_core::types::script_memory::{ScriptMemoryLocation, Void};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -266,12 +266,12 @@ fn setup_engine() -> ScriptResult<Engine> {
     engine.install(angelscript::addons::string::addon())?;
 
     // Set up message callback
-    engine.set_message_callback(|msg| {
+    engine.set_message_callback::<Void>(|msg, _ | {
         println!(
             "[{:?}] {} {} {} - {}",
             msg.msg_type, msg.row, msg.col, msg.section, msg.message
         );
-    })?;
+    }, None)?;
 
     Ok(engine)
 }
@@ -429,7 +429,7 @@ fn main() -> ScriptResult<()> {
 
     // Create a module
     let module = engine.get_module("MyModule", GetModuleFlags::AlwaysCreate)?;
-    module.add_script_section_simple("main", script)?;
+    module.add_script_section("main", script, 0)?;
     module.build()?;
 
     let func = module.get_function_by_name("main").unwrap();

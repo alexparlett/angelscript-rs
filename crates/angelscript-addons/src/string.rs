@@ -1,10 +1,10 @@
-use crate::Addon;
 use crate::stringfactory::get_string_factory_instance;
+use crate::Addon;
 use angelscript_core::core::engine::Engine;
 use angelscript_core::core::script_generic::ScriptGeneric;
 use angelscript_core::types::enums::{Behaviour, ObjectTypeFlags, TypeId};
 use angelscript_core::types::script_memory::ScriptMemoryLocation;
-use angelscript_sys::{asDWORD, asINT8, asINT16, asINT32, asINT64, asQWORD, asUINT};
+use angelscript_sys::{asDWORD, asINT16, asINT32, asINT64, asINT8, asQWORD, asUINT};
 use sprintf::vsprintf;
 
 // Constructors

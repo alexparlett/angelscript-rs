@@ -1,19 +1,23 @@
 #[cfg(test)]
 mod tests {
-    use angelscript::core::engine::Engine;
-    use angelscript::prelude::{ContextState, GetModuleFlags};
-    use angelscript_core::core::script_generic::ScriptGeneric;
+    use angelscript_core::core::context::Context;
+    use angelscript_core::core::engine::Engine;
+    use angelscript_core::types::enums::{ContextState, GetModuleFlags};
+    use angelscript_core::types::script_memory::Void;
 
     // Helper function to reduce boilerplate
     fn create_test_engine() -> Engine {
         let mut engine = Engine::create().expect("Failed to create engine");
         engine
-            .install(angelscript::addons::string::addon())
+            .install(angelscript_addons::string::addon())
             .expect("Failed to install string addon");
         engine
-            .set_message_callback(|msg| {
-                println!("AngelScript: {}", msg.message);
-            })
+            .set_message_callback::<Void>(
+                |msg, _| {
+                    println!("AngelScript: {}", msg.message);
+                },
+                None,
+            )
             .expect("Failed to set message callback");
         engine
     }
@@ -21,15 +25,15 @@ mod tests {
     fn execute_script_with_return<T>(
         script: &str,
         func_decl: &str,
-        get_result: impl FnOnce(&angelscript::core::context::Context) -> T,
+        get_result: impl FnOnce(&Context) -> T,
     ) -> T {
         let engine = create_test_engine();
-        
+
         let module = engine
             .get_module("TestModule", GetModuleFlags::CreateIfNotExists)
             .expect("Failed to get module");
         module
-            .add_script_section_simple("test_script", script)
+            .add_script_section("test_script", script, 0)
             .expect("Failed to add script section");
         module.build().expect("Failed to build module");
 
@@ -222,7 +226,7 @@ mod tests {
             .get_module("TestModule", GetModuleFlags::CreateIfNotExists)
             .expect("Failed to get module");
         module
-            .add_script_section_simple("test_script", script)
+            .add_script_section("test_script", script, 0)
             .expect("Failed to add script section");
         module.build().expect("Failed to build module");
 
@@ -389,9 +393,10 @@ mod tests {
         });
         assert_eq!(result, "3.14");
 
-        let result = execute_script_with_return(script, "string test_format_float_default()", |ctx| {
-            ctx.get_return_object::<String>().unwrap()
-        });
+        let result =
+            execute_script_with_return(script, "string test_format_float_default()", |ctx| {
+                ctx.get_return_object::<String>().unwrap()
+            });
         assert_eq!(result, "3.141590");
     }
 
@@ -577,9 +582,10 @@ mod tests {
         });
         assert_eq!(result, -1);
 
-        let result = execute_script_with_return(script, "int test_rfind_single_occurrence()", |ctx| {
-            ctx.get_return_dword() as i32
-        });
+        let result =
+            execute_script_with_return(script, "int test_rfind_single_occurrence()", |ctx| {
+                ctx.get_return_dword() as i32
+            });
         assert_eq!(result, 0);
 
         let result = execute_script_with_return(script, "int test_rfind_empty()", |ctx| {
@@ -666,14 +672,16 @@ mod tests {
         });
         assert_eq!(result, "Hello, world!");
 
-        let result = execute_script_with_return(script, "string test_push_str_empty_target()", |ctx| {
-            ctx.get_return_object::<String>().unwrap()
-        });
+        let result =
+            execute_script_with_return(script, "string test_push_str_empty_target()", |ctx| {
+                ctx.get_return_object::<String>().unwrap()
+            });
         assert_eq!(result, "Hello, world!");
 
-        let result = execute_script_with_return(script, "string test_push_str_empty_source()", |ctx| {
-            ctx.get_return_object::<String>().unwrap()
-        });
+        let result =
+            execute_script_with_return(script, "string test_push_str_empty_source()", |ctx| {
+                ctx.get_return_object::<String>().unwrap()
+            });
         assert_eq!(result, "Hello, world!");
 
         let result = execute_script_with_return(script, "string test_push_str_multiple()", |ctx| {
@@ -728,5 +736,4 @@ mod tests {
         });
         assert_eq!(result, "New content");
     }
-
 }

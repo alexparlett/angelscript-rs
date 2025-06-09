@@ -7,3 +7,4 @@ pub mod module;
 pub mod script_generic;
 pub mod script_object;
 pub mod typeinfo;
+pub mod diagnostics;

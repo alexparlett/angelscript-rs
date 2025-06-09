@@ -1,4 +1,5 @@
 use crate::core::context::Context;
+use crate::core::diagnostics::{Diagnostic, DiagnosticKind, Diagnostics};
 use crate::core::error::{ScriptError, ScriptResult};
 use crate::core::function::Function;
 use crate::core::lockable_shared_bool::LockableSharedBool;
@@ -11,7 +12,7 @@ use crate::internal::thread_manager::{ExclusiveLockGuard, SharedLockGuard, Threa
 use crate::types::callbacks::{
     CircularRefCallbackFn, CleanContextUserDataCallbackFn, CleanEngineUserDataCallbackFn,
     CleanFunctionUserDataCallbackFn, CleanModuleUserDataCallbackFn, CleanScriptObjectCallbackFn,
-    CleanTypeInfoCallbackFn, GenericFn, MessageCallbackFn, RequestContextCallbackFn,
+    CleanTypeInfoCallbackFn, GenericFn, MessageCallbackFn, MessageInfo, RequestContextCallbackFn,
     ReturnContextCallbackFn, TranslateAppExceptionCallbackFn,
 };
 use crate::types::enums::*;
@@ -53,7 +54,7 @@ pub trait EngineInstallable {
 /// # Examples
 ///
 /// ```rust
-/// use angelscript_rs::Engine;
+/// use angelscript::prelude::Engine;
 ///
 /// // Create a new engine
 /// let engine = Engine::create()?;
@@ -533,14 +534,19 @@ impl Engine {
     ///
     /// # Returns
     /// Result indicating success or failure
-    pub fn set_message_callback(&mut self, callback: MessageCallbackFn) -> ScriptResult<()> {
+    pub fn set_message_callback<T: ScriptData + 'static>(
+        &mut self,
+        callback: MessageCallbackFn,
+        data: Option<&mut T>,
+    ) -> ScriptResult<()> {
         CallbackManager::set_message_callback(Some(callback))?;
 
         unsafe {
             ScriptError::from_code((self.as_vtable().asIScriptEngine_SetMessageCallback)(
                 self.inner.as_ptr(),
                 &mut asMessageInfoFunction(Some(CallbackManager::cvoid_msg_callback)),
-                ptr::null_mut(),
+                data.map(|v| v.to_script_ptr())
+                    .unwrap_or_else(|| std::ptr::null_mut()),
                 CallingConvention::Cdecl.into(),
             ))
         }
@@ -2451,6 +2457,35 @@ impl Engine {
                 conv as i32,
             ))
         }
+    }
+
+    /// Sets a diagnostic collector that will receive all compilation messages
+    pub fn set_diagnostic_callback(&mut self, diagnostics: &mut Diagnostics) -> ScriptResult<()> {
+        // Clear any existing diagnostics
+        diagnostics.clear();
+
+        let callback = |message_info: &MessageInfo, mem: &mut ScriptMemoryLocation| {
+            let diagnostic = Diagnostic {
+                kind: DiagnosticKind::from(message_info.msg_type),
+                message: message_info.message.clone(),
+                section: if message_info.section.is_empty() {
+                    None
+                } else {
+                    Some(message_info.section.clone())
+                },
+                row: message_info.row,
+                col: message_info.col,
+            };
+
+            mem.as_ref_mut::<Diagnostics>().add_diagnostic(diagnostic);
+        };
+
+        self.set_message_callback(callback, Some(diagnostics))
+    }
+
+    /// Clears the diagnostic callback (same as clearing message callback)
+    pub fn clear_diagnostic_callback(&mut self) -> ScriptResult<()> {
+        self.clear_message_callback()
     }
 
     /// Gets the vtable for the underlying AngelScript engine.

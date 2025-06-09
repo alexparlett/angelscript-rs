@@ -864,4 +864,4 @@ impl MessageInfo {
 /// let mut engine = Engine::create()?;
 /// engine.set_message_callback(log_messages_to_file)?;
 /// ```
-pub type MessageCallbackFn = fn(&MessageInfo);
+pub type MessageCallbackFn = fn(&MessageInfo, &mut ScriptMemoryLocation);

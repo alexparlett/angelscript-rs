@@ -1611,69 +1611,6 @@ impl BinaryStream {
 // ========== CONVENIENCE METHODS ==========
 
 impl Module {
-    /// Adds a script section with default line offset of 0.
-    ///
-    /// This is a convenience method that calls `add_script_section()` with a line offset of 0.
-    ///
-    /// # Arguments
-    /// * `name` - Name for this script section
-    /// * `code` - The AngelScript source code
-    ///
-    /// # Returns
-    /// Result indicating success or failure
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// let module = engine.get_module("MyModule", GetModuleFlags::CreateIfNotExists)?;
-    /// module.add_script_section_simple("main", "void main() { print('Hello!'); }")?;
-    /// module.build()?;
-    /// ```
-    pub fn add_script_section_simple(&self, name: &str, code: &str) -> ScriptResult<()> {
-        self.add_script_section(name, code, 0)
-    }
-
-    /// Compiles a function with default flags.
-    ///
-    /// This is a convenience method that calls `compile_function()` with default parameters.
-    ///
-    /// # Arguments
-    /// * `section_name` - Name for error reporting
-    /// * `code` - The function source code
-    ///
-    /// # Returns
-    /// The compiled function or an error
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// let module = engine.get_module("MyModule", GetModuleFlags::CreateIfNotExists)?;
-    /// let function = module.compile_function_simple("test", "int square(int x) { return x * x; }")?;
-    /// ```
-    pub fn compile_function_simple(&self, section_name: &str, code: &str) -> ScriptResult<Function> {
-        self.compile_function(section_name, code, 0, 0)
-    }
-
-    /// Compiles a global variable with default line offset.
-    ///
-    /// This is a convenience method that calls `compile_global_var()` with a line offset of 0.
-    ///
-    /// # Arguments
-    /// * `section_name` - Name for error reporting
-    /// * `code` - The variable declaration
-    ///
-    /// # Returns
-    /// Result indicating success or failure
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// let module = engine.get_module("MyModule", GetModuleFlags::CreateIfNotExists)?;
-    /// module.compile_global_var_simple("vars", "int global_counter = 0;")?;
-    /// ```
-    pub fn compile_global_var_simple(&self, section_name: &str, code: &str) -> ScriptResult<()> {
-        self.compile_global_var(section_name, code, 0)
-    }
 
     /// Gets all functions in the module.
     ///
