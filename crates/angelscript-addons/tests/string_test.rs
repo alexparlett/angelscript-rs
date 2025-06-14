@@ -12,7 +12,7 @@ mod tests {
             .install(angelscript_addons::string::addon())
             .expect("Failed to install string addon");
         engine
-            .set_message_callback::<Void>(
+            .set_message_callback(
                 |msg, _| {
                     println!("AngelScript: {}", msg.message);
                 },
