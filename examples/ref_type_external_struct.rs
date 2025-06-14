@@ -266,7 +266,7 @@ fn setup_engine() -> ScriptResult<Engine> {
     engine.install(angelscript::addons::string::addon())?;
 
     // Set up message callback
-    engine.set_message_callback::<Void>(|msg, _ | {
+    engine.set_message_callback(|msg, _ | {
         println!(
             "[{:?}] {} {} {} - {}",
             msg.msg_type, msg.row, msg.col, msg.section, msg.message

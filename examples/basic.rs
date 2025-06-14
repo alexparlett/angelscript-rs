@@ -2,7 +2,6 @@ use angelscript::prelude::{
     ContextState, GetModuleFlags, ReturnCode, ScriptError, ScriptGeneric, ScriptResult,
 };
 use angelscript_core::core::engine::Engine;
-use angelscript_core::types::script_memory::Void;
 
 fn print(g: &ScriptGeneric) {
     let arg_ptr = g.get_arg_object(0).unwrap();
@@ -14,9 +13,12 @@ fn main() -> ScriptResult<()> {
     let mut engine = Engine::create().expect("Failed to create script engine");
 
     // Set up message callback
-    engine.set_message_callback::<Void>(|msg, _ | {
-        println!("AngelScript: {}", msg.message);
-    }, None)?;
+    engine.set_message_callback(
+        |msg, _| {
+            println!("AngelScript: {}", msg.message);
+        },
+        None,
+    )?;
 
     engine.install(angelscript::addons::string::addon())?;
 

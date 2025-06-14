@@ -356,4 +356,6 @@ macro_rules! impl_script_data {
     };
 }
 
-impl_script_data!(i8, u8, u16, i16, i32, u32, f32, i64, u64, f64, String);
+impl_script_data!(
+    bool, usize, isize, i8, u8, u16, i16, i32, u32, f32, i64, u64, f64, String
+);

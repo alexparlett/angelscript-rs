@@ -1,9 +1,10 @@
 use crate::core::engine::Engine;
-use crate::types::enums::*;
 use crate::core::error::{ScriptError, ScriptResult};
 use crate::core::function::Function;
 use crate::core::module::Module;
+use crate::types::enums::*;
 use crate::types::script_data::ScriptData;
+use crate::types::script_memory::Void;
 use crate::types::user_data::UserData;
 use angelscript_sys::*;
 use std::ffi::CStr;
@@ -171,8 +172,7 @@ impl TypeInfo {
     /// ```
     pub fn get_engine(&self) -> ScriptResult<Engine> {
         unsafe {
-            let result: *mut asIScriptEngine =
-                (self.as_vtable().asITypeInfo_GetEngine)(self.inner);
+            let result: *mut asIScriptEngine = (self.as_vtable().asITypeInfo_GetEngine)(self.inner);
             let ptr = NonNull::new(result).ok_or(ScriptError::NullPointer)?;
             Ok(Engine::from_raw(ptr))
         }
@@ -434,7 +434,11 @@ impl TypeInfo {
     /// }
     /// ```
     pub fn get_sub_type_id(&self, sub_type_index: asUINT) -> TypeId {
-        unsafe { TypeId::from((self.as_vtable().asITypeInfo_GetSubTypeId)(self.inner, sub_type_index) as asUINT) }
+        unsafe {
+            TypeId::from(
+                (self.as_vtable().asITypeInfo_GetSubTypeId)(self.inner, sub_type_index) as asUINT,
+            )
+        }
     }
 
     /// Gets a sub-type by index.
@@ -1729,6 +1733,21 @@ impl TypeInfo {
             TypeKind::Funcdef
         } else {
             TypeKind::Unknown
+        }
+    }
+}
+
+impl ScriptData for TypeInfo {
+    fn to_script_ptr(&mut self) -> *mut Void {
+        self.inner as *mut Void
+    }
+
+    fn from_script_ptr(ptr: *mut Void) -> Self
+    where
+        Self: Sized,
+    {
+        Self {
+            inner: ptr as *mut _,
         }
     }
 }
