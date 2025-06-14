@@ -7,9 +7,11 @@ edition = "2024"
 angelscript-core = { path = "../angelscript-core" }
 angelscript-sys = { path = "../angelscript-sys" }
 sprintf  = { version = "0.4.2", optional = true }
+lazy_static = "1.5.0"
 
 [features]
 string = ["dep:sprintf"]
+array = []
 
 [package.metadata.docs.rs]
 all-features = true

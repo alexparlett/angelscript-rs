@@ -1,14 +1,14 @@
 #[cfg(test)]
 mod tests {
-    use crate::core::diagnostics::{Diagnostic, DiagnosticKind, Diagnostics};
-    use crate::core::engine::Engine;
-    use crate::core::error::ScriptResult;
-    use crate::types::enums::GetModuleFlags;
+    use angelscript_core::core::diagnostics::{Diagnostic, DiagnosticKind, Diagnostics};
+    use angelscript_core::core::engine::Engine;
+    use angelscript_core::core::error::ScriptResult;
+    use angelscript_core::types::enums::GetModuleFlags;
 
     #[test]
     fn test_diagnostics_with_successful_compilation() -> ScriptResult<()> {
         // Create the script engine
-        let mut engine = Engine::create().expect("Failed to create script engine");
+        let mut engine = Engine::create()?;
         let mut diagnostics = Diagnostics::new();
 
         // Set up diagnostic callback
@@ -52,7 +52,7 @@ mod tests {
     #[test]
     fn test_diagnostics_with_compilation_errors() -> ScriptResult<()> {
         // Create the script engine
-        let mut engine = Engine::create().expect("Failed to create script engine");
+        let mut engine = Engine::create()?;
         let mut diagnostics = Diagnostics::new();
 
         // Set up diagnostic callback
@@ -113,7 +113,7 @@ mod tests {
     #[test]
     fn test_diagnostics_with_warnings() -> ScriptResult<()> {
         // Create the script engine
-        let mut engine = Engine::create().expect("Failed to create script engine");
+        let mut engine = Engine::create()?;
         let mut diagnostics = Diagnostics::new();
 
         // Set up diagnostic callback
@@ -157,7 +157,7 @@ mod tests {
     #[test]
     fn test_diagnostics_clear_and_reuse() -> ScriptResult<()> {
         // Create the script engine
-        let mut engine = Engine::create().expect("Failed to create script engine");
+        let mut engine = Engine::create()?;
         let mut diagnostics = Diagnostics::new();
 
         // Set up diagnostic callback
@@ -206,7 +206,7 @@ mod tests {
     #[test]
     fn test_diagnostics_multiple_sections() -> ScriptResult<()> {
         // Create the script engine
-        let mut engine = Engine::create().expect("Failed to create script engine");
+        let mut engine = Engine::create()?; 
         let mut diagnostics = Diagnostics::new();
 
         // Set up diagnostic callback

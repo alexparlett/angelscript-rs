@@ -318,12 +318,12 @@ impl EngineInstallable for Addon {
                     engine.register_object_type(&name, size, flags)?;
 
                     // Apply methods
-                    for method in type_builder.methods {
+                    for mut method in type_builder.methods {
                         engine.register_object_method(
                             &name,
                             &method.declaration,
                             method.function,
-                            method.auxiliary.as_ref(),
+                            method.auxiliary.as_mut(),
                             method.composite_offset,
                             method.is_composite_indirect,
                         )?;
@@ -341,13 +341,13 @@ impl EngineInstallable for Addon {
                     }
 
                     // Apply custom behaviors
-                    for behavior in type_builder.behaviors {
+                    for mut behavior in type_builder.behaviors {
                         engine.register_object_behaviour(
                             &name,
                             behavior.behavior,
                             &behavior.declaration,
                             behavior.function,
-                            behavior.auxiliary.as_ref(),
+                            behavior.auxiliary.as_mut(),
                             behavior.composite_offset,
                             behavior.is_composite_indirect,
                         )?;

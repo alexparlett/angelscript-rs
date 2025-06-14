@@ -339,36 +339,21 @@ pub trait ScriptData: Send + Sync {
 ///         }
 ///     }
 /// }
-/// ```
-impl<T: Sized + Send + Sync> ScriptData for T {
-    /// Converts the value to a script pointer by returning its memory address.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// let mut value = 42i32;
-    /// let ptr = value.to_script_ptr();
-    /// // ptr now points to the memory location of value
-    /// ```
-    fn to_script_ptr(&mut self) -> *mut Void {
-        self as *mut T as *mut Void
-    }
+///
 
-    /// Reconstructs the value by reading from the pointer location.
-    ///
-    /// # Safety
-    /// This performs a `ptr.read()` which moves the value from the pointer
-    /// location. The pointer should not be used after this operation.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// let mut original = 42i32;
-    /// let ptr = original.to_script_ptr();
-    /// let restored: i32 = ScriptData::from_script_ptr(ptr);
-    /// assert_eq!(restored, 42);
-    /// ```
-    fn from_script_ptr(ptr: *mut Void) -> Self {
-        unsafe { (ptr as *mut T).read() }
-    }
+// Macro to reduce boilerplate for your own types
+#[macro_export]
+macro_rules! impl_script_data {
+    ($($t:ty),*) => {
+        $(impl ScriptData for $t {
+            fn to_script_ptr(&mut self) -> *mut Void {
+                self as *mut $t as *mut Void
+            }
+            fn from_script_ptr(ptr: *mut Void) -> Self {
+                unsafe { (ptr as *mut $t).read() }
+            }
+        })*
+    };
 }
+
+impl_script_data!(i8, u8, u16, i16, i32, u32, f32, i64, u64, f64, String);

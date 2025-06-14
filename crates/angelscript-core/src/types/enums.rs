@@ -1,6 +1,6 @@
-use crate::types::enums::TypeId::Custom;
 use angelscript_sys::*;
-use bitflags::bitflags;
+use bitflags::{bitflags, Flags};
+use std::hash::{Hash, Hasher};
 
 /// AngelScript return codes indicating the result of operations.
 ///
@@ -833,126 +833,74 @@ impl From<TokenClass> for asETokenClass {
     }
 }
 
-/// Type identifiers for built-in and custom types.
-///
-/// These identify the different data types that AngelScript can work with,
-/// including primitive types and custom object types.
-///
-/// # Usage
-///
-/// ```rust
-/// use angelscript_rs::{Engine, TypeId};
-///
-/// let engine = Engine::create()?;
-///
-/// // Get type info for built-in types
-/// if let Some(type_info) = engine.get_type_info_by_id(TypeId::Int32) {
-///     println!("Found int32 type");
-/// }
-///
-/// // Custom types use the Custom variant
-/// let custom_type_id = engine.get_type_id_by_decl("MyClass")?;
-/// match TypeId::from(custom_type_id) {
-///     TypeId::Custom(id) => println!("Custom type with ID: {}", id),
-///     _ => println!("Built-in type"),
-/// }
-/// ```
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[repr(u32)]
-pub enum TypeId {
-    /// Void type.
-    Void = asETypeIdFlags_asTYPEID_VOID,
-    /// Boolean type.
-    Bool = asETypeIdFlags_asTYPEID_BOOL,
-    /// 8-bit signed integer.
-    Int8 = asETypeIdFlags_asTYPEID_INT8,
-    /// 16-bit signed integer.
-    Int16 = asETypeIdFlags_asTYPEID_INT16,
-    /// 32-bit signed integer.
-    Int32 = asETypeIdFlags_asTYPEID_INT32,
-    /// 64-bit signed integer.
-    Int64 = asETypeIdFlags_asTYPEID_INT64,
-    /// 8-bit unsigned integer.
-    Uint8 = asETypeIdFlags_asTYPEID_UINT8,
-    /// 16-bit unsigned integer.
-    Uint16 = asETypeIdFlags_asTYPEID_UINT16,
-    /// 32-bit unsigned integer.
-    Uint32 = asETypeIdFlags_asTYPEID_UINT32,
-    /// 64-bit unsigned integer.
-    Uint64 = asETypeIdFlags_asTYPEID_UINT64,
-    /// 32-bit floating point.
-    Float = asETypeIdFlags_asTYPEID_FLOAT,
-    /// 64-bit floating point.
-    Double = asETypeIdFlags_asTYPEID_DOUBLE,
-    /// Object handle.
-    ObjHandle = asETypeIdFlags_asTYPEID_OBJHANDLE,
-    /// Handle to const object.
-    HandleToConst = asETypeIdFlags_asTYPEID_HANDLETOCONST,
-    /// Object mask.
-    MaskObject = asETypeIdFlags_asTYPEID_MASK_OBJECT,
-    /// Application object.
-    AppObject = asETypeIdFlags_asTYPEID_APPOBJECT,
-    /// Script object.
-    ScriptObject = asETypeIdFlags_asTYPEID_SCRIPTOBJECT,
-    /// Template type.
-    Template = asETypeIdFlags_asTYPEID_TEMPLATE,
-    /// Sequence number mask.
-    MaskSeqnr = asETypeIdFlags_asTYPEID_MASK_SEQNBR,
-    /// Custom type with specific ID.
-    Custom(i32) = u32::MAX,
+bitflags! {
+    /// Type identifiers for built-in and custom types.
+    ///
+    /// These identify the different data types that AngelScript can work with,
+    /// including primitive types and custom object types.
+    ///
+    /// # Usage
+    ///
+    /// ```rust
+    /// let engine = Engine::create()?;
+    ///
+    /// // Get type info for built-in types
+    /// if let Some(type_info) = engine.get_type_info_by_id(TypeId::Int32) {
+    ///     println!("Found int32 type");
+    /// }
+    /// ```
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub struct TypeId: asETypeIdFlags {
+        /// Void type.
+        const Void = asETypeIdFlags_asTYPEID_VOID;
+        /// Boolean type.
+        const Bool = asETypeIdFlags_asTYPEID_BOOL;
+        /// 8-bit signed integer.
+        const Int8 = asETypeIdFlags_asTYPEID_INT8;
+        /// 16-bit signed integer.
+        const Int16 = asETypeIdFlags_asTYPEID_INT16;
+        /// 32-bit signed integer.
+        const Int32 = asETypeIdFlags_asTYPEID_INT32;
+        /// 64-bit signed integer.
+        const  Int64 = asETypeIdFlags_asTYPEID_INT64;
+        /// 8-bit unsigned integer.
+        const Uint8 = asETypeIdFlags_asTYPEID_UINT8;
+        /// 16-bit unsigned integer.
+        const Uint16 = asETypeIdFlags_asTYPEID_UINT16;
+        /// 32-bit unsigned integer.
+        const Uint32 = asETypeIdFlags_asTYPEID_UINT32;
+        /// 64-bit unsigned integer.
+        const Uint64 = asETypeIdFlags_asTYPEID_UINT64;
+        /// 32-bit floating point.
+        const Float = asETypeIdFlags_asTYPEID_FLOAT;
+        /// 64-bit floating point.
+        const Double = asETypeIdFlags_asTYPEID_DOUBLE;
+        /// Object handle.
+        const ObjHandle = asETypeIdFlags_asTYPEID_OBJHANDLE;
+        /// Handle to const object.
+        const HandleToConst = asETypeIdFlags_asTYPEID_HANDLETOCONST;
+        /// Object mask.
+        const MaskObject = asETypeIdFlags_asTYPEID_MASK_OBJECT;
+        /// Application object.
+        const AppObject = asETypeIdFlags_asTYPEID_APPOBJECT;
+        /// Script object.
+        const ScriptObject = asETypeIdFlags_asTYPEID_SCRIPTOBJECT;
+        /// Template type.
+        const Template = asETypeIdFlags_asTYPEID_TEMPLATE;
+        /// Sequence number mask.
+        const MaskSeqnr = asETypeIdFlags_asTYPEID_MASK_SEQNBR;
+    }
 }
 
 impl From<asETypeIdFlags> for TypeId {
     fn from(value: asETypeIdFlags) -> Self {
-        match value {
-            asETypeIdFlags_asTYPEID_VOID => Self::Void,
-            asETypeIdFlags_asTYPEID_BOOL => Self::Bool,
-            asETypeIdFlags_asTYPEID_INT8 => Self::Int8,
-            asETypeIdFlags_asTYPEID_INT16 => Self::Int16,
-            asETypeIdFlags_asTYPEID_INT32 => Self::Int32,
-            asETypeIdFlags_asTYPEID_INT64 => Self::Int64,
-            asETypeIdFlags_asTYPEID_UINT8 => Self::Uint8,
-            asETypeIdFlags_asTYPEID_UINT16 => Self::Uint16,
-            asETypeIdFlags_asTYPEID_UINT32 => Self::Uint32,
-            asETypeIdFlags_asTYPEID_UINT64 => Self::Uint64,
-            asETypeIdFlags_asTYPEID_FLOAT => Self::Float,
-            asETypeIdFlags_asTYPEID_DOUBLE => Self::Double,
-            asETypeIdFlags_asTYPEID_OBJHANDLE => Self::ObjHandle,
-            asETypeIdFlags_asTYPEID_HANDLETOCONST => Self::HandleToConst,
-            asETypeIdFlags_asTYPEID_MASK_OBJECT => Self::MaskObject,
-            asETypeIdFlags_asTYPEID_APPOBJECT => Self::AppObject,
-            asETypeIdFlags_asTYPEID_SCRIPTOBJECT => Self::ScriptObject,
-            asETypeIdFlags_asTYPEID_TEMPLATE => Self::Template,
-            asETypeIdFlags_asTYPEID_MASK_SEQNBR => Self::MaskSeqnr,
-            _ => Custom(value as i32),
-        }
+        Self::from_bits_truncate(value)
     }
 }
 
 impl From<TypeId> for asETypeIdFlags {
     fn from(value: TypeId) -> Self {
-        match value {
-            TypeId::Void => asETypeIdFlags_asTYPEID_VOID,
-            TypeId::Bool => asETypeIdFlags_asTYPEID_BOOL,
-            TypeId::Int8 => asETypeIdFlags_asTYPEID_INT8,
-            TypeId::Int16 => asETypeIdFlags_asTYPEID_INT16,
-            TypeId::Int32 => asETypeIdFlags_asTYPEID_INT32,
-            TypeId::Int64 => asETypeIdFlags_asTYPEID_INT64,
-            TypeId::Uint8 => asETypeIdFlags_asTYPEID_UINT8,
-            TypeId::Uint16 => asETypeIdFlags_asTYPEID_UINT16,
-            TypeId::Uint32 => asETypeIdFlags_asTYPEID_UINT32,
-            TypeId::Uint64 => asETypeIdFlags_asTYPEID_UINT64,
-            TypeId::Float => asETypeIdFlags_asTYPEID_FLOAT,
-            TypeId::Double => asETypeIdFlags_asTYPEID_DOUBLE,
-            TypeId::ObjHandle => asETypeIdFlags_asTYPEID_OBJHANDLE,
-            TypeId::HandleToConst => asETypeIdFlags_asTYPEID_HANDLETOCONST,
-            TypeId::MaskObject => asETypeIdFlags_asTYPEID_MASK_OBJECT,
-            TypeId::AppObject => asETypeIdFlags_asTYPEID_APPOBJECT,
-            TypeId::ScriptObject => asETypeIdFlags_asTYPEID_SCRIPTOBJECT,
-            TypeId::Template => asETypeIdFlags_asTYPEID_TEMPLATE,
-            TypeId::MaskSeqnr => asETypeIdFlags_asTYPEID_MASK_SEQNBR,
-            Custom(value) => value as asETypeIdFlags,
-        }
+        value.bits()
     }
 }
 
@@ -1587,7 +1535,7 @@ pub enum BCInstr {
     /// Line number.
     LINE = asEBCInstr_asBC_LINE,
     /// Label.
-    LABEL = asEBCInstr_asBC_LABEL,
+    Labal = asEBCInstr_asBC_LABEL,
 }
 
 impl From<asEBCInstr> for BCInstr {
@@ -1800,7 +1748,7 @@ impl From<asEBCInstr> for BCInstr {
             asEBCInstr_asBC_Block => Self::Block,
             asEBCInstr_asBC_ObjInfo => Self::ObjInfo,
             asEBCInstr_asBC_LINE => Self::LINE,
-            asEBCInstr_asBC_LABEL => Self::LABEL,
+            asEBCInstr_asBC_LABEL => Self::Labal,
             _ => panic!("Unknown bytecode instruction: {}", value),
         }
     }

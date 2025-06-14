@@ -1,6 +1,8 @@
 use crate::types::enums::MessageType;
 use std::collections::VecDeque;
 use std::fmt;
+use crate::types::script_data::ScriptData;
+use crate::types::script_memory::Void;
 
 /// A single diagnostic message from the AngelScript compiler.
 ///
@@ -68,7 +70,6 @@ impl From<MessageType> for DiagnosticKind {
             MessageType::Error => DiagnosticKind::Error,
             MessageType::Warning => DiagnosticKind::Warning,
             MessageType::Information => DiagnosticKind::Info,
-            _ => DiagnosticKind::Info,
         }
     }
 }
@@ -481,5 +482,18 @@ impl fmt::Display for Diagnostics {
             writeln!(f, "{}", diagnostic)?;
         }
         Ok(())
+    }
+}
+
+impl ScriptData for Diagnostics {
+    fn to_script_ptr(&mut self) -> *mut Void {
+        self as *mut Diagnostics as *mut Void
+    }
+
+    fn from_script_ptr(ptr: *mut Void) -> Self
+    where
+        Self: Sized
+    {
+        unsafe { ptr.cast::<Self>().read() }
     }
 }

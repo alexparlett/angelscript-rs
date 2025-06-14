@@ -17,7 +17,7 @@ use crate::types::callbacks::{
 };
 use crate::types::enums::*;
 use crate::types::script_data::ScriptData;
-use crate::types::script_memory::ScriptMemoryLocation;
+use crate::types::script_memory::{ScriptMemoryLocation, Void};
 use crate::types::user_data::UserData;
 use angelscript_sys::*;
 use std::alloc::{alloc, Layout};
@@ -534,10 +534,10 @@ impl Engine {
     ///
     /// # Returns
     /// Result indicating success or failure
-    pub fn set_message_callback<T: ScriptData + 'static>(
+    pub fn set_message_callback(
         &mut self,
         callback: MessageCallbackFn,
-        data: Option<&mut T>,
+        data: Option<&mut dyn ScriptData>,
     ) -> ScriptResult<()> {
         CallbackManager::set_message_callback(Some(callback))?;
 
@@ -582,7 +582,7 @@ impl Engine {
         section: &str,
         row: i32,
         col: i32,
-        msg_type: asEMsgType,
+        msg_type: MessageType,
         message: &str,
     ) -> ScriptResult<()> {
         let c_section = CString::new(section)?;
@@ -594,7 +594,7 @@ impl Engine {
                 c_section.as_ptr(),
                 row,
                 col,
-                msg_type,
+                msg_type.into(),
                 c_message.as_ptr(),
             ))
         }
@@ -974,7 +974,7 @@ impl Engine {
         obj: &str,
         declaration: &str,
         func_ptr: GenericFn,
-        auxiliary: Option<&Box<dyn ScriptData>>,
+        auxiliary: Option<&mut Box<dyn ScriptData>>,
         composite_offset: Option<i32>,
         is_composite_indirect: Option<bool>,
     ) -> ScriptResult<()> {
@@ -991,7 +991,7 @@ impl Engine {
                 &mut asGenericFunction(base_func),
                 CallingConvention::Generic.into(),
                 auxiliary
-                    .map(|mut aux| aux.to_script_ptr())
+                    .map(|aux| aux.to_script_ptr())
                     .unwrap_or_else(std::ptr::null_mut),
                 composite_offset.unwrap_or(0),
                 is_composite_indirect.unwrap_or(false),
@@ -1027,7 +1027,7 @@ impl Engine {
         behaviour: Behaviour,
         declaration: &str,
         func_ptr: GenericFn,
-        auxiliary: Option<&Box<dyn ScriptData>>,
+        auxiliary: Option<&mut Box<dyn ScriptData>>,
         composite_offset: Option<i32>,
         is_composite_indirect: Option<bool>,
     ) -> ScriptResult<()> {
@@ -1044,7 +1044,7 @@ impl Engine {
                 c_decl.as_ptr(),
                 &mut asGenericFunction(base_func),
                 asECallConvTypes_asCALL_GENERIC,
-                auxiliary.map_or_else(ptr::null_mut, |mut aux| aux.to_script_ptr()),
+                auxiliary.map_or_else(ptr::null_mut, |aux| aux.to_script_ptr()),
                 composite_offset.unwrap_or(0),
                 is_composite_indirect.unwrap_or(false),
             );
@@ -2540,6 +2540,19 @@ unsafe impl Sync for GenericFnUserData {}
 
 impl UserData for GenericFnUserData {
     const KEY: usize = 0x129032719; // Must be unique!
+}
+
+impl ScriptData for GenericFnUserData {
+    fn to_script_ptr(&mut self) -> *mut Void {
+        self as *const Self as *mut Void
+    }
+
+    fn from_script_ptr(ptr: *mut Void) -> Self
+    where
+        Self: Sized,
+    {
+        unsafe { ptr.cast::<Self>().read() }
+    }
 }
 
 /// Information about a global property.

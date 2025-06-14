@@ -491,3 +491,16 @@ impl ScriptMemoryLocation {
 
 unsafe impl Send for ScriptMemoryLocation {}
 unsafe impl Sync for ScriptMemoryLocation {}
+
+impl ScriptData for ScriptMemoryLocation {
+    fn to_script_ptr(&mut self) -> *mut Void {
+        self.0 as *mut Void
+    }
+
+    fn from_script_ptr(ptr: *mut Void) -> Self
+    where
+        Self: Sized,
+    {
+        ScriptMemoryLocation(ptr)
+    }
+}

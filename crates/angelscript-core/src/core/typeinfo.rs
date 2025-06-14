@@ -132,7 +132,7 @@ impl TypeInfo {
     ///
     /// # Returns
     /// A new TypeInfo wrapper
-    pub(crate) fn from_raw(ptr: *mut asITypeInfo) -> Self {
+    pub fn from_raw(ptr: *mut asITypeInfo) -> Self {
         let wrapper = Self { inner: ptr };
         wrapper
             .add_ref()
@@ -409,8 +409,8 @@ impl TypeInfo {
     ///
     /// // Use type_id for variable declarations, function parameters, etc.
     /// ```
-    pub fn get_type_id(&self) -> i32 {
-        unsafe { (self.as_vtable().asITypeInfo_GetTypeId)(self.inner) }
+    pub fn get_type_id(&self) -> TypeId {
+        unsafe { TypeId::from((self.as_vtable().asITypeInfo_GetTypeId)(self.inner) as asUINT) }
     }
 
     /// Gets the type ID of a sub-type.
@@ -433,8 +433,8 @@ impl TypeInfo {
     ///     println!("Array element type ID: {}", element_type_id);
     /// }
     /// ```
-    pub fn get_sub_type_id(&self, sub_type_index: asUINT) -> i32 {
-        unsafe { (self.as_vtable().asITypeInfo_GetSubTypeId)(self.inner, sub_type_index) }
+    pub fn get_sub_type_id(&self, sub_type_index: asUINT) -> TypeId {
+        unsafe { TypeId::from((self.as_vtable().asITypeInfo_GetSubTypeId)(self.inner, sub_type_index) as asUINT) }
     }
 
     /// Gets a sub-type by index.
