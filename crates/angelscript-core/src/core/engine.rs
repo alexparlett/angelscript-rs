@@ -20,7 +20,6 @@ use crate::types::script_data::ScriptData;
 use crate::types::script_memory::{ScriptMemoryLocation, Void};
 use crate::types::user_data::UserData;
 use angelscript_sys::*;
-use std::alloc::{alloc, Layout};
 use std::ffi::{c_char, CStr, CString};
 use std::marker::PhantomData;
 use std::os::raw::c_void;
@@ -88,8 +87,8 @@ impl Engine {
     #[cfg(feature = "rust-alloc")]
     pub unsafe extern "C" fn unified_alloc(size: usize) -> *mut std::ffi::c_void {
         unsafe {
-            let layout = Layout::from_size_align(size, 8).unwrap();
-            alloc(layout) as *mut std::ffi::c_void
+            let layout = std::alloc::Layout::from_size_align(size, 8).unwrap();
+            std::alloc::alloc(layout) as *mut std::ffi::c_void
         }
     }
 

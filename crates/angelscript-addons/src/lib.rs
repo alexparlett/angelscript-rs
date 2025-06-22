@@ -9,4 +9,7 @@ pub mod stringfactory;
 #[cfg(feature = "math")]
 pub mod math;
 
+#[cfg(feature = "script-builder")]
+pub mod script_builder;
+
 pub use addon::{Addon, TypeRegistration};

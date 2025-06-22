@@ -1,6 +1,6 @@
 use angelscript_sys::*;
-use bitflags::{bitflags, Flags};
-use std::hash::{Hash, Hasher};
+use bitflags::bitflags;
+use std::hash::Hash;
 
 /// AngelScript return codes indicating the result of operations.
 ///
@@ -849,7 +849,7 @@ bitflags! {
     ///     println!("Found int32 type");
     /// }
     /// ```
-    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
     pub struct TypeId: asETypeIdFlags {
         /// Void type.
         const Void = asETypeIdFlags_asTYPEID_VOID;
@@ -1323,33 +1323,33 @@ pub enum BCInstr {
     /// Variable.
     VAR = asEBCInstr_asBC_VAR,
     /// Integer to float.
-    iTOf = asEBCInstr_asBC_iTOf,
+    Itof = asEBCInstr_asBC_iTOf,
     /// Float to integer.
-    fTOi = asEBCInstr_asBC_fTOi,
+    Ftoi = asEBCInstr_asBC_fTOi,
     /// Unsigned to float.
-    uTOf = asEBCInstr_asBC_uTOf,
+    Utof = asEBCInstr_asBC_uTOf,
     /// Float to unsigned.
-    fTOu = asEBCInstr_asBC_fTOu,
+    Ftou = asEBCInstr_asBC_fTOu,
     /// Signed byte to integer.
-    sbTOi = asEBCInstr_asBC_sbTOi,
+    SbToi = asEBCInstr_asBC_sbTOi,
     /// Signed word to integer.
-    swTOi = asEBCInstr_asBC_swTOi,
+    SwToi = asEBCInstr_asBC_swTOi,
     /// Unsigned byte to integer.
-    ubTOi = asEBCInstr_asBC_ubTOi,
+    UbToi = asEBCInstr_asBC_ubTOi,
     /// Unsigned word to integer.
-    uwTOi = asEBCInstr_asBC_uwTOi,
+    UwToi = asEBCInstr_asBC_uwTOi,
     /// Double to integer.
-    dTOi = asEBCInstr_asBC_dTOi,
+    Dtoi = asEBCInstr_asBC_dTOi,
     /// Double to unsigned.
-    dTOu = asEBCInstr_asBC_dTOu,
+    Dtou = asEBCInstr_asBC_dTOu,
     /// Double to float.
-    dTOf = asEBCInstr_asBC_dTOf,
+    Dtof = asEBCInstr_asBC_dTOf,
     /// Integer to double.
-    iTOd = asEBCInstr_asBC_iTOd,
+    Itod = asEBCInstr_asBC_iTOd,
     /// Unsigned to double.
-    uTOd = asEBCInstr_asBC_uTOd,
+    Utod = asEBCInstr_asBC_uTOd,
     /// Float to double.
-    fTOd = asEBCInstr_asBC_fTOd,
+    Ftod = asEBCInstr_asBC_fTOd,
     /// Add integer.
     ADDi = asEBCInstr_asBC_ADDi,
     /// Subtract integer.
@@ -1401,9 +1401,9 @@ pub enum BCInstr {
     /// Call interface.
     CALLINTF = asEBCInstr_asBC_CALLINTF,
     /// Integer to byte.
-    iTOb = asEBCInstr_asBC_iTOb,
+    Itob = asEBCInstr_asBC_iTOb,
     /// Integer to word.
-    iTOw = asEBCInstr_asBC_iTOw,
+    Itow = asEBCInstr_asBC_iTOw,
     /// Set variable 1-byte.
     SetV1 = asEBCInstr_asBC_SetV1,
     /// Set variable 2-byte.
@@ -1411,27 +1411,27 @@ pub enum BCInstr {
     /// Cast operation.
     Cast = asEBCInstr_asBC_Cast,
     /// 64-bit integer to integer.
-    i64TOi = asEBCInstr_asBC_i64TOi,
+    I64toi = asEBCInstr_asBC_i64TOi,
     /// Unsigned to 64-bit integer.
-    uTOi64 = asEBCInstr_asBC_uTOi64,
+    Utoi64 = asEBCInstr_asBC_uTOi64,
     /// Integer to 64-bit integer.
-    iTOi64 = asEBCInstr_asBC_iTOi64,
+    Itoi64 = asEBCInstr_asBC_iTOi64,
     /// Float to 64-bit integer.
-    fTOi64 = asEBCInstr_asBC_fTOi64,
+    Ftoi64 = asEBCInstr_asBC_fTOi64,
     /// Double to 64-bit integer.
-    dTOi64 = asEBCInstr_asBC_dTOi64,
+    Dtoi64 = asEBCInstr_asBC_dTOi64,
     /// Float to 64-bit unsigned.
-    fTOu64 = asEBCInstr_asBC_fTOu64,
+    Ftou64 = asEBCInstr_asBC_fTOu64,
     /// Double to 64-bit unsigned.
-    dTOu64 = asEBCInstr_asBC_dTOu64,
+    Dtou64 = asEBCInstr_asBC_dTOu64,
     /// 64-bit integer to float.
-    i64TOf = asEBCInstr_asBC_i64TOf,
+    I64tof = asEBCInstr_asBC_i64TOf,
     /// 64-bit unsigned to float.
-    u64TOf = asEBCInstr_asBC_u64TOf,
+    U64tof = asEBCInstr_asBC_u64TOf,
     /// 64-bit integer to double.
-    i64TOd = asEBCInstr_asBC_i64TOd,
+    I64tod = asEBCInstr_asBC_i64TOd,
     /// 64-bit unsigned to double.
-    u64TOd = asEBCInstr_asBC_u64TOd,
+    U64tod = asEBCInstr_asBC_u64TOd,
     /// Negate 64-bit integer.
     NEGi64 = asEBCInstr_asBC_NEGi64,
     /// Increment 64-bit integer.
@@ -1642,20 +1642,20 @@ impl From<asEBCInstr> for BCInstr {
             asEBCInstr_asBC_PGA => Self::PGA,
             asEBCInstr_asBC_CmpPtr => Self::CmpPtr,
             asEBCInstr_asBC_VAR => Self::VAR,
-            asEBCInstr_asBC_iTOf => Self::iTOf,
-            asEBCInstr_asBC_fTOi => Self::fTOi,
-            asEBCInstr_asBC_uTOf => Self::uTOf,
-            asEBCInstr_asBC_fTOu => Self::fTOu,
-            asEBCInstr_asBC_sbTOi => Self::sbTOi,
-            asEBCInstr_asBC_swTOi => Self::swTOi,
-            asEBCInstr_asBC_ubTOi => Self::ubTOi,
-            asEBCInstr_asBC_uwTOi => Self::uwTOi,
-            asEBCInstr_asBC_dTOi => Self::dTOi,
-            asEBCInstr_asBC_dTOu => Self::dTOu,
-            asEBCInstr_asBC_dTOf => Self::dTOf,
-            asEBCInstr_asBC_iTOd => Self::iTOd,
-            asEBCInstr_asBC_uTOd => Self::uTOd,
-            asEBCInstr_asBC_fTOd => Self::fTOd,
+            asEBCInstr_asBC_iTOf => Self::Itof,
+            asEBCInstr_asBC_fTOi => Self::Ftoi,
+            asEBCInstr_asBC_uTOf => Self::Utof,
+            asEBCInstr_asBC_fTOu => Self::Ftou,
+            asEBCInstr_asBC_sbTOi => Self::SbToi,
+            asEBCInstr_asBC_swTOi => Self::SwToi,
+            asEBCInstr_asBC_ubTOi => Self::UbToi,
+            asEBCInstr_asBC_uwTOi => Self::UwToi,
+            asEBCInstr_asBC_dTOi => Self::Dtoi,
+            asEBCInstr_asBC_dTOu => Self::Dtou,
+            asEBCInstr_asBC_dTOf => Self::Dtof,
+            asEBCInstr_asBC_iTOd => Self::Itod,
+            asEBCInstr_asBC_uTOd => Self::Utod,
+            asEBCInstr_asBC_fTOd => Self::Ftod,
             asEBCInstr_asBC_ADDi => Self::ADDi,
             asEBCInstr_asBC_SUBi => Self::SUBi,
             asEBCInstr_asBC_MULi => Self::MULi,
@@ -1681,22 +1681,22 @@ impl From<asEBCInstr> for BCInstr {
             asEBCInstr_asBC_ChkRefS => Self::ChkRefS,
             asEBCInstr_asBC_ChkNullV => Self::ChkNullV,
             asEBCInstr_asBC_CALLINTF => Self::CALLINTF,
-            asEBCInstr_asBC_iTOb => Self::iTOb,
-            asEBCInstr_asBC_iTOw => Self::iTOw,
+            asEBCInstr_asBC_iTOb => Self::Itob,
+            asEBCInstr_asBC_iTOw => Self::Itow,
             asEBCInstr_asBC_SetV1 => Self::SetV1,
             asEBCInstr_asBC_SetV2 => Self::SetV2,
             asEBCInstr_asBC_Cast => Self::Cast,
-            asEBCInstr_asBC_i64TOi => Self::i64TOi,
-            asEBCInstr_asBC_uTOi64 => Self::uTOi64,
-            asEBCInstr_asBC_iTOi64 => Self::iTOi64,
-            asEBCInstr_asBC_fTOi64 => Self::fTOi64,
-            asEBCInstr_asBC_dTOi64 => Self::dTOi64,
-            asEBCInstr_asBC_fTOu64 => Self::fTOu64,
-            asEBCInstr_asBC_dTOu64 => Self::dTOu64,
-            asEBCInstr_asBC_i64TOf => Self::i64TOf,
-            asEBCInstr_asBC_u64TOf => Self::u64TOf,
-            asEBCInstr_asBC_i64TOd => Self::i64TOd,
-            asEBCInstr_asBC_u64TOd => Self::u64TOd,
+            asEBCInstr_asBC_i64TOi => Self::I64toi,
+            asEBCInstr_asBC_uTOi64 => Self::Utoi64,
+            asEBCInstr_asBC_iTOi64 => Self::Itoi64,
+            asEBCInstr_asBC_fTOi64 => Self::Ftoi64,
+            asEBCInstr_asBC_dTOi64 => Self::Dtoi64,
+            asEBCInstr_asBC_fTOu64 => Self::Ftou64,
+            asEBCInstr_asBC_dTOu64 => Self::Dtou64,
+            asEBCInstr_asBC_i64TOf => Self::I64tof,
+            asEBCInstr_asBC_u64TOf => Self::U64tof,
+            asEBCInstr_asBC_i64TOd => Self::I64tod,
+            asEBCInstr_asBC_u64TOd => Self::U64tod,
             asEBCInstr_asBC_NEGi64 => Self::NEGi64,
             asEBCInstr_asBC_INCi64 => Self::INCi64,
             asEBCInstr_asBC_DECi64 => Self::DECi64,

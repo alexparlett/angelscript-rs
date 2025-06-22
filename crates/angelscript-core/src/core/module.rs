@@ -3,6 +3,7 @@ use crate::core::engine::Engine;
 use crate::core::error::{ScriptError, ScriptResult};
 use crate::core::function::Function;
 use crate::core::typeinfo::TypeInfo;
+use crate::types::enums::TypeId;
 use crate::types::script_data::ScriptData;
 use crate::types::user_data::UserData;
 use angelscript_sys::*;
@@ -1013,7 +1014,7 @@ impl Module {
     ///     println!("MyClass has type ID: {}", type_id);
     /// }
     /// ```
-    pub fn get_type_id_by_decl(&self, decl: &str) -> Option<i32> {
+    pub fn get_type_id_by_decl(&self, decl: &str) -> Option<TypeId> {
         let c_decl = match CString::new(decl) {
             Ok(s) => s,
             Err(_) => return None,
@@ -1022,7 +1023,11 @@ impl Module {
         unsafe {
             let type_id =
                 (self.as_vtable().asIScriptModule_GetTypeIdByDecl)(self.inner, c_decl.as_ptr());
-            if type_id < 0 { None } else { Some(type_id) }
+            if type_id < 0 {
+                None
+            } else {
+                Some(TypeId::from(type_id as u32))
+            }
         }
     }
 
@@ -1360,7 +1365,11 @@ impl Module {
     ///
     /// module.bind_imported_function(import_index, &add_func)?;
     /// ```
-    pub fn bind_imported_function(&self, import_index: asUINT, func: &Function) -> ScriptResult<()> {
+    pub fn bind_imported_function(
+        &self,
+        import_index: asUINT,
+        func: &Function,
+    ) -> ScriptResult<()> {
         unsafe {
             ScriptError::from_code((self.as_vtable().asIScriptModule_BindImportedFunction)(
                 self.inner,
@@ -1455,7 +1464,11 @@ impl Module {
     /// // let mut stream = MyBinaryStream::new();
     /// // module.save_byte_code(&mut stream, false)?;
     /// ```
-    pub fn save_byte_code(&self, out: &mut BinaryStream, strip_debug_info: bool) -> ScriptResult<()> {
+    pub fn save_byte_code(
+        &self,
+        out: &mut BinaryStream,
+        strip_debug_info: bool,
+    ) -> ScriptResult<()> {
         unsafe {
             ScriptError::from_code((self.as_vtable().asIScriptModule_SaveByteCode)(
                 self.inner,
@@ -1611,7 +1624,6 @@ impl BinaryStream {
 // ========== CONVENIENCE METHODS ==========
 
 impl Module {
-
     /// Gets all functions in the module.
     ///
     /// This is a convenience method that collects all functions into a vector.
