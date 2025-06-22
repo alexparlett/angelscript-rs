@@ -388,7 +388,7 @@ fn string_substring(g: &ScriptGeneric) {
 /// Create a string plugin for AngelScript
 pub fn addon() -> Addon {
     let addon = Addon::new()
-        .ty::<String>("string", |ctx| {
+        .with_type::<String>("string", |ctx| {
             ctx.as_value_type()
                 .with_flags(ObjectTypeFlags::VALUE | ObjectTypeFlags::APP_CLASS_CDAK)
                 // Constructors
@@ -704,7 +704,7 @@ pub fn addon() -> Addon {
         .with_engine_configuration(|e| {
             e.register_string_factory("string", get_string_factory_instance())
         })
-        .global_function(
+        .with_global_function(
             "bool parse_bool(const string &in val)",
             |g: &ScriptGeneric| {
                 let in_ptr = g.get_arg_address(0).unwrap();
@@ -714,7 +714,7 @@ pub fn addon() -> Addon {
             },
             None,
         )
-        .global_function(
+        .with_global_function(
             "int parse_int(const string &in val, const uint radix = 10)",
             |g: &ScriptGeneric| {
                 let in_ptr = g.get_arg_address(0).unwrap();
@@ -725,7 +725,7 @@ pub fn addon() -> Addon {
             },
             None,
         )
-        .global_function(
+        .with_global_function(
             "uint parse_uint(const string &in val, const uint radix = 10)",
             |g: &ScriptGeneric| {
                 let in_ptr = g.get_arg_address(0).unwrap();
@@ -736,7 +736,7 @@ pub fn addon() -> Addon {
             },
             None,
         )
-        .global_function(
+        .with_global_function(
             "float parse_float(const string &in val)",
             |g: &ScriptGeneric| {
                 let in_ptr = g.get_arg_address(0).unwrap();
@@ -746,7 +746,7 @@ pub fn addon() -> Addon {
             },
             None,
         )
-        .global_function(
+        .with_global_function(
             "double parse_double(const string &in val)",
             |g: &ScriptGeneric| {
                 let in_ptr = g.get_arg_address(0).unwrap();
@@ -756,7 +756,7 @@ pub fn addon() -> Addon {
             },
             None,
         )
-        .global_function(
+        .with_global_function(
             "string format(const string &in options, const ?&in val)",
             |g: &ScriptGeneric| {
                 let options_ptr = g.get_arg_address(0).unwrap();

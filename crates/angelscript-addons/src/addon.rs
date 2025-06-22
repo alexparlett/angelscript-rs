@@ -26,6 +26,13 @@ pub(crate) enum Registration {
         flags: ObjectTypeFlags,
         type_builder: TypeBuilder,
     },
+    Interface {
+        name: String,
+        methods: Vec<String>,
+    },
+    Funcdef {
+        declaration: String,
+    },
 }
 
 /// Builder for object type registrations
@@ -95,8 +102,31 @@ impl Addon {
         self
     }
 
+    /// Register an enum with its values
+    pub fn with_enum(
+        mut self,
+        name: impl Into<String>,
+        values: Vec<(impl Into<String>, i32)>,
+    ) -> Self {
+        let name = name.into();
+        let enum_values = values
+            .into_iter()
+            .map(|(name, value)| EnumRegistration {
+                name: name.into(),
+                value,
+            })
+            .collect();
+
+        self.registrations.push(Registration::Enum {
+            name,
+            values: enum_values,
+        });
+
+        self
+    }
+
     /// Register a global function
-    pub fn global_function(
+    pub fn with_global_function(
         mut self,
         declaration: impl Into<String>,
         function: GenericFn,
@@ -114,7 +144,7 @@ impl Addon {
     }
 
     /// Register a global property
-    pub fn global_property(
+    pub fn with_global_property(
         mut self,
         declaration: impl Into<String>,
         property: Box<dyn ScriptData>,
@@ -130,7 +160,7 @@ impl Addon {
     }
 
     /// Register an object type and return a TypeRegistration for further configuration
-    pub fn ty<T>(
+    pub fn with_type<T>(
         self,
         name: impl Into<String>,
         configure: impl FnOnce(&mut TypeRegistration<T>),
@@ -160,6 +190,37 @@ impl Addon {
         type_registration.register()
     }
 
+    /// Register an interface and return an InterfaceRegistration for further configuration
+    pub fn with_interface(
+        self,
+        name: impl Into<String>,
+        configure: impl FnOnce(&mut InterfaceRegistration),
+    ) -> Self {
+        let interface_name = name.into();
+
+        let mut interface_registration = InterfaceRegistration {
+            addon: self,
+            interface_name: interface_name.clone(),
+            methods: Vec::new(),
+        };
+
+        // Use the closure to configure the InterfaceRegistration
+        configure(&mut interface_registration);
+
+        // Finish the interface registration and return the updated addon
+        interface_registration.register()
+    }
+
+    /// Register a function definition (funcdef)
+    pub fn with_funcdef(mut self, declaration: impl Into<String>) -> Self {
+        self.registrations.push(Registration::Funcdef {
+            declaration: declaration.into(),
+        });
+
+        self
+    }
+
+
     pub(crate) fn namespace(&self) -> Option<&str> {
         self.namespace.as_deref()
     }
@@ -168,6 +229,32 @@ impl Addon {
 impl Default for Addon {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// Builder for configuring interface registrations
+#[doc(hidden)]
+pub struct InterfaceRegistration {
+    addon: Addon,
+    interface_name: String,
+    methods: Vec<String>,
+}
+
+impl InterfaceRegistration {
+    /// Add a method to the interface
+    pub fn with_method(&mut self, declaration: impl Into<String>) -> &mut Self {
+        self.methods.push(declaration.into());
+        self
+    }
+
+    /// Finish interface registration and return to addon
+    fn register(mut self) -> Addon {
+        self.addon.registrations.push(Registration::Interface {
+            name: self.interface_name,
+            methods: self.methods,
+        });
+
+        self.addon
     }
 }
 
@@ -362,6 +449,16 @@ impl EngineInstallable for Addon {
                             value.value,
                         )?;
                     }
+                }
+                Registration::Interface { name, methods } => {
+                    engine.register_interface(&name)?;
+
+                    for method in methods {
+                        engine.register_interface_method(&name, &method)?;
+                    }
+                }
+                Registration::Funcdef { declaration } => {
+                    engine.register_funcdef(&declaration)?;
                 }
             }
         }
