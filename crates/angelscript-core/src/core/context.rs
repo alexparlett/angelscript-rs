@@ -1,20 +1,18 @@
-use crate::types::callbacks::{ExceptionCallbackFn, LineCallbackFn};
-use angelscript_sys::*;
-use std::ffi::{CStr, CString};
-use std::os::raw::{c_char, c_void};
-use std::ptr;
-use std::ptr::NonNull;
 use crate::core::engine::Engine;
 use crate::core::error::{ScriptError, ScriptResult};
 use crate::core::function::Function;
 use crate::core::typeinfo::TypeInfo;
 use crate::internal::callback_manager::CallbackManager;
+use crate::types::callbacks::{ExceptionCallbackFn, LineCallbackFn};
 use crate::types::enums::{CallingConvention, ContextState, TypeModifiers};
 use crate::types::script_data::ScriptData;
 use crate::types::script_memory::ScriptMemoryLocation;
 use crate::types::user_data::UserData;
-
-type InternalCallback = Option<unsafe extern "C" fn(*mut asIScriptContext, *const c_void)>;
+use angelscript_sys::*;
+use std::ffi::{CStr, CString};
+use std::os::raw::{c_char, c_void};
+use std::ptr;
+use std::ptr::NonNull;
 
 /// A script execution context.
 ///
@@ -644,17 +642,20 @@ impl Context {
     ///
     /// # Returns
     /// Result indicating success or failure
-    pub fn set_exception_callback(&self, callback: ExceptionCallbackFn) -> ScriptResult<()> {
+    pub fn set_exception_callback(
+        &self,
+        callback: ExceptionCallbackFn,
+        param: Option<Box<dyn ScriptData>>,
+    ) -> ScriptResult<()> {
         CallbackManager::set_exception_callback(Some(callback))?;
-
-        let base_func: InternalCallback = Some(CallbackManager::cvoid_exception_callback);
-        let c_func = unsafe { std::mem::transmute::<InternalCallback, asFUNCTION_t>(base_func) };
 
         unsafe {
             ScriptError::from_code((self.as_vtable().asIScriptContext_SetExceptionCallback)(
                 self.context,
-                asFunction(c_func),
-                std::ptr::null_mut(),
+                asScriptContextFunction(Some(CallbackManager::cvoid_line_callback)),
+                param
+                    .map(|mut aux| aux.to_script_ptr())
+                    .unwrap_or_else(ptr::null_mut),
                 CallingConvention::Cdecl as i32,
             ))
         }
@@ -685,7 +686,7 @@ impl Context {
     pub fn set_line_callback<T: ScriptData>(
         &mut self,
         callback: LineCallbackFn,
-        param: &mut T,
+        param: Option<Box<dyn ScriptData>>,
     ) -> ScriptResult<()> {
         CallbackManager::set_line_callback(Some(callback))?;
 
@@ -693,7 +694,9 @@ impl Context {
             ScriptError::from_code((self.as_vtable().asIScriptContext_SetLineCallback)(
                 self.context,
                 asScriptContextFunction(Some(CallbackManager::cvoid_line_callback)),
-                param.to_script_ptr(),
+                param
+                    .map(|mut aux| aux.to_script_ptr())
+                    .unwrap_or_else(ptr::null_mut),
                 CallingConvention::Cdecl as i32,
             ))
         }
