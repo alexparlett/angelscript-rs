@@ -18,9 +18,5 @@ sprintf = { version = "0.4.2" }
 # math
 paste = { version = "1.0" }
 
-#script builder
-logos = { version = "0.15.0" }
-regex = { version = "1.11.1" }
-
 [dev-dependencies]
 tempdir = "0.3.7"
