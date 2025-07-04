@@ -1,3 +1,5 @@
+#![allow(non_upper_case_globals)]
+
 use angelscript_sys::*;
 use bitflags::bitflags;
 use std::hash::Hash;
@@ -1523,7 +1525,7 @@ pub enum BCInstr {
     /// This-call 1.
     Thiscall1 = asEBCInstr_asBC_Thiscall1,
     /// Maximum bytecode.
-    MAXBYTECODE = asEBCInstr_asBC_MAXBYTECODE,
+    MaxByteCode = asEBCInstr_asBC_MAXBYTECODE,
     /// Try block.
     TryBlock = asEBCInstr_asBC_TryBlock,
     /// Variable declaration.
@@ -1533,14 +1535,14 @@ pub enum BCInstr {
     /// Object info.
     ObjInfo = asEBCInstr_asBC_ObjInfo,
     /// Line number.
-    LINE = asEBCInstr_asBC_LINE,
+    Line = asEBCInstr_asBC_LINE,
     /// Label.
-    Labal = asEBCInstr_asBC_LABEL,
+    Label = asEBCInstr_asBC_LABEL,
 }
 
 impl From<asEBCInstr> for BCInstr {
     fn from(value: asEBCInstr) -> Self {
-        match value {
+         match value {
             asEBCInstr_asBC_PopPtr => Self::PopPtr,
             asEBCInstr_asBC_PshGPtr => Self::PshGPtr,
             asEBCInstr_asBC_PshC4 => Self::PshC4,
@@ -1742,13 +1744,13 @@ impl From<asEBCInstr> for BCInstr {
             asEBCInstr_asBC_POWi64 => Self::POWi64,
             asEBCInstr_asBC_POWu64 => Self::POWu64,
             asEBCInstr_asBC_Thiscall1 => Self::Thiscall1,
-            asEBCInstr_asBC_MAXBYTECODE => Self::MAXBYTECODE,
+            asEBCInstr_asBC_MAXBYTECODE => Self::MaxByteCode,
             asEBCInstr_asBC_TryBlock => Self::TryBlock,
             asEBCInstr_asBC_VarDecl => Self::VarDecl,
             asEBCInstr_asBC_Block => Self::Block,
             asEBCInstr_asBC_ObjInfo => Self::ObjInfo,
-            asEBCInstr_asBC_LINE => Self::LINE,
-            asEBCInstr_asBC_LABEL => Self::Labal,
+            asEBCInstr_asBC_LINE => Self::Line,
+            asEBCInstr_asBC_LABEL => Self::Label,
             _ => panic!("Unknown bytecode instruction: {}", value),
         }
     }
