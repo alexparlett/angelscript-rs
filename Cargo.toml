@@ -11,13 +11,9 @@ angelscript-addons = { path = "crates/angelscript-addons", optional = true }
 [dev-dependencies]
 
 [features]
-default = ["macros", "string", "math", "rust-alloc", "script-builder"]
+default = ["macros", "addons", "rust-alloc"]
 macros = ["dep:angelscript-macros"]
 addons = ["dep:angelscript-addons"]
-string = ["addons", "angelscript-addons/string"]
-math = ["addons", "angelscript-addons/math"]
-script-builder = ["addons", "angelscript-addons/script-builder"]
-script-builder-metadata = ["addons", "angelscript-addons/script-builder-metadata"]
 rust-threads = ["angelscript-core/rust-threads"]
 rust-alloc = ["angelscript-core/rust-alloc"]
 

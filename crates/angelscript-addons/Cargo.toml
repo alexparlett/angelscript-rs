@@ -3,6 +3,9 @@ name = "angelscript-addons"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+script-builder-metadata = []
+
 [dependencies]
 angelscript-core = { path = "../angelscript-core" }
 angelscript-sys = { path = "../angelscript-sys" }
@@ -10,25 +13,14 @@ angelscript-sys = { path = "../angelscript-sys" }
 thiserror = "2.0.12"
 
 #string
-sprintf = { version = "0.4.2", optional = true }
+sprintf = { version = "0.4.2" }
 
 # math
-paste = { version = "1.0", optional = true }
+paste = { version = "1.0" }
 
 #script builder
-logos = { version = "0.15.0", optional = true }
-regex = { version = "1.11.1", optional = true}
-
-[features]
-default = ["string", "math", "script-builder"]
-string = ["dep:sprintf"]
-math = ["dep:paste"]
-script-builder = ["dep:logos", "dep:regex"]
-script-builder-metadata = ["script-builder"]
+logos = { version = "0.15.0" }
+regex = { version = "1.11.1" }
 
 [dev-dependencies]
 tempdir = "0.3.7"
-
-[package.metadata.docs.rs]
-all-features = true
-no-deps = true

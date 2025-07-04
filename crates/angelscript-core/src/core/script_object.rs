@@ -2,7 +2,7 @@ use crate::core::engine::Engine;
 use crate::core::error::{ScriptError, ScriptResult};
 use crate::core::lockable_shared_bool::LockableSharedBool;
 use crate::core::typeinfo::TypeInfo;
-use crate::types::script_memory::ScriptMemoryLocation;
+use crate::types::script_memory::{ScriptMemoryLocation, Void};
 use crate::types::script_data::ScriptData;
 use crate::types::user_data::UserData;
 use angelscript_sys::*;
@@ -893,3 +893,16 @@ impl WeakScriptObjectRef {
 
 unsafe impl Send for WeakScriptObjectRef {}
 unsafe impl Sync for WeakScriptObjectRef {}
+
+impl ScriptData for ScriptObject {
+    fn to_script_ptr(&mut self) -> *mut Void {
+        self.inner as *mut Void   
+    }
+
+    fn from_script_ptr(ptr: *mut Void) -> Self
+    where
+        Self: Sized
+    {
+        Self::from_raw(ptr as *mut asIScriptObject)   
+    }
+}

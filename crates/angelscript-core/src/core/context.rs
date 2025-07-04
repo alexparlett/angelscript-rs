@@ -683,10 +683,10 @@ impl Context {
     ///
     /// # Returns
     /// Result indicating success or failure
-    pub fn set_line_callback<T: ScriptData>(
+    pub fn set_line_callback(
         &mut self,
         callback: LineCallbackFn,
-        param: Option<Box<dyn ScriptData>>,
+        param: Option<&mut dyn ScriptData>,
     ) -> ScriptResult<()> {
         CallbackManager::set_line_callback(Some(callback))?;
 
@@ -695,7 +695,7 @@ impl Context {
                 self.context,
                 asScriptContextFunction(Some(CallbackManager::cvoid_line_callback)),
                 param
-                    .map(|mut aux| aux.to_script_ptr())
+                    .map(|aux| aux.to_script_ptr())
                     .unwrap_or_else(ptr::null_mut),
                 CallingConvention::Cdecl as i32,
             ))

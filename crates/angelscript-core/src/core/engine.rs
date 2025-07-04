@@ -2463,7 +2463,7 @@ impl Engine {
         // Clear any existing diagnostics
         diagnostics.clear();
 
-        let callback = |message_info: &MessageInfo, mem: &mut ScriptMemoryLocation| {
+        let callback = |message_info: &MessageInfo, mut mem: ScriptMemoryLocation| {
             let diagnostic = Diagnostic {
                 kind: DiagnosticKind::from(message_info.msg_type),
                 message: message_info.message.clone(),

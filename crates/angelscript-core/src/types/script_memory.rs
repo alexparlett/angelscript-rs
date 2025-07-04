@@ -371,7 +371,7 @@ impl ScriptMemoryLocation {
     /// let ptr = memory_loc.as_mut_ptr();
     /// assert!(ptr.is_null());
     /// ```
-    pub fn as_mut_ptr(&mut self) -> *mut Void {
+    pub fn as_mut_ptr(&self) -> *mut Void {
         self.0
     }
 

@@ -73,7 +73,7 @@ use crate::types::script_data::ScriptData;
 ///     }
 /// }
 /// ```
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Eq, PartialEq, Copy)]
 pub struct Function {
     inner: *mut asIScriptFunction,
 }

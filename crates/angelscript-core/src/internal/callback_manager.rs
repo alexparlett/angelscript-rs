@@ -254,7 +254,9 @@ impl CallbackManager {
             .and_then(|lock| lock.line_callback)
         {
             let context = Context::from_raw(ctx);
-            callback(&context, ScriptMemoryLocation::from_const(params));
+            let location = ScriptMemoryLocation::from_mut(params);
+            
+            callback(&context, location);
         }
     }
 
@@ -277,9 +279,9 @@ impl CallbackManager {
                 message: read_cstring(c_msg.message).to_string(),
             };
             
-            let mut mem = ScriptMemoryLocation::from_const(params);
+            let mem = ScriptMemoryLocation::from_const(params);
 
-            callback(&info, &mut mem);
+            callback(&info, mem);
         }
     }
 

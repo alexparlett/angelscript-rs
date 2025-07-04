@@ -3,7 +3,6 @@ mod tests {
     use angelscript_core::core::context::Context;
     use angelscript_core::core::engine::Engine;
     use angelscript_core::types::enums::{ContextState, GetModuleFlags};
-    use angelscript_core::types::script_memory::Void;
 
     // Helper function to reduce boilerplate
     fn create_test_engine() -> Engine {
