@@ -3,7 +3,6 @@ use angelscript::prelude::{
     ScriptGeneric, ScriptResult, TypeId, TypeModifiers,
 };
 use std::collections::HashMap;
-use angelscript_core::types::script_memory::Void;
 
 #[repr(C)]
 #[derive(Debug, Clone)]

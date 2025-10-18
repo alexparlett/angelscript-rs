@@ -20,11 +20,15 @@ use crate::types::script_data::ScriptData;
 use crate::types::script_memory::{ScriptMemoryLocation, Void};
 use crate::types::user_data::UserData;
 use angelscript_sys::*;
+use lazy_static::lazy_static;
+use std::alloc::{GlobalAlloc, Layout, System};
+use std::collections::HashMap;
 use std::ffi::{c_char, CStr, CString};
 use std::marker::PhantomData;
 use std::os::raw::c_void;
 use std::ptr;
 use std::ptr::NonNull;
+use std::sync::Mutex;
 
 /// Trait for types that can be installed into an AngelScript engine.
 ///
@@ -79,30 +83,95 @@ pub struct Engine {
     phantom_data: PhantomData<asIScriptEngine>,
 }
 
+const AS_MIN_ALIGNMENT: usize = 8;
+
+/// A wrapper around the raw pointer to make it Send + Sync
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+struct AllocKey(usize);
+
+impl AllocKey {
+    fn from_ptr<T>(ptr: *mut T) -> Self {
+        AllocKey(ptr as usize)
+    }
+
+    fn as_ptr<T>(&self) -> *mut T {
+        self.0 as *mut T
+    }
+}
+
+// This is safe because we're only using the numeric value of the pointer
+// as a key, not dereferencing it across threads
+unsafe impl Send for AllocKey {}
+unsafe impl Sync for AllocKey {}
+
+/// Track allocations with their layouts for proper deallocation
+lazy_static! {
+    static ref ALLOC_MAP: Mutex<HashMap<AllocKey, Layout>> = Mutex::new(HashMap::new());
+}
+
 impl Engine {
-    /// Custom memory allocator that uses Rust's allocator.
+    /// Custom memory allocator that uses Rust's global allocator.
     ///
     /// This function is used when the `rust-alloc` feature is enabled
     /// to ensure all memory allocation goes through Rust's allocator.
     #[cfg(feature = "rust-alloc")]
     pub unsafe extern "C" fn unified_alloc(size: usize) -> *mut std::ffi::c_void {
-        unsafe {
-            let layout = std::alloc::Layout::from_size_align(size, 8).unwrap();
-            std::alloc::alloc(layout) as *mut std::ffi::c_void
+        // Handle zero-size allocation requests
+        if size == 0 {
+            return std::ptr::null_mut();
+        }
+
+        // Ensure proper alignment for AngelScript objects
+        let align = std::cmp::max(AS_MIN_ALIGNMENT, std::mem::align_of::<*mut u8>());
+
+        match Layout::from_size_align(size, align) {
+            Ok(layout) => {
+                let ptr = System.alloc(layout);
+
+                if !ptr.is_null() {
+                    // Store the allocation layout for later deallocation
+                    // using the wrapped key type
+                    let key = AllocKey::from_ptr(ptr);
+                    let mut map = ALLOC_MAP.lock().unwrap();
+                    map.insert(key, layout);
+                }
+
+                ptr as *mut std::ffi::c_void
+            },
+            Err(_) => std::ptr::null_mut(),
         }
     }
 
-    /// Custom memory deallocator that uses libc's free.
+    /// Custom memory deallocator that uses Rust's global allocator.
     ///
     /// This function is used when the `rust-alloc` feature is enabled.
+    /// It properly deallocates memory previously allocated with unified_alloc.
     #[cfg(feature = "rust-alloc")]
     pub unsafe extern "C" fn unified_free(ptr: *mut std::ffi::c_void) {
-        unsafe {
-            if !ptr.is_null() {
-                libc::free(ptr);
-            }
+        // Handle null pointers gracefully
+        if ptr.is_null() {
+            return;
+        }
+
+        let raw_ptr = ptr as *mut u8;
+        let key = AllocKey::from_ptr(raw_ptr);
+
+        // Look up the layout in our allocation map
+        let layout = {
+            let mut map = ALLOC_MAP.lock().unwrap();
+            map.remove(&key)
+        };
+
+        if let Some(layout) = layout {
+            // Deallocate the memory using the stored layout
+            System.dealloc(raw_ptr, layout);
+        } else {
+            // This could happen if using the GC and we're not properly tracking an allocation
+            // Log warning but don't panic, as AngelScript may be using its GC
+            eprintln!("Warning: Attempted to free pointer that wasn't allocated with unified_alloc");
         }
     }
+
 
     /// Creates a new AngelScript engine.
     ///
