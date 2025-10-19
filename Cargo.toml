@@ -4,21 +4,15 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-angelscript-macros = { path = "crates/angelscript-macros", optional = true }
-angelscript-core = { path = "crates/angelscript-core" }
-angelscript-addons = { path = "crates/angelscript-addons", optional = true }
+thiserror = "2.0"
+bitflags = "2.9"
+pest = "2.8"
+pest_derive = "2.8"
 
 [dev-dependencies]
+criterion = "0.7"
 
 [features]
-default = ["macros", "addons", "rust-alloc"]
-macros = ["dep:angelscript-macros"]
-addons = ["dep:angelscript-addons"]
-rust-threads = ["angelscript-core/rust-threads"]
-rust-alloc = ["angelscript-core/rust-alloc"]
-
-[workspace]
-members = ["crates/angelscript-sys", "crates/angelscript-macros", "crates/angelscript-core", "crates/angelscript-addons"]
 
 [package.metadata.docs.rs]
 all-features = true

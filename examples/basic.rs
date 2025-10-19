@@ -1,81 +1,79 @@
-use angelscript::prelude::{
-    ContextState, GetModuleFlags, ReturnCode, ScriptError, ScriptGeneric, ScriptResult,
-};
-use angelscript_core::core::engine::Engine;
+use angelscript::{ExecutionResult, GetModuleFlag, ScriptEngine, TypeFlags};
 
-fn print(g: &ScriptGeneric) {
-    let arg_ptr = g.get_arg_object(0).unwrap();
-    println!("Hello, {}", arg_ptr.as_ref::<String>());
-}
+fn main() {
+    println!("AngelScript Basic Example\n");
 
-fn main() -> ScriptResult<()> {
-    // Create the script engine
-    let mut engine = Engine::create().expect("Failed to create script engine");
+    // Create engine
+    let mut engine = ScriptEngine::new();
 
-    // Set up message callback
-    engine.set_message_callback(
-        |msg, _| {
-            println!("AngelScript: {}", msg.message);
-        },
-        None,
-    )?;
-
-    engine.install(angelscript::addons::string::addon())?;
-
-    engine.register_global_function("void print(const string &in)", print, None)?;
+    // Register types
+    engine
+        .register_object_type_raw("string", 0, TypeFlags::REF_TYPE)
+        .expect("Failed to register string");
 
     // Create a module
-    let module = engine.get_module("MyModule", GetModuleFlags::AlwaysCreate)?;
+    let module = engine
+        .get_module("MyModule", GetModuleFlag::AlwaysCreate)
+        .expect("Failed to create module");
 
-    // Add a simple script without strings for now
-    let script = r#"
-        void say(const string &in msg) {
-            print(msg);
+    // Add script section
+    module
+        .add_script_section(
+            "main.as",
+            r#"
+        int add(int a, int b) {
+            return a + b;
         }
-    
+
+        int multiply(int a, int b) {
+            return a * b;
+        }
+
         void main() {
-            int x = 5;
-            int y = 10;
-            int result = x + y;
-            print("carl");
+            int result = add(10, 20);
         }
-    "#;
-
-    module.add_script_section("main", script, 0)?;
+    "#,
+        )
+        .expect("Failed to add script section");
 
     // Build the module
-    module.build()?;
-
-    let ctx = engine.create_context()?;
-
-    let main_func = module.get_function_by_decl("void main()").unwrap();
-
-    // Create a context and execute
-    ctx.prepare(&main_func)?;
-    ctx.execute()?;
-
-    let print_func = module.get_function_by_name("say").unwrap();
-
-    let mut name = "Cat".to_string();
-
-    ctx.prepare(&print_func)?;
-    ctx.set_arg_object(0, &mut name)?;
-    let result = ctx.execute()?;
-
-    if result == ContextState::Exception {
-        let error = ctx.get_exception_string();
-        let (line, column, section) = ctx.get_exception_line_number();
-        println!(
-            "Exception {:?} at {}, {:?}, {:?}",
-            error, line, column, section
-        );
-
-        println!("Script execution failed");
-
-        Err(ScriptError::AngelScriptError(ReturnCode::Error))
-    } else {
-        println!("✅ Script execution completed");
-
-        Ok(())
+    println!("Building module...");
+    let r = module.build();
+    if r < 0 {
+        eprintln!("Build failed!");
+        return;
     }
+
+    println!("✓ Build successful!\n");
+
+    // Create context
+    let mut ctx = engine.create_context();
+
+    // Call add(10, 20)
+    println!("Calling add(10, 20)...");
+    ctx.prepare(module, "add").expect("Failed to prepare");
+    ctx.set_arg_dword(0, 10).expect("Failed to set arg 0");
+    ctx.set_arg_dword(1, 20).expect("Failed to set arg 1");
+
+    let result = ctx.execute().expect("Execution failed");
+    if result == ExecutionResult::Finished {
+        let return_value = ctx.get_return_dword().expect("Failed to get return value");
+        println!("Result: {}\n", return_value);
+    }
+
+    // Reuse context for multiply(5, 6)
+    ctx.unprepare();
+
+    println!("Calling multiply(5, 6)...");
+    ctx.prepare(module, "multiply").expect("Failed to prepare");
+    ctx.set_arg_dword(0, 5).expect("Failed to set arg 0");
+    ctx.set_arg_dword(1, 6).expect("Failed to set arg 1");
+
+    let result = ctx.execute().expect("Execution failed");
+    if result == ExecutionResult::Finished {
+        let return_value = ctx.get_return_dword().expect("Failed to get return value");
+        println!("Result: {}", return_value);
+    }
+
+    println!("\n✓ Example completed successfully!");
 }
