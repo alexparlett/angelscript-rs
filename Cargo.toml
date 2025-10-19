@@ -6,8 +6,6 @@ edition = "2024"
 [dependencies]
 thiserror = "2.0"
 bitflags = "2.9"
-pest = "2.8"
-pest_derive = "2.8"
 
 [dev-dependencies]
 criterion = "0.7"

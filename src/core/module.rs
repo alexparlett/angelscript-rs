@@ -1,10 +1,11 @@
 use crate::compiler::bytecode::BytecodeModule;
-use crate::core::engine::EngineInner;
-use std::sync::{Arc, RwLock, Weak};
-use crate::compiler::AngelscriptCompiler;
 use crate::compiler::codegen::CodeGenerator;
 use crate::compiler::semantic::SemanticAnalyzer;
-use crate::parser::AngelScriptParser;
+use crate::compiler::AngelscriptCompiler;
+use crate::core::engine::EngineInner;
+use crate::parser::parse_with_preprocessor;
+use crate::parser::script_builder::{IncludeCallback, PragmaCallback, ScriptBuilder};
+use std::sync::{Arc, RwLock, Weak};
 
 /// A module contains compiled scripts and their metadata
 ///
@@ -27,6 +28,9 @@ pub struct Module {
 
     /// Reference to the engine that owns this module
     engine: Weak<RwLock<EngineInner>>,
+
+    /// Script builder for preprocessor handling
+    script_builder: ScriptBuilder,
 }
 
 #[derive(Clone)]
@@ -90,6 +94,7 @@ impl Module {
             symbols: ModuleSymbols::default(),
             state: ModuleState::Empty,
             engine,
+            script_builder: ScriptBuilder::new(),
         }
     }
 
@@ -118,6 +123,26 @@ impl Module {
         });
 
         Ok(())
+    }
+
+    /// Define a word for conditional compilation (#if directives)
+    pub fn define_word(&mut self, word: String) {
+        self.script_builder.define_word(word);
+    }
+
+    /// Check if a word is defined
+    pub fn is_defined(&self, word: &str) -> bool {
+        self.script_builder.is_defined(word)
+    }
+
+    /// Set the include callback for handling #include directives
+    pub fn set_include_callback<C: IncludeCallback + 'static>(&mut self, callback: C) {
+        self.script_builder.set_include_callback(callback);
+    }
+
+    /// Set the pragma callback for handling #pragma directives
+    pub fn set_pragma_callback<C: PragmaCallback + 'static>(&mut self, callback: C) {
+        self.script_builder.set_pragma_callback(callback);
     }
 
     /// Build (compile) this module
@@ -175,8 +200,8 @@ impl Module {
 
         let module_name = self.name.clone();
 
-        // Phase 1: Parse
-        let ast = match AngelScriptParser::from_source(&source) {
+        // Phase 1: Parse and process preprocessor directives
+        let ast = match parse_with_preprocessor(&source, &mut self.script_builder) {
             Ok(ast) => ast,
             Err(e) => {
                 self.state = ModuleState::Failed;
@@ -201,6 +226,9 @@ impl Module {
 
         self.bytecode = Some(bytecode);
         self.state = ModuleState::Built;
+
+        // Clear script builder state for next build
+        self.script_builder.clear();
 
         // Log warnings
         if !analyzer.warnings.is_empty() {
@@ -255,5 +283,6 @@ impl Module {
         self.bytecode = None;
         self.symbols = ModuleSymbols::default();
         self.state = ModuleState::Empty;
+        self.script_builder.clear();
     }
 }

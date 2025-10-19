@@ -1,10 +1,12 @@
-use angelscript::{ScriptEngine, GetModuleFlag, TypeFlags};
+use angelscript::{GetModuleFlag, ScriptEngine, TypeFlags};
 
 #[test]
 fn test_basic_compilation() {
     let mut engine = ScriptEngine::new();
 
-    let module = engine.get_module("test", GetModuleFlag::AlwaysCreate).unwrap();
+    let module = engine
+        .get_module("test", GetModuleFlag::AlwaysCreate)
+        .unwrap();
     module.add_script_section("main", "void main() {}").unwrap();
 
     let result = module.build();
@@ -15,12 +17,19 @@ fn test_basic_compilation() {
 fn test_simple_function() {
     let mut engine = ScriptEngine::new();
 
-    let module = engine.get_module("test", GetModuleFlag::AlwaysCreate).unwrap();
-    module.add_script_section("main", r#"
+    let module = engine
+        .get_module("test", GetModuleFlag::AlwaysCreate)
+        .unwrap();
+    module
+        .add_script_section(
+            "main",
+            r#"
         int add(int a, int b) {
             return a + b;
         }
-    "#).unwrap();
+    "#,
+        )
+        .unwrap();
 
     let result = module.build();
     assert_eq!(result, 0, "Build should succeed");
@@ -34,8 +43,13 @@ fn test_simple_function() {
 fn test_class_definition() {
     let mut engine = ScriptEngine::new();
 
-    let module = engine.get_module("test", GetModuleFlag::AlwaysCreate).unwrap();
-    module.add_script_section("main", r#"
+    let module = engine
+        .get_module("test", GetModuleFlag::AlwaysCreate)
+        .unwrap();
+    module
+        .add_script_section(
+            "main",
+            r#"
         class Player {
             int health;
 
@@ -43,7 +57,9 @@ fn test_class_definition() {
                 health = health - amount;
             }
         }
-    "#).unwrap();
+    "#,
+        )
+        .unwrap();
 
     let result = module.build();
     assert_eq!(result, 0, "Build should succeed");
@@ -56,21 +72,33 @@ fn test_class_definition() {
 fn test_multiple_sections() {
     let mut engine = ScriptEngine::new();
 
-    let module = engine.get_module("test", GetModuleFlag::AlwaysCreate).unwrap();
+    let module = engine
+        .get_module("test", GetModuleFlag::AlwaysCreate)
+        .unwrap();
 
-    module.add_script_section("types", r#"
+    module
+        .add_script_section(
+            "types",
+            r#"
         class Vector3 {
             float x;
             float y;
             float z;
         }
-    "#).unwrap();
+    "#,
+        )
+        .unwrap();
 
-    module.add_script_section("main", r#"
+    module
+        .add_script_section(
+            "main",
+            r#"
         void main() {
             Vector3 v;
         }
-    "#).unwrap();
+    "#,
+        )
+        .unwrap();
 
     let result = module.build();
     assert_eq!(result, 0, "Build should succeed");
@@ -80,14 +108,23 @@ fn test_multiple_sections() {
 fn test_registered_types() {
     let mut engine = ScriptEngine::new();
 
-    engine.register_object_type_raw("string", 0, TypeFlags::REF_TYPE).unwrap();
+    engine
+        .register_object_type::<String>("string", TypeFlags::REF_TYPE)
+        .unwrap();
 
-    let module = engine.get_module("test", GetModuleFlag::AlwaysCreate).unwrap();
-    module.add_script_section("main", r#"
+    let module = engine
+        .get_module("test", GetModuleFlag::AlwaysCreate)
+        .unwrap();
+    module
+        .add_script_section(
+            "main",
+            r#"
         void main() {
             string s;
         }
-    "#).unwrap();
+    "#,
+        )
+        .unwrap();
 
     let result = module.build();
     assert_eq!(result, 0, "Build should succeed");
@@ -97,12 +134,19 @@ fn test_registered_types() {
 fn test_syntax_error() {
     let mut engine = ScriptEngine::new();
 
-    let module = engine.get_module("test", GetModuleFlag::AlwaysCreate).unwrap();
-    module.add_script_section("main", r#"
+    let module = engine
+        .get_module("test", GetModuleFlag::AlwaysCreate)
+        .unwrap();
+    module
+        .add_script_section(
+            "main",
+            r#"
         void main() {
             int x = ;
         }
-    "#).unwrap();
+    "#,
+        )
+        .unwrap();
 
     let result = module.build();
     assert!(result < 0, "Build should fail with syntax error");
@@ -112,11 +156,17 @@ fn test_syntax_error() {
 fn test_module_always_create() {
     let mut engine = ScriptEngine::new();
 
-    let module1 = engine.get_module("test", GetModuleFlag::AlwaysCreate).unwrap();
-    module1.add_script_section("main", "void func1() {}").unwrap();
+    let module1 = engine
+        .get_module("test", GetModuleFlag::AlwaysCreate)
+        .unwrap();
+    module1
+        .add_script_section("main", "void func1() {}")
+        .unwrap();
     module1.build();
 
-    let module2 = engine.get_module("test", GetModuleFlag::AlwaysCreate).unwrap();
+    let module2 = engine
+        .get_module("test", GetModuleFlag::AlwaysCreate)
+        .unwrap();
     assert_eq!(module2.sources.len(), 0, "Module should be cleared");
 }
 
@@ -124,12 +174,19 @@ fn test_module_always_create() {
 fn test_context_execution() {
     let mut engine = ScriptEngine::new();
 
-    let module = engine.get_module("test", GetModuleFlag::AlwaysCreate).unwrap();
-    module.add_script_section("main", r#"
+    let module = engine
+        .get_module("test", GetModuleFlag::AlwaysCreate)
+        .unwrap();
+    module
+        .add_script_section(
+            "main",
+            r#"
         int getValue() {
             return 42;
         }
-    "#).unwrap();
+    "#,
+        )
+        .unwrap();
 
     let result = module.build();
     assert_eq!(result, 0);

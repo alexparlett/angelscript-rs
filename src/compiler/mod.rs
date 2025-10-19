@@ -4,8 +4,7 @@ pub mod semantic;
 
 use crate::compiler::semantic::SemanticAnalyzer;
 use crate::core::module::{ClassDecl, FunctionDecl, GlobalDecl, ModuleSymbols};
-use crate::parser::Script;
-use crate::parser::ScriptItem;
+use crate::parser::ast::{Script, ScriptItem};
 
 pub struct AngelscriptCompiler;
 

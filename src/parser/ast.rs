@@ -18,8 +18,41 @@ pub enum ScriptItem {
     Var(Var),
     Func(Func),
     Namespace(Namespace),
-    Using(Using),
-    Include(String),
+
+    // Simplified preprocessor directives
+    Include(Include),
+    Pragma(Pragma),
+    ConditionalBlock(ConditionalBlock),
+    CustomDirective(CustomDirective),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Include {
+    pub path: String,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Pragma {
+    pub content: String,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct CustomDirective {
+    pub name: String,
+    pub content: String,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ConditionalBlock {
+    pub if_branch: ConditionalBranch,
+    pub elif_branches: Vec<ConditionalBranch>,
+    pub else_branch: Option<Vec<ScriptItem>>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ConditionalBranch {
+    pub condition: String,
+    pub items: Vec<ScriptItem>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -161,7 +194,7 @@ pub struct VarDecl {
 pub enum VarInit {
     Expr(Expr),
     InitList(InitList),
-    ArgList(Vec<Expr>),
+    ArgList(Vec<Arg>),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -356,12 +389,6 @@ pub struct Arg {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct Lambda {
-    pub params: Vec<(Option<Type>, Option<String>)>,
-    pub body: StatBlock,
-}
-
-#[derive(Debug, Clone, PartialEq)]
 pub enum BinaryOp {
     Add, Sub, Mul, Div, Mod, Pow,
     Eq, Ne, Lt, Le, Gt, Ge, Is, IsNot,
@@ -391,6 +418,19 @@ pub enum PostfixOp {
 pub struct IndexArg {
     pub name: Option<String>,
     pub value: Expr,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Lambda {
+    pub params: Vec<LambdaParam>,
+    pub body: StatBlock,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct LambdaParam {
+    pub param_type: Option<Type>,
+    pub type_mod: Option<TypeMod>,
+    pub name: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]

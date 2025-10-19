@@ -32,7 +32,6 @@ pub struct EngineInner {
 pub struct ObjectTypeInfo {
     pub type_id: u32,
     pub name: String,
-    pub size: usize,
     pub flags: TypeFlags,
     pub properties: Vec<PropertyInfo>,
     pub methods: Vec<MethodInfo>,
@@ -157,42 +156,9 @@ impl ScriptEngine {
             })),
         };
 
-        engine.register_primitive_types();
         engine
     }
-
-    /// Register built-in primitive types
-    fn register_primitive_types(&mut self) {
-        self.register_object_type_raw("void", 0, TypeFlags::POD_TYPE)
-            .unwrap();
-        self.register_object_type_raw("bool", std::mem::size_of::<bool>(), TypeFlags::POD_TYPE)
-            .unwrap();
-        self.register_object_type_raw("int8", std::mem::size_of::<i8>(), TypeFlags::POD_TYPE)
-            .unwrap();
-        self.register_object_type_raw("int16", std::mem::size_of::<i16>(), TypeFlags::POD_TYPE)
-            .unwrap();
-        self.register_object_type_raw("int32", std::mem::size_of::<i32>(), TypeFlags::POD_TYPE)
-            .unwrap();
-        self.register_object_type_raw("int64", std::mem::size_of::<i64>(), TypeFlags::POD_TYPE)
-            .unwrap();
-        self.register_object_type_raw("int", std::mem::size_of::<i32>(), TypeFlags::POD_TYPE)
-            .unwrap();
-        self.register_object_type_raw("uint8", std::mem::size_of::<u8>(), TypeFlags::POD_TYPE)
-            .unwrap();
-        self.register_object_type_raw("uint16", std::mem::size_of::<u16>(), TypeFlags::POD_TYPE)
-            .unwrap();
-        self.register_object_type_raw("uint32", std::mem::size_of::<u32>(), TypeFlags::POD_TYPE)
-            .unwrap();
-        self.register_object_type_raw("uint64", std::mem::size_of::<u64>(), TypeFlags::POD_TYPE)
-            .unwrap();
-        self.register_object_type_raw("uint", std::mem::size_of::<u32>(), TypeFlags::POD_TYPE)
-            .unwrap();
-        self.register_object_type_raw("float", std::mem::size_of::<f32>(), TypeFlags::POD_TYPE)
-            .unwrap();
-        self.register_object_type_raw("double", std::mem::size_of::<f64>(), TypeFlags::POD_TYPE)
-            .unwrap();
-    }
-
+    
     /// Get a thread-safe reference to the engine for the compiler
     pub fn get_ref(&self) -> Arc<RwLock<EngineInner>> {
         Arc::clone(&self.inner)
@@ -204,7 +170,6 @@ impl ScriptEngine {
         name: &str,
         flags: TypeFlags,
     ) -> Result<u32, String> {
-        let size = std::mem::size_of::<T>();
         let rust_type_id = StdTypeId::of::<T>();
 
         let mut inner = self.inner.write().unwrap();
@@ -223,45 +188,11 @@ impl ScriptEngine {
             ObjectTypeInfo {
                 type_id,
                 name: name.to_string(),
-                size,
                 flags,
                 properties: Vec::new(),
                 methods: Vec::new(),
                 behaviours: Vec::new(),
                 rust_type_id: Some(rust_type_id),
-            },
-        );
-
-        Ok(type_id)
-    }
-
-    /// Register an object type with explicit size (for opaque types or special cases)
-    pub fn register_object_type_raw(
-        &mut self,
-        name: &str,
-        size: usize,
-        flags: TypeFlags,
-    ) -> Result<u32, String> {
-        let mut inner = self.inner.write().unwrap();
-
-        if inner.object_types.contains_key(name) {
-            return Err(format!("Type '{}' already registered", name));
-        }
-
-        let type_id = inner.next_type_id;
-        inner.next_type_id += 1;
-
-        inner.object_types.insert(
-            name.to_string(),
-            ObjectTypeInfo {
-                type_id,
-                name: name.to_string(),
-                size,
-                flags,
-                properties: Vec::new(),
-                methods: Vec::new(),
-                behaviours: Vec::new(),
-                rust_type_id: None,
             },
         );
 
@@ -400,28 +331,30 @@ impl ScriptEngine {
     pub fn get_module(&mut self, name: &str, flag: GetModuleFlag) -> Option<&mut Module> {
         let mut inner = self.inner.write().unwrap();
 
-        match flag {
-            GetModuleFlag::OnlyIfExists => inner.modules.get_mut(name).map(|b| b.as_mut()),
-
-            GetModuleFlag::CreateIfNotExists => {
-                if !inner.modules.contains_key(name) {
-                    let module =
-                        Box::new(Module::new(name.to_string(), Arc::downgrade(&self.inner)));
-                    inner.modules.insert(name.to_string(), module);
-                }
-                inner.modules.get_mut(name).map(|b| b.as_mut())
-            }
-
-            GetModuleFlag::AlwaysCreate => {
-                if let Some(existing) = inner.modules.get_mut(name) {
-                    existing.discard();
-                }
-
-                let module = Box::new(Module::new(name.to_string(), Arc::downgrade(&self.inner)));
-                inner.modules.insert(name.to_string(), module);
-                inner.modules.get_mut(name).map(|b| b.as_mut())
-            }
-        }
+        // match flag {
+        //     GetModuleFlag::OnlyIfExists => inner.modules.get_mut(name).map(|b| b.as_mut()),
+        // 
+        //     GetModuleFlag::CreateIfNotExists => {
+        //         if !inner.modules.contains_key(name) {
+        //             let module =
+        //                 Box::new(Module::new(name.to_string(), Arc::downgrade(&self.inner)));
+        //             inner.modules.insert(name.to_string(), module);
+        //         }
+        //         inner.modules.get_mut(name).map(|b| b.as_mut())
+        //     }
+        // 
+        //     GetModuleFlag::AlwaysCreate => {
+        //         if let Some(existing) = inner.modules.get_mut(name) {
+        //             existing.discard();
+        //         }
+        // 
+        //         let module = Box::new(Module::new(name.to_string(), Arc::downgrade(&self.inner)));
+        //         inner.modules.insert(name.to_string(), module);
+        //         inner.modules.get_mut(name).map(|b| b.as_mut())
+        //     }
+        // }
+        
+        None
     }
 
     /// Discard a module

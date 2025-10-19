@@ -1,7 +1,7 @@
-use crate::parser::*;
+use crate::core::engine::EngineInner;
+use crate::parser::ast::{Class, ClassMember, DataType, Enum, Func, FuncDef, Interface, Namespace, Script, ScriptItem, Type, TypeMod, Typedef, Var, Visibility};
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
-use crate::core::engine::EngineInner;
 
 pub struct SemanticAnalyzer {
     pub symbol_table: SymbolTable,
@@ -36,7 +36,6 @@ enum ScriptTypeKind {
 pub struct MemberInfo {
     pub name: String,
     pub type_id: u32,
-    pub offset: u32,
     pub visibility: Visibility,
 }
 
@@ -251,13 +250,15 @@ impl SemanticAnalyzer {
             if let Some(base_id) = self.lookup_type_id(base_name) {
                 base_class_ids.push(base_id);
             } else {
-                self.errors.push(format!("Unknown base class '{}' for class '{}'", base_name, class.name));
+                self.errors.push(format!(
+                    "Unknown base class '{}' for class '{}'",
+                    base_name, class.name
+                ));
             }
         }
 
         let mut members = Vec::new();
         let mut methods = Vec::new();
-        let mut offset = 0u32;
 
         for member in &class.members {
             match member {
@@ -267,23 +268,30 @@ impl SemanticAnalyzer {
                         members.push(MemberInfo {
                             name: decl.name.clone(),
                             type_id: member_type_id,
-                            offset,
                             visibility: var.visibility.clone().unwrap_or(Visibility::Private),
                         });
-                        offset += self.get_type_size(member_type_id);
                     }
                 }
                 ClassMember::Func(func) => {
-                    let return_type = func.return_type.as_ref()
-                                          .map(|t| self.resolve_type(t))
-                                          .unwrap_or_else(|| self.lookup_type_id("void").unwrap_or(0));
+                    let return_type = func
+                        .return_type
+                        .as_ref()
+                        .map(|t| self.resolve_type(t))
+                        .unwrap_or_else(|| self.lookup_type_id("void").unwrap_or(0));
 
-                    let params = func.params.iter().map(|p| ParamInfo {
-                        name: p.name.clone(),
-                        type_id: self.resolve_type(&p.param_type),
-                        is_ref: matches!(p.type_mod, Some(TypeMod::In) | Some(TypeMod::Out) | Some(TypeMod::InOut)),
-                        is_const: p.param_type.is_const,
-                    }).collect();
+                    let params = func
+                        .params
+                        .iter()
+                        .map(|p| ParamInfo {
+                            name: p.name.clone(),
+                            type_id: self.resolve_type(&p.param_type),
+                            is_ref: matches!(
+                                p.type_mod,
+                                Some(TypeMod::In) | Some(TypeMod::Out) | Some(TypeMod::InOut)
+                            ),
+                            is_const: p.param_type.is_const,
+                        })
+                        .collect();
 
                     methods.push(MethodInfo {
                         name: func.name.clone(),
@@ -297,13 +305,16 @@ impl SemanticAnalyzer {
             }
         }
 
-        self.script_types.insert(class.name.clone(), ScriptTypeInfo {
-            type_id,
-            kind: ScriptTypeKind::Class,
-            members,
-            methods,
-            base_classes: base_class_ids,
-        });
+        self.script_types.insert(
+            class.name.clone(),
+            ScriptTypeInfo {
+                type_id,
+                kind: ScriptTypeKind::Class,
+                members,
+                methods,
+                base_classes: base_class_ids,
+            },
+        );
     }
 
     fn collect_enum(&mut self, enum_def: &Enum) {
@@ -328,13 +339,16 @@ impl SemanticAnalyzer {
             });
         }
 
-        self.script_types.insert(enum_def.name.clone(), ScriptTypeInfo {
-            type_id,
-            kind: ScriptTypeKind::Enum,
-            members: Vec::new(),
-            methods: Vec::new(),
-            base_classes: Vec::new(),
-        });
+        self.script_types.insert(
+            enum_def.name.clone(),
+            ScriptTypeInfo {
+                type_id,
+                kind: ScriptTypeKind::Enum,
+                members: Vec::new(),
+                methods: Vec::new(),
+                base_classes: Vec::new(),
+            },
+        );
     }
 
     fn collect_interface(&mut self, interface: &Interface) {
@@ -349,13 +363,16 @@ impl SemanticAnalyzer {
             is_initialized: true,
         });
 
-        self.script_types.insert(interface.name.clone(), ScriptTypeInfo {
-            type_id,
-            kind: ScriptTypeKind::Interface,
-            members: Vec::new(),
-            methods: Vec::new(),
-            base_classes: Vec::new(),
-        });
+        self.script_types.insert(
+            interface.name.clone(),
+            ScriptTypeInfo {
+                type_id,
+                kind: ScriptTypeKind::Interface,
+                members: Vec::new(),
+                methods: Vec::new(),
+                base_classes: Vec::new(),
+            },
+        );
     }
 
     fn collect_typedef(&mut self, typedef: &Typedef) {
@@ -368,14 +385,17 @@ impl SemanticAnalyzer {
                 is_initialized: true,
             });
         } else {
-            self.errors.push(format!("Unknown type '{}' in typedef", typedef.prim_type));
+            self.errors
+                .push(format!("Unknown type '{}' in typedef", typedef.prim_type));
         }
     }
 
     fn collect_function(&mut self, func: &Func) {
-        let return_type = func.return_type.as_ref()
-                              .map(|t| self.resolve_type(t))
-                              .unwrap_or_else(|| self.lookup_type_id("void").unwrap_or(0));
+        let return_type = func
+            .return_type
+            .as_ref()
+            .map(|t| self.resolve_type(t))
+            .unwrap_or_else(|| self.lookup_type_id("void").unwrap_or(0));
 
         self.symbol_table.insert_global(Symbol {
             name: func.name.clone(),
@@ -413,7 +433,9 @@ impl SemanticAnalyzer {
     }
 
     fn collect_namespace(&mut self, namespace: &Namespace) {
-        self.collect_declarations(&Script { items: namespace.items.clone() });
+        self.collect_declarations(&Script {
+            items: namespace.items.clone(),
+        });
     }
 
     fn resolve_type(&self, type_def: &Type) -> TypeId {
@@ -427,27 +449,6 @@ impl SemanticAnalyzer {
         self.lookup_type_id(&base_name).unwrap_or(0)
     }
 
-    fn get_type_size(&self, type_id: TypeId) -> u32 {
-        // Check script types
-        for script_type in self.script_types.values() {
-            if script_type.type_id == type_id {
-                return script_type.members.iter()
-                                  .map(|m| self.get_type_size(m.type_id))
-                                  .sum();
-            }
-        }
-
-        // Check engine types
-        let engine_guard = self.engine.read().unwrap();
-        for obj_type in engine_guard.object_types.values() {
-            if obj_type.type_id == type_id {
-                return obj_type.size as u32;
-            }
-        }
-
-        4 // Default size
-    }
-
     // Stub implementations for analysis methods
     fn analyze_function(&mut self, _func: &Func) {}
     fn analyze_class(&mut self, _class: &Class) {}
@@ -457,13 +458,17 @@ impl SemanticAnalyzer {
 impl SymbolTable {
     pub fn new() -> Self {
         Self {
-            scopes: vec![Scope { symbols: HashMap::new() }],
+            scopes: vec![Scope {
+                symbols: HashMap::new(),
+            }],
             global_scope: HashMap::new(),
         }
     }
 
     pub fn push_scope(&mut self) {
-        self.scopes.push(Scope { symbols: HashMap::new() });
+        self.scopes.push(Scope {
+            symbols: HashMap::new(),
+        });
     }
 
     pub fn pop_scope(&mut self) {

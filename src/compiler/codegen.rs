@@ -1,8 +1,8 @@
-use crate::parser::*;
 use crate::compiler::bytecode::*;
+use crate::compiler::bytecode::{BytecodeModule, GlobalVar, Instruction, TypeInfo};
 use crate::compiler::semantic::SemanticAnalyzer;
 use std::collections::HashMap;
-use crate::compiler::bytecode::{BytecodeModule, GlobalVar, Instruction, TypeInfo};
+use crate::parser::ast::{BinaryOp, Class, ClassMember, Expr, Func, IfStmt, Literal, ReturnStmt, Script, ScriptItem, StatBlock, Statement, UnaryOp, Var, VarInit, WhileStmt};
 
 pub struct CodeGenerator {
     module: BytecodeModule,
@@ -56,7 +56,10 @@ impl CodeGenerator {
         }
 
         // Add return if not present
-        if !matches!(self.module.instructions.last(), Some(Instruction::Return | Instruction::ReturnValue)) {
+        if !matches!(
+            self.module.instructions.last(),
+            Some(Instruction::Return | Instruction::ReturnValue)
+        ) {
             self.emit(Instruction::Return);
         }
 
@@ -308,7 +311,8 @@ impl CodeGenerator {
     }
 
     fn find_function(&self, name: &str) -> u32 {
-        self.module.functions
+        self.module
+            .functions
             .iter()
             .position(|f| f.name == name)
             .unwrap_or(0) as u32
