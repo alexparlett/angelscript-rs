@@ -22,10 +22,10 @@ pub enum TokenKind {
     False,
     Null,
 
-    // Identifiers and keywords
+    // Identifiers
     Identifier(String),
 
-    // Keywords
+    // Keywords - ONLY actual reserved keywords from as_tokendef.h
     Class,
     Enum,
     Interface,
@@ -52,18 +52,10 @@ pub enum TokenKind {
     Const,
     Private,
     Protected,
-    Shared,
-    External,
-    Abstract,
-    Final,
-    Override,
-    Explicit,
-    Property,
-    Get,
-    Set,
     If,
     Else,
     For,
+    ForEach,
     While,
     Do,
     Switch,
@@ -74,48 +66,43 @@ pub enum TokenKind {
     Return,
     Try,
     Catch,
-    Foreach,
     In,
     Out,
     InOut,
     Cast,
-    Function,
-    From,
-    This,
-    Super,
 
     // Operators - Binary
-    Add,          // +
-    Sub,          // -
-    Mul,          // *
-    Div,          // /
-    Mod,          // %
-    Pow,          // **
+    Add, // +
+    Sub, // -
+    Mul, // *
+    Div, // /
+    Mod, // %
+    Pow, // **
 
     // Comparison
-    Eq,           // ==
-    Ne,           // !=
-    Lt,           // <
-    Le,           // <=
-    Gt,           // >
-    Ge,           // >=
-    Is,           // is
-    IsNot,        // !is
+    Eq,    // ==
+    Ne,    // !=
+    Lt,    // <
+    Le,    // <=
+    Gt,    // >
+    Ge,    // >=
+    Is,    // is
+    IsNot, // !is
 
     // Logical
-    And,          // &&
-    Or,           // ||
-    Xor,          // ^^
-    Not,          // !
+    And, // && or 'and'
+    Or,  // || or 'or'
+    Xor, // ^^ or 'xor'
+    Not, // ! or 'not'
 
     // Bitwise
-    BitAnd,       // &
-    BitOr,        // |
-    BitXor,       // ^
-    BitNot,       // ~
-    Shl,          // <<
-    Shr,          // >>
-    UShr,         // >>>
+    BitAnd, // &
+    BitOr,  // |
+    BitXor, // ^
+    BitNot, // ~
+    Shl,    // <<
+    Shr,    // >>
+    UShr,   // >>>
 
     // Assignment
     Assign,       // =
@@ -133,29 +120,28 @@ pub enum TokenKind {
     UShrAssign,   // >>>=
 
     // Unary
-    Inc,          // ++
-    Dec,          // --
-    At,           // @
-    Tilde,        // ~
+    Inc, // ++
+    Dec, // --
+    At,  // @
 
     // Delimiters
-    LParen,       // (
-    RParen,       // )
-    LBracket,     // [
-    RBracket,     // ]
-    LBrace,       // {
-    RBrace,       // }
+    LParen,   // (
+    RParen,   // )
+    LBracket, // [
+    RBracket, // ]
+    LBrace,   // {
+    RBrace,   // }
 
     // Other
-    Dot,          // .
-    Comma,        // ,
-    Semicolon,    // ;
-    Colon,        // :
-    Question,     // ?
-    DoubleColon,  // ::
+    Dot,         // .
+    Comma,       // ,
+    Semicolon,   // ;
+    Colon,       // :
+    Question,    // ?
+    DoubleColon, // ::
 
     // Preprocessor
-    Hash,         // #
+    Hash, // #
 
     Eof,
 }
@@ -189,18 +175,10 @@ impl TokenKind {
             "const" => TokenKind::Const,
             "private" => TokenKind::Private,
             "protected" => TokenKind::Protected,
-            "shared" => TokenKind::Shared,
-            "external" => TokenKind::External,
-            "abstract" => TokenKind::Abstract,
-            "final" => TokenKind::Final,
-            "override" => TokenKind::Override,
-            "explicit" => TokenKind::Explicit,
-            "property" => TokenKind::Property,
-            "get" => TokenKind::Get,
-            "set" => TokenKind::Set,
             "if" => TokenKind::If,
             "else" => TokenKind::Else,
             "for" => TokenKind::For,
+            "foreach" => TokenKind::ForEach,
             "while" => TokenKind::While,
             "do" => TokenKind::Do,
             "switch" => TokenKind::Switch,
@@ -211,23 +189,42 @@ impl TokenKind {
             "return" => TokenKind::Return,
             "try" => TokenKind::Try,
             "catch" => TokenKind::Catch,
-            "foreach" => TokenKind::Foreach,
             "in" => TokenKind::In,
             "out" => TokenKind::Out,
             "inout" => TokenKind::InOut,
             "cast" => TokenKind::Cast,
-            "function" => TokenKind::Function,
-            "from" => TokenKind::From,
             "true" => TokenKind::True,
             "false" => TokenKind::False,
             "null" => TokenKind::Null,
             "and" => TokenKind::And,
             "or" => TokenKind::Or,
             "xor" => TokenKind::Xor,
+            "not" => TokenKind::Not,
             "is" => TokenKind::Is,
-            "this" => TokenKind::This,
-            "super" => TokenKind::Super,
             _ => return None,
         })
+    }
+
+    /// Check if an identifier string is a contextual keyword
+    /// These are NOT tokens but are checked during parsing
+    pub fn is_contextual_keyword(s: &str) -> bool {
+        matches!(
+            s,
+            "this"
+                | "super"
+                | "from"
+                | "shared"
+                | "final"
+                | "override"
+                | "get"
+                | "set"
+                | "abstract"
+                | "function"
+                | "external"
+                | "explicit"
+                | "property"
+                | "delete"
+                | "if_handle_then_const"
+        )
     }
 }

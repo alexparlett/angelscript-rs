@@ -10,11 +10,14 @@ pub struct ExprParser {
 
 impl ExprParser {
     pub fn new(mut tokens: Vec<Token>) -> Self {
-        // Ensure there's always an EOF token
         if tokens.is_empty() || !matches!(tokens.last().map(|t| &t.kind), Some(TokenKind::Eof)) {
             tokens.push(Token::new(
                 TokenKind::Eof,
-                Span::new(Position::new(0, 0, 0), Position::new(0, 0, 0), String::new()),
+                Span::new(
+                    Position::new(0, 0, 0),
+                    Position::new(0, 0, 0),
+                    String::new(),
+                ),
             ));
         }
 
@@ -23,7 +26,11 @@ impl ExprParser {
             pos: 0,
             eof_token: Token::new(
                 TokenKind::Eof,
-                Span::new(Position::new(0, 0, 0), Position::new(0, 0, 0), String::new()),
+                Span::new(
+                    Position::new(0, 0, 0),
+                    Position::new(0, 0, 0),
+                    String::new(),
+                ),
             ),
         }
     }
@@ -43,16 +50,13 @@ impl ExprParser {
     }
 
     fn parse_expr(&mut self, min_bp: u8) -> Result<Expr> {
-        // Parse prefix expression
         let mut lhs = self.parse_prefix()?;
 
-        // Parse infix/postfix expressions
         loop {
             if self.is_at_end() {
                 break;
             }
 
-            // Try postfix operators first
             if let Some(postfix_bp) = self.postfix_binding_power() {
                 if postfix_bp < min_bp {
                     break;
@@ -61,7 +65,6 @@ impl ExprParser {
                 continue;
             }
 
-            // Try infix operators
             if let Some((l_bp, r_bp)) = self.infix_binding_power() {
                 if l_bp < min_bp {
                     break;
@@ -70,7 +73,6 @@ impl ExprParser {
                 continue;
             }
 
-            // No more operators
             break;
         }
 
@@ -81,7 +83,6 @@ impl ExprParser {
         let token = self.current().clone();
 
         match &token.kind {
-            // Literals
             TokenKind::Number(n) => {
                 self.advance();
                 Ok(Expr::Literal(Literal::Number(n.clone())))
@@ -111,7 +112,6 @@ impl ExprParser {
                 Ok(Expr::Void)
             }
 
-            // Prefix operators
             TokenKind::Sub => {
                 self.advance();
                 let ((), r_bp) = prefix_binding_power(UnaryOp::Neg);
@@ -155,7 +155,6 @@ impl ExprParser {
                 Ok(Expr::Unary(UnaryOp::Handle, Box::new(rhs)))
             }
 
-            // Parenthesized expression
             TokenKind::LParen => {
                 self.advance();
                 let expr = self.parse_expr(0)?;
@@ -163,35 +162,79 @@ impl ExprParser {
                 Ok(expr)
             }
 
-            // Identifier or function call
-            // Identifier - could be variable, function call, or templated type
             TokenKind::Identifier(name) => {
+                // Check if this is "function" keyword for lambda (contextual keyword)
+                if name == "function" {
+                    // Look ahead to determine if this is a lambda or function call
+                    // Lambda: function(...) { ... }
+                    // Call: function(...)
+                    let checkpoint = self.pos;
+                    self.advance(); // skip "function"
+
+                    if self.check(&TokenKind::LParen) {
+                        // Find the matching ) and check if { follows
+                        let mut paren_depth = 1;
+                        let mut scan_pos = self.pos + 1; // skip the (
+
+                        while paren_depth > 0 && scan_pos < self.tokens.len() {
+                            match &self.tokens[scan_pos].kind {
+                                TokenKind::LParen => paren_depth += 1,
+                                TokenKind::RParen => paren_depth -= 1,
+                                TokenKind::Eof => break,
+                                _ => {}
+                            }
+                            scan_pos += 1;
+                        }
+
+                        // Check if { follows the )
+                        let is_lambda = if scan_pos < self.tokens.len() {
+                            matches!(self.tokens[scan_pos].kind, TokenKind::LBrace)
+                        } else {
+                            false
+                        };
+
+                        self.pos = checkpoint; // rewind
+
+                        if is_lambda {
+                            return self.parse_lambda();
+                        }
+                    } else {
+                        self.pos = checkpoint; // rewind
+                    }
+                }
+
                 let name = name.clone();
                 self.advance();
 
-                // Check if this is a templated type (for constructor calls)
-                // e.g., array<int>(), MyClass<T>()
                 if self.check(&TokenKind::Lt) {
-                    // Could be template args or less-than operator
-                    // Heuristic: if followed by a type-like token, it's probably a template
                     let next_pos = self.pos + 1;
                     let looks_like_template = if next_pos < self.tokens.len() {
                         matches!(
-                        self.tokens[next_pos].kind,
-                        TokenKind::Identifier(_) | TokenKind::Int | TokenKind::Int8 |
-                        TokenKind::Int16 | TokenKind::Int32 | TokenKind::Int64 |
-                        TokenKind::Uint | TokenKind::Uint8 | TokenKind::Uint16 |
-                        TokenKind::Uint32 | TokenKind::Uint64 | TokenKind::Float |
-                        TokenKind::Double | TokenKind::Bool | TokenKind::Void |
-                        TokenKind::Const | TokenKind::Auto
-                    )
+                            self.tokens[next_pos].kind,
+                            TokenKind::Identifier(_)
+                                | TokenKind::Int
+                                | TokenKind::Int8
+                                | TokenKind::Int16
+                                | TokenKind::Int32
+                                | TokenKind::Int64
+                                | TokenKind::Uint
+                                | TokenKind::Uint8
+                                | TokenKind::Uint16
+                                | TokenKind::Uint32
+                                | TokenKind::Uint64
+                                | TokenKind::Float
+                                | TokenKind::Double
+                                | TokenKind::Bool
+                                | TokenKind::Void
+                                | TokenKind::Const
+                                | TokenKind::Auto
+                        )
                     } else {
                         false
                     };
 
                     if looks_like_template {
-                        // Parse as templated type
-                        self.advance(); // consume <
+                        self.advance();
 
                         let mut template_types = Vec::new();
 
@@ -206,9 +249,8 @@ impl ExprParser {
                             }
                         }
 
-                        self.expect(&TokenKind::Gt)?;
+                        self.expect_gt_in_template()?;
 
-                        // Check if this is a constructor call
                         if self.check(&TokenKind::LParen) {
                             self.advance();
                             let args = self.parse_arg_list_inner()?;
@@ -216,7 +258,10 @@ impl ExprParser {
 
                             let typ = Type {
                                 is_const: false,
-                                scope: Scope { is_global: false, path: Vec::new() },
+                                scope: Scope {
+                                    is_global: false,
+                                    path: Vec::new(),
+                                },
                                 datatype: DataType::Identifier(name),
                                 template_types,
                                 modifiers: Vec::new(),
@@ -224,17 +269,17 @@ impl ExprParser {
 
                             return Ok(Expr::ConstructCall(typ, args));
                         } else {
-                            // Just a type reference (unusual in expression context)
-                            // Treat as variable access for now
                             return Ok(Expr::VarAccess(
-                                Scope { is_global: false, path: Vec::new() },
-                                name
+                                Scope {
+                                    is_global: false,
+                                    path: Vec::new(),
+                                },
+                                name,
                             ));
                         }
                     }
                 }
 
-                // Check for scope resolution
                 let (scope, final_name) = self.parse_scope(name)?;
 
                 Ok(Expr::VarAccess(scope, final_name))
@@ -259,30 +304,10 @@ impl ExprParser {
                     })
                 }
             }
-            
-            // Cast expression
+
             TokenKind::Cast => self.parse_cast(),
 
-            // Lambda
-            TokenKind::Function => self.parse_lambda(),
-
-            // Init list
             TokenKind::LBrace => self.parse_init_list(),
-
-            TokenKind::This => {
-                self.advance();
-                Ok(Expr::VarAccess(
-                    Scope { is_global: false, path: Vec::new() },
-                    "this".to_string()
-                ))
-            }
-            TokenKind::Super => {
-                self.advance();
-                Ok(Expr::VarAccess(
-                    Scope { is_global: false, path: Vec::new() },
-                    "super".to_string()
-                ))
-            }
 
             _ => Err(ParseError::UnexpectedToken {
                 span: token.span.clone(),
@@ -337,7 +362,6 @@ impl ExprParser {
             TokenKind::UShrAssign => BinaryOp::UShrAssign,
 
             TokenKind::Question => {
-                // Ternary operator
                 self.advance();
                 let then_expr = self.parse_expr(0)?;
                 self.expect(&TokenKind::Colon)?;
@@ -375,29 +399,24 @@ impl ExprParser {
                 Ok(Expr::Postfix(Box::new(lhs), PostfixOp::PostDec))
             }
             TokenKind::LParen => {
-                // Function call
                 self.advance();
                 let args = self.parse_arg_list_inner()?;
                 self.expect(&TokenKind::RParen)?;
                 Ok(Expr::Postfix(Box::new(lhs), PostfixOp::Call(args)))
             }
             TokenKind::LBracket => {
-                // Array indexing
                 self.advance();
                 let indices = self.parse_index_args()?;
                 self.expect(&TokenKind::RBracket)?;
                 Ok(Expr::Postfix(Box::new(lhs), PostfixOp::Index(indices)))
             }
             TokenKind::Dot => {
-                // Member access
                 self.advance();
 
-                // Check if it's a method call or property access
                 if let TokenKind::Identifier(name) = &self.current().kind {
                     let name = name.clone();
                     self.advance();
 
-                    // Check for function call
                     if self.check(&TokenKind::LParen) {
                         self.advance();
                         let args = self.parse_arg_list_inner()?;
@@ -434,8 +453,6 @@ impl ExprParser {
         }
     }
 
-    // Helper methods
-
     fn parse_scope(&mut self, initial_name: String) -> Result<(Scope, String)> {
         let mut path = Vec::new();
         let mut current_name = initial_name;
@@ -464,7 +481,6 @@ impl ExprParser {
         self.expect(&TokenKind::Cast)?;
         self.expect(&TokenKind::Lt)?;
 
-        // Parse type - simplified
         let type_name = if let TokenKind::Identifier(name) = &self.current().kind {
             name.clone()
         } else {
@@ -476,7 +492,7 @@ impl ExprParser {
         };
         self.advance();
 
-        self.expect(&TokenKind::Gt)?;
+        self.expect_gt_in_template()?;
         self.expect(&TokenKind::LParen)?;
 
         let expr = self.parse_expr(0)?;
@@ -498,21 +514,46 @@ impl ExprParser {
     }
 
     fn parse_lambda(&mut self) -> Result<Expr> {
-        self.expect(&TokenKind::Function)?;
+        if let TokenKind::Identifier(name) = &self.current().kind {
+            if name != "function" {
+                return Err(ParseError::UnexpectedToken {
+                    span: self.current().span.clone(),
+                    expected: "'function'".to_string(),
+                    found: name.clone(),
+                });
+            }
+        }
+        self.advance();
+
         self.expect(&TokenKind::LParen)?;
 
-        // Parse lambda parameters
         let mut params = Vec::new();
 
         while !self.check(&TokenKind::RParen) && !self.is_at_end() {
-            // Parse parameter type (optional for lambdas)
+            let checkpoint = self.pos;
+
+            if self.check(&TokenKind::Const) {
+                self.advance();
+            }
+
             let param_type = if self.check_type_token() {
-                Some(self.parse_type_in_expr()?)
+                self.pos = checkpoint;
+                let typ = self.parse_type_in_expr()?;
+
+                if self.check_identifier()
+                    || self.check(&TokenKind::Comma)
+                    || self.check(&TokenKind::RParen)
+                {
+                    Some(typ)
+                } else {
+                    self.pos = checkpoint;
+                    None
+                }
             } else {
+                self.pos = checkpoint;
                 None
             };
 
-            // Check for & modifier
             let mut type_mod = None;
             if self.check(&TokenKind::BitAnd) {
                 self.advance();
@@ -527,15 +568,12 @@ impl ExprParser {
                     self.advance();
                     TypeMod::InOut
                 } else {
-                    TypeMod::InOut // Default
+                    TypeMod::InOut
                 });
             }
 
-            // Parse parameter name (optional)
-            let name = if let TokenKind::Identifier(n) = &self.current().kind {
-                let n = n.clone();
-                self.advance();
-                Some(n)
+            let name = if self.check_identifier() {
+                Some(self.expect_identifier()?)
             } else {
                 None
             };
@@ -546,29 +584,29 @@ impl ExprParser {
                 name,
             });
 
-            if !self.check(&TokenKind::RParen) {
-                self.expect(&TokenKind::Comma)?;
+            if self.check(&TokenKind::Comma) {
+                self.advance();
+            } else if !self.check(&TokenKind::RParen) {
+                return Err(ParseError::UnexpectedToken {
+                    span: self.current().span.clone(),
+                    expected: "',' or ')'".to_string(),
+                    found: format!("{:?}", self.current().kind),
+                });
             }
         }
 
         self.expect(&TokenKind::RParen)?;
 
-        // Parse lambda body
         self.expect(&TokenKind::LBrace)?;
 
-        // We need to parse the body, but we're in the expression parser
-        // and don't have access to statement parsing.
-        // For now, collect all tokens until the matching }
-        let body_tokens = self.collect_lambda_body()?;
+        let _body_tokens = self.collect_lambda_body()?;
 
         self.expect(&TokenKind::RBrace)?;
 
-        // Create a simplified lambda with the body tokens
-        // The actual statement parsing would happen later if needed
         Ok(Expr::Lambda(Lambda {
             params,
             body: StatBlock {
-                statements: Vec::new() // Simplified - would need full statement parser
+                statements: Vec::new(),
             },
         }))
     }
@@ -605,13 +643,25 @@ impl ExprParser {
 
     fn check_type_token(&self) -> bool {
         matches!(
-        self.current().kind,
-        TokenKind::Void | TokenKind::Int | TokenKind::Int8 | TokenKind::Int16 |
-        TokenKind::Int32 | TokenKind::Int64 | TokenKind::Uint | TokenKind::Uint8 |
-        TokenKind::Uint16 | TokenKind::Uint32 | TokenKind::Uint64 | TokenKind::Float |
-        TokenKind::Double | TokenKind::Bool | TokenKind::Auto | TokenKind::Const |
-        TokenKind::Identifier(_)
-    )
+            self.current().kind,
+            TokenKind::Void
+                | TokenKind::Int
+                | TokenKind::Int8
+                | TokenKind::Int16
+                | TokenKind::Int32
+                | TokenKind::Int64
+                | TokenKind::Uint
+                | TokenKind::Uint8
+                | TokenKind::Uint16
+                | TokenKind::Uint32
+                | TokenKind::Uint64
+                | TokenKind::Float
+                | TokenKind::Double
+                | TokenKind::Bool
+                | TokenKind::Auto
+                | TokenKind::Const
+                | TokenKind::Identifier(_)
+        )
     }
 
     fn parse_type_in_expr(&mut self) -> Result<Type> {
@@ -620,19 +670,17 @@ impl ExprParser {
             self.advance();
         }
 
-        // Simplified scope parsing
         let scope = Scope {
             is_global: false,
             path: Vec::new(),
         };
 
-        // Parse datatype
         let datatype = match &self.current().kind {
             TokenKind::Void => {
                 self.advance();
                 DataType::PrimType("void".to_string())
             }
-            TokenKind::Int => {
+            TokenKind::Int | TokenKind::Int32 => {
                 self.advance();
                 DataType::PrimType("int".to_string())
             }
@@ -644,15 +692,11 @@ impl ExprParser {
                 self.advance();
                 DataType::PrimType("int16".to_string())
             }
-            TokenKind::Int32 => {
-                self.advance();
-                DataType::PrimType("int32".to_string())
-            }
             TokenKind::Int64 => {
                 self.advance();
                 DataType::PrimType("int64".to_string())
             }
-            TokenKind::Uint => {
+            TokenKind::Uint | TokenKind::Uint32 => {
                 self.advance();
                 DataType::PrimType("uint".to_string())
             }
@@ -663,10 +707,6 @@ impl ExprParser {
             TokenKind::Uint16 => {
                 self.advance();
                 DataType::PrimType("uint16".to_string())
-            }
-            TokenKind::Uint32 => {
-                self.advance();
-                DataType::PrimType("uint32".to_string())
             }
             TokenKind::Uint64 => {
                 self.advance();
@@ -693,13 +733,14 @@ impl ExprParser {
                 self.advance();
                 DataType::Identifier(name)
             }
-            _ => return Err(ParseError::SyntaxError {
-                span: self.current().span.clone(),
-                message: "Expected type".to_string(),
-            }),
+            _ => {
+                return Err(ParseError::SyntaxError {
+                    span: self.current().span.clone(),
+                    message: "Expected type".to_string(),
+                });
+            }
         };
 
-        // Parse template args if present
         let template_types = if self.check(&TokenKind::Lt) {
             self.advance();
             let mut types = vec![self.parse_type_in_expr()?];
@@ -709,13 +750,12 @@ impl ExprParser {
                 types.push(self.parse_type_in_expr()?);
             }
 
-            self.expect(&TokenKind::Gt)?;
+            self.expect_gt_in_template()?;
             types
         } else {
             Vec::new()
         };
 
-        // Parse type modifiers
         let mut modifiers = Vec::new();
 
         loop {
@@ -768,25 +808,8 @@ impl ExprParser {
         let mut args = Vec::new();
 
         while !self.check(&TokenKind::RParen) && !self.is_at_end() {
-            // Check for named argument
-            let name = if let TokenKind::Identifier(n) = &self.current().kind {
-                let n = n.clone();
-                let next_pos = self.pos + 1;
-                if next_pos < self.tokens.len()
-                    && self.tokens[next_pos].kind == TokenKind::Colon
-                {
-                    self.advance();
-                    self.advance();
-                    Some(n)
-                } else {
-                    None
-                }
-            } else {
-                None
-            };
-
             let value = self.parse_expr(0)?;
-            args.push(Arg { name, value });
+            args.push(Arg { name: None, value });
 
             if !self.check(&TokenKind::RParen) {
                 self.expect(&TokenKind::Comma)?;
@@ -800,25 +823,8 @@ impl ExprParser {
         let mut args = Vec::new();
 
         while !self.check(&TokenKind::RBracket) && !self.is_at_end() {
-            // Check for named index
-            let name = if let TokenKind::Identifier(n) = &self.current().kind {
-                let n = n.clone();
-                let next_pos = self.pos + 1;
-                if next_pos < self.tokens.len()
-                    && self.tokens[next_pos].kind == TokenKind::Colon
-                {
-                    self.advance();
-                    self.advance();
-                    Some(n)
-                } else {
-                    None
-                }
-            } else {
-                None
-            };
-
             let value = self.parse_expr(0)?;
-            args.push(IndexArg { name, value });
+            args.push(IndexArg { name: None, value });
 
             if !self.check(&TokenKind::RBracket) {
                 self.expect(&TokenKind::Comma)?;
@@ -828,8 +834,6 @@ impl ExprParser {
         Ok(args)
     }
 
-    // Binding power functions
-
     fn infix_binding_power(&self) -> Option<(u8, u8)> {
         if self.is_at_end() {
             return None;
@@ -837,7 +841,6 @@ impl ExprParser {
 
         let token = self.current();
         Some(match token.kind {
-            // Assignment (right associative)
             TokenKind::Assign
             | TokenKind::AddAssign
             | TokenKind::SubAssign
@@ -852,43 +855,18 @@ impl ExprParser {
             | TokenKind::ShrAssign
             | TokenKind::UShrAssign => (2, 1),
 
-            // Ternary (right associative)
             TokenKind::Question => (4, 3),
-
-            // Logical OR
             TokenKind::Or => (5, 6),
-
-            // Logical XOR
             TokenKind::Xor => (7, 8),
-
-            // Logical AND
             TokenKind::And => (9, 10),
-
-            // Bitwise OR
             TokenKind::BitOr => (11, 12),
-
-            // Bitwise XOR
             TokenKind::BitXor => (13, 14),
-
-            // Bitwise AND
             TokenKind::BitAnd => (15, 16),
-
-            // Equality
             TokenKind::Eq | TokenKind::Ne | TokenKind::Is | TokenKind::IsNot => (17, 18),
-
-            // Relational
             TokenKind::Lt | TokenKind::Le | TokenKind::Gt | TokenKind::Ge => (19, 20),
-
-            // Shift
             TokenKind::Shl | TokenKind::Shr | TokenKind::UShr => (21, 22),
-
-            // Additive
             TokenKind::Add | TokenKind::Sub => (23, 24),
-
-            // Multiplicative
             TokenKind::Mul | TokenKind::Div | TokenKind::Mod => (25, 26),
-
-            // Power (right associative)
             TokenKind::Pow => (28, 27),
 
             _ => return None,
@@ -911,7 +889,54 @@ impl ExprParser {
         })
     }
 
-    // Token navigation
+    /// Expect > in template context, handling >>, >>>, etc. as multiple >
+    fn expect_gt_in_template(&mut self) -> Result<()> {
+        match &self.current().kind {
+            TokenKind::Gt => {
+                self.advance();
+                Ok(())
+            }
+            TokenKind::Shr => {
+                let shr_token = self.current().clone();
+                let gt_token = Token::new(
+                    TokenKind::Gt,
+                    Span::new(
+                        Position::new(
+                            shr_token.span.start.line,
+                            shr_token.span.start.column + 1,
+                            shr_token.span.start.offset + 1,
+                        ),
+                        shr_token.span.end.clone(),
+                        ">".to_string(),
+                    ),
+                );
+                self.tokens[self.pos] = gt_token;
+                Ok(())
+            }
+            TokenKind::UShr => {
+                let ushr_token = self.current().clone();
+                let shr_token = Token::new(
+                    TokenKind::Shr,
+                    Span::new(
+                        Position::new(
+                            ushr_token.span.start.line,
+                            ushr_token.span.start.column + 1,
+                            ushr_token.span.start.offset + 1,
+                        ),
+                        ushr_token.span.end.clone(),
+                        ">>".to_string(),
+                    ),
+                );
+                self.tokens[self.pos] = shr_token;
+                Ok(())
+            }
+            _ => Err(ParseError::UnexpectedToken {
+                span: self.current().span.clone(),
+                expected: "'>'".to_string(),
+                found: format!("{:?}", self.current().kind),
+            }),
+        }
+    }
 
     fn current(&self) -> &Token {
         self.tokens.get(self.pos).unwrap_or(&self.eof_token)
@@ -934,6 +959,10 @@ impl ExprParser {
         std::mem::discriminant(&self.current().kind) == std::mem::discriminant(kind)
     }
 
+    fn check_identifier(&self) -> bool {
+        matches!(self.current().kind, TokenKind::Identifier(_))
+    }
+
     fn expect(&mut self, kind: &TokenKind) -> Result<()> {
         if self.check(kind) {
             self.advance();
@@ -942,6 +971,20 @@ impl ExprParser {
             Err(ParseError::UnexpectedToken {
                 span: self.current().span.clone(),
                 expected: format!("{:?}", kind),
+                found: format!("{:?}", self.current().kind),
+            })
+        }
+    }
+
+    fn expect_identifier(&mut self) -> Result<String> {
+        if let TokenKind::Identifier(name) = &self.current().kind {
+            let name = name.clone();
+            self.advance();
+            Ok(name)
+        } else {
+            Err(ParseError::UnexpectedToken {
+                span: self.current().span.clone(),
+                expected: "identifier".to_string(),
                 found: format!("{:?}", self.current().kind),
             })
         }

@@ -1,5 +1,5 @@
-use thiserror::Error;
 use std::fmt;
+use thiserror::Error;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Span {
@@ -17,7 +17,11 @@ pub struct Position {
 
 impl Position {
     pub fn new(line: usize, column: usize, offset: usize) -> Self {
-        Self { line, column, offset }
+        Self {
+            line,
+            column,
+            offset,
+        }
     }
 }
 
@@ -46,9 +50,11 @@ impl fmt::Display for Span {
         if self.start.line == self.end.line {
             write!(f, "{}:{}", self.start.line, self.start.column)
         } else {
-            write!(f, "{}:{}-{}:{}",
-                   self.start.line, self.start.column,
-                   self.end.line, self.end.column)
+            write!(
+                f,
+                "{}:{}-{}:{}",
+                self.start.line, self.start.column, self.end.line, self.end.column
+            )
         }
     }
 }
@@ -63,22 +69,13 @@ pub enum ParseError {
     },
 
     #[error("Unexpected end of input at {span}: expected {expected}")]
-    UnexpectedEof {
-        span: Span,
-        expected: String,
-    },
+    UnexpectedEof { span: Span, expected: String },
 
     #[error("Invalid operator at {span}: '{operator}'")]
-    InvalidOperator {
-        span: Span,
-        operator: String,
-    },
+    InvalidOperator { span: Span, operator: String },
 
     #[error("Invalid expression at {span}: {message}")]
-    InvalidExpression {
-        span: Span,
-        message: String,
-    },
+    InvalidExpression { span: Span, message: String },
 
     #[error("Unmatched delimiter at {span}: expected '{expected}', found '{found}'")]
     UnmatchedDelimiter {
@@ -88,28 +85,16 @@ pub enum ParseError {
     },
 
     #[error("Invalid number literal at {span}: {message}")]
-    InvalidNumber {
-        span: Span,
-        message: String,
-    },
+    InvalidNumber { span: Span, message: String },
 
     #[error("Invalid string literal at {span}: {message}")]
-    InvalidString {
-        span: Span,
-        message: String,
-    },
+    InvalidString { span: Span, message: String },
 
     #[error("Type error at {span}: {message}")]
-    TypeError {
-        span: Span,
-        message: String,
-    },
+    TypeError { span: Span, message: String },
 
     #[error("Syntax error at {span}: {message}")]
-    SyntaxError {
-        span: Span,
-        message: String,
-    },
+    SyntaxError { span: Span, message: String },
 }
 
 impl ParseError {

@@ -1,9 +1,6 @@
 use crate::compiler::bytecode::BytecodeModule;
-use crate::compiler::codegen::CodeGenerator;
-use crate::compiler::semantic::SemanticAnalyzer;
-use crate::compiler::AngelscriptCompiler;
+use crate::compiler::compiler::Compiler;
 use crate::core::engine::EngineInner;
-use crate::parser::parse_with_preprocessor;
 use crate::parser::script_builder::{IncludeCallback, PragmaCallback, ScriptBuilder};
 use std::sync::{Arc, RwLock, Weak};
 
@@ -198,10 +195,10 @@ impl Module {
             return Err(vec!["Module has no source code".to_string()]);
         }
 
-        let module_name = self.name.clone();
+        let _module_name = self.name.clone();
 
         // Phase 1: Parse and process preprocessor directives
-        let ast = match parse_with_preprocessor(&source, &mut self.script_builder) {
+        let ast = match self.script_builder.build_from_source(&source) {
             Ok(ast) => ast,
             Err(e) => {
                 self.state = ModuleState::Failed;
@@ -209,20 +206,12 @@ impl Module {
             }
         };
 
-        // Phase 2: Semantic Analysis
-        let mut analyzer = SemanticAnalyzer::new(engine);
-
-        if let Err(errors) = analyzer.analyze(&ast) {
-            self.state = ModuleState::Failed;
-            return Err(errors);
-        }
-
-        // Phase 3: Code Generation
-        let mut codegen = CodeGenerator::new();
-        let bytecode = codegen.generate(&ast, &analyzer);
+        // Phase 2: Code Generation
+        let codegen = Compiler::new(engine);
+        let bytecode = codegen.compile(ast).unwrap();
 
         // Phase 4: Store results
-        AngelscriptCompiler::extract_symbols(&ast, &mut self.symbols, &analyzer);
+        // AngelscriptCompiler::extract_symbols(&ast, &mut self.symbols, &analyzer);
 
         self.bytecode = Some(bytecode);
         self.state = ModuleState::Built;
@@ -231,12 +220,12 @@ impl Module {
         self.script_builder.clear();
 
         // Log warnings
-        if !analyzer.warnings.is_empty() {
-            eprintln!("Build warnings for module '{}':", module_name);
-            for warning in &analyzer.warnings {
-                eprintln!("  Warning: {}", warning);
-            }
-        }
+        // if !analyzer.warnings.is_empty() {
+        //     eprintln!("Build warnings for module '{}':", module_name);
+        //     for warning in &analyzer.warnings {
+        //         eprintln!("  Warning: {}", warning);
+        //     }
+        // }
 
         Ok(())
     }

@@ -2,11 +2,11 @@ use std::fmt;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Script {
-    pub items: Vec<ScriptItem>,
+    pub items: Vec<ScriptNode>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum ScriptItem {
+pub enum ScriptNode {
     Import(Import),
     Enum(Enum),
     Typedef(Typedef),
@@ -46,13 +46,13 @@ pub struct CustomDirective {
 pub struct ConditionalBlock {
     pub if_branch: ConditionalBranch,
     pub elif_branches: Vec<ConditionalBranch>,
-    pub else_branch: Option<Vec<ScriptItem>>,
+    pub else_branch: Option<Vec<ScriptNode>>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ConditionalBranch {
     pub condition: String,
-    pub items: Vec<ScriptItem>,
+    pub items: Vec<ScriptNode>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -72,7 +72,7 @@ pub struct Using {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Namespace {
     pub name: Vec<String>,
-    pub items: Vec<ScriptItem>,
+    pub items: Vec<ScriptNode>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -207,6 +207,7 @@ pub struct Typedef {
 pub enum Visibility {
     Private,
     Protected,
+    Public,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -390,18 +391,53 @@ pub struct Arg {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum BinaryOp {
-    Add, Sub, Mul, Div, Mod, Pow,
-    Eq, Ne, Lt, Le, Gt, Ge, Is, IsNot,
-    And, Or, Xor,
-    BitAnd, BitOr, BitXor, Shl, Shr, UShr,
-    Assign, AddAssign, SubAssign, MulAssign, DivAssign,
-    ModAssign, PowAssign, BitAndAssign, BitOrAssign,
-    BitXorAssign, ShlAssign, ShrAssign, UShrAssign,
+    Add,
+    Sub,
+    Mul,
+    Div,
+    Mod,
+    Pow,
+    Eq,
+    Ne,
+    Lt,
+    Le,
+    Gt,
+    Ge,
+    Is,
+    IsNot,
+    And,
+    Or,
+    Xor,
+    BitAnd,
+    BitOr,
+    BitXor,
+    Shl,
+    Shr,
+    UShr,
+    Assign,
+    AddAssign,
+    SubAssign,
+    MulAssign,
+    DivAssign,
+    ModAssign,
+    PowAssign,
+    BitAndAssign,
+    BitOrAssign,
+    BitXorAssign,
+    ShlAssign,
+    ShrAssign,
+    UShrAssign,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum UnaryOp {
-    Neg, Plus, Not, PreInc, PreDec, BitNot, Handle,
+    Neg,
+    Plus,
+    Not,
+    PreInc,
+    PreDec,
+    BitNot,
+    Handle,
 }
 
 #[derive(Debug, Clone, PartialEq)]

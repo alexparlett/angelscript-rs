@@ -217,9 +217,10 @@ impl<'a> Lexer<'a> {
 
         if self.match_char('=') {
             Ok(self.make_token_from(TokenKind::Ne, start))
-        } else if self.peek_str("is") {
-            self.advance();
-            self.advance();
+        } else if self.peek_keyword("is") {
+            // Check if 'is' follows, treating it as !is operator
+            self.advance(); // 'i'
+            self.advance(); // 's'
             Ok(self.make_token_from(TokenKind::IsNot, start))
         } else {
             Ok(self.make_token_from(TokenKind::Not, start))
@@ -377,7 +378,6 @@ impl<'a> Lexer<'a> {
                         return Ok(self.make_token_from(TokenKind::Number(text), start));
                     }
                     'd' | 'D' => {
-                        // Decimal bits notation
                         text.push(next);
                         self.advance();
                         while !self.is_at_end() && self.current_char().is_ascii_digit() {
@@ -526,13 +526,30 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    fn peek_str(&self, s: &str) -> bool {
-        let chars: Vec<char> = s.chars().collect();
+    fn peek_keyword(&self, keyword: &str) -> bool {
+        let chars: Vec<char> = keyword.chars().collect();
+
+        // Check if we have enough characters
+        if self.pos + chars.len() > self.chars.len() {
+            return false;
+        }
+
+        // Check if the characters match
         for (i, &ch) in chars.iter().enumerate() {
-            if self.pos + i >= self.chars.len() || self.chars[self.pos + i] != ch {
+            if self.chars[self.pos + i] != ch {
                 return false;
             }
         }
+
+        // Make sure it's not part of a longer identifier
+        let next_pos = self.pos + chars.len();
+        if next_pos < self.chars.len() {
+            let next_char = self.chars[next_pos];
+            if next_char.is_alphanumeric() || next_char == '_' {
+                return false;
+            }
+        }
+
         true
     }
 

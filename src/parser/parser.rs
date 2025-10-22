@@ -1,7 +1,7 @@
 use crate::parser::ast::*;
 use crate::parser::error::*;
-use crate::parser::token::*;
 use crate::parser::expr_parser::ExprParser;
+use crate::parser::token::*;
 
 pub struct Parser {
     tokens: Vec<Token>,
@@ -28,72 +28,81 @@ impl Parser {
         Ok(Script { items })
     }
 
-    fn parse_script_item(&mut self) -> Result<ScriptItem> {
+    fn parse_script_item(&mut self) -> Result<ScriptNode> {
         // Handle preprocessor directives
         if self.check(&TokenKind::Hash) {
             return self.parse_directive();
         }
 
-        // Handle modifiers
-        let modifiers = self.parse_modifiers();
+        // Optimize by skipping tokens 'shared', 'external', 'final', 'abstract'
+        let start_pos = self.pos;
+        while self.identifier_is("shared")
+            || self.identifier_is("external")
+            || self.identifier_is("final")
+            || self.identifier_is("abstract")
+        {
+            self.advance();
+        }
 
-        match self.current().kind {
-            TokenKind::Namespace => Ok(ScriptItem::Namespace(self.parse_namespace()?)),
-            TokenKind::Enum => Ok(ScriptItem::Enum(self.parse_enum(modifiers)?)),
-            TokenKind::Class => Ok(ScriptItem::Class(self.parse_class(modifiers)?)),
-            TokenKind::Interface => Ok(ScriptItem::Interface(self.parse_interface(modifiers)?)),
-            TokenKind::Typedef => Ok(ScriptItem::Typedef(self.parse_typedef()?)),
-            TokenKind::Funcdef => Ok(ScriptItem::FuncDef(self.parse_funcdef(modifiers)?)),
-            TokenKind::Mixin => Ok(ScriptItem::Mixin(self.parse_mixin()?)),
-            TokenKind::Import => Ok(ScriptItem::Import(self.parse_import()?)),
-            _ => {
-                // Could be function or variable
-                // Quick lookahead: if we see '(' before ';' or '=', it's a function
-                let checkpoint = self.pos;
-                let mut found_paren = false;
-                let mut found_terminator = false;
+        let t1 = self.current().clone();
+        self.pos = start_pos; // Rewind
 
-                // Skip type and identifier to check what comes next
-                while !self.is_at_end() && !found_terminator {
-                    match self.current().kind {
-                        TokenKind::LParen => {
-                            found_paren = true;
-                            break;
-                        }
-                        TokenKind::Semicolon | TokenKind::Assign | TokenKind::Comma => {
-                            found_terminator = true;
-                            break;
-                        }
-                        _ => self.advance(),
-                    }
-                }
-
-                // Restore position
-                self.pos = checkpoint;
-
-                if found_paren {
-                    // It's a function
-                    let visibility = self.parse_visibility(&modifiers);
-                    Ok(ScriptItem::Func(self.try_parse_func(modifiers, visibility)?))
-                } else {
-                    // It's a variable
-                    Ok(ScriptItem::Var(self.parse_var(modifiers)?))
-                }
+        match t1.kind {
+            TokenKind::Import => Ok(ScriptNode::Import(self.parse_import()?)),
+            TokenKind::Enum => Ok(ScriptNode::Enum(self.parse_enum()?)),
+            TokenKind::Typedef => Ok(ScriptNode::Typedef(self.parse_typedef()?)),
+            TokenKind::Class => Ok(ScriptNode::Class(self.parse_class()?)),
+            TokenKind::Mixin => Ok(ScriptNode::Mixin(self.parse_mixin()?)),
+            TokenKind::Interface => Ok(ScriptNode::Interface(self.parse_interface()?)),
+            TokenKind::Funcdef => Ok(ScriptNode::FuncDef(self.parse_funcdef()?)),
+            TokenKind::Namespace => Ok(ScriptNode::Namespace(self.parse_namespace()?)),
+            TokenKind::Semicolon => {
+                self.advance();
+                self.parse_script_item()
             }
+            TokenKind::Const
+            | TokenKind::Void
+            | TokenKind::Int
+            | TokenKind::Int8
+            | TokenKind::Int16
+            | TokenKind::Int32
+            | TokenKind::Int64
+            | TokenKind::Uint
+            | TokenKind::Uint8
+            | TokenKind::Uint16
+            | TokenKind::Uint32
+            | TokenKind::Uint64
+            | TokenKind::Float
+            | TokenKind::Double
+            | TokenKind::Bool
+            | TokenKind::Auto
+            | TokenKind::DoubleColon => self.parse_const_or_var_or_func(),
+            TokenKind::Identifier(_) => self.parse_const_or_var_or_func(),
+            _ => Err(self.error(&format!("Unexpected token: {:?}", t1.kind))),
         }
     }
 
-    fn parse_directive(&mut self) -> Result<ScriptItem> {
+    fn parse_const_or_var_or_func(&mut self) -> Result<ScriptNode> {
+        if self.is_virtual_property_decl() {
+            return Ok(ScriptNode::VirtProp(self.parse_virtprop(false, false)?));
+        }
+
+        if self.is_func_decl(false) {
+            return Ok(ScriptNode::Func(self.parse_function(false)?));
+        }
+
+        Ok(ScriptNode::Var(self.parse_var(false, true)?))
+    }
+
+    fn parse_directive(&mut self) -> Result<ScriptNode> {
         self.expect(&TokenKind::Hash)?;
 
-        // Get directive name - could be a keyword or identifier
         let directive_name = match &self.current().kind {
             TokenKind::Identifier(name) => {
                 let name = name.clone();
                 self.advance();
                 name
             }
-            // Handle directive keywords that conflict with language keywords
             TokenKind::If => {
                 self.advance();
                 "if".to_string()
@@ -103,7 +112,6 @@ impl Parser {
                 "else".to_string()
             }
             _ => {
-                // Try to get any token as string for directive name
                 let name = self.current().span.source.clone();
                 self.advance();
                 name
@@ -113,48 +121,20 @@ impl Parser {
         match directive_name.as_str() {
             "include" => {
                 let path = self.expect_string()?;
-                Ok(ScriptItem::Include(Include { path }))
+                Ok(ScriptNode::Include(Include { path }))
             }
             "pragma" => {
                 let content = self.read_until_newline();
-                Ok(ScriptItem::Pragma(Pragma { content }))
-            }
-            "if" | "elif" | "else" | "endif" => {
-                // These need special handling for conditional compilation
-                // For now, just consume the rest of the line
-                let content = self.read_until_newline();
-                Ok(ScriptItem::CustomDirective(CustomDirective {
-                    name: directive_name,
-                    content,
-                }))
+                Ok(ScriptNode::Pragma(Pragma { content }))
             }
             _ => {
                 let content = self.read_until_newline();
-                Ok(ScriptItem::CustomDirective(CustomDirective {
+                Ok(ScriptNode::CustomDirective(CustomDirective {
                     name: directive_name,
                     content,
                 }))
             }
         }
-    }
-
-    fn parse_modifiers(&mut self) -> Vec<String> {
-        let mut modifiers = Vec::new();
-
-        while matches!(
-            self.current().kind,
-            TokenKind::Shared
-                | TokenKind::External
-                | TokenKind::Abstract
-                | TokenKind::Final
-                | TokenKind::Private
-                | TokenKind::Protected
-        ) {
-            modifiers.push(self.current().span.source.clone());
-            self.advance();
-        }
-
-        modifiers
     }
 
     fn parse_namespace(&mut self) -> Result<Namespace> {
@@ -183,7 +163,13 @@ impl Parser {
         Ok(Namespace { name, items })
     }
 
-    fn parse_enum(&mut self, modifiers: Vec<String>) -> Result<Enum> {
+    fn parse_enum(&mut self) -> Result<Enum> {
+        let mut modifiers = Vec::new();
+
+        while self.identifier_is("shared") || self.identifier_is("external") {
+            modifiers.push(self.expect_identifier()?);
+        }
+
         self.expect(&TokenKind::Enum)?;
         let name = self.expect_identifier()?;
 
@@ -228,7 +214,17 @@ impl Parser {
         })
     }
 
-    fn parse_class(&mut self, modifiers: Vec<String>) -> Result<Class> {
+    fn parse_class(&mut self) -> Result<Class> {
+        let mut modifiers = Vec::new();
+
+        while self.identifier_is("shared")
+            || self.identifier_is("abstract")
+            || self.identifier_is("final")
+            || self.identifier_is("external")
+        {
+            modifiers.push(self.expect_identifier()?);
+        }
+
         self.expect(&TokenKind::Class)?;
         let name = self.expect_identifier()?;
 
@@ -258,7 +254,11 @@ impl Parser {
         let mut members = Vec::new();
 
         while !self.check(&TokenKind::RBrace) && !self.is_at_end() {
-            members.push(self.parse_class_member()?);
+            if self.check(&TokenKind::Semicolon) {
+                self.advance();
+                continue;
+            }
+            members.push(self.parse_class_member(&name)?);
         }
 
         self.expect(&TokenKind::RBrace)?;
@@ -271,60 +271,42 @@ impl Parser {
         })
     }
 
-    fn parse_class_member(&mut self) -> Result<ClassMember> {
-        let member_modifiers = self.parse_modifiers();
-
-        // Check for destructor
+    fn parse_class_member(&mut self, class_name: &str) -> Result<ClassMember> {
         if self.check(&TokenKind::BitNot) {
-            return Ok(ClassMember::Func(self.parse_destructor(member_modifiers)?));
+            return Ok(ClassMember::Func(self.parse_function(true)?));
         }
 
-        // Try to parse type
-        let checkpoint = self.pos;
-        if let Ok(_typ) = self.try_parse_type() {
-            // Check if it's a property (has { after identifier)
-            if self.check(&TokenKind::BitAnd) {
-                self.advance();
-            }
-
-            if let TokenKind::Identifier(_) = self.current().kind {
-                let _name = self.expect_identifier()?;
-
-                if self.check(&TokenKind::LBrace) {
-                    // It's a property
-                    self.pos = checkpoint;
-                    return Ok(ClassMember::VirtProp(self.parse_virtprop(member_modifiers)?));
+        if let TokenKind::Identifier(name) = &self.current().kind {
+            if name == class_name {
+                let next_pos = self.pos + 1;
+                if next_pos < self.tokens.len() && self.tokens[next_pos].kind == TokenKind::LParen {
+                    return Ok(ClassMember::Func(self.parse_function(true)?));
                 }
-
-                if self.check(&TokenKind::LParen) {
-                    // It's a method
-                    self.pos = checkpoint;
-                    return Ok(ClassMember::Func(self.parse_method(member_modifiers)?));
-                }
-
-                // It's a field
-                self.pos = checkpoint;
-                return Ok(ClassMember::Var(self.parse_var(member_modifiers)?));
             }
         }
 
-        // Could be constructor or funcdef
-        self.pos = checkpoint;
-
-        if self.check_identifier() {
-            let _name = self.current().span.source.clone();
-            let next_pos = self.pos + 1;
-
-            if next_pos < self.tokens.len() && self.tokens[next_pos].kind == TokenKind::LParen {
-                // Constructor
-                return Ok(ClassMember::Func(self.parse_constructor(member_modifiers)?));
-            }
+        if self.check(&TokenKind::Funcdef) {
+            return Ok(ClassMember::FuncDef(self.parse_funcdef()?));
         }
 
-        Err(self.error("Expected class member"))
+        if self.is_func_decl(true) {
+            Ok(ClassMember::Func(self.parse_function(true)?))
+        } else if self.is_virtual_property_decl() {
+            Ok(ClassMember::VirtProp(self.parse_virtprop(true, false)?))
+        } else if self.is_var_decl() {
+            Ok(ClassMember::Var(self.parse_var(true, false)?))
+        } else {
+            Err(self.error("Expected class member"))
+        }
     }
 
-    fn parse_interface(&mut self, modifiers: Vec<String>) -> Result<Interface> {
+    fn parse_interface(&mut self) -> Result<Interface> {
+        let mut modifiers = Vec::new();
+
+        while self.identifier_is("shared") || self.identifier_is("external") {
+            modifiers.push(self.expect_identifier()?);
+        }
+
         self.expect(&TokenKind::Interface)?;
         let name = self.expect_identifier()?;
 
@@ -354,7 +336,16 @@ impl Parser {
         let mut members = Vec::new();
 
         while !self.check(&TokenKind::RBrace) && !self.is_at_end() {
-            members.push(self.parse_interface_member()?);
+            if self.check(&TokenKind::Semicolon) {
+                self.advance();
+                continue;
+            }
+
+            if self.is_virtual_property_decl() {
+                members.push(InterfaceMember::VirtProp(self.parse_virtprop(true, true)?));
+            } else {
+                members.push(InterfaceMember::Method(self.parse_interface_method()?));
+            }
         }
 
         self.expect(&TokenKind::RBrace)?;
@@ -367,58 +358,47 @@ impl Parser {
         })
     }
 
-    fn parse_interface_member(&mut self) -> Result<InterfaceMember> {
-        let typ = self.parse_type()?;
-        let is_ref = self.check(&TokenKind::BitAnd);
-        if is_ref {
+    fn parse_interface_method(&mut self) -> Result<IntfMthd> {
+        let return_type = self.parse_type()?;
+        let is_ref = if self.check(&TokenKind::BitAnd) {
             self.advance();
-        }
+            true
+        } else {
+            false
+        };
 
         let name = self.expect_identifier()?;
+        let params = self.parse_param_list()?;
 
-        if self.check(&TokenKind::LBrace) {
-            // Property
-            Ok(InterfaceMember::VirtProp(VirtProp {
-                visibility: None,
-                prop_type: typ,
-                is_ref,
-                name,
-                accessors: Vec::new(), // Parse accessors if needed
-            }))
+        let is_const = if self.check(&TokenKind::Const) {
+            self.advance();
+            true
         } else {
-            // Method
-            let params = self.parse_param_list()?;
-            let is_const = self.check(&TokenKind::Const);
-            if is_const {
-                self.advance();
-            }
+            false
+        };
 
-            self.expect(&TokenKind::Semicolon)?;
+        self.expect(&TokenKind::Semicolon)?;
 
-            Ok(InterfaceMember::Method(IntfMthd {
-                return_type: typ,
-                is_ref,
-                name,
-                params,
-                is_const,
-            }))
-        }
+        Ok(IntfMthd {
+            return_type,
+            is_ref,
+            name,
+            params,
+            is_const,
+        })
     }
 
     fn parse_typedef(&mut self) -> Result<Typedef> {
         self.expect(&TokenKind::Typedef)?;
 
         let prim_type = match &self.current().kind {
-            TokenKind::Void => "void",
-            TokenKind::Int => "int",
+            TokenKind::Int | TokenKind::Int32 => "int",
             TokenKind::Int8 => "int8",
             TokenKind::Int16 => "int16",
-            TokenKind::Int32 => "int32",
             TokenKind::Int64 => "int64",
-            TokenKind::Uint => "uint",
+            TokenKind::Uint | TokenKind::Uint32 => "uint",
             TokenKind::Uint8 => "uint8",
             TokenKind::Uint16 => "uint16",
-            TokenKind::Uint32 => "uint32",
             TokenKind::Uint64 => "uint64",
             TokenKind::Float => "float",
             TokenKind::Double => "double",
@@ -435,14 +415,22 @@ impl Parser {
         Ok(Typedef { prim_type, name })
     }
 
-    fn parse_funcdef(&mut self, modifiers: Vec<String>) -> Result<FuncDef> {
+    fn parse_funcdef(&mut self) -> Result<FuncDef> {
+        let mut modifiers = Vec::new();
+
+        while self.identifier_is("shared") || self.identifier_is("external") {
+            modifiers.push(self.expect_identifier()?);
+        }
+
         self.expect(&TokenKind::Funcdef)?;
 
         let return_type = self.parse_type()?;
-        let is_ref = self.check(&TokenKind::BitAnd);
-        if is_ref {
+        let is_ref = if self.check(&TokenKind::BitAnd) {
             self.advance();
-        }
+            true
+        } else {
+            false
+        };
 
         let name = self.expect_identifier()?;
         let params = self.parse_param_list()?;
@@ -460,7 +448,7 @@ impl Parser {
 
     fn parse_mixin(&mut self) -> Result<Mixin> {
         self.expect(&TokenKind::Mixin)?;
-        let class = self.parse_class(Vec::new())?;
+        let class = self.parse_class()?;
         Ok(Mixin { class })
     }
 
@@ -468,23 +456,21 @@ impl Parser {
         self.expect(&TokenKind::Import)?;
 
         let type_name = self.parse_type()?;
-        let is_ref = self.check(&TokenKind::BitAnd);
-        if is_ref {
+        let is_ref = if self.check(&TokenKind::BitAnd) {
             self.advance();
-        }
+            true
+        } else {
+            false
+        };
 
         let identifier = self.expect_identifier()?;
         let params = self.parse_param_list()?;
 
-        // Parse function attributes
-        while matches!(
-            self.current().kind,
-            TokenKind::Override | TokenKind::Final | TokenKind::Explicit | TokenKind::Property
-        ) {
+        while self.is_func_attribute() {
             self.advance();
         }
 
-        self.expect_keyword("from")?;
+        self.expect_contextual_keyword("from")?;
         let from = self.expect_string()?;
         self.expect(&TokenKind::Semicolon)?;
 
@@ -497,14 +483,26 @@ impl Parser {
         })
     }
 
-    fn parse_virtprop(&mut self, modifiers: Vec<String>) -> Result<VirtProp> {
-        let visibility = self.parse_visibility(&modifiers);
+    fn parse_virtprop(&mut self, is_method: bool, is_interface: bool) -> Result<VirtProp> {
+        let mut visibility = None;
+
+        if is_method {
+            if self.check(&TokenKind::Private) {
+                visibility = Some(Visibility::Private);
+                self.advance();
+            } else if self.check(&TokenKind::Protected) {
+                visibility = Some(Visibility::Protected);
+                self.advance();
+            }
+        }
 
         let prop_type = self.parse_type()?;
-        let is_ref = self.check(&TokenKind::BitAnd);
-        if is_ref {
+        let is_ref = if self.check(&TokenKind::BitAnd) {
             self.advance();
-        }
+            true
+        } else {
+            false
+        };
 
         let name = self.expect_identifier()?;
         self.expect(&TokenKind::LBrace)?;
@@ -512,25 +510,35 @@ impl Parser {
         let mut accessors = Vec::new();
 
         while !self.check(&TokenKind::RBrace) && !self.is_at_end() {
-            let kind = if self.check(&TokenKind::Get) {
+            let kind = if self.identifier_is("get") {
                 self.advance();
                 AccessorKind::Get
-            } else if self.check(&TokenKind::Set) {
+            } else if self.identifier_is("set") {
                 self.advance();
                 AccessorKind::Set
             } else {
                 return Err(self.error("Expected 'get' or 'set'"));
             };
 
-            let is_const = self.check(&TokenKind::Const);
-            if is_const {
+            let is_const = if self.check(&TokenKind::Const) {
                 self.advance();
+                true
+            } else {
+                false
+            };
+
+            let mut attributes = Vec::new();
+            if is_method && !is_interface {
+                attributes = self.parse_func_attributes()?;
             }
 
-            let attributes = self.parse_func_attributes();
-
-            let body = if self.check(&TokenKind::LBrace) {
-                Some(self.parse_stat_block()?)
+            let body = if !is_interface {
+                if self.check(&TokenKind::LBrace) {
+                    Some(self.parse_stat_block()?)
+                } else {
+                    self.expect(&TokenKind::Semicolon)?;
+                    None
+                }
             } else {
                 self.expect(&TokenKind::Semicolon)?;
                 None
@@ -555,60 +563,114 @@ impl Parser {
         })
     }
 
-    fn parse_func_or_var(&mut self, modifiers: Vec<String>) -> Result<ScriptItem> {
-        let visibility = self.parse_visibility(&modifiers);
-        let checkpoint = self.pos;
+    fn parse_function(&mut self, is_method: bool) -> Result<Func> {
+        let mut modifiers = Vec::new();
+        let mut visibility = None;
 
-        // Try to parse as function
-        match self.try_parse_func(modifiers.clone(), visibility) {
-            Ok(func) => Ok(ScriptItem::Func(func)),
-            Err(_) => {
-                // Backtrack and try as variable
-                self.pos = checkpoint;
-                Ok(ScriptItem::Var(self.parse_var(modifiers)?))
+        if !is_method {
+            while self.identifier_is("shared") || self.identifier_is("external") {
+                modifiers.push(self.expect_identifier()?);
             }
         }
-    }
 
-    fn try_parse_func(&mut self, modifiers: Vec<String>, visibility: Option<Visibility>) -> Result<Func> {
-        // Check for destructor
+        if is_method {
+            if self.check(&TokenKind::Private) {
+                visibility = Some(Visibility::Private);
+                self.advance();
+            } else if self.check(&TokenKind::Protected) {
+                visibility = Some(Visibility::Protected);
+                self.advance();
+            }
+        }
+
         if self.check(&TokenKind::BitNot) {
-            return self.parse_destructor(modifiers);
-        }
-
-        // Try to parse return type
-        let return_type = if self.check_type_start() {
-            Some(self.parse_type()?)
-        } else {
-            None
-        };
-
-        let is_ref = self.check(&TokenKind::BitAnd);
-        if is_ref {
             self.advance();
+            let name = format!("~{}", self.expect_identifier()?);
+            let params = self.parse_param_list()?;
+            let attributes = self.parse_func_attributes()?;
+
+            let body = if self.check(&TokenKind::LBrace) {
+                Some(self.parse_stat_block()?)
+            } else {
+                self.expect(&TokenKind::Semicolon)?;
+                None
+            };
+
+            return Ok(Func {
+                modifiers,
+                visibility,
+                return_type: None,
+                is_ref: false,
+                name,
+                params,
+                is_const: false,
+                attributes,
+                body,
+            });
         }
 
-        let name = self.expect_identifier()?;
+        let mut return_type = None;
+        let mut is_ref = false;
+        let name;
 
-        // Must have parameter list for function
-        if !self.check(&TokenKind::LParen) {
-            return Err(self.error("Expected '(' for function"));
+        if is_method {
+            let checkpoint = self.pos;
+
+            if self.check_identifier() {
+                let potential_name = self.expect_identifier()?;
+
+                if self.check(&TokenKind::LParen) {
+                    name = potential_name;
+                } else {
+                    self.pos = checkpoint;
+                    return_type = Some(self.parse_type()?);
+                    is_ref = if self.check(&TokenKind::BitAnd) {
+                        self.advance();
+                        true
+                    } else {
+                        false
+                    };
+                    name = self.expect_identifier()?;
+                }
+            } else {
+                return_type = Some(self.parse_type()?);
+                is_ref = if self.check(&TokenKind::BitAnd) {
+                    self.advance();
+                    true
+                } else {
+                    false
+                };
+                name = self.expect_identifier()?;
+            }
+        } else {
+            return_type = Some(self.parse_type()?);
+            is_ref = if self.check(&TokenKind::BitAnd) {
+                self.advance();
+                true
+            } else {
+                false
+            };
+            name = self.expect_identifier()?;
         }
 
         let params = self.parse_param_list()?;
 
-        let is_const = self.check(&TokenKind::Const);
-        if is_const {
+        let is_const = if is_method && self.check(&TokenKind::Const) {
             self.advance();
-        }
+            true
+        } else {
+            false
+        };
 
-        let attributes = self.parse_func_attributes();
+        let attributes = self.parse_func_attributes()?;
 
-        let body = if self.check(&TokenKind::LBrace) {
+        let body = if self.check(&TokenKind::Semicolon) {
+            self.advance();
+            None
+        } else if self.check(&TokenKind::LBrace) {
             Some(self.parse_stat_block()?)
         } else {
-            self.expect(&TokenKind::Semicolon)?;
-            None
+            return Err(self.error("Expected ';' or '{'"));
         };
 
         Ok(Func {
@@ -624,119 +686,49 @@ impl Parser {
         })
     }
 
-    fn parse_destructor(&mut self, modifiers: Vec<String>) -> Result<Func> {
-        self.expect(&TokenKind::BitNot)?;
-        let name = format!("~{}", self.expect_identifier()?);
-        let params = self.parse_param_list()?;
-        let attributes = self.parse_func_attributes();
+    pub(crate) fn parse_var(&mut self, is_class_prop: bool, is_global_var: bool) -> Result<Var> {
+        let mut visibility = None;
 
-        let body = if self.check(&TokenKind::LBrace) {
-            Some(self.parse_stat_block()?)
-        } else {
-            self.expect(&TokenKind::Semicolon)?;
-            None
-        };
-
-        Ok(Func {
-            modifiers,
-            visibility: None,
-            return_type: None,
-            is_ref: false,
-            name,
-            params,
-            is_const: false,
-            attributes,
-            body,
-        })
-    }
-
-    fn parse_constructor(&mut self, modifiers: Vec<String>) -> Result<Func> {
-        let name = self.expect_identifier()?;
-        let params = self.parse_param_list()?;
-        let attributes = self.parse_func_attributes();
-
-        let body = if self.check(&TokenKind::LBrace) {
-            Some(self.parse_stat_block()?)
-        } else {
-            self.expect(&TokenKind::Semicolon)?;
-            None
-        };
-
-        Ok(Func {
-            modifiers,
-            visibility: None,
-            return_type: None,
-            is_ref: false,
-            name,
-            params,
-            is_const: false,
-            attributes,
-            body,
-        })
-    }
-
-    fn parse_method(&mut self, modifiers: Vec<String>) -> Result<Func> {
-        let visibility = self.parse_visibility(&modifiers);
-        let return_type = Some(self.parse_type()?);
-
-        let is_ref = self.check(&TokenKind::BitAnd);
-        if is_ref {
-            self.advance();
+        if is_class_prop {
+            if self.check(&TokenKind::Private) {
+                visibility = Some(Visibility::Private);
+                self.advance();
+            } else if self.check(&TokenKind::Protected) {
+                visibility = Some(Visibility::Protected);
+                self.advance();
+            }
         }
 
-        let name = self.expect_identifier()?;
-        let params = self.parse_param_list()?;
-
-        let is_const = self.check(&TokenKind::Const);
-        if is_const {
-            self.advance();
-        }
-
-        let attributes = self.parse_func_attributes();
-
-        let body = if self.check(&TokenKind::LBrace) {
-            Some(self.parse_stat_block()?)
-        } else {
-            self.expect(&TokenKind::Semicolon)?;
-            None
-        };
-
-        Ok(Func {
-            modifiers,
-            visibility,
-            return_type,
-            is_ref,
-            name,
-            params,
-            is_const,
-            attributes,
-            body,
-        })
-    }
-
-    fn parse_var(&mut self, modifiers: Vec<String>) -> Result<Var> {
-        let visibility = self.parse_visibility(&modifiers);
         let var_type = self.parse_type()?;
 
         let mut declarations = Vec::new();
 
         loop {
+            if self.check(&TokenKind::At) {
+                self.advance();
+            }
+
             let name = self.expect_identifier()?;
 
-            let initializer = if self.check(&TokenKind::Assign) {
-                self.advance();
-
-                // Check for init list
-                if self.check(&TokenKind::LBrace) {
-                    Some(VarInit::InitList(self.parse_init_list()?))
+            let initializer = if is_class_prop || is_global_var {
+                if self.check(&TokenKind::Assign) || self.check(&TokenKind::LParen) {
+                    Some(self.superficially_parse_var_init()?)
                 } else {
-                    // Parse as expression (handles lambdas, function calls, etc.)
-                    Some(VarInit::Expr(self.parse_expression()?))
+                    None
                 }
-            } else if self.check(&TokenKind::LParen) {
-                Some(VarInit::ArgList(self.parse_arg_list()?))
             } else {
-                None
+                if self.check(&TokenKind::LParen) {
+                    Some(VarInit::ArgList(self.parse_arg_list()?))
+                } else if self.check(&TokenKind::Assign) {
+                    self.advance();
+                    if self.check(&TokenKind::LBrace) {
+                        Some(VarInit::InitList(self.parse_init_list()?))
+                    } else {
+                        Some(VarInit::Expr(self.parse_expression()?))
+                    }
+                } else {
+                    None
+                }
             };
 
             declarations.push(VarDecl { name, initializer });
@@ -756,11 +748,69 @@ impl Parser {
         })
     }
 
-    fn parse_type(&mut self) -> Result<Type> {
-        let is_const = self.check(&TokenKind::Const);
-        if is_const {
+    fn superficially_parse_var_init(&mut self) -> Result<VarInit> {
+        if self.check(&TokenKind::Assign) {
             self.advance();
+
+            let mut depth_paren = 0;
+            let mut depth_brace = 0;
+
+            while !self.is_at_end() {
+                if self.check(&TokenKind::LParen) {
+                    depth_paren += 1;
+                    self.advance();
+                } else if self.check(&TokenKind::RParen) {
+                    if depth_paren == 0 {
+                        break;
+                    }
+                    depth_paren -= 1;
+                    self.advance();
+                } else if self.check(&TokenKind::LBrace) {
+                    depth_brace += 1;
+                    self.advance();
+                } else if self.check(&TokenKind::RBrace) {
+                    if depth_brace == 0 {
+                        break;
+                    }
+                    depth_brace -= 1;
+                    self.advance();
+                } else if self.check(&TokenKind::Comma) || self.check(&TokenKind::Semicolon) {
+                    if depth_paren == 0 && depth_brace == 0 {
+                        break;
+                    }
+                    self.advance();
+                } else {
+                    self.advance();
+                }
+            }
+
+            Ok(VarInit::Expr(Expr::Void))
+        } else if self.check(&TokenKind::LParen) {
+            let mut depth = 1;
+            self.advance();
+
+            while depth > 0 && !self.is_at_end() {
+                if self.check(&TokenKind::LParen) {
+                    depth += 1;
+                } else if self.check(&TokenKind::RParen) {
+                    depth -= 1;
+                }
+                self.advance();
+            }
+
+            Ok(VarInit::ArgList(Vec::new()))
+        } else {
+            Err(self.error("Expected '=' or '('"))
         }
+    }
+
+    pub fn parse_type(&mut self) -> Result<Type> {
+        let is_const = if self.check(&TokenKind::Const) {
+            self.advance();
+            true
+        } else {
+            false
+        };
 
         let scope = self.parse_scope()?;
         let datatype = self.parse_datatype()?;
@@ -800,10 +850,6 @@ impl Parser {
         })
     }
 
-    fn try_parse_type(&mut self) -> Result<Type> {
-        self.parse_type()
-    }
-
     fn parse_scope(&mut self) -> Result<Scope> {
         let mut is_global = false;
         let mut path = Vec::new();
@@ -821,7 +867,6 @@ impl Parser {
                 self.advance();
                 path.push(ident);
             } else {
-                // Not part of scope, backtrack
                 self.pos = checkpoint;
                 break;
             }
@@ -836,7 +881,7 @@ impl Parser {
                 self.advance();
                 Ok(DataType::PrimType("void".to_string()))
             }
-            TokenKind::Int => {
+            TokenKind::Int | TokenKind::Int32 => {
                 self.advance();
                 Ok(DataType::PrimType("int".to_string()))
             }
@@ -848,15 +893,11 @@ impl Parser {
                 self.advance();
                 Ok(DataType::PrimType("int16".to_string()))
             }
-            TokenKind::Int32 => {
-                self.advance();
-                Ok(DataType::PrimType("int32".to_string()))
-            }
             TokenKind::Int64 => {
                 self.advance();
                 Ok(DataType::PrimType("int64".to_string()))
             }
-            TokenKind::Uint => {
+            TokenKind::Uint | TokenKind::Uint32 => {
                 self.advance();
                 Ok(DataType::PrimType("uint".to_string()))
             }
@@ -867,10 +908,6 @@ impl Parser {
             TokenKind::Uint16 => {
                 self.advance();
                 Ok(DataType::PrimType("uint16".to_string()))
-            }
-            TokenKind::Uint32 => {
-                self.advance();
-                Ok(DataType::PrimType("uint32".to_string()))
             }
             TokenKind::Uint64 => {
                 self.advance();
@@ -915,7 +952,7 @@ impl Parser {
             types.push(self.parse_type()?);
         }
 
-        self.expect(&TokenKind::Gt)?;
+        self.expect_gt_in_template()?;
 
         Ok(types)
     }
@@ -964,7 +1001,6 @@ impl Parser {
                 self.advance();
                 TypeMod::InOut
             } else {
-                // Default is inout
                 TypeMod::InOut
             });
         }
@@ -991,18 +1027,25 @@ impl Parser {
         })
     }
 
-    fn parse_func_attributes(&mut self) -> Vec<String> {
+    fn parse_func_attributes(&mut self) -> Result<Vec<String>> {
         let mut attributes = Vec::new();
 
-        while matches!(
-            self.current().kind,
-            TokenKind::Override | TokenKind::Final | TokenKind::Explicit | TokenKind::Property
-        ) {
-            attributes.push(self.current().span.source.clone());
-            self.advance();
+        while self.is_func_attribute() {
+            attributes.push(self.expect_identifier()?);
         }
 
-        attributes
+        Ok(attributes)
+    }
+
+    fn is_func_attribute(&self) -> bool {
+        if let TokenKind::Identifier(name) = &self.current().kind {
+            matches!(
+                name.as_str(),
+                "override" | "final" | "explicit" | "property" | "delete"
+            )
+        } else {
+            false
+        }
     }
 
     fn parse_stat_block(&mut self) -> Result<StatBlock> {
@@ -1011,9 +1054,8 @@ impl Parser {
         let mut statements = Vec::new();
 
         while !self.check(&TokenKind::RBrace) && !self.is_at_end() {
-            // Check for variable declaration
-            if self.is_var_declaration() {
-                statements.push(Statement::Var(self.parse_var(Vec::new())?));
+            if self.is_var_decl() {
+                statements.push(Statement::Var(self.parse_var(false, false)?));
             } else {
                 statements.push(self.parse_statement()?);
             }
@@ -1024,50 +1066,198 @@ impl Parser {
         Ok(StatBlock { statements })
     }
 
-    fn is_var_declaration(&mut self) -> bool {
+    fn try_parse_type(&mut self) -> Result<Type> {
+        self.parse_type()
+    }
+
+    fn is_virtual_property_decl(&mut self) -> bool {
         let checkpoint = self.pos;
 
-        // Check for visibility modifiers
-        if matches!(self.current().kind, TokenKind::Private | TokenKind::Protected) {
+        if matches!(
+            self.current().kind,
+            TokenKind::Private | TokenKind::Protected
+        ) {
             self.advance();
         }
 
-        // Check for const
-        if self.check(&TokenKind::Const) {
-            self.advance();
-        }
-
-        // Must start with a type keyword or identifier
-        let looks_like_type = matches!(
-        self.current().kind,
-        TokenKind::Void | TokenKind::Int | TokenKind::Int8 | TokenKind::Int16 |
-        TokenKind::Int32 | TokenKind::Int64 | TokenKind::Uint | TokenKind::Uint8 |
-        TokenKind::Uint16 | TokenKind::Uint32 | TokenKind::Uint64 | TokenKind::Float |
-        TokenKind::Double | TokenKind::Bool | TokenKind::Auto | TokenKind::Identifier(_)
-    );
-
-        if !looks_like_type {
+        if self.try_parse_type().is_err() {
             self.pos = checkpoint;
             return false;
         }
 
-        // Try to parse type
-        let result = if self.try_parse_type().is_ok() {
-            // After type, should be identifier (variable name)
-            self.check_identifier()
-        } else {
-            false
-        };
+        if !self.check_identifier() {
+            self.pos = checkpoint;
+            return false;
+        }
+
+        self.advance();
+
+        let result = self.check(&TokenKind::LBrace);
 
         self.pos = checkpoint;
         result
     }
 
-    fn check_type_start(&self) -> bool {
+    fn is_func_decl(&mut self, is_method: bool) -> bool {
+        let checkpoint = self.pos;
+
+        if is_method {
+            if self.check(&TokenKind::BitNot) {
+                self.pos = checkpoint;
+                return true;
+            }
+
+            if matches!(
+                self.current().kind,
+                TokenKind::Private | TokenKind::Protected
+            ) {
+                self.advance();
+            }
+
+            if self.check_identifier() {
+                self.advance();
+                if self.check(&TokenKind::LParen) {
+                    self.pos = checkpoint;
+                    return true;
+                }
+                self.pos = checkpoint;
+            }
+        }
+
+        if self.check(&TokenKind::Const) {
+            self.advance();
+        }
+
+        if self.check(&TokenKind::DoubleColon) {
+            self.advance();
+        }
+
+        while self.check_identifier() {
+            self.advance();
+            if self.check(&TokenKind::DoubleColon) {
+                self.advance();
+            } else {
+                break;
+            }
+        }
+
+        if !self.is_type_token() {
+            self.pos = checkpoint;
+            return false;
+        }
+        self.advance();
+
+        if self.check(&TokenKind::Lt) {
+            if !self.skip_template_args() {
+                self.pos = checkpoint;
+                return false;
+            }
+        }
+
+        while self.check(&TokenKind::LBracket) || self.check(&TokenKind::At) {
+            if self.check(&TokenKind::LBracket) {
+                self.advance();
+                if self.check(&TokenKind::RBracket) {
+                    self.advance();
+                }
+            } else {
+                self.advance();
+                if self.check(&TokenKind::Const) {
+                    self.advance();
+                }
+            }
+        }
+
+        if self.check(&TokenKind::BitAnd) {
+            self.advance();
+        }
+
+        if !self.check_identifier() {
+            self.pos = checkpoint;
+            return false;
+        }
+        self.advance();
+
+        let result = self.check(&TokenKind::LParen);
+        self.pos = checkpoint;
+        result
+    }
+
+    fn is_var_decl(&mut self) -> bool {
+        let checkpoint = self.pos;
+
+        if matches!(
+            self.current().kind,
+            TokenKind::Private | TokenKind::Protected
+        ) {
+            self.advance();
+        }
+
+        if self.check(&TokenKind::Const) {
+            self.advance();
+        }
+
+        if self.check(&TokenKind::At) {
+            self.pos = checkpoint;
+            return false;
+        }
+
+        if self.check(&TokenKind::DoubleColon) {
+            self.advance();
+        }
+        while self.check_identifier() {
+            let next_pos = self.pos + 1;
+            if next_pos < self.tokens.len() && self.tokens[next_pos].kind == TokenKind::DoubleColon
+            {
+                self.advance();
+                self.advance();
+            } else {
+                break;
+            }
+        }
+
+        if !self.is_type_token() {
+            self.pos = checkpoint;
+            return false;
+        }
+        self.advance();
+
+        if self.check(&TokenKind::Lt) {
+            if !self.skip_template_args() {
+                self.pos = checkpoint;
+                return false;
+            }
+        }
+
+        while self.check(&TokenKind::LBracket) || self.check(&TokenKind::At) {
+            self.advance();
+            if self.check(&TokenKind::RBracket) {
+                self.advance();
+            }
+            if self.check(&TokenKind::Const) {
+                self.advance();
+            }
+        }
+
+        if !self.check_identifier() {
+            self.pos = checkpoint;
+            return false;
+        }
+        self.advance();
+
+        let result = self.check(&TokenKind::Semicolon)
+            || self.check(&TokenKind::Assign)
+            || self.check(&TokenKind::Comma)
+            || self.check(&TokenKind::LParen);
+
+        self.pos = checkpoint;
+        result
+    }
+
+    fn is_type_token(&self) -> bool {
         matches!(
             self.current().kind,
-            TokenKind::Const
-                | TokenKind::Void
+            TokenKind::Void
                 | TokenKind::Int
                 | TokenKind::Int8
                 | TokenKind::Int16
@@ -1083,15 +1273,97 @@ impl Parser {
                 | TokenKind::Bool
                 | TokenKind::Auto
                 | TokenKind::Identifier(_)
-                | TokenKind::DoubleColon
         )
+    }
+
+    fn skip_template_args(&mut self) -> bool {
+        if !self.check(&TokenKind::Lt) {
+            return false;
+        }
+
+        let mut depth: i8 = 1;
+        self.advance();
+
+        while depth > 0 && !self.is_at_end() {
+            match &self.current().kind {
+                TokenKind::Lt => {
+                    depth += 1;
+                    self.advance();
+                }
+                TokenKind::Gt => {
+                    depth -= 1;
+                    self.advance();
+                }
+                TokenKind::Shr => {
+                    depth = depth.saturating_sub(2);
+                    self.advance();
+                }
+                TokenKind::UShr => {
+                    depth = depth.saturating_sub(3);
+                    self.advance();
+                }
+                _ => {
+                    self.advance();
+                }
+            }
+        }
+
+        depth == 0
+    }
+
+    fn expect_gt_in_template(&mut self) -> Result<()> {
+        match &self.current().kind {
+            TokenKind::Gt => {
+                self.advance();
+                Ok(())
+            }
+            TokenKind::Shr => {
+                let shr_token = self.current().clone();
+                let gt_token = Token::new(
+                    TokenKind::Gt,
+                    Span::new(
+                        Position::new(
+                            shr_token.span.start.line,
+                            shr_token.span.start.column + 1,
+                            shr_token.span.start.offset + 1,
+                        ),
+                        shr_token.span.end.clone(),
+                        ">".to_string(),
+                    ),
+                );
+                self.tokens[self.pos] = gt_token;
+                Ok(())
+            }
+            TokenKind::UShr => {
+                let ushr_token = self.current().clone();
+                let shr_token = Token::new(
+                    TokenKind::Shr,
+                    Span::new(
+                        Position::new(
+                            ushr_token.span.start.line,
+                            ushr_token.span.start.column + 1,
+                            ushr_token.span.start.offset + 1,
+                        ),
+                        ushr_token.span.end.clone(),
+                        ">>".to_string(),
+                    ),
+                );
+                self.tokens[self.pos] = shr_token;
+                Ok(())
+            }
+            _ => Err(ParseError::UnexpectedToken {
+                span: self.current().span.clone(),
+                expected: "'>'".to_string(),
+                found: format!("{:?}", self.current().kind),
+            }),
+        }
     }
 
     fn parse_statement(&mut self) -> Result<Statement> {
         match &self.current().kind {
             TokenKind::If => self.parse_if(),
             TokenKind::For => self.parse_for(),
-            TokenKind::Foreach => self.parse_foreach(),
+            TokenKind::ForEach => self.parse_foreach(), // Direct match!
             TokenKind::While => self.parse_while(),
             TokenKind::Do => self.parse_do_while(),
             TokenKind::Switch => self.parse_switch(),
@@ -1110,6 +1382,56 @@ impl Parser {
             TokenKind::LBrace => Ok(Statement::Block(self.parse_stat_block()?)),
             _ => self.parse_expr_statement(),
         }
+    }
+
+    fn parse_foreach(&mut self) -> Result<Statement> {
+        // Parse: foreach( type var [, type var]* : container ) statement
+
+        self.expect(&TokenKind::ForEach)?; // Simplified!
+        self.expect(&TokenKind::LParen)?;
+
+        // Parse variable declarations: type name [, type name]*
+        let mut variables = Vec::new();
+
+        loop {
+            // Parse type
+            let var_type = self.parse_type()?;
+
+            // Parse variable name
+            let var_name = self.expect_identifier()?;
+
+            variables.push((var_type, var_name));
+
+            // Check for comma (more variables) or colon (end of variables)
+            if self.check(&TokenKind::Comma) {
+                self.advance();
+                // Continue to next variable
+            } else if self.check(&TokenKind::Colon) {
+                break;
+            } else {
+                return Err(ParseError::UnexpectedToken {
+                    span: self.current().span.clone(),
+                    expected: "',' or ':'".to_string(),
+                    found: format!("{:?}", self.current().kind),
+                });
+            }
+        }
+
+        self.expect(&TokenKind::Colon)?;
+
+        // Parse the iterable expression
+        let iterable = self.parse_expression()?;
+
+        self.expect(&TokenKind::RParen)?;
+
+        // Parse the body
+        let body = Box::new(self.parse_statement()?);
+
+        Ok(Statement::ForEach(ForEachStmt {
+            variables,
+            iterable,
+            body,
+        }))
     }
 
     fn parse_if(&mut self) -> Result<Statement> {
@@ -1138,8 +1460,8 @@ impl Parser {
         self.expect(&TokenKind::For)?;
         self.expect(&TokenKind::LParen)?;
 
-        let init = if self.is_var_declaration() {
-            ForInit::Var(self.parse_var(Vec::new())?)
+        let init = if self.is_var_decl() {
+            ForInit::Var(self.parse_var(false, false)?)
         } else {
             ForInit::Expr(self.parse_expr_statement_inner()?)
         };
@@ -1164,36 +1486,6 @@ impl Parser {
             init,
             condition,
             increment,
-            body,
-        }))
-    }
-
-    fn parse_foreach(&mut self) -> Result<Statement> {
-        self.expect(&TokenKind::Foreach)?;
-        self.expect(&TokenKind::LParen)?;
-
-        let mut variables = Vec::new();
-
-        loop {
-            let var_type = self.parse_type()?;
-            let var_name = self.expect_identifier()?;
-            variables.push((var_type, var_name));
-
-            if !self.check(&TokenKind::Comma) {
-                break;
-            }
-            self.advance();
-        }
-
-        self.expect(&TokenKind::Colon)?;
-        let iterable = self.parse_expression()?;
-        self.expect(&TokenKind::RParen)?;
-
-        let body = Box::new(self.parse_statement()?);
-
-        Ok(Statement::ForEach(ForEachStmt {
-            variables,
-            iterable,
             body,
         }))
     }
@@ -1259,8 +1551,8 @@ impl Parser {
             TokenKind::Case | TokenKind::Default | TokenKind::RBrace
         ) && !self.is_at_end()
         {
-            if self.is_var_declaration() {
-                statements.push(Statement::Var(self.parse_var(Vec::new())?));
+            if self.is_var_decl() {
+                statements.push(Statement::Var(self.parse_var(false, false)?));
             } else {
                 statements.push(self.parse_statement()?);
             }
@@ -1315,14 +1607,12 @@ impl Parser {
     }
 
     fn parse_expression(&mut self) -> Result<Expr> {
-        // Collect tokens until we hit a statement terminator
         let expr_tokens = self.collect_expression_tokens()?;
 
         if expr_tokens.is_empty() {
             return Err(self.error("Expected expression"));
         }
 
-        // Use Pratt parser
         let pratt = ExprParser::new(expr_tokens);
         pratt.parse()
     }
@@ -1332,6 +1622,7 @@ impl Parser {
         let mut paren_depth = 0;
         let mut bracket_depth = 0;
         let mut brace_depth = 0;
+        let mut angle_depth: i32 = 0;
 
         loop {
             let token = self.current().clone();
@@ -1364,37 +1655,73 @@ impl Parser {
                     self.advance();
                 }
                 TokenKind::LBrace => {
-                    // LBrace starts init list
                     brace_depth += 1;
                     tokens.push(token);
                     self.advance();
                 }
                 TokenKind::RBrace => {
                     if brace_depth == 0 {
-                        // Not in an init list, end expression
                         break;
                     }
                     brace_depth -= 1;
                     tokens.push(token);
                     self.advance();
                 }
+                TokenKind::Lt => {
+                    // Look ahead to see if this is actually a template
+                    let looks_like_template = self.looks_like_template_lookahead(&tokens);
+
+                    if looks_like_template {
+                        angle_depth += 1;
+                    }
+                    tokens.push(token);
+                    self.advance();
+                }
+                TokenKind::Gt => {
+                    if angle_depth > 0 {
+                        angle_depth -= 1;
+                    }
+                    tokens.push(token);
+                    self.advance();
+                }
+                TokenKind::Shr => {
+                    angle_depth = angle_depth.saturating_sub(2);
+                    tokens.push(token);
+                    self.advance();
+                }
+                TokenKind::UShr => {
+                    angle_depth = angle_depth.saturating_sub(3);
+                    tokens.push(token);
+                    self.advance();
+                }
                 TokenKind::Semicolon => {
-                    if paren_depth == 0 && bracket_depth == 0 && brace_depth == 0 {
+                    if paren_depth == 0
+                        && bracket_depth == 0
+                        && brace_depth == 0
+                        && angle_depth == 0
+                    {
                         break;
                     }
                     tokens.push(token);
                     self.advance();
                 }
                 TokenKind::Comma => {
-                    if paren_depth == 0 && bracket_depth == 0 && brace_depth == 0 {
+                    if paren_depth == 0
+                        && bracket_depth == 0
+                        && brace_depth == 0
+                        && angle_depth == 0
+                    {
                         break;
                     }
                     tokens.push(token);
                     self.advance();
                 }
                 TokenKind::Colon => {
-                    if paren_depth == 0 && bracket_depth == 0 && brace_depth == 0 {
-                        // Check if it's part of ternary
+                    if paren_depth == 0
+                        && bracket_depth == 0
+                        && brace_depth == 0
+                        && angle_depth == 0
+                    {
                         let has_question = tokens.iter().any(|t| t.kind == TokenKind::Question);
                         if !has_question {
                             break;
@@ -1412,6 +1739,135 @@ impl Parser {
         }
 
         Ok(tokens)
+    }
+    fn looks_like_template_lookahead(&self, tokens_so_far: &[Token]) -> bool {
+        // Check pattern: identifier < type_stuff >
+        // where type_stuff is: type [, type]*
+
+        // Must have identifier before <
+        if tokens_so_far.is_empty() {
+            return false;
+        }
+        if !matches!(tokens_so_far.last().unwrap().kind, TokenKind::Identifier(_)) {
+            return false;
+        }
+
+        // Look ahead past the < (current position is at <, so start at pos + 1)
+        let mut scan_pos = self.pos + 1;
+        let mut depth: i32 = 1;
+        let mut saw_type = false;
+
+        while scan_pos < self.tokens.len() && depth > 0 {
+            match &self.tokens[scan_pos].kind {
+                // Type tokens
+                TokenKind::Identifier(_)
+                | TokenKind::Const
+                | TokenKind::Int
+                | TokenKind::Int8
+                | TokenKind::Int16
+                | TokenKind::Int32
+                | TokenKind::Int64
+                | TokenKind::Uint
+                | TokenKind::Uint8
+                | TokenKind::Uint16
+                | TokenKind::Uint32
+                | TokenKind::Uint64
+                | TokenKind::Float
+                | TokenKind::Double
+                | TokenKind::Bool
+                | TokenKind::Void => {
+                    saw_type = true;
+                    scan_pos += 1;
+                }
+
+                // Template nesting
+                TokenKind::Lt => {
+                    depth += 1;
+                    scan_pos += 1;
+                }
+                TokenKind::Gt => {
+                    depth -= 1;
+                    if depth == 0 {
+                        // Found matching >
+                        // This looks like a template if we saw types
+                        return saw_type;
+                    }
+                    scan_pos += 1;
+                }
+                TokenKind::Shr => {
+                    // >> closes 2 levels
+                    if depth >= 2 {
+                        depth -= 2;
+                    } else {
+                        depth = 0;
+                    }
+                    if depth == 0 {
+                        return saw_type;
+                    }
+                    scan_pos += 1;
+                }
+                TokenKind::UShr => {
+                    // >>> closes 3 levels
+                    depth = depth.saturating_sub(3);
+                    if depth == 0 {
+                        return saw_type;
+                    }
+                    scan_pos += 1;
+                }
+
+                // Comma is OK in templates
+                TokenKind::Comma => {
+                    scan_pos += 1;
+                }
+
+                // Scope resolution is OK in types
+                TokenKind::DoubleColon => {
+                    scan_pos += 1;
+                }
+
+                // Array brackets and @ are OK in types
+                TokenKind::LBracket | TokenKind::RBracket | TokenKind::At => {
+                    scan_pos += 1;
+                }
+
+                // Operators indicate this is NOT a template
+                TokenKind::Add
+                | TokenKind::Sub
+                | TokenKind::Mul
+                | TokenKind::Div
+                | TokenKind::Mod
+                | TokenKind::Eq
+                | TokenKind::Ne
+                | TokenKind::Le
+                | TokenKind::Ge
+                | TokenKind::And
+                | TokenKind::Or
+                | TokenKind::Xor
+                | TokenKind::BitAnd
+                | TokenKind::BitOr
+                | TokenKind::BitXor
+                | TokenKind::Shl
+                | TokenKind::Assign => {
+                    return false;
+                }
+
+                // Numbers indicate comparison, not template
+                TokenKind::Number(_) => {
+                    return false;
+                }
+
+                // Anything else, stop looking
+                _ => return false,
+            }
+
+            // Safety: don't scan too far (prevent infinite loops)
+            if scan_pos - self.pos > 100 {
+                return false;
+            }
+        }
+
+        // Didn't find matching >, not a template
+        false
     }
 
     fn parse_init_list(&mut self) -> Result<InitList> {
@@ -1454,24 +1910,8 @@ impl Parser {
         let mut args = Vec::new();
 
         loop {
-            // Check for named argument
-            let name = if self.check_identifier() {
-                let checkpoint = self.pos;
-                let ident = self.expect_identifier()?;
-
-                if self.check(&TokenKind::Colon) {
-                    self.advance();
-                    Some(ident)
-                } else {
-                    self.pos = checkpoint;
-                    None
-                }
-            } else {
-                None
-            };
-
             let value = self.parse_expression()?;
-            args.push(Arg { name, value });
+            args.push(Arg { name: None, value });
 
             if !self.check(&TokenKind::Comma) {
                 break;
@@ -1484,15 +1924,11 @@ impl Parser {
         Ok(args)
     }
 
-    // Helper methods
-
-    fn parse_visibility(&self, modifiers: &[String]) -> Option<Visibility> {
-        if modifiers.contains(&"private".to_string()) {
-            Some(Visibility::Private)
-        } else if modifiers.contains(&"protected".to_string()) {
-            Some(Visibility::Protected)
+    fn identifier_is(&self, name: &str) -> bool {
+        if let TokenKind::Identifier(id) = &self.current().kind {
+            id == name
         } else {
-            None
+            false
         }
     }
 
@@ -1538,12 +1974,7 @@ impl Parser {
                 self.advance();
                 Ok(name)
             }
-            // Allow some keywords to be used as identifiers in certain contexts
-            TokenKind::Function => {
-                self.advance();
-                Ok("function".to_string())
-            }
-            _ => Err(self.error("Expected identifier"))
+            _ => Err(self.error("Expected identifier")),
         }
     }
 
@@ -1557,14 +1988,13 @@ impl Parser {
         }
     }
 
-    fn expect_keyword(&mut self, keyword: &str) -> Result<()> {
-        if let TokenKind::Identifier(name) = &self.current().kind {
-            if name == keyword {
-                self.advance();
-                return Ok(());
-            }
+    fn expect_contextual_keyword(&mut self, keyword: &str) -> Result<()> {
+        if self.identifier_is(keyword) {
+            self.advance();
+            Ok(())
+        } else {
+            Err(self.error(&format!("Expected keyword '{}'", keyword)))
         }
-        Err(self.error(&format!("Expected keyword '{}'", keyword)))
     }
 
     fn read_until_newline(&mut self) -> String {
@@ -1587,5 +2017,75 @@ impl Parser {
             span: self.current().span.clone(),
             message: message.to_string(),
         }
+    }
+
+    /// Parse a function declaration without body (for engine registration)
+    /// This is a public helper for the declaration parser
+    pub fn parse_function_signature(&mut self) -> Result<Func> {
+        let mut modifiers = Vec::new();
+        let mut visibility = None;
+
+        // Parse modifiers
+        while self.identifier_is("shared")
+            || self.identifier_is("external")
+            || self.identifier_is("final")
+            || self.identifier_is("override")
+            || self.identifier_is("virtual")
+            || self.identifier_is("explicit")
+        {
+            modifiers.push(self.expect_identifier()?);
+        }
+
+        // Parse visibility
+        if self.check(&TokenKind::Private) {
+            visibility = Some(Visibility::Private);
+            self.advance();
+        } else if self.check(&TokenKind::Protected) {
+            visibility = Some(Visibility::Protected);
+            self.advance();
+        }
+
+        // Parse return type (optional for constructors)
+        let (return_type, is_ref) = if self.is_type_token() || self.check(&TokenKind::Const) {
+            let ret_type = self.parse_type()?;
+            let is_ref = if self.check(&TokenKind::BitAnd) {
+                self.advance();
+                true
+            } else {
+                false
+            };
+            (Some(ret_type), is_ref)
+        } else {
+            (None, false)
+        };
+
+        // Parse function name
+        let name = self.expect_identifier()?;
+
+        // Parse parameters
+        let params = self.parse_param_list()?;
+
+        // Check for const
+        let is_const = if self.check(&TokenKind::Const) {
+            self.advance();
+            true
+        } else {
+            false
+        };
+
+        // Parse attributes
+        let attributes = self.parse_func_attributes()?;
+
+        Ok(Func {
+            modifiers,
+            visibility,
+            return_type,
+            is_ref,
+            name,
+            params,
+            is_const,
+            attributes,
+            body: None,
+        })
     }
 }
