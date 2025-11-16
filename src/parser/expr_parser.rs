@@ -1,5 +1,5 @@
+use crate::core::error::*;
 use crate::parser::ast::*;
-use crate::parser::error::*;
 use crate::parser::token::*;
 
 pub struct ExprParser {
@@ -35,7 +35,7 @@ impl ExprParser {
         }
     }
 
-    pub fn parse(mut self) -> Result<Expr> {
+    pub fn parse(mut self) -> ParseResult<Expr> {
         let expr = self.parse_expr(0)?;
 
         if !self.is_at_end() {
@@ -49,7 +49,7 @@ impl ExprParser {
         Ok(expr)
     }
 
-    fn parse_expr(&mut self, min_bp: u8) -> Result<Expr> {
+    fn parse_expr(&mut self, min_bp: u8) -> ParseResult<Expr> {
         let mut lhs = self.parse_prefix()?;
 
         loop {
@@ -79,7 +79,7 @@ impl ExprParser {
         Ok(lhs)
     }
 
-    fn parse_prefix(&mut self) -> Result<Expr> {
+    fn parse_prefix(&mut self) -> ParseResult<Expr> {
         let token = self.current().clone();
 
         match &token.kind {
@@ -317,7 +317,7 @@ impl ExprParser {
         }
     }
 
-    fn parse_infix(&mut self, lhs: Expr, r_bp: u8) -> Result<Expr> {
+    fn parse_infix(&mut self, lhs: Expr, r_bp: u8) -> ParseResult<Expr> {
         let token = self.current().clone();
         let op = match &token.kind {
             TokenKind::Add => BinaryOp::Add,
@@ -386,7 +386,7 @@ impl ExprParser {
         Ok(Expr::Binary(Box::new(lhs), op, Box::new(rhs)))
     }
 
-    fn parse_postfix(&mut self, lhs: Expr) -> Result<Expr> {
+    fn parse_postfix(&mut self, lhs: Expr) -> ParseResult<Expr> {
         let token = self.current().clone();
 
         match &token.kind {
@@ -453,7 +453,7 @@ impl ExprParser {
         }
     }
 
-    fn parse_scope(&mut self, initial_name: String) -> Result<(Scope, String)> {
+    fn parse_scope(&mut self, initial_name: String) -> ParseResult<(Scope, String)> {
         let mut path = Vec::new();
         let mut current_name = initial_name;
         let is_global = false;
@@ -477,7 +477,7 @@ impl ExprParser {
         Ok((Scope { is_global, path }, current_name))
     }
 
-    fn parse_cast(&mut self) -> Result<Expr> {
+    fn parse_cast(&mut self) -> ParseResult<Expr> {
         self.expect(&TokenKind::Cast)?;
         self.expect(&TokenKind::Lt)?;
 
@@ -513,7 +513,7 @@ impl ExprParser {
         Ok(Expr::Cast(cast_type, Box::new(expr)))
     }
 
-    fn parse_lambda(&mut self) -> Result<Expr> {
+    fn parse_lambda(&mut self) -> ParseResult<Expr> {
         if let TokenKind::Identifier(name) = &self.current().kind {
             if name != "function" {
                 return Err(ParseError::UnexpectedToken {
@@ -611,7 +611,7 @@ impl ExprParser {
         }))
     }
 
-    fn collect_lambda_body(&mut self) -> Result<Vec<Token>> {
+    fn collect_lambda_body(&mut self) -> ParseResult<Vec<Token>> {
         let mut tokens = Vec::new();
         let mut brace_depth = 1;
 
@@ -664,7 +664,7 @@ impl ExprParser {
         )
     }
 
-    fn parse_type_in_expr(&mut self) -> Result<Type> {
+    fn parse_type_in_expr(&mut self) -> ParseResult<Type> {
         let is_const = self.check(&TokenKind::Const);
         if is_const {
             self.advance();
@@ -785,7 +785,7 @@ impl ExprParser {
         })
     }
 
-    fn parse_init_list(&mut self) -> Result<Expr> {
+    fn parse_init_list(&mut self) -> ParseResult<Expr> {
         self.expect(&TokenKind::LBrace)?;
 
         let mut items = Vec::new();
@@ -804,7 +804,7 @@ impl ExprParser {
         Ok(Expr::InitList(InitList { items }))
     }
 
-    fn parse_arg_list_inner(&mut self) -> Result<Vec<Arg>> {
+    fn parse_arg_list_inner(&mut self) -> ParseResult<Vec<Arg>> {
         let mut args = Vec::new();
 
         while !self.check(&TokenKind::RParen) && !self.is_at_end() {
@@ -819,7 +819,7 @@ impl ExprParser {
         Ok(args)
     }
 
-    fn parse_index_args(&mut self) -> Result<Vec<IndexArg>> {
+    fn parse_index_args(&mut self) -> ParseResult<Vec<IndexArg>> {
         let mut args = Vec::new();
 
         while !self.check(&TokenKind::RBracket) && !self.is_at_end() {
@@ -890,7 +890,7 @@ impl ExprParser {
     }
 
     /// Expect > in template context, handling >>, >>>, etc. as multiple >
-    fn expect_gt_in_template(&mut self) -> Result<()> {
+    fn expect_gt_in_template(&mut self) -> ParseResult<()> {
         match &self.current().kind {
             TokenKind::Gt => {
                 self.advance();
@@ -963,7 +963,7 @@ impl ExprParser {
         matches!(self.current().kind, TokenKind::Identifier(_))
     }
 
-    fn expect(&mut self, kind: &TokenKind) -> Result<()> {
+    fn expect(&mut self, kind: &TokenKind) -> ParseResult<()> {
         if self.check(kind) {
             self.advance();
             Ok(())
@@ -976,7 +976,7 @@ impl ExprParser {
         }
     }
 
-    fn expect_identifier(&mut self) -> Result<String> {
+    fn expect_identifier(&mut self) -> ParseResult<String> {
         if let TokenKind::Identifier(name) = &self.current().kind {
             let name = name.clone();
             self.advance();

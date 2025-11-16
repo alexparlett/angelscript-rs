@@ -1,4 +1,4 @@
-use crate::parser::error::Span;
+use crate::core::error::Span;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Token {
@@ -224,7 +224,6 @@ impl TokenKind {
                 | "explicit"
                 | "property"
                 | "delete"
-                | "if_handle_then_const"
         )
     }
 }

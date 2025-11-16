@@ -1,7 +1,8 @@
-// src/core/declaration_parser.rs - New file
-
-use crate::compiler::semantic::TYPE_AUTO;
-use crate::core::engine::{EngineInner, MethodParam};
+use crate::core::engine::EngineInner;
+use crate::core::types::{
+    MethodParam, TYPE_AUTO, TYPE_BOOL, TYPE_DOUBLE, TYPE_FLOAT, TYPE_INT16, TYPE_INT32, TYPE_INT64,
+    TYPE_INT8, TYPE_STRING, TYPE_UINT16, TYPE_UINT32, TYPE_UINT64, TYPE_UINT8, TYPE_VOID,
+};
 use crate::parser::ast::{DataType, Param, Type, TypeMod, TypeModifier};
 use crate::{Lexer, Parser};
 use std::sync::{Arc, RwLock};
@@ -108,7 +109,6 @@ impl DeclarationParser {
     }
 
     /// Resolve Type AST to TypeId
-    /// Resolve Type AST to TypeId
     fn resolve_type_def(&self, type_def: &Type) -> Result<u32, String> {
         let type_name = match &type_def.datatype {
             DataType::PrimType(name) => name.clone(),
@@ -131,8 +131,6 @@ impl DeclarationParser {
 
     /// Get primitive type ID without needing engine registry
     fn get_primitive_type_id(&self, type_name: &str) -> Option<u32> {
-        use crate::compiler::semantic::*;
-
         match type_name {
             "void" => Some(TYPE_VOID),
             "bool" => Some(TYPE_BOOL),
@@ -196,7 +194,8 @@ pub struct BehaviourSignature {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::engine::{ScriptEngine, TypeFlags};
+    use crate::core::engine::ScriptEngine;
+    use crate::core::types::TypeFlags;
 
     struct MyClass {}
 

@@ -1,5 +1,5 @@
+use crate::core::error::*;
 use crate::parser::ast::{Script, ScriptNode};
-use crate::parser::error::*;
 use crate::parser::lexer::Lexer;
 use crate::parser::preprocessor::Preprocessor;
 use std::collections::HashSet;
@@ -17,13 +17,13 @@ pub trait IncludeCallback {
     /// # Returns
     /// * `Ok(source_code)` with the content of the included file
     /// * `Err(ParseError)` to abort compilation with an error
-    fn on_include(&mut self, include_path: &str, from_source: &str) -> Result<String>;
+    fn on_include(&mut self, include_path: &str, from_source: &str) -> ParseResult<String>;
 }
 
 /// Callback trait for handling #pragma directives
 pub trait PragmaCallback {
     /// Called when a #pragma directive is encountered
-    fn on_pragma(&mut self, pragma_text: &str) -> Result<()>;
+    fn on_pragma(&mut self, pragma_text: &str) -> ParseResult<()>;
 }
 
 /// Script builder that processes preprocessor directives
@@ -94,7 +94,7 @@ impl ScriptBuilder {
     ///
     /// let script = builder.build_from_source(source)?;
     /// ```
-    pub fn build_from_source(&mut self, source: &str) -> Result<Script> {
+    pub fn build_from_source(&mut self, source: &str) -> ParseResult<Script> {
         // Tokenize
         let lexer = Lexer::new(source);
         let tokens = lexer.tokenize()?;
@@ -113,7 +113,7 @@ impl ScriptBuilder {
         &mut self,
         current_source: &str,
         items: Vec<ScriptNode>,
-    ) -> Result<Vec<ScriptNode>> {
+    ) -> ParseResult<Vec<ScriptNode>> {
         let mut result = Vec::new();
 
         for item in items {
@@ -148,7 +148,11 @@ impl ScriptBuilder {
         Ok(result)
     }
 
-    fn handle_include(&mut self, include_path: &str, from_source: &str) -> Result<Vec<ScriptNode>> {
+    fn handle_include(
+        &mut self,
+        include_path: &str,
+        from_source: &str,
+    ) -> ParseResult<Vec<ScriptNode>> {
         // Check for circular includes
         if self.included_sources.contains(include_path) {
             // Already included, skip
@@ -229,7 +233,7 @@ impl DefaultIncludeCallback {
 }
 
 impl IncludeCallback for DefaultIncludeCallback {
-    fn on_include(&mut self, include_path: &str, _from_source: &str) -> Result<String> {
+    fn on_include(&mut self, include_path: &str, _from_source: &str) -> ParseResult<String> {
         let resolved_path =
             self.resolve_path(include_path)
                 .ok_or_else(|| ParseError::SyntaxError {

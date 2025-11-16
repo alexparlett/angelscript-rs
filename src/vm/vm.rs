@@ -1,42 +1,27 @@
-use crate::compiler::bytecode::{BytecodeModule, Instruction, ScriptValue};
+use std::any::Any;
+use crate::compiler::bytecode::{BytecodeModule, Instruction};
+use crate::core::types::{ScriptValue, TypeRegistration};
 use crate::vm::memory::*;
+use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
-/// Virtual Machine for executing AngelScript bytecode
 pub struct VM {
-    /// Bytecode module being executed
     module: BytecodeModule,
-
-    /// Call stack (function call frames)
     call_stack: Vec<StackFrame>,
-
-    /// Value stack (for passing arguments and temporary values)
     value_stack: Vec<ScriptValue>,
-
-    /// Object heap (all allocated objects)
     heap: ObjectHeap,
-
-    /// Global variables
     globals: Vec<ScriptValue>,
-
-    /// Type registry
     type_registry: Arc<RwLock<TypeRegistry>>,
-
-    /// Object register (for 'this' pointer and temp objects)
     object_register: Option<u64>,
-
-    /// Value register (for comparisons and temp values)
     value_register: ScriptValue,
-
-    /// Instruction pointer
     ip: u32,
-
-    /// Execution state
     state: VMState,
-
-    /// Init list buffer (for building initialization lists)
     init_list_buffer: Option<Vec<ScriptValue>>,
+    system_functions: HashMap<u32, SystemFunction>,
 }
+
+type SystemFunction =
+    Arc<dyn Fn(&mut VM, &[ScriptValue]) -> Result<ScriptValue, String> + Send + Sync>;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum VMState {
@@ -46,19 +31,11 @@ pub enum VMState {
     Error(String),
 }
 
-/// Stack frame for a function call
 #[derive(Debug, Clone)]
 pub struct StackFrame {
-    /// Function being executed
     function_id: u32,
-
-    /// Return address (instruction pointer to return to)
     return_address: u32,
-
-    /// Local variables (indexed by var number)
     locals: Vec<ScriptValue>,
-
-    /// Frame pointer (index in call stack)
     frame_pointer: usize,
 }
 
@@ -87,7 +64,6 @@ impl StackFrame {
 }
 
 impl VM {
-    /// Create a new VM with a bytecode module
     pub fn new(module: BytecodeModule, type_registry: Arc<RwLock<TypeRegistry>>) -> Self {
         let heap = ObjectHeap::new(type_registry.clone());
         let global_count = module.globals.len();
@@ -104,41 +80,155 @@ impl VM {
             ip: 0,
             state: VMState::Running,
             init_list_buffer: None,
+            system_functions: HashMap::new(),
         }
     }
 
-    /// Execute a function by name
-    pub fn execute_function(&mut self, name: &str) -> Result<ScriptValue, String> {
-        let func = self
-            .module
-            .find_function(name)
-            .ok_or_else(|| format!("Function '{}' not found", name))?;
+    /// Load a module's bytecode (for script function execution)
+    pub fn load_module(&mut self, bytecode: BytecodeModule) {
+        self.module = bytecode;
+        self.ip = 0;
+    }
 
-        // Create initial stack frame
-        let frame = StackFrame::new(
-            0, // function_id (we'd need to track this)
-            0, // return address (no return for entry point)
-            func.local_count,
-            0, // frame pointer
-        );
+    /// Clear execution stacks (for prepare/unprepare)
+    pub fn clear_stacks(&mut self) {
+        self.value_stack.clear();
+        self.call_stack.clear();
+        self.object_register = None;
+        self.value_register = ScriptValue::Void;
+    }
+
+    /// Push argument onto value stack (for SetArg methods)
+    pub fn push_arg(&mut self, value: ScriptValue) {
+        self.value_stack.push(value);
+    }
+
+    /// Execute a script function by ID (already has bytecode loaded)
+    pub fn execute_function_by_id(&mut self, func_id: u32) -> Result<(), String> {
+        let func = self.module.functions.get(func_id as usize)
+                       .ok_or("Invalid function ID")?;
+
+        let mut frame = StackFrame::new(func_id, 0, func.local_count, 0);
+
+        // Pop args from value_stack into frame
+        for i in (0..func.param_count).rev() {
+            if let Some(arg) = self.value_stack.pop() {
+                frame.locals[i as usize] = arg;
+            }
+        }
 
         self.call_stack.push(frame);
         self.ip = func.address;
         self.state = VMState::Running;
 
-        // Execute until finished
+        // Execute bytecode loop
         while self.state == VMState::Running {
             self.execute_instruction()?;
         }
 
-        match &self.state {
-            VMState::Finished => Ok(self.value_register.clone()),
-            VMState::Error(msg) => Err(msg.clone()),
-            _ => Err("Unexpected VM state".to_string()),
+        Ok(())
+    }
+
+    /// Call a system function directly (no bytecode)
+    pub fn call_system_function_direct(&mut self, sys_func_id: u32) -> Result<(), String> {
+        // Pop args from value_stack
+        let mut args = Vec::new();
+        while let Some(arg) = self.value_stack.pop() {
+            args.push(arg);
+        }
+        args.reverse();
+
+        // Call the registered system function
+        self.execute_system_call(sys_func_id)?;
+
+        Ok(())
+    }
+
+    /// Get return value helpers
+    pub fn get_return_byte(&self) -> u8 {
+        match &self.value_register {
+            ScriptValue::UInt8(v) => *v,
+            ScriptValue::Int8(v) => *v as u8,
+            _ => 0,
         }
     }
 
-    /// Execute a single instruction
+    pub fn get_return_word(&self) -> u16 {
+        match &self.value_register {
+            ScriptValue::UInt16(v) => *v,
+            ScriptValue::Int16(v) => *v as u16,
+            _ => 0,
+        }
+    }
+
+    pub fn get_return_dword(&self) -> u32 {
+        match &self.value_register {
+            ScriptValue::UInt32(v) => *v,
+            ScriptValue::Int32(v) => *v as u32,
+            _ => 0,
+        }
+    }
+
+    pub fn get_return_qword(&self) -> u64 {
+        match &self.value_register {
+            ScriptValue::UInt64(v) => *v,
+            ScriptValue::Int64(v) => *v as u64,
+            _ => 0,
+        }
+    }
+
+    pub fn get_return_float(&self) -> f32 {
+        match &self.value_register {
+            ScriptValue::Float(v) => *v,
+            _ => 0.0,
+        }
+    }
+
+    pub fn get_return_double(&self) -> f64 {
+        match &self.value_register {
+            ScriptValue::Double(v) => *v,
+            _ => 0.0,
+        }
+    }
+
+    pub fn get_return_object(&self, heap: Arc<RwLock<ObjectHeap>>) -> Option<ScriptObject> {
+        match &self.value_register {
+            ScriptValue::ObjectHandle(handle) => {
+                Some(ScriptObject::new(*handle, heap))
+            }
+            _ => None,
+        }
+    }
+
+    pub fn get_return_address(&self) -> Option<Arc<RwLock<Box<dyn Any + Send + Sync>>>> {
+        match &self.value_register {
+            ScriptValue::Dynamic(d) => Some(d.clone()),
+            _ => None,
+        }
+    }
+
+    pub fn set_object_register(&mut self, handle: Option<u64>) {
+        self.object_register = handle;
+    }
+
+    pub fn get_object_register(&self) -> Option<u64> {
+        self.object_register
+    }
+
+    pub fn get_call_stack_size(&self) -> u32 {
+        self.call_stack.len() as u32
+    }
+
+    pub fn get_address_of_var(&mut self, var_index: u32, stack_level: u32) -> Option<&mut ScriptValue> {
+        if stack_level >= self.call_stack.len() as u32 {
+            return None;
+        }
+
+        let frame_idx = self.call_stack.len() - 1 - stack_level as usize;
+        self.call_stack.get_mut(frame_idx)
+            .and_then(|frame| frame.locals.get_mut(var_index as usize))
+    }
+
     fn execute_instruction(&mut self) -> Result<(), String> {
         if self.ip as usize >= self.module.instructions.len() {
             return Err("Instruction pointer out of bounds".to_string());
@@ -148,7 +238,6 @@ impl VM {
         self.ip += 1;
 
         match instruction {
-            // ==================== OBJECT MANAGEMENT ====================
             Instruction::Alloc { type_id, func_id } => {
                 self.execute_alloc(type_id, func_id)?;
             }
@@ -210,7 +299,41 @@ impl VM {
                 self.value_stack.push(ScriptValue::UInt32(func_id));
             }
 
-            // ==================== PROPERTY ACCESS (HASHMAP-BASED) ====================
+            Instruction::ChkRef { var } => {
+                let handle = self
+                    .current_frame()
+                    .get_local(var)
+                    .as_object_handle()
+                    .ok_or("ChkRef: variable is not an object handle")?;
+
+                if handle == 0 {
+                    return Err("Null reference".to_string());
+                }
+
+                if self.heap.get_object(handle).is_none() {
+                    return Err("Invalid object reference".to_string());
+                }
+            }
+
+            Instruction::ChkRefS => {
+                let value = self
+                    .value_stack
+                    .last()
+                    .ok_or("ChkRefS: value stack is empty")?;
+
+                let handle = value
+                    .as_object_handle()
+                    .ok_or("ChkRefS: top of stack is not an object handle")?;
+
+                if handle == 0 {
+                    return Err("Null reference on stack".to_string());
+                }
+
+                if self.heap.get_object(handle).is_none() {
+                    return Err("Invalid object reference on stack".to_string());
+                }
+            }
+
             Instruction::GetProperty {
                 obj_var,
                 prop_name_id,
@@ -241,7 +364,6 @@ impl VM {
                 self.execute_set_this_property(prop_name_id, src_var)?;
             }
 
-            // ==================== MATH INSTRUCTIONS ====================
             Instruction::NEGi { var } => {
                 let value = self
                     .current_frame()
@@ -263,21 +385,21 @@ impl VM {
             }
 
             Instruction::NEGd { var } => {
-                let frame = self.current_frame_mut();
-                if let ScriptValue::Double(value) = frame.get_local(var) {
-                    frame.set_local(var, ScriptValue::Double(-value));
-                } else {
-                    return Err("NEGd: not a double".to_string());
-                }
+                let value = match self.current_frame().get_local(var) {
+                    ScriptValue::Double(v) => *v,
+                    _ => return Err("NEGd: not a double".to_string()),
+                };
+                self.current_frame_mut()
+                    .set_local(var, ScriptValue::Double(-value));
             }
 
             Instruction::NEGi64 { var } => {
-                let frame = self.current_frame_mut();
-                if let ScriptValue::Int64(value) = frame.get_local(var) {
-                    frame.set_local(var, ScriptValue::Int64(-value));
-                } else {
-                    return Err("NEGi64: not an int64".to_string());
-                }
+                let value = match self.current_frame().get_local(var) {
+                    ScriptValue::Int64(v) => *v,
+                    _ => return Err("NEGi64: not an int64".to_string()),
+                };
+                self.current_frame_mut()
+                    .set_local(var, ScriptValue::Int64(-value));
             }
 
             Instruction::ADDi { dst, a, b } => {
@@ -377,7 +499,58 @@ impl VM {
                     .set_local(dst, ScriptValue::Int32(result as i32));
             }
 
-            // Float operations
+            Instruction::DIVu { dst, a, b } => {
+                let a_val = self
+                    .current_frame()
+                    .get_local(a)
+                    .as_i32()
+                    .ok_or("DIVu: operand a not uint32")? as u32;
+                let b_val = self
+                    .current_frame()
+                    .get_local(b)
+                    .as_i32()
+                    .ok_or("DIVu: operand b not uint32")? as u32;
+                if b_val == 0 {
+                    return Err("Division by zero".to_string());
+                }
+                self.current_frame_mut()
+                    .set_local(dst, ScriptValue::UInt32(a_val / b_val));
+            }
+
+            Instruction::MODu { dst, a, b } => {
+                let a_val = self
+                    .current_frame()
+                    .get_local(a)
+                    .as_i32()
+                    .ok_or("MODu: operand a not uint32")? as u32;
+                let b_val = self
+                    .current_frame()
+                    .get_local(b)
+                    .as_i32()
+                    .ok_or("MODu: operand b not uint32")? as u32;
+                if b_val == 0 {
+                    return Err("Modulo by zero".to_string());
+                }
+                self.current_frame_mut()
+                    .set_local(dst, ScriptValue::UInt32(a_val % b_val));
+            }
+
+            Instruction::POWu { dst, a, b } => {
+                let a_val = self
+                    .current_frame()
+                    .get_local(a)
+                    .as_i32()
+                    .ok_or("POWu: operand a not uint32")? as u32;
+                let b_val = self
+                    .current_frame()
+                    .get_local(b)
+                    .as_i32()
+                    .ok_or("POWu: operand b not uint32")? as u32;
+                let result = (a_val as f64).powi(b_val as i32) as u32;
+                self.current_frame_mut()
+                    .set_local(dst, ScriptValue::UInt32(result));
+            }
+
             Instruction::ADDf { dst, a, b } => {
                 let a_val = self
                     .current_frame()
@@ -468,7 +641,6 @@ impl VM {
                     .set_local(dst, ScriptValue::Float(a_val.powf(b_val)));
             }
 
-            // Double operations
             Instruction::ADDd { dst, a, b } => {
                 let a_val = match self.current_frame().get_local(a) {
                     ScriptValue::Double(v) => *v,
@@ -561,7 +733,6 @@ impl VM {
                     .set_local(dst, ScriptValue::Double(a_val.powi(b_val)));
             }
 
-            // Int64 operations (similar pattern - abbreviated for space)
             Instruction::ADDi64 { dst, a, b } => {
                 let a_val = match self.current_frame().get_local(a) {
                     ScriptValue::Int64(v) => *v,
@@ -575,9 +746,124 @@ impl VM {
                     .set_local(dst, ScriptValue::Int64(a_val + b_val));
             }
 
-            // ... (other int64 operations follow same pattern)
+            Instruction::SUBi64 { dst, a, b } => {
+                let a_val = match self.current_frame().get_local(a) {
+                    ScriptValue::Int64(v) => *v,
+                    _ => return Err("SUBi64: operand a not int64".to_string()),
+                };
+                let b_val = match self.current_frame().get_local(b) {
+                    ScriptValue::Int64(v) => *v,
+                    _ => return Err("SUBi64: operand b not int64".to_string()),
+                };
+                self.current_frame_mut()
+                    .set_local(dst, ScriptValue::Int64(a_val - b_val));
+            }
 
-            // Math with immediate values
+            Instruction::MULi64 { dst, a, b } => {
+                let a_val = match self.current_frame().get_local(a) {
+                    ScriptValue::Int64(v) => *v,
+                    _ => return Err("MULi64: operand a not int64".to_string()),
+                };
+                let b_val = match self.current_frame().get_local(b) {
+                    ScriptValue::Int64(v) => *v,
+                    _ => return Err("MULi64: operand b not int64".to_string()),
+                };
+                self.current_frame_mut()
+                    .set_local(dst, ScriptValue::Int64(a_val * b_val));
+            }
+
+            Instruction::DIVi64 { dst, a, b } => {
+                let a_val = match self.current_frame().get_local(a) {
+                    ScriptValue::Int64(v) => *v,
+                    _ => return Err("DIVi64: operand a not int64".to_string()),
+                };
+                let b_val = match self.current_frame().get_local(b) {
+                    ScriptValue::Int64(v) => *v,
+                    _ => return Err("DIVi64: operand b not int64".to_string()),
+                };
+                if b_val == 0 {
+                    return Err("Division by zero".to_string());
+                }
+                self.current_frame_mut()
+                    .set_local(dst, ScriptValue::Int64(a_val / b_val));
+            }
+
+            Instruction::MODi64 { dst, a, b } => {
+                let a_val = match self.current_frame().get_local(a) {
+                    ScriptValue::Int64(v) => *v,
+                    _ => return Err("MODi64: operand a not int64".to_string()),
+                };
+                let b_val = match self.current_frame().get_local(b) {
+                    ScriptValue::Int64(v) => *v,
+                    _ => return Err("MODi64: operand b not int64".to_string()),
+                };
+                if b_val == 0 {
+                    return Err("Modulo by zero".to_string());
+                }
+                self.current_frame_mut()
+                    .set_local(dst, ScriptValue::Int64(a_val % b_val));
+            }
+
+            Instruction::POWi64 { dst, a, b } => {
+                let a_val = match self.current_frame().get_local(a) {
+                    ScriptValue::Int64(v) => *v,
+                    _ => return Err("POWi64: operand a not int64".to_string()),
+                };
+                let b_val = match self.current_frame().get_local(b) {
+                    ScriptValue::Int64(v) => *v,
+                    _ => return Err("POWi64: operand b not int64".to_string()),
+                };
+                let result = (a_val as f64).powi(b_val as i32) as i64;
+                self.current_frame_mut()
+                    .set_local(dst, ScriptValue::Int64(result));
+            }
+
+            Instruction::DIVu64 { dst, a, b } => {
+                let a_val = match self.current_frame().get_local(a) {
+                    ScriptValue::UInt64(v) => *v,
+                    _ => return Err("DIVu64: operand a not uint64".to_string()),
+                };
+                let b_val = match self.current_frame().get_local(b) {
+                    ScriptValue::UInt64(v) => *v,
+                    _ => return Err("DIVu64: operand b not uint64".to_string()),
+                };
+                if b_val == 0 {
+                    return Err("Division by zero".to_string());
+                }
+                self.current_frame_mut()
+                    .set_local(dst, ScriptValue::UInt64(a_val / b_val));
+            }
+
+            Instruction::MODu64 { dst, a, b } => {
+                let a_val = match self.current_frame().get_local(a) {
+                    ScriptValue::UInt64(v) => *v,
+                    _ => return Err("MODu64: operand a not uint64".to_string()),
+                };
+                let b_val = match self.current_frame().get_local(b) {
+                    ScriptValue::UInt64(v) => *v,
+                    _ => return Err("MODu64: operand b not uint64".to_string()),
+                };
+                if b_val == 0 {
+                    return Err("Modulo by zero".to_string());
+                }
+                self.current_frame_mut()
+                    .set_local(dst, ScriptValue::UInt64(a_val % b_val));
+            }
+
+            Instruction::POWu64 { dst, a, b } => {
+                let a_val = match self.current_frame().get_local(a) {
+                    ScriptValue::UInt64(v) => *v,
+                    _ => return Err("POWu64: operand a not uint64".to_string()),
+                };
+                let b_val = match self.current_frame().get_local(b) {
+                    ScriptValue::UInt64(v) => *v,
+                    _ => return Err("POWu64: operand b not uint64".to_string()),
+                };
+                let result = (a_val as f64).powi(b_val as i32) as u64;
+                self.current_frame_mut()
+                    .set_local(dst, ScriptValue::UInt64(result));
+            }
+
             Instruction::ADDIi { var, imm } => {
                 let value = self
                     .current_frame()
@@ -638,7 +924,6 @@ impl VM {
                     .set_local(var, ScriptValue::Float(value * imm));
             }
 
-            // ==================== BITWISE INSTRUCTIONS ====================
             Instruction::NOT { var } => {
                 let value = self.current_frame().get_local(var).is_truthy();
                 self.current_frame_mut()
@@ -709,7 +994,45 @@ impl VM {
                     .set_local(dst, ScriptValue::Int32(a_val ^ b_val));
             }
 
-            // ... (other bitwise operations follow same pattern)
+            Instruction::BAND64 { dst, a, b } => {
+                let a_val = match self.current_frame().get_local(a) {
+                    ScriptValue::Int64(v) => *v,
+                    _ => return Err("BAND64: operand a not int64".to_string()),
+                };
+                let b_val = match self.current_frame().get_local(b) {
+                    ScriptValue::Int64(v) => *v,
+                    _ => return Err("BAND64: operand b not int64".to_string()),
+                };
+                self.current_frame_mut()
+                    .set_local(dst, ScriptValue::Int64(a_val & b_val));
+            }
+
+            Instruction::BOR64 { dst, a, b } => {
+                let a_val = match self.current_frame().get_local(a) {
+                    ScriptValue::Int64(v) => *v,
+                    _ => return Err("BOR64: operand a not int64".to_string()),
+                };
+                let b_val = match self.current_frame().get_local(b) {
+                    ScriptValue::Int64(v) => *v,
+                    _ => return Err("BOR64: operand b not int64".to_string()),
+                };
+                self.current_frame_mut()
+                    .set_local(dst, ScriptValue::Int64(a_val | b_val));
+            }
+
+            Instruction::BXOR64 { dst, a, b } => {
+                let a_val = match self.current_frame().get_local(a) {
+                    ScriptValue::Int64(v) => *v,
+                    _ => return Err("BXOR64: operand a not int64".to_string()),
+                };
+                let b_val = match self.current_frame().get_local(b) {
+                    ScriptValue::Int64(v) => *v,
+                    _ => return Err("BXOR64: operand b not int64".to_string()),
+                };
+                self.current_frame_mut()
+                    .set_local(dst, ScriptValue::Int64(a_val ^ b_val));
+            }
+
             Instruction::BSLL { dst, val, shift } => {
                 let val_val = self
                     .current_frame()
@@ -755,9 +1078,48 @@ impl VM {
                     .set_local(dst, ScriptValue::Int32(val_val >> shift_val));
             }
 
-            // ... (64-bit shifts follow same pattern)
+            Instruction::BSLL64 { dst, val, shift } => {
+                let val_val = match self.current_frame().get_local(val) {
+                    ScriptValue::Int64(v) => *v,
+                    _ => return Err("BSLL64: val not int64".to_string()),
+                };
+                let shift_val = self
+                    .current_frame()
+                    .get_local(shift)
+                    .as_i32()
+                    .ok_or("BSLL64: shift not int32")? as u32;
+                self.current_frame_mut()
+                    .set_local(dst, ScriptValue::Int64(val_val << shift_val));
+            }
 
-            // ==================== COMPARISON INSTRUCTIONS ====================
+            Instruction::BSRL64 { dst, val, shift } => {
+                let val_val = match self.current_frame().get_local(val) {
+                    ScriptValue::UInt64(v) => *v,
+                    _ => return Err("BSRL64: val not uint64".to_string()),
+                };
+                let shift_val = self
+                    .current_frame()
+                    .get_local(shift)
+                    .as_i32()
+                    .ok_or("BSRL64: shift not int32")? as u32;
+                self.current_frame_mut()
+                    .set_local(dst, ScriptValue::UInt64(val_val >> shift_val));
+            }
+
+            Instruction::BSRA64 { dst, val, shift } => {
+                let val_val = match self.current_frame().get_local(val) {
+                    ScriptValue::Int64(v) => *v,
+                    _ => return Err("BSRA64: val not int64".to_string()),
+                };
+                let shift_val = self
+                    .current_frame()
+                    .get_local(shift)
+                    .as_i32()
+                    .ok_or("BSRA64: shift not int32")?;
+                self.current_frame_mut()
+                    .set_local(dst, ScriptValue::Int64(val_val >> shift_val));
+            }
+
             Instruction::CMPi { a, b } => {
                 let a_val = self
                     .current_frame()
@@ -807,7 +1169,63 @@ impl VM {
                 self.value_register = ScriptValue::Int32(result);
             }
 
-            // ... (other comparison operations)
+            Instruction::CMPd { a, b } => {
+                let a_val = match self.current_frame().get_local(a) {
+                    ScriptValue::Double(v) => *v,
+                    _ => return Err("CMPd: operand a not double".to_string()),
+                };
+                let b_val = match self.current_frame().get_local(b) {
+                    ScriptValue::Double(v) => *v,
+                    _ => return Err("CMPd: operand b not double".to_string()),
+                };
+                let result = if a_val < b_val {
+                    -1
+                } else if a_val > b_val {
+                    1
+                } else {
+                    0
+                };
+                self.value_register = ScriptValue::Int32(result);
+            }
+
+            Instruction::CMPi64 { a, b } => {
+                let a_val = match self.current_frame().get_local(a) {
+                    ScriptValue::Int64(v) => *v,
+                    _ => return Err("CMPi64: operand a not int64".to_string()),
+                };
+                let b_val = match self.current_frame().get_local(b) {
+                    ScriptValue::Int64(v) => *v,
+                    _ => return Err("CMPi64: operand b not int64".to_string()),
+                };
+                self.value_register = ScriptValue::Int32(a_val.cmp(&b_val) as i32);
+            }
+
+            Instruction::CMPu64 { a, b } => {
+                let a_val = match self.current_frame().get_local(a) {
+                    ScriptValue::UInt64(v) => *v,
+                    _ => return Err("CMPu64: operand a not uint64".to_string()),
+                };
+                let b_val = match self.current_frame().get_local(b) {
+                    ScriptValue::UInt64(v) => *v,
+                    _ => return Err("CMPu64: operand b not uint64".to_string()),
+                };
+                self.value_register = ScriptValue::Int32(a_val.cmp(&b_val) as i32);
+            }
+
+            Instruction::CmpPtr { a, b } => {
+                let a_val = self
+                    .current_frame()
+                    .get_local(a)
+                    .as_object_handle()
+                    .unwrap_or(0);
+                let b_val = self
+                    .current_frame()
+                    .get_local(b)
+                    .as_object_handle()
+                    .unwrap_or(0);
+                self.value_register = ScriptValue::Int32(a_val.cmp(&b_val) as i32);
+            }
+
             Instruction::CMPIi { var, imm } => {
                 let value = self
                     .current_frame()
@@ -817,7 +1235,31 @@ impl VM {
                 self.value_register = ScriptValue::Int32(value.cmp(&imm) as i32);
             }
 
-            // ==================== TEST INSTRUCTIONS ====================
+            Instruction::CMPIu { var, imm } => {
+                let value = self
+                    .current_frame()
+                    .get_local(var)
+                    .as_i32()
+                    .ok_or("CMPIu: variable not uint32")? as u32;
+                self.value_register = ScriptValue::Int32(value.cmp(&imm) as i32);
+            }
+
+            Instruction::CMPIf { var, imm } => {
+                let value = self
+                    .current_frame()
+                    .get_local(var)
+                    .as_f32()
+                    .ok_or("CMPIf: variable not float")?;
+                let result = if value < imm {
+                    -1
+                } else if value > imm {
+                    1
+                } else {
+                    0
+                };
+                self.value_register = ScriptValue::Int32(result);
+            }
+
             Instruction::TZ => {
                 let is_zero = match &self.value_register {
                     ScriptValue::Int32(v) => *v == 0,
@@ -866,8 +1308,62 @@ impl VM {
                 self.value_register = ScriptValue::Bool(is_not_positive);
             }
 
-            // ==================== TYPE CONVERSION INSTRUCTIONS ====================
-            // (Abbreviated - full implementation in complete file)
+            Instruction::iTOb { var } => {
+                let value = self
+                    .current_frame()
+                    .get_local(var)
+                    .as_i32()
+                    .ok_or("iTOb: variable not int32")? as i8;
+                self.current_frame_mut()
+                    .set_local(var, ScriptValue::Int8(value));
+            }
+
+            Instruction::iTOw { var } => {
+                let value = self
+                    .current_frame()
+                    .get_local(var)
+                    .as_i32()
+                    .ok_or("iTOw: variable not int32")? as i16;
+                self.current_frame_mut()
+                    .set_local(var, ScriptValue::Int16(value));
+            }
+
+            Instruction::sbTOi { var } => {
+                let value = match self.current_frame().get_local(var) {
+                    ScriptValue::Int8(v) => *v as i32,
+                    _ => return Err("sbTOi: variable not int8".to_string()),
+                };
+                self.current_frame_mut()
+                    .set_local(var, ScriptValue::Int32(value));
+            }
+
+            Instruction::swTOi { var } => {
+                let value = match self.current_frame().get_local(var) {
+                    ScriptValue::Int16(v) => *v as i32,
+                    _ => return Err("swTOi: variable not int16".to_string()),
+                };
+                self.current_frame_mut()
+                    .set_local(var, ScriptValue::Int32(value));
+            }
+
+            Instruction::ubTOi { var } => {
+                let value = match self.current_frame().get_local(var) {
+                    ScriptValue::UInt8(v) => *v as i32,
+                    _ => return Err("ubTOi: variable not uint8".to_string()),
+                };
+                self.current_frame_mut()
+                    .set_local(var, ScriptValue::Int32(value));
+            }
+
+            Instruction::uwTOi { var } => {
+                let value = match self.current_frame().get_local(var) {
+                    ScriptValue::UInt16(v) => *v as i32,
+                    _ => return Err("uwTOi: variable not uint16".to_string()),
+                };
+                self.current_frame_mut()
+                    .set_local(var, ScriptValue::Int32(value));
+            }
+
             Instruction::iTOf { var } => {
                 let value = self
                     .current_frame()
@@ -888,9 +1384,222 @@ impl VM {
                     .set_local(var, ScriptValue::Int32(value));
             }
 
-            // ... (other conversions follow same pattern)
+            Instruction::uTOf { var } => {
+                let value = self
+                    .current_frame()
+                    .get_local(var)
+                    .as_i32()
+                    .ok_or("uTOf: variable not uint32")? as u32 as f32;
+                self.current_frame_mut()
+                    .set_local(var, ScriptValue::Float(value));
+            }
 
-            // ==================== INCREMENT/DECREMENT INSTRUCTIONS ====================
+            Instruction::fTOu { var } => {
+                let value = self
+                    .current_frame()
+                    .get_local(var)
+                    .as_f32()
+                    .ok_or("fTOu: variable not float")? as u32;
+                self.current_frame_mut()
+                    .set_local(var, ScriptValue::UInt32(value));
+            }
+
+            Instruction::dTOi64 { var } => {
+                let value = match self.current_frame().get_local(var) {
+                    ScriptValue::Double(v) => *v as i64,
+                    _ => return Err("dTOi64: variable not double".to_string()),
+                };
+                self.current_frame_mut()
+                    .set_local(var, ScriptValue::Int64(value));
+            }
+
+            Instruction::dTOu64 { var } => {
+                let value = match self.current_frame().get_local(var) {
+                    ScriptValue::Double(v) => *v as u64,
+                    _ => return Err("dTOu64: variable not double".to_string()),
+                };
+                self.current_frame_mut()
+                    .set_local(var, ScriptValue::UInt64(value));
+            }
+
+            Instruction::i64TOd { var } => {
+                let value = match self.current_frame().get_local(var) {
+                    ScriptValue::Int64(v) => *v as f64,
+                    _ => return Err("i64TOd: variable not int64".to_string()),
+                };
+                self.current_frame_mut()
+                    .set_local(var, ScriptValue::Double(value));
+            }
+
+            Instruction::u64TOd { var } => {
+                let value = match self.current_frame().get_local(var) {
+                    ScriptValue::UInt64(v) => *v as f64,
+                    _ => return Err("u64TOd: variable not uint64".to_string()),
+                };
+                self.current_frame_mut()
+                    .set_local(var, ScriptValue::Double(value));
+            }
+
+            Instruction::dTOi { var } => {
+                let value = match self.current_frame().get_local(var) {
+                    ScriptValue::Double(v) => *v as i32,
+                    _ => return Err("dTOi: variable not double".to_string()),
+                };
+                self.current_frame_mut()
+                    .set_local(var, ScriptValue::Int32(value));
+            }
+
+            Instruction::dTOu { var } => {
+                let value = match self.current_frame().get_local(var) {
+                    ScriptValue::Double(v) => *v as u32,
+                    _ => return Err("dTOu: variable not double".to_string()),
+                };
+                self.current_frame_mut()
+                    .set_local(var, ScriptValue::UInt32(value));
+            }
+
+            Instruction::dTOf { var } => {
+                let value = match self.current_frame().get_local(var) {
+                    ScriptValue::Double(v) => *v as f32,
+                    _ => return Err("dTOf: variable not double".to_string()),
+                };
+                self.current_frame_mut()
+                    .set_local(var, ScriptValue::Float(value));
+            }
+
+            Instruction::iTOd { var } => {
+                let value = self
+                    .current_frame()
+                    .get_local(var)
+                    .as_i32()
+                    .ok_or("iTOd: variable not int32")? as f64;
+                self.current_frame_mut()
+                    .set_local(var, ScriptValue::Double(value));
+            }
+
+            Instruction::uTOd { var } => {
+                let value = self
+                    .current_frame()
+                    .get_local(var)
+                    .as_i32()
+                    .ok_or("uTOd: variable not uint32")? as u32 as f64;
+                self.current_frame_mut()
+                    .set_local(var, ScriptValue::Double(value));
+            }
+
+            Instruction::fTOd { var } => {
+                let value = self
+                    .current_frame()
+                    .get_local(var)
+                    .as_f32()
+                    .ok_or("fTOd: variable not float")? as f64;
+                self.current_frame_mut()
+                    .set_local(var, ScriptValue::Double(value));
+            }
+
+            Instruction::i64TOi { var } => {
+                let value = match self.current_frame().get_local(var) {
+                    ScriptValue::Int64(v) => *v as i32,
+                    _ => return Err("i64TOi: variable not int64".to_string()),
+                };
+                self.current_frame_mut()
+                    .set_local(var, ScriptValue::Int32(value));
+            }
+
+            Instruction::i64TOf { var } => {
+                let value = match self.current_frame().get_local(var) {
+                    ScriptValue::Int64(v) => *v as f32,
+                    _ => return Err("i64TOf: variable not int64".to_string()),
+                };
+                self.current_frame_mut()
+                    .set_local(var, ScriptValue::Float(value));
+            }
+
+            Instruction::u64TOf { var } => {
+                let value = match self.current_frame().get_local(var) {
+                    ScriptValue::UInt64(v) => *v as f32,
+                    _ => return Err("u64TOf: variable not uint64".to_string()),
+                };
+                self.current_frame_mut()
+                    .set_local(var, ScriptValue::Float(value));
+            }
+
+            Instruction::uTOi64 { var } => {
+                let value =
+                    self.current_frame()
+                        .get_local(var)
+                        .as_i32()
+                        .ok_or("uTOi64: variable not uint32")? as u32 as i64;
+                self.current_frame_mut()
+                    .set_local(var, ScriptValue::Int64(value));
+            }
+
+            Instruction::iTOi64 { var } => {
+                let value = self
+                    .current_frame()
+                    .get_local(var)
+                    .as_i32()
+                    .ok_or("iTOi64: variable not int32")? as i64;
+                self.current_frame_mut()
+                    .set_local(var, ScriptValue::Int64(value));
+            }
+
+            Instruction::fTOi64 { var } => {
+                let value = self
+                    .current_frame()
+                    .get_local(var)
+                    .as_f32()
+                    .ok_or("fTOi64: variable not float")? as i64;
+                self.current_frame_mut()
+                    .set_local(var, ScriptValue::Int64(value));
+            }
+
+            Instruction::fTOu64 { var } => {
+                let value = self
+                    .current_frame()
+                    .get_local(var)
+                    .as_f32()
+                    .ok_or("fTOu64: variable not float")? as u64;
+                self.current_frame_mut()
+                    .set_local(var, ScriptValue::UInt64(value));
+            }
+
+            Instruction::INCi8 { var } => {
+                let value = match self.current_frame().get_local(var) {
+                    ScriptValue::Int8(v) => v.wrapping_add(1),
+                    _ => return Err("INCi8: variable not int8".to_string()),
+                };
+                self.current_frame_mut()
+                    .set_local(var, ScriptValue::Int8(value));
+            }
+
+            Instruction::DECi8 { var } => {
+                let value = match self.current_frame().get_local(var) {
+                    ScriptValue::Int8(v) => v.wrapping_sub(1),
+                    _ => return Err("DECi8: variable not int8".to_string()),
+                };
+                self.current_frame_mut()
+                    .set_local(var, ScriptValue::Int8(value));
+            }
+
+            Instruction::INCi16 { var } => {
+                let value = match self.current_frame().get_local(var) {
+                    ScriptValue::Int16(v) => v.wrapping_add(1),
+                    _ => return Err("INCi16: variable not int16".to_string()),
+                };
+                self.current_frame_mut()
+                    .set_local(var, ScriptValue::Int16(value));
+            }
+
+            Instruction::DECi16 { var } => {
+                let value = match self.current_frame().get_local(var) {
+                    ScriptValue::Int16(v) => v.wrapping_sub(1),
+                    _ => return Err("DECi16: variable not int16".to_string()),
+                };
+                self.current_frame_mut()
+                    .set_local(var, ScriptValue::Int16(value));
+            }
+
             Instruction::INCi { var } => {
                 let value = self
                     .current_frame()
@@ -913,15 +1622,74 @@ impl VM {
                     .set_local(var, ScriptValue::Int32(value));
             }
 
-            // ... (other inc/dec operations)
+            Instruction::INCi64 { var } => {
+                let value = match self.current_frame().get_local(var) {
+                    ScriptValue::Int64(v) => v.wrapping_add(1),
+                    _ => return Err("INCi64: variable not int64".to_string()),
+                };
+                self.current_frame_mut()
+                    .set_local(var, ScriptValue::Int64(value));
+            }
 
-            // ==================== FLOW CONTROL INSTRUCTIONS ====================
+            Instruction::DECi64 { var } => {
+                let value = match self.current_frame().get_local(var) {
+                    ScriptValue::Int64(v) => v.wrapping_sub(1),
+                    _ => return Err("DECi64: variable not int64".to_string()),
+                };
+                self.current_frame_mut()
+                    .set_local(var, ScriptValue::Int64(value));
+            }
+
+            Instruction::INCf { var } => {
+                let value = self
+                    .current_frame()
+                    .get_local(var)
+                    .as_f32()
+                    .ok_or("INCf: variable not float")?
+                    + 1.0;
+                self.current_frame_mut()
+                    .set_local(var, ScriptValue::Float(value));
+            }
+
+            Instruction::DECf { var } => {
+                let value = self
+                    .current_frame()
+                    .get_local(var)
+                    .as_f32()
+                    .ok_or("DECf: variable not float")?
+                    - 1.0;
+                self.current_frame_mut()
+                    .set_local(var, ScriptValue::Float(value));
+            }
+
+            Instruction::INCd { var } => {
+                let value = match self.current_frame().get_local(var) {
+                    ScriptValue::Double(v) => v + 1.0,
+                    _ => return Err("INCd: variable not double".to_string()),
+                };
+                self.current_frame_mut()
+                    .set_local(var, ScriptValue::Double(value));
+            }
+
+            Instruction::DECd { var } => {
+                let value = match self.current_frame().get_local(var) {
+                    ScriptValue::Double(v) => v - 1.0,
+                    _ => return Err("DECd: variable not double".to_string()),
+                };
+                self.current_frame_mut()
+                    .set_local(var, ScriptValue::Double(value));
+            }
+
             Instruction::CALL { func_id } => {
                 self.execute_call(func_id)?;
             }
 
             Instruction::CALLINTF { func_id } => {
                 self.execute_call(func_id)?;
+            }
+
+            Instruction::CALLSYS { sys_func_id } => {
+                self.execute_system_call(sys_func_id)?;
             }
 
             Instruction::CallPtr => {
@@ -957,16 +1725,58 @@ impl VM {
                 }
             }
 
-            // ... (other jumps)
-            Instruction::CALLSYS { sys_func_id } => {
-                self.execute_system_call(sys_func_id)?;
+            Instruction::JS { offset } => {
+                let is_negative = match &self.value_register {
+                    ScriptValue::Int32(v) => *v < 0,
+                    _ => false,
+                };
+                if is_negative {
+                    self.ip = (self.ip as i32 + offset) as u32;
+                }
+            }
+
+            Instruction::JNS { offset } => {
+                let is_not_negative = match &self.value_register {
+                    ScriptValue::Int32(v) => *v >= 0,
+                    _ => true,
+                };
+                if is_not_negative {
+                    self.ip = (self.ip as i32 + offset) as u32;
+                }
+            }
+
+            Instruction::JP { offset } => {
+                let is_positive = match &self.value_register {
+                    ScriptValue::Int32(v) => *v > 0,
+                    _ => false,
+                };
+                if is_positive {
+                    self.ip = (self.ip as i32 + offset) as u32;
+                }
+            }
+
+            Instruction::JNP { offset } => {
+                let is_not_positive = match &self.value_register {
+                    ScriptValue::Int32(v) => *v <= 0,
+                    _ => true,
+                };
+                if is_not_positive {
+                    self.ip = (self.ip as i32 + offset) as u32;
+                }
+            }
+
+            Instruction::JMPP { offset } => {
+                self.ip = offset;
             }
 
             Instruction::SUSPEND => {
                 self.state = VMState::Suspended;
             }
 
-            // ==================== VARIABLE OPERATIONS (SIMPLIFIED) ====================
+            Instruction::Halt => {
+                self.state = VMState::Finished;
+            }
+
             Instruction::SetV { var, value } => {
                 self.current_frame_mut().set_local(var, value);
             }
@@ -974,6 +1784,10 @@ impl VM {
             Instruction::CpyV { dst, src } => {
                 let value = self.current_frame().get_local(src).clone();
                 self.current_frame_mut().set_local(dst, value);
+            }
+
+            Instruction::COPY { dst, src } => {
+                self.execute_copy(dst, src)?;
             }
 
             Instruction::ClrV { var } => {
@@ -989,7 +1803,6 @@ impl VM {
                 self.current_frame_mut().set_local(var, cloned_value);
             }
 
-            // ==================== STACK OPERATIONS (SIMPLIFIED) ====================
             Instruction::PshC { value } => {
                 self.value_stack.push(value);
             }
@@ -1022,7 +1835,6 @@ impl VM {
                 }
             }
 
-            // ==================== GLOBAL VARIABLE OPERATIONS (SIMPLIFIED) ====================
             Instruction::CpyVtoG { global_id, var } => {
                 let value = self.current_frame().get_local(var).clone();
                 self.globals[global_id as usize] = value;
@@ -1046,7 +1858,6 @@ impl VM {
                 self.value_register = self.globals[global_id as usize].clone();
             }
 
-            // ==================== VALIDATION ====================
             Instruction::ChkNull { var } => {
                 let value = self.current_frame().get_local(var);
                 if matches!(value, ScriptValue::Null) {
@@ -1062,7 +1873,6 @@ impl VM {
                 }
             }
 
-            // ==================== STRING MANAGEMENT ====================
             Instruction::Str { str_id } => {
                 let string = self
                     .module
@@ -1072,13 +1882,11 @@ impl VM {
                 self.value_register = ScriptValue::String(string);
             }
 
-            // ==================== INITIALIZATION LIST MANAGEMENT ====================
             Instruction::BeginInitList => {
                 self.init_list_buffer = Some(Vec::new());
             }
 
             Instruction::AddToInitList => {
-                // Pop value from value stack and add to init list buffer
                 if let Some(value) = self.value_stack.pop() {
                     if let Some(buffer) = &mut self.init_list_buffer {
                         buffer.push(value);
@@ -1095,22 +1903,13 @@ impl VM {
                 }
             }
 
-            // ==================== UTILITY ====================
             Instruction::Nop => {}
-
-            Instruction::Halt => {
-                self.state = VMState::Finished;
-            }
-
-            _ => {
-                return Err(format!("Unimplemented instruction: {:?}", instruction));
-            }
         }
 
         Ok(())
     }
 
-    // ==================== HELPER METHODS ====================
+    // src/vm/vm.rs - continued
 
     fn current_frame(&self) -> &StackFrame {
         self.call_stack.last().expect("No stack frame")
@@ -1121,11 +1920,29 @@ impl VM {
     }
 
     fn execute_alloc(&mut self, type_id: u32, func_id: u32) -> Result<(), String> {
-        let handle = self.heap.allocate_script(type_id)?;
-        self.object_register = Some(handle);
+        let type_registry = self.type_registry.read().unwrap();
+        let type_info = type_registry
+            .get_type(type_id)
+            .ok_or_else(|| format!("Type {} not found", type_id))?;
 
-        if func_id != 0 {
-            self.execute_call(func_id)?;
+        let is_rust_type = type_info.type_registration == TypeRegistration::Application;
+        drop(type_registry);
+
+        if is_rust_type && func_id != 0 {
+            self.execute_system_call(func_id)?;
+
+            if let ScriptValue::ObjectHandle(handle) = self.value_register {
+                self.object_register = Some(handle);
+            } else {
+                return Err("Factory behaviour must return object handle".to_string());
+            }
+        } else {
+            let handle = self.heap.allocate_script(type_id)?;
+            self.object_register = Some(handle);
+
+            if func_id != 0 {
+                self.execute_call(func_id)?;
+            }
         }
 
         Ok(())
@@ -1146,6 +1963,84 @@ impl VM {
         self.heap.release_object(handle);
         self.current_frame_mut().set_local(var, ScriptValue::Null);
 
+        Ok(())
+    }
+
+    fn execute_copy(&mut self, dst: u32, src: u32) -> Result<(), String> {
+        let value = self.current_frame().get_local(src).clone();
+
+        if let ScriptValue::ObjectHandle(src_handle) = value {
+            let (type_id, is_rust_type, is_value_type, has_op_assign) = {
+                if let Some(src_object) = self.heap.get_object(src_handle) {
+                    let type_registry = self.type_registry.read().unwrap();
+                    if let Some(type_info) = type_registry.get_type(src_object.type_id()) {
+                        let type_id = src_object.type_id();
+                        let is_rust = type_info.type_registration == TypeRegistration::Application;
+                        let is_value = type_info.is_value_type();
+                        let has_assign = type_info.rust_methods.contains_key("opAssign");
+
+                        (type_id, is_rust, is_value, has_assign)
+                    } else {
+                        (0, false, false, false)
+                    }
+                } else {
+                    return Err("COPY: invalid source handle".to_string());
+                }
+            };
+
+            if is_rust_type && has_op_assign {
+                let dst_handle = self
+                    .current_frame()
+                    .get_local(dst)
+                    .as_object_handle()
+                    .ok_or("COPY: destination not an object handle")?;
+
+                let op_assign_fn = {
+                    let type_registry = self.type_registry.read().unwrap();
+                    let type_info = type_registry.get_type(type_id).unwrap();
+                    type_info
+                        .rust_methods
+                        .get("opAssign")
+                        .unwrap()
+                        .function
+                        .clone()
+                };
+
+                if let Some(dst_object) = self.heap.get_object_mut(dst_handle) {
+                    let args = vec![ScriptValue::ObjectHandle(src_handle)];
+                    op_assign_fn(dst_object, &args);
+                }
+
+                return Ok(());
+            }
+
+            if is_value_type {
+                let properties_to_copy = {
+                    if let Some(src_object) = self.heap.get_object(src_handle) {
+                        src_object.properties().clone()
+                    } else {
+                        return Err("COPY: invalid source handle".to_string());
+                    }
+                };
+
+                let new_handle = self
+                    .heap
+                    .allocate_script(type_id)
+                    .map_err(|e| e.to_string())?;
+
+                if let Some(new_object) = self.heap.get_object_mut(new_handle) {
+                    for (prop_name, prop_value) in properties_to_copy {
+                        new_object.set_property(&prop_name, prop_value);
+                    }
+                }
+
+                self.current_frame_mut()
+                    .set_local(dst, ScriptValue::ObjectHandle(new_handle));
+                return Ok(());
+            }
+        }
+
+        self.current_frame_mut().set_local(dst, value);
         Ok(())
     }
 
@@ -1177,7 +2072,7 @@ impl VM {
                 .get_type(object.type_id())
                 .ok_or("GetProperty: type not found")?;
 
-            if type_info.flags.contains(TypeFlags::RUST_TYPE) {
+            if type_info.type_registration == TypeRegistration::Application {
                 if let Some(accessor) = type_info.rust_accessors.get(prop_name) {
                     if let Some(getter) = &accessor.getter {
                         getter(object)
@@ -1227,7 +2122,7 @@ impl VM {
             .get_type(object.type_id())
             .ok_or("SetProperty: type not found")?;
 
-        if type_info.flags.contains(TypeFlags::RUST_TYPE) {
+        if type_info.type_registration == TypeRegistration::Application {
             if let Some(accessor) = type_info.rust_accessors.get(prop_name) {
                 if let Some(setter) = &accessor.setter {
                     drop(type_registry);
@@ -1275,7 +2170,7 @@ impl VM {
                 .get_type(object.type_id())
                 .ok_or("GetThisProperty: type not found")?;
 
-            if type_info.flags.contains(TypeFlags::RUST_TYPE) {
+            if type_info.type_registration == TypeRegistration::Application {
                 if let Some(accessor) = type_info.rust_accessors.get(prop_name) {
                     if let Some(getter) = &accessor.getter {
                         getter(object)
@@ -1318,7 +2213,7 @@ impl VM {
             .get_type(object.type_id())
             .ok_or("SetThisProperty: type not found")?;
 
-        if type_info.flags.contains(TypeFlags::RUST_TYPE) {
+        if type_info.type_registration == TypeRegistration::Application {
             if let Some(accessor) = type_info.rust_accessors.get(prop_name) {
                 if let Some(setter) = &accessor.setter {
                     drop(type_registry);
@@ -1345,7 +2240,7 @@ impl VM {
         Ok(())
     }
 
-    fn execute_call(&mut self, func_id: u32) -> Result<(), String> {
+    pub(crate) fn execute_call(&mut self, func_id: u32) -> Result<(), String> {
         let func = self
             .module
             .functions
@@ -1354,7 +2249,6 @@ impl VM {
 
         let mut frame = StackFrame::new(func_id, self.ip, func.local_count, self.call_stack.len());
 
-        // Pop arguments from value stack into locals
         for i in (0..func.param_count).rev() {
             if let Some(arg) = self.value_stack.pop() {
                 frame.locals[i as usize] = arg;
@@ -1367,11 +2261,83 @@ impl VM {
         Ok(())
     }
 
-    fn execute_system_call(&mut self, _sys_func_id: u32) -> Result<(), String> {
-        Err("System calls not yet implemented".to_string())
+    pub(crate) fn execute_system_call(&mut self, sys_func_id: u32) -> Result<(), String> {
+        let sys_func = self
+            .system_functions
+            .get(&sys_func_id)
+            .ok_or_else(|| format!("System function {} not registered", sys_func_id))?
+            .clone();
+
+        let mut args = Vec::new();
+        while let Some(arg) = self.value_stack.pop() {
+            args.push(arg);
+            if args.len() > 100 {
+                break;
+            }
+        }
+        args.reverse();
+
+        let result = sys_func(self, &args)?;
+
+        self.value_register = result;
+
+        Ok(())
     }
 
     fn can_cast(&self, from_type: u32, to_type: u32) -> bool {
         from_type == to_type
+    }
+
+    pub fn collect_garbage(&mut self) {
+        // Collect root handles from:
+        // 1. Global variables
+        let mut roots = Vec::new();
+
+        for global in &self.globals {
+            if let ScriptValue::ObjectHandle(handle) = global {
+                roots.push(*handle);
+            }
+        }
+
+        // 2. Call stack locals
+        for frame in &self.call_stack {
+            for local in &frame.locals {
+                if let ScriptValue::ObjectHandle(handle) = local {
+                    roots.push(*handle);
+                }
+            }
+        }
+
+        // 3. Value stack
+        for value in &self.value_stack {
+            if let ScriptValue::ObjectHandle(handle) = value {
+                roots.push(*handle);
+            }
+        }
+
+        // 4. Registers
+        if let Some(handle) = self.object_register {
+            roots.push(handle);
+        }
+        if let ScriptValue::ObjectHandle(handle) = &self.value_register {
+            roots.push(*handle);
+        }
+
+        // ✅ Run GC
+        self.heap.collect_garbage(&roots);
+    }
+
+    pub fn maybe_collect_garbage(&mut self) {
+        // Trigger GC if we have too many objects
+        if self.heap.object_count() > 1000 {
+            self.collect_garbage();
+        }
+    }
+
+    pub fn print_stats(&self) {
+        println!("VM Statistics:");
+        println!("  Objects allocated: {}", self.heap.object_count());
+        println!("  Call stack depth: {}", self.call_stack.len());
+        println!("  Value stack size: {}", self.value_stack.len());
     }
 }

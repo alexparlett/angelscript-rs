@@ -1,6 +1,4 @@
 pub mod bytecode;
 pub mod compiler;
-pub mod semantic;
-mod symbol;
-
-pub use compiler::Compiler;
+pub mod semantic_analyzer;
+pub mod symbol_table;

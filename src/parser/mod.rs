@@ -1,5 +1,4 @@
 pub mod ast;
-pub mod error;
 pub mod expr_parser;
 pub mod lexer;
 pub mod parser;
@@ -9,12 +8,12 @@ pub mod token;
 
 #[cfg(test)]
 mod tests {
+    use crate::core::error::ParseResult;
     use crate::parser::ast::*;
-    use crate::parser::error::Result;
     use crate::parser::script_builder::{IncludeCallback, PragmaCallback, ScriptBuilder};
     use std::collections::HashMap;
 
-    fn parse(source: &str) -> Result<Script> {
+    fn parse(source: &str) -> ParseResult<Script> {
         let mut builder = ScriptBuilder::new();
         builder.build_from_source(source)
     }
@@ -1248,12 +1247,12 @@ mod tests {
     }
 
     impl IncludeCallback for TestIncludeCallback {
-        fn on_include(&mut self, include_path: &str, _from_source: &str) -> Result<String> {
+        fn on_include(&mut self, include_path: &str, _from_source: &str) -> ParseResult<String> {
             self.files.get(include_path).cloned().ok_or_else(|| {
-                crate::parser::error::ParseError::SyntaxError {
-                    span: crate::parser::error::Span::new(
-                        crate::parser::error::Position::new(0, 0, 0),
-                        crate::parser::error::Position::new(0, 0, 0),
+                crate::core::error::ParseError::SyntaxError {
+                    span: crate::core::error::Span::new(
+                        crate::core::error::Position::new(0, 0, 0),
+                        crate::core::error::Position::new(0, 0, 0),
                         String::new(),
                     ),
                     message: format!("File not found: {}", include_path),
@@ -1320,7 +1319,7 @@ mod tests {
     }
 
     impl PragmaCallback for TestPragmaCallback {
-        fn on_pragma(&mut self, pragma_text: &str) -> Result<()> {
+        fn on_pragma(&mut self, pragma_text: &str) -> ParseResult<()> {
             self.pragmas.push(pragma_text.to_string());
             Ok(())
         }

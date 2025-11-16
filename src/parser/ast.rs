@@ -1,11 +1,11 @@
 use std::fmt;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Hash)]
 pub struct Script {
     pub items: Vec<ScriptNode>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Hash)]
 pub enum ScriptNode {
     Import(Import),
     Enum(Enum),
@@ -26,36 +26,36 @@ pub enum ScriptNode {
     CustomDirective(CustomDirective),
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Hash)]
 pub struct Include {
     pub path: String,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Hash)]
 pub struct Pragma {
     pub content: String,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Hash)]
 pub struct CustomDirective {
     pub name: String,
     pub content: String,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Hash)]
 pub struct ConditionalBlock {
     pub if_branch: ConditionalBranch,
     pub elif_branches: Vec<ConditionalBranch>,
     pub else_branch: Option<Vec<ScriptNode>>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Hash)]
 pub struct ConditionalBranch {
     pub condition: String,
     pub items: Vec<ScriptNode>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Hash)]
 pub struct Import {
     pub type_name: Type,
     pub is_ref: bool,
@@ -64,31 +64,31 @@ pub struct Import {
     pub from: String,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Hash)]
 pub struct Using {
     pub namespace: Vec<String>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Hash)]
 pub struct Namespace {
     pub name: Vec<String>,
     pub items: Vec<ScriptNode>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Hash)]
 pub struct Enum {
     pub modifiers: Vec<String>,
     pub name: String,
     pub variants: Vec<EnumVariant>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Hash)]
 pub struct EnumVariant {
     pub name: String,
     pub value: Option<Expr>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Hash)]
 pub struct FuncDef {
     pub modifiers: Vec<String>,
     pub return_type: Type,
@@ -97,7 +97,7 @@ pub struct FuncDef {
     pub params: Vec<Param>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Hash)]
 pub struct Func {
     pub modifiers: Vec<String>,
     pub visibility: Option<Visibility>,
@@ -110,7 +110,7 @@ pub struct Func {
     pub body: Option<StatBlock>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Hash)]
 pub struct VirtProp {
     pub visibility: Option<Visibility>,
     pub prop_type: Type,
@@ -119,7 +119,7 @@ pub struct VirtProp {
     pub accessors: Vec<PropertyAccessor>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Hash)]
 pub struct PropertyAccessor {
     pub kind: AccessorKind,
     pub is_const: bool,
@@ -127,13 +127,13 @@ pub struct PropertyAccessor {
     pub body: Option<StatBlock>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Hash)]
 pub enum AccessorKind {
     Get,
     Set,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Hash)]
 pub struct Interface {
     pub modifiers: Vec<String>,
     pub name: String,
@@ -141,13 +141,13 @@ pub struct Interface {
     pub members: Vec<InterfaceMember>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Hash)]
 pub enum InterfaceMember {
     VirtProp(VirtProp),
     Method(IntfMthd),
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Hash)]
 pub struct IntfMthd {
     pub return_type: Type,
     pub is_ref: bool,
@@ -156,12 +156,12 @@ pub struct IntfMthd {
     pub is_const: bool,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Hash)]
 pub struct Mixin {
     pub class: Class,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Hash)]
 pub struct Class {
     pub modifiers: Vec<String>,
     pub name: String,
@@ -169,7 +169,7 @@ pub struct Class {
     pub members: Vec<ClassMember>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Hash)]
 pub enum ClassMember {
     VirtProp(VirtProp),
     Func(Func),
@@ -177,40 +177,40 @@ pub enum ClassMember {
     FuncDef(FuncDef),
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Hash)]
 pub struct Var {
     pub visibility: Option<Visibility>,
     pub var_type: Type,
     pub declarations: Vec<VarDecl>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Hash)]
 pub struct VarDecl {
     pub name: String,
     pub initializer: Option<VarInit>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Hash)]
 pub enum VarInit {
     Expr(Expr),
     InitList(InitList),
     ArgList(Vec<Arg>),
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Hash)]
 pub struct Typedef {
     pub prim_type: String,
     pub name: String,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Hash)]
 pub enum Visibility {
     Private,
     Protected,
     Public,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Hash)]
 pub struct Type {
     pub is_const: bool,
     pub scope: Scope,
@@ -219,20 +219,20 @@ pub struct Type {
     pub modifiers: Vec<TypeModifier>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Hash)]
 pub enum TypeModifier {
     Array,
     Handle,
     ConstHandle,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Hash)]
 pub struct Scope {
     pub is_global: bool,
     pub path: Vec<String>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Hash)]
 pub enum DataType {
     Identifier(String),
     PrimType(String),
@@ -240,7 +240,7 @@ pub enum DataType {
     Auto,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Hash)]
 pub struct Param {
     pub param_type: Type,
     pub type_mod: Option<TypeMod>,
@@ -249,30 +249,30 @@ pub struct Param {
     pub is_variadic: bool,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Hash)]
 pub enum TypeMod {
     In,
     Out,
     InOut,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Hash)]
 pub struct InitList {
     pub items: Vec<InitListItem>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Hash)]
 pub enum InitListItem {
     Expr(Expr),
     InitList(InitList),
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Hash)]
 pub struct StatBlock {
     pub statements: Vec<Statement>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Hash)]
 pub enum Statement {
     If(IfStmt),
     For(ForStmt),
@@ -290,14 +290,14 @@ pub enum Statement {
     Try(TryStmt),
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Hash)]
 pub struct IfStmt {
     pub condition: Expr,
     pub then_branch: Box<Statement>,
     pub else_branch: Option<Box<Statement>>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Hash)]
 pub struct ForStmt {
     pub init: ForInit,
     pub condition: Option<Expr>,
@@ -305,61 +305,61 @@ pub struct ForStmt {
     pub body: Box<Statement>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Hash)]
 pub enum ForInit {
     Var(Var),
     Expr(Option<Expr>),
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Hash)]
 pub struct ForEachStmt {
     pub variables: Vec<(Type, String)>,
     pub iterable: Expr,
     pub body: Box<Statement>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Hash)]
 pub struct WhileStmt {
     pub condition: Expr,
     pub body: Box<Statement>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Hash)]
 pub struct DoWhileStmt {
     pub body: Box<Statement>,
     pub condition: Expr,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Hash)]
 pub struct ReturnStmt {
     pub value: Option<Expr>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Hash)]
 pub struct SwitchStmt {
     pub value: Expr,
     pub cases: Vec<Case>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Hash)]
 pub struct Case {
     pub pattern: CasePattern,
     pub statements: Vec<Statement>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Hash)]
 pub enum CasePattern {
     Value(Expr),
     Default,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Hash)]
 pub struct TryStmt {
     pub try_block: StatBlock,
     pub catch_block: StatBlock,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Hash)]
 pub enum Expr {
     Binary(Box<Expr>, BinaryOp, Box<Expr>),
     Unary(UnaryOp, Box<Expr>),
@@ -375,7 +375,7 @@ pub enum Expr {
     Void,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Hash)]
 pub struct FuncCall {
     pub scope: Scope,
     pub name: String,
@@ -383,13 +383,13 @@ pub struct FuncCall {
     pub args: Vec<Arg>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Hash)]
 pub struct Arg {
     pub name: Option<String>,
     pub value: Expr,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Hash)]
 pub enum BinaryOp {
     Add,
     Sub,
@@ -429,7 +429,7 @@ pub enum BinaryOp {
     UShrAssign,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Hash)]
 pub enum UnaryOp {
     Neg,
     Plus,
@@ -440,7 +440,7 @@ pub enum UnaryOp {
     Handle,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Hash)]
 pub enum PostfixOp {
     PostInc,
     PostDec,
@@ -450,26 +450,26 @@ pub enum PostfixOp {
     Call(Vec<Arg>),
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Hash)]
 pub struct IndexArg {
     pub name: Option<String>,
     pub value: Expr,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Hash)]
 pub struct Lambda {
     pub params: Vec<LambdaParam>,
     pub body: StatBlock,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Hash)]
 pub struct LambdaParam {
     pub param_type: Option<Type>,
     pub type_mod: Option<TypeMod>,
     pub name: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Hash)]
 pub enum Literal {
     Number(String),
     String(String),

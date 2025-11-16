@@ -1,4 +1,4 @@
-use crate::parser::error::*;
+use crate::core::error::*;
 use crate::parser::token::*;
 
 pub struct Lexer<'a> {
@@ -20,7 +20,7 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    pub fn tokenize(mut self) -> Result<Vec<Token>> {
+    pub fn tokenize(mut self) -> ParseResult<Vec<Token>> {
         let mut tokens = Vec::new();
 
         loop {
@@ -35,7 +35,7 @@ impl<'a> Lexer<'a> {
         Ok(tokens)
     }
 
-    fn next_token(&mut self) -> Result<Token> {
+    fn next_token(&mut self) -> ParseResult<Token> {
         self.skip_whitespace_and_comments()?;
 
         if self.is_at_end() {
@@ -135,7 +135,7 @@ impl<'a> Lexer<'a> {
 
     // Operator readers
 
-    fn read_plus(&mut self) -> Result<Token> {
+    fn read_plus(&mut self) -> ParseResult<Token> {
         let start = self.current_position();
         self.advance();
 
@@ -148,7 +148,7 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    fn read_minus(&mut self) -> Result<Token> {
+    fn read_minus(&mut self) -> ParseResult<Token> {
         let start = self.current_position();
         self.advance();
 
@@ -161,7 +161,7 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    fn read_star(&mut self) -> Result<Token> {
+    fn read_star(&mut self) -> ParseResult<Token> {
         let start = self.current_position();
         self.advance();
 
@@ -178,7 +178,7 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    fn read_slash(&mut self) -> Result<Token> {
+    fn read_slash(&mut self) -> ParseResult<Token> {
         let start = self.current_position();
         self.advance();
 
@@ -189,7 +189,7 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    fn read_percent(&mut self) -> Result<Token> {
+    fn read_percent(&mut self) -> ParseResult<Token> {
         let start = self.current_position();
         self.advance();
 
@@ -200,7 +200,7 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    fn read_equals(&mut self) -> Result<Token> {
+    fn read_equals(&mut self) -> ParseResult<Token> {
         let start = self.current_position();
         self.advance();
 
@@ -211,7 +211,7 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    fn read_bang(&mut self) -> Result<Token> {
+    fn read_bang(&mut self) -> ParseResult<Token> {
         let start = self.current_position();
         self.advance();
 
@@ -227,7 +227,7 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    fn read_less(&mut self) -> Result<Token> {
+    fn read_less(&mut self) -> ParseResult<Token> {
         let start = self.current_position();
         self.advance();
 
@@ -244,7 +244,7 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    fn read_greater(&mut self) -> Result<Token> {
+    fn read_greater(&mut self) -> ParseResult<Token> {
         let start = self.current_position();
         self.advance();
 
@@ -267,7 +267,7 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    fn read_ampersand(&mut self) -> Result<Token> {
+    fn read_ampersand(&mut self) -> ParseResult<Token> {
         let start = self.current_position();
         self.advance();
 
@@ -280,7 +280,7 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    fn read_pipe(&mut self) -> Result<Token> {
+    fn read_pipe(&mut self) -> ParseResult<Token> {
         let start = self.current_position();
         self.advance();
 
@@ -293,7 +293,7 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    fn read_caret(&mut self) -> Result<Token> {
+    fn read_caret(&mut self) -> ParseResult<Token> {
         let start = self.current_position();
         self.advance();
 
@@ -306,7 +306,7 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    fn read_colon(&mut self) -> Result<Token> {
+    fn read_colon(&mut self) -> ParseResult<Token> {
         let start = self.current_position();
         self.advance();
 
@@ -319,7 +319,7 @@ impl<'a> Lexer<'a> {
 
     // Complex token readers
 
-    fn read_identifier(&mut self) -> Result<Token> {
+    fn read_identifier(&mut self) -> ParseResult<Token> {
         let start = self.current_position();
         let mut text = String::new();
 
@@ -338,7 +338,7 @@ impl<'a> Lexer<'a> {
         Ok(self.make_token_from(kind, start))
     }
 
-    fn read_number(&mut self) -> Result<Token> {
+    fn read_number(&mut self) -> ParseResult<Token> {
         let start = self.current_position();
         let mut text = String::new();
 
@@ -427,7 +427,7 @@ impl<'a> Lexer<'a> {
         Ok(self.make_token_from(TokenKind::Number(text), start))
     }
 
-    fn read_string(&mut self, quote: char) -> Result<Token> {
+    fn read_string(&mut self, quote: char) -> ParseResult<Token> {
         let start = self.current_position();
         let mut text = String::new();
 
@@ -471,7 +471,7 @@ impl<'a> Lexer<'a> {
 
     // Helper methods
 
-    fn skip_whitespace_and_comments(&mut self) -> Result<()> {
+    fn skip_whitespace_and_comments(&mut self) -> ParseResult<()> {
         loop {
             if self.is_at_end() {
                 break;

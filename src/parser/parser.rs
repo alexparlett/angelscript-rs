@@ -1,5 +1,5 @@
+use crate::core::error::*;
 use crate::parser::ast::*;
-use crate::parser::error::*;
 use crate::parser::expr_parser::ExprParser;
 use crate::parser::token::*;
 
@@ -13,7 +13,7 @@ impl Parser {
         Self { tokens, pos: 0 }
     }
 
-    pub fn parse(mut self) -> Result<Script> {
+    pub fn parse(mut self) -> ParseResult<Script> {
         let mut items = Vec::new();
 
         while !self.is_at_end() {
@@ -28,7 +28,7 @@ impl Parser {
         Ok(Script { items })
     }
 
-    fn parse_script_item(&mut self) -> Result<ScriptNode> {
+    fn parse_script_item(&mut self) -> ParseResult<ScriptNode> {
         // Handle preprocessor directives
         if self.check(&TokenKind::Hash) {
             return self.parse_directive();
@@ -82,7 +82,7 @@ impl Parser {
         }
     }
 
-    fn parse_const_or_var_or_func(&mut self) -> Result<ScriptNode> {
+    fn parse_const_or_var_or_func(&mut self) -> ParseResult<ScriptNode> {
         if self.is_virtual_property_decl() {
             return Ok(ScriptNode::VirtProp(self.parse_virtprop(false, false)?));
         }
@@ -94,7 +94,7 @@ impl Parser {
         Ok(ScriptNode::Var(self.parse_var(false, true)?))
     }
 
-    fn parse_directive(&mut self) -> Result<ScriptNode> {
+    fn parse_directive(&mut self) -> ParseResult<ScriptNode> {
         self.expect(&TokenKind::Hash)?;
 
         let directive_name = match &self.current().kind {
@@ -137,7 +137,7 @@ impl Parser {
         }
     }
 
-    fn parse_namespace(&mut self) -> Result<Namespace> {
+    fn parse_namespace(&mut self) -> ParseResult<Namespace> {
         self.expect(&TokenKind::Namespace)?;
 
         let mut name = vec![self.expect_identifier()?];
@@ -163,7 +163,7 @@ impl Parser {
         Ok(Namespace { name, items })
     }
 
-    fn parse_enum(&mut self) -> Result<Enum> {
+    fn parse_enum(&mut self) -> ParseResult<Enum> {
         let mut modifiers = Vec::new();
 
         while self.identifier_is("shared") || self.identifier_is("external") {
@@ -214,7 +214,7 @@ impl Parser {
         })
     }
 
-    fn parse_class(&mut self) -> Result<Class> {
+    fn parse_class(&mut self) -> ParseResult<Class> {
         let mut modifiers = Vec::new();
 
         while self.identifier_is("shared")
@@ -271,7 +271,7 @@ impl Parser {
         })
     }
 
-    fn parse_class_member(&mut self, class_name: &str) -> Result<ClassMember> {
+    fn parse_class_member(&mut self, class_name: &str) -> ParseResult<ClassMember> {
         if self.check(&TokenKind::BitNot) {
             return Ok(ClassMember::Func(self.parse_function(true)?));
         }
@@ -300,7 +300,7 @@ impl Parser {
         }
     }
 
-    fn parse_interface(&mut self) -> Result<Interface> {
+    fn parse_interface(&mut self) -> ParseResult<Interface> {
         let mut modifiers = Vec::new();
 
         while self.identifier_is("shared") || self.identifier_is("external") {
@@ -358,7 +358,7 @@ impl Parser {
         })
     }
 
-    fn parse_interface_method(&mut self) -> Result<IntfMthd> {
+    fn parse_interface_method(&mut self) -> ParseResult<IntfMthd> {
         let return_type = self.parse_type()?;
         let is_ref = if self.check(&TokenKind::BitAnd) {
             self.advance();
@@ -388,7 +388,7 @@ impl Parser {
         })
     }
 
-    fn parse_typedef(&mut self) -> Result<Typedef> {
+    fn parse_typedef(&mut self) -> ParseResult<Typedef> {
         self.expect(&TokenKind::Typedef)?;
 
         let prim_type = match &self.current().kind {
@@ -415,7 +415,7 @@ impl Parser {
         Ok(Typedef { prim_type, name })
     }
 
-    fn parse_funcdef(&mut self) -> Result<FuncDef> {
+    fn parse_funcdef(&mut self) -> ParseResult<FuncDef> {
         let mut modifiers = Vec::new();
 
         while self.identifier_is("shared") || self.identifier_is("external") {
@@ -446,13 +446,13 @@ impl Parser {
         })
     }
 
-    fn parse_mixin(&mut self) -> Result<Mixin> {
+    fn parse_mixin(&mut self) -> ParseResult<Mixin> {
         self.expect(&TokenKind::Mixin)?;
         let class = self.parse_class()?;
         Ok(Mixin { class })
     }
 
-    fn parse_import(&mut self) -> Result<Import> {
+    fn parse_import(&mut self) -> ParseResult<Import> {
         self.expect(&TokenKind::Import)?;
 
         let type_name = self.parse_type()?;
@@ -483,7 +483,7 @@ impl Parser {
         })
     }
 
-    fn parse_virtprop(&mut self, is_method: bool, is_interface: bool) -> Result<VirtProp> {
+    fn parse_virtprop(&mut self, is_method: bool, is_interface: bool) -> ParseResult<VirtProp> {
         let mut visibility = None;
 
         if is_method {
@@ -563,7 +563,7 @@ impl Parser {
         })
     }
 
-    fn parse_function(&mut self, is_method: bool) -> Result<Func> {
+    fn parse_function(&mut self, is_method: bool) -> ParseResult<Func> {
         let mut modifiers = Vec::new();
         let mut visibility = None;
 
@@ -686,7 +686,11 @@ impl Parser {
         })
     }
 
-    pub(crate) fn parse_var(&mut self, is_class_prop: bool, is_global_var: bool) -> Result<Var> {
+    pub(crate) fn parse_var(
+        &mut self,
+        is_class_prop: bool,
+        is_global_var: bool,
+    ) -> ParseResult<Var> {
         let mut visibility = None;
 
         if is_class_prop {
@@ -748,7 +752,7 @@ impl Parser {
         })
     }
 
-    fn superficially_parse_var_init(&mut self) -> Result<VarInit> {
+    fn superficially_parse_var_init(&mut self) -> ParseResult<VarInit> {
         if self.check(&TokenKind::Assign) {
             self.advance();
 
@@ -804,7 +808,7 @@ impl Parser {
         }
     }
 
-    pub fn parse_type(&mut self) -> Result<Type> {
+    pub fn parse_type(&mut self) -> ParseResult<Type> {
         let is_const = if self.check(&TokenKind::Const) {
             self.advance();
             true
@@ -850,7 +854,7 @@ impl Parser {
         })
     }
 
-    fn parse_scope(&mut self) -> Result<Scope> {
+    fn parse_scope(&mut self) -> ParseResult<Scope> {
         let mut is_global = false;
         let mut path = Vec::new();
 
@@ -875,7 +879,7 @@ impl Parser {
         Ok(Scope { is_global, path })
     }
 
-    fn parse_datatype(&mut self) -> Result<DataType> {
+    fn parse_datatype(&mut self) -> ParseResult<DataType> {
         match &self.current().kind {
             TokenKind::Void => {
                 self.advance();
@@ -942,7 +946,7 @@ impl Parser {
         }
     }
 
-    fn parse_template_args(&mut self) -> Result<Vec<Type>> {
+    fn parse_template_args(&mut self) -> ParseResult<Vec<Type>> {
         self.expect(&TokenKind::Lt)?;
 
         let mut types = vec![self.parse_type()?];
@@ -957,7 +961,7 @@ impl Parser {
         Ok(types)
     }
 
-    fn parse_param_list(&mut self) -> Result<Vec<Param>> {
+    fn parse_param_list(&mut self) -> ParseResult<Vec<Param>> {
         self.expect(&TokenKind::LParen)?;
 
         if self.check(&TokenKind::Void) {
@@ -983,7 +987,7 @@ impl Parser {
         Ok(params)
     }
 
-    fn parse_param(&mut self) -> Result<Param> {
+    fn parse_param(&mut self) -> ParseResult<Param> {
         let param_type = self.parse_type()?;
 
         let mut type_mod = None;
@@ -1027,7 +1031,7 @@ impl Parser {
         })
     }
 
-    fn parse_func_attributes(&mut self) -> Result<Vec<String>> {
+    fn parse_func_attributes(&mut self) -> ParseResult<Vec<String>> {
         let mut attributes = Vec::new();
 
         while self.is_func_attribute() {
@@ -1048,7 +1052,7 @@ impl Parser {
         }
     }
 
-    fn parse_stat_block(&mut self) -> Result<StatBlock> {
+    fn parse_stat_block(&mut self) -> ParseResult<StatBlock> {
         self.expect(&TokenKind::LBrace)?;
 
         let mut statements = Vec::new();
@@ -1066,7 +1070,7 @@ impl Parser {
         Ok(StatBlock { statements })
     }
 
-    fn try_parse_type(&mut self) -> Result<Type> {
+    fn try_parse_type(&mut self) -> ParseResult<Type> {
         self.parse_type()
     }
 
@@ -1311,7 +1315,7 @@ impl Parser {
         depth == 0
     }
 
-    fn expect_gt_in_template(&mut self) -> Result<()> {
+    fn expect_gt_in_template(&mut self) -> ParseResult<()> {
         match &self.current().kind {
             TokenKind::Gt => {
                 self.advance();
@@ -1359,7 +1363,7 @@ impl Parser {
         }
     }
 
-    fn parse_statement(&mut self) -> Result<Statement> {
+    fn parse_statement(&mut self) -> ParseResult<Statement> {
         match &self.current().kind {
             TokenKind::If => self.parse_if(),
             TokenKind::For => self.parse_for(),
@@ -1384,7 +1388,7 @@ impl Parser {
         }
     }
 
-    fn parse_foreach(&mut self) -> Result<Statement> {
+    fn parse_foreach(&mut self) -> ParseResult<Statement> {
         // Parse: foreach( type var [, type var]* : container ) statement
 
         self.expect(&TokenKind::ForEach)?; // Simplified!
@@ -1434,7 +1438,7 @@ impl Parser {
         }))
     }
 
-    fn parse_if(&mut self) -> Result<Statement> {
+    fn parse_if(&mut self) -> ParseResult<Statement> {
         self.expect(&TokenKind::If)?;
         self.expect(&TokenKind::LParen)?;
         let condition = self.parse_expression()?;
@@ -1456,7 +1460,7 @@ impl Parser {
         }))
     }
 
-    fn parse_for(&mut self) -> Result<Statement> {
+    fn parse_for(&mut self) -> ParseResult<Statement> {
         self.expect(&TokenKind::For)?;
         self.expect(&TokenKind::LParen)?;
 
@@ -1490,7 +1494,7 @@ impl Parser {
         }))
     }
 
-    fn parse_while(&mut self) -> Result<Statement> {
+    fn parse_while(&mut self) -> ParseResult<Statement> {
         self.expect(&TokenKind::While)?;
         self.expect(&TokenKind::LParen)?;
         let condition = self.parse_expression()?;
@@ -1501,7 +1505,7 @@ impl Parser {
         Ok(Statement::While(WhileStmt { condition, body }))
     }
 
-    fn parse_do_while(&mut self) -> Result<Statement> {
+    fn parse_do_while(&mut self) -> ParseResult<Statement> {
         self.expect(&TokenKind::Do)?;
         let body = Box::new(self.parse_statement()?);
         self.expect(&TokenKind::While)?;
@@ -1513,7 +1517,7 @@ impl Parser {
         Ok(Statement::DoWhile(DoWhileStmt { body, condition }))
     }
 
-    fn parse_switch(&mut self) -> Result<Statement> {
+    fn parse_switch(&mut self) -> ParseResult<Statement> {
         self.expect(&TokenKind::Switch)?;
         self.expect(&TokenKind::LParen)?;
         let value = self.parse_expression()?;
@@ -1531,7 +1535,7 @@ impl Parser {
         Ok(Statement::Switch(SwitchStmt { value, cases }))
     }
 
-    fn parse_case(&mut self) -> Result<Case> {
+    fn parse_case(&mut self) -> ParseResult<Case> {
         let pattern = if self.check(&TokenKind::Case) {
             self.advance();
             CasePattern::Value(self.parse_expression()?)
@@ -1564,7 +1568,7 @@ impl Parser {
         })
     }
 
-    fn parse_return(&mut self) -> Result<Statement> {
+    fn parse_return(&mut self) -> ParseResult<Statement> {
         self.expect(&TokenKind::Return)?;
 
         let value = if self.check(&TokenKind::Semicolon) {
@@ -1578,7 +1582,7 @@ impl Parser {
         Ok(Statement::Return(ReturnStmt { value }))
     }
 
-    fn parse_try(&mut self) -> Result<Statement> {
+    fn parse_try(&mut self) -> ParseResult<Statement> {
         self.expect(&TokenKind::Try)?;
         let try_block = self.parse_stat_block()?;
         self.expect(&TokenKind::Catch)?;
@@ -1590,12 +1594,12 @@ impl Parser {
         }))
     }
 
-    fn parse_expr_statement(&mut self) -> Result<Statement> {
+    fn parse_expr_statement(&mut self) -> ParseResult<Statement> {
         let expr = self.parse_expr_statement_inner()?;
         Ok(Statement::Expr(expr))
     }
 
-    fn parse_expr_statement_inner(&mut self) -> Result<Option<Expr>> {
+    fn parse_expr_statement_inner(&mut self) -> ParseResult<Option<Expr>> {
         if self.check(&TokenKind::Semicolon) {
             self.advance();
             return Ok(None);
@@ -1606,7 +1610,7 @@ impl Parser {
         Ok(Some(expr))
     }
 
-    fn parse_expression(&mut self) -> Result<Expr> {
+    fn parse_expression(&mut self) -> ParseResult<Expr> {
         let expr_tokens = self.collect_expression_tokens()?;
 
         if expr_tokens.is_empty() {
@@ -1617,7 +1621,7 @@ impl Parser {
         pratt.parse()
     }
 
-    fn collect_expression_tokens(&mut self) -> Result<Vec<Token>> {
+    fn collect_expression_tokens(&mut self) -> ParseResult<Vec<Token>> {
         let mut tokens = Vec::new();
         let mut paren_depth = 0;
         let mut bracket_depth = 0;
@@ -1870,7 +1874,7 @@ impl Parser {
         false
     }
 
-    fn parse_init_list(&mut self) -> Result<InitList> {
+    fn parse_init_list(&mut self) -> ParseResult<InitList> {
         self.expect(&TokenKind::LBrace)?;
 
         let mut items = Vec::new();
@@ -1899,7 +1903,7 @@ impl Parser {
         Ok(InitList { items })
     }
 
-    fn parse_arg_list(&mut self) -> Result<Vec<Arg>> {
+    fn parse_arg_list(&mut self) -> ParseResult<Vec<Arg>> {
         self.expect(&TokenKind::LParen)?;
 
         if self.check(&TokenKind::RParen) {
@@ -1954,7 +1958,7 @@ impl Parser {
         matches!(self.current().kind, TokenKind::Identifier(_))
     }
 
-    fn expect(&mut self, kind: &TokenKind) -> Result<()> {
+    fn expect(&mut self, kind: &TokenKind) -> ParseResult<()> {
         if self.check(kind) {
             self.advance();
             Ok(())
@@ -1967,7 +1971,7 @@ impl Parser {
         }
     }
 
-    fn expect_identifier(&mut self) -> Result<String> {
+    fn expect_identifier(&mut self) -> ParseResult<String> {
         match &self.current().kind {
             TokenKind::Identifier(name) => {
                 let name = name.clone();
@@ -1978,7 +1982,7 @@ impl Parser {
         }
     }
 
-    fn expect_string(&mut self) -> Result<String> {
+    fn expect_string(&mut self) -> ParseResult<String> {
         if let TokenKind::String(s) = &self.current().kind {
             let s = s.clone();
             self.advance();
@@ -1988,7 +1992,7 @@ impl Parser {
         }
     }
 
-    fn expect_contextual_keyword(&mut self, keyword: &str) -> Result<()> {
+    fn expect_contextual_keyword(&mut self, keyword: &str) -> ParseResult<()> {
         if self.identifier_is(keyword) {
             self.advance();
             Ok(())
@@ -2021,7 +2025,7 @@ impl Parser {
 
     /// Parse a function declaration without body (for engine registration)
     /// This is a public helper for the declaration parser
-    pub fn parse_function_signature(&mut self) -> Result<Func> {
+    pub fn parse_function_signature(&mut self) -> ParseResult<Func> {
         let mut modifiers = Vec::new();
         let mut visibility = None;
 

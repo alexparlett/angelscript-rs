@@ -1,5 +1,5 @@
+use crate::core::error::*;
 use crate::parser::ast::*;
-use crate::parser::error::*;
 use crate::parser::parser::Parser;
 use crate::parser::script_builder::ScriptBuilder;
 use crate::parser::token::*;
@@ -19,12 +19,12 @@ impl<'a> Preprocessor<'a> {
         }
     }
 
-    pub fn parse(mut self) -> Result<Script> {
+    pub fn parse(mut self) -> ParseResult<Script> {
         let items = self.parse_items()?;
         Ok(Script { items })
     }
 
-    fn parse_items(&mut self) -> Result<Vec<ScriptNode>> {
+    fn parse_items(&mut self) -> ParseResult<Vec<ScriptNode>> {
         let mut items = Vec::new();
 
         while !self.is_at_end() {
@@ -45,7 +45,7 @@ impl<'a> Preprocessor<'a> {
         Ok(items)
     }
 
-    fn handle_directive(&mut self, items: &mut Vec<ScriptNode>) -> Result<()> {
+    fn handle_directive(&mut self, items: &mut Vec<ScriptNode>) -> ParseResult<()> {
         self.expect(&TokenKind::Hash)?;
 
         let directive_name = match &self.current().kind {
@@ -164,7 +164,7 @@ impl<'a> Preprocessor<'a> {
         Ok(())
     }
 
-    fn parse_conditional_block(&mut self) -> Result<Vec<ScriptNode>> {
+    fn parse_conditional_block(&mut self) -> ParseResult<Vec<ScriptNode>> {
         let mut items = Vec::new();
 
         while !self.is_at_end() {
@@ -231,7 +231,7 @@ impl<'a> Preprocessor<'a> {
         tokens
     }
 
-    fn expect_directive(&mut self, name: &str) -> Result<()> {
+    fn expect_directive(&mut self, name: &str) -> ParseResult<()> {
         self.expect(&TokenKind::Hash)?;
 
         if let TokenKind::Identifier(id) = &self.current().kind {
@@ -286,7 +286,7 @@ impl<'a> Preprocessor<'a> {
         std::mem::discriminant(&self.current().kind) == std::mem::discriminant(kind)
     }
 
-    fn expect(&mut self, kind: &TokenKind) -> Result<()> {
+    fn expect(&mut self, kind: &TokenKind) -> ParseResult<()> {
         if self.check(kind) {
             self.advance();
             Ok(())
@@ -299,7 +299,7 @@ impl<'a> Preprocessor<'a> {
         }
     }
 
-    fn expect_identifier(&mut self) -> Result<String> {
+    fn expect_identifier(&mut self) -> ParseResult<String> {
         if let TokenKind::Identifier(name) = &self.current().kind {
             let name = name.clone();
             self.advance();
@@ -309,7 +309,7 @@ impl<'a> Preprocessor<'a> {
         }
     }
 
-    fn expect_string(&mut self) -> Result<String> {
+    fn expect_string(&mut self) -> ParseResult<String> {
         if let TokenKind::String(s) = &self.current().kind {
             let s = s.clone();
             self.advance();

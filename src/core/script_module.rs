@@ -7,7 +7,7 @@ use std::sync::{Arc, RwLock, Weak};
 /// A module contains compiled scripts and their metadata
 ///
 /// Note: Module itself is not thread-safe. Thread safety is the user's responsibility.
-pub struct Module {
+pub struct ScriptModule {
     /// Module name
     pub name: String,
 
@@ -81,7 +81,7 @@ pub enum ModuleState {
     Failed,
 }
 
-impl Module {
+impl ScriptModule {
     /// Create a new empty module
     pub(crate) fn new(name: String, engine: Weak<RwLock<EngineInner>>) -> Self {
         Self {
@@ -150,20 +150,13 @@ impl Module {
         let engine_ref = match self.engine.upgrade() {
             Some(engine) => engine,
             None => {
-                eprintln!("Build error: Engine has been destroyed");
                 return -1;
             }
         };
 
         match self.build_internal(engine_ref) {
             Ok(()) => 0,
-            Err(errors) => {
-                eprintln!("Build errors:");
-                for error in errors {
-                    eprintln!("  {}", error);
-                }
-                -1
-            }
+            Err(_) => -1,
         }
     }
 

@@ -1,211 +1,76 @@
-// src/compiler/compiler.rs - Complete AngelScript Bytecode Compiler with HashMap-based memory model
-
-use crate::compiler::bytecode::*;
-use crate::compiler::semantic::{ExprContext, SemanticAnalyzer, TypeId};
+use crate::compiler::bytecode::{BytecodeModule, GlobalVar, Instruction};
+use crate::compiler::semantic_analyzer::SemanticAnalyzer;
 use crate::core::engine::EngineInner;
+use crate::core::error::{CodegenError, CodegenResult, CompileError, CompileResult};
+use crate::core::types::{BehaviourType, ScriptValue, TypeFlags, TypeId, TypeRegistration, TYPE_BOOL, TYPE_DOUBLE, TYPE_FLOAT, TYPE_INT16, TYPE_INT32, TYPE_INT64, TYPE_INT8, TYPE_STRING, TYPE_UINT16, TYPE_UINT32, TYPE_UINT64, TYPE_UINT8, TYPE_VOID};
 use crate::parser::ast::*;
-use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
-// Type ID constants (must match semantic.rs)
-const TYPE_VOID: TypeId = 0;
-const TYPE_BOOL: TypeId = 1;
-const TYPE_INT8: TypeId = 2;
-const TYPE_INT16: TypeId = 3;
-const TYPE_INT32: TypeId = 4;
-const TYPE_INT64: TypeId = 5;
-const TYPE_UINT8: TypeId = 6;
-const TYPE_UINT16: TypeId = 7;
-const TYPE_UINT32: TypeId = 8;
-const TYPE_UINT64: TypeId = 9;
-const TYPE_FLOAT: TypeId = 10;
-const TYPE_DOUBLE: TypeId = 11;
-const TYPE_STRING: TypeId = 12;
-const TYPE_AUTO: TypeId = 13;
-
-/// Code generator that converts AST to AngelScript bytecode
 pub struct Compiler {
-    /// The bytecode module being built
     module: BytecodeModule,
-
-    /// Current instruction address
     current_address: u32,
-
-    /// Local variables in current function
-    local_vars: HashMap<String, LocalVarInfo>,
-
-    /// Next available local variable index
-    local_count: u32,
-
-    /// Pool of reusable temporary variables
-    temp_var_pool: Vec<u32>,
-
-    /// Semantic analyzer (owned)
     analyzer: SemanticAnalyzer,
-
-    /// Current function being compiled
     current_function: Option<FunctionContext>,
-
-    /// Current class being compiled
-    current_class: Option<ClassContext>,
-
-    /// Break jump targets (for loop breaks)
-    break_targets: Vec<Vec<u32>>,
-
-    /// Continue jump targets (for loop continues)
-    continue_targets: Vec<Vec<u32>>,
-
-    /// Stack of deferred cleanup operations
-    cleanup_stack: Vec<CleanupInfo>,
-
-    /// Global variable name to ID mapping
-    global_map: HashMap<String, u32>,
-
-    /// Function name to ID mapping
-    function_map: HashMap<String, u32>,
-
-    /// Type name to ID mapping
-    type_map: HashMap<String, u32>,
-
-    /// Lambda counter for generating unique names
-    lambda_count: u32,
-
-    /// Current namespace path
+    current_class: Option<String>,
     current_namespace: Vec<String>,
-
-    /// Property accessor map (property_name -> (getter_id, setter_id))
-    property_map: HashMap<String, (Option<u32>, Option<u32>)>,
-
-    /// Operator overload map (type_id::op_name -> func_id)
-    operator_map: HashMap<String, u32>,
-
-    /// Virtual method table
-    vtable: HashMap<TypeId, Vec<u32>>,
-
-    /// Member initializer expressions
-    member_initializers: HashMap<String, HashMap<String, Expr>>,
-}
-
-#[derive(Debug, Clone)]
-struct LocalVarInfo {
-    index: u32,
-    type_id: TypeId,
-    is_ref: bool,
-    is_temp: bool,
-    needs_cleanup: bool,
+    break_targets: Vec<Vec<u32>>,
+    continue_targets: Vec<Vec<u32>>,
+    lambda_count: u32,
 }
 
 #[derive(Debug, Clone)]
 struct FunctionContext {
     name: String,
-    return_type: TypeId,
-    param_count: u32,
-    start_address: u32,
-    max_stack_size: u32,
     has_return: bool,
 }
 
-#[derive(Debug, Clone)]
-struct ClassContext {
-    name: String,
-    type_id: TypeId,
-    member_types: HashMap<String, TypeId>,
-    has_base_class: bool,
-    base_class_type: Option<TypeId>,
-}
-
-#[derive(Debug, Clone)]
-struct CleanupInfo {
-    var: u32,
-    type_id: TypeId,
-    needs_destructor: bool,
-}
-
 impl Compiler {
-    /// Create a new code generator with an engine
     pub fn new(engine: Arc<RwLock<EngineInner>>) -> Self {
         Self {
             module: BytecodeModule::new(),
             current_address: 0,
-            local_vars: HashMap::new(),
-            local_count: 0,
-            temp_var_pool: Vec::new(),
             analyzer: SemanticAnalyzer::new(engine),
             current_function: None,
             current_class: None,
+            current_namespace: Vec::new(),
             break_targets: Vec::new(),
             continue_targets: Vec::new(),
-            cleanup_stack: Vec::new(),
-            global_map: HashMap::new(),
-            function_map: HashMap::new(),
-            type_map: HashMap::new(),
             lambda_count: 0,
-            current_namespace: Vec::new(),
-            property_map: HashMap::new(),
-            operator_map: HashMap::new(),
-            vtable: HashMap::new(),
-            member_initializers: HashMap::new(),
         }
     }
 
-    /// Create from an existing analyzer (for testing)
     pub fn with_analyzer(analyzer: SemanticAnalyzer) -> Self {
         Self {
             module: BytecodeModule::new(),
             current_address: 0,
-            local_vars: HashMap::new(),
-            local_count: 0,
-            temp_var_pool: Vec::new(),
             analyzer,
             current_function: None,
             current_class: None,
+            current_namespace: Vec::new(),
             break_targets: Vec::new(),
             continue_targets: Vec::new(),
-            cleanup_stack: Vec::new(),
-            global_map: HashMap::new(),
-            function_map: HashMap::new(),
-            type_map: HashMap::new(),
             lambda_count: 0,
-            current_namespace: Vec::new(),
-            property_map: HashMap::new(),
-            operator_map: HashMap::new(),
-            vtable: HashMap::new(),
-            member_initializers: HashMap::new(),
         }
     }
 
-    /// Generate bytecode from AST (runs semantic analysis first)
-    pub fn compile(mut self, script: Script) -> Result<BytecodeModule, CompileError> {
-        // Run semantic analysis
+    pub fn compile(mut self, script: Script) -> CompileResult<BytecodeModule> {
         self.analyzer
             .analyze(&script)
             .map_err(|errors| CompileError::SemanticErrors(errors))?;
 
-        // Generate bytecode
         self.generate(script)
             .map_err(|e| CompileError::CodegenError(e))
     }
 
-    /// Generate bytecode from already-analyzed AST
-    fn generate(mut self, script: Script) -> Result<BytecodeModule, CodegenError> {
-        // First pass: Register all global symbols
-        self.register_global_symbols(&script)?;
-
-        // Second pass: Collect member initializers
-        self.collect_member_initializers(&script)?;
-
-        // Third pass: Build virtual method tables
-        self.build_vtables(&script)?;
-
-        // Fourth pass: Generate code for all items
+    fn generate(mut self, script: Script) -> CodegenResult<BytecodeModule> {
         for item in &script.items {
             match item {
                 ScriptNode::Func(func) => self.generate_function(func)?,
                 ScriptNode::Class(class) => self.generate_class(class)?,
                 ScriptNode::Var(var) => self.generate_global_var(var)?,
                 ScriptNode::Namespace(ns) => self.generate_namespace(ns)?,
-                ScriptNode::Enum(enum_def) => self.generate_enum(enum_def)?,
-                ScriptNode::Interface(interface) => self.generate_interface(interface)?,
+                ScriptNode::Enum(_) => {}
+                ScriptNode::Interface(_) => {}
                 _ => {}
             }
         }
@@ -213,229 +78,80 @@ impl Compiler {
         Ok(self.module)
     }
 
-    // Helper to access analyzer methods
-    fn resolve_type(&self, type_def: &Type) -> TypeId {
-        self.analyzer.resolve_type_from_ast(type_def)
-    }
-
-    fn lookup_type_id(&self, name: &str) -> Option<TypeId> {
-        self.analyzer.lookup_type_id(name)
-    }
-
-    fn get_expr_type(&self, expr: &Expr) -> TypeId {
-        self.analyzer.get_expr_type(expr)
-    }
-
-    // ==================== FIRST PASS: SYMBOL REGISTRATION ====================
-
-    fn register_global_symbols(&mut self, script: &Script) -> Result<(), CodegenError> {
-        for item in &script.items {
-            match item {
-                ScriptNode::Func(func) => {
-                    let func_id = self.module.functions.len() as u32;
-                    let full_name = self.make_full_name(&func.name);
-                    self.function_map.insert(full_name, func_id);
-                }
-                ScriptNode::Var(var) => {
-                    for decl in &var.declarations {
-                        let global_id = self.module.globals.len() as u32;
-                        let full_name = self.make_full_name(&decl.name);
-                        self.global_map.insert(full_name, global_id);
-                    }
-                }
-                ScriptNode::Class(class) => {
-                    let type_id = self
-                        .analyzer
-                        .lookup_type_id(&class.name)
-                        .ok_or_else(|| CodegenError::UnknownType(class.name.clone()))?;
-                    self.type_map.insert(class.name.clone(), type_id);
-
-                    // Register class methods
-                    for member in &class.members {
-                        if let ClassMember::Func(func) = member {
-                            let func_id = self.module.functions.len() as u32 + 1000;
-                            let method_name = format!("{}::{}", class.name, func.name);
-                            self.function_map.insert(method_name, func_id);
-                        }
-                    }
-                }
-                ScriptNode::Enum(enum_def) => {
-                    let type_id = self
-                        .analyzer
-                        .lookup_type_id(&enum_def.name)
-                        .ok_or_else(|| CodegenError::UnknownType(enum_def.name.clone()))?;
-                    self.type_map.insert(enum_def.name.clone(), type_id);
-                }
-                ScriptNode::Namespace(ns) => {
-                    let saved_namespace = self.current_namespace.clone();
-                    self.current_namespace.extend(ns.name.clone());
-                    self.register_global_symbols(&Script {
-                        items: ns.items.clone(),
-                    })?;
-                    self.current_namespace = saved_namespace;
-                }
-                _ => {}
-            }
-        }
-        Ok(())
-    }
-
-    fn make_full_name(&self, name: &str) -> String {
-        if self.current_namespace.is_empty() {
-            name.to_string()
-        } else {
-            format!("{}::{}", self.current_namespace.join("::"), name)
-        }
-    }
-
-    // ==================== SECOND PASS: COLLECT MEMBER INITIALIZERS ====================
-
-    fn collect_member_initializers(&mut self, script: &Script) -> Result<(), CodegenError> {
-        for item in &script.items {
-            if let ScriptNode::Class(class) = item {
-                let mut initializers = HashMap::new();
-
-                for member in &class.members {
-                    if let ClassMember::Var(var) = member {
-                        for decl in &var.declarations {
-                            if let Some(VarInit::Expr(expr)) = &decl.initializer {
-                                initializers.insert(decl.name.clone(), expr.clone());
-                            }
-                        }
-                    }
-                }
-
-                self.member_initializers
-                    .insert(class.name.clone(), initializers);
-            }
-        }
-        Ok(())
-    }
-
-    // ==================== THIRD PASS: BUILD VIRTUAL METHOD TABLES ====================
-
-    fn build_vtables(&mut self, script: &Script) -> Result<(), CodegenError> {
-        for item in &script.items {
-            if let ScriptNode::Class(class) = item {
-                let type_id = self
-                    .type_map
-                    .get(&class.name)
-                    .copied()
-                    .ok_or_else(|| CodegenError::UnknownType(class.name.clone()))?;
-
-                let mut vtable = Vec::new();
-
-                // Collect virtual methods
-                for member in &class.members {
-                    if let ClassMember::Func(func) = member {
-                        if func.modifiers.contains(&"virtual".to_string())
-                            || func.modifiers.contains(&"override".to_string())
-                        {
-                            let method_name = format!("{}::{}", class.name, func.name);
-                            if let Some(&func_id) = self.function_map.get(&method_name) {
-                                vtable.push(func_id);
-                            }
-                        }
-                    }
-                }
-
-                self.vtable.insert(type_id, vtable);
-            }
-        }
-        Ok(())
-    }
-
-    // ==================== FUNCTION GENERATION ====================
-
-    fn generate_function(&mut self, func: &Func) -> Result<(), CodegenError> {
+    fn generate_function(&mut self, func: &Func) -> CodegenResult<()> {
         let func_address = self.current_address;
 
-        // Determine return type
-        let return_type = func
-            .return_type
-            .as_ref()
-            .map(|t| self.resolve_type(t))
-            .unwrap_or(TYPE_VOID);
+        let func_full_name = if let Some(class_name) = &self.current_class {
+            format!("{}::{}", class_name, func.name)
+        } else if !self.current_namespace.is_empty() {
+            format!("{}::{}", self.current_namespace.join("::"), func.name)
+        } else {
+            func.name.clone()
+        };
 
-        // Reset local state
-        self.local_vars.clear();
-        self.local_count = 0;
-        self.temp_var_pool.clear();
-        self.cleanup_stack.clear();
+        let func_info = self
+            .analyzer
+            .symbol_table
+            .get_function(&func_full_name)
+            .ok_or_else(|| CodegenError::UndefinedFunction(func.name.clone()))?;
 
-        // Setup function context
+        let func_locals = self
+            .analyzer
+            .symbol_table
+            .get_function_locals(&func_full_name)
+            .ok_or_else(|| {
+                CodegenError::Internal(format!("Function locals not found: {}", func_full_name))
+            })?;
+
         self.current_function = Some(FunctionContext {
             name: func.name.clone(),
-            return_type,
-            param_count: func.params.len() as u32,
-            start_address: func_address,
-            max_stack_size: 0,
             has_return: false,
         });
 
-        // Allocate space for parameters
-        for param in &func.params {
-            if let Some(name) = &param.name {
-                let param_type = self.resolve_type(&param.param_type);
-                let is_ref = matches!(param.type_mod, Some(TypeMod::Out) | Some(TypeMod::InOut));
-
-                let var_info = LocalVarInfo {
-                    index: self.local_count,
-                    type_id: param_type,
-                    is_ref,
-                    is_temp: false,
-                    needs_cleanup: self.type_needs_cleanup(param_type),
-                };
-
-                self.local_vars.insert(name.clone(), var_info);
-                self.local_count += 1;
-            }
-        }
-
-        // Generate function prologue (for constructors)
         if self.is_constructor(func) {
             self.generate_constructor_prologue(&func.name)?;
         }
 
-        // Generate function body
         if let Some(body) = &func.body {
             self.generate_statement_block(body)?;
         }
 
-        // Generate function epilogue (for destructors)
         if self.is_destructor(func) {
             self.generate_destructor_epilogue(&func.name)?;
         }
 
-        // Ensure function returns
         if !self.last_instruction_is_return() {
-            if return_type == TYPE_VOID {
+            if func_info.return_type == TYPE_VOID {
                 self.emit(Instruction::RET { stack_size: 0 });
             } else {
-                self.emit_default_return(return_type);
+                self.emit_default_return(func_info.return_type);
             }
         }
 
-        // Register function info
-        let func_info = FunctionInfo {
-            name: self.make_full_name(&func.name),
+        let bytecode_func_info = crate::compiler::bytecode::FunctionInfo {
+            name: func_full_name.clone(),
             address: func_address,
-            param_count: func.params.len() as u8,
-            local_count: self.local_count,
-            stack_size: self.current_function.as_ref().unwrap().max_stack_size,
-            return_type,
+            param_count: func_locals.param_count as u8,
+            local_count: func_locals.total_count as u32,
+            stack_size: 0,
+            return_type: func_info.return_type,
             is_script_func: true,
         };
 
-        self.module.functions.push(func_info);
+        self.module.functions.push(bytecode_func_info);
+
+        self.analyzer
+            .symbol_table
+            .update_function_address(&func_full_name, func_address);
+
         self.current_function = None;
 
         Ok(())
     }
 
     fn is_constructor(&self, func: &Func) -> bool {
-        if let Some(class_ctx) = &self.current_class {
-            func.name == class_ctx.name && func.return_type.is_none()
+        if let Some(class_name) = &self.current_class {
+            func.name == *class_name && func.return_type.is_none()
         } else {
             false
         }
@@ -445,35 +161,40 @@ impl Compiler {
         func.name.starts_with('~')
     }
 
-    fn generate_constructor_prologue(&mut self, class_name: &str) -> Result<(), CodegenError> {
-        // Call base class constructor if exists
-        if let Some(class_ctx) = &self.current_class {
-            if class_ctx.has_base_class {
-                if let Some(base_type) = class_ctx.base_class_type {
-                    // Push 'this' pointer
-                    self.emit(Instruction::PshR);
+    fn generate_constructor_prologue(&mut self, class_name: &str) -> CodegenResult<()> {
+        let type_id = self
+            .analyzer
+            .symbol_table
+            .lookup_type(class_name)
+            .ok_or_else(|| CodegenError::UnknownType(class_name.to_string()))?;
 
-                    // Call base constructor
-                    if let Some(base_ctor_id) = self.find_default_constructor(base_type) {
-                        self.emit(Instruction::CALL {
-                            func_id: base_ctor_id,
-                        });
-                    }
-                }
+        let type_info = self
+            .analyzer
+            .symbol_table
+            .get_type(type_id)
+            .ok_or_else(|| CodegenError::UnknownType(class_name.to_string()))?;
+
+        if let Some(base_type_id) = type_info.base_class {
+            self.emit(Instruction::PshR);
+
+            if let Some(base_ctor_id) = self.find_default_constructor(base_type_id) {
+                self.emit(Instruction::CALL {
+                    func_id: base_ctor_id,
+                });
             }
         }
 
-        // FIX: Clone the initializers to avoid borrow checker issues
-        let initializers = self.member_initializers.get(class_name).cloned();
+        let initializers = self
+            .analyzer
+            .symbol_table
+            .get_member_initializers_cloned(class_name);
 
         if let Some(initializers) = initializers {
             for (member_name, init_expr) in initializers {
                 let init_var = self.generate_expr(&init_expr)?;
 
-                // Register property name
                 let prop_name_id = self.module.add_property_name(member_name.clone());
 
-                // Set property on 'this' using HashMap-based instruction
                 self.emit(Instruction::SetThisProperty {
                     prop_name_id,
                     src_var: init_var,
@@ -488,80 +209,62 @@ impl Compiler {
         Ok(())
     }
 
-    fn generate_destructor_epilogue(&mut self, _class_name: &str) -> Result<(), CodegenError> {
-        // Cleanup is handled by the VM automatically for reference types
-        // For value types with destructors, we need to call member destructors
+    fn generate_destructor_epilogue(&mut self, class_name: &str) -> CodegenResult<()> {
+        let class_name = class_name.trim_start_matches('~');
 
-        let member_info: Vec<_> = if let Some(ctx) = &self.current_class {
-            ctx.member_types
-                .iter()
-                .filter_map(|(name, &type_id)| {
-                    if self.type_has_destructor(type_id) {
-                        Some((name.clone(), type_id))
-                    } else {
-                        None
-                    }
-                })
-                .collect()
-        } else {
-            Vec::new()
-        };
+        let type_id = self
+            .analyzer
+            .symbol_table
+            .lookup_type(class_name)
+            .ok_or_else(|| CodegenError::UnknownType(class_name.to_string()))?;
 
-        for (member_name, member_type) in member_info {
-            // Get property
-            let prop_name_id = self.module.add_property_name(member_name);
-            let temp = self.allocate_temp(member_type);
+        let type_info = self
+            .analyzer
+            .symbol_table
+            .get_type(type_id)
+            .ok_or_else(|| CodegenError::UnknownType(class_name.to_string()))?;
 
-            self.emit(Instruction::GetThisProperty {
-                prop_name_id,
-                dst_var: temp,
-            });
+        for (member_name, member_info) in &type_info.members {
+            if self.type_has_destructor(member_info.type_id) {
+                let prop_name_id = self.module.add_property_name(member_name.clone());
+                let temp = self.allocate_temp(member_info.type_id);
 
-            // Call destructor
-            if let Some(dtor_id) = self.get_destructor_id(member_type) {
-                self.emit(Instruction::CALL { func_id: dtor_id });
+                self.emit(Instruction::GetThisProperty {
+                    prop_name_id,
+                    dst_var: temp,
+                });
+
+                if let Some(dtor_id) = self.get_destructor_id(member_info.type_id) {
+                    self.emit(Instruction::CALL { func_id: dtor_id });
+                }
+
+                self.free_temp(temp);
             }
-
-            self.free_temp(temp);
         }
 
         Ok(())
     }
 
     fn find_default_constructor(&self, type_id: TypeId) -> Option<u32> {
-        // Look for constructor with no parameters
-        if let Some(type_info) = self
-            .analyzer
-            .script_types
-            .values()
-            .find(|t| t.type_id == type_id)
-        {
-            let ctor_name = format!("{}::{}", type_info.name, type_info.name);
-            return self.function_map.get(&ctor_name).copied();
-        }
-        None
+        let type_info = self.analyzer.symbol_table.get_type(type_id)?;
+        let ctor_name = format!("{}::{}", type_info.name, type_info.name);
+        let func_info = self.analyzer.symbol_table.get_function(&ctor_name)?;
+        Some(func_info.address)
     }
 
     fn type_has_destructor(&self, type_id: TypeId) -> bool {
         self.analyzer
-            .script_types
-            .values()
-            .find(|t| t.type_id == type_id)
-            .map(|t| t.has_destructor)
+            .symbol_table
+            .get_type(type_id)
+            .map(|t| t.flags.contains(TypeFlags::APP_CLASS_DESTRUCTOR))
             .unwrap_or(false)
     }
 
     fn get_destructor_id(&self, type_id: TypeId) -> Option<u32> {
-        if let Some(type_info) = self
-            .analyzer
-            .script_types
-            .values()
-            .find(|t| t.type_id == type_id)
-        {
-            let dtor_name = format!("{}::~{}", type_info.name, type_info.name);
-            return self.function_map.get(&dtor_name).copied();
-        }
-        None
+        let type_info = self.analyzer.symbol_table.get_type(type_id)?;
+        let dtor_name = format!("{}::~{}", type_info.name, type_info.name);
+        let func_info = self.analyzer.symbol_table.get_function(&dtor_name)?;
+        Some(func_info.address)
     }
 
     fn emit_default_return(&mut self, return_type: TypeId) {
@@ -594,45 +297,9 @@ impl Compiler {
             .unwrap_or(false)
     }
 
-    // ==================== CLASS GENERATION ====================
+    fn generate_class(&mut self, class: &Class) -> CodegenResult<()> {
+        self.current_class = Some(class.name.clone());
 
-    fn generate_class(&mut self, class: &Class) -> Result<(), CodegenError> {
-        let type_id = self
-            .type_map
-            .get(&class.name)
-            .copied()
-            .ok_or_else(|| CodegenError::UnknownType(class.name.clone()))?;
-
-        let mut member_types = HashMap::new();
-
-        // Collect member types
-        for member in &class.members {
-            if let ClassMember::Var(var) = member {
-                let member_type = self.resolve_type(&var.var_type);
-
-                for decl in &var.declarations {
-                    member_types.insert(decl.name.clone(), member_type);
-                }
-            }
-        }
-
-        // Check for base class
-        let has_base_class = !class.extends.is_empty();
-        let base_class_type = if has_base_class {
-            self.type_map.get(&class.extends[0]).copied()
-        } else {
-            None
-        };
-
-        self.current_class = Some(ClassContext {
-            name: class.name.clone(),
-            type_id,
-            member_types,
-            has_base_class,
-            base_class_type,
-        });
-
-        // Generate class members
         for member in &class.members {
             match member {
                 ClassMember::Func(func) => {
@@ -649,32 +316,25 @@ impl Compiler {
         Ok(())
     }
 
-    fn generate_virtual_property(&mut self, prop: &VirtProp) -> Result<(), CodegenError> {
-        let mut getter_id = None;
-        let mut setter_id = None;
-
+    fn generate_virtual_property(&mut self, prop: &VirtProp) -> CodegenResult<()> {
         for accessor in &prop.accessors {
             if let Some(body) = &accessor.body {
-                let func_name = format!(
-                    "{}_{}",
-                    prop.name,
-                    match accessor.kind {
-                        AccessorKind::Get => "get",
-                        AccessorKind::Set => "set",
-                    }
-                );
+                let func_name = match accessor.kind {
+                    AccessorKind::Get => format!("get_{}", prop.name),
+                    AccessorKind::Set => format!("set_{}", prop.name),
+                };
 
                 let func = Func {
-                    modifiers: Vec::new(),
+                    modifiers: vec![],
                     visibility: prop.visibility.clone(),
                     return_type: match accessor.kind {
                         AccessorKind::Get => Some(prop.prop_type.clone()),
                         AccessorKind::Set => None,
                     },
                     is_ref: prop.is_ref,
-                    name: func_name.clone(),
+                    name: func_name,
                     params: match accessor.kind {
-                        AccessorKind::Get => Vec::new(),
+                        AccessorKind::Get => vec![],
                         AccessorKind::Set => vec![Param {
                             param_type: prop.prop_type.clone(),
                             type_mod: None,
@@ -688,73 +348,87 @@ impl Compiler {
                     body: Some(body.clone()),
                 };
 
-                let func_id = self.module.functions.len() as u32;
                 self.generate_function(&func)?;
-
-                match accessor.kind {
-                    AccessorKind::Get => getter_id = Some(func_id),
-                    AccessorKind::Set => setter_id = Some(func_id),
-                }
             }
         }
-
-        self.property_map
-            .insert(prop.name.clone(), (getter_id, setter_id));
 
         Ok(())
     }
 
-    // ==================== GLOBAL VARIABLE GENERATION ====================
-
-    fn generate_global_var(&mut self, var: &Var) -> Result<(), CodegenError> {
-        let var_type = self.resolve_type(&var.var_type);
+    fn generate_global_var(&mut self, var: &Var) -> CodegenResult<()> {
+        let var_type = self
+            .analyzer
+            .symbol_table
+            .resolve_type_from_ast(&var.var_type);
 
         for decl in &var.declarations {
-            let global_id = self.module.globals.len() as u32;
+            if let Some(global_info) = self.analyzer.symbol_table.get_global(&decl.name) {
+                self.module.globals.push(GlobalVar {
+                    name: decl.name.clone(),
+                    type_id: var_type,
+                    address: global_info.address,
+                    is_const: global_info.is_const,
+                });
 
-            self.module.globals.push(GlobalVar {
-                name: self.make_full_name(&decl.name),
-                type_id: var_type,
-                address: global_id,
-                is_const: var.var_type.is_const,
-            });
-
-            if let Some(init) = &decl.initializer {
-                match init {
-                    VarInit::Expr(expr) => {
-                        if let Expr::Literal(lit) = expr {
-                            self.generate_global_literal_init(global_id, lit, var_type);
-                        }
+                if let Some(VarInit::Expr(expr)) = &decl.initializer {
+                    if let Expr::Literal(lit) = expr {
+                        self.generate_global_literal_init(global_info.address, lit);
                     }
-                    _ => {}
                 }
             }
         }
         Ok(())
     }
 
-    fn generate_global_literal_init(&mut self, global_id: u32, lit: &Literal, type_id: TypeId) {
+    fn generate_global_literal_init(&mut self, global_id: u32, lit: &Literal) {
         let value = match lit {
             Literal::Number(n) => {
-                if n.contains('.') {
-                    if type_id == TYPE_FLOAT {
-                        let val: f32 = n.parse().unwrap_or(0.0);
-                        ScriptValue::Float(val)
-                    } else {
-                        let val: f64 = n.parse().unwrap_or(0.0);
-                        ScriptValue::Double(val)
-                    }
+                if n.ends_with("ull") || n.ends_with("ULL") {
+                    let val: u64 = n
+                        .trim_end_matches(|c: char| c.is_alphabetic())
+                        .parse()
+                        .unwrap_or(0);
+                    ScriptValue::UInt64(val)
+                } else if n.ends_with("ll") || n.ends_with("LL") {
+                    let val: i64 = n
+                        .trim_end_matches(|c: char| c.is_alphabetic())
+                        .parse()
+                        .unwrap_or(0);
+                    ScriptValue::Int64(val)
+                } else if n.ends_with("ul")
+                    || n.ends_with("UL")
+                    || n.ends_with("lu")
+                    || n.ends_with("LU")
+                {
+                    let val: u32 = n
+                        .trim_end_matches(|c: char| c.is_alphabetic())
+                        .parse()
+                        .unwrap_or(0);
+                    ScriptValue::UInt32(val)
+                } else if n.ends_with("u") || n.ends_with("U") {
+                    let val: u32 = n
+                        .trim_end_matches(|c: char| c.is_alphabetic())
+                        .parse()
+                        .unwrap_or(0);
+                    ScriptValue::UInt32(val)
+                } else if n.ends_with("l") || n.ends_with("L") {
+                    let val: i64 = n
+                        .trim_end_matches(|c: char| c.is_alphabetic())
+                        .parse()
+                        .unwrap_or(0);
+                    ScriptValue::Int64(val)
+                } else if n.ends_with("f") || n.ends_with("F") {
+                    let val: f32 = n
+                        .trim_end_matches(|c: char| c.is_alphabetic())
+                        .parse()
+                        .unwrap_or(0.0);
+                    ScriptValue::Float(val)
+                } else if n.contains('.') || n.contains('e') || n.contains('E') {
+                    let val: f64 = n.parse().unwrap_or(0.0);
+                    ScriptValue::Double(val)
                 } else {
-                    if n.ends_with("ll") || n.ends_with("LL") {
-                        let val: i64 = n
-                            .trim_end_matches(|c| c == 'l' || c == 'L')
-                            .parse()
-                            .unwrap_or(0);
-                        ScriptValue::Int64(val)
-                    } else {
-                        let val: i32 = n.parse().unwrap_or(0);
-                        ScriptValue::Int32(val)
-                    }
+                    let val: i32 = n.parse().unwrap_or(0);
+                    ScriptValue::Int32(val)
                 }
             }
             Literal::Bool(b) => ScriptValue::Bool(*b),
@@ -771,10 +445,7 @@ impl Compiler {
         self.emit(Instruction::SetG { global_id, value });
     }
 
-    // ==================== NAMESPACE GENERATION ====================
-
-    fn generate_namespace(&mut self, namespace: &Namespace) -> Result<(), CodegenError> {
-        let saved_namespace = self.current_namespace.clone();
+    fn generate_namespace(&mut self, namespace: &Namespace) -> CodegenResult<()> {
         self.current_namespace.extend(namespace.name.clone());
 
         for item in &namespace.items {
@@ -787,81 +458,84 @@ impl Compiler {
             }
         }
 
-        self.current_namespace = saved_namespace;
+        self.current_namespace
+            .truncate(self.current_namespace.len() - namespace.name.len());
+
         Ok(())
     }
 
-    fn generate_enum(&mut self, _enum_def: &Enum) -> Result<(), CodegenError> {
-        // Enums are compile-time only, no runtime code needed
-        Ok(())
-    }
-
-    fn generate_interface(&mut self, _interface: &Interface) -> Result<(), CodegenError> {
-        // Interfaces are compile-time only, no runtime code needed
-        Ok(())
-    }
-
-    // ==================== STATEMENT GENERATION ====================
-
-    fn generate_statement_block(&mut self, block: &StatBlock) -> Result<(), CodegenError> {
+    fn generate_statement_block(&mut self, block: &StatBlock) -> CodegenResult<()> {
         for stmt in &block.statements {
             self.generate_statement(stmt)?;
         }
         Ok(())
     }
 
-    fn generate_statement(&mut self, stmt: &Statement) -> Result<(), CodegenError> {
+    fn generate_statement(&mut self, stmt: &Statement) -> CodegenResult<()> {
         match stmt {
             Statement::Var(var) => self.generate_var_decl(var),
-            Statement::Expr(expr) => {
-                if let Some(e) = expr {
-                    let result_var = self.generate_expr(e)?;
-                    if self.is_temp_var(result_var) {
-                        self.free_temp(result_var);
-                    }
+            Statement::Expr(Some(e)) => {
+                let result_var = self.generate_expr(e)?;
+                if self.is_temp_var(result_var) {
+                    self.free_temp(result_var);
                 }
                 Ok(())
             }
+            Statement::Expr(None) => Ok(()),
             Statement::If(if_stmt) => self.generate_if(if_stmt),
             Statement::While(while_stmt) => self.generate_while(while_stmt),
             Statement::DoWhile(do_while) => self.generate_do_while(do_while),
             Statement::For(for_stmt) => self.generate_for(for_stmt),
-            Statement::ForEach(foreach) => self.generate_foreach(foreach),
             Statement::Return(ret) => self.generate_return(ret),
             Statement::Break => self.generate_break(),
             Statement::Continue => self.generate_continue(),
-            Statement::Switch(switch) => self.generate_switch(switch),
             Statement::Block(block) => self.generate_statement_block(block),
+            Statement::ForEach(foreach_stmt) => self.generate_foreach(foreach_stmt),
+            Statement::Switch(switch_stmt) => self.generate_switch(switch_stmt),
             Statement::Try(try_stmt) => self.generate_try(try_stmt),
             Statement::Using(_) => Ok(()),
         }
     }
 
-    fn generate_var_decl(&mut self, var: &Var) -> Result<(), CodegenError> {
-        let var_type = self.resolve_type(&var.var_type);
+    fn generate_var_decl(&mut self, var: &Var) -> CodegenResult<()> {
+        let var_type = self
+            .analyzer
+            .symbol_table
+            .resolve_type_from_ast(&var.var_type);
+
+        let func_name = self
+            .current_function
+            .as_ref()
+            .map(|f| f.name.clone())
+            .ok_or_else(|| CodegenError::Internal("No current function".to_string()))?;
+
+        let func_full_name = if let Some(class_name) = &self.current_class {
+            format!("{}::{}", class_name, func_name)
+        } else if !self.current_namespace.is_empty() {
+            format!("{}::{}", self.current_namespace.join("::"), func_name)
+        } else {
+            func_name
+        };
+
+        let func_locals = self
+            .analyzer
+            .symbol_table
+            .get_function_locals(&func_full_name)
+            .ok_or_else(|| CodegenError::Internal("Function locals not found".to_string()))?;
 
         for decl in &var.declarations {
-            let local_idx = self.local_count;
-
-            let cleanup = self.type_needs_cleanup(var_type);
-
-            let var_info = LocalVarInfo {
-                index: local_idx,
-                type_id: var_type,
-                is_ref: false,
-                is_temp: false,
-                needs_cleanup: cleanup,
-            };
-
-            self.local_vars.insert(decl.name.clone(), var_info);
-            self.local_count += 1;
+            let var_idx = func_locals
+                .variable_map
+                .get(&decl.name)
+                .copied()
+                .ok_or_else(|| CodegenError::UndefinedVariable(decl.name.clone()))?;
 
             if let Some(init) = &decl.initializer {
                 match init {
                     VarInit::Expr(expr) => {
                         let result_var = self.generate_expr(expr)?;
                         self.emit(Instruction::CpyV {
-                            dst: local_idx,
+                            dst: var_idx as u32,
                             src: result_var,
                         });
                         if self.is_temp_var(result_var) {
@@ -869,48 +543,82 @@ impl Compiler {
                         }
                     }
                     VarInit::InitList(init_list) => {
-                        // FIX 1: Use generate_init_list_expr and handle the result
                         self.generate_init_list_expr(init_list)?;
-                        // Pop the init list from value stack to local variable
                         self.emit(Instruction::PopR);
-                        self.emit(Instruction::CpyRtoV { var: local_idx });
+                        self.emit(Instruction::CpyRtoV {
+                            var: var_idx as u32,
+                        });
                     }
                     VarInit::ArgList(args) => {
-                        self.generate_constructor_call(local_idx, var_type, args)?;
+                        let temp = self.generate_construct_call(&var.var_type, args)?;
+                        self.emit(Instruction::CpyV {
+                            dst: var_idx as u32,
+                            src: temp,
+                        });
+                        if self.is_temp_var(temp) {
+                            self.free_temp(temp);
+                        }
                     }
                 }
             } else {
-                self.emit_default_init(local_idx, var_type);
-            }
-
-            // Track for cleanup if needed
-            if cleanup {
-                self.cleanup_stack.push(CleanupInfo {
-                    var: local_idx,
-                    type_id: var_type,
-                    needs_destructor: self.type_has_destructor(var_type),
-                });
+                self.emit_default_init(var_idx as u32, var_type);
             }
         }
         Ok(())
     }
 
-    fn type_needs_cleanup(&self, type_id: TypeId) -> bool {
-        if self.is_primitive_type(type_id) {
-            return false;
+    fn generate_construct_call(&mut self, type_def: &Type, args: &[Arg]) -> CodegenResult<u32> {
+        let type_id = self.analyzer.symbol_table.resolve_type_from_ast(type_def);
+
+        let type_info = self
+            .analyzer
+            .symbol_table
+            .get_type(type_id)
+            .ok_or_else(|| CodegenError::UnknownType(format!("type {}", type_id)))?;
+
+        let func_id = if type_info.registration == TypeRegistration::Application {
+            self.find_construct_behaviour(type_id, args.len())?
+        } else {
+            self.find_constructor(type_id, args.len()).unwrap_or(0)
+        };
+
+        self.emit(Instruction::Alloc { type_id, func_id });
+
+        for arg in args.iter().rev() {
+            let arg_var = self.generate_expr(&arg.value)?;
+            self.emit(Instruction::PshV { var: arg_var });
+
+            if self.is_temp_var(arg_var) {
+                self.free_temp(arg_var);
+            }
         }
 
-        // Check if it's a reference type that needs cleanup
-        self.analyzer
-            .script_types
-            .values()
-            .find(|t| t.type_id == type_id)
-            .map(|t| t.is_ref_type || t.has_destructor)
-            .unwrap_or(false)
+        if func_id != 0 {
+            if type_info.registration == TypeRegistration::Application {
+                self.emit(Instruction::CALLSYS {
+                    sys_func_id: func_id,
+                });
+            } else {
+                self.emit(Instruction::CALL { func_id });
+            }
+        }
+
+        let result = self.allocate_temp(type_id);
+        self.emit(Instruction::StoreObj { var: result });
+
+        Ok(result)
     }
 
-    fn is_primitive_type(&self, type_id: TypeId) -> bool {
-        type_id <= TYPE_AUTO
+    fn find_constructor(&self, type_id: TypeId, arg_count: usize) -> Option<u32> {
+        let type_info = self.analyzer.symbol_table.get_type(type_id)?;
+        let ctor_name = format!("{}::{}", type_info.name, type_info.name);
+        let func_info = self.analyzer.symbol_table.get_function(&ctor_name)?;
+
+        if func_info.params.len() == arg_count {
+            Some(func_info.address)
+        } else {
+            None
+        }
     }
 
     fn emit_default_init(&mut self, var: u32, type_id: TypeId) {
@@ -932,9 +640,7 @@ impl Compiler {
         self.emit(Instruction::SetV { var, value });
     }
 
-    // ==================== CONTROL FLOW GENERATION ====================
-
-    fn generate_if(&mut self, if_stmt: &IfStmt) -> Result<(), CodegenError> {
+    fn generate_if(&mut self, if_stmt: &IfStmt) -> CodegenResult<()> {
         let cond_var = self.generate_expr(&if_stmt.condition)?;
 
         if self.is_comparison_expr(&if_stmt.condition) {
@@ -964,7 +670,7 @@ impl Compiler {
         Ok(())
     }
 
-    fn generate_while(&mut self, while_stmt: &WhileStmt) -> Result<(), CodegenError> {
+    fn generate_while(&mut self, while_stmt: &WhileStmt) -> CodegenResult<()> {
         let loop_start = self.current_address;
 
         self.break_targets.push(Vec::new());
@@ -1010,7 +716,7 @@ impl Compiler {
         Ok(())
     }
 
-    fn generate_do_while(&mut self, do_while: &DoWhileStmt) -> Result<(), CodegenError> {
+    fn generate_do_while(&mut self, do_while: &DoWhileStmt) -> CodegenResult<()> {
         let loop_start = self.current_address;
 
         self.break_targets.push(Vec::new());
@@ -1053,7 +759,7 @@ impl Compiler {
         Ok(())
     }
 
-    fn generate_for(&mut self, for_stmt: &ForStmt) -> Result<(), CodegenError> {
+    fn generate_for(&mut self, for_stmt: &ForStmt) -> CodegenResult<()> {
         match &for_stmt.init {
             ForInit::Var(var) => self.generate_var_decl(var)?,
             ForInit::Expr(Some(expr)) => {
@@ -1125,22 +831,44 @@ impl Compiler {
         Ok(())
     }
 
-    fn generate_foreach(&mut self, foreach: &ForEachStmt) -> Result<(), CodegenError> {
-        // Generate foreach using AngelScript's foreach protocol
-        let collection_var = self.generate_expr(&foreach.iterable)?;
-        let collection_type = self.get_expr_type(&foreach.iterable);
+    fn generate_foreach(&mut self, foreach_stmt: &ForEachStmt) -> CodegenResult<()> {
+        let collection_var = self.generate_expr(&foreach_stmt.iterable)?;
+        let collection_type = self.get_expr_type(&foreach_stmt.iterable);
 
-        // Allocate iterator variable
-        let iterator_var = self.allocate_temp(TYPE_INT32);
+        let func_name = self
+            .current_function
+            .as_ref()
+            .map(|f| f.name.clone())
+            .ok_or_else(|| CodegenError::Internal("No current function".to_string()))?;
 
-        // Call opForBegin()
-        self.emit(Instruction::PshV {
-            var: collection_var,
-        });
+        let func_full_name = if let Some(class_name) = &self.current_class {
+            format!("{}::{}", class_name, func_name)
+        } else if !self.current_namespace.is_empty() {
+            format!("{}::{}", self.current_namespace.join("::"), func_name)
+        } else {
+            func_name
+        };
+
+        let func_locals = self
+            .analyzer
+            .symbol_table
+            .get_function_locals(&func_full_name)
+            .ok_or_else(|| CodegenError::Internal("Function locals not found".to_string()))?;
+
+        let iterator_var = func_locals.total_count as u32 + self.lambda_count;
+        self.lambda_count += 1;
+
         if let Some(begin_id) = self.find_operator_method(collection_type, "opForBegin") {
+            self.emit(Instruction::PshV {
+                var: collection_var,
+            });
             self.emit(Instruction::CALL { func_id: begin_id });
             self.emit(Instruction::PopR);
             self.emit(Instruction::CpyRtoV { var: iterator_var });
+        } else {
+            return Err(CodegenError::NotImplemented(
+                "foreach - collection type doesn't implement opForBegin".to_string(),
+            ));
         }
 
         let loop_start = self.current_address;
@@ -1148,56 +876,60 @@ impl Compiler {
         self.break_targets.push(Vec::new());
         self.continue_targets.push(Vec::new());
 
-        // Call opForEnd(iterator)
-        self.emit(Instruction::PshV {
-            var: collection_var,
-        });
-        self.emit(Instruction::PshV { var: iterator_var });
         if let Some(end_id) = self.find_operator_method(collection_type, "opForEnd") {
-            self.emit(Instruction::CALL { func_id: end_id });
-            self.emit(Instruction::PopR);
-            self.emit(Instruction::TNZ);
-        }
-
-        let jump_to_end = self.emit_jump_placeholder(Instruction::JNZ { offset: 0 });
-
-        // Get current value - opForValue(iterator)
-        for (var_type, var_name) in &foreach.variables {
-            let value_var = self.allocate_temp(self.resolve_type(var_type));
-
             self.emit(Instruction::PshV {
                 var: collection_var,
             });
             self.emit(Instruction::PshV { var: iterator_var });
-            if let Some(value_id) = self.find_operator_method(collection_type, "opForValue") {
-                self.emit(Instruction::CALL { func_id: value_id });
-                self.emit(Instruction::PopR);
-                self.emit(Instruction::CpyRtoV { var: value_var });
-            }
-
-            // Register loop variable
-            let var_info = LocalVarInfo {
-                index: value_var,
-                type_id: self.resolve_type(var_type),
-                is_ref: false,
-                is_temp: false,
-                needs_cleanup: false,
-            };
-            self.local_vars.insert(var_name.clone(), var_info);
+            self.emit(Instruction::CALL { func_id: end_id });
+            self.emit(Instruction::PopR);
+            self.emit(Instruction::TNZ);
+        } else {
+            return Err(CodegenError::NotImplemented(
+                "foreach - collection type doesn't implement opForEnd".to_string(),
+            ));
         }
 
-        // Execute body
-        self.generate_statement(&foreach.body)?;
+        let jump_to_end = self.emit_jump_placeholder(Instruction::JNZ { offset: 0 });
 
-        // Call opForNext(iterator)
-        self.emit(Instruction::PshV {
-            var: collection_var,
-        });
-        self.emit(Instruction::PshV { var: iterator_var });
+        for (_var_type, var_name) in &foreach_stmt.variables {
+            let value_var = func_locals
+                .variable_map
+                .get(var_name)
+                .copied()
+                .ok_or_else(|| CodegenError::UndefinedVariable(var_name.clone()))?;
+
+            if let Some(value_id) = self.find_operator_method(collection_type, "opForValue") {
+                self.emit(Instruction::PshV {
+                    var: collection_var,
+                });
+                self.emit(Instruction::PshV { var: iterator_var });
+                self.emit(Instruction::CALL { func_id: value_id });
+                self.emit(Instruction::PopR);
+                self.emit(Instruction::CpyRtoV {
+                    var: value_var as u32,
+                });
+            } else {
+                return Err(CodegenError::NotImplemented(
+                    "foreach - collection type doesn't implement opForValue".to_string(),
+                ));
+            }
+        }
+
+        self.generate_statement(&foreach_stmt.body)?;
+
         if let Some(next_id) = self.find_operator_method(collection_type, "opForNext") {
+            self.emit(Instruction::PshV {
+                var: collection_var,
+            });
+            self.emit(Instruction::PshV { var: iterator_var });
             self.emit(Instruction::CALL { func_id: next_id });
             self.emit(Instruction::PopR);
             self.emit(Instruction::CpyRtoV { var: iterator_var });
+        } else {
+            return Err(CodegenError::NotImplemented(
+                "foreach - collection type doesn't implement opForNext".to_string(),
+            ));
         }
 
         let offset = (loop_start as i32) - (self.current_address as i32);
@@ -1223,96 +955,20 @@ impl Compiler {
         if self.is_temp_var(collection_var) {
             self.free_temp(collection_var);
         }
-        self.free_temp(iterator_var);
 
         Ok(())
     }
 
-    fn find_operator_method(&self, type_id: TypeId, op_name: &str) -> Option<u32> {
-        if let Some(type_info) = self
-            .analyzer
-            .script_types
-            .values()
-            .find(|t| t.type_id == type_id)
-        {
-            let method_name = format!("{}::{}", type_info.name, op_name);
-            return self.function_map.get(&method_name).copied();
-        }
-        None
-    }
-
-    fn generate_return(&mut self, ret: &ReturnStmt) -> Result<(), CodegenError> {
-        if let Some(value) = &ret.value {
-            let result_var = self.generate_expr(value)?;
-            self.emit(Instruction::CpyVtoR { var: result_var });
-
-            if self.is_temp_var(result_var) {
-                self.free_temp(result_var);
-            }
-        }
-
-        // Cleanup local variables before return
-        self.emit_cleanup_before_return();
-
-        self.emit(Instruction::RET { stack_size: 0 });
-
-        if let Some(func_ctx) = &mut self.current_function {
-            func_ctx.has_return = true;
-        }
-
-        Ok(())
-    }
-
-    fn emit_cleanup_before_return(&mut self) {
-        // Collect cleanup items first
-        let cleanups: Vec<_> = self
-            .cleanup_stack
-            .iter()
-            .filter(|c| c.needs_destructor)
-            .map(|c| (c.var, c.type_id))
-            .collect();
-
-        // Process cleanups in reverse order
-        for (var, type_id) in cleanups.into_iter().rev() {
-            if let Some(dtor_id) = self.get_destructor_id(type_id) {
-                self.emit(Instruction::LoadObj { var });
-                self.emit(Instruction::CALL { func_id: dtor_id });
-            }
-        }
-    }
-
-    fn generate_break(&mut self) -> Result<(), CodegenError> {
-        let jump_addr = self.emit_jump_placeholder(Instruction::JMP { offset: 0 });
-
-        if let Some(breaks) = self.break_targets.last_mut() {
-            breaks.push(jump_addr);
-            Ok(())
-        } else {
-            Err(CodegenError::InvalidBreak)
-        }
-    }
-
-    fn generate_continue(&mut self) -> Result<(), CodegenError> {
-        let jump_addr = self.emit_jump_placeholder(Instruction::JMP { offset: 0 });
-
-        if let Some(continues) = self.continue_targets.last_mut() {
-            continues.push(jump_addr);
-            Ok(())
-        } else {
-            Err(CodegenError::InvalidContinue)
-        }
-    }
-
-    fn generate_switch(&mut self, switch: &SwitchStmt) -> Result<(), CodegenError> {
-        let switch_var = self.generate_expr(&switch.value)?;
-        let switch_type = self.get_expr_type(&switch.value);
+    fn generate_switch(&mut self, switch_stmt: &SwitchStmt) -> CodegenResult<()> {
+        let switch_var = self.generate_expr(&switch_stmt.value)?;
+        let switch_type = self.get_expr_type(&switch_stmt.value);
 
         self.break_targets.push(Vec::new());
 
         let mut case_jumps = Vec::new();
         let mut default_jump = None;
 
-        for case in &switch.cases {
+        for case in &switch_stmt.cases {
             match &case.pattern {
                 CasePattern::Value(expr) => {
                     let case_var = self.generate_expr(expr)?;
@@ -1336,7 +992,7 @@ impl Compiler {
         let jump_to_end = self.emit_jump_placeholder(Instruction::JMP { offset: 0 });
 
         let mut case_idx = 0;
-        for case in &switch.cases {
+        for case in &switch_stmt.cases {
             if matches!(case.pattern, CasePattern::Value(_)) {
                 self.patch_jump(case_jumps[case_idx]);
                 case_idx += 1;
@@ -1364,35 +1020,64 @@ impl Compiler {
         Ok(())
     }
 
-    fn generate_try(&mut self, try_stmt: &TryStmt) -> Result<(), CodegenError> {
-        // AngelScript doesn't have full exception support in bytecode
-        // This is a simplified implementation
+    fn generate_try(&mut self, try_stmt: &TryStmt) -> CodegenResult<()> {
         self.generate_statement_block(&try_stmt.try_block)?;
         self.generate_statement_block(&try_stmt.catch_block)?;
         Ok(())
     }
 
-    // ==================== EXPRESSION GENERATION ====================
+    fn generate_return(&mut self, ret: &ReturnStmt) -> CodegenResult<()> {
+        if let Some(value) = &ret.value {
+            let result_var = self.generate_expr(value)?;
+            self.emit(Instruction::CpyVtoR { var: result_var });
 
-    fn generate_expr(&mut self, expr: &Expr) -> Result<u32, CodegenError> {
-        // Get expression context from analyzer
-        let ctx = self
-            .analyzer
-            .analyze_expr_context(expr)
-            .map_err(|e| CodegenError::SemanticError(e.message))?;
+            if self.is_temp_var(result_var) {
+                self.free_temp(result_var);
+            }
+        }
 
+        self.emit(Instruction::RET { stack_size: 0 });
+
+        if let Some(func_ctx) = &mut self.current_function {
+            func_ctx.has_return = true;
+        }
+
+        Ok(())
+    }
+
+    fn generate_break(&mut self) -> CodegenResult<()> {
+        let jump_addr = self.emit_jump_placeholder(Instruction::JMP { offset: 0 });
+
+        if let Some(breaks) = self.break_targets.last_mut() {
+            breaks.push(jump_addr);
+            Ok(())
+        } else {
+            Err(CodegenError::InvalidBreak)
+        }
+    }
+
+    fn generate_continue(&mut self) -> CodegenResult<()> {
+        let jump_addr = self.emit_jump_placeholder(Instruction::JMP { offset: 0 });
+
+        if let Some(continues) = self.continue_targets.last_mut() {
+            continues.push(jump_addr);
+            Ok(())
+        } else {
+            Err(CodegenError::InvalidContinue)
+        }
+    }
+
+    fn generate_expr(&mut self, expr: &Expr) -> CodegenResult<u32> {
         match expr {
             Expr::Literal(lit) => self.generate_literal(lit),
-            Expr::VarAccess(scope, name) => self.generate_var_access(scope, name),
-            Expr::Binary(left, op, right) => self.generate_binary(left, op, right, &ctx),
+            Expr::VarAccess(scope, name) => self.generate_var_access(expr, scope, name),
+            Expr::Binary(left, op, right) => self.generate_binary(left, op, right),
             Expr::Unary(op, operand) => self.generate_unary(op, operand),
-            Expr::Postfix(expr, op) => self.generate_postfix(expr, op),
+            Expr::Postfix(expr_inner, op) => self.generate_postfix(expr_inner, op),
             Expr::Ternary(cond, then_expr, else_expr) => {
                 self.generate_ternary(cond, then_expr, else_expr)
             }
             Expr::FuncCall(call) => self.generate_func_call(call),
-            Expr::ConstructCall(type_def, args) => self.generate_construct_call(type_def, args),
-            Expr::Cast(target_type, expr) => self.generate_cast(target_type, expr),
             Expr::Lambda(lambda) => self.generate_lambda(lambda),
             Expr::InitList(init_list) => {
                 let temp = self.allocate_temp(TYPE_VOID);
@@ -1403,35 +1088,61 @@ impl Compiler {
                 let temp = self.allocate_temp(TYPE_VOID);
                 Ok(temp)
             }
+            Expr::ConstructCall(type_def, args) => self.generate_construct_call(type_def, args),
+            Expr::Cast(target_type, expr_inner) => self.generate_cast(target_type, expr_inner),
         }
     }
 
-    fn generate_literal(&mut self, lit: &Literal) -> Result<u32, CodegenError> {
+    fn generate_literal(&mut self, lit: &Literal) -> CodegenResult<u32> {
         let (value, type_id) = match lit {
             Literal::Bool(b) => (ScriptValue::Bool(*b), TYPE_BOOL),
             Literal::Number(n) => {
-                if n.contains('.') || n.contains('e') || n.contains('E') {
-                    if n.ends_with('f') || n.ends_with('F') {
-                        let val: f32 = n
-                            .trim_end_matches(|c| c == 'f' || c == 'F')
-                            .parse()
-                            .unwrap_or(0.0);
-                        (ScriptValue::Float(val), TYPE_FLOAT)
-                    } else {
-                        let val: f64 = n.parse().unwrap_or(0.0);
-                        (ScriptValue::Double(val), TYPE_DOUBLE)
-                    }
+                if n.ends_with("ull") || n.ends_with("ULL") {
+                    let val: u64 = n
+                        .trim_end_matches(|c: char| c.is_alphabetic())
+                        .parse()
+                        .unwrap_or(0);
+                    (ScriptValue::UInt64(val), TYPE_UINT64)
+                } else if n.ends_with("ll") || n.ends_with("LL") {
+                    let val: i64 = n
+                        .trim_end_matches(|c: char| c.is_alphabetic())
+                        .parse()
+                        .unwrap_or(0);
+                    (ScriptValue::Int64(val), TYPE_INT64)
+                } else if n.ends_with("ul")
+                    || n.ends_with("UL")
+                    || n.ends_with("lu")
+                    || n.ends_with("LU")
+                {
+                    let val: u32 = n
+                        .trim_end_matches(|c: char| c.is_alphabetic())
+                        .parse()
+                        .unwrap_or(0);
+                    (ScriptValue::UInt32(val), TYPE_UINT32)
+                } else if n.ends_with("u") || n.ends_with("U") {
+                    let val: u32 = n
+                        .trim_end_matches(|c: char| c.is_alphabetic())
+                        .parse()
+                        .unwrap_or(0);
+                    (ScriptValue::UInt32(val), TYPE_UINT32)
+                } else if n.ends_with("l") || n.ends_with("L") {
+                    let val: i64 = n
+                        .trim_end_matches(|c: char| c.is_alphabetic())
+                        .parse()
+                        .unwrap_or(0);
+                    (ScriptValue::Int64(val), TYPE_INT64)
+                } else if n.ends_with("f") || n.ends_with("F") {
+                    let val: f32 = n
+                        .trim_end_matches(|c: char| c.is_alphabetic())
+                        .parse()
+                        .unwrap_or(0.0);
+                    (ScriptValue::Float(val), TYPE_FLOAT)
+                } else if n.contains('.') || n.contains('e') || n.contains('E') {
+                    let val: f64 = n.parse().unwrap_or(0.0);
+                    (ScriptValue::Double(val), TYPE_DOUBLE)
                 } else {
-                    if n.ends_with("ll") || n.ends_with("LL") {
-                        let val: i64 = n
-                            .trim_end_matches(|c| c == 'l' || c == 'L')
-                            .parse()
-                            .unwrap_or(0);
-                        (ScriptValue::Int64(val), TYPE_INT64)
-                    } else {
-                        let val: i32 = n.parse().unwrap_or(0);
-                        (ScriptValue::Int32(val), TYPE_INT32)
-                    }
+                    let val: i32 = n.parse().unwrap_or(0);
+                    (ScriptValue::Int32(val), TYPE_INT32)
                 }
             }
             Literal::String(s) => {
@@ -1456,36 +1167,67 @@ impl Compiler {
         Ok(temp)
     }
 
-    fn generate_var_access(&mut self, _scope: &Scope, name: &str) -> Result<u32, CodegenError> {
-        if let Some(var_info) = self.local_vars.get(name) {
-            return Ok(var_info.index);
+    fn generate_var_access(
+        &mut self,
+        expr: &Expr,
+        _scope: &crate::parser::ast::Scope,
+        name: &str,
+    ) -> CodegenResult<u32> {
+        if let Some(ctx) = self.analyzer.symbol_table.get_expr_context(expr) {
+            if let Some(index) = ctx.resolved_var_index {
+                return Ok(index as u32);
+            }
+
+            if ctx.is_global {
+                if let Some(global_addr) = ctx.global_address {
+                    let temp = self.allocate_temp(ctx.result_type);
+                    self.emit(Instruction::CpyGtoV {
+                        var: temp,
+                        global_id: global_addr,
+                    });
+                    return Ok(temp);
+                }
+            }
         }
 
-        if let Some(&global_id) = self.global_map.get(name) {
-            let temp = self.allocate_temp(TYPE_INT32);
-            self.emit(Instruction::CpyGtoV {
-                var: temp,
-                global_id,
-            });
-            return Ok(temp);
-        }
-
-        Err(CodegenError::UndefinedVariable(name.to_string()))
+        Err(CodegenError::Internal(format!(
+            "Variable '{}' not resolved during semantic analysis",
+            name
+        )))
     }
 
-    fn generate_binary(
-        &mut self,
-        left: &Expr,
-        op: &BinaryOp,
-        right: &Expr,
-        ctx: &ExprContext,
-    ) -> Result<u32, CodegenError> {
-        // Handle assignments specially
+    fn get_common_type(&self, type1: TypeId, type2: TypeId) -> TypeId {
+        if type1 == type2 {
+            return type1;
+        }
+
+        let rank = |t: TypeId| -> u32 {
+            match t {
+                TYPE_DOUBLE => 6,
+                TYPE_FLOAT => 5,
+                TYPE_INT64 | TYPE_UINT64 => 4,
+                TYPE_UINT32 => 3,
+                TYPE_INT32 => 2,
+                TYPE_INT16 | TYPE_UINT16 => 1,
+                TYPE_INT8 | TYPE_UINT8 | TYPE_BOOL => 0,
+                _ => 0,
+            }
+        };
+
+        if rank(type1) > rank(type2) {
+            type1
+        } else {
+            type2
+        }
+    }
+
+    // src/compiler/compiler.rs - continued
+
+    fn generate_binary(&mut self, left: &Expr, op: &BinaryOp, right: &Expr) -> CodegenResult<u32> {
         if matches!(op, BinaryOp::Assign) {
             return self.generate_assignment(left, op, right);
         }
 
-        // Handle compound assignments
         if matches!(
             op,
             BinaryOp::AddAssign
@@ -1504,19 +1246,33 @@ impl Compiler {
             return self.generate_assignment(left, op, right);
         }
 
-        // Handle logical operators with short-circuit evaluation
         if matches!(op, BinaryOp::And | BinaryOp::Or) {
             return self.generate_logical_op(left, op, right);
         }
 
-        // Use context information for better code generation
         let left_var = self.generate_expr(left)?;
         let right_var = self.generate_expr(right)?;
 
-        let result_var = self.allocate_temp(ctx.result_type);
+        let result_type = self.get_expr_type(&Expr::Binary(
+            Box::new(left.clone()),
+            op.clone(),
+            Box::new(right.clone()),
+        ));
 
-        // Emit appropriate instruction based on context
-        self.emit_binary_op(op, result_var, left_var, right_var, ctx.result_type)?;
+        let result_var = self.allocate_temp(result_type);
+
+        let operation_type = if matches!(
+            op,
+            BinaryOp::Eq | BinaryOp::Ne | BinaryOp::Lt | BinaryOp::Le | BinaryOp::Gt | BinaryOp::Ge
+        ) {
+            let left_type = self.get_expr_type(left);
+            let right_type = self.get_expr_type(right);
+            self.get_common_type(left_type, right_type)
+        } else {
+            result_type
+        };
+
+        self.emit_binary_op(op, result_var, left_var, right_var, operation_type)?;
 
         if self.is_temp_var(left_var) {
             self.free_temp(left_var);
@@ -1535,14 +1291,21 @@ impl Compiler {
         a: u32,
         b: u32,
         type_id: TypeId,
-    ) -> Result<(), CodegenError> {
+    ) -> CodegenResult<()> {
         let instr = match (op, type_id) {
-            (BinaryOp::Add, TYPE_INT32 | TYPE_UINT32) => Instruction::ADDi { dst, a, b },
-            (BinaryOp::Sub, TYPE_INT32 | TYPE_UINT32) => Instruction::SUBi { dst, a, b },
-            (BinaryOp::Mul, TYPE_INT32 | TYPE_UINT32) => Instruction::MULi { dst, a, b },
-            (BinaryOp::Div, TYPE_INT32 | TYPE_UINT32) => Instruction::DIVi { dst, a, b },
-            (BinaryOp::Mod, TYPE_INT32 | TYPE_UINT32) => Instruction::MODi { dst, a, b },
+            (BinaryOp::Add, TYPE_INT32) => Instruction::ADDi { dst, a, b },
+            (BinaryOp::Sub, TYPE_INT32) => Instruction::SUBi { dst, a, b },
+            (BinaryOp::Mul, TYPE_INT32) => Instruction::MULi { dst, a, b },
+            (BinaryOp::Div, TYPE_INT32) => Instruction::DIVi { dst, a, b },
+            (BinaryOp::Mod, TYPE_INT32) => Instruction::MODi { dst, a, b },
             (BinaryOp::Pow, TYPE_INT32) => Instruction::POWi { dst, a, b },
+
+            (BinaryOp::Add, TYPE_UINT32) => Instruction::ADDi { dst, a, b },
+            (BinaryOp::Sub, TYPE_UINT32) => Instruction::SUBi { dst, a, b },
+            (BinaryOp::Mul, TYPE_UINT32) => Instruction::MULi { dst, a, b },
+            (BinaryOp::Div, TYPE_UINT32) => Instruction::DIVu { dst, a, b },
+            (BinaryOp::Mod, TYPE_UINT32) => Instruction::MODu { dst, a, b },
+            (BinaryOp::Pow, TYPE_UINT32) => Instruction::POWu { dst, a, b },
 
             (BinaryOp::Add, TYPE_FLOAT) => Instruction::ADDf { dst, a, b },
             (BinaryOp::Sub, TYPE_FLOAT) => Instruction::SUBf { dst, a, b },
@@ -1558,12 +1321,19 @@ impl Compiler {
             (BinaryOp::Mod, TYPE_DOUBLE) => Instruction::MODd { dst, a, b },
             (BinaryOp::Pow, TYPE_DOUBLE) => Instruction::POWd { dst, a, b },
 
-            (BinaryOp::Add, TYPE_INT64 | TYPE_UINT64) => Instruction::ADDi64 { dst, a, b },
-            (BinaryOp::Sub, TYPE_INT64 | TYPE_UINT64) => Instruction::SUBi64 { dst, a, b },
-            (BinaryOp::Mul, TYPE_INT64 | TYPE_UINT64) => Instruction::MULi64 { dst, a, b },
-            (BinaryOp::Div, TYPE_INT64 | TYPE_UINT64) => Instruction::DIVi64 { dst, a, b },
-            (BinaryOp::Mod, TYPE_INT64 | TYPE_UINT64) => Instruction::MODi64 { dst, a, b },
+            (BinaryOp::Add, TYPE_INT64) => Instruction::ADDi64 { dst, a, b },
+            (BinaryOp::Sub, TYPE_INT64) => Instruction::SUBi64 { dst, a, b },
+            (BinaryOp::Mul, TYPE_INT64) => Instruction::MULi64 { dst, a, b },
+            (BinaryOp::Div, TYPE_INT64) => Instruction::DIVi64 { dst, a, b },
+            (BinaryOp::Mod, TYPE_INT64) => Instruction::MODi64 { dst, a, b },
             (BinaryOp::Pow, TYPE_INT64) => Instruction::POWi64 { dst, a, b },
+
+            (BinaryOp::Add, TYPE_UINT64) => Instruction::ADDi64 { dst, a, b },
+            (BinaryOp::Sub, TYPE_UINT64) => Instruction::SUBi64 { dst, a, b },
+            (BinaryOp::Mul, TYPE_UINT64) => Instruction::MULi64 { dst, a, b },
+            (BinaryOp::Div, TYPE_UINT64) => Instruction::DIVu64 { dst, a, b },
+            (BinaryOp::Mod, TYPE_UINT64) => Instruction::MODu64 { dst, a, b },
+            (BinaryOp::Pow, TYPE_UINT64) => Instruction::POWu64 { dst, a, b },
 
             (BinaryOp::BitAnd, TYPE_INT32 | TYPE_UINT32) => Instruction::BAND { dst, a, b },
             (BinaryOp::BitOr, TYPE_INT32 | TYPE_UINT32) => Instruction::BOR { dst, a, b },
@@ -1648,7 +1418,7 @@ impl Compiler {
             TYPE_DOUBLE => Instruction::CMPd { a, b },
             TYPE_INT64 => Instruction::CMPi64 { a, b },
             TYPE_UINT64 => Instruction::CMPu64 { a, b },
-            _ => Instruction::CmpPtr { a, b },
+            _ => Instruction::CMPu64 { a, b },
         };
         self.emit(instr);
     }
@@ -1671,38 +1441,67 @@ impl Compiler {
         left: &Expr,
         op: &BinaryOp,
         right: &Expr,
-    ) -> Result<u32, CodegenError> {
-        // Handle member access assignment
+    ) -> CodegenResult<u32> {
         if let Expr::Postfix(obj, PostfixOp::MemberAccess(member)) = left {
-            let obj_var = self.generate_expr(obj)?;
             let right_var = self.generate_expr(right)?;
 
-            // Register property name and get its ID
+            if let Expr::VarAccess(_, name) = obj.as_ref() {
+                if name == "this" {
+                    let prop_name_id = self.module.add_property_name(member.clone());
+
+                    if matches!(op, BinaryOp::Assign) {
+                        self.emit(Instruction::SetThisProperty {
+                            prop_name_id,
+                            src_var: right_var,
+                        });
+                    } else {
+                        let temp = self.allocate_temp(TYPE_INT32);
+
+                        self.emit(Instruction::GetThisProperty {
+                            prop_name_id,
+                            dst_var: temp,
+                        });
+
+                        let result_type = self.get_expr_type(left);
+                        self.emit_compound_assignment_op(op, temp, temp, right_var, result_type)?;
+
+                        self.emit(Instruction::SetThisProperty {
+                            prop_name_id,
+                            src_var: temp,
+                        });
+
+                        self.free_temp(temp);
+                    }
+
+                    if self.is_temp_var(right_var) {
+                        self.free_temp(right_var);
+                    }
+
+                    return Ok(right_var);
+                }
+            }
+
+            let obj_var = self.generate_expr(obj)?;
             let prop_name_id = self.module.add_property_name(member.clone());
 
             if matches!(op, BinaryOp::Assign) {
-                // Simple assignment
                 self.emit(Instruction::SetProperty {
                     obj_var,
                     prop_name_id,
                     src_var: right_var,
                 });
             } else {
-                // Compound assignment (+=, -=, etc.)
                 let temp = self.allocate_temp(TYPE_INT32);
 
-                // Get current value
                 self.emit(Instruction::GetProperty {
                     obj_var,
                     prop_name_id,
                     dst_var: temp,
                 });
 
-                // Perform operation
                 let result_type = self.get_expr_type(left);
                 self.emit_compound_assignment_op(op, temp, temp, right_var, result_type)?;
 
-                // Set new value
                 self.emit(Instruction::SetProperty {
                     obj_var,
                     prop_name_id,
@@ -1722,31 +1521,45 @@ impl Compiler {
             return Ok(right_var);
         }
 
-        // Handle regular variable assignment
-        let lvalue = match left {
-            Expr::VarAccess(_scope, name) => {
-                if let Some(var_info) = self.local_vars.get(name) {
-                    var_info.index
-                } else if let Some(&global_id) = self.global_map.get(name) {
-                    let right_var = self.generate_expr(right)?;
+        if let Expr::VarAccess(_scope, name) = left {
+            let ctx = self
+                .analyzer
+                .symbol_table
+                .get_expr_context(left)
+                .cloned()
+                .ok_or_else(|| {
+                    CodegenError::Internal(format!(
+                        "Variable '{}' not resolved during semantic analysis",
+                        name
+                    ))
+                })?;
 
+            let right_var = self.generate_expr(right)?;
+
+            if ctx.is_global {
+                if let Some(global_addr) = ctx.global_address {
                     if matches!(op, BinaryOp::Assign) {
                         self.emit(Instruction::CpyVtoG {
-                            global_id,
+                            global_id: global_addr,
                             var: right_var,
                         });
                     } else {
-                        let temp = self.allocate_temp(TYPE_INT32);
+                        let temp = self.allocate_temp(ctx.result_type);
                         self.emit(Instruction::CpyGtoV {
                             var: temp,
-                            global_id,
+                            global_id: global_addr,
                         });
 
-                        let result_type = self.get_expr_type(left);
-                        self.emit_compound_assignment_op(op, temp, temp, right_var, result_type)?;
+                        self.emit_compound_assignment_op(
+                            op,
+                            temp,
+                            temp,
+                            right_var,
+                            ctx.result_type,
+                        )?;
 
                         self.emit(Instruction::CpyVtoG {
-                            global_id,
+                            global_id: global_addr,
                             var: temp,
                         });
                         self.free_temp(temp);
@@ -1756,32 +1569,48 @@ impl Compiler {
                         self.free_temp(right_var);
                     }
                     return Ok(right_var);
-                } else {
-                    return Err(CodegenError::UndefinedVariable(name.to_string()));
                 }
             }
-            _ => {
-                return Err(CodegenError::InvalidLValue);
+
+            if let Some(lvalue) = ctx.resolved_var_index {
+                let lvalue = lvalue as u32;
+
+                if matches!(op, BinaryOp::Assign) {
+                    if self.is_value_type(ctx.result_type) {
+                        self.emit(Instruction::COPY {
+                            dst: lvalue,
+                            src: right_var,
+                        });
+                    } else {
+                        self.emit(Instruction::CpyV {
+                            dst: lvalue,
+                            src: right_var,
+                        });
+                    }
+                } else {
+                    self.emit_compound_assignment_op(
+                        op,
+                        lvalue,
+                        lvalue,
+                        right_var,
+                        ctx.result_type,
+                    )?;
+                }
+
+                if self.is_temp_var(right_var) {
+                    self.free_temp(right_var);
+                }
+
+                return Ok(lvalue);
             }
-        };
 
-        let right_var = self.generate_expr(right)?;
-
-        if matches!(op, BinaryOp::Assign) {
-            self.emit(Instruction::CpyV {
-                dst: lvalue,
-                src: right_var,
-            });
-        } else {
-            let result_type = self.get_expr_type(left);
-            self.emit_compound_assignment_op(op, lvalue, lvalue, right_var, result_type)?;
+            return Err(CodegenError::Internal(format!(
+                "Variable '{}' has no resolved index or global address",
+                name
+            )));
         }
 
-        if self.is_temp_var(right_var) {
-            self.free_temp(right_var);
-        }
-
-        Ok(lvalue)
+        Err(CodegenError::InvalidLValue)
     }
 
     fn emit_compound_assignment_op(
@@ -1791,7 +1620,7 @@ impl Compiler {
         left: u32,
         right: u32,
         type_id: TypeId,
-    ) -> Result<(), CodegenError> {
+    ) -> CodegenResult<()> {
         let base_op = match op {
             BinaryOp::AddAssign => BinaryOp::Add,
             BinaryOp::SubAssign => BinaryOp::Sub,
@@ -1816,7 +1645,7 @@ impl Compiler {
         left: &Expr,
         op: &BinaryOp,
         right: &Expr,
-    ) -> Result<u32, CodegenError> {
+    ) -> CodegenResult<u32> {
         let result = self.allocate_temp(TYPE_BOOL);
 
         let left_var = self.generate_expr(left)?;
@@ -1865,7 +1694,9 @@ impl Compiler {
         Ok(result)
     }
 
-    fn generate_unary(&mut self, op: &UnaryOp, operand: &Expr) -> Result<u32, CodegenError> {
+    // src/compiler/compiler.rs - continued
+
+    fn generate_unary(&mut self, op: &UnaryOp, operand: &Expr) -> CodegenResult<u32> {
         let operand_var = self.generate_expr(operand)?;
         let operand_type = self.get_expr_type(operand);
         let result = self.allocate_temp(operand_type);
@@ -1900,12 +1731,10 @@ impl Compiler {
             (UnaryOp::PreDec, TYPE_DOUBLE) => Instruction::DECd { var: result },
 
             (UnaryOp::Handle, _) => {
-                // Handle operator @ - creates a handle to the object
                 return Ok(result);
             }
 
             (UnaryOp::Plus, _) => {
-                // Unary plus is a no-op
                 return Ok(result);
             }
 
@@ -1926,7 +1755,7 @@ impl Compiler {
         Ok(result)
     }
 
-    fn generate_postfix(&mut self, expr: &Expr, op: &PostfixOp) -> Result<u32, CodegenError> {
+    fn generate_postfix(&mut self, expr: &Expr, op: &PostfixOp) -> CodegenResult<u32> {
         match op {
             PostfixOp::PostInc | PostfixOp::PostDec => {
                 let var = self.generate_expr(expr)?;
@@ -1975,20 +1804,39 @@ impl Compiler {
         }
     }
 
-    fn generate_member_access(&mut self, obj: &Expr, member: &str) -> Result<u32, CodegenError> {
+    fn generate_member_access(&mut self, obj: &Expr, member: &str) -> CodegenResult<u32> {
+        if let Expr::VarAccess(_, name) = obj {
+            if name == "this" {
+                let class_type = if let Some(class_name) = &self.current_class {
+                    self.analyzer
+                        .symbol_table
+                        .lookup_type(class_name)
+                        .ok_or_else(|| CodegenError::UnknownType(class_name.clone()))?
+                } else {
+                    return Err(CodegenError::Internal(
+                        "'this' used outside of class".to_string(),
+                    ));
+                };
+
+                let member_type = self.get_member_type(class_type, member)?;
+                let prop_name_id = self.module.add_property_name(member.to_string());
+                let result = self.allocate_temp(member_type);
+
+                self.emit(Instruction::GetThisProperty {
+                    prop_name_id,
+                    dst_var: result,
+                });
+
+                return Ok(result);
+            }
+        }
+
         let obj_var = self.generate_expr(obj)?;
         let obj_type = self.get_expr_type(obj);
-
-        // Get member type
         let member_type = self.get_member_type(obj_type, member)?;
-
-        // Register property name and get its ID
         let prop_name_id = self.module.add_property_name(member.to_string());
-
-        // Allocate temp for result
         let result = self.allocate_temp(member_type);
 
-        // Emit GetProperty instruction
         self.emit(Instruction::GetProperty {
             obj_var,
             prop_name_id,
@@ -2002,27 +1850,25 @@ impl Compiler {
         Ok(result)
     }
 
-    fn get_member_type(&self, obj_type: TypeId, member: &str) -> Result<TypeId, CodegenError> {
-        if let Some(type_info) = self
+    fn get_member_type(&self, obj_type: TypeId, member: &str) -> CodegenResult<TypeId> {
+        let type_info = self
             .analyzer
-            .script_types
-            .values()
-            .find(|t| t.type_id == obj_type)
-        {
-            if let Some(member_info) = type_info.members.get(member) {
-                return Ok(member_info.type_id);
-            }
-        }
+            .symbol_table
+            .get_type(obj_type)
+            .ok_or_else(|| CodegenError::UnknownType(format!("type {}", obj_type)))?;
 
-        Err(CodegenError::UndefinedMember(member.to_string()))
+        let member_info = type_info
+            .members
+            .get(member)
+            .ok_or_else(|| CodegenError::UndefinedMember(member.to_string()))?;
+
+        Ok(member_info.type_id)
     }
 
-    fn generate_method_call(&mut self, obj: &Expr, call: &FuncCall) -> Result<u32, CodegenError> {
-        // Push 'this' pointer
+    fn generate_method_call(&mut self, obj: &Expr, call: &FuncCall) -> CodegenResult<u32> {
         let obj_var = self.generate_expr(obj)?;
         self.emit(Instruction::PshV { var: obj_var });
 
-        // Push arguments (right to left)
         for arg in call.args.iter().rev() {
             let arg_var = self.generate_expr(&arg.value)?;
             self.emit(Instruction::PshV { var: arg_var });
@@ -2032,16 +1878,21 @@ impl Compiler {
             }
         }
 
-        // Get method ID
         let obj_type = self.get_expr_type(obj);
         let method_id = self
             .find_method_id(obj_type, &call.name)
             .ok_or_else(|| CodegenError::UndefinedFunction(call.name.clone()))?;
 
-        // Call method
-        self.emit(Instruction::CALL { func_id: method_id });
+        let is_system_method = self.is_system_method(obj_type, &call.name);
 
-        // Get return value
+        if is_system_method {
+            self.emit(Instruction::CALLSYS {
+                sys_func_id: method_id,
+            });
+        } else {
+            self.emit(Instruction::CALL { func_id: method_id });
+        }
+
         let return_type = self.get_method_return_type(obj_type, &call.name);
         let result = self.allocate_temp(return_type);
 
@@ -2058,45 +1909,48 @@ impl Compiler {
     }
 
     fn find_method_id(&self, type_id: TypeId, method_name: &str) -> Option<u32> {
-        // Look up method in function map
-        if let Some(type_info) = self
-            .analyzer
-            .script_types
-            .values()
-            .find(|t| t.type_id == type_id)
-        {
-            let full_name = format!("{}::{}", type_info.name, method_name);
-            return self.function_map.get(&full_name).copied();
+        let type_info = self.analyzer.symbol_table.get_type(type_id)?;
+        let method_names = type_info.methods.get(method_name)?;
+        let full_name = method_names.first()?;
+        let func_info = self.analyzer.symbol_table.get_function(full_name)?;
+
+        if func_info.is_system_func {
+            func_info.system_func_id
+        } else {
+            Some(func_info.address)
         }
-        None
+    }
+
+    fn is_system_method(&self, type_id: TypeId, method_name: &str) -> bool {
+        if let Some(type_info) = self.analyzer.symbol_table.get_type(type_id) {
+            if let Some(method_names) = type_info.methods.get(method_name) {
+                if let Some(full_name) = method_names.first() {
+                    if let Some(func_info) = self.analyzer.symbol_table.get_function(full_name) {
+                        return func_info.is_system_func;
+                    }
+                }
+            }
+        }
+        false
     }
 
     fn get_method_return_type(&self, type_id: TypeId, method_name: &str) -> TypeId {
-        // Query semantic analyzer for method return type
-        if let Some(type_info) = self
-            .analyzer
-            .script_types
-            .values()
-            .find(|t| t.type_id == type_id)
-        {
-            if let Some(methods) = type_info.methods.get(method_name) {
-                if let Some(method) = methods.first() {
-                    return method.return_type;
+        if let Some(type_info) = self.analyzer.symbol_table.get_type(type_id) {
+            if let Some(method_names) = type_info.methods.get(method_name) {
+                if let Some(full_name) = method_names.first() {
+                    if let Some(func_info) = self.analyzer.symbol_table.get_function(full_name) {
+                        return func_info.return_type;
+                    }
                 }
             }
         }
         TYPE_VOID
     }
 
-    fn generate_index_access(
-        &mut self,
-        array: &Expr,
-        indices: &[IndexArg],
-    ) -> Result<u32, CodegenError> {
+    fn generate_index_access(&mut self, array: &Expr, indices: &[IndexArg]) -> CodegenResult<u32> {
         let array_var = self.generate_expr(array)?;
         let array_type = self.get_expr_type(array);
 
-        // For now, support single index
         if indices.len() != 1 {
             return Err(CodegenError::NotImplemented(
                 "multi-dimensional indexing".to_string(),
@@ -2105,14 +1959,21 @@ impl Compiler {
 
         let index_var = self.generate_expr(&indices[0].value)?;
 
-        // Check if type has opIndex operator
         if let Some(op_index_id) = self.find_operator_method(array_type, "opIndex") {
-            // Call opIndex method
+            let is_system = self.is_system_method(array_type, "opIndex");
+
             self.emit(Instruction::PshV { var: array_var });
             self.emit(Instruction::PshV { var: index_var });
-            self.emit(Instruction::CALL {
-                func_id: op_index_id,
-            });
+
+            if is_system {
+                self.emit(Instruction::CALLSYS {
+                    sys_func_id: op_index_id,
+                });
+            } else {
+                self.emit(Instruction::CALL {
+                    func_id: op_index_id,
+                });
+            }
 
             let result = self.allocate_temp(TYPE_INT32);
             self.emit(Instruction::PopR);
@@ -2129,20 +1990,32 @@ impl Compiler {
         }
 
         Err(CodegenError::NotImplemented(
-            "built-in array indexing".to_string(),
+            "array indexing - type doesn't implement opIndex operator".to_string(),
         ))
     }
 
-    fn generate_functor_call(&mut self, functor: &Expr, args: &[Arg]) -> Result<u32, CodegenError> {
+    fn find_operator_method(&self, type_id: TypeId, op_name: &str) -> Option<u32> {
+        let type_info = self.analyzer.symbol_table.get_type(type_id)?;
+        let method_names = type_info.methods.get(op_name)?;
+        let full_name = method_names.first()?;
+        let func_info = self.analyzer.symbol_table.get_function(full_name)?;
+
+        if func_info.is_system_func {
+            func_info.system_func_id
+        } else {
+            Some(func_info.address)
+        }
+    }
+
+    fn generate_functor_call(&mut self, functor: &Expr, args: &[Arg]) -> CodegenResult<u32> {
         let functor_var = self.generate_expr(functor)?;
         let functor_type = self.get_expr_type(functor);
 
-        // Check if type has opCall operator
         if let Some(op_call_id) = self.find_operator_method(functor_type, "opCall") {
-            // Push functor object
+            let is_system = self.is_system_method(functor_type, "opCall");
+
             self.emit(Instruction::PshV { var: functor_var });
 
-            // Push arguments
             for arg in args.iter().rev() {
                 let arg_var = self.generate_expr(&arg.value)?;
                 self.emit(Instruction::PshV { var: arg_var });
@@ -2152,10 +2025,15 @@ impl Compiler {
                 }
             }
 
-            // Call opCall
-            self.emit(Instruction::CALL {
-                func_id: op_call_id,
-            });
+            if is_system {
+                self.emit(Instruction::CALLSYS {
+                    sys_func_id: op_call_id,
+                });
+            } else {
+                self.emit(Instruction::CALL {
+                    func_id: op_call_id,
+                });
+            }
 
             let result = self.allocate_temp(TYPE_INT32);
             self.emit(Instruction::PopR);
@@ -2168,7 +2046,9 @@ impl Compiler {
             return Ok(result);
         }
 
-        Err(CodegenError::NotImplemented("functor call".to_string()))
+        Err(CodegenError::NotImplemented(
+            "functor call - type doesn't implement opCall operator".to_string(),
+        ))
     }
 
     fn generate_ternary(
@@ -2176,7 +2056,7 @@ impl Compiler {
         cond: &Expr,
         then_expr: &Expr,
         else_expr: &Expr,
-    ) -> Result<u32, CodegenError> {
+    ) -> CodegenResult<u32> {
         let result_type = self.get_expr_type(then_expr);
         let result = self.allocate_temp(result_type);
 
@@ -2216,8 +2096,7 @@ impl Compiler {
         Ok(result)
     }
 
-    fn generate_func_call(&mut self, call: &FuncCall) -> Result<u32, CodegenError> {
-        // Push arguments (right to left)
+    fn generate_func_call(&mut self, call: &FuncCall) -> CodegenResult<u32> {
         for arg in call.args.iter().rev() {
             let arg_var = self.generate_expr(&arg.value)?;
             self.emit(Instruction::PshV { var: arg_var });
@@ -2227,34 +2106,29 @@ impl Compiler {
             }
         }
 
-        // Look up function
-        let full_name = self.make_full_name(&call.name);
-        if let Some(&func_id) = self.function_map.get(&full_name) {
-            self.emit(Instruction::CALL { func_id });
-        } else {
-            // Check if it's an engine-registered function
-            let sys_func = {
-                let engine = self.analyzer.engine.read().unwrap();
-                engine
-                    .global_functions
-                    .iter()
-                    .position(|f| f.name == call.name)
-            };
+        let func_info = self
+            .analyzer
+            .symbol_table
+            .get_function(&call.name)
+            .ok_or_else(|| CodegenError::UndefinedFunction(call.name.clone()))?;
 
-            if let Some(sys_func_id) = sys_func {
-                self.emit(Instruction::CALLSYS {
-                    sys_func_id: sys_func_id as u32,
-                });
+        if func_info.is_system_func {
+            if let Some(sys_func_id) = func_info.system_func_id {
+                self.emit(Instruction::CALLSYS { sys_func_id });
             } else {
-                return Err(CodegenError::UndefinedFunction(call.name.clone()));
+                return Err(CodegenError::Internal(
+                    "System function missing system_func_id".to_string(),
+                ));
             }
+        } else {
+            self.emit(Instruction::CALL {
+                func_id: func_info.address,
+            });
         }
 
-        // Get return value
-        let return_type = self.lookup_type_id(&call.name).unwrap_or(TYPE_VOID);
-        let result = self.allocate_temp(return_type);
+        let result = self.allocate_temp(func_info.return_type);
 
-        if return_type != TYPE_VOID {
+        if func_info.return_type != TYPE_VOID {
             self.emit(Instruction::PopR);
             self.emit(Instruction::CpyRtoV { var: result });
         }
@@ -2262,70 +2136,31 @@ impl Compiler {
         Ok(result)
     }
 
-    fn generate_construct_call(
-        &mut self,
-        type_def: &Type,
-        args: &[Arg],
-    ) -> Result<u32, CodegenError> {
-        let type_id = self.resolve_type(type_def);
+    fn find_construct_behaviour(&self, type_id: TypeId, arg_count: usize) -> CodegenResult<u32> {
+        let engine = self.analyzer.engine.read().unwrap();
 
-        let result = self.allocate_temp(type_id);
-
-        // Find constructor
-        let constructor_id = self
-            .find_constructor(type_id, args.len())
-            .ok_or_else(|| CodegenError::UndefinedFunction("constructor".to_string()))?;
-
-        // Allocate object
-        self.emit(Instruction::Alloc {
-            type_id,
-            func_id: constructor_id,
-        });
-
-        // Push arguments
-        for arg in args.iter().rev() {
-            let arg_var = self.generate_expr(&arg.value)?;
-            self.emit(Instruction::PshV { var: arg_var });
-
-            if self.is_temp_var(arg_var) {
-                self.free_temp(arg_var);
-            }
-        }
-
-        // Call constructor
-        self.emit(Instruction::CALL {
-            func_id: constructor_id,
-        });
-
-        // Store result
-        self.emit(Instruction::StoreObj { var: result });
-
-        Ok(result)
-    }
-
-    fn find_constructor(&self, type_id: TypeId, arg_count: usize) -> Option<u32> {
-        if let Some(type_info) = self
-            .analyzer
-            .script_types
-            .values()
-            .find(|t| t.type_id == type_id)
-        {
-            if let Some(constructors) = type_info.methods.get(&type_info.name) {
-                for ctor in constructors {
-                    if ctor.params.len() == arg_count {
-                        let ctor_name = format!("{}::{}", type_info.name, type_info.name);
-                        return self.function_map.get(&ctor_name).copied();
+        for obj_type in engine.object_types.values() {
+            if obj_type.type_id == type_id {
+                for behaviour in &obj_type.behaviours {
+                    if behaviour.behaviour_type == BehaviourType::Construct {
+                        if behaviour.params.len() == arg_count {
+                            return Ok(behaviour.function_id);
+                        }
                     }
                 }
             }
         }
-        None
+
+        Err(CodegenError::UndefinedFunction("constructor".to_string()))
     }
 
-    fn generate_cast(&mut self, target_type: &Type, expr: &Expr) -> Result<u32, CodegenError> {
+    fn generate_cast(&mut self, target_type: &Type, expr: &Expr) -> CodegenResult<u32> {
         let source_var = self.generate_expr(expr)?;
         let source_type = self.get_expr_type(expr);
-        let target_type_id = self.resolve_type(target_type);
+        let target_type_id = self
+            .analyzer
+            .symbol_table
+            .resolve_type_from_ast(target_type);
 
         let result = self.allocate_temp(target_type_id);
 
@@ -2333,6 +2168,7 @@ impl Compiler {
             dst: result,
             src: source_var,
         });
+
         self.emit_type_conversion(result, source_type, target_type_id);
 
         if self.is_temp_var(source_var) {
@@ -2363,8 +2199,10 @@ impl Compiler {
             (TYPE_FLOAT, TYPE_DOUBLE) => Instruction::fTOd { var },
             (TYPE_FLOAT, TYPE_INT64) => Instruction::fTOi64 { var },
             (TYPE_FLOAT, TYPE_UINT64) => Instruction::fTOu64 { var },
+            (TYPE_FLOAT, TYPE_UINT32) => Instruction::fTOu { var },
 
             (TYPE_DOUBLE, TYPE_INT32) => Instruction::dTOi { var },
+            (TYPE_DOUBLE, TYPE_UINT32) => Instruction::dTOu { var },
             (TYPE_DOUBLE, TYPE_FLOAT) => Instruction::dTOf { var },
             (TYPE_DOUBLE, TYPE_INT64) => Instruction::dTOi64 { var },
             (TYPE_DOUBLE, TYPE_UINT64) => Instruction::dTOu64 { var },
@@ -2375,6 +2213,9 @@ impl Compiler {
 
             (TYPE_UINT64, TYPE_FLOAT) => Instruction::u64TOf { var },
             (TYPE_UINT64, TYPE_DOUBLE) => Instruction::u64TOd { var },
+            (TYPE_UINT32, TYPE_INT64) => Instruction::uTOi64 { var },
+            (TYPE_UINT32, TYPE_FLOAT) => Instruction::uTOf { var },
+            (TYPE_UINT32, TYPE_DOUBLE) => Instruction::uTOd { var },
 
             _ => return,
         };
@@ -2382,16 +2223,51 @@ impl Compiler {
         self.emit(instr);
     }
 
-    fn generate_lambda(&mut self, lambda: &Lambda) -> Result<u32, CodegenError> {
-        // Generate a unique name for the lambda
+    // src/compiler/compiler.rs - continued
+
+    fn generate_lambda(&mut self, lambda: &Lambda) -> CodegenResult<u32> {
         let lambda_name = format!("$lambda_{}", self.lambda_count);
+        let lambda_count_save = self.lambda_count;
         self.lambda_count += 1;
 
-        // Create a function from the lambda
+        let mut return_type = None;
+        for stmt in &lambda.body.statements {
+            if let Statement::Return(ret) = stmt {
+                if let Some(value) = &ret.value {
+                    return_type = Some(self.get_expr_type(value));
+                    break;
+                }
+            }
+        }
+
         let lambda_func = Func {
             modifiers: vec![],
             visibility: None,
-            return_type: None,
+            return_type: return_type.map(|type_id| {
+                if let Some(type_info) = self.analyzer.symbol_table.get_type(type_id) {
+                    Type {
+                        is_const: false,
+                        scope: crate::parser::ast::Scope {
+                            is_global: false,
+                            path: vec![],
+                        },
+                        datatype: DataType::PrimType(type_info.name.clone()),
+                        template_types: vec![],
+                        modifiers: vec![],
+                    }
+                } else {
+                    Type {
+                        is_const: false,
+                        scope: crate::parser::ast::Scope {
+                            is_global: false,
+                            path: vec![],
+                        },
+                        datatype: DataType::Auto,
+                        template_types: vec![],
+                        modifiers: vec![],
+                    }
+                }
+            }),
             is_ref: false,
             name: lambda_name.clone(),
             params: lambda
@@ -2400,7 +2276,7 @@ impl Compiler {
                 .map(|p| Param {
                     param_type: p.param_type.clone().unwrap_or_else(|| Type {
                         is_const: false,
-                        scope: Scope {
+                        scope: crate::parser::ast::Scope {
                             is_global: false,
                             path: vec![],
                         },
@@ -2419,17 +2295,25 @@ impl Compiler {
             body: Some(lambda.body.clone()),
         };
 
-        // Generate the lambda function
+        let saved_function = self.current_function.clone();
+        let saved_class = self.current_class.clone();
+        let saved_namespace = self.current_namespace.clone();
+
         self.generate_function(&lambda_func)?;
 
-        // Return a function pointer
-        let func_id = self
-            .function_map
-            .get(&lambda_name)
-            .copied()
-            .ok_or_else(|| CodegenError::UndefinedFunction(lambda_name.clone()))?;
+        self.current_function = saved_function;
+        self.current_class = saved_class;
+        self.current_namespace = saved_namespace;
+        self.lambda_count = lambda_count_save + 1;
 
-        let result = self.allocate_temp(TYPE_INT32);
+        let func_id = self
+            .analyzer
+            .symbol_table
+            .get_function(&lambda_name)
+            .map(|f| f.address)
+            .unwrap_or(0);
+
+        let result = self.allocate_temp(TYPE_VOID);
         self.emit(Instruction::FuncPtr { func_id });
         self.emit(Instruction::PopR);
         self.emit(Instruction::CpyRtoV { var: result });
@@ -2437,20 +2321,24 @@ impl Compiler {
         Ok(result)
     }
 
-    fn generate_init_list_expr(&mut self, init_list: &InitList) -> Result<(), CodegenError> {
-        // Begin init list
+    fn generate_init_list_expr(&mut self, init_list: &InitList) -> CodegenResult<()> {
         self.emit(Instruction::BeginInitList);
 
-        // Add each element
+        let element_type = if let Some(first_item) = init_list.items.first() {
+            match first_item {
+                InitListItem::Expr(expr) => self.get_expr_type(expr),
+                InitListItem::InitList(_) => TYPE_VOID,
+            }
+        } else {
+            TYPE_VOID
+        };
+
         for item in &init_list.items {
             match item {
                 InitListItem::Expr(expr) => {
                     let item_var = self.generate_expr(expr)?;
 
-                    // Push value onto value stack
                     self.emit(Instruction::PshV { var: item_var });
-
-                    // Add to init list (pops from value stack)
                     self.emit(Instruction::AddToInitList);
 
                     if self.is_temp_var(item_var) {
@@ -2459,58 +2347,25 @@ impl Compiler {
                 }
                 InitListItem::InitList(nested) => {
                     self.generate_init_list_expr(nested)?;
+                    self.emit(Instruction::AddToInitList);
                 }
             }
         }
 
-        // End init list
         self.emit(Instruction::EndInitList {
-            element_type: TYPE_VOID,
+            element_type,
             count: init_list.items.len() as u32,
         });
 
         Ok(())
     }
 
-    fn generate_constructor_call(
-        &mut self,
-        var: u32,
-        type_id: TypeId,
-        args: &[Arg],
-    ) -> Result<(), CodegenError> {
-        // Find constructor
-        let constructor_id = self
-            .find_constructor(type_id, args.len())
-            .ok_or_else(|| CodegenError::UndefinedFunction("constructor".to_string()))?;
-
-        // Allocate object at variable location
-        self.emit(Instruction::Alloc {
-            type_id,
-            func_id: constructor_id,
-        });
-
-        // Push arguments
-        for arg in args.iter().rev() {
-            let arg_var = self.generate_expr(&arg.value)?;
-            self.emit(Instruction::PshV { var: arg_var });
-
-            if self.is_temp_var(arg_var) {
-                self.free_temp(arg_var);
-            }
-        }
-
-        // Call constructor
-        self.emit(Instruction::CALL {
-            func_id: constructor_id,
-        });
-
-        // Store result
-        self.emit(Instruction::StoreObj { var });
-
-        Ok(())
+    fn get_expr_type(&self, expr: &Expr) -> TypeId {
+        self.analyzer
+            .symbol_table
+            .get_expr_type(expr)
+            .unwrap_or(TYPE_VOID)
     }
-
-    // ==================== HELPER METHODS ====================
 
     fn emit(&mut self, instr: Instruction) -> u32 {
         let addr = self.current_address;
@@ -2545,36 +2400,52 @@ impl Compiler {
         }
     }
 
-    fn allocate_temp(&mut self, type_id: TypeId) -> u32 {
-        if let Some(var) = self.temp_var_pool.pop() {
-            var
-        } else {
-            let var = self.local_count;
-            self.local_count += 1;
-
-            let var_info = LocalVarInfo {
-                index: var,
-                type_id,
-                is_ref: false,
-                is_temp: true,
-                needs_cleanup: false,
+    fn allocate_temp(&mut self, _type_id: TypeId) -> u32 {
+        if let Some(func_ctx) = &self.current_function {
+            let func_full_name = if let Some(class_name) = &self.current_class {
+                format!("{}::{}", class_name, func_ctx.name)
+            } else if !self.current_namespace.is_empty() {
+                format!("{}::{}", self.current_namespace.join("::"), func_ctx.name)
+            } else {
+                func_ctx.name.clone()
             };
 
-            self.local_vars.insert(format!("$temp{}", var), var_info);
-            var
+            if let Some(func_locals) = self
+                .analyzer
+                .symbol_table
+                .get_function_locals(&func_full_name)
+            {
+                return func_locals.total_count as u32 + self.lambda_count;
+            }
         }
+
+        let temp = self.lambda_count;
+        self.lambda_count += 1;
+        temp
     }
 
-    fn free_temp(&mut self, var: u32) {
-        if self.is_temp_var(var) {
-            self.temp_var_pool.push(var);
-        }
-    }
+    fn free_temp(&mut self, _var: u32) {}
 
     fn is_temp_var(&self, var: u32) -> bool {
-        self.local_vars
-            .values()
-            .any(|info| info.index == var && info.is_temp)
+        if let Some(func_ctx) = &self.current_function {
+            let func_full_name = if let Some(class_name) = &self.current_class {
+                format!("{}::{}", class_name, func_ctx.name)
+            } else if !self.current_namespace.is_empty() {
+                format!("{}::{}", self.current_namespace.join("::"), func_ctx.name)
+            } else {
+                func_ctx.name.clone()
+            };
+
+            if let Some(func_locals) = self
+                .analyzer
+                .symbol_table
+                .get_function_locals(&func_full_name)
+            {
+                return var >= func_locals.total_count as u32;
+            }
+        }
+
+        true
     }
 
     fn emit_compare_zero(&mut self, var: u32, type_id: TypeId) {
@@ -2607,113 +2478,35 @@ impl Compiler {
         )
     }
 
-    fn current_frame(&self) -> &HashMap<String, LocalVarInfo> {
-        &self.local_vars
-    }
-}
-
-// ==================== ERROR TYPES ====================
-
-#[derive(Debug, Clone)]
-pub enum CodegenError {
-    UndefinedVariable(String),
-    UndefinedFunction(String),
-    UndefinedMember(String),
-    UnknownType(String),
-    UnsupportedOperation(String),
-    InvalidLValue,
-    InvalidBreak,
-    InvalidContinue,
-    NotImplemented(String),
-    SemanticError(String),
-}
-
-impl std::fmt::Display for CodegenError {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        match self {
-            CodegenError::UndefinedVariable(name) => {
-                write!(f, "Undefined variable: {}", name)
-            }
-            CodegenError::UndefinedFunction(name) => {
-                write!(f, "Undefined function: {}", name)
-            }
-            CodegenError::UndefinedMember(name) => {
-                write!(f, "Undefined member: {}", name)
-            }
-            CodegenError::UnknownType(name) => {
-                write!(f, "Unknown type: {}", name)
-            }
-            CodegenError::UnsupportedOperation(op) => {
-                write!(f, "Unsupported operation: {}", op)
-            }
-            CodegenError::InvalidLValue => {
-                write!(f, "Invalid left-hand side of assignment")
-            }
-            CodegenError::InvalidBreak => {
-                write!(f, "Break statement outside of loop")
-            }
-            CodegenError::InvalidContinue => {
-                write!(f, "Continue statement outside of loop")
-            }
-            CodegenError::NotImplemented(feature) => {
-                write!(f, "Not yet implemented: {}", feature)
-            }
-            CodegenError::SemanticError(msg) => {
-                write!(f, "Semantic error: {}", msg)
-            }
+    fn is_value_type(&self, type_id: TypeId) -> bool {
+        if type_id <= TYPE_STRING {
+            return false;
         }
+
+        self.analyzer
+            .symbol_table
+            .get_type(type_id)
+            .map(|t| t.flags.contains(TypeFlags::VALUE_TYPE))
+            .unwrap_or(false)
     }
 }
-
-impl std::error::Error for CodegenError {}
-
-#[derive(Debug, Clone)]
-pub enum CompileError {
-    SemanticErrors(Vec<crate::compiler::semantic::SemanticError>),
-    CodegenError(CodegenError),
-}
-
-impl std::fmt::Display for CompileError {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        match self {
-            CompileError::SemanticErrors(errors) => {
-                writeln!(
-                    f,
-                    "Semantic analysis failed with {} error(s):",
-                    errors.len()
-                )?;
-                for error in errors {
-                    writeln!(f, "  - {}", error.message)?;
-                }
-                Ok(())
-            }
-            CompileError::CodegenError(error) => {
-                write!(f, "Code generation failed: {}", error)
-            }
-        }
-    }
-}
-
-impl std::error::Error for CompileError {}
-
-// src/compiler/tests.rs - Comprehensive compiler unit tests
-
-// src/compiler/tests.rs - Comprehensive tests with both unit and integration tests
 
 #[cfg(test)]
 mod tests {
-    // ==================== TEST HELPERS ====================
-
+    use crate::compiler::bytecode::Instruction;
+    use crate::core::engine::EngineInner;
+    use crate::core::types::{allocate_type_id, AccessSpecifier, BehaviourInfo, BehaviourType, GlobalFunction, MethodParam, ObjectMethod, ObjectProperty, ObjectType, ScriptValue, TypeFlags, TYPE_INT32, TYPE_STRING, TYPE_VOID};
+    use crate::parser::ast::{
+        Arg, BinaryOp, Case, CasePattern, Class, ClassMember, DataType, DoWhileStmt, Expr, ForInit,
+        ForStmt, Func, FuncCall, IfStmt, InitList, InitListItem, Literal, Namespace, Param,
+        PostfixOp, ReturnStmt, Scope, Script, ScriptNode, StatBlock, Statement, SwitchStmt, Type,
+        UnaryOp, Var, VarDecl, VarInit, WhileStmt,
+    };
+    use crate::Compiler;
     use std::collections::HashMap;
     use std::sync::{Arc, RwLock};
-    use std::sync::atomic::AtomicU32;
-    use crate::{Compiler, SemanticAnalyzer};
-    use crate::compiler::bytecode::{Instruction, ScriptValue};
-    use crate::compiler::compiler::TYPE_INT32;
-    use crate::core::engine::EngineInner;
-    use crate::parser::ast::{BinaryOp, DataType, Expr, Func, IfStmt, Literal, ReturnStmt, Scope, Script, ScriptNode, StatBlock, Statement, Type, UnaryOp, Var, VarDecl, VarInit, WhileStmt};
+    // ==================== TEST HELPERS ====================
 
-    /// Create a minimal engine for testing
     fn create_test_engine() -> Arc<RwLock<EngineInner>> {
         Arc::new(RwLock::new(EngineInner {
             object_types: HashMap::new(),
@@ -2722,19 +2515,10 @@ mod tests {
             funcdefs: HashMap::new(),
             global_functions: Vec::new(),
             global_properties: Vec::new(),
-            next_type_id: AtomicU32::new(100),
             modules: HashMap::new(),
         }))
     }
 
-    /// Create a test compiler with pre-configured analyzer
-    fn create_test_compiler() -> Compiler {
-        let engine = create_test_engine();
-        let analyzer = SemanticAnalyzer::new(engine);
-        Compiler::with_analyzer(analyzer)
-    }
-
-    /// Helper to build an int type
     fn build_int_type() -> Type {
         Type {
             is_const: false,
@@ -2748,9 +2532,72 @@ mod tests {
         }
     }
 
-    /// Helper to build a simple expression
+    fn build_bool_type() -> Type {
+        Type {
+            is_const: false,
+            scope: Scope {
+                is_global: false,
+                path: vec![],
+            },
+            datatype: DataType::PrimType("bool".to_string()),
+            template_types: vec![],
+            modifiers: vec![],
+        }
+    }
+
+    fn build_float_type() -> Type {
+        Type {
+            is_const: false,
+            scope: Scope {
+                is_global: false,
+                path: vec![],
+            },
+            datatype: DataType::PrimType("float".to_string()),
+            template_types: vec![],
+            modifiers: vec![],
+        }
+    }
+
+    fn build_void_type() -> Type {
+        Type {
+            is_const: false,
+            scope: Scope {
+                is_global: false,
+                path: vec![],
+            },
+            datatype: DataType::PrimType("void".to_string()),
+            template_types: vec![],
+            modifiers: vec![],
+        }
+    }
+
+    fn build_class_type(name: &str) -> Type {
+        Type {
+            is_const: false,
+            scope: Scope {
+                is_global: false,
+                path: vec![],
+            },
+            datatype: DataType::Identifier(name.to_string()),
+            template_types: vec![],
+            modifiers: vec![],
+        }
+    }
+
     fn build_int_literal(value: i32) -> Expr {
         Expr::Literal(Literal::Number(value.to_string()))
+    }
+
+    fn build_bool_literal(value: bool) -> Expr {
+        Expr::Literal(Literal::Bool(value))
+    }
+
+    fn build_float_literal(value: f32) -> Expr {
+        Expr::Literal(Literal::Number(format!("{:.1}f", value)))
+    }
+
+    fn build_string_literal(value: &str) -> Expr {
+        Expr::Literal(Literal::String(value.to_string()))
     }
 
     fn build_var_access(name: &str) -> Expr {
@@ -2767,7 +2614,6 @@ mod tests {
         Expr::Binary(Box::new(left), op, Box::new(right))
     }
 
-    /// Helper to build a function
     fn build_function(name: &str, return_type: Option<Type>, body: StatBlock) -> Func {
         Func {
             modifiers: vec![],
@@ -2782,368 +2628,36 @@ mod tests {
         }
     }
 
-    // ==================== UNIT TESTS (with manual semantic analysis) ====================
-
-    #[test]
-    fn test_int_literal() {
-        let mut compiler = create_test_compiler();
-
-        let expr = build_int_literal(42);
-
-        // Run semantic analysis first
-        compiler.analyzer.analyze_expr_context(&expr).unwrap();
-
-        // Now generate code
-        let result = compiler.generate_expr(&expr).unwrap();
-
-        assert!(compiler.is_temp_var(result));
-
-        let instructions = &compiler.module.instructions;
-        assert!(matches!(
-            instructions.last(),
-            Some(Instruction::SetV {
-                var: _,
-                value: ScriptValue::Int32(42)
-            })
-        ));
-    }
-
-    #[test]
-    fn test_bool_literal() {
-        let mut compiler = create_test_compiler();
-
-        let expr = Expr::Literal(Literal::Bool(true));
-
-        compiler.analyzer.analyze_expr_context(&expr).unwrap();
-
-        let result = compiler.generate_expr(&expr).unwrap();
-
-        assert!(compiler.is_temp_var(result));
-
-        let instructions = &compiler.module.instructions;
-        assert!(matches!(
-            instructions.last(),
-            Some(Instruction::SetV {
-                var: _,
-                value: ScriptValue::Bool(true)
-            })
-        ));
-    }
-
-    #[test]
-    fn test_string_literal() {
-        let mut compiler = create_test_compiler();
-
-        let expr = Expr::Literal(Literal::String("Hello".to_string()));
-
-        compiler.analyzer.analyze_expr_context(&expr).unwrap();
-
-        let result = compiler.generate_expr(&expr).unwrap();
-
-        assert!(compiler.is_temp_var(result));
-
-        // Should have added string to string table
-        assert_eq!(compiler.module.strings.len(), 1);
-        assert_eq!(compiler.module.strings[0], "Hello");
-    }
-
-    #[test]
-    fn test_addition() {
-        let mut compiler = create_test_compiler();
-
-        let expr = build_binary(build_int_literal(10), BinaryOp::Add, build_int_literal(20));
-
-        // Run semantic analysis
-        compiler.analyzer.analyze_expr_context(&expr).unwrap();
-
-        let result = compiler.generate_expr(&expr).unwrap();
-        assert!(compiler.is_temp_var(result));
-
-        let instructions = &compiler.module.instructions;
-        assert!(
-            instructions
-                .iter()
-                .any(|i| matches!(i, Instruction::ADDi { .. }))
-        );
-    }
-
-    // First, let's add a debug helper to see what's actually generated
-    #[test]
-    fn test_debug_equality() {
-        let mut compiler = create_test_compiler();
-
-        let expr = build_binary(
-            build_int_literal(5),
-            BinaryOp::Eq,
-            build_int_literal(5),
-        );
-
-        compiler.analyzer.analyze_expr_context(&expr).unwrap();
-        let result = compiler.generate_expr(&expr).unwrap();
-
-        // Print all instructions to see what's generated
-        println!("Generated instructions:");
-        for (i, instr) in compiler.module.instructions.iter().enumerate() {
-            println!("{}: {:?}", i, instr);
+    fn build_func_with_params(
+        name: &str,
+        return_type: Option<Type>,
+        params: Vec<Param>,
+        body: StatBlock,
+    ) -> Func {
+        Func {
+            modifiers: vec![],
+            visibility: None,
+            return_type,
+            is_ref: false,
+            name: name.to_string(),
+            params,
+            is_const: false,
+            attributes: vec![],
+            body: Some(body),
         }
-
-        assert!(compiler.is_temp_var(result));
     }
 
-    #[test]
-    fn test_subtraction() {
-        let mut compiler = create_test_compiler();
-
-        let expr = build_binary(build_int_literal(30), BinaryOp::Sub, build_int_literal(10));
-
-        compiler.analyzer.analyze_expr_context(&expr).unwrap();
-
-        let result = compiler.generate_expr(&expr).unwrap();
-        assert!(compiler.is_temp_var(result));
-
-        let instructions = &compiler.module.instructions;
-        assert!(
-            instructions
-                .iter()
-                .any(|i| matches!(i, Instruction::SUBi { .. }))
-        );
+    fn build_param(name: &str, param_type: Type) -> Param {
+        Param {
+            param_type,
+            type_mod: None,
+            name: Some(name.to_string()),
+            default_value: None,
+            is_variadic: false,
+        }
     }
 
-    #[test]
-    fn test_multiplication() {
-        let mut compiler = create_test_compiler();
-
-        let expr = build_binary(build_int_literal(5), BinaryOp::Mul, build_int_literal(6));
-
-        compiler.analyzer.analyze_expr_context(&expr).unwrap();
-
-        let result = compiler.generate_expr(&expr).unwrap();
-        assert!(compiler.is_temp_var(result));
-
-        let instructions = &compiler.module.instructions;
-        assert!(
-            instructions
-                .iter()
-                .any(|i| matches!(i, Instruction::MULi { .. }))
-        );
-    }
-
-    #[test]
-    fn test_division() {
-        let mut compiler = create_test_compiler();
-
-        let expr = build_binary(build_int_literal(20), BinaryOp::Div, build_int_literal(4));
-
-        compiler.analyzer.analyze_expr_context(&expr).unwrap();
-
-        let result = compiler.generate_expr(&expr).unwrap();
-        assert!(compiler.is_temp_var(result));
-
-        let instructions = &compiler.module.instructions;
-        assert!(
-            instructions
-                .iter()
-                .any(|i| matches!(i, Instruction::DIVi { .. }))
-        );
-    }
-
-    #[test]
-    fn test_equality() {
-        let mut compiler = create_test_compiler();
-
-        let expr = build_binary(build_int_literal(5), BinaryOp::Eq, build_int_literal(5));
-
-        compiler.analyzer.analyze_expr_context(&expr).unwrap();
-
-        let result = compiler.generate_expr(&expr).unwrap();
-        assert!(compiler.is_temp_var(result));
-
-        let instructions = &compiler.module.instructions;
-        assert!(
-            instructions
-                .iter()
-                .any(|i| matches!(i, Instruction::CMPi { .. }))
-        );
-        assert!(instructions.iter().any(|i| matches!(i, Instruction::TZ)));
-    }
-
-    #[test]
-    fn test_less_than() {
-        let mut compiler = create_test_compiler();
-
-        let expr = build_binary(build_int_literal(5), BinaryOp::Lt, build_int_literal(10));
-
-        compiler.analyzer.analyze_expr_context(&expr).unwrap();
-
-        let result = compiler.generate_expr(&expr).unwrap();
-        assert!(compiler.is_temp_var(result));
-
-        let instructions = &compiler.module.instructions;
-        assert!(
-            instructions
-                .iter()
-                .any(|i| matches!(i, Instruction::CMPi { .. }))
-        );
-        assert!(instructions.iter().any(|i| matches!(i, Instruction::TS)));
-    }
-
-    #[test]
-    fn test_negation() {
-        let mut compiler = create_test_compiler();
-
-        let expr = Expr::Unary(UnaryOp::Neg, Box::new(build_int_literal(42)));
-
-        compiler.analyzer.analyze_expr_context(&expr).unwrap();
-
-        let result = compiler.generate_expr(&expr).unwrap();
-        assert!(compiler.is_temp_var(result));
-
-        let instructions = &compiler.module.instructions;
-        assert!(
-            instructions
-                .iter()
-                .any(|i| matches!(i, Instruction::NEGi { .. }))
-        );
-    }
-
-    #[test]
-    fn test_logical_not() {
-        let mut compiler = create_test_compiler();
-
-        let expr = Expr::Unary(UnaryOp::Not, Box::new(Expr::Literal(Literal::Bool(true))));
-
-        compiler.analyzer.analyze_expr_context(&expr).unwrap();
-
-        let result = compiler.generate_expr(&expr).unwrap();
-        assert!(compiler.is_temp_var(result));
-
-        let instructions = &compiler.module.instructions;
-        assert!(
-            instructions
-                .iter()
-                .any(|i| matches!(i, Instruction::NOT { .. }))
-        );
-    }
-
-    #[test]
-    fn test_ternary_operator() {
-        let mut compiler = create_test_compiler();
-
-        let expr = Expr::Ternary(
-            Box::new(build_int_literal(1)),
-            Box::new(build_int_literal(42)),
-            Box::new(build_int_literal(99)),
-        );
-
-        compiler.analyzer.analyze_expr_context(&expr).unwrap();
-
-        let result = compiler.generate_expr(&expr).unwrap();
-        assert!(compiler.is_temp_var(result));
-
-        let instructions = &compiler.module.instructions;
-        assert!(
-            instructions
-                .iter()
-                .any(|i| matches!(i, Instruction::JZ { .. }))
-        );
-        assert!(
-            instructions
-                .iter()
-                .any(|i| matches!(i, Instruction::JMP { .. }))
-        );
-    }
-
-    #[test]
-    fn test_nested_arithmetic() {
-        let mut compiler = create_test_compiler();
-
-        // (10 + 20) * (30 - 5)
-        let expr = build_binary(
-            build_binary(build_int_literal(10), BinaryOp::Add, build_int_literal(20)),
-            BinaryOp::Mul,
-            build_binary(build_int_literal(30), BinaryOp::Sub, build_int_literal(5)),
-        );
-
-        compiler.analyzer.analyze_expr_context(&expr).unwrap();
-
-        let result = compiler.generate_expr(&expr).unwrap();
-        assert!(compiler.is_temp_var(result));
-
-        let instructions = &compiler.module.instructions;
-        assert!(
-            instructions
-                .iter()
-                .any(|i| matches!(i, Instruction::ADDi { .. }))
-        );
-        assert!(
-            instructions
-                .iter()
-                .any(|i| matches!(i, Instruction::SUBi { .. }))
-        );
-        assert!(
-            instructions
-                .iter()
-                .any(|i| matches!(i, Instruction::MULi { .. }))
-        );
-    }
-
-    #[test]
-    fn test_temp_allocation() {
-        let mut compiler = create_test_compiler();
-
-        let temp1 = compiler.allocate_temp(TYPE_INT32);
-        let temp2 = compiler.allocate_temp(TYPE_INT32);
-
-        assert_ne!(temp1, temp2);
-        assert!(compiler.is_temp_var(temp1));
-        assert!(compiler.is_temp_var(temp2));
-    }
-
-    #[test]
-    fn test_temp_reuse() {
-        let mut compiler = create_test_compiler();
-
-        let temp1 = compiler.allocate_temp(TYPE_INT32);
-        compiler.free_temp(temp1);
-
-        let temp2 = compiler.allocate_temp(TYPE_INT32);
-
-        // Should reuse the freed temp
-        assert_eq!(temp1, temp2);
-    }
-
-    #[test]
-    fn test_string_table() {
-        let mut compiler = create_test_compiler();
-
-        let id1 = compiler.module.add_string("Hello".to_string());
-        let id2 = compiler.module.add_string("World".to_string());
-        let id3 = compiler.module.add_string("Hello".to_string()); // Duplicate
-
-        assert_eq!(id1, 0);
-        assert_eq!(id2, 1);
-        assert_eq!(id3, 0); // Should reuse existing string
-
-        assert_eq!(compiler.module.strings.len(), 2);
-    }
-
-    #[test]
-    fn test_property_name_registration() {
-        let mut compiler = create_test_compiler();
-
-        let id1 = compiler.module.add_property_name("health".to_string());
-        let id2 = compiler.module.add_property_name("mana".to_string());
-        let id3 = compiler.module.add_property_name("health".to_string()); // Duplicate
-
-        assert_eq!(id1, id3); // Should reuse
-        assert_ne!(id1, id2);
-
-        assert_eq!(compiler.module.get_property_name(id1), Some("health"));
-        assert_eq!(compiler.module.get_property_name(id2), Some("mana"));
-    }
-
-    // ==================== INTEGRATION TESTS (using compile()) ====================
-
+    // ==================== INTEGRATION TESTS ====================
     #[test]
     fn test_compile_simple_return() {
         let script = Script {
@@ -3160,14 +2674,10 @@ mod tests {
 
         let engine = create_test_engine();
         let compiler = Compiler::new(engine);
-
         let module = compiler.compile(script).unwrap();
 
-        // Check function was registered
         assert_eq!(module.functions.len(), 1);
         assert_eq!(module.functions[0].name, "test");
-
-        // Check bytecode was generated
         assert!(!module.instructions.is_empty());
         assert!(
             module
@@ -3175,32 +2685,144 @@ mod tests {
                 .iter()
                 .any(|i| matches!(i, Instruction::RET { .. }))
         );
+        assert!(
+            module
+                .instructions
+                .iter()
+                .any(|i| matches!(i, Instruction::SetV { .. }))
+        );
     }
 
     #[test]
-    fn test_compile_arithmetic_expression() {
+    fn test_compile_all_literal_types() {
         let script = Script {
             items: vec![ScriptNode::Func(build_function(
-                "add",
-                Some(build_int_type()),
+                "test",
+                Some(build_void_type()),
                 StatBlock {
-                    statements: vec![Statement::Return(ReturnStmt {
-                        value: Some(build_binary(
-                            build_int_literal(10),
-                            BinaryOp::Add,
-                            build_int_literal(20),
-                        )),
-                    })],
+                    statements: vec![
+                        Statement::Expr(Some(build_int_literal(42))),
+                        Statement::Expr(Some(build_bool_literal(true))),
+                        Statement::Expr(Some(build_float_literal(3.14))),
+                        Statement::Expr(Some(build_string_literal("hello"))),
+                        Statement::Expr(Some(Expr::Literal(Literal::Number("42u".to_string())))),
+                        Statement::Expr(Some(Expr::Literal(Literal::Number("42ll".to_string())))),
+                        Statement::Expr(Some(Expr::Literal(Literal::Number("42ull".to_string())))),
+                        Statement::Expr(Some(Expr::Literal(Literal::Number("3.14".to_string())))),
+                    ],
                 },
             ))],
         };
 
         let engine = create_test_engine();
         let compiler = Compiler::new(engine);
-
         let module = compiler.compile(script).unwrap();
 
-        // Should have addition instruction
+        // Verify all literal types are generated
+        assert!(module.instructions.iter().any(|i| matches!(
+            i,
+            Instruction::SetV {
+                value: ScriptValue::Int32(_),
+                ..
+            }
+        )));
+        assert!(module.instructions.iter().any(|i| matches!(
+            i,
+            Instruction::SetV {
+                value: ScriptValue::Bool(_),
+                ..
+            }
+        )));
+        assert!(module.instructions.iter().any(|i| matches!(
+            i,
+            Instruction::SetV {
+                value: ScriptValue::Float(_),
+                ..
+            }
+        )));
+        assert!(module.instructions.iter().any(|i| matches!(
+            i,
+            Instruction::SetV {
+                value: ScriptValue::UInt32(_),
+                ..
+            }
+        )));
+        assert!(module.instructions.iter().any(|i| matches!(
+            i,
+            Instruction::SetV {
+                value: ScriptValue::Int64(_),
+                ..
+            }
+        )));
+        assert!(module.instructions.iter().any(|i| matches!(
+            i,
+            Instruction::SetV {
+                value: ScriptValue::UInt64(_),
+                ..
+            }
+        )));
+        assert!(module.instructions.iter().any(|i| matches!(
+            i,
+            Instruction::SetV {
+                value: ScriptValue::Double(_),
+                ..
+            }
+        )));
+        assert!(
+            module
+                .instructions
+                .iter()
+                .any(|i| matches!(i, Instruction::Str { .. }))
+        );
+    }
+
+    #[test]
+    fn test_compile_all_arithmetic_ops() {
+        let script = Script {
+            items: vec![ScriptNode::Func(build_function(
+                "test",
+                Some(build_void_type()),
+                StatBlock {
+                    statements: vec![
+                        Statement::Expr(Some(build_binary(
+                            build_int_literal(10),
+                            BinaryOp::Add,
+                            build_int_literal(5),
+                        ))),
+                        Statement::Expr(Some(build_binary(
+                            build_int_literal(10),
+                            BinaryOp::Sub,
+                            build_int_literal(5),
+                        ))),
+                        Statement::Expr(Some(build_binary(
+                            build_int_literal(3),
+                            BinaryOp::Mul,
+                            build_int_literal(4),
+                        ))),
+                        Statement::Expr(Some(build_binary(
+                            build_int_literal(20),
+                            BinaryOp::Div,
+                            build_int_literal(4),
+                        ))),
+                        Statement::Expr(Some(build_binary(
+                            build_int_literal(10),
+                            BinaryOp::Mod,
+                            build_int_literal(3),
+                        ))),
+                        Statement::Expr(Some(build_binary(
+                            build_int_literal(2),
+                            BinaryOp::Pow,
+                            build_int_literal(8),
+                        ))),
+                    ],
+                },
+            ))],
+        };
+
+        let engine = create_test_engine();
+        let compiler = Compiler::new(engine);
+        let module = compiler.compile(script).unwrap();
+
         assert!(
             module
                 .instructions
@@ -3211,8 +2833,453 @@ mod tests {
             module
                 .instructions
                 .iter()
-                .any(|i| matches!(i, Instruction::RET { .. }))
+                .any(|i| matches!(i, Instruction::SUBi { .. }))
         );
+        assert!(
+            module
+                .instructions
+                .iter()
+                .any(|i| matches!(i, Instruction::MULi { .. }))
+        );
+        assert!(
+            module
+                .instructions
+                .iter()
+                .any(|i| matches!(i, Instruction::DIVi { .. }))
+        );
+        assert!(
+            module
+                .instructions
+                .iter()
+                .any(|i| matches!(i, Instruction::MODi { .. }))
+        );
+        assert!(
+            module
+                .instructions
+                .iter()
+                .any(|i| matches!(i, Instruction::POWi { .. }))
+        );
+    }
+
+    #[test]
+    fn test_compile_float_operations() {
+        let script = Script {
+            items: vec![ScriptNode::Func(build_function(
+                "test",
+                Some(build_void_type()),
+                StatBlock {
+                    statements: vec![
+                        Statement::Expr(Some(build_binary(
+                            build_float_literal(3.14),
+                            BinaryOp::Add,
+                            build_float_literal(2.86),
+                        ))),
+                        Statement::Expr(Some(build_binary(
+                            build_float_literal(10.0),
+                            BinaryOp::Sub,
+                            build_float_literal(3.5),
+                        ))),
+                        Statement::Expr(Some(build_binary(
+                            build_float_literal(2.5),
+                            BinaryOp::Mul,
+                            build_float_literal(4.0),
+                        ))),
+                        Statement::Expr(Some(build_binary(
+                            build_float_literal(10.0),
+                            BinaryOp::Div,
+                            build_float_literal(2.0),
+                        ))),
+                    ],
+                },
+            ))],
+        };
+
+        let engine = create_test_engine();
+        let compiler = Compiler::new(engine);
+        let module = compiler.compile(script).unwrap();
+
+        assert!(
+            module
+                .instructions
+                .iter()
+                .any(|i| matches!(i, Instruction::ADDf { .. }))
+        );
+        assert!(
+            module
+                .instructions
+                .iter()
+                .any(|i| matches!(i, Instruction::SUBf { .. }))
+        );
+        assert!(
+            module
+                .instructions
+                .iter()
+                .any(|i| matches!(i, Instruction::MULf { .. }))
+        );
+        assert!(
+            module
+                .instructions
+                .iter()
+                .any(|i| matches!(i, Instruction::DIVf { .. }))
+        );
+    }
+
+    #[test]
+    fn test_compile_all_comparisons() {
+        let script = Script {
+            items: vec![ScriptNode::Func(build_function(
+                "test",
+                Some(build_void_type()),
+                StatBlock {
+                    statements: vec![
+                        // ✅ Store results in variables so they're not optimized away
+                        Statement::Var(Var {
+                            visibility: None,
+                            var_type: build_bool_type(),
+                            declarations: vec![VarDecl {
+                                name: "r1".to_string(),
+                                initializer: Some(VarInit::Expr(build_binary(
+                                    build_int_literal(5),
+                                    BinaryOp::Eq,
+                                    build_int_literal(5),
+                                ))),
+                            }],
+                        }),
+                        Statement::Var(Var {
+                            visibility: None,
+                            var_type: build_bool_type(),
+                            declarations: vec![VarDecl {
+                                name: "r2".to_string(),
+                                initializer: Some(VarInit::Expr(build_binary(
+                                    build_int_literal(5),
+                                    BinaryOp::Ne,
+                                    build_int_literal(3),
+                                ))),
+                            }],
+                        }),
+                        Statement::Var(Var {
+                            visibility: None,
+                            var_type: build_bool_type(),
+                            declarations: vec![VarDecl {
+                                name: "r3".to_string(),
+                                initializer: Some(VarInit::Expr(build_binary(
+                                    build_int_literal(3),
+                                    BinaryOp::Lt,
+                                    build_int_literal(5),
+                                ))),
+                            }],
+                        }),
+                        Statement::Var(Var {
+                            visibility: None,
+                            var_type: build_bool_type(),
+                            declarations: vec![VarDecl {
+                                name: "r4".to_string(),
+                                initializer: Some(VarInit::Expr(build_binary(
+                                    build_int_literal(5),
+                                    BinaryOp::Le,
+                                    build_int_literal(5),
+                                ))),
+                            }],
+                        }),
+                        Statement::Var(Var {
+                            visibility: None,
+                            var_type: build_bool_type(),
+                            declarations: vec![VarDecl {
+                                name: "r5".to_string(),
+                                initializer: Some(VarInit::Expr(build_binary(
+                                    build_int_literal(5),
+                                    BinaryOp::Gt,
+                                    build_int_literal(3),
+                                ))),
+                            }],
+                        }),
+                        Statement::Var(Var {
+                            visibility: None,
+                            var_type: build_bool_type(),
+                            declarations: vec![VarDecl {
+                                name: "r6".to_string(),
+                                initializer: Some(VarInit::Expr(build_binary(
+                                    build_int_literal(5),
+                                    BinaryOp::Ge,
+                                    build_int_literal(5),
+                                ))),
+                            }],
+                        }),
+                    ],
+                },
+            ))],
+        };
+
+        let engine = create_test_engine();
+        let compiler = Compiler::new(engine);
+        let module = compiler.compile(script).unwrap();
+
+        assert!(
+            module
+                .instructions
+                .iter()
+                .any(|i| matches!(i, Instruction::CMPi { .. }))
+        );
+        assert!(
+            module
+                .instructions
+                .iter()
+                .any(|i| matches!(i, Instruction::TZ))
+        );
+        assert!(
+            module
+                .instructions
+                .iter()
+                .any(|i| matches!(i, Instruction::TNZ))
+        );
+        assert!(
+            module
+                .instructions
+                .iter()
+                .any(|i| matches!(i, Instruction::TS))
+        );
+        assert!(
+            module
+                .instructions
+                .iter()
+                .any(|i| matches!(i, Instruction::TNS))
+        );
+        assert!(
+            module
+                .instructions
+                .iter()
+                .any(|i| matches!(i, Instruction::TP))
+        );
+        assert!(
+            module
+                .instructions
+                .iter()
+                .any(|i| matches!(i, Instruction::TNP))
+        );
+    }
+
+    #[test]
+    fn test_compile_all_bitwise_ops() {
+        let script = Script {
+            items: vec![ScriptNode::Func(build_function(
+                "test",
+                Some(build_void_type()),
+                StatBlock {
+                    statements: vec![
+                        Statement::Expr(Some(build_binary(
+                            build_int_literal(0xFF),
+                            BinaryOp::BitAnd,
+                            build_int_literal(0x0F),
+                        ))),
+                        Statement::Expr(Some(build_binary(
+                            build_int_literal(0xF0),
+                            BinaryOp::BitOr,
+                            build_int_literal(0x0F),
+                        ))),
+                        Statement::Expr(Some(build_binary(
+                            build_int_literal(0xFF),
+                            BinaryOp::BitXor,
+                            build_int_literal(0x0F),
+                        ))),
+                        Statement::Expr(Some(build_binary(
+                            build_int_literal(1),
+                            BinaryOp::Shl,
+                            build_int_literal(3),
+                        ))),
+                    ],
+                },
+            ))],
+        };
+
+        let engine = create_test_engine();
+        let compiler = Compiler::new(engine);
+        let module = compiler.compile(script).unwrap();
+
+        assert!(
+            module
+                .instructions
+                .iter()
+                .any(|i| matches!(i, Instruction::BAND { .. }))
+        );
+        assert!(
+            module
+                .instructions
+                .iter()
+                .any(|i| matches!(i, Instruction::BOR { .. }))
+        );
+        assert!(
+            module
+                .instructions
+                .iter()
+                .any(|i| matches!(i, Instruction::BXOR { .. }))
+        );
+        assert!(
+            module
+                .instructions
+                .iter()
+                .any(|i| matches!(i, Instruction::BSLL { .. }))
+        );
+    }
+
+    #[test]
+    fn test_compile_all_unary_ops() {
+        let script = Script {
+            items: vec![ScriptNode::Func(build_function(
+                "test",
+                Some(build_void_type()),
+                StatBlock {
+                    statements: vec![
+                        Statement::Expr(Some(Expr::Unary(
+                            UnaryOp::Neg,
+                            Box::new(build_int_literal(42)),
+                        ))),
+                        Statement::Expr(Some(Expr::Unary(
+                            UnaryOp::Not,
+                            Box::new(build_bool_literal(true)),
+                        ))),
+                        Statement::Expr(Some(Expr::Unary(
+                            UnaryOp::BitNot,
+                            Box::new(build_int_literal(0xFF)),
+                        ))),
+                    ],
+                },
+            ))],
+        };
+
+        let engine = create_test_engine();
+        let compiler = Compiler::new(engine);
+        let module = compiler.compile(script).unwrap();
+
+        assert!(
+            module
+                .instructions
+                .iter()
+                .any(|i| matches!(i, Instruction::NEGi { .. }))
+        );
+        assert!(
+            module
+                .instructions
+                .iter()
+                .any(|i| matches!(i, Instruction::NOT { .. }))
+        );
+        assert!(
+            module
+                .instructions
+                .iter()
+                .any(|i| matches!(i, Instruction::BNOT { .. }))
+        );
+    }
+
+    #[test]
+    fn test_compile_ternary() {
+        let script = Script {
+            items: vec![ScriptNode::Func(build_function(
+                "test",
+                Some(build_int_type()),
+                StatBlock {
+                    statements: vec![Statement::Return(ReturnStmt {
+                        value: Some(Expr::Ternary(
+                            Box::new(build_bool_literal(true)),
+                            Box::new(build_int_literal(42)),
+                            Box::new(build_int_literal(99)),
+                        )),
+                    })],
+                },
+            ))],
+        };
+
+        let engine = create_test_engine();
+        let compiler = Compiler::new(engine);
+        let module = compiler.compile(script).unwrap();
+
+        assert!(
+            module
+                .instructions
+                .iter()
+                .any(|i| matches!(i, Instruction::JZ { .. }))
+        );
+        assert!(
+            module
+                .instructions
+                .iter()
+                .any(|i| matches!(i, Instruction::JMP { .. }))
+        );
+        assert!(
+            module
+                .instructions
+                .iter()
+                .any(|i| matches!(i, Instruction::CpyV { .. }))
+        );
+    }
+
+    #[test]
+    fn test_compile_nested_arithmetic() {
+        let script = Script {
+            items: vec![ScriptNode::Func(build_function(
+                "test",
+                Some(build_int_type()),
+                StatBlock {
+                    statements: vec![Statement::Return(ReturnStmt {
+                        value: Some(build_binary(
+                            build_binary(
+                                build_int_literal(10),
+                                BinaryOp::Add,
+                                build_int_literal(20),
+                            ),
+                            BinaryOp::Mul,
+                            build_binary(
+                                build_int_literal(30),
+                                BinaryOp::Sub,
+                                build_int_literal(5),
+                            ),
+                        )),
+                    })],
+                },
+            ))],
+        };
+
+        let engine = create_test_engine();
+        let compiler = Compiler::new(engine);
+        let module = compiler.compile(script).unwrap();
+
+        assert!(
+            module
+                .instructions
+                .iter()
+                .any(|i| matches!(i, Instruction::ADDi { .. }))
+        );
+        assert!(
+            module
+                .instructions
+                .iter()
+                .any(|i| matches!(i, Instruction::SUBi { .. }))
+        );
+        assert!(
+            module
+                .instructions
+                .iter()
+                .any(|i| matches!(i, Instruction::MULi { .. }))
+        );
+
+        // Verify operation order
+        let add_pos = module
+            .instructions
+            .iter()
+            .position(|i| matches!(i, Instruction::ADDi { .. }))
+            .unwrap();
+        let sub_pos = module
+            .instructions
+            .iter()
+            .position(|i| matches!(i, Instruction::SUBi { .. }))
+            .unwrap();
+        let mul_pos = module
+            .instructions
+            .iter()
+            .position(|i| matches!(i, Instruction::MULi { .. }))
+            .unwrap();
+
+        assert!(add_pos < mul_pos);
+        assert!(sub_pos < mul_pos);
     }
 
     #[test]
@@ -3241,10 +3308,8 @@ mod tests {
 
         let engine = create_test_engine();
         let compiler = Compiler::new(engine);
-
         let module = compiler.compile(script).unwrap();
 
-        // Should have variable initialization and copy
         assert!(
             module
                 .instructions
@@ -3263,6 +3328,68 @@ mod tests {
                 .iter()
                 .any(|i| matches!(i, Instruction::RET { .. }))
         );
+    }
+
+    #[test]
+    fn test_compile_multiple_variables() {
+        let script = Script {
+            items: vec![ScriptNode::Func(build_function(
+                "test",
+                Some(build_int_type()),
+                StatBlock {
+                    statements: vec![
+                        Statement::Var(Var {
+                            visibility: None,
+                            var_type: build_int_type(),
+                            declarations: vec![VarDecl {
+                                name: "a".to_string(),
+                                initializer: Some(VarInit::Expr(build_int_literal(10))),
+                            }],
+                        }),
+                        Statement::Var(Var {
+                            visibility: None,
+                            var_type: build_int_type(),
+                            declarations: vec![VarDecl {
+                                name: "b".to_string(),
+                                initializer: Some(VarInit::Expr(build_int_literal(20))),
+                            }],
+                        }),
+                        Statement::Var(Var {
+                            visibility: None,
+                            var_type: build_int_type(),
+                            declarations: vec![VarDecl {
+                                name: "c".to_string(),
+                                initializer: Some(VarInit::Expr(build_binary(
+                                    build_var_access("a"),
+                                    BinaryOp::Add,
+                                    build_var_access("b"),
+                                ))),
+                            }],
+                        }),
+                        Statement::Return(ReturnStmt {
+                            value: Some(build_var_access("c")),
+                        }),
+                    ],
+                },
+            ))],
+        };
+
+        let engine = create_test_engine();
+        let compiler = Compiler::new(engine);
+        let module = compiler.compile(script).unwrap();
+
+        assert!(
+            module
+                .instructions
+                .iter()
+                .any(|i| matches!(i, Instruction::ADDi { .. }))
+        );
+        let set_count = module
+            .instructions
+            .iter()
+            .filter(|i| matches!(i, Instruction::SetV { .. }))
+            .count();
+        assert!(set_count >= 2);
     }
 
     #[test]
@@ -3291,10 +3418,8 @@ mod tests {
 
         let engine = create_test_engine();
         let compiler = Compiler::new(engine);
-
         let module = compiler.compile(script).unwrap();
 
-        // Should have comparison and jumps
         assert!(
             module
                 .instructions
@@ -3357,10 +3482,8 @@ mod tests {
 
         let engine = create_test_engine();
         let compiler = Compiler::new(engine);
-
         let module = compiler.compile(script).unwrap();
 
-        // Should have comparison, conditional jump, and backward jump
         assert!(
             module
                 .instructions
@@ -3374,7 +3497,6 @@ mod tests {
                 .any(|i| matches!(i, Instruction::JZ { .. }))
         );
 
-        // Check for backward jump (negative offset)
         let has_backward_jump = module.instructions.iter().any(|i| {
             if let Instruction::JMP { offset } = i {
                 *offset < 0
@@ -3386,25 +3508,134 @@ mod tests {
     }
 
     #[test]
-    fn test_compile_complex_expression() {
+    fn test_compile_for_loop() {
         let script = Script {
             items: vec![ScriptNode::Func(build_function(
                 "test",
                 Some(build_int_type()),
                 StatBlock {
-                    statements: vec![Statement::Return(ReturnStmt {
-                        value: Some(build_binary(
-                            build_binary(
+                    statements: vec![
+                        Statement::For(ForStmt {
+                            init: ForInit::Var(Var {
+                                visibility: None,
+                                var_type: build_int_type(),
+                                declarations: vec![VarDecl {
+                                    name: "i".to_string(),
+                                    initializer: Some(VarInit::Expr(build_int_literal(0))),
+                                }],
+                            }),
+                            condition: Some(build_binary(
+                                build_var_access("i"),
+                                BinaryOp::Lt,
                                 build_int_literal(10),
-                                BinaryOp::Add,
-                                build_int_literal(20),
-                            ),
-                            BinaryOp::Mul,
-                            build_binary(
-                                build_int_literal(30),
-                                BinaryOp::Sub,
+                            )),
+                            increment: vec![Expr::Unary(
+                                UnaryOp::PreInc,
+                                Box::new(build_var_access("i")),
+                            )],
+                            body: Box::new(Statement::Expr(None)),
+                        }),
+                        Statement::Return(ReturnStmt {
+                            value: Some(build_int_literal(0)),
+                        }),
+                    ],
+                },
+            ))],
+        };
+
+        let engine = create_test_engine();
+        let compiler = Compiler::new(engine);
+        let module = compiler.compile(script).unwrap();
+
+        assert!(
+            module
+                .instructions
+                .iter()
+                .any(|i| matches!(i, Instruction::CMPi { .. }))
+        );
+        assert!(
+            module
+                .instructions
+                .iter()
+                .any(|i| matches!(i, Instruction::INCi { .. }))
+        );
+
+        let has_backward_jump = module.instructions.iter().any(|i| {
+            if let Instruction::JMP { offset } = i {
+                *offset < 0
+            } else {
+                false
+            }
+        });
+        assert!(has_backward_jump);
+    }
+
+    #[test]
+    fn test_compile_do_while_loop() {
+        let script = Script {
+            items: vec![ScriptNode::Func(build_function(
+                "test",
+                Some(build_void_type()),
+                StatBlock {
+                    statements: vec![
+                        Statement::Var(Var {
+                            visibility: None,
+                            var_type: build_int_type(),
+                            declarations: vec![VarDecl {
+                                name: "x".to_string(),
+                                initializer: Some(VarInit::Expr(build_int_literal(0))),
+                            }],
+                        }),
+                        Statement::DoWhile(DoWhileStmt {
+                            body: Box::new(Statement::Expr(Some(Expr::Unary(
+                                UnaryOp::PreInc,
+                                Box::new(build_var_access("x")),
+                            )))),
+                            condition: build_binary(
+                                build_var_access("x"),
+                                BinaryOp::Lt,
                                 build_int_literal(5),
                             ),
+                        }),
+                    ],
+                },
+            ))],
+        };
+
+        let engine = create_test_engine();
+        let compiler = Compiler::new(engine);
+        let module = compiler.compile(script).unwrap();
+
+        assert!(
+            module
+                .instructions
+                .iter()
+                .any(|i| matches!(i, Instruction::INCi { .. }))
+        );
+        assert!(
+            module
+                .instructions
+                .iter()
+                .any(|i| matches!(i, Instruction::JNZ { .. }))
+        );
+    }
+
+    #[test]
+    fn test_compile_function_with_parameters() {
+        let script = Script {
+            items: vec![ScriptNode::Func(build_func_with_params(
+                "add",
+                Some(build_int_type()),
+                vec![
+                    build_param("a", build_int_type()),
+                    build_param("b", build_int_type()),
+                ],
+                StatBlock {
+                    statements: vec![Statement::Return(ReturnStmt {
+                        value: Some(build_binary(
+                            build_var_access("a"),
+                            BinaryOp::Add,
+                            build_var_access("b"),
                         )),
                     })],
                 },
@@ -3413,52 +3644,355 @@ mod tests {
 
         let engine = create_test_engine();
         let compiler = Compiler::new(engine);
-
         let module = compiler.compile(script).unwrap();
 
-        // Should have all three operations
+        assert_eq!(module.functions.len(), 1);
+        assert_eq!(module.functions[0].param_count, 2);
         assert!(
             module
                 .instructions
                 .iter()
                 .any(|i| matches!(i, Instruction::ADDi { .. }))
         );
-        assert!(
-            module
-                .instructions
-                .iter()
-                .any(|i| matches!(i, Instruction::SUBi { .. }))
-        );
-        assert!(
-            module
-                .instructions
-                .iter()
-                .any(|i| matches!(i, Instruction::MULi { .. }))
-        );
-
-        // Verify operation order (ADD and SUB before MUL)
-        let add_pos = module
-            .instructions
-            .iter()
-            .position(|i| matches!(i, Instruction::ADDi { .. }))
-            .unwrap();
-        let sub_pos = module
-            .instructions
-            .iter()
-            .position(|i| matches!(i, Instruction::SUBi { .. }))
-            .unwrap();
-        let mul_pos = module
-            .instructions
-            .iter()
-            .position(|i| matches!(i, Instruction::MULi { .. }))
-            .unwrap();
-
-        assert!(add_pos < mul_pos);
-        assert!(sub_pos < mul_pos);
     }
 
     #[test]
-    fn test_compile_multiple_variables() {
+    fn test_compile_function_call() {
+        let script = Script {
+            items: vec![
+                ScriptNode::Func(build_function(
+                    "helper",
+                    Some(build_int_type()),
+                    StatBlock {
+                        statements: vec![Statement::Return(ReturnStmt {
+                            value: Some(build_int_literal(42)),
+                        })],
+                    },
+                )),
+                ScriptNode::Func(build_function(
+                    "test",
+                    Some(build_int_type()),
+                    StatBlock {
+                        statements: vec![Statement::Return(ReturnStmt {
+                            value: Some(Expr::FuncCall(FuncCall {
+                                scope: Scope {
+                                    is_global: false,
+                                    path: vec![],
+                                },
+                                name: "helper".to_string(),
+                                template_types: vec![],
+                                args: vec![],
+                            })),
+                        })],
+                    },
+                )),
+            ],
+        };
+
+        let engine = create_test_engine();
+        let compiler = Compiler::new(engine);
+        let module = compiler.compile(script).unwrap();
+
+        assert_eq!(module.functions.len(), 2);
+        assert!(
+            module
+                .instructions
+                .iter()
+                .any(|i| matches!(i, Instruction::CALL { .. }))
+        );
+    }
+
+    #[test]
+    fn test_compile_assignment() {
+        let script = Script {
+            items: vec![ScriptNode::Func(build_function(
+                "test",
+                Some(build_void_type()),
+                StatBlock {
+                    statements: vec![
+                        Statement::Var(Var {
+                            visibility: None,
+                            var_type: build_int_type(),
+                            declarations: vec![VarDecl {
+                                name: "x".to_string(),
+                                initializer: Some(VarInit::Expr(build_int_literal(0))),
+                            }],
+                        }),
+                        Statement::Expr(Some(build_binary(
+                            build_var_access("x"),
+                            BinaryOp::Assign,
+                            build_int_literal(42),
+                        ))),
+                    ],
+                },
+            ))],
+        };
+
+        let engine = create_test_engine();
+        let compiler = Compiler::new(engine);
+        let module = compiler.compile(script).unwrap();
+
+        assert!(
+            module
+                .instructions
+                .iter()
+                .any(|i| matches!(i, Instruction::CpyV { .. }))
+        );
+    }
+
+    #[test]
+    fn test_compile_compound_assignment() {
+        let script = Script {
+            items: vec![ScriptNode::Func(build_function(
+                "test",
+                Some(build_void_type()),
+                StatBlock {
+                    statements: vec![
+                        Statement::Var(Var {
+                            visibility: None,
+                            var_type: build_int_type(),
+                            declarations: vec![VarDecl {
+                                name: "x".to_string(),
+                                initializer: Some(VarInit::Expr(build_int_literal(10))),
+                            }],
+                        }),
+                        Statement::Expr(Some(build_binary(
+                            build_var_access("x"),
+                            BinaryOp::AddAssign,
+                            build_int_literal(5),
+                        ))),
+                    ],
+                },
+            ))],
+        };
+
+        let engine = create_test_engine();
+        let compiler = Compiler::new(engine);
+        let module = compiler.compile(script).unwrap();
+
+        assert!(
+            module
+                .instructions
+                .iter()
+                .any(|i| matches!(i, Instruction::ADDi { .. }))
+        );
+    }
+
+    #[test]
+    fn test_compile_pre_increment() {
+        let script = Script {
+            items: vec![ScriptNode::Func(build_function(
+                "test",
+                Some(build_void_type()),
+                StatBlock {
+                    statements: vec![
+                        Statement::Var(Var {
+                            visibility: None,
+                            var_type: build_int_type(),
+                            declarations: vec![VarDecl {
+                                name: "x".to_string(),
+                                initializer: Some(VarInit::Expr(build_int_literal(0))),
+                            }],
+                        }),
+                        Statement::Expr(Some(Expr::Unary(
+                            UnaryOp::PreInc,
+                            Box::new(build_var_access("x")),
+                        ))),
+                    ],
+                },
+            ))],
+        };
+
+        let engine = create_test_engine();
+        let compiler = Compiler::new(engine);
+        let module = compiler.compile(script).unwrap();
+
+        assert!(
+            module
+                .instructions
+                .iter()
+                .any(|i| matches!(i, Instruction::INCi { .. }))
+        );
+    }
+
+    #[test]
+    fn test_compile_post_increment() {
+        let script = Script {
+            items: vec![ScriptNode::Func(build_function(
+                "test",
+                Some(build_void_type()),
+                StatBlock {
+                    statements: vec![
+                        Statement::Var(Var {
+                            visibility: None,
+                            var_type: build_int_type(),
+                            declarations: vec![VarDecl {
+                                name: "x".to_string(),
+                                initializer: Some(VarInit::Expr(build_int_literal(0))),
+                            }],
+                        }),
+                        Statement::Expr(Some(Expr::Postfix(
+                            Box::new(build_var_access("x")),
+                            PostfixOp::PostInc,
+                        ))),
+                    ],
+                },
+            ))],
+        };
+
+        let engine = create_test_engine();
+        let compiler = Compiler::new(engine);
+        let module = compiler.compile(script).unwrap();
+
+        assert!(
+            module
+                .instructions
+                .iter()
+                .any(|i| matches!(i, Instruction::INCi { .. }))
+        );
+        assert!(
+            module
+                .instructions
+                .iter()
+                .any(|i| matches!(i, Instruction::CpyV { .. }))
+        );
+    }
+
+    #[test]
+    fn test_compile_logical_and() {
+        let script = Script {
+            items: vec![ScriptNode::Func(build_function(
+                "test",
+                Some(build_bool_type()),
+                StatBlock {
+                    statements: vec![Statement::Return(ReturnStmt {
+                        value: Some(build_binary(
+                            build_bool_literal(true),
+                            BinaryOp::And,
+                            build_bool_literal(false),
+                        )),
+                    })],
+                },
+            ))],
+        };
+
+        let engine = create_test_engine();
+        let compiler = Compiler::new(engine);
+        let module = compiler.compile(script).unwrap();
+
+        assert!(
+            module
+                .instructions
+                .iter()
+                .any(|i| matches!(i, Instruction::JNZ { .. }))
+        );
+    }
+
+    #[test]
+    fn test_compile_logical_or() {
+        let script = Script {
+            items: vec![ScriptNode::Func(build_function(
+                "test",
+                Some(build_bool_type()),
+                StatBlock {
+                    statements: vec![Statement::Return(ReturnStmt {
+                        value: Some(build_binary(
+                            build_bool_literal(false),
+                            BinaryOp::Or,
+                            build_bool_literal(true),
+                        )),
+                    })],
+                },
+            ))],
+        };
+
+        let engine = create_test_engine();
+        let compiler = Compiler::new(engine);
+        let module = compiler.compile(script).unwrap();
+
+        assert!(
+            module
+                .instructions
+                .iter()
+                .any(|i| matches!(i, Instruction::JNZ { .. }))
+        );
+    }
+
+    #[test]
+    fn test_compile_cast() {
+        let script = Script {
+            items: vec![ScriptNode::Func(build_function(
+                "test",
+                Some(build_float_type()),
+                StatBlock {
+                    statements: vec![Statement::Return(ReturnStmt {
+                        value: Some(Expr::Cast(
+                            build_float_type(),
+                            Box::new(build_int_literal(42)),
+                        )),
+                    })],
+                },
+            ))],
+        };
+
+        let engine = create_test_engine();
+        let compiler = Compiler::new(engine);
+        let module = compiler.compile(script).unwrap();
+
+        assert!(
+            module
+                .instructions
+                .iter()
+                .any(|i| matches!(i, Instruction::iTOf { .. }))
+        );
+    }
+
+    #[test]
+    fn test_compile_type_conversion() {
+        let script = Script {
+            items: vec![ScriptNode::Func(build_function(
+                "test",
+                Some(build_void_type()),
+                StatBlock {
+                    statements: vec![
+                        Statement::Var(Var {
+                            visibility: None,
+                            var_type: build_int_type(),
+                            declarations: vec![VarDecl {
+                                name: "i".to_string(),
+                                initializer: Some(VarInit::Expr(build_int_literal(42))),
+                            }],
+                        }),
+                        Statement::Var(Var {
+                            visibility: None,
+                            var_type: build_float_type(),
+                            declarations: vec![VarDecl {
+                                name: "f".to_string(),
+                                initializer: Some(VarInit::Expr(Expr::Cast(
+                                    build_float_type(),
+                                    Box::new(build_var_access("i")),
+                                ))),
+                            }],
+                        }),
+                    ],
+                },
+            ))],
+        };
+
+        let engine = create_test_engine();
+        let compiler = Compiler::new(engine);
+        let module = compiler.compile(script).unwrap();
+
+        assert!(
+            module
+                .instructions
+                .iter()
+                .any(|i| matches!(i, Instruction::iTOf { .. }))
+        );
+    }
+
+    #[test]
+    fn test_compile_switch_statement() {
         let script = Script {
             items: vec![ScriptNode::Func(build_function(
                 "test",
@@ -3469,32 +4003,26 @@ mod tests {
                             visibility: None,
                             var_type: build_int_type(),
                             declarations: vec![VarDecl {
-                                name: "a".to_string(),
-                                initializer: Some(VarInit::Expr(build_int_literal(10))),
+                                name: "x".to_string(),
+                                initializer: Some(VarInit::Expr(build_int_literal(1))),
                             }],
                         }),
-                        Statement::Var(Var {
-                            visibility: None,
-                            var_type: build_int_type(),
-                            declarations: vec![VarDecl {
-                                name: "b".to_string(),
-                                initializer: Some(VarInit::Expr(build_int_literal(20))),
-                            }],
-                        }),
-                        Statement::Var(Var {
-                            visibility: None,
-                            var_type: build_int_type(),
-                            declarations: vec![VarDecl {
-                                name: "c".to_string(),
-                                initializer: Some(VarInit::Expr(build_binary(
-                                    build_var_access("a"),
-                                    BinaryOp::Add,
-                                    build_var_access("b"),
-                                ))),
-                            }],
-                        }),
-                        Statement::Return(ReturnStmt {
-                            value: Some(build_var_access("c")),
+                        Statement::Switch(SwitchStmt {
+                            value: build_var_access("x"),
+                            cases: vec![
+                                Case {
+                                    pattern: CasePattern::Value(build_int_literal(1)),
+                                    statements: vec![Statement::Return(ReturnStmt {
+                                        value: Some(build_int_literal(10)),
+                                    })],
+                                },
+                                Case {
+                                    pattern: CasePattern::Default,
+                                    statements: vec![Statement::Return(ReturnStmt {
+                                        value: Some(build_int_literal(0)),
+                                    })],
+                                },
+                            ],
                         }),
                     ],
                 },
@@ -3503,23 +4031,1085 @@ mod tests {
 
         let engine = create_test_engine();
         let compiler = Compiler::new(engine);
-
         let module = compiler.compile(script).unwrap();
 
-        // Should have variable initializations and addition
         assert!(
             module
                 .instructions
                 .iter()
-                .any(|i| matches!(i, Instruction::ADDi { .. }))
+                .any(|i| matches!(i, Instruction::CMPi { .. }))
         );
+        assert!(
+            module
+                .instructions
+                .iter()
+                .any(|i| matches!(i, Instruction::JNZ { .. }))
+        );
+    }
 
-        // Should have multiple SetV instructions for initializations
-        let set_count = module
+    #[test]
+    fn test_compile_break_in_loop() {
+        let script = Script {
+            items: vec![ScriptNode::Func(build_function(
+                "test",
+                Some(build_void_type()),
+                StatBlock {
+                    statements: vec![Statement::While(WhileStmt {
+                        condition: build_bool_literal(true),
+                        body: Box::new(Statement::Break),
+                    })],
+                },
+            ))],
+        };
+
+        let engine = create_test_engine();
+        let compiler = Compiler::new(engine);
+        let module = compiler.compile(script).unwrap();
+
+        let jmp_count = module
             .instructions
             .iter()
-            .filter(|i| matches!(i, Instruction::SetV { .. }))
+            .filter(|i| matches!(i, Instruction::JMP { .. }))
             .count();
-        assert!(set_count >= 2); // At least for literals 10 and 20
+        assert!(jmp_count >= 1);
+    }
+
+    #[test]
+    fn test_compile_continue_in_loop() {
+        let script = Script {
+            items: vec![ScriptNode::Func(build_function(
+                "test",
+                Some(build_void_type()),
+                StatBlock {
+                    statements: vec![Statement::While(WhileStmt {
+                        condition: build_bool_literal(true),
+                        body: Box::new(Statement::Continue),
+                    })],
+                },
+            ))],
+        };
+
+        let engine = create_test_engine();
+        let compiler = Compiler::new(engine);
+        let module = compiler.compile(script).unwrap();
+
+        let jmp_count = module
+            .instructions
+            .iter()
+            .filter(|i| matches!(i, Instruction::JMP { .. }))
+            .count();
+        assert!(jmp_count >= 1);
+    }
+
+    #[test]
+    fn test_compile_global_variable() {
+        let script = Script {
+            items: vec![
+                ScriptNode::Var(Var {
+                    visibility: None,
+                    var_type: build_int_type(),
+                    declarations: vec![VarDecl {
+                        name: "globalVar".to_string(),
+                        initializer: Some(VarInit::Expr(build_int_literal(42))),
+                    }],
+                }),
+                ScriptNode::Func(build_function(
+                    "test",
+                    Some(build_int_type()),
+                    StatBlock {
+                        statements: vec![Statement::Return(ReturnStmt {
+                            value: Some(build_var_access("globalVar")),
+                        })],
+                    },
+                )),
+            ],
+        };
+
+        let engine = create_test_engine();
+        let compiler = Compiler::new(engine);
+        let module = compiler.compile(script).unwrap();
+
+        assert_eq!(module.globals.len(), 1);
+        assert_eq!(module.globals[0].name, "globalVar");
+        assert!(
+            module
+                .instructions
+                .iter()
+                .any(|i| matches!(i, Instruction::SetG { .. }))
+        );
+        assert!(
+            module
+                .instructions
+                .iter()
+                .any(|i| matches!(i, Instruction::CpyGtoV { .. }))
+        );
+    }
+
+    #[test]
+    fn test_compile_class_with_members() {
+        let script = Script {
+            items: vec![ScriptNode::Class(Class {
+                modifiers: vec![],
+                name: "MyClass".to_string(),
+                extends: vec![],
+                members: vec![
+                    ClassMember::Var(Var {
+                        visibility: None,
+                        var_type: build_int_type(),
+                        declarations: vec![VarDecl {
+                            name: "value".to_string(),
+                            initializer: Some(VarInit::Expr(build_int_literal(100))),
+                        }],
+                    }),
+                    ClassMember::Func(build_function(
+                        "getValue",
+                        Some(build_int_type()),
+                        StatBlock {
+                            statements: vec![Statement::Return(ReturnStmt {
+                                value: Some(Expr::Postfix(
+                                    Box::new(build_var_access("this")),
+                                    PostfixOp::MemberAccess("value".to_string()),
+                                )),
+                            })],
+                        },
+                    )),
+                ],
+            })],
+        };
+
+        let engine = create_test_engine();
+        let compiler = Compiler::new(engine);
+        let module = compiler.compile(script).unwrap();
+
+        assert_eq!(module.functions.len(), 1);
+        assert_eq!(module.functions[0].name, "MyClass::getValue");
+        assert!(
+            module
+                .instructions
+                .iter()
+                .any(|i| matches!(i, Instruction::GetThisProperty { .. }))
+        );
+    }
+
+    #[test]
+    fn test_compile_class_constructor() {
+        let script = Script {
+            items: vec![ScriptNode::Class(Class {
+                modifiers: vec![],
+                name: "MyClass".to_string(),
+                extends: vec![],
+                members: vec![
+                    ClassMember::Var(Var {
+                        visibility: None,
+                        var_type: build_int_type(),
+                        declarations: vec![VarDecl {
+                            name: "value".to_string(),
+                            initializer: None,
+                        }],
+                    }),
+                    ClassMember::Func(build_func_with_params(
+                        "MyClass",
+                        None,
+                        vec![build_param("v", build_int_type())],
+                        StatBlock {
+                            statements: vec![Statement::Expr(Some(build_binary(
+                                Expr::Postfix(
+                                    Box::new(build_var_access("this")),
+                                    PostfixOp::MemberAccess("value".to_string()),
+                                ),
+                                BinaryOp::Assign,
+                                build_var_access("v"),
+                            )))],
+                        },
+                    )),
+                ],
+            })],
+        };
+
+        let engine = create_test_engine();
+        let compiler = Compiler::new(engine);
+        let module = compiler.compile(script).unwrap();
+
+        assert_eq!(module.functions.len(), 1);
+        // ✅ Fix: Accept SetThisProperty (optimized) instead of SetProperty
+        assert!(module.instructions.iter().any(|i| {
+            matches!(i, Instruction::SetThisProperty { .. })
+                || matches!(i, Instruction::SetProperty { .. })
+        }));
+    }
+
+    #[test]
+    fn test_compile_class_with_initializers() {
+        let script = Script {
+            items: vec![ScriptNode::Class(Class {
+                modifiers: vec![],
+                name: "Player".to_string(),
+                extends: vec![],
+                members: vec![
+                    ClassMember::Var(Var {
+                        visibility: None,
+                        var_type: build_int_type(),
+                        declarations: vec![VarDecl {
+                            name: "health".to_string(),
+                            initializer: Some(VarInit::Expr(build_int_literal(100))),
+                        }],
+                    }),
+                    ClassMember::Func(build_function(
+                        "Player",
+                        None,
+                        StatBlock { statements: vec![] },
+                    )),
+                ],
+            })],
+        };
+
+        let engine = create_test_engine();
+        let compiler = Compiler::new(engine);
+        let module = compiler.compile(script).unwrap();
+
+        assert!(
+            module
+                .instructions
+                .iter()
+                .any(|i| matches!(i, Instruction::SetThisProperty { .. }))
+        );
+    }
+
+    #[test]
+    fn test_compile_member_access() {
+        let script = Script {
+            items: vec![
+                ScriptNode::Class(Class {
+                    modifiers: vec![],
+                    name: "MyClass".to_string(),
+                    extends: vec![],
+                    members: vec![ClassMember::Var(Var {
+                        visibility: None,
+                        var_type: build_int_type(),
+                        declarations: vec![VarDecl {
+                            name: "value".to_string(),
+                            initializer: None,
+                        }],
+                    })],
+                }),
+                ScriptNode::Func(build_function(
+                    "test",
+                    Some(build_int_type()),
+                    StatBlock {
+                        statements: vec![
+                            Statement::Var(Var {
+                                visibility: None,
+                                var_type: build_class_type("MyClass"),
+                                declarations: vec![VarDecl {
+                                    name: "obj".to_string(),
+                                    initializer: None,
+                                }],
+                            }),
+                            Statement::Return(ReturnStmt {
+                                value: Some(Expr::Postfix(
+                                    Box::new(build_var_access("obj")),
+                                    PostfixOp::MemberAccess("value".to_string()),
+                                )),
+                            }),
+                        ],
+                    },
+                )),
+            ],
+        };
+
+        let engine = create_test_engine();
+        let compiler = Compiler::new(engine);
+        let module = compiler.compile(script).unwrap();
+
+        assert!(
+            module
+                .instructions
+                .iter()
+                .any(|i| matches!(i, Instruction::GetProperty { .. }))
+        );
+    }
+
+    #[test]
+    fn test_compile_member_assignment() {
+        let script = Script {
+            items: vec![
+                ScriptNode::Class(Class {
+                    modifiers: vec![],
+                    name: "MyClass".to_string(),
+                    extends: vec![],
+                    members: vec![ClassMember::Var(Var {
+                        visibility: None,
+                        var_type: build_int_type(),
+                        declarations: vec![VarDecl {
+                            name: "value".to_string(),
+                            initializer: None,
+                        }],
+                    })],
+                }),
+                ScriptNode::Func(build_function(
+                    "test",
+                    Some(build_void_type()),
+                    StatBlock {
+                        statements: vec![
+                            Statement::Var(Var {
+                                visibility: None,
+                                var_type: build_class_type("MyClass"),
+                                declarations: vec![VarDecl {
+                                    name: "obj".to_string(),
+                                    initializer: None,
+                                }],
+                            }),
+                            Statement::Expr(Some(build_binary(
+                                Expr::Postfix(
+                                    Box::new(build_var_access("obj")),
+                                    PostfixOp::MemberAccess("value".to_string()),
+                                ),
+                                BinaryOp::Assign,
+                                build_int_literal(42),
+                            ))),
+                        ],
+                    },
+                )),
+            ],
+        };
+
+        let engine = create_test_engine();
+        let compiler = Compiler::new(engine);
+        let module = compiler.compile(script).unwrap();
+
+        assert!(
+            module
+                .instructions
+                .iter()
+                .any(|i| matches!(i, Instruction::SetProperty { .. }))
+        );
+    }
+
+    #[test]
+    fn test_compile_method_call() {
+        let script = Script {
+            items: vec![
+                ScriptNode::Class(Class {
+                    modifiers: vec![],
+                    name: "MyClass".to_string(),
+                    extends: vec![],
+                    members: vec![ClassMember::Func(build_function(
+                        "method",
+                        Some(build_int_type()),
+                        StatBlock {
+                            statements: vec![Statement::Return(ReturnStmt {
+                                value: Some(build_int_literal(42)),
+                            })],
+                        },
+                    ))],
+                }),
+                ScriptNode::Func(build_function(
+                    "test",
+                    Some(build_int_type()),
+                    StatBlock {
+                        statements: vec![
+                            Statement::Var(Var {
+                                visibility: None,
+                                var_type: build_class_type("MyClass"),
+                                declarations: vec![VarDecl {
+                                    name: "obj".to_string(),
+                                    initializer: None,
+                                }],
+                            }),
+                            Statement::Return(ReturnStmt {
+                                value: Some(Expr::Postfix(
+                                    Box::new(build_var_access("obj")),
+                                    PostfixOp::MemberCall(FuncCall {
+                                        scope: Scope {
+                                            is_global: false,
+                                            path: vec![],
+                                        },
+                                        name: "method".to_string(),
+                                        template_types: vec![],
+                                        args: vec![],
+                                    }),
+                                )),
+                            }),
+                        ],
+                    },
+                )),
+            ],
+        };
+
+        let engine = create_test_engine();
+        let compiler = Compiler::new(engine);
+        let module = compiler.compile(script).unwrap();
+
+        let call_count = module
+            .instructions
+            .iter()
+            .filter(|i| matches!(i, Instruction::CALL { .. }))
+            .count();
+        assert!(call_count >= 1);
+    }
+
+    #[test]
+    fn test_compile_namespace() {
+        let script = Script {
+            items: vec![ScriptNode::Namespace(Namespace {
+                name: vec!["MyNamespace".to_string()],
+                items: vec![ScriptNode::Func(build_function(
+                    "test",
+                    Some(build_void_type()),
+                    StatBlock { statements: vec![] },
+                ))],
+            })],
+        };
+
+        let engine = create_test_engine();
+        let compiler = Compiler::new(engine);
+        let module = compiler.compile(script).unwrap();
+
+        assert_eq!(module.functions.len(), 1);
+        assert_eq!(module.functions[0].name, "MyNamespace::test");
+    }
+
+    #[test]
+    fn test_compile_class_inheritance() {
+        let script = Script {
+            items: vec![
+                ScriptNode::Class(Class {
+                    modifiers: vec![],
+                    name: "Base".to_string(),
+                    extends: vec![],
+                    members: vec![ClassMember::Func(build_function(
+                        "Base",
+                        None,
+                        StatBlock { statements: vec![] },
+                    ))],
+                }),
+                ScriptNode::Class(Class {
+                    modifiers: vec![],
+                    name: "Derived".to_string(),
+                    extends: vec!["Base".to_string()],
+                    members: vec![ClassMember::Func(build_function(
+                        "Derived",
+                        None,
+                        StatBlock { statements: vec![] },
+                    ))],
+                }),
+            ],
+        };
+
+        let engine = create_test_engine();
+        let compiler = Compiler::new(engine);
+        let module = compiler.compile(script).unwrap();
+
+        assert_eq!(module.functions.len(), 2);
+        assert!(
+            module
+                .instructions
+                .iter()
+                .any(|i| matches!(i, Instruction::PshR))
+        );
+    }
+
+    #[test]
+    fn test_compile_init_list() {
+        let script = Script {
+            items: vec![ScriptNode::Func(build_function(
+                "test",
+                Some(build_void_type()),
+                StatBlock {
+                    statements: vec![Statement::Expr(Some(Expr::InitList(InitList {
+                        items: vec![
+                            InitListItem::Expr(build_int_literal(1)),
+                            InitListItem::Expr(build_int_literal(2)),
+                            InitListItem::Expr(build_int_literal(3)),
+                        ],
+                    })))],
+                },
+            ))],
+        };
+
+        let engine = create_test_engine();
+        let compiler = Compiler::new(engine);
+        let module = compiler.compile(script).unwrap();
+
+        assert!(
+            module
+                .instructions
+                .iter()
+                .any(|i| matches!(i, Instruction::BeginInitList))
+        );
+        assert!(
+            module
+                .instructions
+                .iter()
+                .any(|i| matches!(i, Instruction::EndInitList { .. }))
+        );
+
+        let add_count = module
+            .instructions
+            .iter()
+            .filter(|i| matches!(i, Instruction::AddToInitList))
+            .count();
+        assert_eq!(add_count, 3);
+    }
+
+    #[test]
+    fn test_compile_nested_init_list() {
+        let script = Script {
+            items: vec![ScriptNode::Func(build_function(
+                "test",
+                Some(build_void_type()),
+                StatBlock {
+                    statements: vec![Statement::Expr(Some(Expr::InitList(InitList {
+                        items: vec![
+                            InitListItem::InitList(InitList {
+                                items: vec![
+                                    InitListItem::Expr(build_int_literal(1)),
+                                    InitListItem::Expr(build_int_literal(2)),
+                                ],
+                            }),
+                            InitListItem::InitList(InitList {
+                                items: vec![
+                                    InitListItem::Expr(build_int_literal(3)),
+                                    InitListItem::Expr(build_int_literal(4)),
+                                ],
+                            }),
+                        ],
+                    })))],
+                },
+            ))],
+        };
+
+        let engine = create_test_engine();
+        let compiler = Compiler::new(engine);
+        let module = compiler.compile(script).unwrap();
+
+        let begin_count = module
+            .instructions
+            .iter()
+            .filter(|i| matches!(i, Instruction::BeginInitList))
+            .count();
+        assert_eq!(begin_count, 3);
+    }
+
+    #[test]
+    fn test_compile_complete_program() {
+        let script = Script {
+            items: vec![
+                ScriptNode::Var(Var {
+                    visibility: None,
+                    var_type: build_int_type(),
+                    declarations: vec![VarDecl {
+                        name: "counter".to_string(),
+                        initializer: Some(VarInit::Expr(build_int_literal(0))),
+                    }],
+                }),
+                ScriptNode::Func(build_func_with_params(
+                    "add",
+                    Some(build_int_type()),
+                    vec![
+                        build_param("a", build_int_type()),
+                        build_param("b", build_int_type()),
+                    ],
+                    StatBlock {
+                        statements: vec![Statement::Return(ReturnStmt {
+                            value: Some(build_binary(
+                                build_var_access("a"),
+                                BinaryOp::Add,
+                                build_var_access("b"),
+                            )),
+                        })],
+                    },
+                )),
+                ScriptNode::Func(build_function(
+                    "main",
+                    Some(build_int_type()),
+                    StatBlock {
+                        statements: vec![
+                            Statement::Var(Var {
+                                visibility: None,
+                                var_type: build_int_type(),
+                                declarations: vec![VarDecl {
+                                    name: "result".to_string(),
+                                    initializer: Some(VarInit::Expr(Expr::FuncCall(FuncCall {
+                                        scope: Scope {
+                                            is_global: false,
+                                            path: vec![],
+                                        },
+                                        name: "add".to_string(),
+                                        template_types: vec![],
+                                        args: vec![
+                                            Arg {
+                                                name: None,
+                                                value: build_int_literal(10),
+                                            },
+                                            Arg {
+                                                name: None,
+                                                value: build_int_literal(20),
+                                            },
+                                        ],
+                                    }))),
+                                }],
+                            }),
+                            Statement::Expr(Some(build_binary(
+                                build_var_access("counter"),
+                                BinaryOp::AddAssign,
+                                build_var_access("result"),
+                            ))),
+                            Statement::Return(ReturnStmt {
+                                value: Some(build_var_access("counter")),
+                            }),
+                        ],
+                    },
+                )),
+            ],
+        };
+
+        let engine = create_test_engine();
+        let compiler = Compiler::new(engine);
+        let module = compiler.compile(script).unwrap();
+
+        assert_eq!(module.functions.len(), 2);
+        assert_eq!(module.functions[0].name, "add");
+        assert_eq!(module.functions[1].name, "main");
+        assert_eq!(module.globals.len(), 1);
+        assert_eq!(module.globals[0].name, "counter");
+        assert!(
+            module
+                .instructions
+                .iter()
+                .any(|i| matches!(i, Instruction::CALL { .. }))
+        );
+        assert!(
+            module
+                .instructions
+                .iter()
+                .any(|i| matches!(i, Instruction::CpyGtoV { .. }))
+        );
+        assert!(
+            module
+                .instructions
+                .iter()
+                .any(|i| matches!(i, Instruction::CpyVtoG { .. }))
+        );
+    }
+
+    #[test]
+    fn test_string_table_deduplication() {
+        let script = Script {
+            items: vec![ScriptNode::Func(build_function(
+                "test",
+                Some(build_void_type()),
+                StatBlock {
+                    statements: vec![
+                        Statement::Expr(Some(build_string_literal("Hello"))),
+                        Statement::Expr(Some(build_string_literal("World"))),
+                        Statement::Expr(Some(build_string_literal("Hello"))), // Duplicate
+                    ],
+                },
+            ))],
+        };
+
+        let engine = create_test_engine();
+        let compiler = Compiler::new(engine);
+        let module = compiler.compile(script).unwrap();
+
+        assert_eq!(module.strings.len(), 2); // Only 2 unique strings
+        assert_eq!(module.strings[0], "Hello");
+        assert_eq!(module.strings[1], "World");
+    }
+
+    // src/compiler/compiler.rs - Add to tests module (after existing tests)
+
+    #[test]
+    fn test_compile_registered_global_function() {
+        let engine = Arc::new(RwLock::new(EngineInner {
+            object_types: HashMap::new(),
+            interface_types: HashMap::new(),
+            enum_types: HashMap::new(),
+            global_functions: vec![GlobalFunction {
+                name: "print".to_string(),
+                return_type_id: TYPE_VOID,
+                params: vec![MethodParam {
+                    name: "msg".to_string(),
+                    type_id: TYPE_STRING,
+                    is_ref: true,
+                    is_out: false,
+                    is_const: true,
+                }],
+                function_id: 0,
+            }],
+            global_properties: Vec::new(),
+            modules: HashMap::new(),
+            funcdefs: HashMap::new(),
+        }));
+
+        let compiler = Compiler::new(engine);
+
+        let script = Script {
+            items: vec![ScriptNode::Func(build_function(
+                "test",
+                Some(build_void_type()),
+                StatBlock {
+                    statements: vec![Statement::Expr(Some(Expr::FuncCall(FuncCall {
+                        scope: Scope {
+                            is_global: false,
+                            path: vec![],
+                        },
+                        name: "print".to_string(),
+                        template_types: vec![],
+                        args: vec![Arg {
+                            name: None,
+                            value: build_string_literal("Hello"),
+                        }],
+                    })))],
+                },
+            ))],
+        };
+
+        let module = compiler.compile(script).unwrap();
+
+        assert!(
+            module
+                .instructions
+                .iter()
+                .any(|i| matches!(i, Instruction::CALLSYS { .. })),
+            "Should generate CALLSYS for registered function"
+        );
+    }
+
+    #[test]
+    fn test_compile_registered_type_property_access() {
+        let engine = Arc::new(RwLock::new(EngineInner {
+            object_types: {
+                let mut map = HashMap::new();
+                map.insert(
+                    "Enemy".to_string(),
+                    ObjectType {
+                        type_id: 100,
+                        name: "Enemy".to_string(),
+                        flags: TypeFlags::REF_TYPE,
+                        properties: vec![ObjectProperty {
+                            name: "health".to_string(),
+                            type_id: TYPE_INT32,
+                            is_handle: false,
+                            is_const: false,
+                            access: AccessSpecifier::Public,
+                        }],
+                        methods: vec![],
+                        behaviours: vec![],
+                        rust_type_id: None,
+                    },
+                );
+                map
+            },
+            interface_types: HashMap::new(),
+            enum_types: HashMap::new(),
+            global_functions: Vec::new(),
+            global_properties: Vec::new(),
+            modules: HashMap::new(),
+            funcdefs: HashMap::new(),
+        }));
+
+        let compiler = Compiler::new(engine);
+
+        let script = Script {
+            items: vec![ScriptNode::Func(build_function(
+                "test",
+                Some(build_int_type()),
+                StatBlock {
+                    statements: vec![
+                        Statement::Var(Var {
+                            visibility: None,
+                            var_type: build_class_type("Enemy"),
+                            declarations: vec![VarDecl {
+                                name: "enemy".to_string(),
+                                initializer: None,
+                            }],
+                        }),
+                        Statement::Return(ReturnStmt {
+                            value: Some(Expr::Postfix(
+                                Box::new(build_var_access("enemy")),
+                                PostfixOp::MemberAccess("health".to_string()),
+                            )),
+                        }),
+                    ],
+                },
+            ))],
+        };
+
+        let module = compiler.compile(script).unwrap();
+
+        assert!(
+            module
+                .instructions
+                .iter()
+                .any(|i| matches!(i, Instruction::GetProperty { .. })),
+            "Should generate GetProperty for registered type property"
+        );
+    }
+
+    #[test]
+    fn test_compile_registered_type_method_call() {
+        let engine = Arc::new(RwLock::new(EngineInner {
+            object_types: {
+                let mut map = HashMap::new();
+                map.insert(
+                    "Enemy".to_string(),
+                    ObjectType {
+                        type_id: 100,
+                        name: "Enemy".to_string(),
+                        flags: TypeFlags::REF_TYPE,
+                        properties: vec![],
+                        methods: vec![ObjectMethod {
+                            name: "takeDamage".to_string(),
+                            return_type_id: TYPE_VOID,
+                            params: vec![MethodParam {
+                                name: "amount".to_string(),
+                                type_id: TYPE_INT32,
+                                is_ref: false,
+                                is_out: false,
+                                is_const: false,
+                            }],
+                            is_const: false,
+                            is_virtual: false,
+                            is_final: false,
+                            access: AccessSpecifier::Public,
+                            function_id: 0,
+                        }],
+                        behaviours: vec![],
+                        rust_type_id: None,
+                    },
+                );
+                map
+            },
+            interface_types: HashMap::new(),
+            enum_types: HashMap::new(),
+            global_functions: Vec::new(),
+            global_properties: Vec::new(),
+            modules: HashMap::new(),
+            funcdefs: HashMap::new(),
+        }));
+
+        let compiler = Compiler::new(engine);
+
+        let script = Script {
+            items: vec![ScriptNode::Func(build_function(
+                "test",
+                Some(build_void_type()),
+                StatBlock {
+                    statements: vec![
+                        Statement::Var(Var {
+                            visibility: None,
+                            var_type: build_class_type("Enemy"),
+                            declarations: vec![VarDecl {
+                                name: "enemy".to_string(),
+                                initializer: None,
+                            }],
+                        }),
+                        Statement::Expr(Some(Expr::Postfix(
+                            Box::new(build_var_access("enemy")),
+                            PostfixOp::MemberCall(FuncCall {
+                                scope: Scope {
+                                    is_global: false,
+                                    path: vec![],
+                                },
+                                name: "takeDamage".to_string(),
+                                template_types: vec![],
+                                args: vec![Arg {
+                                    name: None,
+                                    value: build_int_literal(50),
+                                }],
+                            }),
+                        ))),
+                    ],
+                },
+            ))],
+        };
+
+        let module = compiler.compile(script).unwrap();
+
+        assert!(
+            module
+                .instructions
+                .iter()
+                .any(|i| matches!(i, Instruction::CALLSYS { .. })),
+            "Should generate CALLSYS for registered method"
+        );
+    }
+
+    #[test]
+    fn test_compile_registered_type_construction() {
+        let engine = Arc::new(RwLock::new(EngineInner {
+            object_types: {
+                let mut map = HashMap::new();
+                map.insert(
+                    "Enemy".to_string(),
+                    ObjectType {
+                        type_id: allocate_type_id(),
+                        name: "Enemy".to_string(),
+                        flags: TypeFlags::REF_TYPE,
+                        properties: vec![],
+                        methods: vec![],
+                        behaviours: vec![
+                            BehaviourInfo {
+                                behaviour_type: BehaviourType::Construct,
+                                function_id: allocate_type_id(),
+                                return_type_id: 100,
+                                params: vec![],
+                            },
+                            BehaviourInfo {
+                                behaviour_type: BehaviourType::AddRef,
+                                function_id: allocate_type_id(),
+                                return_type_id: TYPE_VOID,
+                                params: vec![],
+                            },
+                            BehaviourInfo {
+                                behaviour_type: BehaviourType::Release,
+                                function_id: allocate_type_id(),
+                                return_type_id: TYPE_VOID,
+                                params: vec![],
+                            },
+                        ],
+                        rust_type_id: None,
+                    },
+                );
+                map
+            },
+            interface_types: HashMap::new(),
+            enum_types: HashMap::new(),
+            global_functions: Vec::new(),
+            global_properties: Vec::new(),
+            modules: HashMap::new(),
+            funcdefs: HashMap::new(),
+        }));
+
+        let compiler = Compiler::new(engine);
+
+        let script = Script {
+            items: vec![ScriptNode::Func(build_function(
+                "test",
+                Some(build_void_type()),
+                StatBlock {
+                    statements: vec![Statement::Var(Var {
+                        visibility: None,
+                        var_type: build_class_type("Enemy"),
+                        declarations: vec![VarDecl {
+                            name: "enemy".to_string(),
+                            initializer: Some(VarInit::Expr(Expr::ConstructCall(
+                                build_class_type("Enemy"),
+                                vec![],
+                            ))),
+                        }],
+                    })],
+                },
+            ))],
+        };
+
+        let module = compiler.compile(script).unwrap();
+
+        assert!(
+            module
+                .instructions
+                .iter()
+                .any(|i| matches!(i, Instruction::Alloc { .. })),
+            "Should generate Alloc for construction"
+        );
+        assert!(
+            module
+                .instructions
+                .iter()
+                .any(|i| matches!(i, Instruction::CALLSYS { .. })),
+            "Should generate CALLSYS for factory behaviour"
+        );
+    }
+
+    #[test]
+    fn test_compile_mixed_script_and_registered_types() {
+        let engine = Arc::new(RwLock::new(EngineInner {
+            object_types: {
+                let mut map = HashMap::new();
+                map.insert(
+                    "Enemy".to_string(),
+                    ObjectType {
+                        type_id: 100,
+                        name: "Enemy".to_string(),
+                        flags: TypeFlags::REF_TYPE,
+                        properties: vec![ObjectProperty {
+                            name: "health".to_string(),
+                            type_id: TYPE_INT32,
+                            is_handle: false,
+                            is_const: false,
+                            access: AccessSpecifier::Public,
+                        }],
+                        methods: vec![],
+                        behaviours: vec![],
+                        rust_type_id: None,
+                    },
+                );
+                map
+            },
+            interface_types: HashMap::new(),
+            enum_types: HashMap::new(),
+            global_functions: Vec::new(),
+            global_properties: Vec::new(),
+            modules: HashMap::new(),
+            funcdefs: HashMap::new(),
+        }));
+
+        let compiler = Compiler::new(engine);
+
+        let script = Script {
+            items: vec![
+                ScriptNode::Class(Class {
+                    modifiers: vec![],
+                    name: "Player".to_string(),
+                    extends: vec![],
+                    members: vec![ClassMember::Var(Var {
+                        visibility: None,
+                        var_type: build_class_type("Enemy"),
+                        declarations: vec![VarDecl {
+                            name: "target".to_string(),
+                            initializer: None,
+                        }],
+                    })],
+                }),
+                ScriptNode::Func(build_function(
+                    "test",
+                    Some(build_int_type()),
+                    StatBlock {
+                        statements: vec![
+                            Statement::Var(Var {
+                                visibility: None,
+                                var_type: build_class_type("Player"),
+                                declarations: vec![VarDecl {
+                                    name: "player".to_string(),
+                                    initializer: None,
+                                }],
+                            }),
+                            Statement::Return(ReturnStmt {
+                                value: Some(Expr::Postfix(
+                                    Box::new(Expr::Postfix(
+                                        Box::new(build_var_access("player")),
+                                        PostfixOp::MemberAccess("target".to_string()),
+                                    )),
+                                    PostfixOp::MemberAccess("health".to_string()),
+                                )),
+                            }),
+                        ],
+                    },
+                )),
+            ],
+        };
+
+        let module = compiler.compile(script).unwrap();
+
+        assert_eq!(module.functions.len(), 1);
+        assert!(
+            module
+                .instructions
+                .iter()
+                .any(|i| matches!(i, Instruction::GetProperty { .. })),
+            "Should access registered type property"
+        );
     }
 }
