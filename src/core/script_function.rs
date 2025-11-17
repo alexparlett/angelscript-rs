@@ -1,30 +1,20 @@
-use crate::core::script_module::ScriptModule;
+use crate::core::script_type::ScriptType;
+use crate::core::type_registry::{
+    FunctionFlags, FunctionImpl, FunctionKind, ParameterFlags, TypeRegistry,
+};
+use crate::core::types::FunctionId;
 use std::sync::{Arc, RwLock};
 
-#[derive(Clone)]
 pub struct ScriptFunction {
-    id: u32,
-    func_type: FuncType,
-    module: Option<Arc<RwLock<ScriptModule>>>,
-    system_func_id: Option<u32>,
+    function_id: FunctionId,
+    registry: Arc<RwLock<TypeRegistry>>,
 }
 
 impl ScriptFunction {
-    pub(crate) fn new_script(id: u32, module: Arc<RwLock<ScriptModule>>) -> Self {
+    pub(crate) fn new(function_id: FunctionId, registry: Arc<RwLock<TypeRegistry>>) -> Self {
         Self {
-            id,
-            func_type: FuncType::Script,
-            module: Some(module),
-            system_func_id: None,
-        }
-    }
-
-    pub(crate) fn new_system(id: u32) -> Self {
-        Self {
-            id,
-            func_type: FuncType::System,
-            module: None,
-            system_func_id: Some(id),
+            function_id,
+            registry,
         }
     }
 
@@ -37,26 +27,37 @@ impl ScriptFunction {
     }
 
     pub fn get_id(&self) -> i32 {
-        self.id as i32
+        self.function_id as i32
     }
 
     pub fn get_func_type(&self) -> FuncType {
-        self.func_type
+        let registry = self.registry.read().unwrap();
+        if let Some(func_info) = registry.get_function(self.function_id) {
+            match func_info.kind {
+                FunctionKind::Global => FuncType::Script,
+                FunctionKind::Method { .. } => FuncType::Script,
+                FunctionKind::Constructor => FuncType::Script,
+                FunctionKind::Destructor => FuncType::Script,
+                FunctionKind::Lambda => FuncType::Script,
+                FunctionKind::Operator(_) => FuncType::Script,
+                FunctionKind::Conversion => FuncType::Script,
+            }
+        } else {
+            FuncType::Dummy
+        }
     }
 
     pub fn get_module_name(&self) -> Option<String> {
-        self.module.as_ref().map(|m| {
-            let module = m.read().unwrap();
-            module.name.clone()
-        })
-    }
-
-    pub fn get_module(&self) -> Option<Arc<RwLock<ScriptModule>>> {
-        self.module.clone()
+        None
     }
 
     pub fn get_script_section_name(&self) -> Option<String> {
-        None
+        let registry = self.registry.read().unwrap();
+        let func = registry.get_function(self.function_id)?;
+
+        func.definition_span
+            .as_ref()
+            .map(|span| span.source_name.to_string())
     }
 
     pub fn get_config_group(&self) -> Option<String> {
@@ -67,31 +68,29 @@ impl ScriptFunction {
         0xFFFFFFFF
     }
 
+    pub fn get_object_type(&self) -> Option<ScriptType> {
+        let registry = self.registry.read().unwrap();
+        let func_info = registry.get_function(self.function_id)?;
+
+        func_info
+            .owner_type
+            .map(|type_id| ScriptType::new(type_id, Arc::clone(&self.registry)))
+    }
+
     pub fn get_name(&self) -> String {
-        match self.func_type {
-            FuncType::Script => {
-                if let Some(module) = &self.module {
-                    let m = module.read().unwrap();
-                    if let Some(bytecode) = &m.bytecode {
-                        bytecode
-                            .functions
-                            .get(self.id as usize)
-                            .map(|f| f.name.clone())
-                            .unwrap_or_else(|| String::from("<unknown>"))
-                    } else {
-                        String::from("<unknown>")
-                    }
-                } else {
-                    String::from("<unknown>")
-                }
-            }
-            FuncType::System => String::from("<system>"),
-            _ => String::from("<unknown>"),
-        }
+        let registry = self.registry.read().unwrap();
+        registry
+            .get_function(self.function_id)
+            .map(|f| f.name.clone())
+            .unwrap_or_default()
     }
 
     pub fn get_namespace(&self) -> String {
-        String::new()
+        let registry = self.registry.read().unwrap();
+        registry
+            .get_function(self.function_id)
+            .map(|f| f.namespace.join("::"))
+            .unwrap_or_default()
     }
 
     pub fn get_declaration(
@@ -100,62 +99,143 @@ impl ScriptFunction {
         include_namespace: bool,
         include_param_names: bool,
     ) -> String {
-        self.get_name()
+        let registry = self.registry.read().unwrap();
+        let func = match registry.get_function(self.function_id) {
+            Some(f) => f,
+            None => return String::new(),
+        };
+
+        let mut decl = String::new();
+
+        if let Some(ret_type) = registry.get_type(func.return_type) {
+            if func.flags.contains(FunctionFlags::CONST)
+                && matches!(func.kind, FunctionKind::Method { .. })
+            {
+            } else {
+                decl.push_str(&ret_type.name);
+                decl.push(' ');
+            }
+        }
+
+        if include_namespace && !func.namespace.is_empty() {
+            decl.push_str(&func.namespace.join("::"));
+            decl.push_str("::");
+        }
+
+        if include_object_name {
+            if let Some(owner_id) = func.owner_type {
+                if let Some(owner_type) = registry.get_type(owner_id) {
+                    decl.push_str(&owner_type.name);
+                    decl.push_str("::");
+                }
+            }
+        }
+
+        decl.push_str(&func.name);
+
+        decl.push('(');
+        for (i, param) in func.parameters.iter().enumerate() {
+            if i > 0 {
+                decl.push_str(", ");
+            }
+
+            if let Some(param_type) = registry.get_type(param.type_id) {
+                if param.flags.contains(ParameterFlags::CONST) {
+                    decl.push_str("const ");
+                }
+                decl.push_str(&param_type.name);
+            }
+
+            if param.flags.contains(ParameterFlags::INOUT) {
+                decl.push_str(" &inout");
+            } else if param.flags.contains(ParameterFlags::OUT) {
+                decl.push_str(" &out");
+            } else if param.flags.contains(ParameterFlags::IN) {
+                decl.push_str(" &in");
+            }
+
+            if include_param_names {
+                if let Some(name) = &param.name {
+                    decl.push(' ');
+                    decl.push_str(name);
+                }
+            }
+        }
+        decl.push(')');
+
+        if func.flags.contains(FunctionFlags::CONST) {
+            decl.push_str(" const");
+        }
+
+        decl
     }
 
     pub fn is_read_only(&self) -> bool {
-        false
+        let registry = self.registry.read().unwrap();
+        registry
+            .get_function(self.function_id)
+            .map(|f| f.flags.contains(FunctionFlags::CONST))
+            .unwrap_or(false)
     }
 
     pub fn is_private(&self) -> bool {
-        false
+        let registry = self.registry.read().unwrap();
+        registry
+            .get_function(self.function_id)
+            .map(|f| f.flags.contains(FunctionFlags::PRIVATE))
+            .unwrap_or(false)
     }
 
     pub fn is_protected(&self) -> bool {
-        false
+        let registry = self.registry.read().unwrap();
+        registry
+            .get_function(self.function_id)
+            .map(|f| f.flags.contains(FunctionFlags::PROTECTED))
+            .unwrap_or(false)
     }
 
     pub fn is_final(&self) -> bool {
-        false
+        let registry = self.registry.read().unwrap();
+        registry
+            .get_function(self.function_id)
+            .map(|f| f.flags.contains(FunctionFlags::FINAL))
+            .unwrap_or(false)
     }
 
     pub fn is_override(&self) -> bool {
-        false
+        let registry = self.registry.read().unwrap();
+        registry
+            .get_function(self.function_id)
+            .map(|f| f.flags.contains(FunctionFlags::OVERRIDE))
+            .unwrap_or(false)
     }
 
     pub fn is_shared(&self) -> bool {
-        self.func_type == FuncType::System
+        false
     }
 
     pub fn is_explicit(&self) -> bool {
-        false
+        let registry = self.registry.read().unwrap();
+        registry
+            .get_function(self.function_id)
+            .map(|f| f.flags.contains(FunctionFlags::EXPLICIT))
+            .unwrap_or(false)
     }
 
     pub fn is_property(&self) -> bool {
-        false
+        let registry = self.registry.read().unwrap();
+        registry
+            .get_function(self.function_id)
+            .map(|f| f.name.starts_with("get_") || f.name.starts_with("set_"))
+            .unwrap_or(false)
     }
 
     pub fn get_param_count(&self) -> u32 {
-        match self.func_type {
-            FuncType::Script => {
-                if let Some(module) = &self.module {
-                    let m = module.read().unwrap();
-                    if let Some(bytecode) = &m.bytecode {
-                        bytecode
-                            .functions
-                            .get(self.id as usize)
-                            .map(|f| f.param_count as u32)
-                            .unwrap_or(0)
-                    } else {
-                        0
-                    }
-                } else {
-                    0
-                }
-            }
-            FuncType::System => 0,
-            _ => 0,
-        }
+        let registry = self.registry.read().unwrap();
+        registry
+            .get_function(self.function_id)
+            .map(|f| f.parameters.len() as u32)
+            .unwrap_or(0)
     }
 
     pub fn get_param(
@@ -166,34 +246,32 @@ impl ScriptFunction {
         name: &mut Option<String>,
         default_arg: &mut Option<String>,
     ) -> Result<i32, String> {
-        *type_id = 0;
-        *flags = 0;
-        *name = None;
+        let registry = self.registry.read().unwrap();
+        let func = registry
+            .get_function(self.function_id)
+            .ok_or("Function not found")?;
+
+        let param = func
+            .parameters
+            .get(index as usize)
+            .ok_or("Parameter index out of bounds")?;
+
+        *type_id = param.type_id as i32;
+        *flags = param.flags.bits();
+        *name = param.name.clone();
         *default_arg = None;
+
         Ok(0)
     }
 
     pub fn get_return_type_id(&self, flags: &mut u32) -> i32 {
-        *flags = 0;
-        match self.func_type {
-            FuncType::Script => {
-                if let Some(module) = &self.module {
-                    let m = module.read().unwrap();
-                    if let Some(bytecode) = &m.bytecode {
-                        bytecode
-                            .functions
-                            .get(self.id as usize)
-                            .map(|f| f.return_type as i32)
-                            .unwrap_or(0)
-                    } else {
-                        0
-                    }
-                } else {
-                    0
-                }
-            }
-            FuncType::System => 0,
-            _ => 0,
+        let registry = self.registry.read().unwrap();
+        if let Some(func) = registry.get_function(self.function_id) {
+            *flags = 0;
+            func.return_type as i32
+        } else {
+            *flags = 0;
+            0
         }
     }
 
@@ -201,11 +279,11 @@ impl ScriptFunction {
         0
     }
 
-    pub fn is_compatible_with_type_id(&self, type_id: i32) -> bool {
+    pub fn is_compatible_with_type_id(&self, _type_id: i32) -> bool {
         false
     }
 
-    pub fn get_delegate_object(&self) -> Option<u64> {
+    pub fn get_delegate_object(&self) -> Option<super::script_object::ScriptObject> {
         None
     }
 
@@ -213,12 +291,16 @@ impl ScriptFunction {
         None
     }
 
-    pub fn get_delegate_object_type(&self) -> i32 {
-        0
+    pub fn get_delegate_object_type(&self) -> Option<ScriptType> {
+        None
     }
 
     pub fn get_var_count(&self) -> u32 {
-        0
+        let registry = self.registry.read().unwrap();
+        registry
+            .get_function(self.function_id)
+            .map(|f| f.locals.len() as u32)
+            .unwrap_or(0)
     }
 
     pub fn get_var(
@@ -227,16 +309,47 @@ impl ScriptFunction {
         name: &mut Option<String>,
         type_id: &mut i32,
     ) -> Result<i32, String> {
-        *name = None;
-        *type_id = 0;
-        Err("Not supported".to_string())
+        let registry = self.registry.read().unwrap();
+        let func = registry
+            .get_function(self.function_id)
+            .ok_or("Function not found")?;
+
+        let local = func
+            .locals
+            .get(index as usize)
+            .ok_or("Variable index out of bounds")?;
+
+        *name = Some(local.name.clone());
+        *type_id = local.type_id as i32;
+
+        Ok(0)
     }
 
     pub fn get_var_decl(&self, index: u32, include_namespace: bool) -> Option<String> {
-        None
+        let registry = self.registry.read().unwrap();
+        let func = registry.get_function(self.function_id)?;
+        let local = func.locals.get(index as usize)?;
+
+        let var_type = registry.get_type(local.type_id)?;
+        let mut decl = String::new();
+
+        if local.is_const {
+            decl.push_str("const ");
+        }
+
+        if include_namespace && !var_type.namespace.is_empty() {
+            decl.push_str(&var_type.namespace.join("::"));
+            decl.push_str("::");
+        }
+
+        decl.push_str(&var_type.name);
+        decl.push(' ');
+        decl.push_str(&local.name);
+
+        Some(decl)
     }
 
-    pub fn find_next_line_with_code(&self, line: i32) -> i32 {
+    pub fn find_next_line_with_code(&self, _line: i32) -> i32 {
         -1
     }
 
@@ -246,30 +359,53 @@ impl ScriptFunction {
         row: &mut i32,
         col: &mut i32,
     ) -> Result<i32, String> {
-        *script_section = None;
-        *row = 0;
-        *col = 0;
-        Err("Not supported".to_string())
+        let registry = self.registry.read().unwrap();
+        let func = registry
+            .get_function(self.function_id)
+            .ok_or("Function not found")?;
+
+        if let Some(span) = &func.definition_span {
+            *script_section = Some(span.source_name.to_string());
+            *row = span.start_line as i32;
+            *col = span.start_column as i32;
+            Ok(0)
+        } else {
+            *script_section = None;
+            *row = 0;
+            *col = 0;
+            Err("No debug information available".to_string())
+        }
     }
 
-    pub fn set_user_data(
-        &mut self,
-        data: *mut std::ffi::c_void,
-        type_id: u32,
-    ) -> Result<i32, String> {
-        Ok(0)
+    pub(crate) fn is_native(&self) -> bool {
+        let registry = self.registry.read().unwrap();
+        registry
+            .get_function(self.function_id)
+            .map(|f| matches!(f.implementation, FunctionImpl::Native { .. }))
+            .unwrap_or(false)
     }
 
-    pub fn get_user_data(&self, type_id: u32) -> *mut std::ffi::c_void {
-        std::ptr::null_mut()
+    pub(crate) fn get_bytecode_address(&self) -> Option<u32> {
+        let registry = self.registry.read().unwrap();
+        registry
+            .get_function(self.function_id)
+            .and_then(|f| f.bytecode_address)
     }
 
-    pub(crate) fn is_system(&self) -> bool {
-        self.func_type == FuncType::System
+    pub(crate) fn get_local_count(&self) -> u32 {
+        let registry = self.registry.read().unwrap();
+        registry
+            .get_function(self.function_id)
+            .map(|f| f.local_count)
+            .unwrap_or(0)
     }
 
-    pub(crate) fn get_system_id(&self) -> Option<u32> {
-        self.system_func_id
+    pub(crate) fn get_param_count_internal(&self) -> usize {
+        let registry = self.registry.read().unwrap();
+        registry
+            .get_function(self.function_id)
+            .map(|f| f.parameters.len())
+            .unwrap_or(0)
     }
 }
 

@@ -1,10 +1,10 @@
-use std::any::{Any, TypeId as StdTypeId};
-use std::collections::HashMap;
+use std::any::Any;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, LazyLock, RwLock};
-use std::rc::Rc;
 
 pub type TypeId = u32;
+pub type FunctionId = u32;
+pub type ModuleId = u32;
 
 pub const TYPE_VOID: TypeId = 0;
 pub const TYPE_BOOL: TypeId = 1;
@@ -22,97 +22,54 @@ pub const TYPE_STRING: TypeId = 12;
 pub const TYPE_AUTO: TypeId = 13;
 
 static NEXT_TYPE_ID: LazyLock<AtomicU32> = LazyLock::new(|| AtomicU32::new(100));
+static NEXT_FUNCTION_ID: LazyLock<AtomicU32> = LazyLock::new(|| AtomicU32::new(1000));
 
 pub fn allocate_type_id() -> TypeId {
     NEXT_TYPE_ID.fetch_add(1, Ordering::SeqCst)
 }
 
-#[derive(Debug, Clone)]
-pub struct ObjectType {
-    pub type_id: u32,
-    pub name: String,
-    pub flags: TypeFlags,
-
-    pub properties: Vec<ObjectProperty>,
-    pub methods: Vec<ObjectMethod>,
-    pub behaviours: Vec<BehaviourInfo>,
-    pub rust_type_id: Option<StdTypeId>,
+pub fn allocate_function_id() -> FunctionId {
+    NEXT_FUNCTION_ID.fetch_add(1, Ordering::SeqCst)
 }
 
-#[derive(Debug, Clone)]
-pub struct ObjectProperty {
-    pub name: String,
-    pub type_id: u32,
-    pub is_handle: bool,
-    pub is_const: bool,
-    pub access: AccessSpecifier,
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TypeKind {
+    Primitive,
+    Class,
+    Enum,
+    Interface,
+    Funcdef,
+    Typedef,
 }
 
-#[derive(Debug, Clone)]
-pub struct ObjectMethod {
-    pub name: String,
-    pub return_type_id: u32,
-    pub params: Vec<MethodParam>,
-    pub is_const: bool,
-    pub is_virtual: bool,
-    pub is_final: bool,
-    pub access: AccessSpecifier,
-    pub function_id: u32,
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TypeRegistration {
+    Script,
+    Application,
 }
 
-#[derive(Debug, Clone)]
-pub struct GlobalFunction {
-    pub name: String,
-    pub return_type_id: u32,
-    pub params: Vec<MethodParam>,
-    pub function_id: u32,
-}
-
-#[derive(Debug, Clone)]
-pub struct BehaviourInfo {
-    pub behaviour_type: BehaviourType,
-    pub function_id: u32,
-    pub return_type_id: u32,
-    pub params: Vec<MethodParam>,
-}
-
-#[derive(Debug, Clone)]
-pub struct MethodParam {
-    pub name: String,
-    pub type_id: u32,
-    pub is_ref: bool,
-    pub is_out: bool,
-    pub is_const: bool,
-}
-
-#[derive(Debug, Clone)]
-pub struct EnumType {
-    pub type_id: u32,
-    pub name: String,
-    pub values: HashMap<String, i32>,
-}
-
-#[derive(Debug, Clone)]
-pub struct InterfaceInfo {
-    pub type_id: u32,
-    pub name: String,
-    pub aliased_type_id: u32,
-}
-
-#[derive(Debug, Clone)]
-pub struct FuncdefInfo {
-    pub type_id: u32,
-    pub name: String,
-    pub return_type_id: u32,
-    pub params: Vec<MethodParam>,
-}
-
-#[derive(Debug, Clone)]
-pub struct GlobalProperty {
-    pub name: String,
-    pub type_id: u32,
-    pub is_const: bool,
-    pub is_handle: bool,
+bitflags::bitflags! {
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub struct TypeFlags: u32 {
+        const REF_TYPE = 0x00000001;
+        const VALUE_TYPE = 0x00000002;
+        const GC_TYPE = 0x00000004;
+        const POD_TYPE = 0x00000008;
+        const NOHANDLE = 0x00000010;
+        const SCOPED = 0x00000020;
+        const TEMPLATE = 0x00000040;
+        const ASHANDLE = 0x00000080;
+        const APP_CLASS = 0x00000100;
+        const NOCOUNT = 0x00002000;
+        const IMPLICIT_HANDLE = 0x00020000;
+        const SCRIPT_OBJECT = 0x00080000;
+        const SHARED = 0x00100000;
+        const NOINHERIT = 0x00200000;
+        const FUNCDEF = 0x00400000;
+        const ENUM = 0x00800000;
+        const TYPEDEF = 0x01000000;
+        const ABSTRACT = 0x02000000;
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -122,7 +79,7 @@ pub enum AccessSpecifier {
     Private,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum BehaviourType {
     Construct,
     ListConstruct,
@@ -139,71 +96,6 @@ pub enum BehaviourType {
     ReleaseRefs,
 }
 
-bitflags::bitflags! {
-    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-    pub struct TypeFlags: u32 {
-        const REF_TYPE = 0x00000001;
-        const VALUE_TYPE = 0x00000002;
-        const GC_TYPE = 0x00000004;
-        const POD_TYPE = 0x00000008;
-        const NOHANDLE = 0x00000010;
-        const SCOPED = 0x00000020;
-        const TEMPLATE = 0x00000040;
-        const ASHANDLE = 0x00000080;
-        const APP_CLASS = 0x00000100;
-        const APP_CLASS_CONSTRUCTOR = 0x00000200;
-        const APP_CLASS_DESTRUCTOR = 0x00000400;
-        const APP_CLASS_ASSIGNMENT = 0x00000800;
-        const APP_CLASS_COPY_CONSTRUCTOR = 0x00001000;
-        const NOCOUNT = 0x00002000;
-        const APP_CLASS_ALLINTS = 0x00004000;
-        const APP_CLASS_ALLFLOATS = 0x00008000;
-        const APP_CLASS_ALIGN8 = 0x00010000;
-        const IMPLICIT_HANDLE = 0x00020000;
-        const APP_CLASS_UNION = 0x00040000;
-        const SCRIPT_OBJECT = 0x00080000;
-        const SHARED = 0x00100000;
-        const NOINHERIT = 0x00200000;
-        const FUNCDEF = 0x00400000;
-        const ENUM = 0x00800000;
-        const TYPEDEF = 0x01000000;
-        const ABSTRACT = 0x02000000;
-        const APP_ALIGN16 = 0x04000000;
-
-        const APP_CLASS_C = Self::APP_CLASS.bits() | Self::APP_CLASS_CONSTRUCTOR.bits();
-        const APP_CLASS_CD = Self::APP_CLASS_C.bits() | Self::APP_CLASS_DESTRUCTOR.bits();
-        const APP_CLASS_CA = Self::APP_CLASS_C.bits() | Self::APP_CLASS_ASSIGNMENT.bits();
-        const APP_CLASS_CK = Self::APP_CLASS_C.bits() | Self::APP_CLASS_COPY_CONSTRUCTOR.bits();
-        const APP_CLASS_CDA = Self::APP_CLASS_CD.bits() | Self::APP_CLASS_ASSIGNMENT.bits();
-        const APP_CLASS_CDK = Self::APP_CLASS_CD.bits() | Self::APP_CLASS_COPY_CONSTRUCTOR.bits();
-        const APP_CLASS_CAK = Self::APP_CLASS_CA.bits() | Self::APP_CLASS_COPY_CONSTRUCTOR.bits();
-        const APP_CLASS_CDAK = Self::APP_CLASS_CDA.bits() | Self::APP_CLASS_COPY_CONSTRUCTOR.bits();
-        const APP_CLASS_D = Self::APP_CLASS.bits() | Self::APP_CLASS_DESTRUCTOR.bits();
-        const APP_CLASS_DA = Self::APP_CLASS_D.bits() | Self::APP_CLASS_ASSIGNMENT.bits();
-        const APP_CLASS_DK = Self::APP_CLASS_D.bits() | Self::APP_CLASS_COPY_CONSTRUCTOR.bits();
-        const APP_CLASS_DAK = Self::APP_CLASS_DA.bits() | Self::APP_CLASS_COPY_CONSTRUCTOR.bits();
-        const APP_CLASS_A = Self::APP_CLASS.bits() | Self::APP_CLASS_ASSIGNMENT.bits();
-        const APP_CLASS_AK = Self::APP_CLASS_A.bits() | Self::APP_CLASS_COPY_CONSTRUCTOR.bits();
-        const APP_CLASS_K = Self::APP_CLASS.bits() | Self::APP_CLASS_COPY_CONSTRUCTOR.bits();
-    }
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum TypeKind {
-    Primitive,
-    Class,
-    Enum,
-    Interface,
-    Funcdef,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum TypeRegistration {
-    Script,
-    Application,
-}
-
-/// Runtime value that can be stored in variables, on stack, etc.
 #[derive(Debug)]
 pub enum ScriptValue {
     Void,
@@ -220,11 +112,8 @@ pub enum ScriptValue {
     Double(f64),
     String(String),
     ObjectHandle(u64),
-
-    /// Initialization list (temporary, used during array/object construction)
     InitList(Vec<ScriptValue>),
     Dynamic(Arc<RwLock<Box<dyn Any + Send + Sync>>>),
-
     Null,
 }
 
@@ -270,7 +159,7 @@ impl PartialEq for ScriptValue {
             (Self::String(a), Self::String(b)) => a == b,
             (Self::ObjectHandle(a), Self::ObjectHandle(b)) => a == b,
             (Self::InitList(a), Self::InitList(b)) => a == b,
-            (Self::Dynamic(a), Self::Dynamic(b)) => { false }, // Can't compare Dynamic values
+            (Self::Dynamic(_), Self::Dynamic(_)) => false,
             (Self::Null, Self::Null) => true,
             _ => false,
         }
@@ -295,7 +184,7 @@ impl ScriptValue {
             ScriptValue::String(s) => !s.is_empty(),
             ScriptValue::ObjectHandle(h) => *h != 0,
             ScriptValue::InitList(list) => !list.is_empty(),
-            ScriptValue::Dynamic(_) => true
+            ScriptValue::Dynamic(_) => true,
         }
     }
 

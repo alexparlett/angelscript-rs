@@ -1,105 +1,54 @@
+use crate::core::span::Span;
+use crate::core::types::{FunctionId, TypeId};
 use std::fmt;
 use thiserror::Error;
-#[derive(Debug, Clone, PartialEq, Copy)]
-pub struct Position {
-    pub line: usize,
-    pub column: usize,
-    pub offset: usize,
-}
-
-impl Position {
-    pub fn new(line: usize, column: usize, offset: usize) -> Self {
-        Self {
-            line,
-            column,
-            offset,
-        }
-    }
-}
-
-impl fmt::Display for Position {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}:{}", self.line, self.column)
-    }
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct Span {
-    pub start: Position,
-    pub end: Position,
-    pub source: String,
-}
-
-impl Span {
-    pub fn new(start: Position, end: Position, source: String) -> Self {
-        Self { start, end, source }
-    }
-
-    pub fn merge(&self, other: &Span) -> Span {
-        Span {
-            start: self.start,
-            end: other.end,
-            source: format!("{}{}", self.source, other.source),
-        }
-    }
-}
-
-impl fmt::Display for Span {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        if self.start.line == self.end.line {
-            write!(f, "{}:{}", self.start.line, self.start.column)
-        } else {
-            write!(
-                f,
-                "{}:{}-{}:{}",
-                self.start.line, self.start.column, self.end.line, self.end.column
-            )
-        }
-    }
-}
-
-// ==================== PARSE ERRORS ====================
 
 #[derive(Error, Debug, Clone)]
 pub enum ParseError {
-    #[error("Unexpected token at {span}: expected {expected}, found '{found}'")]
+    #[error("Unexpected token: expected {expected}, found '{found}'")]
     UnexpectedToken {
-        span: Span,
         expected: String,
         found: String,
+        span: Option<Span>,
     },
 
-    #[error("Unexpected end of input at {span}: expected {expected}")]
-    UnexpectedEof { span: Span, expected: String },
+    #[error("Unexpected end of input: expected {expected}")]
+    UnexpectedEof {
+        expected: String,
+        span: Option<Span>,
+    },
 
-    #[error("Invalid operator at {span}: '{operator}'")]
-    InvalidOperator { span: Span, operator: String },
+    #[error("Invalid operator: '{operator}'")]
+    InvalidOperator {
+        operator: String,
+        span: Option<Span>,
+    },
 
-    #[error("Invalid expression at {span}: {message}")]
-    InvalidExpression { span: Span, message: String },
+    #[error("Invalid expression: {message}")]
+    InvalidExpression { message: String, span: Option<Span> },
 
-    #[error("Unmatched delimiter at {span}: expected '{expected}', found '{found}'")]
+    #[error("Unmatched delimiter: expected '{expected}', found '{found}'")]
     UnmatchedDelimiter {
-        span: Span,
         expected: char,
         found: String,
+        span: Option<Span>,
     },
 
-    #[error("Invalid number literal at {span}: {message}")]
-    InvalidNumber { span: Span, message: String },
+    #[error("Invalid number literal: {message}")]
+    InvalidNumber { message: String, span: Option<Span> },
 
-    #[error("Invalid string literal at {span}: {message}")]
-    InvalidString { span: Span, message: String },
+    #[error("Invalid string literal: {message}")]
+    InvalidString { message: String, span: Option<Span> },
 
-    #[error("Type error at {span}: {message}")]
-    TypeError { span: Span, message: String },
+    #[error("Type error: {message}")]
+    TypeError { message: String, span: Option<Span> },
 
-    #[error("Syntax error at {span}: {message}")]
-    SyntaxError { span: Span, message: String },
+    #[error("Syntax error: {message}")]
+    SyntaxError { message: String, span: Option<Span> },
 }
 
 impl ParseError {
-    pub fn span(&self) -> &Span {
+    pub fn span(&self) -> Option<&Span> {
         match self {
             ParseError::UnexpectedToken { span, .. }
             | ParseError::UnexpectedEof { span, .. }
@@ -109,288 +58,216 @@ impl ParseError {
             | ParseError::InvalidNumber { span, .. }
             | ParseError::InvalidString { span, .. }
             | ParseError::TypeError { span, .. }
-            | ParseError::SyntaxError { span, .. } => span,
+            | ParseError::SyntaxError { span, .. } => span.as_ref(),
         }
-    }
-
-    /// Format error with source context
-    pub fn format_with_source(&self, source: &str) -> String {
-        let span = self.span();
-
-        let lines: Vec<&str> = source.lines().collect();
-        let line_idx = span.start.line.saturating_sub(1);
-
-        if line_idx >= lines.len() {
-            return self.to_string();
-        }
-
-        let line = lines[line_idx];
-        let col = span.start.column.saturating_sub(1);
-        let length = span.end.offset.saturating_sub(span.start.offset).max(1);
-
-        format!(
-            "{}\n  --> {}:{}\n   |\n{:3} | {}\n   | {}{}",
-            self,
-            span.start.line,
-            span.start.column,
-            span.start.line,
-            line,
-            " ".repeat(col),
-            "^".repeat(length.min(line.len().saturating_sub(col)))
-        )
     }
 }
-
-// ==================== SEMANTIC ERRORS ====================
 
 #[derive(Error, Debug, Clone)]
 pub enum SemanticError {
     #[error("Undefined symbol '{name}'")]
-    UndefinedSymbol {
-        name: String,
-        location: Option<Span>,
-    },
+    UndefinedSymbol { name: String, span: Option<Span> },
 
     #[error("Undefined type '{name}'")]
-    UndefinedType {
-        name: String,
-        location: Option<Span>,
-    },
+    UndefinedType { name: String, span: Option<Span> },
 
     #[error("Undefined function '{name}'")]
-    UndefinedFunction {
-        name: String,
-        location: Option<Span>,
-    },
+    UndefinedFunction { name: String, span: Option<Span> },
 
     #[error("Undefined member '{member}' in type '{type_name}'")]
     UndefinedMember {
         type_name: String,
         member: String,
-        location: Option<Span>,
+        span: Option<Span>,
+    },
+
+    #[error("Duplicate function defined '{name}'")]
+    DuplicateFunction {
+        name: String,
+        span: Option<Span>,
     },
 
     #[error("Type mismatch: expected '{expected}', found '{found}'")]
     TypeMismatch {
         expected: String,
         found: String,
-        location: Option<Span>,
+        span: Option<Span>,
     },
 
     #[error("Cannot assign to '{target}': {reason}")]
     InvalidAssignment {
         target: String,
         reason: String,
-        location: Option<Span>,
+        span: Option<Span>,
     },
 
     #[error("Duplicate definition of '{name}'")]
     DuplicateDefinition {
         name: String,
-        location: Option<Span>,
-        previous_location: Option<Span>,
+        span: Option<Span>,
+        previous_span: Option<Span>,
     },
 
     #[error("Invalid operation '{operation}' on type '{type_name}'")]
     InvalidOperation {
         operation: String,
         type_name: String,
-        location: Option<Span>,
+        span: Option<Span>,
     },
 
     #[error("Cannot convert from '{from}' to '{to}'")]
     InvalidConversion {
         from: String,
         to: String,
-        location: Option<Span>,
+        span: Option<Span>,
     },
 
     #[error("Wrong number of arguments: expected {expected}, found {found}")]
     ArgumentCountMismatch {
         expected: usize,
         found: usize,
-        location: Option<Span>,
+        span: Option<Span>,
     },
 
     #[error("Invalid argument type: expected '{expected}', found '{found}'")]
     InvalidArgumentType {
         expected: String,
         found: String,
-        location: Option<Span>,
+        span: Option<Span>,
     },
 
     #[error("Break statement outside of loop")]
-    InvalidBreak { location: Option<Span> },
+    InvalidBreak { span: Option<Span> },
 
     #[error("Continue statement outside of loop")]
-    InvalidContinue { location: Option<Span> },
+    InvalidContinue { span: Option<Span> },
 
     #[error("Return statement with value in void function")]
-    InvalidReturn { location: Option<Span> },
+    InvalidReturn { span: Option<Span> },
 
     #[error("Missing return statement in non-void function '{function}'")]
     MissingReturn {
         function: String,
-        location: Option<Span>,
+        span: Option<Span>,
     },
 
     #[error("Cannot access private member '{member}'")]
-    PrivateAccess {
-        member: String,
-        location: Option<Span>,
-    },
+    PrivateAccess { member: String, span: Option<Span> },
 
     #[error("Cannot access protected member '{member}'")]
-    ProtectedAccess {
-        member: String,
-        location: Option<Span>,
-    },
+    ProtectedAccess { member: String, span: Option<Span> },
 
     #[error("Cannot override final method '{method}'")]
-    OverrideFinal {
-        method: String,
-        location: Option<Span>,
-    },
+    OverrideFinal { method: String, span: Option<Span> },
 
     #[error("Abstract method '{method}' not implemented in class '{class}'")]
     UnimplementedAbstract {
         method: String,
         class: String,
-        location: Option<Span>,
+        span: Option<Span>,
     },
 
     #[error("Cannot instantiate abstract class '{class}'")]
-    InstantiateAbstract {
-        class: String,
-        location: Option<Span>,
-    },
+    InstantiateAbstract { class: String, span: Option<Span> },
 
     #[error("Circular dependency detected: {cycle}")]
-    CircularDependency {
-        cycle: String,
-        location: Option<Span>,
-    },
+    CircularDependency { cycle: String, span: Option<Span> },
 
     #[error("Const violation: {message}")]
-    ConstViolation {
-        message: String,
-        location: Option<Span>,
-    },
+    ConstViolation { message: String, span: Option<Span> },
 
     #[error("Reference type mismatch: {message}")]
-    ReferenceMismatch {
-        message: String,
-        location: Option<Span>,
-    },
+    ReferenceMismatch { message: String, span: Option<Span> },
 
     #[error("Invalid handle operation: {message}")]
-    InvalidHandle {
-        message: String,
-        location: Option<Span>,
-    },
+    InvalidHandle { message: String, span: Option<Span> },
 
     #[error("Ambiguous call to '{name}': multiple candidates found")]
     AmbiguousCall {
         name: String,
         candidates: Vec<String>,
-        location: Option<Span>,
+        span: Option<Span>,
     },
 
     #[error("Internal compiler error: {message}")]
-    Internal {
-        message: String,
-        location: Option<Span>,
-    },
+    Internal { message: String, span: Option<Span> },
 }
 
 impl SemanticError {
-    pub fn location(&self) -> Option<&Span> {
+    pub fn span(&self) -> Option<&Span> {
         match self {
-            SemanticError::UndefinedSymbol { location, .. }
-            | SemanticError::UndefinedType { location, .. }
-            | SemanticError::UndefinedFunction { location, .. }
-            | SemanticError::UndefinedMember { location, .. }
-            | SemanticError::TypeMismatch { location, .. }
-            | SemanticError::InvalidAssignment { location, .. }
-            | SemanticError::DuplicateDefinition { location, .. }
-            | SemanticError::InvalidOperation { location, .. }
-            | SemanticError::InvalidConversion { location, .. }
-            | SemanticError::ArgumentCountMismatch { location, .. }
-            | SemanticError::InvalidArgumentType { location, .. }
-            | SemanticError::InvalidBreak { location }
-            | SemanticError::InvalidContinue { location }
-            | SemanticError::InvalidReturn { location }
-            | SemanticError::MissingReturn { location, .. }
-            | SemanticError::PrivateAccess { location, .. }
-            | SemanticError::ProtectedAccess { location, .. }
-            | SemanticError::OverrideFinal { location, .. }
-            | SemanticError::UnimplementedAbstract { location, .. }
-            | SemanticError::InstantiateAbstract { location, .. }
-            | SemanticError::CircularDependency { location, .. }
-            | SemanticError::ConstViolation { location, .. }
-            | SemanticError::ReferenceMismatch { location, .. }
-            | SemanticError::InvalidHandle { location, .. }
-            | SemanticError::AmbiguousCall { location, .. }
-            | SemanticError::Internal { location, .. } => location.as_ref(),
+            SemanticError::UndefinedSymbol { span, .. }
+            | SemanticError::UndefinedType { span, .. }
+            | SemanticError::UndefinedFunction { span, .. }
+            | SemanticError::DuplicateFunction { span, .. }
+            | SemanticError::UndefinedMember { span, .. }
+            | SemanticError::TypeMismatch { span, .. }
+            | SemanticError::InvalidAssignment { span, .. }
+            | SemanticError::DuplicateDefinition { span, .. }
+            | SemanticError::InvalidOperation { span, .. }
+            | SemanticError::InvalidConversion { span, .. }
+            | SemanticError::ArgumentCountMismatch { span, .. }
+            | SemanticError::InvalidArgumentType { span, .. }
+            | SemanticError::InvalidBreak { span }
+            | SemanticError::InvalidContinue { span }
+            | SemanticError::InvalidReturn { span }
+            | SemanticError::MissingReturn { span, .. }
+            | SemanticError::PrivateAccess { span, .. }
+            | SemanticError::ProtectedAccess { span, .. }
+            | SemanticError::OverrideFinal { span, .. }
+            | SemanticError::UnimplementedAbstract { span, .. }
+            | SemanticError::InstantiateAbstract { span, .. }
+            | SemanticError::CircularDependency { span, .. }
+            | SemanticError::ConstViolation { span, .. }
+            | SemanticError::ReferenceMismatch { span, .. }
+            | SemanticError::InvalidHandle { span, .. }
+            | SemanticError::AmbiguousCall { span, .. }
+            | SemanticError::Internal { span, .. } => span.as_ref(),
         }
     }
 
-    /// Format error with source context
-    pub fn format_with_source(&self, source: &str) -> String {
-        if let Some(span) = self.location() {
-            let lines: Vec<&str> = source.lines().collect();
-            let line_idx = span.start.line.saturating_sub(1);
+    pub fn format_detailed(&self) -> String {
+        let mut output = format!("error: {}\n", self);
 
-            if line_idx >= lines.len() {
-                return self.to_string();
+        if let Some(span) = self.span() {
+            output.push_str(&format!("  --> {}\n", span.format()));
+        }
+
+        match self {
+            SemanticError::DuplicateDefinition { previous_span, .. } => {
+                if let Some(prev) = previous_span {
+                    output.push_str(&format!("note: Previously defined at: {}\n", prev.format()));
+                }
             }
-
-            let line = lines[line_idx];
-            let col = span.start.column.saturating_sub(1);
-            let length = span.end.offset.saturating_sub(span.start.offset).max(1);
-
-            format!(
-                "{}\n  --> {}:{}\n   |\n{:3} | {}\n   | {}{}",
-                self,
-                span.start.line,
-                span.start.column,
-                span.start.line,
-                line,
-                " ".repeat(col),
-                "^".repeat(length.min(line.len().saturating_sub(col)))
-            )
-        } else {
-            self.to_string()
+            SemanticError::AmbiguousCall { candidates, .. } => {
+                output.push_str("note: Candidates are:\n");
+                for candidate in candidates {
+                    output.push_str(&format!("  - {}\n", candidate));
+                }
+            }
+            _ => {}
         }
+
+        output
     }
 
-    /// Helper constructors for common cases without location
     pub fn undefined_symbol(name: String) -> Self {
-        SemanticError::UndefinedSymbol {
-            name,
-            location: None,
-        }
+        SemanticError::UndefinedSymbol { name, span: None }
     }
 
     pub fn undefined_type(name: String) -> Self {
-        SemanticError::UndefinedType {
-            name,
-            location: None,
-        }
+        SemanticError::UndefinedType { name, span: None }
     }
 
     pub fn undefined_function(name: String) -> Self {
-        SemanticError::UndefinedFunction {
-            name,
-            location: None,
-        }
+        SemanticError::UndefinedFunction { name, span: None }
     }
 
     pub fn undefined_member(type_name: String, member: String) -> Self {
         SemanticError::UndefinedMember {
             type_name,
             member,
-            location: None,
+            span: None,
         }
     }
 
@@ -398,7 +275,7 @@ impl SemanticError {
         SemanticError::TypeMismatch {
             expected,
             found,
-            location: None,
+            span: None,
         }
     }
 
@@ -406,19 +283,17 @@ impl SemanticError {
         SemanticError::InvalidOperation {
             operation,
             type_name,
-            location: None,
+            span: None,
         }
     }
 
     pub fn internal(message: String) -> Self {
         SemanticError::Internal {
             message,
-            location: None,
+            span: None,
         }
     }
 }
-
-// ==================== CODEGEN ERRORS ====================
 
 #[derive(Debug, Clone)]
 pub enum CodegenError {
@@ -434,8 +309,8 @@ pub enum CodegenError {
     Internal(String),
 }
 
-impl std::fmt::Display for CodegenError {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+impl fmt::Display for CodegenError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             CodegenError::UndefinedVariable(name) => write!(f, "Undefined variable: {}", name),
             CodegenError::UndefinedFunction(name) => write!(f, "Undefined function: {}", name),
@@ -453,8 +328,6 @@ impl std::fmt::Display for CodegenError {
 
 impl std::error::Error for CodegenError {}
 
-// ==================== COMPILE ERRORS ====================
-
 #[derive(Error, Debug, Clone)]
 pub enum CompileError {
     #[error("Semantic analysis failed with {} error(s)", .0.len())]
@@ -468,8 +341,7 @@ pub enum CompileError {
 }
 
 impl CompileError {
-    /// Format all errors with source context
-    pub fn format_with_source(&self, source: &str) -> String {
+    pub fn format_detailed(&self) -> String {
         match self {
             CompileError::SemanticErrors(errors) => {
                 let mut output = format!(
@@ -480,7 +352,7 @@ impl CompileError {
                     output.push_str(&format!(
                         "Error {}:\n{}\n\n",
                         i + 1,
-                        error.format_with_source(source)
+                        error.format_detailed()
                     ));
                 }
                 output
@@ -488,13 +360,14 @@ impl CompileError {
             CompileError::CodegenError(error) => {
                 format!("Code generation failed:\n{}", error)
             }
-            CompileError::ParseError(error) => error.format_with_source(source),
+            CompileError::ParseError(error) => {
+                format!("Parse error:\n{}", error)
+            }
         }
     }
 }
 
-// Type aliases for convenience
-pub type ParseResult<T> = std::result::Result<T, ParseError>;
-pub type SemanticResult<T> = std::result::Result<T, SemanticError>;
-pub type CodegenResult<T> = std::result::Result<T, CodegenError>;
-pub type CompileResult<T> = std::result::Result<T, CompileError>;
+pub type ParseResult<T> = Result<T, ParseError>;
+pub type SemanticResult<T> = Result<T, SemanticError>;
+pub type CodegenResult<T> = Result<T, CodegenError>;
+pub type CompileResult<T> = Result<T, CompileError>;

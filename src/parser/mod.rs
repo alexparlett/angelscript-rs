@@ -1,4 +1,5 @@
 pub mod ast;
+pub mod declaration_parser;
 pub mod expr_parser;
 pub mod lexer;
 pub mod parser;
@@ -15,12 +16,9 @@ mod tests {
 
     fn parse(source: &str) -> ParseResult<Script> {
         let mut builder = ScriptBuilder::new();
-        builder.build_from_source(source)
+        builder.add_section("test", source);
+        builder.build()
     }
-
-    // ============================================================================
-    // BASIC DECLARATIONS
-    // ============================================================================
 
     #[test]
     fn test_simple_function() {
@@ -73,10 +71,6 @@ mod tests {
         assert!(result.is_ok(), "Failed to parse: {:?}", result.err());
     }
 
-    // ============================================================================
-    // CLASSES
-    // ============================================================================
-
     #[test]
     fn test_class_with_constructor() {
         let source = r#"
@@ -122,7 +116,6 @@ mod tests {
         let source = r#"
             class MyClass {
                 ~MyClass() {
-                    // cleanup
                 }
             }
         "#;
@@ -222,10 +215,6 @@ mod tests {
         assert!(result.is_ok(), "Failed to parse: {:?}", result.err());
     }
 
-    // ============================================================================
-    // INTERFACES
-    // ============================================================================
-
     #[test]
     fn test_interface() {
         let source = r#"
@@ -282,10 +271,6 @@ mod tests {
         assert!(result.is_ok(), "Failed to parse: {:?}", result.err());
     }
 
-    // ============================================================================
-    // ENUMS
-    // ============================================================================
-
     #[test]
     fn test_enum() {
         let source = r#"
@@ -338,10 +323,6 @@ mod tests {
         assert!(result.is_ok(), "Failed to parse: {:?}", result.err());
     }
 
-    // ============================================================================
-    // TYPEDEF & FUNCDEF
-    // ============================================================================
-
     #[test]
     fn test_typedef() {
         let source = r#"
@@ -383,10 +364,6 @@ mod tests {
         assert!(result.is_ok(), "Failed to parse: {:?}", result.err());
     }
 
-    // ============================================================================
-    // PARAMETERS & TYPE MODIFIERS
-    // ============================================================================
-
     #[test]
     fn test_parameter_type_modifiers() {
         let source = r#"
@@ -411,7 +388,7 @@ mod tests {
                     "test1" => assert_eq!(param.type_mod, Some(TypeMod::In)),
                     "test2" => assert_eq!(param.type_mod, Some(TypeMod::Out)),
                     "test3" => assert_eq!(param.type_mod, Some(TypeMod::InOut)),
-                    "test4" => assert_eq!(param.type_mod, Some(TypeMod::InOut)), // default
+                    "test4" => assert_eq!(param.type_mod, Some(TypeMod::InOut)),
                     _ => {}
                 }
             }
@@ -482,10 +459,6 @@ mod tests {
         }
     }
 
-    // ============================================================================
-    // HANDLES
-    // ============================================================================
-
     #[test]
     fn test_handle_syntax() {
         let source = r#"
@@ -506,7 +479,6 @@ mod tests {
     fn test_const_handle() {
         let source = r#"
             void test(CGameObj @const handle) {
-                // handle is const
             }
         "#;
 
@@ -526,10 +498,6 @@ mod tests {
         let result = parse(source);
         assert!(result.is_ok(), "Failed to parse: {:?}", result.err());
     }
-
-    // ============================================================================
-    // PROPERTY ACCESSORS
-    // ============================================================================
 
     #[test]
     fn test_property_accessor() {
@@ -577,10 +545,6 @@ mod tests {
         assert!(result.is_ok(), "Failed to parse: {:?}", result.err());
     }
 
-    // ============================================================================
-    // OPERATORS & EXPRESSIONS
-    // ============================================================================
-
     #[test]
     fn test_operators() {
         let source = r#"
@@ -603,7 +567,6 @@ mod tests {
         let source = r#"
             void test() {
                 if (msg !is null && msg is CMessage) {
-                    // do something
                 }
             }
         "#;
@@ -665,10 +628,6 @@ mod tests {
         let result = parse(source);
         assert!(result.is_ok(), "Failed to parse: {:?}", result.err());
     }
-
-    // ============================================================================
-    // STATEMENTS
-    // ============================================================================
 
     #[test]
     fn test_if_statement() {
@@ -802,10 +761,6 @@ mod tests {
         assert!(result.is_ok(), "Failed to parse: {:?}", result.err());
     }
 
-    // ============================================================================
-    // MEMBER ACCESS & FUNCTION CALLS
-    // ============================================================================
-
     #[test]
     fn test_array_indexing() {
         let source = r#"
@@ -872,10 +827,6 @@ mod tests {
         assert!(result.is_ok(), "Failed to parse: {:?}", result.err());
     }
 
-    // ============================================================================
-    // LAMBDA FUNCTIONS
-    // ============================================================================
-
     #[test]
     fn test_lambda() {
         let source = r#"
@@ -918,10 +869,6 @@ mod tests {
         assert!(result.is_ok(), "Failed to parse: {:?}", result.err());
     }
 
-    // ============================================================================
-    // TEMPLATE TYPES
-    // ============================================================================
-
     #[test]
     fn test_template_types() {
         let source = r#"
@@ -962,10 +909,6 @@ mod tests {
         let result = parse(source);
         assert!(result.is_ok(), "Failed to parse: {:?}", result.err());
     }
-
-    // ============================================================================
-    // NAMESPACES
-    // ============================================================================
 
     #[test]
     fn test_namespace() {
@@ -1014,10 +957,6 @@ mod tests {
         let result = parse(source);
         assert!(result.is_ok(), "Failed to parse: {:?}", result.err());
     }
-
-    // ============================================================================
-    // LITERALS
-    // ============================================================================
 
     #[test]
     fn test_string_literals() {
@@ -1075,10 +1014,6 @@ mod tests {
         assert!(result.is_ok(), "Failed to parse: {:?}", result.err());
     }
 
-    // ============================================================================
-    // MIXIN
-    // ============================================================================
-
     #[test]
     fn test_mixin() {
         let source = r#"
@@ -1091,10 +1026,6 @@ mod tests {
         assert!(result.is_ok(), "Failed to parse: {:?}", result.err());
     }
 
-    // ============================================================================
-    // IMPORT
-    // ============================================================================
-
     #[test]
     fn test_import() {
         let source = r#"
@@ -1104,10 +1035,6 @@ mod tests {
         let result = parse(source);
         assert!(result.is_ok(), "Failed to parse: {:?}", result.err());
     }
-
-    // ============================================================================
-    // PREPROCESSOR - CONDITIONAL COMPILATION
-    // ============================================================================
 
     #[test]
     fn test_conditional_compilation_if() {
@@ -1120,11 +1047,11 @@ mod tests {
         let mut builder = ScriptBuilder::new();
         builder.define_word("DEBUG".to_string());
 
-        let result = builder.build_from_source(source);
+        builder.add_section("test", source);
+        let result = builder.build();
         assert!(result.is_ok(), "Failed to parse: {:?}", result.err());
 
         let script = result.unwrap();
-        // Should have debugFunction
         assert_eq!(script.items.len(), 1);
     }
 
@@ -1137,12 +1064,11 @@ mod tests {
         "#;
 
         let mut builder = ScriptBuilder::new();
-
-        let result = builder.build_from_source(source);
+        builder.add_section("test", source);
+        let result = builder.build();
         assert!(result.is_ok(), "Failed to parse: {:?}", result.err());
 
         let script = result.unwrap();
-        // Should be empty
         assert_eq!(script.items.len(), 0);
     }
 
@@ -1161,11 +1087,11 @@ mod tests {
         let mut builder = ScriptBuilder::new();
         builder.define_word("FEATURE_B".to_string());
 
-        let result = builder.build_from_source(source);
+        builder.add_section("test", source);
+        let result = builder.build();
         assert!(result.is_ok(), "Failed to parse: {:?}", result.err());
 
         let script = result.unwrap();
-        // Should have FeatureB
         assert_eq!(script.items.len(), 1);
         match &script.items[0] {
             ScriptNode::Class(class) => {
@@ -1187,7 +1113,8 @@ mod tests {
 
         let mut builder = ScriptBuilder::new();
 
-        let result = builder.build_from_source(source);
+        builder.add_section("test", source);
+        let result = builder.build();
         assert!(result.is_ok(), "Failed to parse: {:?}", result.err());
 
         let script = result.unwrap();
@@ -1216,16 +1143,13 @@ mod tests {
         builder.define_word("OUTER".to_string());
         builder.define_word("INNER".to_string());
 
-        let result = builder.build_from_source(source);
+        builder.add_section("test", source);
+        let result = builder.build();
         assert!(result.is_ok(), "Failed to parse: {:?}", result.err());
 
         let script = result.unwrap();
         assert_eq!(script.items.len(), 1);
     }
-
-    // ============================================================================
-    // PREPROCESSOR - INCLUDE
-    // ============================================================================
 
     struct TestIncludeCallback {
         files: HashMap<String, String>,
@@ -1250,11 +1174,7 @@ mod tests {
         fn on_include(&mut self, include_path: &str, _from_source: &str) -> ParseResult<String> {
             self.files.get(include_path).cloned().ok_or_else(|| {
                 crate::core::error::ParseError::SyntaxError {
-                    span: crate::core::error::Span::new(
-                        crate::core::error::Position::new(0, 0, 0),
-                        crate::core::error::Position::new(0, 0, 0),
-                        String::new(),
-                    ),
+                    span: None,
                     message: format!("File not found: {}", include_path),
                 }
             })
@@ -1274,11 +1194,11 @@ mod tests {
         let mut builder = ScriptBuilder::new();
         builder.set_include_callback(TestIncludeCallback::new());
 
-        let result = builder.build_from_source(source);
+        builder.add_section("test", source);
+        let result = builder.build();
         assert!(result.is_ok(), "Failed to parse: {:?}", result.err());
 
         let script = result.unwrap();
-        // Should have commonFunction and main
         assert_eq!(script.items.len(), 2);
     }
 
@@ -1294,17 +1214,13 @@ mod tests {
         let mut builder = ScriptBuilder::new();
         builder.set_include_callback(TestIncludeCallback::new());
 
-        let result = builder.build_from_source(source);
+        builder.add_section("test", source);
+        let result = builder.build();
         assert!(result.is_ok(), "Failed to parse: {:?}", result.err());
 
         let script = result.unwrap();
-        // Should have commonFunction, CommonType, and main
         assert_eq!(script.items.len(), 3);
     }
-
-    // ============================================================================
-    // PREPROCESSOR - PRAGMA
-    // ============================================================================
 
     struct TestPragmaCallback {
         pragmas: Vec<String>,
@@ -1336,7 +1252,8 @@ mod tests {
         let mut builder = ScriptBuilder::new();
         builder.set_pragma_callback(TestPragmaCallback::new());
 
-        let result = builder.build_from_source(source);
+        builder.add_section("test", source);
+        let result = builder.build();
         assert!(result.is_ok(), "Failed to parse: {:?}", result.err());
     }
 
@@ -1353,20 +1270,15 @@ mod tests {
                 void Update(float deltaTime);
                 void Render();
             }
-
-            // ... rest of the test
         "#;
 
         let mut builder = ScriptBuilder::new();
         builder.define_word("DEBUG".to_string());
 
-        let result = builder.build_from_source(source);
+        builder.add_section("test", source);
+        let result = builder.build();
         assert!(result.is_ok(), "Failed to parse: {:?}", result.err());
     }
-
-    // ============================================================================
-    // PREPROCESSOR - CUSTOM DIRECTIVES
-    // ============================================================================
 
     #[test]
     fn test_custom_directive() {
@@ -1379,10 +1291,6 @@ mod tests {
         let result = parse(source);
         assert!(result.is_ok(), "Failed to parse: {:?}", result.err());
     }
-
-    // ============================================================================
-    // COMMENTS
-    // ============================================================================
 
     #[test]
     fn test_comments() {
@@ -1398,10 +1306,6 @@ mod tests {
         let result = parse(source);
         assert!(result.is_ok(), "Failed to parse: {:?}", result.err());
     }
-
-    // ============================================================================
-    // COMPLEX REAL-WORLD EXAMPLES
-    // ============================================================================
 
     #[test]
     fn test_full_player_script() {
@@ -1426,7 +1330,6 @@ mod tests {
                         dx++;
                     if( !self.Move(dx,dy) )
                     {
-                        // Couldn't move
                     }
                 }
 
@@ -1458,10 +1361,6 @@ mod tests {
         let script = result.unwrap();
         assert_eq!(script.items.len(), 2);
     }
-
-    // ============================================================================
-    // EDGE CASES
-    // ============================================================================
 
     #[test]
     fn test_empty_script() {
@@ -1498,7 +1397,7 @@ mod tests {
     fn test_void_expression() {
         let source = r#"
             void test() {
-                void;  // Valid in AngelScript
+                void;
             }
         "#;
 
@@ -1615,7 +1514,6 @@ mod tests {
         let source = r#"
         void main() {
             foreach(string val, uint idx : arr) {
-                // body
             }
         }
     "#;
@@ -1671,7 +1569,6 @@ mod tests {
                     match &body.statements[0] {
                         Statement::ForEach(outer_foreach) => {
                             assert_eq!(outer_foreach.variables[0].1, "row");
-                            // Check nested foreach
                             match outer_foreach.body.as_ref() {
                                 Statement::Block(block) => match &block.statements[0] {
                                     Statement::ForEach(inner_foreach) => {

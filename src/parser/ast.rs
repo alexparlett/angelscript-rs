@@ -1,8 +1,10 @@
+use crate::core::span::Span;
 use std::fmt;
 
 #[derive(Debug, Clone, PartialEq, Hash)]
 pub struct Script {
     pub items: Vec<ScriptNode>,
+    pub span: Option<Span>,
 }
 
 #[derive(Debug, Clone, PartialEq, Hash)]
@@ -19,7 +21,6 @@ pub enum ScriptNode {
     Func(Func),
     Namespace(Namespace),
 
-    // Simplified preprocessor directives
     Include(Include),
     Pragma(Pragma),
     ConditionalBlock(ConditionalBlock),
@@ -62,17 +63,20 @@ pub struct Import {
     pub identifier: String,
     pub params: Vec<Param>,
     pub from: String,
+    pub span: Option<Span>,
 }
 
 #[derive(Debug, Clone, PartialEq, Hash)]
 pub struct Using {
     pub namespace: Vec<String>,
+    pub span: Option<Span>,
 }
 
 #[derive(Debug, Clone, PartialEq, Hash)]
 pub struct Namespace {
     pub name: Vec<String>,
     pub items: Vec<ScriptNode>,
+    pub span: Option<Span>,
 }
 
 #[derive(Debug, Clone, PartialEq, Hash)]
@@ -80,12 +84,14 @@ pub struct Enum {
     pub modifiers: Vec<String>,
     pub name: String,
     pub variants: Vec<EnumVariant>,
+    pub span: Option<Span>,
 }
 
 #[derive(Debug, Clone, PartialEq, Hash)]
 pub struct EnumVariant {
     pub name: String,
     pub value: Option<Expr>,
+    pub span: Option<Span>,
 }
 
 #[derive(Debug, Clone, PartialEq, Hash)]
@@ -95,6 +101,7 @@ pub struct FuncDef {
     pub is_ref: bool,
     pub name: String,
     pub params: Vec<Param>,
+    pub span: Option<Span>,
 }
 
 #[derive(Debug, Clone, PartialEq, Hash)]
@@ -108,6 +115,7 @@ pub struct Func {
     pub is_const: bool,
     pub attributes: Vec<String>,
     pub body: Option<StatBlock>,
+    pub span: Option<Span>,
 }
 
 #[derive(Debug, Clone, PartialEq, Hash)]
@@ -117,6 +125,7 @@ pub struct VirtProp {
     pub is_ref: bool,
     pub name: String,
     pub accessors: Vec<PropertyAccessor>,
+    pub span: Option<Span>,
 }
 
 #[derive(Debug, Clone, PartialEq, Hash)]
@@ -125,6 +134,7 @@ pub struct PropertyAccessor {
     pub is_const: bool,
     pub attributes: Vec<String>,
     pub body: Option<StatBlock>,
+    pub span: Option<Span>,
 }
 
 #[derive(Debug, Clone, PartialEq, Hash)]
@@ -139,6 +149,7 @@ pub struct Interface {
     pub name: String,
     pub extends: Vec<String>,
     pub members: Vec<InterfaceMember>,
+    pub span: Option<Span>,
 }
 
 #[derive(Debug, Clone, PartialEq, Hash)]
@@ -154,11 +165,13 @@ pub struct IntfMthd {
     pub name: String,
     pub params: Vec<Param>,
     pub is_const: bool,
+    pub span: Option<Span>,
 }
 
 #[derive(Debug, Clone, PartialEq, Hash)]
 pub struct Mixin {
     pub class: Class,
+    pub span: Option<Span>,
 }
 
 #[derive(Debug, Clone, PartialEq, Hash)]
@@ -167,6 +180,7 @@ pub struct Class {
     pub name: String,
     pub extends: Vec<String>,
     pub members: Vec<ClassMember>,
+    pub span: Option<Span>,
 }
 
 #[derive(Debug, Clone, PartialEq, Hash)]
@@ -182,12 +196,14 @@ pub struct Var {
     pub visibility: Option<Visibility>,
     pub var_type: Type,
     pub declarations: Vec<VarDecl>,
+    pub span: Option<Span>,
 }
 
 #[derive(Debug, Clone, PartialEq, Hash)]
 pub struct VarDecl {
     pub name: String,
     pub initializer: Option<VarInit>,
+    pub span: Option<Span>,
 }
 
 #[derive(Debug, Clone, PartialEq, Hash)]
@@ -201,6 +217,7 @@ pub enum VarInit {
 pub struct Typedef {
     pub prim_type: String,
     pub name: String,
+    pub span: Option<Span>,
 }
 
 #[derive(Debug, Clone, PartialEq, Hash)]
@@ -217,6 +234,7 @@ pub struct Type {
     pub datatype: DataType,
     pub template_types: Vec<Type>,
     pub modifiers: Vec<TypeModifier>,
+    pub span: Option<Span>,
 }
 
 #[derive(Debug, Clone, PartialEq, Hash)]
@@ -247,6 +265,7 @@ pub struct Param {
     pub name: Option<String>,
     pub default_value: Option<Expr>,
     pub is_variadic: bool,
+    pub span: Option<Span>,
 }
 
 #[derive(Debug, Clone, PartialEq, Hash)]
@@ -259,6 +278,7 @@ pub enum TypeMod {
 #[derive(Debug, Clone, PartialEq, Hash)]
 pub struct InitList {
     pub items: Vec<InitListItem>,
+    pub span: Option<Span>,
 }
 
 #[derive(Debug, Clone, PartialEq, Hash)]
@@ -270,6 +290,7 @@ pub enum InitListItem {
 #[derive(Debug, Clone, PartialEq, Hash)]
 pub struct StatBlock {
     pub statements: Vec<Statement>,
+    pub span: Option<Span>,
 }
 
 #[derive(Debug, Clone, PartialEq, Hash)]
@@ -280,8 +301,8 @@ pub enum Statement {
     While(WhileStmt),
     DoWhile(DoWhileStmt),
     Return(ReturnStmt),
-    Break,
-    Continue,
+    Break(Option<Span>),
+    Continue(Option<Span>),
     Switch(SwitchStmt),
     Block(StatBlock),
     Expr(Option<Expr>),
@@ -295,6 +316,7 @@ pub struct IfStmt {
     pub condition: Expr,
     pub then_branch: Box<Statement>,
     pub else_branch: Option<Box<Statement>>,
+    pub span: Option<Span>,
 }
 
 #[derive(Debug, Clone, PartialEq, Hash)]
@@ -303,6 +325,7 @@ pub struct ForStmt {
     pub condition: Option<Expr>,
     pub increment: Vec<Expr>,
     pub body: Box<Statement>,
+    pub span: Option<Span>,
 }
 
 #[derive(Debug, Clone, PartialEq, Hash)]
@@ -316,35 +339,41 @@ pub struct ForEachStmt {
     pub variables: Vec<(Type, String)>,
     pub iterable: Expr,
     pub body: Box<Statement>,
+    pub span: Option<Span>,
 }
 
 #[derive(Debug, Clone, PartialEq, Hash)]
 pub struct WhileStmt {
     pub condition: Expr,
     pub body: Box<Statement>,
+    pub span: Option<Span>,
 }
 
 #[derive(Debug, Clone, PartialEq, Hash)]
 pub struct DoWhileStmt {
     pub body: Box<Statement>,
     pub condition: Expr,
+    pub span: Option<Span>,
 }
 
 #[derive(Debug, Clone, PartialEq, Hash)]
 pub struct ReturnStmt {
     pub value: Option<Expr>,
+    pub span: Option<Span>,
 }
 
 #[derive(Debug, Clone, PartialEq, Hash)]
 pub struct SwitchStmt {
     pub value: Expr,
     pub cases: Vec<Case>,
+    pub span: Option<Span>,
 }
 
 #[derive(Debug, Clone, PartialEq, Hash)]
 pub struct Case {
     pub pattern: CasePattern,
     pub statements: Vec<Statement>,
+    pub span: Option<Span>,
 }
 
 #[derive(Debug, Clone, PartialEq, Hash)]
@@ -357,22 +386,42 @@ pub enum CasePattern {
 pub struct TryStmt {
     pub try_block: StatBlock,
     pub catch_block: StatBlock,
+    pub span: Option<Span>,
 }
 
 #[derive(Debug, Clone, PartialEq, Hash)]
 pub enum Expr {
-    Binary(Box<Expr>, BinaryOp, Box<Expr>),
-    Unary(UnaryOp, Box<Expr>),
-    Postfix(Box<Expr>, PostfixOp),
-    Ternary(Box<Expr>, Box<Expr>, Box<Expr>),
-    Literal(Literal),
-    VarAccess(Scope, String),
-    FuncCall(FuncCall),
-    ConstructCall(Type, Vec<Arg>),
-    Cast(Type, Box<Expr>),
-    Lambda(Lambda),
+    Binary(Box<Expr>, BinaryOp, Box<Expr>, Option<Span>),
+    Unary(UnaryOp, Box<Expr>, Option<Span>),
+    Postfix(Box<Expr>, PostfixOp, Option<Span>),
+    Ternary(Box<Expr>, Box<Expr>, Box<Expr>, Option<Span>),
+    Literal(Literal, Option<Span>),
+    VarAccess(Scope, String, Option<Span>),
+    FuncCall(FuncCall, Option<Span>),
+    ConstructCall(Type, Vec<Arg>, Option<Span>),
+    Cast(Type, Box<Expr>, Option<Span>),
+    Lambda(Lambda, Option<Span>),
     InitList(InitList),
-    Void,
+    Void(Option<Span>),
+}
+
+impl Expr {
+    pub fn span(&self) -> Option<&Span> {
+        match self {
+            Expr::Binary(_, _, _, span) => span.as_ref(),
+            Expr::Unary(_, _, span) => span.as_ref(),
+            Expr::Postfix(_, _, span) => span.as_ref(),
+            Expr::Ternary(_, _, _, span) => span.as_ref(),
+            Expr::Literal(_, span) => span.as_ref(),
+            Expr::VarAccess(_, _, span) => span.as_ref(),
+            Expr::FuncCall(_, span) => span.as_ref(),
+            Expr::ConstructCall(_, _, span) => span.as_ref(),
+            Expr::Cast(_, _, span) => span.as_ref(),
+            Expr::Lambda(_, span) => span.as_ref(),
+            Expr::InitList(init_list) => init_list.span.as_ref(),
+            Expr::Void(span) => span.as_ref(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Hash)]
@@ -381,12 +430,14 @@ pub struct FuncCall {
     pub name: String,
     pub template_types: Vec<Type>,
     pub args: Vec<Arg>,
+    pub span: Option<Span>,
 }
 
 #[derive(Debug, Clone, PartialEq, Hash)]
 pub struct Arg {
     pub name: Option<String>,
     pub value: Expr,
+    pub span: Option<Span>,
 }
 
 #[derive(Debug, Clone, PartialEq, Hash)]
@@ -454,12 +505,14 @@ pub enum PostfixOp {
 pub struct IndexArg {
     pub name: Option<String>,
     pub value: Expr,
+    pub span: Option<Span>,
 }
 
 #[derive(Debug, Clone, PartialEq, Hash)]
 pub struct Lambda {
     pub params: Vec<LambdaParam>,
     pub body: StatBlock,
+    pub span: Option<Span>,
 }
 
 #[derive(Debug, Clone, PartialEq, Hash)]
@@ -467,6 +520,7 @@ pub struct LambdaParam {
     pub param_type: Option<Type>,
     pub type_mod: Option<TypeMod>,
     pub name: Option<String>,
+    pub span: Option<Span>,
 }
 
 #[derive(Debug, Clone, PartialEq, Hash)]

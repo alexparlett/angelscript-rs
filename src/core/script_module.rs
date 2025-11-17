@@ -1,197 +1,108 @@
 use crate::compiler::bytecode::BytecodeModule;
 use crate::compiler::compiler::Compiler;
-use crate::core::engine::EngineInner;
+use crate::core::script_function::ScriptFunction;
+use crate::core::script_type::ScriptType;
+use crate::core::type_registry::TypeRegistry;
 use crate::parser::script_builder::{IncludeCallback, PragmaCallback, ScriptBuilder};
-use std::sync::{Arc, RwLock, Weak};
+use std::sync::{Arc, RwLock};
 
-/// A module contains compiled scripts and their metadata
-///
-/// Note: Module itself is not thread-safe. Thread safety is the user's responsibility.
 pub struct ScriptModule {
-    /// Module name
     pub name: String,
-
-    /// Compiled bytecode (populated after build())
     pub bytecode: Option<BytecodeModule>,
-
-    /// Source code sections (added via add_script_section)
     pub sources: Vec<SourceSection>,
-
-    /// Module-level symbols
-    pub symbols: ModuleSymbols,
-
-    /// Compilation state
     pub state: ModuleState,
 
-    /// Reference to the engine that owns this module
-    engine: Weak<RwLock<EngineInner>>,
-
-    /// Script builder for preprocessor handling
+    registry: Arc<RwLock<TypeRegistry>>,
     script_builder: ScriptBuilder,
 }
 
 #[derive(Clone)]
 pub struct SourceSection {
     pub name: String,
-    pub code: String,
-}
-
-#[derive(Default)]
-pub struct ModuleSymbols {
-    /// Functions defined in this module
-    pub functions: Vec<FunctionDecl>,
-
-    /// Classes defined in this module
-    pub classes: Vec<ClassDecl>,
-
-    /// Global variables in this module
-    pub globals: Vec<GlobalDecl>,
-}
-
-#[derive(Clone)]
-pub struct FunctionDecl {
-    pub name: String,
-    pub type_id: u32,
-}
-
-#[derive(Clone)]
-pub struct ClassDecl {
-    pub name: String,
-    pub type_id: u32,
-}
-
-#[derive(Clone)]
-pub struct GlobalDecl {
-    pub name: String,
-    pub type_id: u32,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum ModuleState {
-    /// Module created but not compiled
     Empty,
-
-    /// Currently being compiled
     Building,
-
-    /// Successfully compiled
     Built,
-
-    /// Compilation failed
     Failed,
 }
 
 impl ScriptModule {
-    /// Create a new empty module
-    pub(crate) fn new(name: String, engine: Weak<RwLock<EngineInner>>) -> Self {
+    pub fn new(name: String, registry: Arc<RwLock<TypeRegistry>>) -> Self {
         Self {
             name,
             bytecode: None,
             sources: Vec::new(),
-            symbols: ModuleSymbols::default(),
             state: ModuleState::Empty,
-            engine,
+            registry,
             script_builder: ScriptBuilder::new(),
         }
     }
 
-    /// Add a script section to the module
-    ///
-    /// Multiple sections can be added before calling build().
-    /// This is useful for splitting large scripts into multiple files.
-    pub fn add_script_section(&mut self, name: &str, code: &str) -> Result<(), String> {
-        // Check if we can add sections
+    pub fn add_ref(&self) -> i32 {
+        1
+    }
+
+    pub fn release(&self) -> i32 {
+        0
+    }
+
+    pub fn set_name(&mut self, name: &str) {
+        self.name = name.to_string();
+    }
+
+    pub fn get_name(&self) -> &str {
+        &self.name
+    }
+
+    pub fn add_script_section(&mut self, name: &str, code: &str) -> Result<i32, String> {
         match self.state {
             ModuleState::Building => {
                 return Err("Cannot add sections while building".to_string());
             }
             ModuleState::Built => {
-                // Allow adding more sections, but will need to rebuild
                 self.state = ModuleState::Empty;
                 self.bytecode = None;
-                self.symbols = ModuleSymbols::default();
+                self.sources.clear();
             }
             _ => {}
         }
 
         self.sources.push(SourceSection {
             name: name.to_string(),
-            code: code.to_string(),
         });
 
-        Ok(())
+        self.script_builder.add_section(name, code);
+
+        Ok(0)
     }
 
-    /// Define a word for conditional compilation (#if directives)
-    pub fn define_word(&mut self, word: String) {
-        self.script_builder.define_word(word);
-    }
-
-    /// Check if a word is defined
-    pub fn is_defined(&self, word: &str) -> bool {
-        self.script_builder.is_defined(word)
-    }
-
-    /// Set the include callback for handling #include directives
-    pub fn set_include_callback<C: IncludeCallback + 'static>(&mut self, callback: C) {
-        self.script_builder.set_include_callback(callback);
-    }
-
-    /// Set the pragma callback for handling #pragma directives
-    pub fn set_pragma_callback<C: PragmaCallback + 'static>(&mut self, callback: C) {
-        self.script_builder.set_pragma_callback(callback);
-    }
-
-    /// Build (compile) this module
-    ///
-    /// Returns 0 on success, negative value on error.
     pub fn build(&mut self) -> i32 {
-        // Get engine reference
-        let engine_ref = match self.engine.upgrade() {
-            Some(engine) => engine,
-            None => {
-                return -1;
-            }
-        };
-
-        match self.build_internal(engine_ref) {
+        match self.build_internal() {
             Ok(()) => 0,
             Err(_) => -1,
         }
     }
 
-    /// Internal build implementation
-    fn build_internal(
-        &mut self,
-        engine: Arc<RwLock<crate::core::engine::EngineInner>>,
-    ) -> Result<(), Vec<String>> {
-        // Check state
+    fn build_internal(&mut self) -> Result<(), Vec<String>> {
         match self.state {
-            ModuleState::Built => {
-                // Already built
-                return Ok(());
-            }
+            ModuleState::Built => return Ok(()),
             ModuleState::Building => {
                 return Err(vec!["Module is already being built".to_string()]);
             }
             _ => {}
         }
 
-        // Mark as building
         self.state = ModuleState::Building;
 
-        // Get all source code
-        let source = self.get_full_source();
-
-        if source.is_empty() {
+        if self.sources.is_empty() {
             self.state = ModuleState::Failed;
             return Err(vec!["Module has no source code".to_string()]);
         }
 
-        let _module_name = self.name.clone();
-
-        // Phase 1: Parse and process preprocessor directives
-        let ast = match self.script_builder.build_from_source(&source) {
+        let ast = match self.script_builder.build() {
             Ok(ast) => ast,
             Err(e) => {
                 self.state = ModuleState::Failed;
@@ -199,72 +110,234 @@ impl ScriptModule {
             }
         };
 
-        // Phase 2: Code Generation
-        let codegen = Compiler::new(engine);
-        let bytecode = codegen.compile(ast).unwrap();
-
-        // Phase 4: Store results
-        // AngelscriptCompiler::extract_symbols(&ast, &mut self.symbols, &analyzer);
+        let compiler = Compiler::new(Arc::clone(&self.registry));
+        let bytecode = match compiler.compile(ast) {
+            Ok(bc) => bc,
+            Err(e) => {
+                self.state = ModuleState::Failed;
+                return Err(vec![format!("Compilation error: {:?}", e)]);
+            }
+        };
 
         self.bytecode = Some(bytecode);
         self.state = ModuleState::Built;
 
-        // Clear script builder state for next build
         self.script_builder.clear();
-
-        // Log warnings
-        // if !analyzer.warnings.is_empty() {
-        //     eprintln!("Build warnings for module '{}':", module_name);
-        //     for warning in &analyzer.warnings {
-        //         eprintln!("  Warning: {}", warning);
-        //     }
-        // }
 
         Ok(())
     }
 
-    /// Get all source code concatenated
-    pub fn get_full_source(&self) -> String {
-        self.sources
-            .iter()
-            .map(|s| s.code.as_str())
-            .collect::<Vec<_>>()
-            .join("\n")
+    pub fn discard(&mut self) {
+        self.sources.clear();
+        self.bytecode = None;
+        self.state = ModuleState::Empty;
+        self.script_builder.clear();
     }
 
-    /// Check if module is built (compiled)
+    pub fn get_function_count(&self) -> u32 {
+        self.bytecode
+            .as_ref()
+            .map(|bc| bc.function_addresses.len() as u32)
+            .unwrap_or(0)
+    }
+
+    pub fn get_function_by_index(&self, index: u32) -> Option<ScriptFunction> {
+        let bytecode = self.bytecode.as_ref()?;
+
+        let func_id = bytecode
+            .function_addresses
+            .keys()
+            .nth(index as usize)
+            .copied()?;
+
+        Some(ScriptFunction::new(func_id, Arc::clone(&self.registry)))
+    }
+
+    pub fn get_function_by_name(&self, name: &str) -> Option<ScriptFunction> {
+        let registry = self.registry.read().unwrap();
+        let func_info = registry.find_function(name, &[])?;
+
+        Some(ScriptFunction::new(
+            func_info.function_id,
+            Arc::clone(&self.registry),
+        ))
+    }
+
+    pub fn get_function_by_decl(&self, _decl: &str) -> Option<ScriptFunction> {
+        None
+    }
+
+    pub fn get_global_var_count(&self) -> u32 {
+        let registry = self.registry.read().unwrap();
+        registry.get_all_globals().len() as u32
+    }
+
+    pub fn get_global_var_index_by_name(&self, name: &str) -> Option<i32> {
+        let registry = self.registry.read().unwrap();
+        registry.get_global(name).map(|g| g.address as i32)
+    }
+
+    pub fn get_global_var_index_by_decl(&self, _decl: &str) -> Option<i32> {
+        None
+    }
+
+    pub fn get_global_var(
+        &self,
+        index: u32,
+        name: &mut Option<String>,
+        namespace_out: &mut Option<String>,
+        type_id: &mut i32,
+        is_const: &mut bool,
+    ) -> Result<i32, String> {
+        let registry = self.registry.read().unwrap();
+        let globals = registry.get_all_globals();
+
+        let global = globals
+            .get(index as usize)
+            .ok_or("Global index out of bounds")?;
+
+        *name = Some(global.name.clone());
+        *namespace_out = None;
+        *type_id = global.type_id as i32;
+        *is_const = global.is_const;
+
+        Ok(0)
+    }
+
+    pub fn get_object_type_count(&self) -> u32 {
+        let registry = self.registry.read().unwrap();
+        registry
+            .get_all_types()
+            .iter()
+            .filter(|t| t.kind == crate::core::types::TypeKind::Class)
+            .count() as u32
+    }
+
+    pub fn get_object_type_by_index(&self, index: u32) -> Option<ScriptType> {
+        let registry = self.registry.read().unwrap();
+        let type_id = registry
+            .get_all_types()
+            .iter()
+            .filter(|t| t.kind == crate::core::types::TypeKind::Class)
+            .nth(index as usize)?
+            .type_id;
+
+        Some(ScriptType::new(type_id, Arc::clone(&self.registry)))
+    }
+
+    pub fn get_type_id_by_decl(&self, _decl: &str) -> Option<i32> {
+        None
+    }
+
+    pub fn get_type_info_by_name(&self, name: &str) -> Option<ScriptType> {
+        let registry = self.registry.read().unwrap();
+        let type_id = registry.lookup_type(name, &[])?;
+
+        Some(ScriptType::new(type_id, Arc::clone(&self.registry)))
+    }
+
+    pub fn get_type_info_by_decl(&self, _decl: &str) -> Option<ScriptType> {
+        None
+    }
+
+    pub fn get_enum_count(&self) -> u32 {
+        let registry = self.registry.read().unwrap();
+        registry
+            .get_all_types()
+            .iter()
+            .filter(|t| t.kind == crate::core::types::TypeKind::Enum)
+            .count() as u32
+    }
+
+    pub fn get_enum_by_index(&self, index: u32) -> Option<ScriptType> {
+        let registry = self.registry.read().unwrap();
+        let type_id = registry
+            .get_all_types()
+            .iter()
+            .filter(|t| t.kind == crate::core::types::TypeKind::Enum)
+            .nth(index as usize)?
+            .type_id;
+
+        Some(ScriptType::new(type_id, Arc::clone(&self.registry)))
+    }
+
+    pub fn get_typedef_count(&self) -> u32 {
+        0
+    }
+
+    pub fn get_typedef_by_index(&self, _index: u32) -> Option<ScriptType> {
+        None
+    }
+
+    pub fn get_imported_function_count(&self) -> u32 {
+        0
+    }
+
+    pub fn get_imported_function_index_by_decl(&self, _decl: &str) -> Option<i32> {
+        None
+    }
+
+    pub fn remove_function(&mut self, _func: &ScriptFunction) -> Result<i32, String> {
+        Err("Not supported".to_string())
+    }
+
+    pub fn reset_global_vars(&mut self, _func: Option<&ScriptFunction>) -> Result<i32, String> {
+        Ok(0)
+    }
+
+    pub fn rebind_imported_functions(&mut self) -> Result<i32, String> {
+        Ok(0)
+    }
+
+    pub fn bind_imported_function(
+        &mut self,
+        _import_index: u32,
+        _func: &ScriptFunction,
+    ) -> Result<i32, String> {
+        Err("Not supported".to_string())
+    }
+
+    pub fn unbind_imported_function(&mut self, _import_index: u32) -> Result<i32, String> {
+        Err("Not supported".to_string())
+    }
+
+    pub fn bind_all_imported_functions(&mut self) -> Result<i32, String> {
+        Ok(0)
+    }
+
+    pub fn unbind_all_imported_functions(&mut self) -> Result<i32, String> {
+        Ok(0)
+    }
+
+    pub fn set_default_namespace(&mut self, _namespace: &str) -> Result<i32, String> {
+        Ok(0)
+    }
+
+    pub fn get_default_namespace(&self) -> String {
+        String::new()
+    }
+
+    pub fn set_access_mask(&mut self, _access_mask: u32) -> Result<i32, String> {
+        Ok(0)
+    }
+
     pub fn is_built(&self) -> bool {
         self.state == ModuleState::Built
     }
 
-    /// Get a function by name
-    pub fn get_function_by_name(&self, name: &str) -> Option<&FunctionDecl> {
-        self.symbols.functions.iter().find(|f| f.name == name)
+    pub fn define_word(&mut self, word: String) {
+        self.script_builder.define_word(word);
     }
 
-    /// Get a function by declaration (e.g., "int add(int, int)")
-    pub fn get_function_by_decl(&self, declaration: &str) -> Option<&FunctionDecl> {
-        // TODO: Parse declaration and match
-        // For now, just extract the function name
-        let name = declaration
-            .split('(')
-            .next()
-            .and_then(|s| s.split_whitespace().last())?;
-
-        self.get_function_by_name(name)
+    pub fn is_defined(&self, word: &str) -> bool {
+        self.script_builder.is_defined(word)
     }
 
-    /// Get a class by name
-    pub fn get_class(&self, name: &str) -> Option<&ClassDecl> {
-        self.symbols.classes.iter().find(|c| c.name == name)
+    pub fn set_include_callback<C: IncludeCallback + 'static>(&mut self, callback: C) {
+        self.script_builder.set_include_callback(callback);
     }
 
-    /// Discard the module (clear all data)
-    pub fn discard(&mut self) {
-        self.sources.clear();
-        self.bytecode = None;
-        self.symbols = ModuleSymbols::default();
-        self.state = ModuleState::Empty;
-        self.script_builder.clear();
+    pub fn set_pragma_callback<C: PragmaCallback + 'static>(&mut self, callback: C) {
+        self.script_builder.set_pragma_callback(callback);
     }
 }

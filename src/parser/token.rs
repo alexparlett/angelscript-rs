@@ -1,20 +1,36 @@
-use crate::core::error::Span;
+use crate::core::span::Span;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Token {
     pub kind: TokenKind,
-    pub span: Span,
+    pub span: Option<Span>,
+    pub lexeme: String,
 }
 
 impl Token {
-    pub fn new(kind: TokenKind, span: Span) -> Self {
-        Self { kind, span }
+    pub fn new(kind: TokenKind, span: Option<Span>, lexeme: String) -> Self {
+        Self { kind, span, lexeme }
+    }
+
+    pub fn eof() -> Self {
+        Self {
+            kind: TokenKind::Eof,
+            span: None,
+            lexeme: String::new(),
+        }
+    }
+
+    pub fn line(&self) -> usize {
+        self.span.as_ref().map(|s| s.start_line).unwrap_or(0)
+    }
+
+    pub fn lexeme(&self) -> &str {
+        &self.lexeme
     }
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum TokenKind {
-    // Literals
     Number(String),
     String(String),
     Bits(String),
@@ -22,10 +38,8 @@ pub enum TokenKind {
     False,
     Null,
 
-    // Identifiers
     Identifier(String),
 
-    // Keywords - ONLY actual reserved keywords from as_tokendef.h
     Class,
     Enum,
     Interface,
@@ -71,77 +85,68 @@ pub enum TokenKind {
     InOut,
     Cast,
 
-    // Operators - Binary
-    Add, // +
-    Sub, // -
-    Mul, // *
-    Div, // /
-    Mod, // %
-    Pow, // **
+    Add,
+    Sub,
+    Mul,
+    Div,
+    Mod,
+    Pow,
 
-    // Comparison
-    Eq,    // ==
-    Ne,    // !=
-    Lt,    // <
-    Le,    // <=
-    Gt,    // >
-    Ge,    // >=
-    Is,    // is
-    IsNot, // !is
+    Eq,
+    Ne,
+    Lt,
+    Le,
+    Gt,
+    Ge,
+    Is,
+    IsNot,
 
-    // Logical
-    And, // && or 'and'
-    Or,  // || or 'or'
-    Xor, // ^^ or 'xor'
-    Not, // ! or 'not'
+    And,
+    Or,
+    Xor,
+    Not,
 
-    // Bitwise
-    BitAnd, // &
-    BitOr,  // |
-    BitXor, // ^
-    BitNot, // ~
-    Shl,    // <<
-    Shr,    // >>
-    UShr,   // >>>
+    BitAnd,
+    BitOr,
+    BitXor,
+    BitNot,
+    Shl,
+    Shr,
+    UShr,
 
-    // Assignment
-    Assign,       // =
-    AddAssign,    // +=
-    SubAssign,    // -=
-    MulAssign,    // *=
-    DivAssign,    // /=
-    ModAssign,    // %=
-    PowAssign,    // **=
-    BitAndAssign, // &=
-    BitOrAssign,  // |=
-    BitXorAssign, // ^=
-    ShlAssign,    // <<=
-    ShrAssign,    // >>=
-    UShrAssign,   // >>>=
+    Assign,
+    AddAssign,
+    SubAssign,
+    MulAssign,
+    DivAssign,
+    ModAssign,
+    PowAssign,
+    BitAndAssign,
+    BitOrAssign,
+    BitXorAssign,
+    ShlAssign,
+    ShrAssign,
+    UShrAssign,
 
-    // Unary
-    Inc, // ++
-    Dec, // --
-    At,  // @
+    Inc,
+    Dec,
+    At,
 
-    // Delimiters
-    LParen,   // (
-    RParen,   // )
-    LBracket, // [
-    RBracket, // ]
-    LBrace,   // {
-    RBrace,   // }
+    LParen,
+    RParen,
+    LBracket,
+    RBracket,
+    LBrace,
+    RBrace,
 
-    // Other
-    Dot,         // .
-    Comma,       // ,
-    Semicolon,   // ;
-    Colon,       // :
-    Question,    // ?
-    DoubleColon, // ::
+    Dot,
+    Comma,
+    Semicolon,
+    Colon,
+    Question,
+    DoubleColon,
 
-    // Preprocessor
-    Hash, // #
+    Hash,
 
     Eof,
 }
@@ -205,8 +210,6 @@ impl TokenKind {
         })
     }
 
-    /// Check if an identifier string is a contextual keyword
-    /// These are NOT tokens but are checked during parsing
     pub fn is_contextual_keyword(s: &str) -> bool {
         matches!(
             s,

@@ -1,37 +1,28 @@
 use crate::core::error::*;
+use crate::core::span::SpanBuilder;
 use crate::parser::ast::*;
 use crate::parser::token::*;
 
 pub struct ExprParser {
     tokens: Vec<Token>,
     pos: usize,
-    eof_token: Token,
+    span_builder: Option<SpanBuilder>,
+    include_spans: bool,
 }
 
 impl ExprParser {
-    pub fn new(mut tokens: Vec<Token>) -> Self {
+    pub fn new(tokens: Vec<Token>, span_builder: Option<SpanBuilder>, include_spans: bool) -> Self {
+        let mut tokens = tokens;
+
         if tokens.is_empty() || !matches!(tokens.last().map(|t| &t.kind), Some(TokenKind::Eof)) {
-            tokens.push(Token::new(
-                TokenKind::Eof,
-                Span::new(
-                    Position::new(0, 0, 0),
-                    Position::new(0, 0, 0),
-                    String::new(),
-                ),
-            ));
+            tokens.push(Token::eof());
         }
 
         Self {
             tokens,
             pos: 0,
-            eof_token: Token::new(
-                TokenKind::Eof,
-                Span::new(
-                    Position::new(0, 0, 0),
-                    Position::new(0, 0, 0),
-                    String::new(),
-                ),
-            ),
+            span_builder,
+            include_spans,
         }
     }
 
@@ -80,101 +71,98 @@ impl ExprParser {
     }
 
     fn parse_prefix(&mut self) -> ParseResult<Expr> {
+        let start_offset = self.current().span.as_ref().map(|s| s.start).unwrap_or(0);
         let token = self.current().clone();
 
-        match &token.kind {
+        let expr = match &token.kind {
             TokenKind::Number(n) => {
                 self.advance();
-                Ok(Expr::Literal(Literal::Number(n.clone())))
+                Expr::Literal(Literal::Number(n.clone()), None)
             }
             TokenKind::String(s) => {
                 self.advance();
-                Ok(Expr::Literal(Literal::String(s.clone())))
+                Expr::Literal(Literal::String(s.clone()), None)
             }
             TokenKind::Bits(b) => {
                 self.advance();
-                Ok(Expr::Literal(Literal::Bits(b.clone())))
+                Expr::Literal(Literal::Bits(b.clone()), None)
             }
             TokenKind::True => {
                 self.advance();
-                Ok(Expr::Literal(Literal::Bool(true)))
+                Expr::Literal(Literal::Bool(true), None)
             }
             TokenKind::False => {
                 self.advance();
-                Ok(Expr::Literal(Literal::Bool(false)))
+                Expr::Literal(Literal::Bool(false), None)
             }
             TokenKind::Null => {
                 self.advance();
-                Ok(Expr::Literal(Literal::Null))
+                Expr::Literal(Literal::Null, None)
             }
             TokenKind::Void => {
                 self.advance();
-                Ok(Expr::Void)
+                Expr::Void(None)
             }
 
             TokenKind::Sub => {
                 self.advance();
                 let ((), r_bp) = prefix_binding_power(UnaryOp::Neg);
                 let rhs = self.parse_expr(r_bp)?;
-                Ok(Expr::Unary(UnaryOp::Neg, Box::new(rhs)))
+                Expr::Unary(UnaryOp::Neg, Box::new(rhs), None)
             }
             TokenKind::Add => {
                 self.advance();
                 let ((), r_bp) = prefix_binding_power(UnaryOp::Plus);
                 let rhs = self.parse_expr(r_bp)?;
-                Ok(Expr::Unary(UnaryOp::Plus, Box::new(rhs)))
+                Expr::Unary(UnaryOp::Plus, Box::new(rhs), None)
             }
             TokenKind::Not => {
                 self.advance();
                 let ((), r_bp) = prefix_binding_power(UnaryOp::Not);
                 let rhs = self.parse_expr(r_bp)?;
-                Ok(Expr::Unary(UnaryOp::Not, Box::new(rhs)))
+                Expr::Unary(UnaryOp::Not, Box::new(rhs), None)
             }
             TokenKind::BitNot => {
                 self.advance();
                 let ((), r_bp) = prefix_binding_power(UnaryOp::BitNot);
                 let rhs = self.parse_expr(r_bp)?;
-                Ok(Expr::Unary(UnaryOp::BitNot, Box::new(rhs)))
+                Expr::Unary(UnaryOp::BitNot, Box::new(rhs), None)
             }
             TokenKind::Inc => {
                 self.advance();
                 let ((), r_bp) = prefix_binding_power(UnaryOp::PreInc);
                 let rhs = self.parse_expr(r_bp)?;
-                Ok(Expr::Unary(UnaryOp::PreInc, Box::new(rhs)))
+                Expr::Unary(UnaryOp::PreInc, Box::new(rhs), None)
             }
             TokenKind::Dec => {
                 self.advance();
                 let ((), r_bp) = prefix_binding_power(UnaryOp::PreDec);
                 let rhs = self.parse_expr(r_bp)?;
-                Ok(Expr::Unary(UnaryOp::PreDec, Box::new(rhs)))
+                Expr::Unary(UnaryOp::PreDec, Box::new(rhs), None)
             }
             TokenKind::At => {
                 self.advance();
                 let ((), r_bp) = prefix_binding_power(UnaryOp::Handle);
                 let rhs = self.parse_expr(r_bp)?;
-                Ok(Expr::Unary(UnaryOp::Handle, Box::new(rhs)))
+                Expr::Unary(UnaryOp::Handle, Box::new(rhs), None)
             }
 
             TokenKind::LParen => {
                 self.advance();
                 let expr = self.parse_expr(0)?;
                 self.expect(&TokenKind::RParen)?;
-                Ok(expr)
+                let end_offset = self.previous().span.as_ref().map(|s| s.end).unwrap_or(0);
+                return Ok(self.attach_span(expr, start_offset, end_offset));
             }
 
             TokenKind::Identifier(name) => {
-                // Check if this is "function" keyword for lambda (contextual keyword)
                 if name == "function" {
-                    // Look ahead to determine if this is a lambda or function call
-                    // Lambda: function(...) { ... }
-                    // Call: function(...)
                     let checkpoint = self.pos;
-                    self.advance(); // skip "function"
+                    self.advance();
 
                     if self.check(&TokenKind::LParen) {
-                        // Find the matching ) and check if { follows
                         let mut paren_depth = 1;
-                        let mut scan_pos = self.pos + 1; // skip the (
+                        let mut scan_pos = self.pos + 1;
 
                         while paren_depth > 0 && scan_pos < self.tokens.len() {
                             match &self.tokens[scan_pos].kind {
@@ -186,20 +174,19 @@ impl ExprParser {
                             scan_pos += 1;
                         }
 
-                        // Check if { follows the )
                         let is_lambda = if scan_pos < self.tokens.len() {
                             matches!(self.tokens[scan_pos].kind, TokenKind::LBrace)
                         } else {
                             false
                         };
 
-                        self.pos = checkpoint; // rewind
+                        self.pos = checkpoint;
 
                         if is_lambda {
                             return self.parse_lambda();
                         }
                     } else {
-                        self.pos = checkpoint; // rewind
+                        self.pos = checkpoint;
                     }
                 }
 
@@ -265,9 +252,10 @@ impl ExprParser {
                                 datatype: DataType::Identifier(name),
                                 template_types,
                                 modifiers: Vec::new(),
+                                span: None,
                             };
 
-                            return Ok(Expr::ConstructCall(typ, args));
+                            return Ok(Expr::ConstructCall(typ, args, None));
                         } else {
                             return Ok(Expr::VarAccess(
                                 Scope {
@@ -275,6 +263,7 @@ impl ExprParser {
                                     path: Vec::new(),
                                 },
                                 name,
+                                None,
                             ));
                         }
                     }
@@ -282,7 +271,7 @@ impl ExprParser {
 
                 let (scope, final_name) = self.parse_scope(name)?;
 
-                Ok(Expr::VarAccess(scope, final_name))
+                Expr::VarAccess(scope, final_name, None)
             }
 
             TokenKind::DoubleColon => {
@@ -295,29 +284,35 @@ impl ExprParser {
                     let (mut scope, final_name) = self.parse_scope(name)?;
                     scope.is_global = true;
 
-                    Ok(Expr::VarAccess(scope, final_name))
+                    Expr::VarAccess(scope, final_name, None)
                 } else {
-                    Err(ParseError::UnexpectedToken {
+                    return Err(ParseError::UnexpectedToken {
                         span: self.current().span.clone(),
                         expected: "identifier after ::".to_string(),
                         found: format!("{:?}", self.current().kind),
-                    })
+                    });
                 }
             }
 
-            TokenKind::Cast => self.parse_cast(),
+            TokenKind::Cast => return self.parse_cast(),
 
-            TokenKind::LBrace => self.parse_init_list(),
+            TokenKind::LBrace => return self.parse_init_list(),
 
-            _ => Err(ParseError::UnexpectedToken {
-                span: token.span.clone(),
-                expected: "expression".to_string(),
-                found: format!("{:?}", token.kind),
-            }),
-        }
+            _ => {
+                return Err(ParseError::UnexpectedToken {
+                    span: token.span.clone(),
+                    expected: "expression".to_string(),
+                    found: format!("{:?}", token.kind),
+                });
+            }
+        };
+
+        let end_offset = self.previous().span.as_ref().map(|s| s.end).unwrap_or(0);
+        Ok(self.attach_span(expr, start_offset, end_offset))
     }
 
     fn parse_infix(&mut self, lhs: Expr, r_bp: u8) -> ParseResult<Expr> {
+        let start_offset = lhs.span().map(|s| s.start).unwrap_or(0);
         let token = self.current().clone();
         let op = match &token.kind {
             TokenKind::Add => BinaryOp::Add,
@@ -366,10 +361,13 @@ impl ExprParser {
                 let then_expr = self.parse_expr(0)?;
                 self.expect(&TokenKind::Colon)?;
                 let else_expr = self.parse_expr(r_bp)?;
+                let end_offset = self.previous().span.as_ref().map(|s| s.end).unwrap_or(0);
+                let span = self.make_span(start_offset, end_offset);
                 return Ok(Expr::Ternary(
                     Box::new(lhs),
                     Box::new(then_expr),
                     Box::new(else_expr),
+                    span,
                 ));
             }
 
@@ -383,32 +381,47 @@ impl ExprParser {
 
         self.advance();
         let rhs = self.parse_expr(r_bp)?;
-        Ok(Expr::Binary(Box::new(lhs), op, Box::new(rhs)))
+        let end_offset = self.previous().span.as_ref().map(|s| s.end).unwrap_or(0);
+        let span = self.make_span(start_offset, end_offset);
+        Ok(Expr::Binary(Box::new(lhs), op, Box::new(rhs), span))
     }
 
     fn parse_postfix(&mut self, lhs: Expr) -> ParseResult<Expr> {
+        let start_offset = lhs.span().map(|s| s.start).unwrap_or(0);
         let token = self.current().clone();
 
         match &token.kind {
             TokenKind::Inc => {
                 self.advance();
-                Ok(Expr::Postfix(Box::new(lhs), PostfixOp::PostInc))
+                let end_offset = self.previous().span.as_ref().map(|s| s.end).unwrap_or(0);
+                let span = self.make_span(start_offset, end_offset);
+                Ok(Expr::Postfix(Box::new(lhs), PostfixOp::PostInc, span))
             }
             TokenKind::Dec => {
                 self.advance();
-                Ok(Expr::Postfix(Box::new(lhs), PostfixOp::PostDec))
+                let end_offset = self.previous().span.as_ref().map(|s| s.end).unwrap_or(0);
+                let span = self.make_span(start_offset, end_offset);
+                Ok(Expr::Postfix(Box::new(lhs), PostfixOp::PostDec, span))
             }
             TokenKind::LParen => {
                 self.advance();
                 let args = self.parse_arg_list_inner()?;
                 self.expect(&TokenKind::RParen)?;
-                Ok(Expr::Postfix(Box::new(lhs), PostfixOp::Call(args)))
+                let end_offset = self.previous().span.as_ref().map(|s| s.end).unwrap_or(0);
+                let span = self.make_span(start_offset, end_offset);
+                Ok(Expr::Postfix(Box::new(lhs), PostfixOp::Call(args), span))
             }
             TokenKind::LBracket => {
                 self.advance();
                 let indices = self.parse_index_args()?;
                 self.expect(&TokenKind::RBracket)?;
-                Ok(Expr::Postfix(Box::new(lhs), PostfixOp::Index(indices)))
+                let end_offset = self.previous().span.as_ref().map(|s| s.end).unwrap_or(0);
+                let span = self.make_span(start_offset, end_offset);
+                Ok(Expr::Postfix(
+                    Box::new(lhs),
+                    PostfixOp::Index(indices),
+                    span,
+                ))
             }
             TokenKind::Dot => {
                 self.advance();
@@ -421,6 +434,8 @@ impl ExprParser {
                         self.advance();
                         let args = self.parse_arg_list_inner()?;
                         self.expect(&TokenKind::RParen)?;
+                        let end_offset = self.previous().span.as_ref().map(|s| s.end).unwrap_or(0);
+                        let span = self.make_span(start_offset, end_offset);
 
                         let func_call = FuncCall {
                             scope: Scope {
@@ -430,13 +445,21 @@ impl ExprParser {
                             name,
                             template_types: Vec::new(),
                             args,
+                            span: span.clone(),
                         };
                         Ok(Expr::Postfix(
                             Box::new(lhs),
                             PostfixOp::MemberCall(func_call),
+                            span,
                         ))
                     } else {
-                        Ok(Expr::Postfix(Box::new(lhs), PostfixOp::MemberAccess(name)))
+                        let end_offset = self.previous().span.as_ref().map(|s| s.end).unwrap_or(0);
+                        let span = self.make_span(start_offset, end_offset);
+                        Ok(Expr::Postfix(
+                            Box::new(lhs),
+                            PostfixOp::MemberAccess(name),
+                            span,
+                        ))
                     }
                 } else {
                     Err(ParseError::UnexpectedToken {
@@ -478,6 +501,8 @@ impl ExprParser {
     }
 
     fn parse_cast(&mut self) -> ParseResult<Expr> {
+        let start_offset = self.current().span.as_ref().map(|s| s.start).unwrap_or(0);
+
         self.expect(&TokenKind::Cast)?;
         self.expect(&TokenKind::Lt)?;
 
@@ -498,6 +523,8 @@ impl ExprParser {
         let expr = self.parse_expr(0)?;
 
         self.expect(&TokenKind::RParen)?;
+        let end_offset = self.previous().span.as_ref().map(|s| s.end).unwrap_or(0);
+        let span = self.make_span(start_offset, end_offset);
 
         let cast_type = Type {
             is_const: false,
@@ -508,12 +535,15 @@ impl ExprParser {
             datatype: DataType::Identifier(type_name),
             template_types: Vec::new(),
             modifiers: Vec::new(),
+            span: None,
         };
 
-        Ok(Expr::Cast(cast_type, Box::new(expr)))
+        Ok(Expr::Cast(cast_type, Box::new(expr), span))
     }
 
     fn parse_lambda(&mut self) -> ParseResult<Expr> {
+        let start_offset = self.current().span.as_ref().map(|s| s.start).unwrap_or(0);
+
         if let TokenKind::Identifier(name) = &self.current().kind {
             if name != "function" {
                 return Err(ParseError::UnexpectedToken {
@@ -582,6 +612,7 @@ impl ExprParser {
                 param_type,
                 type_mod,
                 name,
+                span: None,
             });
 
             if self.check(&TokenKind::Comma) {
@@ -602,13 +633,20 @@ impl ExprParser {
         let _body_tokens = self.collect_lambda_body()?;
 
         self.expect(&TokenKind::RBrace)?;
+        let end_offset = self.previous().span.as_ref().map(|s| s.end).unwrap_or(0);
+        let span = self.make_span(start_offset, end_offset);
 
-        Ok(Expr::Lambda(Lambda {
-            params,
-            body: StatBlock {
-                statements: Vec::new(),
+        Ok(Expr::Lambda(
+            Lambda {
+                params,
+                body: StatBlock {
+                    statements: Vec::new(),
+                    span: None,
+                },
+                span: span.clone(),
             },
-        }))
+            span,
+        ))
     }
 
     fn collect_lambda_body(&mut self) -> ParseResult<Vec<Token>> {
@@ -782,6 +820,7 @@ impl ExprParser {
             datatype,
             template_types,
             modifiers,
+            span: None,
         })
     }
 
@@ -801,7 +840,7 @@ impl ExprParser {
 
         self.expect(&TokenKind::RBrace)?;
 
-        Ok(Expr::InitList(InitList { items }))
+        Ok(Expr::InitList(InitList { items, span: None }))
     }
 
     fn parse_arg_list_inner(&mut self) -> ParseResult<Vec<Arg>> {
@@ -809,7 +848,11 @@ impl ExprParser {
 
         while !self.check(&TokenKind::RParen) && !self.is_at_end() {
             let value = self.parse_expr(0)?;
-            args.push(Arg { name: None, value });
+            args.push(Arg {
+                name: None,
+                value,
+                span: None,
+            });
 
             if !self.check(&TokenKind::RParen) {
                 self.expect(&TokenKind::Comma)?;
@@ -824,7 +867,11 @@ impl ExprParser {
 
         while !self.check(&TokenKind::RBracket) && !self.is_at_end() {
             let value = self.parse_expr(0)?;
-            args.push(IndexArg { name: None, value });
+            args.push(IndexArg {
+                name: None,
+                value,
+                span: None,
+            });
 
             if !self.check(&TokenKind::RBracket) {
                 self.expect(&TokenKind::Comma)?;
@@ -889,7 +936,6 @@ impl ExprParser {
         })
     }
 
-    /// Expect > in template context, handling >>, >>>, etc. as multiple >
     fn expect_gt_in_template(&mut self) -> ParseResult<()> {
         match &self.current().kind {
             TokenKind::Gt => {
@@ -897,36 +943,14 @@ impl ExprParser {
                 Ok(())
             }
             TokenKind::Shr => {
-                let shr_token = self.current().clone();
-                let gt_token = Token::new(
-                    TokenKind::Gt,
-                    Span::new(
-                        Position::new(
-                            shr_token.span.start.line,
-                            shr_token.span.start.column + 1,
-                            shr_token.span.start.offset + 1,
-                        ),
-                        shr_token.span.end.clone(),
-                        ">".to_string(),
-                    ),
-                );
+                let shr_span = self.current().span.clone();
+                let gt_token = Token::new(TokenKind::Gt, shr_span, ">".to_string());
                 self.tokens[self.pos] = gt_token;
                 Ok(())
             }
             TokenKind::UShr => {
-                let ushr_token = self.current().clone();
-                let shr_token = Token::new(
-                    TokenKind::Shr,
-                    Span::new(
-                        Position::new(
-                            ushr_token.span.start.line,
-                            ushr_token.span.start.column + 1,
-                            ushr_token.span.start.offset + 1,
-                        ),
-                        ushr_token.span.end.clone(),
-                        ">>".to_string(),
-                    ),
-                );
+                let ushr_span = self.current().span.clone();
+                let shr_token = Token::new(TokenKind::Shr, ushr_span, ">>".to_string());
                 self.tokens[self.pos] = shr_token;
                 Ok(())
             }
@@ -939,7 +963,11 @@ impl ExprParser {
     }
 
     fn current(&self) -> &Token {
-        self.tokens.get(self.pos).unwrap_or(&self.eof_token)
+        &self.tokens[self.pos.min(self.tokens.len() - 1)]
+    }
+
+    fn previous(&self) -> &Token {
+        &self.tokens[self.pos - 1]
     }
 
     fn advance(&mut self) {
@@ -987,6 +1015,33 @@ impl ExprParser {
                 expected: "identifier".to_string(),
                 found: format!("{:?}", self.current().kind),
             })
+        }
+    }
+
+    fn make_span(&self, start: usize, end: usize) -> Option<crate::core::span::Span> {
+        if self.include_spans {
+            self.span_builder.as_ref().map(|sb| sb.span(start, end))
+        } else {
+            None
+        }
+    }
+
+    fn attach_span(&self, expr: Expr, start: usize, end: usize) -> Expr {
+        let span = self.make_span(start, end);
+
+        match expr {
+            Expr::Literal(lit, _) => Expr::Literal(lit, span),
+            Expr::Void(_) => Expr::Void(span),
+            Expr::Unary(op, e, _) => Expr::Unary(op, e, span),
+            Expr::Binary(l, op, r, _) => Expr::Binary(l, op, r, span),
+            Expr::Postfix(e, op, _) => Expr::Postfix(e, op, span),
+            Expr::Ternary(c, t, e, _) => Expr::Ternary(c, t, e, span),
+            Expr::VarAccess(s, n, _) => Expr::VarAccess(s, n, span),
+            Expr::FuncCall(fc, _) => Expr::FuncCall(fc, span),
+            Expr::ConstructCall(t, a, _) => Expr::ConstructCall(t, a, span),
+            Expr::Cast(t, e, _) => Expr::Cast(t, e, span),
+            Expr::Lambda(l, _) => Expr::Lambda(l, span),
+            Expr::InitList(il) => Expr::InitList(il),
         }
     }
 }

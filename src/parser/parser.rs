@@ -1,4 +1,5 @@
 use crate::core::error::*;
+use crate::core::span::{Span, SpanBuilder};
 use crate::parser::ast::*;
 use crate::parser::expr_parser::ExprParser;
 use crate::parser::token::*;
@@ -6,14 +7,31 @@ use crate::parser::token::*;
 pub struct Parser {
     tokens: Vec<Token>,
     pos: usize,
+    span_builder: Option<SpanBuilder>,
+    include_spans: bool,
 }
 
 impl Parser {
     pub fn new(tokens: Vec<Token>) -> Self {
-        Self { tokens, pos: 0 }
+        Self {
+            tokens,
+            pos: 0,
+            span_builder: None,
+            include_spans: false,
+        }
+    }
+
+    pub fn new_with_spans(tokens: Vec<Token>, span_builder: SpanBuilder) -> Self {
+        Self {
+            tokens,
+            pos: 0,
+            span_builder: Some(span_builder),
+            include_spans: true,
+        }
     }
 
     pub fn parse(mut self) -> ParseResult<Script> {
+        let start_offset = self.current().span.as_ref().map(|s| s.start).unwrap_or(0);
         let mut items = Vec::new();
 
         while !self.is_at_end() {
@@ -25,16 +43,17 @@ impl Parser {
             items.push(self.parse_script_item()?);
         }
 
-        Ok(Script { items })
+        let end_offset = self.previous().span.as_ref().map(|s| s.end).unwrap_or(0);
+        let span = self.make_span(start_offset, end_offset);
+
+        Ok(Script { items, span })
     }
 
     fn parse_script_item(&mut self) -> ParseResult<ScriptNode> {
-        // Handle preprocessor directives
         if self.check(&TokenKind::Hash) {
             return self.parse_directive();
         }
 
-        // Optimize by skipping tokens 'shared', 'external', 'final', 'abstract'
         let start_pos = self.pos;
         while self.identifier_is("shared")
             || self.identifier_is("external")
@@ -45,7 +64,7 @@ impl Parser {
         }
 
         let t1 = self.current().clone();
-        self.pos = start_pos; // Rewind
+        self.pos = start_pos;
 
         match t1.kind {
             TokenKind::Import => Ok(ScriptNode::Import(self.parse_import()?)),
@@ -112,7 +131,7 @@ impl Parser {
                 "else".to_string()
             }
             _ => {
-                let name = self.current().span.source.clone();
+                let name = self.current().lexeme.clone();
                 self.advance();
                 name
             }
@@ -138,6 +157,8 @@ impl Parser {
     }
 
     fn parse_namespace(&mut self) -> ParseResult<Namespace> {
+        let start_offset = self.current().span.as_ref().map(|s| s.start).unwrap_or(0);
+
         self.expect(&TokenKind::Namespace)?;
 
         let mut name = vec![self.expect_identifier()?];
@@ -160,10 +181,14 @@ impl Parser {
 
         self.expect(&TokenKind::RBrace)?;
 
-        Ok(Namespace { name, items })
+        let end_offset = self.previous().span.as_ref().map(|s| s.end).unwrap_or(0);
+        let span = self.make_span(start_offset, end_offset);
+
+        Ok(Namespace { name, items, span })
     }
 
     fn parse_enum(&mut self) -> ParseResult<Enum> {
+        let start_offset = self.current().span.as_ref().map(|s| s.start).unwrap_or(0);
         let mut modifiers = Vec::new();
 
         while self.identifier_is("shared") || self.identifier_is("external") {
@@ -175,10 +200,14 @@ impl Parser {
 
         if self.check(&TokenKind::Semicolon) {
             self.advance();
+            let end_offset = self.previous().span.as_ref().map(|s| s.end).unwrap_or(0);
+            let span = self.make_span(start_offset, end_offset);
+
             return Ok(Enum {
                 modifiers,
                 name,
                 variants: Vec::new(),
+                span,
             });
         }
 
@@ -187,6 +216,7 @@ impl Parser {
         let mut variants = Vec::new();
 
         while !self.check(&TokenKind::RBrace) && !self.is_at_end() {
+            let variant_start = self.current().span.as_ref().map(|s| s.start).unwrap_or(0);
             let variant_name = self.expect_identifier()?;
             let value = if self.check(&TokenKind::Assign) {
                 self.advance();
@@ -195,9 +225,13 @@ impl Parser {
                 None
             };
 
+            let variant_end = self.previous().span.as_ref().map(|s| s.end).unwrap_or(0);
+            let variant_span = self.make_span(variant_start, variant_end);
+
             variants.push(EnumVariant {
                 name: variant_name,
                 value,
+                span: variant_span,
             });
 
             if !self.check(&TokenKind::RBrace) {
@@ -207,14 +241,19 @@ impl Parser {
 
         self.expect(&TokenKind::RBrace)?;
 
+        let end_offset = self.previous().span.as_ref().map(|s| s.end).unwrap_or(0);
+        let span = self.make_span(start_offset, end_offset);
+
         Ok(Enum {
             modifiers,
             name,
             variants,
+            span,
         })
     }
 
     fn parse_class(&mut self) -> ParseResult<Class> {
+        let start_offset = self.current().span.as_ref().map(|s| s.start).unwrap_or(0);
         let mut modifiers = Vec::new();
 
         while self.identifier_is("shared")
@@ -241,11 +280,15 @@ impl Parser {
 
         if self.check(&TokenKind::Semicolon) {
             self.advance();
+            let end_offset = self.previous().span.as_ref().map(|s| s.end).unwrap_or(0);
+            let span = self.make_span(start_offset, end_offset);
+
             return Ok(Class {
                 modifiers,
                 name,
                 extends,
                 members: Vec::new(),
+                span,
             });
         }
 
@@ -263,11 +306,15 @@ impl Parser {
 
         self.expect(&TokenKind::RBrace)?;
 
+        let end_offset = self.previous().span.as_ref().map(|s| s.end).unwrap_or(0);
+        let span = self.make_span(start_offset, end_offset);
+
         Ok(Class {
             modifiers,
             name,
             extends,
             members,
+            span,
         })
     }
 
@@ -301,6 +348,7 @@ impl Parser {
     }
 
     fn parse_interface(&mut self) -> ParseResult<Interface> {
+        let start_offset = self.current().span.as_ref().map(|s| s.start).unwrap_or(0);
         let mut modifiers = Vec::new();
 
         while self.identifier_is("shared") || self.identifier_is("external") {
@@ -323,11 +371,15 @@ impl Parser {
 
         if self.check(&TokenKind::Semicolon) {
             self.advance();
+            let end_offset = self.previous().span.as_ref().map(|s| s.end).unwrap_or(0);
+            let span = self.make_span(start_offset, end_offset);
+
             return Ok(Interface {
                 modifiers,
                 name,
                 extends,
                 members: Vec::new(),
+                span,
             });
         }
 
@@ -350,15 +402,21 @@ impl Parser {
 
         self.expect(&TokenKind::RBrace)?;
 
+        let end_offset = self.previous().span.as_ref().map(|s| s.end).unwrap_or(0);
+        let span = self.make_span(start_offset, end_offset);
+
         Ok(Interface {
             modifiers,
             name,
             extends,
             members,
+            span,
         })
     }
 
     fn parse_interface_method(&mut self) -> ParseResult<IntfMthd> {
+        let start_offset = self.current().span.as_ref().map(|s| s.start).unwrap_or(0);
+
         let return_type = self.parse_type()?;
         let is_ref = if self.check(&TokenKind::BitAnd) {
             self.advance();
@@ -379,16 +437,22 @@ impl Parser {
 
         self.expect(&TokenKind::Semicolon)?;
 
+        let end_offset = self.previous().span.as_ref().map(|s| s.end).unwrap_or(0);
+        let span = self.make_span(start_offset, end_offset);
+
         Ok(IntfMthd {
             return_type,
             is_ref,
             name,
             params,
             is_const,
+            span,
         })
     }
 
     fn parse_typedef(&mut self) -> ParseResult<Typedef> {
+        let start_offset = self.current().span.as_ref().map(|s| s.start).unwrap_or(0);
+
         self.expect(&TokenKind::Typedef)?;
 
         let prim_type = match &self.current().kind {
@@ -412,10 +476,18 @@ impl Parser {
         let name = self.expect_identifier()?;
         self.expect(&TokenKind::Semicolon)?;
 
-        Ok(Typedef { prim_type, name })
+        let end_offset = self.previous().span.as_ref().map(|s| s.end).unwrap_or(0);
+        let span = self.make_span(start_offset, end_offset);
+
+        Ok(Typedef {
+            prim_type,
+            name,
+            span,
+        })
     }
 
     fn parse_funcdef(&mut self) -> ParseResult<FuncDef> {
+        let start_offset = self.current().span.as_ref().map(|s| s.start).unwrap_or(0);
         let mut modifiers = Vec::new();
 
         while self.identifier_is("shared") || self.identifier_is("external") {
@@ -437,22 +509,34 @@ impl Parser {
 
         self.expect(&TokenKind::Semicolon)?;
 
+        let end_offset = self.previous().span.as_ref().map(|s| s.end).unwrap_or(0);
+        let span = self.make_span(start_offset, end_offset);
+
         Ok(FuncDef {
             modifiers,
             return_type,
             is_ref,
             name,
             params,
+            span,
         })
     }
 
     fn parse_mixin(&mut self) -> ParseResult<Mixin> {
+        let start_offset = self.current().span.as_ref().map(|s| s.start).unwrap_or(0);
+
         self.expect(&TokenKind::Mixin)?;
         let class = self.parse_class()?;
-        Ok(Mixin { class })
+
+        let end_offset = self.previous().span.as_ref().map(|s| s.end).unwrap_or(0);
+        let span = self.make_span(start_offset, end_offset);
+
+        Ok(Mixin { class, span })
     }
 
     fn parse_import(&mut self) -> ParseResult<Import> {
+        let start_offset = self.current().span.as_ref().map(|s| s.start).unwrap_or(0);
+
         self.expect(&TokenKind::Import)?;
 
         let type_name = self.parse_type()?;
@@ -474,16 +558,21 @@ impl Parser {
         let from = self.expect_string()?;
         self.expect(&TokenKind::Semicolon)?;
 
+        let end_offset = self.previous().span.as_ref().map(|s| s.end).unwrap_or(0);
+        let span = self.make_span(start_offset, end_offset);
+
         Ok(Import {
             type_name,
             is_ref,
             identifier,
             params,
             from,
+            span,
         })
     }
 
     fn parse_virtprop(&mut self, is_method: bool, is_interface: bool) -> ParseResult<VirtProp> {
+        let start_offset = self.current().span.as_ref().map(|s| s.start).unwrap_or(0);
         let mut visibility = None;
 
         if is_method {
@@ -510,6 +599,8 @@ impl Parser {
         let mut accessors = Vec::new();
 
         while !self.check(&TokenKind::RBrace) && !self.is_at_end() {
+            let accessor_start = self.current().span.as_ref().map(|s| s.start).unwrap_or(0);
+
             let kind = if self.identifier_is("get") {
                 self.advance();
                 AccessorKind::Get
@@ -544,15 +635,22 @@ impl Parser {
                 None
             };
 
+            let accessor_end = self.previous().span.as_ref().map(|s| s.end).unwrap_or(0);
+            let accessor_span = self.make_span(accessor_start, accessor_end);
+
             accessors.push(PropertyAccessor {
                 kind,
                 is_const,
                 attributes,
                 body,
+                span: accessor_span,
             });
         }
 
         self.expect(&TokenKind::RBrace)?;
+
+        let end_offset = self.previous().span.as_ref().map(|s| s.end).unwrap_or(0);
+        let span = self.make_span(start_offset, end_offset);
 
         Ok(VirtProp {
             visibility,
@@ -560,10 +658,12 @@ impl Parser {
             is_ref,
             name,
             accessors,
+            span,
         })
     }
 
     fn parse_function(&mut self, is_method: bool) -> ParseResult<Func> {
+        let start_offset = self.current().span.as_ref().map(|s| s.start).unwrap_or(0);
         let mut modifiers = Vec::new();
         let mut visibility = None;
 
@@ -596,6 +696,9 @@ impl Parser {
                 None
             };
 
+            let end_offset = self.previous().span.as_ref().map(|s| s.end).unwrap_or(0);
+            let span = self.make_span(start_offset, end_offset);
+
             return Ok(Func {
                 modifiers,
                 visibility,
@@ -606,6 +709,7 @@ impl Parser {
                 is_const: false,
                 attributes,
                 body,
+                span,
             });
         }
 
@@ -673,6 +777,9 @@ impl Parser {
             return Err(self.error("Expected ';' or '{'"));
         };
 
+        let end_offset = self.previous().span.as_ref().map(|s| s.end).unwrap_or(0);
+        let span = self.make_span(start_offset, end_offset);
+
         Ok(Func {
             modifiers,
             visibility,
@@ -683,6 +790,7 @@ impl Parser {
             is_const,
             attributes,
             body,
+            span,
         })
     }
 
@@ -691,6 +799,7 @@ impl Parser {
         is_class_prop: bool,
         is_global_var: bool,
     ) -> ParseResult<Var> {
+        let start_offset = self.current().span.as_ref().map(|s| s.start).unwrap_or(0);
         let mut visibility = None;
 
         if is_class_prop {
@@ -708,6 +817,8 @@ impl Parser {
         let mut declarations = Vec::new();
 
         loop {
+            let decl_start = self.current().span.as_ref().map(|s| s.start).unwrap_or(0);
+
             if self.check(&TokenKind::At) {
                 self.advance();
             }
@@ -735,7 +846,14 @@ impl Parser {
                 }
             };
 
-            declarations.push(VarDecl { name, initializer });
+            let decl_end = self.previous().span.as_ref().map(|s| s.end).unwrap_or(0);
+            let decl_span = self.make_span(decl_start, decl_end);
+
+            declarations.push(VarDecl {
+                name,
+                initializer,
+                span: decl_span,
+            });
 
             if !self.check(&TokenKind::Comma) {
                 break;
@@ -745,10 +863,14 @@ impl Parser {
 
         self.expect(&TokenKind::Semicolon)?;
 
+        let end_offset = self.previous().span.as_ref().map(|s| s.end).unwrap_or(0);
+        let span = self.make_span(start_offset, end_offset);
+
         Ok(Var {
             visibility,
             var_type,
             declarations,
+            span,
         })
     }
 
@@ -788,7 +910,7 @@ impl Parser {
                 }
             }
 
-            Ok(VarInit::Expr(Expr::Void))
+            Ok(VarInit::Expr(Expr::Void(None)))
         } else if self.check(&TokenKind::LParen) {
             let mut depth = 1;
             self.advance();
@@ -809,6 +931,8 @@ impl Parser {
     }
 
     pub fn parse_type(&mut self) -> ParseResult<Type> {
+        let start_offset = self.current().span.as_ref().map(|s| s.start).unwrap_or(0);
+
         let is_const = if self.check(&TokenKind::Const) {
             self.advance();
             true
@@ -845,12 +969,16 @@ impl Parser {
             }
         }
 
+        let end_offset = self.previous().span.as_ref().map(|s| s.end).unwrap_or(0);
+        let span = self.make_span(start_offset, end_offset);
+
         Ok(Type {
             is_const,
             scope,
             datatype,
             template_types,
             modifiers,
+            span,
         })
     }
 
@@ -988,6 +1116,8 @@ impl Parser {
     }
 
     fn parse_param(&mut self) -> ParseResult<Param> {
+        let start_offset = self.current().span.as_ref().map(|s| s.start).unwrap_or(0);
+
         let param_type = self.parse_type()?;
 
         let mut type_mod = None;
@@ -1022,12 +1152,16 @@ impl Parser {
             None
         };
 
+        let end_offset = self.previous().span.as_ref().map(|s| s.end).unwrap_or(0);
+        let span = self.make_span(start_offset, end_offset);
+
         Ok(Param {
             param_type,
             type_mod,
             name,
             default_value,
             is_variadic: false,
+            span,
         })
     }
 
@@ -1053,6 +1187,8 @@ impl Parser {
     }
 
     fn parse_stat_block(&mut self) -> ParseResult<StatBlock> {
+        let start_offset = self.current().span.as_ref().map(|s| s.start).unwrap_or(0);
+
         self.expect(&TokenKind::LBrace)?;
 
         let mut statements = Vec::new();
@@ -1067,7 +1203,10 @@ impl Parser {
 
         self.expect(&TokenKind::RBrace)?;
 
-        Ok(StatBlock { statements })
+        let end_offset = self.previous().span.as_ref().map(|s| s.end).unwrap_or(0);
+        let span = self.make_span(start_offset, end_offset);
+
+        Ok(StatBlock { statements, span })
     }
 
     fn try_parse_type(&mut self) -> ParseResult<Type> {
@@ -1322,43 +1461,47 @@ impl Parser {
                 Ok(())
             }
             TokenKind::Shr => {
-                let shr_token = self.current().clone();
-                let gt_token = Token::new(
-                    TokenKind::Gt,
+                let current_span = self.current().span.clone();
+                let lexeme = ">".to_string();
+                let new_span = current_span.as_ref().map(|s| {
                     Span::new(
-                        Position::new(
-                            shr_token.span.start.line,
-                            shr_token.span.start.column + 1,
-                            shr_token.span.start.offset + 1,
-                        ),
-                        shr_token.span.end.clone(),
-                        ">".to_string(),
-                    ),
-                );
+                        s.source_name.clone(),
+                        s.start + 1,
+                        s.end,
+                        s.start_line,
+                        s.start_column + 1,
+                        s.end_line,
+                        s.end_column,
+                    )
+                });
+
+                let gt_token = Token::new(TokenKind::Gt, new_span, lexeme);
                 self.tokens[self.pos] = gt_token;
                 Ok(())
             }
             TokenKind::UShr => {
-                let ushr_token = self.current().clone();
-                let shr_token = Token::new(
-                    TokenKind::Shr,
+                let current_span = self.current().span.clone();
+                let lexeme = ">>".to_string();
+                let new_span = current_span.as_ref().map(|s| {
                     Span::new(
-                        Position::new(
-                            ushr_token.span.start.line,
-                            ushr_token.span.start.column + 1,
-                            ushr_token.span.start.offset + 1,
-                        ),
-                        ushr_token.span.end.clone(),
-                        ">>".to_string(),
-                    ),
-                );
+                        s.source_name.clone(),
+                        s.start + 1,
+                        s.end,
+                        s.start_line,
+                        s.start_column + 1,
+                        s.end_line,
+                        s.end_column,
+                    )
+                });
+
+                let shr_token = Token::new(TokenKind::Shr, new_span, lexeme);
                 self.tokens[self.pos] = shr_token;
                 Ok(())
             }
             _ => Err(ParseError::UnexpectedToken {
-                span: self.current().span.clone(),
                 expected: "'>'".to_string(),
                 found: format!("{:?}", self.current().kind),
+                span: self.current().span.clone(),
             }),
         }
     }
@@ -1367,20 +1510,22 @@ impl Parser {
         match &self.current().kind {
             TokenKind::If => self.parse_if(),
             TokenKind::For => self.parse_for(),
-            TokenKind::ForEach => self.parse_foreach(), // Direct match!
+            TokenKind::ForEach => self.parse_foreach(),
             TokenKind::While => self.parse_while(),
             TokenKind::Do => self.parse_do_while(),
             TokenKind::Switch => self.parse_switch(),
             TokenKind::Return => self.parse_return(),
             TokenKind::Break => {
+                let span = self.current().span.clone();
                 self.advance();
                 self.expect(&TokenKind::Semicolon)?;
-                Ok(Statement::Break)
+                Ok(Statement::Break(span))
             }
             TokenKind::Continue => {
+                let span = self.current().span.clone();
                 self.advance();
                 self.expect(&TokenKind::Semicolon)?;
-                Ok(Statement::Continue)
+                Ok(Statement::Continue(span))
             }
             TokenKind::Try => self.parse_try(),
             TokenKind::LBrace => Ok(Statement::Block(self.parse_stat_block()?)),
@@ -1389,56 +1534,54 @@ impl Parser {
     }
 
     fn parse_foreach(&mut self) -> ParseResult<Statement> {
-        // Parse: foreach( type var [, type var]* : container ) statement
+        let start_offset = self.current().span.as_ref().map(|s| s.start).unwrap_or(0);
 
-        self.expect(&TokenKind::ForEach)?; // Simplified!
+        self.expect(&TokenKind::ForEach)?;
         self.expect(&TokenKind::LParen)?;
 
-        // Parse variable declarations: type name [, type name]*
         let mut variables = Vec::new();
 
         loop {
-            // Parse type
             let var_type = self.parse_type()?;
-
-            // Parse variable name
             let var_name = self.expect_identifier()?;
 
             variables.push((var_type, var_name));
 
-            // Check for comma (more variables) or colon (end of variables)
             if self.check(&TokenKind::Comma) {
                 self.advance();
-                // Continue to next variable
             } else if self.check(&TokenKind::Colon) {
                 break;
             } else {
                 return Err(ParseError::UnexpectedToken {
-                    span: self.current().span.clone(),
                     expected: "',' or ':'".to_string(),
                     found: format!("{:?}", self.current().kind),
+                    span: self.current().span.clone(),
                 });
             }
         }
 
         self.expect(&TokenKind::Colon)?;
 
-        // Parse the iterable expression
         let iterable = self.parse_expression()?;
 
         self.expect(&TokenKind::RParen)?;
 
-        // Parse the body
         let body = Box::new(self.parse_statement()?);
+
+        let end_offset = self.previous().span.as_ref().map(|s| s.end).unwrap_or(0);
+        let span = self.make_span(start_offset, end_offset);
 
         Ok(Statement::ForEach(ForEachStmt {
             variables,
             iterable,
             body,
+            span,
         }))
     }
 
     fn parse_if(&mut self) -> ParseResult<Statement> {
+        let start_offset = self.current().span.as_ref().map(|s| s.start).unwrap_or(0);
+
         self.expect(&TokenKind::If)?;
         self.expect(&TokenKind::LParen)?;
         let condition = self.parse_expression()?;
@@ -1453,14 +1596,20 @@ impl Parser {
             None
         };
 
+        let end_offset = self.previous().span.as_ref().map(|s| s.end).unwrap_or(0);
+        let span = self.make_span(start_offset, end_offset);
+
         Ok(Statement::If(IfStmt {
             condition,
             then_branch,
             else_branch,
+            span,
         }))
     }
 
     fn parse_for(&mut self) -> ParseResult<Statement> {
+        let start_offset = self.current().span.as_ref().map(|s| s.start).unwrap_or(0);
+
         self.expect(&TokenKind::For)?;
         self.expect(&TokenKind::LParen)?;
 
@@ -1486,15 +1635,21 @@ impl Parser {
 
         let body = Box::new(self.parse_statement()?);
 
+        let end_offset = self.previous().span.as_ref().map(|s| s.end).unwrap_or(0);
+        let span = self.make_span(start_offset, end_offset);
+
         Ok(Statement::For(ForStmt {
             init,
             condition,
             increment,
             body,
+            span,
         }))
     }
 
     fn parse_while(&mut self) -> ParseResult<Statement> {
+        let start_offset = self.current().span.as_ref().map(|s| s.start).unwrap_or(0);
+
         self.expect(&TokenKind::While)?;
         self.expect(&TokenKind::LParen)?;
         let condition = self.parse_expression()?;
@@ -1502,10 +1657,19 @@ impl Parser {
 
         let body = Box::new(self.parse_statement()?);
 
-        Ok(Statement::While(WhileStmt { condition, body }))
+        let end_offset = self.previous().span.as_ref().map(|s| s.end).unwrap_or(0);
+        let span = self.make_span(start_offset, end_offset);
+
+        Ok(Statement::While(WhileStmt {
+            condition,
+            body,
+            span,
+        }))
     }
 
     fn parse_do_while(&mut self) -> ParseResult<Statement> {
+        let start_offset = self.current().span.as_ref().map(|s| s.start).unwrap_or(0);
+
         self.expect(&TokenKind::Do)?;
         let body = Box::new(self.parse_statement()?);
         self.expect(&TokenKind::While)?;
@@ -1514,10 +1678,19 @@ impl Parser {
         self.expect(&TokenKind::RParen)?;
         self.expect(&TokenKind::Semicolon)?;
 
-        Ok(Statement::DoWhile(DoWhileStmt { body, condition }))
+        let end_offset = self.previous().span.as_ref().map(|s| s.end).unwrap_or(0);
+        let span = self.make_span(start_offset, end_offset);
+
+        Ok(Statement::DoWhile(DoWhileStmt {
+            body,
+            condition,
+            span,
+        }))
     }
 
     fn parse_switch(&mut self) -> ParseResult<Statement> {
+        let start_offset = self.current().span.as_ref().map(|s| s.start).unwrap_or(0);
+
         self.expect(&TokenKind::Switch)?;
         self.expect(&TokenKind::LParen)?;
         let value = self.parse_expression()?;
@@ -1532,10 +1705,15 @@ impl Parser {
 
         self.expect(&TokenKind::RBrace)?;
 
-        Ok(Statement::Switch(SwitchStmt { value, cases }))
+        let end_offset = self.previous().span.as_ref().map(|s| s.end).unwrap_or(0);
+        let span = self.make_span(start_offset, end_offset);
+
+        Ok(Statement::Switch(SwitchStmt { value, cases, span }))
     }
 
     fn parse_case(&mut self) -> ParseResult<Case> {
+        let start_offset = self.current().span.as_ref().map(|s| s.start).unwrap_or(0);
+
         let pattern = if self.check(&TokenKind::Case) {
             self.advance();
             CasePattern::Value(self.parse_expression()?)
@@ -1562,13 +1740,19 @@ impl Parser {
             }
         }
 
+        let end_offset = self.previous().span.as_ref().map(|s| s.end).unwrap_or(0);
+        let span = self.make_span(start_offset, end_offset);
+
         Ok(Case {
             pattern,
             statements,
+            span,
         })
     }
 
     fn parse_return(&mut self) -> ParseResult<Statement> {
+        let start_offset = self.current().span.as_ref().map(|s| s.start).unwrap_or(0);
+
         self.expect(&TokenKind::Return)?;
 
         let value = if self.check(&TokenKind::Semicolon) {
@@ -1579,18 +1763,27 @@ impl Parser {
 
         self.expect(&TokenKind::Semicolon)?;
 
-        Ok(Statement::Return(ReturnStmt { value }))
+        let end_offset = self.previous().span.as_ref().map(|s| s.end).unwrap_or(0);
+        let span = self.make_span(start_offset, end_offset);
+
+        Ok(Statement::Return(ReturnStmt { value, span }))
     }
 
     fn parse_try(&mut self) -> ParseResult<Statement> {
+        let start_offset = self.current().span.as_ref().map(|s| s.start).unwrap_or(0);
+
         self.expect(&TokenKind::Try)?;
         let try_block = self.parse_stat_block()?;
         self.expect(&TokenKind::Catch)?;
         let catch_block = self.parse_stat_block()?;
 
+        let end_offset = self.previous().span.as_ref().map(|s| s.end).unwrap_or(0);
+        let span = self.make_span(start_offset, end_offset);
+
         Ok(Statement::Try(TryStmt {
             try_block,
             catch_block,
+            span,
         }))
     }
 
@@ -1617,7 +1810,7 @@ impl Parser {
             return Err(self.error("Expected expression"));
         }
 
-        let pratt = ExprParser::new(expr_tokens);
+        let pratt = ExprParser::new(expr_tokens, self.span_builder.clone(), self.include_spans);
         pratt.parse()
     }
 
@@ -1672,7 +1865,6 @@ impl Parser {
                     self.advance();
                 }
                 TokenKind::Lt => {
-                    // Look ahead to see if this is actually a template
                     let looks_like_template = self.looks_like_template_lookahead(&tokens);
 
                     if looks_like_template {
@@ -1744,11 +1936,8 @@ impl Parser {
 
         Ok(tokens)
     }
-    fn looks_like_template_lookahead(&self, tokens_so_far: &[Token]) -> bool {
-        // Check pattern: identifier < type_stuff >
-        // where type_stuff is: type [, type]*
 
-        // Must have identifier before <
+    fn looks_like_template_lookahead(&self, tokens_so_far: &[Token]) -> bool {
         if tokens_so_far.is_empty() {
             return false;
         }
@@ -1756,14 +1945,12 @@ impl Parser {
             return false;
         }
 
-        // Look ahead past the < (current position is at <, so start at pos + 1)
         let mut scan_pos = self.pos + 1;
         let mut depth: i32 = 1;
         let mut saw_type = false;
 
         while scan_pos < self.tokens.len() && depth > 0 {
             match &self.tokens[scan_pos].kind {
-                // Type tokens
                 TokenKind::Identifier(_)
                 | TokenKind::Const
                 | TokenKind::Int
@@ -1783,8 +1970,6 @@ impl Parser {
                     saw_type = true;
                     scan_pos += 1;
                 }
-
-                // Template nesting
                 TokenKind::Lt => {
                     depth += 1;
                     scan_pos += 1;
@@ -1792,14 +1977,11 @@ impl Parser {
                 TokenKind::Gt => {
                     depth -= 1;
                     if depth == 0 {
-                        // Found matching >
-                        // This looks like a template if we saw types
                         return saw_type;
                     }
                     scan_pos += 1;
                 }
                 TokenKind::Shr => {
-                    // >> closes 2 levels
                     if depth >= 2 {
                         depth -= 2;
                     } else {
@@ -1811,30 +1993,19 @@ impl Parser {
                     scan_pos += 1;
                 }
                 TokenKind::UShr => {
-                    // >>> closes 3 levels
                     depth = depth.saturating_sub(3);
                     if depth == 0 {
                         return saw_type;
                     }
                     scan_pos += 1;
                 }
-
-                // Comma is OK in templates
-                TokenKind::Comma => {
+                TokenKind::Comma
+                | TokenKind::DoubleColon
+                | TokenKind::LBracket
+                | TokenKind::RBracket
+                | TokenKind::At => {
                     scan_pos += 1;
                 }
-
-                // Scope resolution is OK in types
-                TokenKind::DoubleColon => {
-                    scan_pos += 1;
-                }
-
-                // Array brackets and @ are OK in types
-                TokenKind::LBracket | TokenKind::RBracket | TokenKind::At => {
-                    scan_pos += 1;
-                }
-
-                // Operators indicate this is NOT a template
                 TokenKind::Add
                 | TokenKind::Sub
                 | TokenKind::Mul
@@ -1851,30 +2022,24 @@ impl Parser {
                 | TokenKind::BitOr
                 | TokenKind::BitXor
                 | TokenKind::Shl
-                | TokenKind::Assign => {
+                | TokenKind::Assign
+                | TokenKind::Number(_) => {
                     return false;
                 }
-
-                // Numbers indicate comparison, not template
-                TokenKind::Number(_) => {
-                    return false;
-                }
-
-                // Anything else, stop looking
                 _ => return false,
             }
 
-            // Safety: don't scan too far (prevent infinite loops)
             if scan_pos - self.pos > 100 {
                 return false;
             }
         }
 
-        // Didn't find matching >, not a template
         false
     }
 
     fn parse_init_list(&mut self) -> ParseResult<InitList> {
+        let start_offset = self.current().span.as_ref().map(|s| s.start).unwrap_or(0);
+
         self.expect(&TokenKind::LBrace)?;
 
         let mut items = Vec::new();
@@ -1900,7 +2065,10 @@ impl Parser {
 
         self.expect(&TokenKind::RBrace)?;
 
-        Ok(InitList { items })
+        let end_offset = self.previous().span.as_ref().map(|s| s.end).unwrap_or(0);
+        let span = self.make_span(start_offset, end_offset);
+
+        Ok(InitList { items, span })
     }
 
     fn parse_arg_list(&mut self) -> ParseResult<Vec<Arg>> {
@@ -1914,8 +2082,16 @@ impl Parser {
         let mut args = Vec::new();
 
         loop {
+            let arg_start = self.current().span.as_ref().map(|s| s.start).unwrap_or(0);
             let value = self.parse_expression()?;
-            args.push(Arg { name: None, value });
+            let arg_end = self.previous().span.as_ref().map(|s| s.end).unwrap_or(0);
+            let arg_span = self.make_span(arg_start, arg_end);
+
+            args.push(Arg {
+                name: None,
+                value,
+                span: arg_span,
+            });
 
             if !self.check(&TokenKind::Comma) {
                 break;
@@ -1938,6 +2114,14 @@ impl Parser {
 
     fn current(&self) -> &Token {
         &self.tokens[self.pos.min(self.tokens.len() - 1)]
+    }
+
+    fn previous(&self) -> &Token {
+        if self.pos > 0 {
+            &self.tokens[self.pos - 1]
+        } else {
+            &self.tokens[0]
+        }
     }
 
     fn advance(&mut self) {
@@ -1964,9 +2148,9 @@ impl Parser {
             Ok(())
         } else {
             Err(ParseError::UnexpectedToken {
-                span: self.current().span.clone(),
                 expected: format!("{:?}", kind),
                 found: format!("{:?}", self.current().kind),
+                span: self.current().span.clone(),
             })
         }
     }
@@ -2003,13 +2187,13 @@ impl Parser {
 
     fn read_until_newline(&mut self) -> String {
         let mut content = String::new();
-        let start_line = self.current().span.start.line;
+        let start_line = self.current().line();
 
-        while !self.is_at_end() && self.current().span.start.line == start_line {
+        while !self.is_at_end() && self.current().line() == start_line {
             if !content.is_empty() {
                 content.push(' ');
             }
-            content.push_str(&self.current().span.source);
+            content.push_str(&self.current().lexeme);
             self.advance();
         }
 
@@ -2018,18 +2202,24 @@ impl Parser {
 
     fn error(&self, message: &str) -> ParseError {
         ParseError::SyntaxError {
-            span: self.current().span.clone(),
             message: message.to_string(),
+            span: self.current().span.clone(),
         }
     }
 
-    /// Parse a function declaration without body (for engine registration)
-    /// This is a public helper for the declaration parser
+    fn make_span(&self, start: usize, end: usize) -> Option<Span> {
+        if self.include_spans {
+            self.span_builder.as_ref().map(|sb| sb.span(start, end))
+        } else {
+            None
+        }
+    }
+
     pub fn parse_function_signature(&mut self) -> ParseResult<Func> {
+        let start_offset = self.current().span.as_ref().map(|s| s.start).unwrap_or(0);
         let mut modifiers = Vec::new();
         let mut visibility = None;
 
-        // Parse modifiers
         while self.identifier_is("shared")
             || self.identifier_is("external")
             || self.identifier_is("final")
@@ -2040,7 +2230,6 @@ impl Parser {
             modifiers.push(self.expect_identifier()?);
         }
 
-        // Parse visibility
         if self.check(&TokenKind::Private) {
             visibility = Some(Visibility::Private);
             self.advance();
@@ -2049,7 +2238,6 @@ impl Parser {
             self.advance();
         }
 
-        // Parse return type (optional for constructors)
         let (return_type, is_ref) = if self.is_type_token() || self.check(&TokenKind::Const) {
             let ret_type = self.parse_type()?;
             let is_ref = if self.check(&TokenKind::BitAnd) {
@@ -2063,13 +2251,9 @@ impl Parser {
             (None, false)
         };
 
-        // Parse function name
         let name = self.expect_identifier()?;
-
-        // Parse parameters
         let params = self.parse_param_list()?;
 
-        // Check for const
         let is_const = if self.check(&TokenKind::Const) {
             self.advance();
             true
@@ -2077,8 +2261,10 @@ impl Parser {
             false
         };
 
-        // Parse attributes
         let attributes = self.parse_func_attributes()?;
+
+        let end_offset = self.previous().span.as_ref().map(|s| s.end).unwrap_or(0);
+        let span = self.make_span(start_offset, end_offset);
 
         Ok(Func {
             modifiers,
@@ -2090,6 +2276,7 @@ impl Parser {
             is_const,
             attributes,
             body: None,
+            span,
         })
     }
 }

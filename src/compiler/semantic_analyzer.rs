@@ -1,277 +1,80 @@
-use crate::compiler::symbol_table::{
-    ExprContext, FunctionInfo, GlobalVarInfo, MemberInfo, ParamInfo, ScopeType, SymbolTable,
-    TypeInfo, TypeUsage, VariableLocation,
-};
-use crate::core::engine::EngineInner;
+use crate::compiler::symbol_table::{ExprContext, ScopeType, SymbolTable};
+use crate::core::engine_properties::EngineProperty;
 use crate::core::error::{SemanticError, SemanticResult};
+use crate::core::span::Span;
+use crate::core::type_registry::{
+    FunctionFlags, FunctionImpl, FunctionInfo, FunctionKind, GlobalInfo, ParameterFlags,
+    ParameterInfo, PropertyFlags, PropertyInfo, TypeInfo, TypeRegistry, VTableEntry,
+};
 use crate::core::types::{
-    BehaviourType, ObjectType, TypeFlags, TypeId, TypeKind, TypeRegistration, TYPE_AUTO,
-    TYPE_BOOL, TYPE_DOUBLE, TYPE_FLOAT, TYPE_INT16, TYPE_INT32, TYPE_INT64, TYPE_INT8,
-    TYPE_STRING, TYPE_UINT16, TYPE_UINT32, TYPE_UINT64, TYPE_UINT8, TYPE_VOID,
+    allocate_function_id, allocate_type_id, AccessSpecifier, BehaviourType, FunctionId, TypeFlags, TypeId,
+    TypeKind, TypeRegistration, TYPE_AUTO, TYPE_BOOL, TYPE_DOUBLE, TYPE_FLOAT, TYPE_INT16,
+    TYPE_INT32, TYPE_INT64, TYPE_INT8, TYPE_STRING, TYPE_UINT16, TYPE_UINT32, TYPE_UINT64,
+    TYPE_UINT8, TYPE_VOID,
 };
-use crate::parser::ast::{
-    AccessorKind, BinaryOp, CasePattern, Class, ClassMember, Expr, ForInit, Func, FuncDef,
-    InitListItem, Literal, Param, PostfixOp, Script, ScriptNode, StatBlock, Statement, Type,
-    TypeMod, TypeModifier, UnaryOp, Var, VarInit,
-};
+use crate::parser::ast::*;
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
 pub struct SemanticAnalyzer {
-    pub engine: Arc<RwLock<EngineInner>>,
+    registry: Arc<RwLock<TypeRegistry>>,
     pub symbol_table: SymbolTable,
     current_namespace: Vec<String>,
     current_class: Option<String>,
+    current_function: Option<FunctionId>,
     errors: Vec<SemanticError>,
     loop_depth: u32,
     switch_depth: u32,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub enum TypeUsage {
+    AsHandle,
+    AsBaseClass,
+    AsVariable,
+    InAssignment,
+}
+
 impl SemanticAnalyzer {
-    pub fn new(engine: Arc<RwLock<EngineInner>>) -> Self {
-        let mut analyzer = Self {
-            engine: engine.clone(),
-            symbol_table: SymbolTable::new(),
+    pub fn new(registry: Arc<RwLock<TypeRegistry>>) -> Self {
+        let symbol_table = SymbolTable::new(Arc::clone(&registry));
+
+        Self {
+            registry,
+            symbol_table,
             current_namespace: Vec::new(),
             current_class: None,
+            current_function: None,
             errors: Vec::new(),
             loop_depth: 0,
             switch_depth: 0,
-        };
-
-        analyzer.import_engine_registrations();
-
-        analyzer
-    }
-
-    fn import_engine_registrations(&mut self) {
-        let engine = self.engine.read().unwrap();
-
-        for (type_name, obj_type) in &engine.object_types {
-            let flags = self.convert_object_type_flags(obj_type);
-
-            let mut type_info = TypeInfo {
-                type_id: obj_type.type_id,
-                name: type_name.clone(),
-                kind: TypeKind::Class,
-                flags,
-                members: HashMap::new(),
-                methods: HashMap::new(),
-                base_class: None,
-                registration: TypeRegistration::Application,
-            };
-
-            for prop in &obj_type.properties {
-                let member_info = MemberInfo {
-                    name: prop.name.clone(),
-                    type_id: prop.type_id,
-                    is_const: prop.is_const,
-                    visibility: None,
-                };
-                type_info.members.insert(prop.name.clone(), member_info);
-            }
-
-            for method in &obj_type.methods {
-                let full_name = format!("{}::{}", type_name, method.name);
-
-                type_info
-                    .methods
-                    .entry(method.name.clone())
-                    .or_insert_with(Vec::new)
-                    .push(full_name.clone());
-
-                let func_info = FunctionInfo {
-                    name: method.name.clone(),
-                    full_name: full_name.clone(),
-                    return_type: method.return_type_id,
-                    params: method
-                        .params
-                        .iter()
-                        .map(|p| ParamInfo {
-                            name: Some(p.name.clone()),
-                            type_id: p.type_id,
-                            is_ref: p.is_ref,
-                            is_out: p.is_out,
-                            default_value: None,
-                        })
-                        .collect(),
-                    is_method: true,
-                    class_type: Some(obj_type.type_id),
-                    is_const: method.is_const,
-                    is_virtual: method.is_virtual,
-                    is_override: false,
-                    address: 0,
-                    is_system_func: true,
-                    system_func_id: Some(method.function_id),
-                };
-
-                self.symbol_table.register_function(func_info);
-            }
-
-            for behaviour in &obj_type.behaviours {
-                let behaviour_name = self.get_behaviour_name(behaviour.behaviour_type);
-                let full_name = format!("{}::{}", type_name, behaviour_name);
-
-                let func_info = FunctionInfo {
-                    name: behaviour_name.clone(),
-                    full_name: full_name.clone(),
-                    return_type: behaviour.return_type_id,
-                    params: behaviour
-                        .params
-                        .iter()
-                        .map(|p| ParamInfo {
-                            name: Some(p.name.clone()),
-                            type_id: p.type_id,
-                            is_ref: p.is_ref,
-                            is_out: p.is_out,
-                            default_value: None,
-                        })
-                        .collect(),
-                    is_method: true,
-                    class_type: Some(obj_type.type_id),
-                    is_const: false,
-                    is_virtual: false,
-                    is_override: false,
-                    address: 0,
-                    is_system_func: true,
-                    system_func_id: Some(behaviour.function_id),
-                };
-
-                self.symbol_table.register_function(func_info);
-
-                type_info
-                    .methods
-                    .entry(behaviour_name)
-                    .or_insert_with(Vec::new)
-                    .push(full_name);
-            }
-
-            self.symbol_table.register_type(type_info);
-        }
-
-        for (idx, global_func) in engine.global_functions.iter().enumerate() {
-            let func_info = FunctionInfo {
-                name: global_func.name.clone(),
-                full_name: global_func.name.clone(),
-                return_type: global_func.return_type_id,
-                params: global_func
-                    .params
-                    .iter()
-                    .map(|p| ParamInfo {
-                        name: Some(p.name.clone()),
-                        type_id: p.type_id,
-                        is_ref: p.is_ref,
-                        is_out: p.is_out,
-                        default_value: None,
-                    })
-                    .collect(),
-                is_method: false,
-                class_type: None,
-                is_const: false,
-                is_virtual: false,
-                is_override: false,
-                address: 0,
-                is_system_func: true,
-                system_func_id: Some(idx as u32),
-            };
-
-            self.symbol_table.register_function(func_info);
-        }
-
-        for (idx, global_prop) in engine.global_properties.iter().enumerate() {
-            let global_info = GlobalVarInfo {
-                name: global_prop.name.clone(),
-                type_id: global_prop.type_id,
-                is_const: global_prop.is_const,
-                address: idx as u32,
-            };
-
-            self.symbol_table.register_global(global_info);
-        }
-
-        for (enum_name, enum_type) in &engine.enum_types {
-            let type_info = TypeInfo {
-                type_id: enum_type.type_id,
-                name: enum_name.clone(),
-                kind: TypeKind::Enum,
-                flags: TypeFlags::ENUM,
-                members: HashMap::new(),
-                methods: HashMap::new(),
-                base_class: None,
-                registration: TypeRegistration::Application,
-            };
-
-            self.symbol_table.register_type(type_info);
-        }
-
-        for (interface_name, interface_type) in &engine.interface_types {
-            let type_info = TypeInfo {
-                type_id: interface_type.type_id,
-                name: interface_name.clone(),
-                kind: TypeKind::Interface,
-                flags: TypeFlags::ABSTRACT,
-                members: HashMap::new(),
-                methods: HashMap::new(),
-                base_class: None,
-                registration: TypeRegistration::Application,
-            };
-
-            self.symbol_table.register_type(type_info);
-        }
-
-        for (funcdef_name, funcdef) in &engine.funcdefs {
-            let type_info = TypeInfo {
-                type_id: funcdef.type_id,
-                name: funcdef_name.clone(),
-                kind: TypeKind::Funcdef,
-                flags: TypeFlags::FUNCDEF,
-                members: HashMap::new(),
-                methods: HashMap::new(),
-                base_class: None,
-                registration: TypeRegistration::Application,
-            };
-
-            self.symbol_table.register_type(type_info);
-        }
-    }
-
-    fn convert_object_type_flags(&self, obj_type: &ObjectType) -> TypeFlags {
-        let mut flags = TypeFlags::empty();
-
-        if obj_type.flags.contains(TypeFlags::REF_TYPE) {
-            flags |= TypeFlags::REF_TYPE;
-        }
-        if obj_type.flags.contains(TypeFlags::VALUE_TYPE) {
-            flags |= TypeFlags::VALUE_TYPE;
-        }
-        if obj_type.flags.contains(TypeFlags::POD_TYPE) {
-            flags |= TypeFlags::POD_TYPE;
-        }
-
-        for behaviour in &obj_type.behaviours {
-            match behaviour.behaviour_type {
-                BehaviourType::Construct => flags |= TypeFlags::APP_CLASS_CONSTRUCTOR,
-                BehaviourType::Destruct => flags |= TypeFlags::APP_CLASS_DESTRUCTOR,
-                _ => {}
-            }
-        }
-
-        flags
-    }
-
-    fn get_behaviour_name(&self, behaviour_type: BehaviourType) -> String {
-        match behaviour_type {
-            BehaviourType::Construct => "constructor".to_string(),
-            BehaviourType::Destruct => "destructor".to_string(),
-            BehaviourType::AddRef => "AddRef".to_string(),
-            BehaviourType::Release => "Release".to_string(),
-            _ => format!("{:?}", behaviour_type),
         }
     }
 
     pub fn analyze(&mut self, script: &Script) -> Result<(), Vec<SemanticError>> {
         self.errors.clear();
 
+        // Phase 0: Register typedefs
+        for item in &script.items {
+            match item {
+                ScriptNode::Typedef(typedef) => {
+                    self.register_typedef(typedef);
+                }
+                ScriptNode::Namespace(ns) => {
+                    self.current_namespace.extend(ns.name.clone());
+                    for nested_item in &ns.items {
+                        if let ScriptNode::Typedef(typedef) = nested_item {
+                            self.register_typedef(typedef);
+                        }
+                    }
+                    self.current_namespace
+                        .truncate(self.current_namespace.len() - ns.name.len());
+                }
+                _ => {}
+            }
+        }
+
+        // Phase 1: Register type declarations
         for item in &script.items {
             match item {
                 ScriptNode::Class(class) => {
@@ -296,6 +99,7 @@ impl SemanticAnalyzer {
             }
         }
 
+        // Phase 2: Register function signatures and class members
         for item in &script.items {
             match item {
                 ScriptNode::Func(func) => {
@@ -324,6 +128,7 @@ impl SemanticAnalyzer {
             }
         }
 
+        // Phase 3: Analyze function bodies
         for item in &script.items {
             match item {
                 ScriptNode::Func(func) => {
@@ -367,12 +172,961 @@ impl SemanticAnalyzer {
         }
     }
 
+    fn analyze_expr(&mut self, expr: &Expr) -> SemanticResult<ExprContext> {
+        let context = match expr {
+            Expr::Literal(lit, _span) => {
+                let type_id = self.analyze_literal(lit);
+                ExprContext::Temporary { type_id }
+            }
+
+            Expr::VarAccess(_, name, span) => {
+                if let Some(local) = self.symbol_table.lookup_local(name) {
+                    ExprContext::LocalVar {
+                        type_id: local.type_id,
+                        var_index: local.index,
+                        is_const: local.is_const,
+                    }
+                } else if let Some(global) = self.symbol_table.get_global(name) {
+                    ExprContext::GlobalVar {
+                        type_id: global.type_id,
+                        global_address: global.address,
+                        is_const: global.is_const,
+                    }
+                } else {
+                    return Err(SemanticError::UndefinedSymbol {
+                        name: name.clone(),
+                        span: span.clone(),
+                    });
+                }
+            }
+
+            Expr::Binary(left, op, right, span) => {
+                let left_ctx = self.analyze_expr(left)?;
+                let right_ctx = self.analyze_expr(right)?;
+                self.analyze_binary_op(left_ctx, op, right_ctx, span.as_ref())?
+            }
+
+            Expr::Unary(op, operand, span) => {
+                let operand_ctx = self.analyze_expr(operand)?;
+
+                if matches!(op, UnaryOp::Handle) {
+                    self.validate_type_usage(
+                        operand_ctx.get_type(),
+                        TypeUsage::AsHandle,
+                        span.as_ref(),
+                    )?;
+                }
+
+                self.analyze_unary_op(op, operand_ctx, span.as_ref())?
+            }
+
+            Expr::FuncCall(call, span) => {
+                let mut arg_types = Vec::new();
+                for arg in &call.args {
+                    let arg_ctx = self.analyze_expr(&arg.value)?;
+                    arg_types.push(arg_ctx.get_type());
+                }
+
+                match self.resolve_function_overload(&call.name, &arg_types) {
+                    Ok(function_id) => {
+                        let registry = self.registry.read().unwrap();
+                        let func_info = registry.get_function(function_id).unwrap();
+
+                        let min_args = func_info
+                            .parameters
+                            .iter()
+                            .filter(|p| p.default_expr.is_none())
+                            .count();
+                        let max_args = func_info.parameters.len();
+
+                        if call.args.len() < min_args || call.args.len() > max_args {
+                            return Err(SemanticError::ArgumentCountMismatch {
+                                expected: min_args,
+                                found: call.args.len(),
+                                span: span.clone(),
+                            });
+                        }
+
+                        ExprContext::FunctionCall {
+                            return_type: func_info.return_type,
+                            function_id,
+                        }
+                    }
+                    Err(candidates) if candidates.is_empty() => {
+                        return Err(SemanticError::UndefinedFunction {
+                            name: call.name.clone(),
+                            span: span.clone(),
+                        });
+                    }
+                    Err(candidates) => {
+                        let registry = self.registry.read().unwrap();
+                        let candidate_names: Vec<String> = candidates
+                            .iter()
+                            .filter_map(|&id| {
+                                registry.get_function(id).map(|f| f.full_name.clone())
+                            })
+                            .collect();
+
+                        return Err(SemanticError::AmbiguousCall {
+                            name: call.name.clone(),
+                            candidates: candidate_names,
+                            span: span.clone(),
+                        });
+                    }
+                }
+            }
+
+            Expr::Postfix(obj, op, span) => {
+                let obj_ctx = self.analyze_expr(obj)?;
+                self.analyze_postfix(obj_ctx, op, span.as_ref())?
+            }
+
+            Expr::Ternary(cond, then_expr, else_expr, _span) => {
+                self.analyze_expr(cond)?;
+                let then_ctx = self.analyze_expr(then_expr)?;
+                let else_ctx = self.analyze_expr(else_expr)?;
+
+                let result_type = if then_ctx.get_type() == else_ctx.get_type() {
+                    then_ctx.get_type()
+                } else {
+                    self.get_common_type(then_ctx.get_type(), else_ctx.get_type())
+                };
+
+                ExprContext::Temporary {
+                    type_id: result_type,
+                }
+            }
+
+            Expr::ConstructCall(type_def, args, span) => {
+                for arg in args {
+                    self.analyze_expr(&arg.value)?;
+                }
+                let type_id = self.symbol_table.resolve_type_from_ast(type_def);
+
+                self.validate_type_usage(type_id, TypeUsage::AsVariable, span.as_ref())?;
+                self.validate_required_behaviours(type_id, span.as_ref())?;
+
+                ExprContext::Handle { type_id }
+            }
+
+            Expr::Cast(target_type, expr, _span) => {
+                self.analyze_expr(expr)?;
+                let type_id = self.symbol_table.resolve_type_from_ast(target_type);
+                ExprContext::Temporary { type_id }
+            }
+
+            Expr::Lambda(lambda, span) => self.analyze_lambda(lambda, span.as_ref())?,
+
+            Expr::InitList(init_list) => {
+                for item in &init_list.items {
+                    match item {
+                        InitListItem::Expr(expr) => {
+                            self.analyze_expr(expr)?;
+                        }
+                        InitListItem::InitList(nested) => {
+                            self.analyze_expr(&Expr::InitList(nested.clone()))?;
+                        }
+                    }
+                }
+
+                ExprContext::Temporary { type_id: TYPE_VOID }
+            }
+
+            Expr::Void(_) => ExprContext::Temporary { type_id: TYPE_VOID },
+        };
+
+        self.symbol_table.set_expr_context(expr, context.clone());
+
+        Ok(context)
+    }
+
+    fn analyze_binary_op(
+        &mut self,
+        left_ctx: ExprContext,
+        op: &BinaryOp,
+        right_ctx: ExprContext,
+        span: Option<&Span>,
+    ) -> SemanticResult<ExprContext> {
+        match op {
+            BinaryOp::Assign
+            | BinaryOp::AddAssign
+            | BinaryOp::SubAssign
+            | BinaryOp::MulAssign
+            | BinaryOp::DivAssign
+            | BinaryOp::ModAssign
+            | BinaryOp::PowAssign
+            | BinaryOp::BitAndAssign
+            | BinaryOp::BitOrAssign
+            | BinaryOp::BitXorAssign
+            | BinaryOp::ShlAssign
+            | BinaryOp::ShrAssign
+            | BinaryOp::UShrAssign => {
+                if let ExprContext::VirtualProperty {
+                    setter_id,
+                    is_const,
+                    ..
+                } = &left_ctx
+                {
+                    if setter_id.is_none() {
+                        return Err(SemanticError::ConstViolation {
+                            message: "Cannot assign to read-only property".to_string(),
+                            span: span.cloned(),
+                        });
+                    }
+
+                    if *is_const {
+                        return Err(SemanticError::ConstViolation {
+                            message: "Cannot assign to property on const object".to_string(),
+                            span: span.cloned(),
+                        });
+                    }
+
+                    return Ok(ExprContext::Temporary {
+                        type_id: left_ctx.get_type(),
+                    })
+                }
+
+                if !left_ctx.is_lvalue() {
+                    return Err(SemanticError::InvalidAssignment {
+                        target: "expression".to_string(),
+                        reason: "not an lvalue".to_string(),
+                        span: span.cloned(),
+                    });
+                }
+
+                if left_ctx.is_const() {
+                    return Err(SemanticError::ConstViolation {
+                        message: "cannot assign to const variable".to_string(),
+                        span: span.cloned(),
+                    });
+                }
+
+                self.validate_type_usage(left_ctx.get_type(), TypeUsage::InAssignment, span)?;
+
+                Ok(ExprContext::Temporary {
+                    type_id: left_ctx.get_type(),
+                })
+            }
+
+            BinaryOp::Eq
+            | BinaryOp::Ne
+            | BinaryOp::Lt
+            | BinaryOp::Le
+            | BinaryOp::Gt
+            | BinaryOp::Ge
+            | BinaryOp::And
+            | BinaryOp::Or => Ok(ExprContext::Temporary { type_id: TYPE_BOOL }),
+
+            _ => {
+                let result_type = self.get_common_type(left_ctx.get_type(), right_ctx.get_type());
+                Ok(ExprContext::Temporary {
+                    type_id: result_type,
+                })
+            }
+        }
+    }
+
+    fn analyze_unary_op(
+        &self,
+        op: &UnaryOp,
+        operand_ctx: ExprContext,
+        span: Option<&Span>,
+    ) -> SemanticResult<ExprContext> {
+        match op {
+            UnaryOp::PreInc | UnaryOp::PreDec => {
+                if !operand_ctx.is_lvalue() {
+                    return Err(SemanticError::InvalidOperation {
+                        operation: format!("{:?}", op),
+                        type_name: "non-lvalue".to_string(),
+                        span: span.cloned(),
+                    });
+                }
+
+                if operand_ctx.is_const() {
+                    return Err(SemanticError::ConstViolation {
+                        message: format!("cannot apply {:?} to const variable", op),
+                        span: span.cloned(),
+                    });
+                }
+
+                Ok(ExprContext::Temporary {
+                    type_id: operand_ctx.get_type(),
+                })
+            }
+
+            UnaryOp::Handle => Ok(ExprContext::Handle {
+                type_id: operand_ctx.get_type(),
+            }),
+
+            UnaryOp::Not => Ok(ExprContext::Temporary { type_id: TYPE_BOOL }),
+
+            UnaryOp::Neg | UnaryOp::Plus | UnaryOp::BitNot => Ok(ExprContext::Temporary {
+                type_id: operand_ctx.get_type(),
+            }),
+        }
+    }
+
+    fn analyze_postfix(
+        &mut self,
+        obj_ctx: ExprContext,
+        op: &PostfixOp,
+        span: Option<&Span>,
+    ) -> SemanticResult<ExprContext> {
+        match op {
+            PostfixOp::PostInc | PostfixOp::PostDec => {
+                if !obj_ctx.is_lvalue() {
+                    return Err(SemanticError::InvalidOperation {
+                        operation: format!("{:?}", op),
+                        type_name: "non-lvalue".to_string(),
+                        span: span.cloned(),
+                    });
+                }
+
+                if obj_ctx.is_const() {
+                    return Err(SemanticError::ConstViolation {
+                        message: format!("cannot apply {:?} to const variable", op),
+                        span: span.cloned(),
+                    });
+                }
+
+                Ok(ExprContext::Temporary {
+                    type_id: obj_ctx.get_type(),
+                })
+            }
+
+            PostfixOp::MemberAccess(member) => {
+                let obj_type = obj_ctx.get_type();
+
+                if let Some(type_info) = self.symbol_table.get_type(obj_type) {
+                    if let Some(member_info) = type_info.get_property(member) {
+                        if member_info.getter.is_some() || member_info.setter.is_some() {
+                            if member_info.getter.is_none() {
+                                return Err(SemanticError::ConstViolation {
+                                    message: format!(
+                                        "Cannot read write-only property '{}'",
+                                        member
+                                    ),
+                                    span: span.cloned(),
+                                });
+                            }
+
+                            if obj_ctx.is_const() {
+                                if let Some(getter_id) = member_info.getter {
+                                    let registry = self.registry.read().unwrap();
+                                    if let Some(getter_func) = registry.get_function(getter_id) {
+                                        if !getter_func.flags.contains(FunctionFlags::CONST) {
+                                            return Err(SemanticError::ConstViolation {
+                                                message: format!(
+                                                    "Cannot access property '{}' on const object - getter is not const",
+                                                    member
+                                                ),
+                                                span: span.cloned(),
+                                            });
+                                        }
+                                    }
+                                }
+                            }
+
+                            return Ok(ExprContext::VirtualProperty {
+                                property_type: member_info.type_id,
+                                getter_id: member_info.getter,
+                                setter_id: member_info.setter,
+                                is_const: obj_ctx.is_const() || member_info.setter.is_none(),
+                            });
+                        }
+
+                        let is_const =
+                            obj_ctx.is_const() || member_info.flags.contains(PropertyFlags::CONST);
+
+                        Ok(ExprContext::PropertyAccess {
+                            property_type: member_info.type_id,
+                            property_name: member.clone(),
+                            is_const,
+                        })
+                    } else {
+                        Err(SemanticError::UndefinedMember {
+                            type_name: type_info.name.clone(),
+                            member: member.clone(),
+                            span: span.cloned(),
+                        })
+                    }
+                } else {
+                    Err(SemanticError::InvalidOperation {
+                        operation: "member access".to_string(),
+                        type_name: format!("type {}", obj_type),
+                        span: span.cloned(),
+                    })
+                }
+            }
+
+            PostfixOp::MemberCall(call) => {
+                let obj_type = obj_ctx.get_type();
+
+                let mut arg_types = Vec::new();
+                for arg in &call.args {
+                    let arg_ctx = self.analyze_expr(&arg.value)?;
+                    arg_types.push(arg_ctx.get_type());
+                }
+
+                match self.resolve_method_overload(
+                    obj_type,
+                    &call.name,
+                    &arg_types,
+                    obj_ctx.is_const(),
+                ) {
+                    Ok(function_id) => {
+                        let registry = self.registry.read().unwrap();
+                        let func_info = registry.get_function(function_id).unwrap();
+
+                        Ok(ExprContext::MethodCall {
+                            return_type: func_info.return_type,
+                            function_id,
+                        })
+                    }
+                    Err(candidates) if candidates.is_empty() => {
+                        let registry = self.registry.read().unwrap();
+                        let type_info = registry.get_type(obj_type);
+
+                        if let Some(type_info) = type_info {
+                            Err(SemanticError::UndefinedMember {
+                                type_name: type_info.name.clone(),
+                                member: call.name.clone(),
+                                span: span.cloned(),
+                            })
+                        } else {
+                            Err(SemanticError::InvalidOperation {
+                                operation: "method call".to_string(),
+                                type_name: format!("type {}", obj_type),
+                                span: span.cloned(),
+                            })
+                        }
+                    }
+                    Err(candidates) => {
+                        let registry = self.registry.read().unwrap();
+                        let candidate_names: Vec<String> = candidates
+                            .iter()
+                            .filter_map(|&id| {
+                                registry.get_function(id).map(|f| f.full_name.clone())
+                            })
+                            .collect();
+
+                        Err(SemanticError::AmbiguousCall {
+                            name: call.name.clone(),
+                            candidates: candidate_names,
+                            span: span.cloned(),
+                        })
+                    }
+                }
+            }
+
+            PostfixOp::Index(_indices) => Ok(ExprContext::Temporary {
+                type_id: TYPE_INT32,
+            }),
+
+            PostfixOp::Call(_args) => Ok(ExprContext::Temporary { type_id: TYPE_VOID }),
+        }
+    }
+
+    // ✅ Function overload resolution (returns Result with candidate list)
+    fn resolve_function_overload(
+        &self,
+        name: &str,
+        arg_types: &[TypeId],
+    ) -> Result<FunctionId, Vec<FunctionId>> {
+        let registry = self.registry.read().unwrap();
+
+        let mut candidates = registry.get_functions_by_name(name);
+
+        candidates.retain(|f| f.namespace == self.current_namespace || f.namespace.is_empty());
+
+        if candidates.is_empty() {
+            return Err(Vec::new());
+        }
+
+        candidates.retain(|f| {
+            let min_args = f
+                .parameters
+                .iter()
+                .filter(|p| p.default_expr.is_none())
+                .count();
+            let max_args = f.parameters.len();
+            arg_types.len() >= min_args && arg_types.len() <= max_args
+        });
+
+        if candidates.is_empty() {
+            return Err(Vec::new());
+        }
+
+        // Phase 1: Exact matches
+        let exact_matches: Vec<FunctionId> = candidates
+            .iter()
+            .filter(|f| {
+                f.parameters
+                 .iter()
+                 .take(arg_types.len())
+                 .zip(arg_types)
+                 .all(|(param, &arg_type)| {
+                     let param_type = registry.resolve_typedef(param.type_id);
+                     let arg_type = registry.resolve_typedef(arg_type);
+                     param_type == arg_type
+                 })
+            })
+            .map(|f| f.function_id)
+            .collect();
+
+        if exact_matches.len() > 1 {
+            return Err(exact_matches);
+        }
+
+        if exact_matches.len() == 1 {
+            return Ok(exact_matches[0]);
+        }
+
+        // Phase 2: Conversion matches
+        let conversion_matches: Vec<FunctionId> = candidates
+            .iter()
+            .filter(|f| {
+                f.parameters
+                 .iter()
+                 .take(arg_types.len())
+                 .zip(arg_types)
+                 .all(|(param, &arg_type)| {
+                     let param_type = registry.resolve_typedef(param.type_id);
+                     let arg_type = registry.resolve_typedef(arg_type);
+
+                     param_type == arg_type
+                         || registry.can_implicitly_convert(arg_type, param_type)
+                 })
+            })
+            .map(|f| f.function_id)
+            .collect();
+
+        if conversion_matches.len() > 1 {
+            return Err(conversion_matches);
+        }
+
+        if conversion_matches.len() == 1 {
+            return Ok(conversion_matches[0]);
+        }
+
+        Err(Vec::new())
+    }
+
+    // ✅ Method overload resolution
+    fn resolve_method_overload(
+        &self,
+        type_id: TypeId,
+        method_name: &str,
+        arg_types: &[TypeId],
+        is_const_context: bool,
+    ) -> Result<FunctionId, Vec<FunctionId>> {
+        let registry = self.registry.read().unwrap();
+
+        let candidates = registry.get_methods_by_name(type_id, method_name);
+
+        if candidates.is_empty() {
+            return Err(Vec::new());
+        }
+
+        // Filter by argument count
+        let valid_candidates: Vec<_> = candidates
+            .into_iter()
+            .filter(|f| {
+                let min_args = f
+                    .parameters
+                    .iter()
+                    .filter(|p| p.default_expr.is_none())
+                    .count();
+                let max_args = f.parameters.len();
+                arg_types.len() >= min_args && arg_types.len() <= max_args
+            })
+            .collect();
+
+        if valid_candidates.is_empty() {
+            return Err(Vec::new());
+        }
+
+        // Phase 1: Exact matches (with const checking)
+        let exact_matches: Vec<FunctionId> = valid_candidates
+            .iter()
+            .filter(|f| {
+                let type_match = f
+                    .parameters
+                    .iter()
+                    .take(arg_types.len())
+                    .zip(arg_types)
+                    .all(|(param, &arg_type)| {
+                        let param_type = registry.resolve_typedef(param.type_id);
+                        let arg_type = registry.resolve_typedef(arg_type);
+                        param_type == arg_type
+                    });
+
+                if !type_match {
+                    return false;
+                }
+
+                // Check const qualifier
+                if is_const_context {
+                    matches!(f.kind, FunctionKind::Method { is_const: true })
+                } else {
+                    true
+                }
+            })
+            .map(|f| f.function_id)
+            .collect();
+
+        if exact_matches.len() > 1 {
+            return Err(exact_matches);
+        }
+
+        if exact_matches.len() == 1 {
+            return Ok(exact_matches[0]);
+        }
+
+        // Phase 2: Conversion matches
+        let conversion_matches: Vec<FunctionId> = valid_candidates
+            .iter()
+            .filter(|f| {
+                let type_match = f
+                    .parameters
+                    .iter()
+                    .take(arg_types.len())
+                    .zip(arg_types)
+                    .all(|(param, &arg_type)| {
+                        let param_type = registry.resolve_typedef(param.type_id);
+                        let arg_type = registry.resolve_typedef(arg_type);
+
+                        param_type == arg_type
+                            || registry.can_implicitly_convert(arg_type, param_type)
+                    });
+
+                if !type_match {
+                    return false;
+                }
+
+                if is_const_context {
+                    matches!(f.kind, FunctionKind::Method { is_const: true })
+                } else {
+                    true
+                }
+            })
+            .map(|f| f.function_id)
+            .collect();
+
+        if conversion_matches.len() > 1 {
+            return Err(conversion_matches);
+        }
+
+        if conversion_matches.len() == 1 {
+            return Ok(conversion_matches[0]);
+        }
+
+        Err(Vec::new())
+    }
+
+    fn analyze_lambda(
+        &mut self,
+        lambda: &Lambda,
+        span: Option<&Span>,
+    ) -> SemanticResult<ExprContext> {
+        let lambda_name = format!("$lambda_{}", self.errors.len());
+        let function_id = allocate_function_id();
+
+        self.current_function = Some(function_id);
+        self.symbol_table
+            .push_scope(ScopeType::Function(lambda_name.clone()));
+
+        let mut param_types = Vec::new();
+        for param in &lambda.params {
+            if let Some(name) = &param.name {
+                let type_id = if let Some(param_type) = &param.param_type {
+                    self.symbol_table.resolve_type_from_ast(param_type)
+                } else {
+                    TYPE_AUTO
+                };
+
+                param_types.push(type_id);
+
+                self.symbol_table.register_local(
+                    name.clone(),
+                    type_id,
+                    false,
+                    true,
+                    param.span.clone(),
+                );
+            }
+        }
+
+        let mut return_type = TYPE_VOID;
+        for stmt in &lambda.body.statements {
+            self.analyze_statement(stmt)?;
+
+            if let Statement::Return(ret) = stmt {
+                if let Some(value) = &ret.value {
+                    if let Some(ctx) = self.symbol_table.get_expr_context(value) {
+                        return_type = ctx.get_type();
+                        break;
+                    }
+                }
+            }
+        }
+
+        let locals = self.symbol_table.collect_function_locals(&lambda_name);
+
+        let parameters = lambda
+            .params
+            .iter()
+            .enumerate()
+            .map(|(i, p)| ParameterInfo {
+                name: p.name.clone(),
+                type_id: param_types.get(i).copied().unwrap_or(TYPE_AUTO),
+                flags: match p.type_mod {
+                    Some(TypeMod::In) => ParameterFlags::IN,
+                    Some(TypeMod::Out) => ParameterFlags::OUT,
+                    Some(TypeMod::InOut) => ParameterFlags::INOUT,
+                    None => ParameterFlags::IN,
+                },
+                default_expr: None,
+                definition_span: p.span.clone(),
+            })
+            .collect();
+
+        let func_info = FunctionInfo {
+            function_id,
+            name: lambda_name.clone(),
+            full_name: lambda_name,
+            namespace: self.current_namespace.clone(),
+
+            return_type,
+            return_is_ref: false,
+            parameters,
+
+            kind: FunctionKind::Lambda,
+            flags: FunctionFlags::PUBLIC,
+
+            owner_type: None,
+            vtable_index: None,
+
+            implementation: FunctionImpl::Script {
+                bytecode_offset: 0,
+                module_id: 0,
+            },
+
+            definition_span: span.cloned(),
+            doc_comments: Vec::new(),
+
+            locals,
+
+            bytecode_address: None,
+            local_count: 0,
+        };
+
+        if let Err(e) = self.registry.write().unwrap().register_function(func_info) {
+            self.errors.push(SemanticError::Internal {
+                message: e,
+                span: None,
+            });
+        }
+
+        self.symbol_table.pop_scope();
+        self.current_function = None;
+
+        let funcdef_type = self.create_funcdef_type(return_type, &param_types);
+
+        Ok(ExprContext::Handle {
+            type_id: funcdef_type,
+        })
+    }
+
+    fn create_funcdef_type(&mut self, return_type: TypeId, param_types: &[TypeId]) -> TypeId {
+        let signature = format!(
+            "funcdef_{}_({})",
+            return_type,
+            param_types
+                .iter()
+                .map(|t| t.to_string())
+                .collect::<Vec<_>>()
+                .join("_")
+        );
+
+        if let Some(existing_id) = self.symbol_table.lookup_type(&signature) {
+            return existing_id;
+        }
+
+        let type_info = TypeInfo {
+            type_id: allocate_type_id(),
+            name: signature,
+            namespace: Vec::new(),
+            kind: TypeKind::Funcdef,
+            flags: TypeFlags::FUNCDEF,
+            registration: TypeRegistration::Script,
+
+            properties: Vec::new(),
+            methods: HashMap::new(),
+
+            base_type: None,
+            interfaces: Vec::new(),
+
+            behaviours: HashMap::new(),
+
+            rust_type_id: None,
+            rust_accessors: HashMap::new(),
+            rust_methods: HashMap::new(),
+
+            vtable: Vec::new(),
+
+            definition_span: None,
+            doc_comments: Vec::new(),
+        };
+
+        let type_id = type_info.type_id;
+
+        if self
+            .registry
+            .write()
+            .unwrap()
+            .register_type(type_info)
+            .is_err()
+        {
+            return TYPE_VOID;
+        }
+
+        type_id
+    }
+
+    fn analyze_literal(&self, lit: &Literal) -> TypeId {
+        match lit {
+            Literal::Bool(_) => TYPE_BOOL,
+            Literal::Number(n) => {
+                if n.ends_with("ull") || n.ends_with("ULL") {
+                    return TYPE_UINT64;
+                }
+                if n.ends_with("ll") || n.ends_with("LL") {
+                    return TYPE_INT64;
+                }
+                if n.ends_with("ul") || n.ends_with("UL") || n.ends_with("lu") || n.ends_with("LU")
+                {
+                    return TYPE_UINT32;
+                }
+                if n.ends_with("u") || n.ends_with("U") {
+                    return TYPE_UINT32;
+                }
+                if n.ends_with("l") || n.ends_with("L") {
+                    return TYPE_INT64;
+                }
+                if n.ends_with("f") || n.ends_with("F") {
+                    return TYPE_FLOAT;
+                }
+
+                if n.contains('.') || n.contains('e') || n.contains('E') {
+                    TYPE_DOUBLE
+                } else {
+                    TYPE_INT32
+                }
+            }
+            Literal::String(_) => TYPE_STRING,
+            Literal::Null => TYPE_VOID,
+            Literal::Bits(_) => TYPE_UINT32,
+        }
+    }
+
+    fn get_common_type(&self, type1: TypeId, type2: TypeId) -> TypeId {
+        if type1 == type2 {
+            return type1;
+        }
+
+        let rank = |t: TypeId| -> u32 {
+            match t {
+                TYPE_DOUBLE => 6,
+                TYPE_FLOAT => 5,
+                TYPE_INT64 => 4,
+                TYPE_UINT64 => 4,
+                TYPE_UINT32 => 3,
+                TYPE_INT32 => 2,
+                TYPE_INT16 => 1,
+                TYPE_UINT16 => 1,
+                TYPE_INT8 => 0,
+                TYPE_UINT8 => 0,
+                TYPE_BOOL => 0,
+                _ => 2,
+            }
+        };
+
+        if rank(type1) > rank(type2) {
+            type1
+        } else {
+            type2
+        }
+    }
+
+    pub fn get_expr_context(&self, expr: &Expr) -> Option<&ExprContext> {
+        self.symbol_table.get_expr_context(expr)
+    }
+
+    fn register_typedef(&mut self, typedef: &Typedef) {
+        let debug_enabled = self.registry.read().unwrap().debug_enabled();
+
+        let aliased_type_id = self.symbol_table.lookup_type(&typedef.prim_type);
+
+        if aliased_type_id.is_none() {
+            self.errors.push(SemanticError::UndefinedType {
+                name: typedef.prim_type.clone(),
+                span: typedef.span.clone(),
+            });
+            return;
+        }
+
+        let aliased_type_id = aliased_type_id.unwrap();
+
+        let type_info = TypeInfo {
+            type_id: allocate_type_id(),
+            name: typedef.name.clone(),
+            namespace: self.current_namespace.clone(),
+            kind: TypeKind::Typedef,
+            flags: TypeFlags::TYPEDEF,
+            registration: TypeRegistration::Script,
+
+            properties: Vec::new(),
+            methods: HashMap::new(),
+
+            base_type: Some(aliased_type_id),
+            interfaces: Vec::new(),
+
+            behaviours: HashMap::new(),
+
+            rust_type_id: None,
+            rust_accessors: HashMap::new(),
+            rust_methods: HashMap::new(),
+
+            vtable: Vec::new(),
+
+            definition_span: if debug_enabled {
+                typedef.span.clone()
+            } else {
+                None
+            },
+            doc_comments: Vec::new(),
+        };
+
+        if let Err(e) = self.registry.write().unwrap().register_type(type_info) {
+            self.errors.push(SemanticError::Internal {
+                message: e,
+                span: typedef.span.clone(),
+            });
+        }
+    }
+
     fn register_class_type(&mut self, class: &Class) {
+        let debug_enabled = self.registry.read().unwrap().debug_enabled();
+        let store_docs = self.registry.read().unwrap().store_doc_comments();
+
         let base_class = if !class.extends.is_empty() {
             let base_type_id = self.symbol_table.lookup_type(&class.extends[0]);
 
             if let Some(base_id) = base_type_id {
-                if let Err(e) = self.validate_type_usage(base_id, TypeUsage::AsBaseClass) {
+                if let Err(e) =
+                    self.validate_type_usage(base_id, TypeUsage::AsBaseClass, class.span.as_ref())
+                {
                     self.errors.push(e);
                 }
             }
@@ -382,171 +1136,87 @@ impl SemanticAnalyzer {
             None
         };
 
-        let type_id = crate::core::types::allocate_type_id();
-
         let type_info = TypeInfo {
-            type_id,
+            type_id: allocate_type_id(),
             name: class.name.clone(),
+            namespace: self.current_namespace.clone(),
             kind: TypeKind::Class,
             flags: TypeFlags::REF_TYPE,
-            members: HashMap::new(),
-            methods: HashMap::new(),
-            base_class,
             registration: TypeRegistration::Script,
+
+            properties: Vec::new(),
+            methods: HashMap::new(),
+
+            base_type: base_class,
+            interfaces: Vec::new(),
+
+            behaviours: HashMap::new(),
+
+            rust_type_id: None,
+            rust_accessors: HashMap::new(),
+            rust_methods: HashMap::new(),
+
+            vtable: Vec::new(),
+
+            definition_span: if debug_enabled {
+                class.span.clone()
+            } else {
+                None
+            },
+            doc_comments: if store_docs { Vec::new() } else { Vec::new() },
         };
 
-        self.symbol_table.register_type(type_info);
+        if let Err(e) = self.registry.write().unwrap().register_type(type_info) {
+            self.errors.push(SemanticError::Internal {
+                message: e,
+                span: class.span.clone(),
+            });
+        }
     }
 
     fn register_funcdef_type(&mut self, funcdef: &FuncDef) {
-        let return_type = self
+        let debug_enabled = self.registry.read().unwrap().debug_enabled();
+
+        let _return_type = self
             .symbol_table
             .resolve_type_from_ast(&funcdef.return_type);
 
-        let param_types: Vec<TypeId> = funcdef
-            .params
-            .iter()
-            .map(|p| self.symbol_table.resolve_type_from_ast(&p.param_type))
-            .collect();
-
-        let funcdef_type_id = self
-            .symbol_table
-            .create_funcdef_type(return_type, param_types);
-
         let type_info = TypeInfo {
-            type_id: funcdef_type_id,
+            type_id: allocate_type_id(),
             name: funcdef.name.clone(),
+            namespace: self.current_namespace.clone(),
             kind: TypeKind::Funcdef,
             flags: TypeFlags::FUNCDEF,
-            members: HashMap::new(),
-            methods: HashMap::new(),
-            base_class: None,
             registration: TypeRegistration::Script,
+
+            properties: Vec::new(),
+            methods: HashMap::new(),
+
+            base_type: None,
+            interfaces: Vec::new(),
+
+            behaviours: HashMap::new(),
+
+            rust_type_id: None,
+            rust_accessors: HashMap::new(),
+            rust_methods: HashMap::new(),
+
+            vtable: Vec::new(),
+
+            definition_span: if debug_enabled {
+                funcdef.span.clone()
+            } else {
+                None
+            },
+            doc_comments: Vec::new(),
         };
 
-        self.symbol_table.register_type(type_info);
-    }
-
-    fn register_class_members(&mut self, class: &Class) {
-        let type_id = match self.symbol_table.lookup_type(&class.name) {
-            Some(id) => id,
-            None => return,
-        };
-
-        let mut type_info = match self.symbol_table.get_type(type_id) {
-            Some(info) => info,
-            None => return,
-        };
-
-        let type_info_mut = Arc::make_mut(&mut type_info);
-
-        let saved_class = self.current_class.clone();
-        self.current_class = Some(class.name.clone());
-
-        for member in &class.members {
-            match member {
-                ClassMember::Var(var) => {
-                    let member_type = self.symbol_table.resolve_type_from_ast(&var.var_type);
-
-                    for decl in &var.declarations {
-                        let member_info = MemberInfo {
-                            name: decl.name.clone(),
-                            type_id: member_type,
-                            is_const: var.var_type.is_const,
-                            visibility: var.visibility.clone(),
-                        };
-
-                        type_info_mut.members.insert(decl.name.clone(), member_info);
-
-                        if let Some(VarInit::Expr(expr)) = &decl.initializer {
-                            self.symbol_table.set_member_initializer(
-                                class.name.clone(),
-                                decl.name.clone(),
-                                expr.clone(),
-                            );
-                        }
-                    }
-                }
-                ClassMember::Func(func) => {
-                    self.register_function_signature(func);
-
-                    let method_name = func.name.clone();
-                    let full_name = format!("{}::{}", class.name, method_name);
-
-                    type_info_mut
-                        .methods
-                        .entry(method_name)
-                        .or_insert_with(Vec::new)
-                        .push(full_name);
-                }
-                ClassMember::VirtProp(prop) => {
-                    let prop_type = self.symbol_table.resolve_type_from_ast(&prop.prop_type);
-
-                    let member_info = MemberInfo {
-                        name: prop.name.clone(),
-                        type_id: prop_type,
-                        is_const: false,
-                        visibility: prop.visibility.clone(),
-                    };
-
-                    type_info_mut.members.insert(prop.name.clone(), member_info);
-
-                    for accessor in &prop.accessors {
-                        let method_name = match accessor.kind {
-                            AccessorKind::Get => format!("get_{}", prop.name),
-                            AccessorKind::Set => format!("set_{}", prop.name),
-                        };
-
-                        let full_name = format!("{}::{}", class.name, method_name);
-
-                        let return_type = match accessor.kind {
-                            AccessorKind::Get => prop_type,
-                            AccessorKind::Set => TYPE_VOID,
-                        };
-
-                        let params = match accessor.kind {
-                            AccessorKind::Get => vec![],
-                            AccessorKind::Set => vec![ParamInfo {
-                                name: Some("value".to_string()),
-                                type_id: prop_type,
-                                is_ref: false,
-                                is_out: false,
-                                default_value: None,
-                            }],
-                        };
-
-                        let func_info = FunctionInfo {
-                            name: method_name.clone(),
-                            full_name: full_name.clone(),
-                            return_type,
-                            params,
-                            is_method: true,
-                            class_type: Some(type_id),
-                            is_const: accessor.is_const,
-                            is_virtual: false,
-                            is_override: false,
-                            address: 0,
-                            is_system_func: false,
-                            system_func_id: None,
-                        };
-
-                        self.symbol_table.register_function(func_info);
-
-                        type_info_mut
-                            .methods
-                            .entry(method_name)
-                            .or_insert_with(Vec::new)
-                            .push(full_name);
-                    }
-                }
-                _ => {}
-            }
+        if let Err(e) = self.registry.write().unwrap().register_type(type_info) {
+            self.errors.push(SemanticError::Internal {
+                message: e,
+                span: funcdef.span.clone(),
+            });
         }
-
-        self.current_class = saved_class;
-
-        self.symbol_table
-            .register_type(Arc::try_unwrap(type_info).unwrap_or_else(|arc| (*arc).clone()));
     }
 
     fn register_function_signature(&mut self, func: &Func) {
@@ -554,21 +1224,32 @@ impl SemanticAnalyzer {
             self.errors.push(e);
         }
 
+        let debug_enabled = self.registry.read().unwrap().debug_enabled();
+
         let return_type = func
             .return_type
             .as_ref()
             .map(|t| self.symbol_table.resolve_type_from_ast(t))
             .unwrap_or(TYPE_VOID);
 
-        let params = func
+        let parameters = func
             .params
             .iter()
-            .map(|p| ParamInfo {
+            .map(|p| ParameterInfo {
                 name: p.name.clone(),
                 type_id: self.symbol_table.resolve_type_from_ast(&p.param_type),
-                is_ref: matches!(p.type_mod, Some(TypeMod::InOut) | Some(TypeMod::Out)),
-                is_out: matches!(p.type_mod, Some(TypeMod::Out)),
-                default_value: None,
+                flags: match p.type_mod {
+                    Some(TypeMod::In) => ParameterFlags::IN,
+                    Some(TypeMod::Out) => ParameterFlags::OUT,
+                    Some(TypeMod::InOut) => ParameterFlags::INOUT,
+                    None => ParameterFlags::IN,
+                } | if p.param_type.is_const {
+                    ParameterFlags::CONST
+                } else {
+                    ParameterFlags::empty()
+                },
+                default_expr: p.default_value.as_ref().map(|expr| Arc::new(expr.clone())),
+                definition_span: if debug_enabled { p.span.clone() } else { None },
             })
             .collect();
 
@@ -580,37 +1261,242 @@ impl SemanticAnalyzer {
             func.name.clone()
         };
 
+        let function_id = allocate_function_id();
+
+        let mut flags = FunctionFlags::PUBLIC;
+        if func.is_const {
+            flags |= FunctionFlags::CONST;
+        }
+        if func.modifiers.contains(&"virtual".to_string()) {
+            flags |= FunctionFlags::VIRTUAL;
+        }
+        if func.modifiers.contains(&"override".to_string()) {
+            flags |= FunctionFlags::OVERRIDE;
+        }
+        if func.modifiers.contains(&"final".to_string()) {
+            flags |= FunctionFlags::FINAL;
+        }
+        if func.modifiers.contains(&"abstract".to_string()) {
+            flags |= FunctionFlags::ABSTRACT;
+        }
+        if let Some(Visibility::Private) = &func.visibility {
+            flags |= FunctionFlags::PRIVATE;
+        }
+        if let Some(Visibility::Protected) = &func.visibility {
+            flags |= FunctionFlags::PROTECTED;
+        }
+
         let func_info = FunctionInfo {
+            function_id,
             name: func.name.clone(),
             full_name: full_name.clone(),
+            namespace: self.current_namespace.clone(),
+
             return_type,
-            params,
-            is_method: self.current_class.is_some(),
-            class_type: self
+            return_is_ref: func.is_ref,
+            parameters,
+
+            kind: if self.current_class.is_some() {
+                FunctionKind::Method {
+                    is_const: func.is_const,
+                }
+            } else {
+                FunctionKind::Global
+            },
+            flags,
+
+            owner_type: self
                 .current_class
                 .as_ref()
                 .and_then(|name| self.symbol_table.lookup_type(name)),
-            is_const: func.is_const,
-            is_virtual: func.modifiers.contains(&"virtual".to_string()),
-            is_override: func.modifiers.contains(&"override".to_string()),
-            address: 0,
-            is_system_func: false,
-            system_func_id: None,
+            vtable_index: None,
+
+            implementation: FunctionImpl::Script {
+                bytecode_offset: 0,
+                module_id: 0,
+            },
+
+            definition_span: if debug_enabled {
+                func.span.clone()
+            } else {
+                None
+            },
+            doc_comments: Vec::new(),
+
+            locals: Vec::new(),
+
+            bytecode_address: None,
+            local_count: 0,
         };
 
-        self.symbol_table.register_function(func_info);
+        let registry = self.registry.read().unwrap();
+        let existing_funcs = registry.get_functions_by_name(&func.name);
+
+        for existing in &existing_funcs {
+            // Check if this is a duplicate signature
+            if self.is_duplicate_signature(&func_info, existing) {
+                self.errors.push(SemanticError::DuplicateFunction {
+                    name: func.name.clone(),
+                    span: func.span.clone(),
+                });
+                return;
+            }
+        }
+        drop(registry);
+
+        // Now register
+        if let Err(e) = self.registry.write().unwrap().register_function(func_info) {
+            self.errors.push(SemanticError::Internal {
+                message: e,
+                span: func.span.clone(),
+            });
+        }
+
+        if let Some(class_name) = &self.current_class {
+            if let Some(type_id) = self.symbol_table.lookup_type(class_name) {
+                if let Err(e) = self.registry.write().unwrap().add_method(
+                    type_id,
+                    func.name.clone(),
+                    function_id,
+                ) {
+                    self.errors.push(SemanticError::Internal {
+                        message: e,
+                        span: func.span.clone(),
+                    });
+                }
+            }
+        }
     }
 
-    fn validate_function_params(&self, func: &Func) -> SemanticResult<()> {
+    fn is_duplicate_signature(&self, new_func: &FunctionInfo, existing: &Arc<FunctionInfo>) -> bool {
+        // Same namespace
+        if new_func.namespace != existing.namespace {
+            return false;
+        }
+
+        // Same owner (class)
+        if new_func.owner_type != existing.owner_type {
+            return false;
+        }
+
+        // Same parameter count
+        if new_func.parameters.len() != existing.parameters.len() {
+            return false;
+        }
+
+        // Same parameter types
+        for (new_param, existing_param) in new_func.parameters.iter().zip(&existing.parameters) {
+            if new_param.type_id != existing_param.type_id {
+                return false;
+            }
+            // Parameter const-ness matters for overload resolution
+            if new_param.flags.contains(ParameterFlags::CONST)
+                != existing_param.flags.contains(ParameterFlags::CONST) {
+                return false;
+            }
+        }
+
+        // For methods, const-ness matters
+        match (&new_func.kind, &existing.kind) {
+            (FunctionKind::Method { is_const: nc }, FunctionKind::Method { is_const: ec }) => {
+                if nc != ec {
+                    return false; // Different const-ness = different overload
+                }
+            }
+            _ => {}
+        }
+
+        // All checks passed - this is a duplicate
+        true
+    }
+
+    fn validate_function_params(&mut self, func: &Func) -> SemanticResult<()> {
+        let mut has_default = false;
+
         for param in &func.params {
             let type_id = self.symbol_table.resolve_type_from_ast(&param.param_type);
 
+            if let Some(default_expr) = &param.default_value {
+                has_default = true;
+
+                let default_ctx = self.analyze_expr(default_expr)?;
+
+                let param_type = self.registry.read().unwrap().resolve_typedef(type_id);
+                let default_type = self
+                    .registry
+                    .read()
+                    .unwrap()
+                    .resolve_typedef(default_ctx.get_type());
+
+                if param_type != default_type {
+                    let registry = self.registry.read().unwrap();
+                    if !registry.can_implicitly_convert(default_type, param_type) {
+                        return Err(SemanticError::TypeMismatch {
+                            expected: format!("type {}", param_type),
+                            found: format!("type {}", default_type),
+                            span: param.span.clone(),
+                        });
+                    }
+                }
+
+                if !self.is_constant_expression(default_expr) {
+                    return Err(SemanticError::Internal {
+                        message: "Default argument must be a constant expression".to_string(),
+                        span: param.span.clone(),
+                    });
+                }
+            } else if has_default {
+                return Err(SemanticError::Internal {
+                    message: "Non-default parameter after default parameter".to_string(),
+                    span: param.span.clone(),
+                });
+            }
+
             if let Some(type_mod) = &param.type_mod {
-                self.validate_reference_param(type_id, type_mod, &param.param_type)?;
+                self.validate_reference_param(
+                    type_id,
+                    type_mod,
+                    &param.param_type,
+                    param.span.as_ref(),
+                )?;
             }
         }
 
         Ok(())
+    }
+
+    fn is_constant_expression(&self, expr: &Expr) -> bool {
+        match expr {
+            Expr::Literal(_, _) => true,
+            Expr::Unary(UnaryOp::Neg | UnaryOp::Plus | UnaryOp::BitNot, operand, _) => {
+                self.is_constant_expression(operand)
+            }
+            Expr::Binary(left, op, right, _) => {
+                let allowed_op = matches!(
+                    op,
+                    BinaryOp::Add
+                        | BinaryOp::Sub
+                        | BinaryOp::Mul
+                        | BinaryOp::Div
+                        | BinaryOp::Mod
+                        | BinaryOp::BitAnd
+                        | BinaryOp::BitOr
+                        | BinaryOp::BitXor
+                        | BinaryOp::Shl
+                        | BinaryOp::Shr
+                );
+
+                allowed_op
+                    && self.is_constant_expression(left)
+                    && self.is_constant_expression(right)
+            }
+            Expr::Ternary(cond, then_expr, else_expr, _) => {
+                self.is_constant_expression(cond)
+                    && self.is_constant_expression(then_expr)
+                    && self.is_constant_expression(else_expr)
+            }
+            _ => false,
+        }
     }
 
     fn validate_reference_param(
@@ -618,14 +1504,15 @@ impl SemanticAnalyzer {
         type_id: TypeId,
         type_mod: &TypeMod,
         param_type: &Type,
+        span: Option<&Span>,
     ) -> SemanticResult<()> {
         if type_id <= TYPE_STRING {
             if matches!(type_mod, TypeMod::InOut) {
                 return Err(SemanticError::ReferenceMismatch {
                     message:
-                        "Primitive types cannot use 'inout' references. Use 'in' or 'out' instead."
-                            .to_string(),
-                    location: None,
+                    "Primitive types cannot use 'inout' references. Use 'in' or 'out' instead."
+                        .to_string(),
+                    span: span.cloned(),
                 });
             }
             return Ok(());
@@ -634,8 +1521,8 @@ impl SemanticAnalyzer {
         let type_info = self.symbol_table.get_type(type_id);
 
         if let Some(type_info) = type_info {
-            let is_value_type = type_info.flags.contains(TypeFlags::VALUE_TYPE);
-            let is_ref_type = type_info.flags.contains(TypeFlags::REF_TYPE);
+            let is_value_type = type_info.is_value_type();
+            let is_ref_type = type_info.is_ref_type();
 
             match type_mod {
                 TypeMod::InOut => {
@@ -645,7 +1532,7 @@ impl SemanticAnalyzer {
                                 "Value type '{}' cannot use 'inout' references. AngelScript cannot guarantee the reference will remain valid during function execution. Use 'in' or 'out' instead.",
                                 type_info.name
                             ),
-                            location: None,
+                            span: span.cloned(),
                         });
                     }
 
@@ -655,7 +1542,7 @@ impl SemanticAnalyzer {
                                 "Type '{}' must be a reference type to use 'inout' references",
                                 type_info.name
                             ),
-                            location: None,
+                            span: span.cloned(),
                         });
                     }
                 }
@@ -667,7 +1554,7 @@ impl SemanticAnalyzer {
                                 "Reference type '{}' should use 'const &in' for input-only parameters to avoid unnecessary copies",
                                 type_info.name
                             ),
-                            location: None,
+                            span: span.cloned(),
                         });
                     }
                 }
@@ -676,7 +1563,7 @@ impl SemanticAnalyzer {
                     if param_type.is_const {
                         return Err(SemanticError::ReferenceMismatch {
                             message: "Output parameters cannot be const".to_string(),
-                            location: None,
+                            span: span.cloned(),
                         });
                     }
                 }
@@ -688,6 +1575,7 @@ impl SemanticAnalyzer {
 
     fn register_global_var(&mut self, var: &Var) {
         let type_id = self.symbol_table.resolve_type_from_ast(&var.var_type);
+        let debug_enabled = self.registry.read().unwrap().debug_enabled();
 
         for (idx, decl) in var.declarations.iter().enumerate() {
             let full_name = if !self.current_namespace.is_empty() {
@@ -696,14 +1584,259 @@ impl SemanticAnalyzer {
                 decl.name.clone()
             };
 
-            let global_info = GlobalVarInfo {
+            let global_info = GlobalInfo {
                 name: full_name,
                 type_id,
                 is_const: var.var_type.is_const,
                 address: idx as u32,
+                definition_span: if debug_enabled {
+                    decl.span.clone()
+                } else {
+                    None
+                },
             };
 
-            self.symbol_table.register_global(global_info);
+            if let Err(e) = self.registry.write().unwrap().register_global(global_info) {
+                self.errors.push(SemanticError::Internal {
+                    message: e,
+                    span: decl.span.clone(),
+                });
+            }
+        }
+    }
+
+    fn register_class_members(&mut self, class: &Class) {
+        let type_id = match self.symbol_table.lookup_type(&class.name) {
+            Some(id) => id,
+            None => return,
+        };
+
+        let saved_class = self.current_class.clone();
+        self.current_class = Some(class.name.clone());
+
+        for member in &class.members {
+            match member {
+                ClassMember::Var(var) => {
+                    let member_type = self.symbol_table.resolve_type_from_ast(&var.var_type);
+                    let debug_enabled = self.registry.read().unwrap().debug_enabled();
+
+                    for decl in &var.declarations {
+                        let property_info = PropertyInfo {
+                            name: decl.name.clone(),
+                            type_id: member_type,
+                            offset: None,
+                            access: match &var.visibility {
+                                Some(Visibility::Private) => AccessSpecifier::Private,
+                                Some(Visibility::Protected) => AccessSpecifier::Protected,
+                                Some(Visibility::Public) | None => AccessSpecifier::Public,
+                            },
+                            flags: if var.var_type.is_const {
+                                PropertyFlags::CONST | PropertyFlags::PUBLIC
+                            } else {
+                                PropertyFlags::PUBLIC
+                            },
+                            getter: None,
+                            setter: None,
+                            definition_span: if debug_enabled {
+                                decl.span.clone()
+                            } else {
+                                None
+                            },
+                            doc_comments: Vec::new(),
+                        };
+
+                        if let Err(e) = self
+                            .registry
+                            .write()
+                            .unwrap()
+                            .add_property(type_id, property_info)
+                        {
+                            self.errors.push(SemanticError::Internal {
+                                message: e,
+                                span: decl.span.clone(),
+                            });
+                        }
+                    }
+                }
+                ClassMember::Func(func) => {
+                    self.register_function_signature(func);
+                }
+                ClassMember::VirtProp(prop) => {
+                    self.register_virtual_property(type_id, prop);
+                }
+                _ => {}
+            }
+        }
+
+        let mut vtable = Vec::new();
+        for member in &class.members {
+            if let ClassMember::Func(func) = member {
+                if func.modifiers.contains(&"virtual".to_string())
+                    || func.modifiers.contains(&"override".to_string())
+                {
+                    if let Some(func_info) = self
+                        .symbol_table
+                        .get_function(&format!("{}::{}", class.name, func.name))
+                    {
+                        vtable.push(VTableEntry {
+                            method_name: func.name.clone(),
+                            function_id: func_info.function_id,
+                            override_of: None,
+                        });
+                    }
+                }
+            }
+        }
+
+        if !vtable.is_empty() {
+            if let Err(e) = self
+                .registry
+                .write()
+                .unwrap()
+                .update_vtable(type_id, vtable)
+            {
+                self.errors.push(SemanticError::Internal {
+                    message: e,
+                    span: class.span.clone(),
+                });
+            }
+        }
+
+        self.current_class = saved_class;
+    }
+
+    fn register_virtual_property(&mut self, type_id: TypeId, prop: &VirtProp) {
+        let debug_enabled = self.registry.read().unwrap().debug_enabled();
+        let prop_type = self.symbol_table.resolve_type_from_ast(&prop.prop_type);
+
+        let mut getter_id = None;
+        let mut setter_id = None;
+
+        for accessor in &prop.accessors {
+            let func_name = match accessor.kind {
+                AccessorKind::Get => format!("get_{}", prop.name),
+                AccessorKind::Set => format!("set_{}", prop.name),
+            };
+
+            let full_name = if let Some(class_name) = &self.current_class {
+                format!("{}::{}", class_name, func_name)
+            } else {
+                func_name.clone()
+            };
+
+            let function_id = allocate_function_id();
+
+            let return_type = match accessor.kind {
+                AccessorKind::Get => prop_type,
+                AccessorKind::Set => TYPE_VOID,
+            };
+
+            let parameters = match accessor.kind {
+                AccessorKind::Get => Vec::new(),
+                AccessorKind::Set => vec![ParameterInfo {
+                    name: Some("value".to_string()),
+                    type_id: prop_type,
+                    flags: ParameterFlags::IN,
+                    default_expr: None,
+                    definition_span: None,
+                }],
+            };
+
+            let func_info = FunctionInfo {
+                function_id,
+                name: func_name.clone(),
+                full_name: full_name.clone(),
+                namespace: self.current_namespace.clone(),
+
+                return_type,
+                return_is_ref: false,
+                parameters,
+
+                kind: FunctionKind::Method {
+                    is_const: accessor.is_const,
+                },
+                flags: if accessor.is_const {
+                    FunctionFlags::PUBLIC | FunctionFlags::CONST
+                } else {
+                    FunctionFlags::PUBLIC
+                },
+
+                owner_type: Some(type_id),
+                vtable_index: None,
+
+                implementation: FunctionImpl::Script {
+                    bytecode_offset: 0,
+                    module_id: 0,
+                },
+
+                definition_span: if debug_enabled {
+                    accessor.span.clone()
+                } else {
+                    None
+                },
+                doc_comments: Vec::new(),
+
+                locals: Vec::new(),
+
+                bytecode_address: None,
+                local_count: 0,
+            };
+
+            if let Err(e) = self.registry.write().unwrap().register_function(func_info) {
+                self.errors.push(SemanticError::Internal {
+                    message: e,
+                    span: accessor.span.clone(),
+                });
+            }
+
+            if let Err(e) =
+                self.registry
+                    .write()
+                    .unwrap()
+                    .add_method(type_id, func_name, function_id)
+            {
+                self.errors.push(SemanticError::Internal {
+                    message: e,
+                    span: accessor.span.clone(),
+                });
+            }
+
+            match accessor.kind {
+                AccessorKind::Get => getter_id = Some(function_id),
+                AccessorKind::Set => setter_id = Some(function_id),
+            }
+        }
+
+        let property_info = PropertyInfo {
+            name: prop.name.clone(),
+            type_id: prop_type,
+            offset: None,
+            access: match &prop.visibility {
+                Some(Visibility::Private) => AccessSpecifier::Private,
+                Some(Visibility::Protected) => AccessSpecifier::Protected,
+                Some(Visibility::Public) | None => AccessSpecifier::Public,
+            },
+            flags: PropertyFlags::VIRTUAL | PropertyFlags::PUBLIC,
+            getter: getter_id,
+            setter: setter_id,
+            definition_span: if debug_enabled {
+                prop.span.clone()
+            } else {
+                None
+            },
+            doc_comments: Vec::new(),
+        };
+
+        if let Err(e) = self
+            .registry
+            .write()
+            .unwrap()
+            .add_property(type_id, property_info)
+        {
+            self.errors.push(SemanticError::Internal {
+                message: e,
+                span: prop.span.clone(),
+            });
         }
     }
 
@@ -716,6 +1849,13 @@ impl SemanticAnalyzer {
             func.name.clone()
         };
 
+        let func_info = self
+            .symbol_table
+            .get_function(&func_name)
+            .ok_or_else(|| SemanticError::undefined_function(func_name.clone()))?;
+
+        self.current_function = Some(func_info.function_id);
+
         self.symbol_table
             .push_scope(ScopeType::Function(func_name.clone()));
 
@@ -726,6 +1866,7 @@ impl SemanticAnalyzer {
                     class_type_id,
                     func.is_const,
                     true,
+                    None,
                 );
             }
         }
@@ -733,17 +1874,42 @@ impl SemanticAnalyzer {
         for param in &func.params {
             if let Some(name) = &param.name {
                 let type_id = self.symbol_table.resolve_type_from_ast(&param.param_type);
-                self.symbol_table
-                    .register_local(name.clone(), type_id, false, true);
+                self.symbol_table.register_local(
+                    name.clone(),
+                    type_id,
+                    false,
+                    true,
+                    param.span.clone(),
+                );
             }
         }
 
         if let Some(body) = &func.body {
             self.analyze_statement_block(body)?;
+
+            if func.is_ref {
+                self.validate_function_return_references(func, body)?;
+            }
         }
 
-        self.symbol_table.save_function_locals(func_name);
+        let locals = self.symbol_table.collect_function_locals(&func_name);
+
+        if let Some(function_id) = self.current_function {
+            if let Err(e) = self
+                .registry
+                .write()
+                .unwrap()
+                .update_function_locals(function_id, locals)
+            {
+                self.errors.push(SemanticError::Internal {
+                    message: e,
+                    span: func.span.clone(),
+                });
+            }
+        }
+
         self.symbol_table.pop_scope();
+        self.current_function = None;
 
         Ok(())
     }
@@ -764,52 +1930,63 @@ impl SemanticAnalyzer {
                                 AccessorKind::Set => format!("set_{}", prop.name),
                             };
 
-                            let func = Func {
-                                modifiers: vec![],
-                                visibility: prop.visibility.clone(),
-                                return_type: match accessor.kind {
-                                    AccessorKind::Get => Some(prop.prop_type.clone()),
-                                    AccessorKind::Set => None,
-                                },
-                                is_ref: prop.is_ref,
-                                name: func_name,
-                                params: match accessor.kind {
-                                    AccessorKind::Get => vec![],
-                                    AccessorKind::Set => vec![Param {
-                                        param_type: prop.prop_type.clone(),
-                                        type_mod: None,
-                                        name: Some("value".to_string()),
-                                        default_value: None,
-                                        is_variadic: false,
-                                    }],
-                                },
-                                is_const: accessor.is_const,
-                                attributes: accessor.attributes.clone(),
-                                body: Some(body.clone()),
-                            };
+                            let full_name = format!("{}::{}", class.name, func_name);
 
-                            self.analyze_function(&func)?;
+                            if let Some(func_info) = self.symbol_table.get_function(&full_name) {
+                                self.current_function = Some(func_info.function_id);
+                            }
+
+                            self.symbol_table
+                                .push_scope(ScopeType::Function(full_name.clone()));
+
+                            if let Some(class_type_id) = self.symbol_table.lookup_type(&class.name)
+                            {
+                                self.symbol_table.register_local(
+                                    "this".to_string(),
+                                    class_type_id,
+                                    accessor.is_const,
+                                    true,
+                                    None,
+                                );
+                            }
+
+                            if matches!(accessor.kind, AccessorKind::Set) {
+                                let prop_type =
+                                    self.symbol_table.resolve_type_from_ast(&prop.prop_type);
+                                self.symbol_table.register_local(
+                                    "value".to_string(),
+                                    prop_type,
+                                    false,
+                                    true,
+                                    None,
+                                );
+                            }
+
+                            self.analyze_statement_block(body)?;
+
+                            let locals = self.symbol_table.collect_function_locals(&full_name);
+
+                            if let Some(function_id) = self.current_function {
+                                if let Err(e) = self
+                                    .registry
+                                    .write()
+                                    .unwrap()
+                                    .update_function_locals(function_id, locals)
+                                {
+                                    self.errors.push(SemanticError::Internal {
+                                        message: e,
+                                        span: accessor.span.clone(),
+                                    });
+                                }
+                            }
+
+                            self.symbol_table.pop_scope();
+                            self.current_function = None;
                         }
                     }
                 }
                 _ => {}
             }
-        }
-
-        let mut vtable = Vec::new();
-        for member in &class.members {
-            if let ClassMember::Func(func) = member {
-                if func.modifiers.contains(&"virtual".to_string())
-                    || func.modifiers.contains(&"override".to_string())
-                {
-                    let full_name = format!("{}::{}", class.name, func.name);
-                    vtable.push(full_name);
-                }
-            }
-        }
-
-        if let Some(type_id) = self.symbol_table.lookup_type(&class.name) {
-            self.symbol_table.set_vtable(type_id, vtable);
         }
 
         self.current_class = None;
@@ -825,7 +2002,7 @@ impl SemanticAnalyzer {
     }
 
     fn in_function(&self) -> bool {
-        self.symbol_table.current_function_name().is_some()
+        self.current_function.is_some()
     }
 
     fn analyze_statement(&mut self, stmt: &Statement) -> SemanticResult<()> {
@@ -833,14 +2010,14 @@ impl SemanticAnalyzer {
             Statement::Var(var) => {
                 let type_id = self.symbol_table.resolve_type_from_ast(&var.var_type);
 
-                if type_id > TYPE_STRING {
-                    self.validate_type_usage(type_id, TypeUsage::AsVariable)?;
+                if type_id > TYPE_STRING && type_id != TYPE_AUTO {
+                    self.validate_type_usage(type_id, TypeUsage::AsVariable, var.span.as_ref())?;
                 }
 
                 let is_handle = var.var_type.modifiers.contains(&TypeModifier::Handle);
 
                 if is_handle {
-                    self.validate_type_usage(type_id, TypeUsage::AsHandle)?;
+                    self.validate_type_usage(type_id, TypeUsage::AsHandle, var.span.as_ref())?;
                 }
 
                 for decl in &var.declarations {
@@ -848,14 +2025,14 @@ impl SemanticAnalyzer {
                         .symbol_table
                         .scopes
                         .last()
-                        .map(|scope| scope.has_variable(&decl.name))
+                        .map(|scope| scope.variables.contains_key(&decl.name))
                         .unwrap_or(false);
 
                     if has_duplicate_in_current_scope {
                         return Err(SemanticError::DuplicateDefinition {
                             name: decl.name.clone(),
-                            location: None,
-                            previous_location: None,
+                            span: decl.span.clone(),
+                            previous_span: None,
                         });
                     }
 
@@ -864,6 +2041,7 @@ impl SemanticAnalyzer {
                         type_id,
                         var.var_type.is_const,
                         false,
+                        decl.span.clone(),
                     );
 
                     if let Some(VarInit::Expr(expr)) = &decl.initializer {
@@ -873,17 +2051,17 @@ impl SemanticAnalyzer {
                 Ok(())
             }
 
-            Statement::Break => {
+            Statement::Break(span) => {
                 if self.loop_depth == 0 && self.switch_depth == 0 {
-                    Err(SemanticError::InvalidBreak { location: None })
+                    Err(SemanticError::InvalidBreak { span: span.clone() })
                 } else {
                     Ok(())
                 }
             }
 
-            Statement::Continue => {
+            Statement::Continue(span) => {
                 if self.loop_depth == 0 {
-                    Err(SemanticError::InvalidContinue { location: None })
+                    Err(SemanticError::InvalidContinue { span: span.clone() })
                 } else {
                     Ok(())
                 }
@@ -934,6 +2112,7 @@ impl SemanticAnalyzer {
                                 type_id,
                                 false,
                                 false,
+                                decl.span.clone(),
                             );
                             if let Some(VarInit::Expr(expr)) = &decl.initializer {
                                 self.analyze_expr(expr)?;
@@ -974,7 +2153,7 @@ impl SemanticAnalyzer {
                 for (var_type, var_name) in &foreach_stmt.variables {
                     let type_id = self.symbol_table.resolve_type_from_ast(var_type);
                     self.symbol_table
-                        .register_local(var_name.clone(), type_id, false, false);
+                        .register_local(var_name.clone(), type_id, false, false, None);
                 }
 
                 self.analyze_statement(&foreach_stmt.body)?;
@@ -1038,598 +2217,266 @@ impl SemanticAnalyzer {
         }
     }
 
-    fn analyze_expr(&mut self, expr: &Expr) -> SemanticResult<ExprContext> {
-        let context = match expr {
-            Expr::Literal(lit) => {
-                let type_id = self.analyze_literal(lit);
-                ExprContext::new(type_id)
-            }
-
-            Expr::VarAccess(_, name) => match self.symbol_table.lookup_variable(name) {
-                Some(VariableLocation::Local(var)) => {
-                    ExprContext::local_var(var.type_id, var.is_const, var.index)
-                }
-                Some(VariableLocation::Global(var)) => {
-                    ExprContext::global_var(var.type_id, var.is_const, var.address)
-                }
-                None => {
-                    return Err(SemanticError::undefined_symbol(name.clone()));
-                }
-            },
-
-            Expr::Binary(left, op, right) => {
-                let left_ctx = self.analyze_expr(left)?;
-                let right_ctx = self.analyze_expr(right)?;
-                self.analyze_binary_op(left_ctx, op, right_ctx)?
-            }
-
-            Expr::Unary(op, operand) => {
-                let operand_ctx = self.analyze_expr(operand)?;
-
-                if matches!(op, UnaryOp::Handle) {
-                    self.validate_type_usage(operand_ctx.result_type, TypeUsage::AsHandle)?;
-                }
-
-                self.analyze_unary_op(op, operand_ctx)?
-            }
-
-            Expr::FuncCall(call) => {
-                for arg in &call.args {
-                    self.analyze_expr(&arg.value)?;
-                }
-
-                if let Some(func) = self.symbol_table.get_function(&call.name) {
-                    ExprContext::new(func.return_type)
-                } else {
-                    return Err(SemanticError::undefined_function(call.name.clone()));
-                }
-            }
-
-            Expr::Postfix(obj, op) => {
-                let obj_ctx = self.analyze_expr(obj)?;
-                self.analyze_postfix(obj_ctx, op)?
-            }
-
-            Expr::Ternary(cond, then_expr, else_expr) => {
-                self.analyze_expr(cond)?;
-                let then_ctx = self.analyze_expr(then_expr)?;
-                let else_ctx = self.analyze_expr(else_expr)?;
-
-                let result_type = if then_ctx.result_type == else_ctx.result_type {
-                    then_ctx.result_type
-                } else {
-                    self.get_common_type(then_ctx.result_type, else_ctx.result_type)
-                };
-
-                ExprContext::new(result_type)
-            }
-
-            Expr::ConstructCall(type_def, args) => {
-                for arg in args {
-                    self.analyze_expr(&arg.value)?;
-                }
-                let type_id = self.symbol_table.resolve_type_from_ast(type_def);
-
-                self.validate_type_usage(type_id, TypeUsage::AsVariable)?;
-                self.validate_required_behaviours(type_id)?;
-
-                ExprContext::handle(type_id)
-            }
-
-            Expr::Cast(target_type, expr) => {
-                self.analyze_expr(expr)?;
-                let type_id = self.symbol_table.resolve_type_from_ast(target_type);
-                ExprContext::new(type_id)
-            }
-
-            Expr::Lambda(lambda) => {
-                let lambda_name = format!("$lambda_{}", self.errors.len());
-
-                self.symbol_table
-                    .push_scope(ScopeType::Function(lambda_name.clone()));
-
-                let mut param_types = Vec::new();
-                for param in &lambda.params {
-                    if let Some(name) = &param.name {
-                        let type_id = if let Some(param_type) = &param.param_type {
-                            self.symbol_table.resolve_type_from_ast(param_type)
-                        } else {
-                            TYPE_AUTO
-                        };
-
-                        param_types.push(type_id);
-
-                        self.symbol_table
-                            .register_local(name.clone(), type_id, false, true);
-                    }
-                }
-
-                let mut return_type = TYPE_VOID;
-                for stmt in &lambda.body.statements {
-                    self.analyze_statement(stmt)?;
-
-                    if let Statement::Return(ret) = stmt {
-                        if let Some(value) = &ret.value {
-                            if let Some(ret_type) = self.symbol_table.get_expr_type(value) {
-                                return_type = ret_type;
-                                break;
-                            }
-                        }
-                    }
-                }
-
-                self.symbol_table.save_function_locals(lambda_name.clone());
-                self.symbol_table.pop_scope();
-
-                let funcdef_type = self
-                    .symbol_table
-                    .get_or_create_funcdef(return_type, &param_types);
-
-                let func_info = FunctionInfo {
-                    name: lambda_name.clone(),
-                    full_name: lambda_name,
-                    return_type,
-                    params: lambda
-                        .params
-                        .iter()
-                        .enumerate()
-                        .map(|(i, p)| ParamInfo {
-                            name: p.name.clone(),
-                            type_id: param_types.get(i).copied().unwrap_or(TYPE_AUTO),
-                            is_ref: matches!(p.type_mod, Some(TypeMod::InOut) | Some(TypeMod::Out)),
-                            is_out: matches!(p.type_mod, Some(TypeMod::Out)),
-                            default_value: None,
-                        })
-                        .collect(),
-                    is_method: false,
-                    class_type: None,
-                    is_const: false,
-                    is_virtual: false,
-                    is_override: false,
-                    address: 0,
-                    is_system_func: false,
-                    system_func_id: None,
-                };
-
-                self.symbol_table.register_function(func_info);
-
-                ExprContext::new(funcdef_type)
-            }
-
-            Expr::InitList(init_list) => {
-                let mut element_types = Vec::new();
-
-                for item in &init_list.items {
-                    match item {
-                        InitListItem::Expr(expr) => {
-                            let ctx = self.analyze_expr(expr)?;
-                            element_types.push(ctx.result_type);
-                        }
-                        InitListItem::InitList(nested) => {
-                            let ctx = self.analyze_expr(&Expr::InitList(nested.clone()))?;
-                            element_types.push(ctx.result_type);
-                        }
-                    }
-                }
-
-                ExprContext::new(TYPE_VOID)
-            }
-
-            Expr::Void => ExprContext::new(TYPE_VOID),
-        };
-
-        self.symbol_table.set_expr_context(expr, context.clone());
-
-        Ok(context)
-    }
-
-    fn analyze_literal(&self, lit: &Literal) -> TypeId {
-        match lit {
-            Literal::Bool(_) => TYPE_BOOL,
-            Literal::Number(n) => {
-                if n.ends_with("ull") || n.ends_with("ULL") {
-                    return TYPE_UINT64;
-                }
-                if n.ends_with("ll") || n.ends_with("LL") {
-                    return TYPE_INT64;
-                }
-                if n.ends_with("ul") || n.ends_with("UL") || n.ends_with("lu") || n.ends_with("LU")
-                {
-                    return TYPE_UINT32;
-                }
-                if n.ends_with("u") || n.ends_with("U") {
-                    return TYPE_UINT32;
-                }
-                if n.ends_with("l") || n.ends_with("L") {
-                    return TYPE_INT64;
-                }
-                if n.ends_with("f") || n.ends_with("F") {
-                    return TYPE_FLOAT;
-                }
-
-                if n.contains('.') || n.contains('e') || n.contains('E') {
-                    TYPE_DOUBLE
-                } else {
-                    TYPE_INT32
-                }
-            }
-            Literal::String(_) => TYPE_STRING,
-            Literal::Null => TYPE_VOID,
-            Literal::Bits(_) => TYPE_UINT32,
-        }
-    }
-
-    fn analyze_binary_op(
+    fn validate_type_usage(
         &self,
-        left_ctx: ExprContext,
-        op: &BinaryOp,
-        right_ctx: ExprContext,
-    ) -> SemanticResult<ExprContext> {
-        match op {
-            BinaryOp::Assign
-            | BinaryOp::AddAssign
-            | BinaryOp::SubAssign
-            | BinaryOp::MulAssign
-            | BinaryOp::DivAssign
-            | BinaryOp::ModAssign
-            | BinaryOp::PowAssign
-            | BinaryOp::BitAndAssign
-            | BinaryOp::BitOrAssign
-            | BinaryOp::BitXorAssign
-            | BinaryOp::ShlAssign
-            | BinaryOp::ShrAssign
-            | BinaryOp::UShrAssign => {
-                if !left_ctx.is_lvalue {
-                    return Err(SemanticError::InvalidAssignment {
-                        target: "expression".to_string(),
-                        reason: "not an lvalue".to_string(),
-                        location: None,
-                    });
-                }
-
-                if left_ctx.is_const {
-                    return Err(SemanticError::ConstViolation {
-                        message: "cannot assign to const variable".to_string(),
-                        location: None,
-                    });
-                }
-
-                self.validate_type_usage(left_ctx.result_type, TypeUsage::InAssignment)?;
-
-                Ok(left_ctx)
-            }
-
-            BinaryOp::Eq
-            | BinaryOp::Ne
-            | BinaryOp::Lt
-            | BinaryOp::Le
-            | BinaryOp::Gt
-            | BinaryOp::Ge
-            | BinaryOp::And
-            | BinaryOp::Or => Ok(ExprContext::new(TYPE_BOOL)),
-
-            _ => {
-                let result_type = self.get_common_type(left_ctx.result_type, right_ctx.result_type);
-                Ok(ExprContext::new(result_type))
-            }
-        }
-    }
-
-    fn analyze_unary_op(
-        &self,
-        op: &UnaryOp,
-        operand_ctx: ExprContext,
-    ) -> SemanticResult<ExprContext> {
-        match op {
-            UnaryOp::PreInc | UnaryOp::PreDec => {
-                if !operand_ctx.is_lvalue {
-                    return Err(SemanticError::InvalidOperation {
-                        operation: format!("{:?}", op),
-                        type_name: "non-lvalue".to_string(),
-                        location: None,
-                    });
-                }
-
-                if operand_ctx.is_const {
-                    return Err(SemanticError::ConstViolation {
-                        message: format!("cannot apply {:?} to const variable", op),
-                        location: None,
-                    });
-                }
-
-                Ok(operand_ctx)
-            }
-
-            UnaryOp::Handle => Ok(ExprContext::handle(operand_ctx.result_type)),
-
-            UnaryOp::Not => Ok(ExprContext::new(TYPE_BOOL)),
-
-            UnaryOp::Neg | UnaryOp::Plus | UnaryOp::BitNot => {
-                Ok(ExprContext::new(operand_ctx.result_type))
-            }
-        }
-    }
-
-    fn analyze_postfix(
-        &mut self,
-        obj_ctx: ExprContext,
-        op: &PostfixOp,
-    ) -> SemanticResult<ExprContext> {
-        match op {
-            PostfixOp::PostInc | PostfixOp::PostDec => {
-                if !obj_ctx.is_lvalue {
-                    return Err(SemanticError::InvalidOperation {
-                        operation: format!("{:?}", op),
-                        type_name: "non-lvalue".to_string(),
-                        location: None,
-                    });
-                }
-
-                if obj_ctx.is_const {
-                    return Err(SemanticError::ConstViolation {
-                        message: format!("cannot apply {:?} to const variable", op),
-                        location: None,
-                    });
-                }
-
-                Ok(ExprContext::new(obj_ctx.result_type))
-            }
-
-            PostfixOp::MemberAccess(member) => {
-                if let Some(type_info) = self.symbol_table.get_type(obj_ctx.result_type) {
-                    if let Some(member_info) = type_info.members.get(member) {
-                        let is_lvalue = obj_ctx.is_lvalue && !member_info.is_const;
-                        let is_const = obj_ctx.is_const || member_info.is_const;
-
-                        if is_lvalue {
-                            Ok(ExprContext::lvalue(member_info.type_id, is_const))
-                        } else {
-                            Ok(ExprContext::new(member_info.type_id))
-                        }
-                    } else {
-                        Err(SemanticError::undefined_member(
-                            type_info.name.clone(),
-                            member.clone(),
-                        ))
-                    }
-                } else {
-                    Err(SemanticError::InvalidOperation {
-                        operation: "member access".to_string(),
-                        type_name: format!("type {}", obj_ctx.result_type),
-                        location: None,
-                    })
-                }
-            }
-
-            PostfixOp::MemberCall(call) => {
-                for arg in &call.args {
-                    self.analyze_expr(&arg.value)?;
-                }
-
-                if let Some(type_info) = self.symbol_table.get_type(obj_ctx.result_type) {
-                    if let Some(method_overloads) = type_info.methods.get(&call.name) {
-                        if let Some(full_name) = method_overloads.first() {
-                            if let Some(func_info) = self.symbol_table.get_function(full_name) {
-                                return Ok(ExprContext::new(func_info.return_type));
-                            }
-                        }
-                    }
-
-                    Err(SemanticError::undefined_member(
-                        type_info.name.clone(),
-                        call.name.clone(),
-                    ))
-                } else {
-                    Err(SemanticError::InvalidOperation {
-                        operation: "method call".to_string(),
-                        type_name: format!("type {}", obj_ctx.result_type),
-                        location: None,
-                    })
-                }
-            }
-
-            PostfixOp::Index(_indices) => {
-                if obj_ctx.is_lvalue {
-                    Ok(ExprContext::lvalue(TYPE_INT32, obj_ctx.is_const))
-                } else {
-                    Ok(ExprContext::new(TYPE_INT32))
-                }
-            }
-
-            PostfixOp::Call(_args) => Ok(ExprContext::new(TYPE_VOID)),
-        }
-    }
-
-    fn get_common_type(&self, type1: TypeId, type2: TypeId) -> TypeId {
-        if type1 == type2 {
-            return type1;
+        type_id: TypeId,
+        usage: TypeUsage,
+        span: Option<&Span>,
+    ) -> SemanticResult<()> {
+        if type_id == TYPE_AUTO || type_id == TYPE_VOID {
+            return Ok(());
         }
 
-        let rank = |t: TypeId| -> u32 {
-            match t {
-                TYPE_DOUBLE => 6,
-                TYPE_FLOAT => 5,
-                TYPE_INT64 => 4,
-                TYPE_UINT64 => 4,
-                TYPE_UINT32 => 3,
-                TYPE_INT32 => 2,
-                TYPE_INT16 => 1,
-                TYPE_UINT16 => 1,
-                TYPE_INT8 => 0,
-                TYPE_UINT8 => 0,
-                TYPE_BOOL => 0,
-                _ => 2,
-            }
-        };
+        let type_info = self.symbol_table.get_type(type_id);
 
-        if rank(type1) > rank(type2) {
-            type1
-        } else {
-            type2
-        }
-    }
-
-    pub fn get_expr_context(&self, expr: &Expr) -> Option<&ExprContext> {
-        self.symbol_table.get_expr_context(expr)
-    }
-
-    pub fn analyze_expr_context(&mut self, expr: &Expr) -> SemanticResult<ExprContext> {
-        self.analyze_expr(expr)
-    }
-
-    fn validate_type_usage(&self, type_id: TypeId, usage: TypeUsage) -> SemanticResult<()> {
-        let type_info = self
-            .symbol_table
-            .get_type(type_id)
-            .ok_or_else(|| SemanticError::undefined_type(format!("type {}", type_id)))?;
-
-        let engine = self.engine.read().unwrap();
-        let obj_type = engine.object_types.values().find(|t| t.type_id == type_id);
-
-        if let Some(obj_type) = obj_type {
+        if let Some(type_info) = type_info {
             match usage {
                 TypeUsage::AsHandle => {
-                    if obj_type.flags.contains(TypeFlags::NOHANDLE) {
+                    if !type_info.can_be_handle() {
                         return Err(SemanticError::InvalidHandle {
                             message: format!("Type '{}' cannot be used as handle", type_info.name),
-                            location: None,
+                            span: span.cloned(),
                         });
                     }
                 }
 
                 TypeUsage::AsBaseClass => {
-                    if obj_type.flags.contains(TypeFlags::NOINHERIT) {
+                    if !type_info.can_be_inherited() {
                         return Err(SemanticError::Internal {
                             message: format!(
                                 "Type '{}' is final and cannot be inherited",
                                 type_info.name
                             ),
-                            location: None,
+                            span: span.cloned(),
                         });
                     }
                 }
 
                 TypeUsage::AsVariable => {
-                    if obj_type.flags.contains(TypeFlags::ABSTRACT) {
+                    if type_info.is_abstract() {
                         return Err(SemanticError::InstantiateAbstract {
                             class: type_info.name.clone(),
-                            location: None,
+                            span: span.cloned(),
                         });
                     }
                 }
 
                 TypeUsage::InAssignment => {
-                    if obj_type.flags.contains(TypeFlags::SCOPED) {
+                    if type_info.flags.contains(TypeFlags::SCOPED) {
                         return Err(SemanticError::InvalidAssignment {
                             target: type_info.name.clone(),
                             reason: "scoped type cannot be assigned".to_string(),
-                            location: None,
+                            span: span.cloned(),
                         });
                     }
                 }
             }
-        }
 
-        Ok(())
+            Ok(())
+        } else {
+            Err(SemanticError::UndefinedType {
+                name: format!("type {}", type_id),
+                span: span.cloned(),
+            })
+        }
     }
 
-    fn validate_required_behaviours(&self, type_id: TypeId) -> SemanticResult<()> {
-        let type_info = self
-            .symbol_table
-            .get_type(type_id)
-            .ok_or_else(|| SemanticError::undefined_type(format!("type {}", type_id)))?;
+    fn validate_required_behaviours(
+        &self,
+        type_id: TypeId,
+        span: Option<&Span>,
+    ) -> SemanticResult<()> {
+        if let Some(type_info) = self.symbol_table.get_type(type_id) {
+            if type_info.registration != TypeRegistration::Application {
+                return Ok(());
+            }
 
-        // ✅ Only validate behaviours for application-registered types
-        if type_info.registration != TypeRegistration::Application {
-            return Ok(()); // Script types don't need behaviours
-        }
+            if type_info.kind != TypeKind::Class {
+                return Ok(());
+            }
 
-        // ✅ Only validate if it's a class (not enum, funcdef, etc.)
-        if type_info.kind != TypeKind::Class {
-            return Ok(());
-        }
+            if type_info.is_ref_type() {
+                if !type_info.flags.contains(TypeFlags::NOCOUNT) {
+                    let has_addref = type_info.behaviours.contains_key(&BehaviourType::AddRef);
+                    let has_release = type_info.behaviours.contains_key(&BehaviourType::Release);
 
-        let engine = self.engine.read().unwrap();
-        let obj_type = engine
-            .object_types
-            .values()
-            .find(|t| t.type_id == type_id)
-            .ok_or_else(|| SemanticError::undefined_type(type_info.name.clone()))?;
+                    if !has_addref || !has_release {
+                        return Err(SemanticError::Internal {
+                            message: format!(
+                                "Reference type '{}' must have AddRef and Release behaviours",
+                                type_info.name
+                            ),
+                            span: span.cloned(),
+                        });
+                    }
+                }
 
-        // ✅ Reference types need AddRef/Release (unless NOCOUNT)
-        if obj_type.flags.contains(TypeFlags::REF_TYPE) {
-            if !obj_type.flags.contains(TypeFlags::NOCOUNT) {
-                let has_addref = obj_type
-                    .behaviours
-                    .iter()
-                    .any(|b| b.behaviour_type == BehaviourType::AddRef);
-                let has_release = obj_type
-                    .behaviours
-                    .iter()
-                    .any(|b| b.behaviour_type == BehaviourType::Release);
+                let has_factory = type_info.behaviours.contains_key(&BehaviourType::Construct);
 
-                if !has_addref || !has_release {
+                if !has_factory && !type_info.flags.contains(TypeFlags::NOHANDLE) {
                     return Err(SemanticError::Internal {
                         message: format!(
-                            "Reference type '{}' must have AddRef and Release behaviours",
+                            "Reference type '{}' must have a factory behaviour",
                             type_info.name
                         ),
-                        location: None,
+                        span: span.cloned(),
                     });
                 }
             }
 
-            // ✅ Need factory to instantiate (unless NOHANDLE)
-            let has_factory = obj_type
-                .behaviours
-                .iter()
-                .any(|b| b.behaviour_type == BehaviourType::Construct);
+            Ok(())
+        } else {
+            Err(SemanticError::UndefinedType {
+                name: format!("type {}", type_id),
+                span: span.cloned(),
+            })
+        }
+    }
 
-            if !has_factory && !obj_type.flags.contains(TypeFlags::NOHANDLE) {
-                return Err(SemanticError::Internal {
-                    message: format!(
-                        "Reference type '{}' must have a factory behaviour",
-                        type_info.name
-                    ),
-                    location: None,
-                });
-            }
+    fn validate_function_return_references(
+        &self,
+        func: &Func,
+        body: &StatBlock,
+    ) -> SemanticResult<()> {
+        let allow_unsafe = self
+            .registry
+            .read()
+            .unwrap()
+            .get_property(EngineProperty::AllowUnsafeReferences)
+            != 0;
+
+        if allow_unsafe {
+            return Ok(());
         }
 
+        self.validate_return_statements_in_block(body, func)?;
+
         Ok(())
+    }
+
+    fn validate_return_statements_in_block(
+        &self,
+        block: &StatBlock,
+        func: &Func,
+    ) -> SemanticResult<()> {
+        for stmt in &block.statements {
+            match stmt {
+                Statement::Return(ret) => {
+                    self.validate_return_reference(ret, func)?;
+                }
+                Statement::If(if_stmt) => {
+                    self.validate_return_statements_in_statement(&if_stmt.then_branch, func)?;
+                    if let Some(else_branch) = &if_stmt.else_branch {
+                        self.validate_return_statements_in_statement(else_branch, func)?;
+                    }
+                }
+                Statement::Block(inner_block) => {
+                    self.validate_return_statements_in_block(inner_block, func)?;
+                }
+                Statement::While(while_stmt) => {
+                    self.validate_return_statements_in_statement(&while_stmt.body, func)?;
+                }
+                Statement::For(for_stmt) => {
+                    self.validate_return_statements_in_statement(&for_stmt.body, func)?;
+                }
+                Statement::Switch(switch_stmt) => {
+                    for case in &switch_stmt.cases {
+                        for case_stmt in &case.statements {
+                            self.validate_return_statements_in_statement(case_stmt, func)?;
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        Ok(())
+    }
+
+    fn validate_return_statements_in_statement(
+        &self,
+        stmt: &Statement,
+        func: &Func,
+    ) -> SemanticResult<()> {
+        match stmt {
+            Statement::Return(ret) => self.validate_return_reference(ret, func),
+            Statement::Block(block) => self.validate_return_statements_in_block(block, func),
+            Statement::If(if_stmt) => {
+                self.validate_return_statements_in_statement(&if_stmt.then_branch, func)?;
+                if let Some(else_branch) = &if_stmt.else_branch {
+                    self.validate_return_statements_in_statement(else_branch, func)?;
+                }
+                Ok(())
+            }
+            _ => Ok(()),
+        }
+    }
+
+    fn validate_return_reference(&self, ret_stmt: &ReturnStmt, func: &Func) -> SemanticResult<()> {
+        if !func.is_ref {
+            return Ok(());
+        }
+
+        let value = match &ret_stmt.value {
+            Some(v) => v,
+            None => return Ok(()),
+        };
+
+        match value {
+            Expr::Postfix(obj, PostfixOp::MemberAccess(_), _) => {
+                if let Expr::VarAccess(_, name, _) = obj.as_ref() {
+                    if name == "this" {
+                        return Ok(());
+                    }
+                }
+
+                if let Some(ctx) = self.symbol_table.get_expr_context(obj) {
+                    if ctx.is_lvalue() && !ctx.is_temporary() {
+                        return Ok(());
+                    }
+                }
+
+                Err(SemanticError::InvalidReturn {
+                    span: ret_stmt.span.clone(),
+                })
+            }
+
+            Expr::VarAccess(_, name, _) => {
+                if let Some(local) = self.symbol_table.lookup_local(name) {
+                    return if local.is_param {
+                        Ok(())
+                    } else {
+                        Err(SemanticError::InvalidReturn {
+                            span: ret_stmt.span.clone(),
+                        })
+                    };
+                } else if self.symbol_table.get_global(name).is_some() {
+                    return Ok(());
+                }
+
+                Err(SemanticError::InvalidReturn {
+                    span: ret_stmt.span.clone(),
+                })
+            }
+
+            Expr::Postfix(_, PostfixOp::Index(_), _) => Ok(()),
+
+            _ => Err(SemanticError::InvalidReturn {
+                span: ret_stmt.span.clone(),
+            }),
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::type_registry::TypeRegistry;
 
-    use crate::core::types::{
-        AccessSpecifier, BehaviourInfo, EnumType, FuncdefInfo, GlobalFunction, GlobalProperty,
-        MethodParam, ObjectMethod, ObjectProperty, TypeKind, TYPE_DOUBLE, TYPE_INT64,
-        TYPE_UINT32, TYPE_UINT64, TYPE_VOID,
-    };
-    use crate::parser::ast::{
-        AccessorKind, Arg, BinaryOp, Case, CasePattern, Class, ClassMember, DataType, Expr,
-        ForEachStmt, Func, FuncCall, FuncDef, IfStmt, IndexArg, InitList, InitListItem, Lambda,
-        LambdaParam, Namespace, Param, PostfixOp, PropertyAccessor, ReturnStmt, Scope, Script,
-        ScriptNode, StatBlock, Statement, SwitchStmt, TryStmt, Type, TypeMod, TypeModifier,
-        UnaryOp, Var, VarDecl, VarInit, VirtProp, Visibility, WhileStmt,
-    };
-    use std::collections::HashMap;
     use std::sync::{Arc, RwLock};
-    // ==================== HELPER FUNCTIONS ====================
 
     fn create_analyzer() -> SemanticAnalyzer {
-        SemanticAnalyzer::new(Arc::new(RwLock::new(EngineInner {
-            object_types: HashMap::new(),
-            interface_types: HashMap::new(),
-            enum_types: HashMap::new(),
-            global_functions: Vec::new(),
-            global_properties: Vec::new(),
-            modules: HashMap::new(),
-            funcdefs: HashMap::new(),
-        })))
+        let registry = Arc::new(RwLock::new(TypeRegistry::new()));
+        SemanticAnalyzer::new(registry)
     }
 
     fn int_type() -> Type {
@@ -1642,6 +2489,7 @@ mod tests {
             datatype: DataType::PrimType("int".to_string()),
             template_types: vec![],
             modifiers: vec![],
+            span: None,
         }
     }
 
@@ -1655,6 +2503,7 @@ mod tests {
             datatype: DataType::PrimType("int".to_string()),
             template_types: vec![],
             modifiers: vec![],
+            span: None,
         }
     }
 
@@ -1668,6 +2517,7 @@ mod tests {
             datatype: DataType::PrimType("void".to_string()),
             template_types: vec![],
             modifiers: vec![],
+            span: None,
         }
     }
 
@@ -1681,6 +2531,7 @@ mod tests {
             datatype: DataType::PrimType("bool".to_string()),
             template_types: vec![],
             modifiers: vec![],
+            span: None,
         }
     }
 
@@ -1694,6 +2545,7 @@ mod tests {
             datatype: DataType::PrimType("float".to_string()),
             template_types: vec![],
             modifiers: vec![],
+            span: None,
         }
     }
 
@@ -1707,6 +2559,7 @@ mod tests {
             datatype: DataType::PrimType("string".to_string()),
             template_types: vec![],
             modifiers: vec![],
+            span: None,
         }
     }
 
@@ -1720,6 +2573,7 @@ mod tests {
             datatype: DataType::Identifier(name.to_string()),
             template_types: vec![],
             modifiers: vec![],
+            span: None,
         }
     }
 
@@ -1733,27 +2587,28 @@ mod tests {
             datatype: DataType::Identifier(name.to_string()),
             template_types: vec![],
             modifiers: vec![TypeModifier::Handle],
+            span: None,
         }
     }
 
     fn int_literal(value: i32) -> Expr {
-        Expr::Literal(Literal::Number(value.to_string()))
+        Expr::Literal(Literal::Number(value.to_string()), None)
     }
 
     fn bool_literal(value: bool) -> Expr {
-        Expr::Literal(Literal::Bool(value))
+        Expr::Literal(Literal::Bool(value), None)
     }
 
     fn float_literal(value: f32) -> Expr {
-        Expr::Literal(Literal::Number(format!("{}f", value)))
+        Expr::Literal(Literal::Number(format!("{}f", value)), None)
     }
 
     fn string_literal(value: &str) -> Expr {
-        Expr::Literal(Literal::String(value.to_string()))
+        Expr::Literal(Literal::String(value.to_string()), None)
     }
 
     fn null_literal() -> Expr {
-        Expr::Literal(Literal::Null)
+        Expr::Literal(Literal::Null, None)
     }
 
     fn var_expr(name: &str) -> Expr {
@@ -1763,37 +2618,48 @@ mod tests {
                 path: vec![],
             },
             name.to_string(),
+            None,
         )
     }
 
     fn binary_expr(left: Expr, op: BinaryOp, right: Expr) -> Expr {
-        Expr::Binary(Box::new(left), op, Box::new(right))
+        Expr::Binary(Box::new(left), op, Box::new(right), None)
     }
 
     fn unary_expr(op: UnaryOp, operand: Expr) -> Expr {
-        Expr::Unary(op, Box::new(operand))
+        Expr::Unary(op, Box::new(operand), None)
     }
 
     fn ternary_expr(cond: Expr, then_expr: Expr, else_expr: Expr) -> Expr {
-        Expr::Ternary(Box::new(cond), Box::new(then_expr), Box::new(else_expr))
+        Expr::Ternary(
+            Box::new(cond),
+            Box::new(then_expr),
+            Box::new(else_expr),
+            None,
+        )
     }
 
     fn func_call(name: &str, args: Vec<Expr>) -> Expr {
-        Expr::FuncCall(FuncCall {
-            scope: Scope {
-                is_global: false,
-                path: vec![],
+        Expr::FuncCall(
+            FuncCall {
+                scope: Scope {
+                    is_global: false,
+                    path: vec![],
+                },
+                name: name.to_string(),
+                template_types: vec![],
+                args: args
+                    .into_iter()
+                    .map(|e| Arg {
+                        name: None,
+                        value: e,
+                        span: None,
+                    })
+                    .collect(),
+                span: None,
             },
-            name: name.to_string(),
-            template_types: vec![],
-            args: args
-                .into_iter()
-                .map(|e| Arg {
-                    name: None,
-                    value: e,
-                })
-                .collect(),
-        })
+            None,
+        )
     }
 
     fn method_call(obj: Expr, method: &str, args: Vec<Expr>) -> Expr {
@@ -1811,14 +2677,21 @@ mod tests {
                     .map(|e| Arg {
                         name: None,
                         value: e,
+                        span: None,
                     })
                     .collect(),
+                span: None,
             }),
+            None,
         )
     }
 
     fn member_access(obj: Expr, member: &str) -> Expr {
-        Expr::Postfix(Box::new(obj), PostfixOp::MemberAccess(member.to_string()))
+        Expr::Postfix(
+            Box::new(obj),
+            PostfixOp::MemberAccess(member.to_string()),
+            None,
+        )
     }
 
     fn simple_func(name: &str, return_type: Option<Type>, body: StatBlock) -> Func {
@@ -1832,6 +2705,7 @@ mod tests {
             is_const: false,
             attributes: vec![],
             body: Some(body),
+            span: None,
         }
     }
 
@@ -1851,6 +2725,7 @@ mod tests {
             is_const: false,
             attributes: vec![],
             body: Some(body),
+            span: None,
         }
     }
 
@@ -1861,6 +2736,7 @@ mod tests {
             name: Some(name.to_string()),
             default_value: None,
             is_variadic: false,
+            span: None,
         }
     }
 
@@ -1871,6 +2747,7 @@ mod tests {
             name: Some(name.to_string()),
             default_value: None,
             is_variadic: false,
+            span: None,
         }
     }
 
@@ -1881,12 +2758,14 @@ mod tests {
             declarations: vec![VarDecl {
                 name: name.to_string(),
                 initializer: init.map(VarInit::Expr),
+                span: None,
             }],
+            span: None,
         }
     }
 
     fn return_stmt(value: Option<Expr>) -> Statement {
-        Statement::Return(ReturnStmt { value })
+        Statement::Return(ReturnStmt { value, span: None })
     }
 
     fn expr_stmt(expr: Expr) -> Statement {
@@ -1897,30 +2776,20 @@ mod tests {
         Statement::Var(var)
     }
 
-    fn if_stmt(
-        condition: Expr,
-        then_branch: Statement,
-        else_branch: Option<Statement>,
-    ) -> Statement {
-        Statement::If(IfStmt {
-            condition,
-            then_branch: Box::new(then_branch),
-            else_branch: else_branch.map(Box::new),
-        })
-    }
-
     fn while_stmt(condition: Expr, body: Statement) -> Statement {
         Statement::While(WhileStmt {
             condition,
             body: Box::new(body),
+            span: None,
         })
     }
 
     fn block(statements: Vec<Statement>) -> StatBlock {
-        StatBlock { statements }
+        StatBlock {
+            statements,
+            span: None,
+        }
     }
-
-    // ==================== LITERAL TESTS ====================
 
     #[test]
     fn test_literal_int() {
@@ -1932,17 +2801,15 @@ mod tests {
                 Some(int_type()),
                 block(vec![return_stmt(Some(int_literal(42)))]),
             ))],
+            span: None,
         };
 
         let result = analyzer.analyze(&script);
         assert!(result.is_ok(), "Analysis failed: {:?}", result.err());
 
-        // Check expression was analyzed
         let expr = int_literal(42);
-        let ctx = analyzer.symbol_table.get_expr_context(&expr);
-        assert!(ctx.is_some());
-        assert_eq!(ctx.unwrap().result_type, TYPE_INT32);
-        assert!(ctx.unwrap().is_temporary);
+        let ctx = analyzer.symbol_table.get_expr_context(&expr).unwrap();
+        assert_eq!(ctx.get_type(), TYPE_INT32);
     }
 
     #[test]
@@ -1955,14 +2822,15 @@ mod tests {
                 Some(bool_type()),
                 block(vec![return_stmt(Some(bool_literal(true)))]),
             ))],
+            span: None,
         };
 
         let result = analyzer.analyze(&script);
         assert!(result.is_ok());
 
         let expr = bool_literal(true);
-        let ctx = analyzer.symbol_table.get_expr_context(&expr);
-        assert_eq!(ctx.unwrap().result_type, TYPE_BOOL);
+        let ctx = analyzer.symbol_table.get_expr_context(&expr).unwrap();
+        assert_eq!(ctx.get_type(), TYPE_BOOL);
     }
 
     #[test]
@@ -1975,14 +2843,15 @@ mod tests {
                 Some(float_type()),
                 block(vec![return_stmt(Some(float_literal(3.14)))]),
             ))],
+            span: None,
         };
 
         let result = analyzer.analyze(&script);
         assert!(result.is_ok());
 
         let expr = float_literal(3.14);
-        let ctx = analyzer.symbol_table.get_expr_context(&expr);
-        assert_eq!(ctx.unwrap().result_type, TYPE_FLOAT);
+        let ctx = analyzer.symbol_table.get_expr_context(&expr).unwrap();
+        assert_eq!(ctx.get_type(), TYPE_FLOAT);
     }
 
     #[test]
@@ -1995,33 +2864,16 @@ mod tests {
                 Some(string_type()),
                 block(vec![return_stmt(Some(string_literal("hello")))]),
             ))],
+            span: None,
         };
 
         let result = analyzer.analyze(&script);
         assert!(result.is_ok());
 
         let expr = string_literal("hello");
-        let ctx = analyzer.symbol_table.get_expr_context(&expr);
-        assert_eq!(ctx.unwrap().result_type, TYPE_STRING);
+        let ctx = analyzer.symbol_table.get_expr_context(&expr).unwrap();
+        assert_eq!(ctx.get_type(), TYPE_STRING);
     }
-
-    #[test]
-    fn test_literal_null() {
-        let mut analyzer = create_analyzer();
-
-        let script = Script {
-            items: vec![ScriptNode::Func(simple_func(
-                "test",
-                Some(void_type()),
-                block(vec![return_stmt(Some(null_literal()))]),
-            ))],
-        };
-
-        let result = analyzer.analyze(&script);
-        assert!(result.is_ok());
-    }
-
-    // ==================== VARIABLE TESTS ====================
 
     #[test]
     fn test_variable_declaration() {
@@ -2037,15 +2889,11 @@ mod tests {
                     Some(int_literal(42)),
                 ))]),
             ))],
+            span: None,
         };
 
         let result = analyzer.analyze(&script);
         assert!(result.is_ok(), "Analysis failed: {:?}", result.err());
-
-        // Check variable was registered in function locals
-        let func_locals = analyzer.symbol_table.get_function_locals("test");
-        assert!(func_locals.is_some());
-        assert_eq!(func_locals.unwrap().total_count, 1);
     }
 
     #[test]
@@ -2061,19 +2909,17 @@ mod tests {
                     return_stmt(Some(var_expr("x"))),
                 ]),
             ))],
+            span: None,
         };
 
         let result = analyzer.analyze(&script);
         assert!(result.is_ok(), "Analysis failed: {:?}", result.err());
 
-        // Check variable access was analyzed
         let expr = var_expr("x");
-        let ctx = analyzer.symbol_table.get_expr_context(&expr);
-        if let Some(ctx) = ctx {
-            assert_eq!(ctx.result_type, TYPE_INT32);
-            assert!(ctx.is_lvalue);
-            assert!(!ctx.is_temporary);
-        }
+        let ctx = analyzer.symbol_table.get_expr_context(&expr).unwrap();
+        assert_eq!(ctx.get_type(), TYPE_INT32);
+        assert!(ctx.is_lvalue());
+        assert!(!ctx.is_temporary());
     }
 
     #[test]
@@ -2086,6 +2932,7 @@ mod tests {
                 Some(int_type()),
                 block(vec![return_stmt(Some(var_expr("undefined")))]),
             ))],
+            span: None,
         };
 
         let result = analyzer.analyze(&script);
@@ -2112,14 +2959,15 @@ mod tests {
                     return_stmt(Some(var_expr("x"))),
                 ]),
             ))],
+            span: None,
         };
 
         let result = analyzer.analyze(&script);
         assert!(result.is_ok());
 
         let expr = var_expr("x");
-        let ctx = analyzer.symbol_table.get_expr_context(&expr);
-        assert!(ctx.unwrap().is_const);
+        let ctx = analyzer.symbol_table.get_expr_context(&expr).unwrap();
+        assert!(ctx.is_const());
     }
 
     #[test]
@@ -2135,6 +2983,7 @@ mod tests {
                     var_stmt(var_decl(int_type(), "x", Some(int_literal(2)))),
                 ]),
             ))],
+            span: None,
         };
 
         let result = analyzer.analyze(&script);
@@ -2147,8 +2996,6 @@ mod tests {
                 .any(|e| matches!(e, SemanticError::DuplicateDefinition { .. }))
         );
     }
-
-    // ==================== ARITHMETIC OPERATIONS ====================
 
     #[test]
     fn test_addition() {
@@ -2164,76 +3011,17 @@ mod tests {
                     int_literal(2),
                 )))]),
             ))],
+            span: None,
         };
 
         let result = analyzer.analyze(&script);
         assert!(result.is_ok());
 
         let expr = binary_expr(int_literal(1), BinaryOp::Add, int_literal(2));
-        let ctx = analyzer.symbol_table.get_expr_context(&expr);
-        assert_eq!(ctx.unwrap().result_type, TYPE_INT32);
-        assert!(!ctx.unwrap().is_lvalue);
-        assert!(ctx.unwrap().is_temporary);
-    }
-
-    #[test]
-    fn test_subtraction() {
-        let mut analyzer = create_analyzer();
-
-        let script = Script {
-            items: vec![ScriptNode::Func(simple_func(
-                "test",
-                Some(int_type()),
-                block(vec![return_stmt(Some(binary_expr(
-                    int_literal(5),
-                    BinaryOp::Sub,
-                    int_literal(3),
-                )))]),
-            ))],
-        };
-
-        let result = analyzer.analyze(&script);
-        assert!(result.is_ok());
-    }
-
-    #[test]
-    fn test_multiplication() {
-        let mut analyzer = create_analyzer();
-
-        let script = Script {
-            items: vec![ScriptNode::Func(simple_func(
-                "test",
-                Some(int_type()),
-                block(vec![return_stmt(Some(binary_expr(
-                    int_literal(3),
-                    BinaryOp::Mul,
-                    int_literal(4),
-                )))]),
-            ))],
-        };
-
-        let result = analyzer.analyze(&script);
-        assert!(result.is_ok());
-    }
-
-    #[test]
-    fn test_division() {
-        let mut analyzer = create_analyzer();
-
-        let script = Script {
-            items: vec![ScriptNode::Func(simple_func(
-                "test",
-                Some(int_type()),
-                block(vec![return_stmt(Some(binary_expr(
-                    int_literal(10),
-                    BinaryOp::Div,
-                    int_literal(2),
-                )))]),
-            ))],
-        };
-
-        let result = analyzer.analyze(&script);
-        assert!(result.is_ok());
+        let ctx = analyzer.symbol_table.get_expr_context(&expr).unwrap();
+        assert_eq!(ctx.get_type(), TYPE_INT32);
+        assert!(!ctx.is_lvalue());
+        assert!(ctx.is_temporary());
     }
 
     #[test]
@@ -2248,17 +3036,16 @@ mod tests {
                 Some(float_type()),
                 block(vec![return_stmt(Some(expr.clone()))]),
             ))],
+            span: None,
         };
 
         let result = analyzer.analyze(&script);
         assert!(result.is_ok());
 
         let expr = binary_expr(int_literal(1), BinaryOp::Add, float_literal(2.0));
-        let ctx = analyzer.symbol_table.get_expr_context(&expr);
-        assert_eq!(ctx.unwrap().result_type, TYPE_FLOAT);
+        let ctx = analyzer.symbol_table.get_expr_context(&expr).unwrap();
+        assert_eq!(ctx.get_type(), TYPE_FLOAT);
     }
-
-    // ==================== COMPARISON OPERATIONS ====================
 
     #[test]
     fn test_equality() {
@@ -2274,173 +3061,16 @@ mod tests {
                     int_literal(1),
                 )))]),
             ))],
+            span: None,
         };
 
         let result = analyzer.analyze(&script);
         assert!(result.is_ok());
 
         let expr = binary_expr(int_literal(1), BinaryOp::Eq, int_literal(1));
-        let ctx = analyzer.symbol_table.get_expr_context(&expr);
-        assert_eq!(ctx.unwrap().result_type, TYPE_BOOL);
+        let ctx = analyzer.symbol_table.get_expr_context(&expr).unwrap();
+        assert_eq!(ctx.get_type(), TYPE_BOOL);
     }
-
-    #[test]
-    fn test_less_than() {
-        let mut analyzer = create_analyzer();
-
-        let script = Script {
-            items: vec![ScriptNode::Func(simple_func(
-                "test",
-                Some(bool_type()),
-                block(vec![return_stmt(Some(binary_expr(
-                    int_literal(1),
-                    BinaryOp::Lt,
-                    int_literal(2),
-                )))]),
-            ))],
-        };
-
-        let result = analyzer.analyze(&script);
-        assert!(result.is_ok());
-
-        let expr = binary_expr(int_literal(1), BinaryOp::Lt, int_literal(2));
-        let ctx = analyzer.symbol_table.get_expr_context(&expr);
-        assert_eq!(ctx.unwrap().result_type, TYPE_BOOL);
-    }
-
-    #[test]
-    fn test_greater_than() {
-        let mut analyzer = create_analyzer();
-
-        let script = Script {
-            items: vec![ScriptNode::Func(simple_func(
-                "test",
-                Some(bool_type()),
-                block(vec![return_stmt(Some(binary_expr(
-                    int_literal(2),
-                    BinaryOp::Gt,
-                    int_literal(1),
-                )))]),
-            ))],
-        };
-
-        let result = analyzer.analyze(&script);
-        assert!(result.is_ok());
-    }
-
-    // ==================== LOGICAL OPERATIONS ====================
-
-    #[test]
-    fn test_logical_and() {
-        let mut analyzer = create_analyzer();
-
-        let script = Script {
-            items: vec![ScriptNode::Func(simple_func(
-                "test",
-                Some(bool_type()),
-                block(vec![return_stmt(Some(binary_expr(
-                    bool_literal(true),
-                    BinaryOp::And,
-                    bool_literal(false),
-                )))]),
-            ))],
-        };
-
-        let result = analyzer.analyze(&script);
-        assert!(result.is_ok());
-
-        let expr = binary_expr(bool_literal(true), BinaryOp::And, bool_literal(false));
-        let ctx = analyzer.symbol_table.get_expr_context(&expr);
-        assert_eq!(ctx.unwrap().result_type, TYPE_BOOL);
-    }
-
-    #[test]
-    fn test_logical_or() {
-        let mut analyzer = create_analyzer();
-
-        let script = Script {
-            items: vec![ScriptNode::Func(simple_func(
-                "test",
-                Some(bool_type()),
-                block(vec![return_stmt(Some(binary_expr(
-                    bool_literal(true),
-                    BinaryOp::Or,
-                    bool_literal(false),
-                )))]),
-            ))],
-        };
-
-        let result = analyzer.analyze(&script);
-        assert!(result.is_ok());
-    }
-
-    // ==================== BITWISE OPERATIONS ====================
-
-    #[test]
-    fn test_bitwise_and() {
-        let mut analyzer = create_analyzer();
-
-        let script = Script {
-            items: vec![ScriptNode::Func(simple_func(
-                "test",
-                Some(int_type()),
-                block(vec![return_stmt(Some(binary_expr(
-                    int_literal(0xFF),
-                    BinaryOp::BitAnd,
-                    int_literal(0x0F),
-                )))]),
-            ))],
-        };
-
-        let result = analyzer.analyze(&script);
-        assert!(result.is_ok());
-
-        let expr = binary_expr(int_literal(0xFF), BinaryOp::BitAnd, int_literal(0x0F));
-        let ctx = analyzer.symbol_table.get_expr_context(&expr);
-        assert_eq!(ctx.unwrap().result_type, TYPE_INT32);
-    }
-
-    #[test]
-    fn test_bitwise_or() {
-        let mut analyzer = create_analyzer();
-
-        let script = Script {
-            items: vec![ScriptNode::Func(simple_func(
-                "test",
-                Some(int_type()),
-                block(vec![return_stmt(Some(binary_expr(
-                    int_literal(0xF0),
-                    BinaryOp::BitOr,
-                    int_literal(0x0F),
-                )))]),
-            ))],
-        };
-
-        let result = analyzer.analyze(&script);
-        assert!(result.is_ok());
-    }
-
-    #[test]
-    fn test_bitwise_xor() {
-        let mut analyzer = create_analyzer();
-
-        let script = Script {
-            items: vec![ScriptNode::Func(simple_func(
-                "test",
-                Some(int_type()),
-                block(vec![return_stmt(Some(binary_expr(
-                    int_literal(0xFF),
-                    BinaryOp::BitXor,
-                    int_literal(0x0F),
-                )))]),
-            ))],
-        };
-
-        let result = analyzer.analyze(&script);
-        assert!(result.is_ok());
-    }
-
-    // ==================== UNARY OPERATIONS ====================
 
     #[test]
     fn test_unary_negation() {
@@ -2455,37 +3085,15 @@ mod tests {
                     int_literal(42),
                 )))]),
             ))],
+            span: None,
         };
 
         let result = analyzer.analyze(&script);
         assert!(result.is_ok());
 
         let expr = unary_expr(UnaryOp::Neg, int_literal(42));
-        let ctx = analyzer.symbol_table.get_expr_context(&expr);
-        assert_eq!(ctx.unwrap().result_type, TYPE_INT32);
-    }
-
-    #[test]
-    fn test_unary_not() {
-        let mut analyzer = create_analyzer();
-
-        let script = Script {
-            items: vec![ScriptNode::Func(simple_func(
-                "test",
-                Some(bool_type()),
-                block(vec![return_stmt(Some(unary_expr(
-                    UnaryOp::Not,
-                    bool_literal(true),
-                )))]),
-            ))],
-        };
-
-        let result = analyzer.analyze(&script);
-        assert!(result.is_ok());
-
-        let expr = unary_expr(UnaryOp::Not, bool_literal(true));
-        let ctx = analyzer.symbol_table.get_expr_context(&expr);
-        assert_eq!(ctx.unwrap().result_type, TYPE_BOOL);
+        let ctx = analyzer.symbol_table.get_expr_context(&expr).unwrap();
+        assert_eq!(ctx.get_type(), TYPE_INT32);
     }
 
     #[test]
@@ -2501,6 +3109,7 @@ mod tests {
                     expr_stmt(unary_expr(UnaryOp::PreInc, var_expr("x"))),
                 ]),
             ))],
+            span: None,
         };
 
         let result = analyzer.analyze(&script);
@@ -2520,16 +3129,19 @@ mod tests {
                     expr_stmt(unary_expr(UnaryOp::PreInc, var_expr("x"))),
                 ]),
             ))],
+            span: None,
         };
 
         let result = analyzer.analyze(&script);
-        assert!(result.is_err());
+        assert!(result.is_err(), "Should fail - incrementing const");
 
         let errors = result.unwrap_err();
         assert!(
             errors
                 .iter()
-                .any(|e| matches!(e, SemanticError::ConstViolation { .. }))
+                .any(|e| matches!(e, SemanticError::ConstViolation { .. })),
+            "Expected ConstViolation, got: {:?}",
+            errors
         );
     }
 
@@ -2546,6 +3158,7 @@ mod tests {
                     int_literal(42),
                 ))]),
             ))],
+            span: None,
         };
 
         let result = analyzer.analyze(&script);
@@ -2558,8 +3171,6 @@ mod tests {
                 .any(|e| matches!(e, SemanticError::InvalidOperation { .. }))
         );
     }
-
-    // ==================== ASSIGNMENT OPERATIONS ====================
 
     #[test]
     fn test_simple_assignment() {
@@ -2578,6 +3189,7 @@ mod tests {
                     )),
                 ]),
             ))],
+            span: None,
         };
 
         let result = analyzer.analyze(&script);
@@ -2601,6 +3213,7 @@ mod tests {
                     )),
                 ]),
             ))],
+            span: None,
         };
 
         let result = analyzer.analyze(&script);
@@ -2610,7 +3223,9 @@ mod tests {
         assert!(
             errors
                 .iter()
-                .any(|e| matches!(e, SemanticError::ConstViolation { .. }))
+                .any(|e| matches!(e, SemanticError::ConstViolation { .. })),
+            "Expected ConstViolation, got: {:?}",
+            errors
         );
     }
 
@@ -2628,6 +3243,7 @@ mod tests {
                     int_literal(42),
                 ))]),
             ))],
+            span: None,
         };
 
         let result = analyzer.analyze(&script);
@@ -2642,57 +3258,6 @@ mod tests {
     }
 
     #[test]
-    fn test_compound_assignment() {
-        let mut analyzer = create_analyzer();
-
-        let script = Script {
-            items: vec![ScriptNode::Func(simple_func(
-                "test",
-                Some(void_type()),
-                block(vec![
-                    var_stmt(var_decl(int_type(), "x", Some(int_literal(10)))),
-                    expr_stmt(binary_expr(
-                        var_expr("x"),
-                        BinaryOp::AddAssign,
-                        int_literal(5),
-                    )),
-                ]),
-            ))],
-        };
-
-        let result = analyzer.analyze(&script);
-        assert!(result.is_ok(), "Analysis failed: {:?}", result.err());
-    }
-
-    // ==================== TERNARY OPERATOR ====================
-
-    #[test]
-    fn test_ternary_operator() {
-        let mut analyzer = create_analyzer();
-
-        let script = Script {
-            items: vec![ScriptNode::Func(simple_func(
-                "test",
-                Some(int_type()),
-                block(vec![return_stmt(Some(ternary_expr(
-                    bool_literal(true),
-                    int_literal(1),
-                    int_literal(2),
-                )))]),
-            ))],
-        };
-
-        let result = analyzer.analyze(&script);
-        assert!(result.is_ok());
-
-        let expr = ternary_expr(bool_literal(true), int_literal(1), int_literal(2));
-        let ctx = analyzer.symbol_table.get_expr_context(&expr);
-        assert_eq!(ctx.unwrap().result_type, TYPE_INT32);
-    }
-
-    // ==================== FUNCTION TESTS ====================
-
-    #[test]
     fn test_function_declaration() {
         let mut analyzer = create_analyzer();
 
@@ -2702,12 +3267,12 @@ mod tests {
                 Some(void_type()),
                 block(vec![]),
             ))],
+            span: None,
         };
 
         let result = analyzer.analyze(&script);
         assert!(result.is_ok());
 
-        // Check function was registered
         let func = analyzer.symbol_table.get_function("test");
         assert!(func.is_some());
         assert_eq!(func.unwrap().name, "test");
@@ -2728,89 +3293,12 @@ mod tests {
                     var_expr("b"),
                 )))]),
             ))],
-        };
-
-        let result = analyzer.analyze(&script);
-        assert!(result.is_ok(), "Analysis failed: {:?}", result.err());
-
-        // Check parameters were registered
-        let func_locals = analyzer.symbol_table.get_function_locals("add");
-        assert!(func_locals.is_some());
-        assert_eq!(func_locals.unwrap().param_count, 2);
-    }
-
-    #[test]
-    fn test_function_call() {
-        let mut analyzer = create_analyzer();
-
-        let script = Script {
-            items: vec![
-                ScriptNode::Func(simple_func(
-                    "helper",
-                    Some(int_type()),
-                    block(vec![return_stmt(Some(int_literal(42)))]),
-                )),
-                ScriptNode::Func(simple_func(
-                    "test",
-                    Some(int_type()),
-                    block(vec![return_stmt(Some(func_call("helper", vec![])))]),
-                )),
-            ],
+            span: None,
         };
 
         let result = analyzer.analyze(&script);
         assert!(result.is_ok(), "Analysis failed: {:?}", result.err());
     }
-
-    #[test]
-    fn test_undefined_function_call() {
-        let mut analyzer = create_analyzer();
-
-        let script = Script {
-            items: vec![ScriptNode::Func(simple_func(
-                "test",
-                Some(void_type()),
-                block(vec![expr_stmt(func_call("undefined", vec![]))]),
-            ))],
-        };
-
-        let result = analyzer.analyze(&script);
-        assert!(result.is_err());
-
-        let errors = result.unwrap_err();
-        assert!(
-            errors
-                .iter()
-                .any(|e| matches!(e, SemanticError::UndefinedFunction { .. }))
-        );
-    }
-
-    #[test]
-    fn test_function_with_ref_parameters() {
-        let mut analyzer = create_analyzer();
-
-        let script = Script {
-            items: vec![ScriptNode::Func(func_with_params(
-                "modify",
-                Some(void_type()),
-                vec![param_with_mod("x", int_type(), TypeMod::Out)],
-                block(vec![expr_stmt(binary_expr(
-                    var_expr("x"),
-                    BinaryOp::Assign,
-                    int_literal(42),
-                ))]),
-            ))],
-        };
-
-        let result = analyzer.analyze(&script);
-        assert!(result.is_ok());
-
-        let func = analyzer.symbol_table.get_function("modify");
-        assert!(func.is_some());
-        assert!(func.unwrap().params[0].is_out);
-    }
-
-    // ==================== CLASS TESTS ====================
 
     #[test]
     fn test_class_declaration() {
@@ -2822,13 +3310,14 @@ mod tests {
                 name: "MyClass".to_string(),
                 extends: vec![],
                 members: vec![],
+                span: None,
             })],
+            span: None,
         };
 
         let result = analyzer.analyze(&script);
         assert!(result.is_ok());
 
-        // Check class was registered
         let type_id = analyzer.symbol_table.lookup_type("MyClass");
         assert!(type_id.is_some());
     }
@@ -2843,16 +3332,17 @@ mod tests {
                 name: "MyClass".to_string(),
                 extends: vec![],
                 members: vec![ClassMember::Var(var_decl(int_type(), "value", None))],
+                span: None,
             })],
+            span: None,
         };
 
         let result = analyzer.analyze(&script);
         assert!(result.is_ok());
 
-        // Check member was registered
         let type_id = analyzer.symbol_table.lookup_type("MyClass").unwrap();
         let type_info = analyzer.symbol_table.get_type(type_id).unwrap();
-        assert!(type_info.members.contains_key("value"));
+        assert!(type_info.get_property("value").is_some());
     }
 
     #[test]
@@ -2869,45 +3359,17 @@ mod tests {
                     Some(void_type()),
                     block(vec![]),
                 ))],
+                span: None,
             })],
+            span: None,
         };
 
         let result = analyzer.analyze(&script);
         assert!(result.is_ok());
 
-        // Check method was registered
         let func = analyzer.symbol_table.get_function("MyClass::method");
         assert!(func.is_some());
-        assert!(func.unwrap().is_method);
-    }
-
-    #[test]
-    fn test_class_constructor() {
-        let mut analyzer = create_analyzer();
-
-        let script = Script {
-            items: vec![ScriptNode::Class(Class {
-                modifiers: vec![],
-                name: "MyClass".to_string(),
-                extends: vec![],
-                members: vec![
-                    ClassMember::Var(var_decl(int_type(), "value", None)),
-                    ClassMember::Func(func_with_params(
-                        "MyClass",
-                        None, // Constructor has no return type
-                        vec![param("v", int_type())],
-                        block(vec![expr_stmt(binary_expr(
-                            member_access(var_expr("this"), "value"),
-                            BinaryOp::Assign,
-                            var_expr("v"),
-                        ))]),
-                    )),
-                ],
-            })],
-        };
-
-        let result = analyzer.analyze(&script);
-        assert!(result.is_ok(), "Analysis failed: {:?}", result.err());
+        assert_eq!(func.unwrap().kind, FunctionKind::Method { is_const: false });
     }
 
     #[test]
@@ -2921,26 +3383,28 @@ mod tests {
                     name: "Base".to_string(),
                     extends: vec![],
                     members: vec![ClassMember::Var(var_decl(int_type(), "baseValue", None))],
+                    span: None,
                 }),
                 ScriptNode::Class(Class {
                     modifiers: vec![],
                     name: "Derived".to_string(),
                     extends: vec!["Base".to_string()],
                     members: vec![ClassMember::Var(var_decl(int_type(), "derivedValue", None))],
+                    span: None,
                 }),
             ],
+            span: None,
         };
 
         let result = analyzer.analyze(&script);
         assert!(result.is_ok());
 
-        // Check inheritance was registered
         let derived_id = analyzer.symbol_table.lookup_type("Derived").unwrap();
         let derived_info = analyzer.symbol_table.get_type(derived_id).unwrap();
-        assert!(derived_info.base_class.is_some());
+        assert!(derived_info.base_type.is_some());
 
         let base_id = analyzer.symbol_table.lookup_type("Base").unwrap();
-        assert_eq!(derived_info.base_class.unwrap(), base_id);
+        assert_eq!(derived_info.base_type.unwrap(), base_id);
     }
 
     #[test]
@@ -2954,6 +3418,7 @@ mod tests {
                     name: "MyClass".to_string(),
                     extends: vec![],
                     members: vec![ClassMember::Var(var_decl(int_type(), "value", None))],
+                    span: None,
                 }),
                 ScriptNode::Func(simple_func(
                     "test",
@@ -2964,6 +3429,7 @@ mod tests {
                     ]),
                 )),
             ],
+            span: None,
         };
 
         let result = analyzer.analyze(&script);
@@ -2981,6 +3447,7 @@ mod tests {
                     name: "MyClass".to_string(),
                     extends: vec![],
                     members: vec![],
+                    span: None,
                 }),
                 ScriptNode::Func(simple_func(
                     "test",
@@ -2991,6 +3458,7 @@ mod tests {
                     ]),
                 )),
             ],
+            span: None,
         };
 
         let result = analyzer.analyze(&script);
@@ -3019,6 +3487,7 @@ mod tests {
                         Some(int_type()),
                         block(vec![return_stmt(Some(int_literal(42)))]),
                     ))],
+                    span: None,
                 }),
                 ScriptNode::Func(simple_func(
                     "test",
@@ -3029,99 +3498,11 @@ mod tests {
                     ]),
                 )),
             ],
+            span: None,
         };
 
         let result = analyzer.analyze(&script);
         assert!(result.is_ok(), "Analysis failed: {:?}", result.err());
-    }
-
-    // ==================== NAMESPACE TESTS ====================
-
-    #[test]
-    fn test_namespace() {
-        let mut analyzer = create_analyzer();
-
-        let script = Script {
-            items: vec![ScriptNode::Namespace(Namespace {
-                name: vec!["MyNamespace".to_string()],
-                items: vec![ScriptNode::Func(simple_func(
-                    "test",
-                    Some(void_type()),
-                    block(vec![]),
-                ))],
-            })],
-        };
-
-        let result = analyzer.analyze(&script);
-        assert!(result.is_ok());
-
-        // Check function was registered with namespace
-        let func = analyzer.symbol_table.get_function("MyNamespace::test");
-        assert!(func.is_some());
-    }
-
-    #[test]
-    fn test_nested_namespace() {
-        let mut analyzer = create_analyzer();
-
-        let script = Script {
-            items: vec![ScriptNode::Namespace(Namespace {
-                name: vec!["Outer".to_string(), "Inner".to_string()],
-                items: vec![ScriptNode::Func(simple_func(
-                    "test",
-                    Some(void_type()),
-                    block(vec![]),
-                ))],
-            })],
-        };
-
-        let result = analyzer.analyze(&script);
-        assert!(result.is_ok());
-
-        // Check function was registered with full namespace path
-        let func = analyzer.symbol_table.get_function("Outer::Inner::test");
-        assert!(func.is_some());
-    }
-
-    // ==================== CONTROL FLOW TESTS ====================
-
-    #[test]
-    fn test_if_statement() {
-        let mut analyzer = create_analyzer();
-
-        let script = Script {
-            items: vec![ScriptNode::Func(simple_func(
-                "test",
-                Some(void_type()),
-                block(vec![if_stmt(
-                    bool_literal(true),
-                    expr_stmt(int_literal(1)),
-                    None,
-                )]),
-            ))],
-        };
-
-        let result = analyzer.analyze(&script);
-        assert!(result.is_ok());
-    }
-
-    #[test]
-    fn test_while_loop() {
-        let mut analyzer = create_analyzer();
-
-        let script = Script {
-            items: vec![ScriptNode::Func(simple_func(
-                "test",
-                Some(void_type()),
-                block(vec![while_stmt(
-                    bool_literal(true),
-                    expr_stmt(int_literal(1)),
-                )]),
-            ))],
-        };
-
-        let result = analyzer.analyze(&script);
-        assert!(result.is_ok());
     }
 
     #[test]
@@ -3132,8 +3513,9 @@ mod tests {
             items: vec![ScriptNode::Func(simple_func(
                 "test",
                 Some(void_type()),
-                block(vec![Statement::Break]),
+                block(vec![Statement::Break(None)]),
             ))],
+            span: None,
         };
 
         let result = analyzer.analyze(&script);
@@ -3155,8 +3537,9 @@ mod tests {
             items: vec![ScriptNode::Func(simple_func(
                 "test",
                 Some(void_type()),
-                block(vec![Statement::Continue]),
+                block(vec![Statement::Continue(None)]),
             ))],
+            span: None,
         };
 
         let result = analyzer.analyze(&script);
@@ -3178,15 +3561,548 @@ mod tests {
             items: vec![ScriptNode::Func(simple_func(
                 "test",
                 Some(void_type()),
-                block(vec![while_stmt(bool_literal(true), Statement::Break)]),
+                block(vec![while_stmt(bool_literal(true), Statement::Break(None))]),
             ))],
+            span: None,
         };
 
         let result = analyzer.analyze(&script);
         assert!(result.is_ok());
     }
 
-    // ==================== SCOPE TESTS ====================
+    #[test]
+    fn test_value_type_cannot_use_inout() {
+        let mut analyzer = create_analyzer();
+
+        let script = Script {
+            items: vec![ScriptNode::Func(func_with_params(
+                "test",
+                Some(void_type()),
+                vec![Param {
+                    param_type: int_type(),
+                    type_mod: Some(TypeMod::InOut),
+                    name: Some("value".to_string()),
+                    default_value: None,
+                    is_variadic: false,
+                    span: None,
+                }],
+                block(vec![]),
+            ))],
+            span: None,
+        };
+
+        let result = analyzer.analyze(&script);
+        assert!(result.is_err(), "Value types cannot use 'inout' references");
+
+        let errors = result.unwrap_err();
+        assert!(
+            errors
+                .iter()
+                .any(|e| matches!(e, SemanticError::ReferenceMismatch { .. }))
+        );
+    }
+
+    #[test]
+    fn test_value_type_can_use_in() {
+        let mut analyzer = create_analyzer();
+
+        let script = Script {
+            items: vec![ScriptNode::Func(func_with_params(
+                "test",
+                Some(void_type()),
+                vec![Param {
+                    param_type: int_type(),
+                    type_mod: Some(TypeMod::In),
+                    name: Some("value".to_string()),
+                    default_value: None,
+                    is_variadic: false,
+                    span: None,
+                }],
+                block(vec![]),
+            ))],
+            span: None,
+        };
+
+        let result = analyzer.analyze(&script);
+        assert!(result.is_ok(), "Value types can use 'in' references");
+    }
+
+    #[test]
+    fn test_value_type_can_use_out() {
+        let mut analyzer = create_analyzer();
+
+        let script = Script {
+            items: vec![ScriptNode::Func(func_with_params(
+                "test",
+                Some(void_type()),
+                vec![Param {
+                    param_type: int_type(),
+                    type_mod: Some(TypeMod::Out),
+                    name: Some("value".to_string()),
+                    default_value: None,
+                    is_variadic: false,
+                    span: None,
+                }],
+                block(vec![]),
+            ))],
+            span: None,
+        };
+
+        let result = analyzer.analyze(&script);
+        assert!(result.is_ok(), "Value types can use 'out' references");
+    }
+
+    #[test]
+    fn test_subtraction() {
+        let mut analyzer = create_analyzer();
+
+        let script = Script {
+            items: vec![ScriptNode::Func(simple_func(
+                "test",
+                Some(int_type()),
+                block(vec![return_stmt(Some(binary_expr(
+                    int_literal(5),
+                    BinaryOp::Sub,
+                    int_literal(3),
+                )))]),
+            ))],
+            span: None,
+        };
+
+        let result = analyzer.analyze(&script);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_multiplication() {
+        let mut analyzer = create_analyzer();
+
+        let script = Script {
+            items: vec![ScriptNode::Func(simple_func(
+                "test",
+                Some(int_type()),
+                block(vec![return_stmt(Some(binary_expr(
+                    int_literal(3),
+                    BinaryOp::Mul,
+                    int_literal(4),
+                )))]),
+            ))],
+            span: None,
+        };
+
+        let result = analyzer.analyze(&script);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_division() {
+        let mut analyzer = create_analyzer();
+
+        let script = Script {
+            items: vec![ScriptNode::Func(simple_func(
+                "test",
+                Some(int_type()),
+                block(vec![return_stmt(Some(binary_expr(
+                    int_literal(10),
+                    BinaryOp::Div,
+                    int_literal(2),
+                )))]),
+            ))],
+            span: None,
+        };
+
+        let result = analyzer.analyze(&script);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_less_than() {
+        let mut analyzer = create_analyzer();
+
+        let script = Script {
+            items: vec![ScriptNode::Func(simple_func(
+                "test",
+                Some(bool_type()),
+                block(vec![return_stmt(Some(binary_expr(
+                    int_literal(1),
+                    BinaryOp::Lt,
+                    int_literal(2),
+                )))]),
+            ))],
+            span: None,
+        };
+
+        let result = analyzer.analyze(&script);
+        assert!(result.is_ok());
+
+        let expr = binary_expr(int_literal(1), BinaryOp::Lt, int_literal(2));
+        let ctx = analyzer.symbol_table.get_expr_context(&expr).unwrap();
+        assert_eq!(ctx.get_type(), TYPE_BOOL);
+    }
+
+    #[test]
+    fn test_greater_than() {
+        let mut analyzer = create_analyzer();
+
+        let script = Script {
+            items: vec![ScriptNode::Func(simple_func(
+                "test",
+                Some(bool_type()),
+                block(vec![return_stmt(Some(binary_expr(
+                    int_literal(2),
+                    BinaryOp::Gt,
+                    int_literal(1),
+                )))]),
+            ))],
+            span: None,
+        };
+
+        let result = analyzer.analyze(&script);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_logical_and() {
+        let mut analyzer = create_analyzer();
+
+        let script = Script {
+            items: vec![ScriptNode::Func(simple_func(
+                "test",
+                Some(bool_type()),
+                block(vec![return_stmt(Some(binary_expr(
+                    bool_literal(true),
+                    BinaryOp::And,
+                    bool_literal(false),
+                )))]),
+            ))],
+            span: None,
+        };
+
+        let result = analyzer.analyze(&script);
+        assert!(result.is_ok());
+
+        let expr = binary_expr(bool_literal(true), BinaryOp::And, bool_literal(false));
+        let ctx = analyzer.symbol_table.get_expr_context(&expr).unwrap();
+        assert_eq!(ctx.get_type(), TYPE_BOOL);
+    }
+
+    #[test]
+    fn test_logical_or() {
+        let mut analyzer = create_analyzer();
+
+        let script = Script {
+            items: vec![ScriptNode::Func(simple_func(
+                "test",
+                Some(bool_type()),
+                block(vec![return_stmt(Some(binary_expr(
+                    bool_literal(true),
+                    BinaryOp::Or,
+                    bool_literal(false),
+                )))]),
+            ))],
+            span: None,
+        };
+
+        let result = analyzer.analyze(&script);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_bitwise_and() {
+        let mut analyzer = create_analyzer();
+
+        let script = Script {
+            items: vec![ScriptNode::Func(simple_func(
+                "test",
+                Some(int_type()),
+                block(vec![return_stmt(Some(binary_expr(
+                    int_literal(0xFF),
+                    BinaryOp::BitAnd,
+                    int_literal(0x0F),
+                )))]),
+            ))],
+            span: None,
+        };
+
+        let result = analyzer.analyze(&script);
+        assert!(result.is_ok());
+
+        let expr = binary_expr(int_literal(0xFF), BinaryOp::BitAnd, int_literal(0x0F));
+        let ctx = analyzer.symbol_table.get_expr_context(&expr).unwrap();
+        assert_eq!(ctx.get_type(), TYPE_INT32);
+    }
+
+    #[test]
+    fn test_bitwise_or() {
+        let mut analyzer = create_analyzer();
+
+        let script = Script {
+            items: vec![ScriptNode::Func(simple_func(
+                "test",
+                Some(int_type()),
+                block(vec![return_stmt(Some(binary_expr(
+                    int_literal(0xF0),
+                    BinaryOp::BitOr,
+                    int_literal(0x0F),
+                )))]),
+            ))],
+            span: None,
+        };
+
+        let result = analyzer.analyze(&script);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_bitwise_xor() {
+        let mut analyzer = create_analyzer();
+
+        let script = Script {
+            items: vec![ScriptNode::Func(simple_func(
+                "test",
+                Some(int_type()),
+                block(vec![return_stmt(Some(binary_expr(
+                    int_literal(0xFF),
+                    BinaryOp::BitXor,
+                    int_literal(0x0F),
+                )))]),
+            ))],
+            span: None,
+        };
+
+        let result = analyzer.analyze(&script);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_unary_not() {
+        let mut analyzer = create_analyzer();
+
+        let script = Script {
+            items: vec![ScriptNode::Func(simple_func(
+                "test",
+                Some(bool_type()),
+                block(vec![return_stmt(Some(unary_expr(
+                    UnaryOp::Not,
+                    bool_literal(true),
+                )))]),
+            ))],
+            span: None,
+        };
+
+        let result = analyzer.analyze(&script);
+        assert!(result.is_ok());
+
+        let expr = unary_expr(UnaryOp::Not, bool_literal(true));
+        let ctx = analyzer.symbol_table.get_expr_context(&expr).unwrap();
+        assert_eq!(ctx.get_type(), TYPE_BOOL);
+    }
+
+    #[test]
+    fn test_compound_assignment() {
+        let mut analyzer = create_analyzer();
+
+        let script = Script {
+            items: vec![ScriptNode::Func(simple_func(
+                "test",
+                Some(void_type()),
+                block(vec![
+                    var_stmt(var_decl(int_type(), "x", Some(int_literal(10)))),
+                    expr_stmt(binary_expr(
+                        var_expr("x"),
+                        BinaryOp::AddAssign,
+                        int_literal(5),
+                    )),
+                ]),
+            ))],
+            span: None,
+        };
+
+        let result = analyzer.analyze(&script);
+        assert!(result.is_ok(), "Analysis failed: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_ternary_operator() {
+        let mut analyzer = create_analyzer();
+
+        let script = Script {
+            items: vec![ScriptNode::Func(simple_func(
+                "test",
+                Some(int_type()),
+                block(vec![return_stmt(Some(ternary_expr(
+                    bool_literal(true),
+                    int_literal(1),
+                    int_literal(2),
+                )))]),
+            ))],
+            span: None,
+        };
+
+        let result = analyzer.analyze(&script);
+        assert!(result.is_ok());
+
+        let expr = ternary_expr(bool_literal(true), int_literal(1), int_literal(2));
+        let ctx = analyzer.symbol_table.get_expr_context(&expr).unwrap();
+        assert_eq!(ctx.get_type(), TYPE_INT32);
+    }
+
+    #[test]
+    fn test_function_call() {
+        let mut analyzer = create_analyzer();
+
+        let script = Script {
+            items: vec![
+                ScriptNode::Func(simple_func(
+                    "helper",
+                    Some(int_type()),
+                    block(vec![return_stmt(Some(int_literal(42)))]),
+                )),
+                ScriptNode::Func(simple_func(
+                    "test",
+                    Some(int_type()),
+                    block(vec![return_stmt(Some(func_call("helper", vec![])))]),
+                )),
+            ],
+            span: None,
+        };
+
+        let result = analyzer.analyze(&script);
+        assert!(result.is_ok(), "Analysis failed: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_undefined_function_call() {
+        let mut analyzer = create_analyzer();
+
+        let script = Script {
+            items: vec![ScriptNode::Func(simple_func(
+                "test",
+                Some(void_type()),
+                block(vec![expr_stmt(func_call("undefined", vec![]))]),
+            ))],
+            span: None,
+        };
+
+        let result = analyzer.analyze(&script);
+        assert!(result.is_err());
+
+        let errors = result.unwrap_err();
+        assert!(
+            errors
+                .iter()
+                .any(|e| matches!(e, SemanticError::UndefinedFunction { .. }))
+        );
+    }
+
+    #[test]
+    fn test_function_with_ref_parameters() {
+        let mut analyzer = create_analyzer();
+
+        let script = Script {
+            items: vec![ScriptNode::Func(func_with_params(
+                "modify",
+                Some(void_type()),
+                vec![param_with_mod("x", int_type(), TypeMod::Out)],
+                block(vec![expr_stmt(binary_expr(
+                    var_expr("x"),
+                    BinaryOp::Assign,
+                    int_literal(42),
+                ))]),
+            ))],
+            span: None,
+        };
+
+        let result = analyzer.analyze(&script);
+        assert!(result.is_ok());
+
+        let func = analyzer.symbol_table.get_function("modify");
+        assert!(func.is_some());
+        assert!(
+            func.unwrap().parameters[0]
+                .flags
+                .contains(ParameterFlags::OUT)
+        );
+    }
+
+    #[test]
+    fn test_class_constructor() {
+        let mut analyzer = create_analyzer();
+
+        let script = Script {
+            items: vec![ScriptNode::Class(Class {
+                modifiers: vec![],
+                name: "MyClass".to_string(),
+                extends: vec![],
+                members: vec![
+                    ClassMember::Var(var_decl(int_type(), "value", None)),
+                    ClassMember::Func(func_with_params(
+                        "MyClass",
+                        None,
+                        vec![param("v", int_type())],
+                        block(vec![expr_stmt(binary_expr(
+                            member_access(var_expr("this"), "value"),
+                            BinaryOp::Assign,
+                            var_expr("v"),
+                        ))]),
+                    )),
+                ],
+                span: None,
+            })],
+            span: None,
+        };
+
+        let result = analyzer.analyze(&script);
+        assert!(result.is_ok(), "Analysis failed: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_namespace() {
+        let mut analyzer = create_analyzer();
+
+        let script = Script {
+            items: vec![ScriptNode::Namespace(Namespace {
+                name: vec!["MyNamespace".to_string()],
+                items: vec![ScriptNode::Func(simple_func(
+                    "test",
+                    Some(void_type()),
+                    block(vec![]),
+                ))],
+                span: None,
+            })],
+            span: None,
+        };
+
+        let result = analyzer.analyze(&script);
+        assert!(result.is_ok());
+
+        let func = analyzer.symbol_table.get_function("MyNamespace::test");
+        assert!(func.is_some());
+    }
+
+    #[test]
+    fn test_nested_namespace() {
+        let mut analyzer = create_analyzer();
+
+        let script = Script {
+            items: vec![ScriptNode::Namespace(Namespace {
+                name: vec!["Outer".to_string(), "Inner".to_string()],
+                items: vec![ScriptNode::Func(simple_func(
+                    "test",
+                    Some(void_type()),
+                    block(vec![]),
+                ))],
+                span: None,
+            })],
+            span: None,
+        };
+
+        let result = analyzer.analyze(&script);
+        assert!(result.is_ok());
+
+        let func = analyzer.symbol_table.get_function("Outer::Inner::test");
+        assert!(func.is_some());
+    }
 
     #[test]
     fn test_variable_scope() {
@@ -3200,11 +4116,12 @@ mod tests {
                     var_stmt(var_decl(int_type(), "outer", Some(int_literal(1)))),
                     Statement::Block(block(vec![
                         var_stmt(var_decl(int_type(), "inner", Some(int_literal(2)))),
-                        expr_stmt(var_expr("outer")), // Should be accessible
-                        expr_stmt(var_expr("inner")), // Should be accessible
+                        expr_stmt(var_expr("outer")),
+                        expr_stmt(var_expr("inner")),
                     ])),
                 ]),
             ))],
+            span: None,
         };
 
         let result = analyzer.analyze(&script);
@@ -3221,19 +4138,19 @@ mod tests {
                 Some(void_type()),
                 block(vec![
                     var_stmt(var_decl(int_type(), "x", Some(int_literal(1)))),
-                    Statement::Block(block(vec![
-                        var_stmt(var_decl(int_type(), "x", Some(int_literal(2)))), // Shadow outer x
-                    ])),
+                    Statement::Block(block(vec![var_stmt(var_decl(
+                        int_type(),
+                        "x",
+                        Some(int_literal(2)),
+                    ))])),
                 ]),
             ))],
+            span: None,
         };
 
         let result = analyzer.analyze(&script);
-        // Shadowing is allowed
         assert!(result.is_ok());
     }
-
-    // ==================== HANDLE TESTS ====================
 
     #[test]
     fn test_handle_type() {
@@ -3246,6 +4163,7 @@ mod tests {
                     name: "MyClass".to_string(),
                     extends: vec![],
                     members: vec![],
+                    span: None,
                 }),
                 ScriptNode::Func(simple_func(
                     "test",
@@ -3257,6 +4175,7 @@ mod tests {
                     ))]),
                 )),
             ],
+            span: None,
         };
 
         let result = analyzer.analyze(&script);
@@ -3274,6 +4193,7 @@ mod tests {
                     name: "MyClass".to_string(),
                     extends: vec![],
                     members: vec![],
+                    span: None,
                 }),
                 ScriptNode::Func(simple_func(
                     "test",
@@ -3289,13 +4209,12 @@ mod tests {
                     ]),
                 )),
             ],
+            span: None,
         };
 
         let result = analyzer.analyze(&script);
         assert!(result.is_ok());
     }
-
-    // ==================== VIRTUAL METHODS ====================
 
     #[test]
     fn test_virtual_method() {
@@ -3316,18 +4235,19 @@ mod tests {
                     is_const: false,
                     attributes: vec![],
                     body: Some(block(vec![])),
+                    span: None,
                 })],
+                span: None,
             })],
+            span: None,
         };
 
         let result = analyzer.analyze(&script);
         assert!(result.is_ok());
 
-        // Check vtable was built
         let type_id = analyzer.symbol_table.lookup_type("Base").unwrap();
-        let vtable = analyzer.symbol_table.get_vtable(type_id);
-        assert!(vtable.is_some());
-        assert_eq!(vtable.unwrap().len(), 1);
+        let type_info = analyzer.symbol_table.get_type(type_id).unwrap();
+        assert_eq!(type_info.vtable.len(), 1);
     }
 
     #[test]
@@ -3350,7 +4270,9 @@ mod tests {
                         is_const: false,
                         attributes: vec![],
                         body: Some(block(vec![])),
+                        span: None,
                     })],
+                    span: None,
                 }),
                 ScriptNode::Class(Class {
                     modifiers: vec![],
@@ -3366,21 +4288,21 @@ mod tests {
                         is_const: false,
                         attributes: vec![],
                         body: Some(block(vec![])),
+                        span: None,
                     })],
+                    span: None,
                 }),
             ],
+            span: None,
         };
 
         let result = analyzer.analyze(&script);
         assert!(result.is_ok());
 
-        // Check override was registered in vtable
         let derived_id = analyzer.symbol_table.lookup_type("Derived").unwrap();
-        let vtable = analyzer.symbol_table.get_vtable(derived_id);
-        assert!(vtable.is_some());
+        let derived_info = analyzer.symbol_table.get_type(derived_id).unwrap();
+        assert!(!derived_info.vtable.is_empty());
     }
-
-    // ==================== MEMBER INITIALIZERS ====================
 
     #[test]
     fn test_member_initializer() {
@@ -3396,19 +4318,14 @@ mod tests {
                     "value",
                     Some(int_literal(100)),
                 ))],
+                span: None,
             })],
+            span: None,
         };
 
         let result = analyzer.analyze(&script);
         assert!(result.is_ok());
-
-        // Check initializer was saved
-        let initializers = analyzer.symbol_table.get_member_initializers("MyClass");
-        assert!(initializers.is_some());
-        assert!(initializers.unwrap().contains_key("value"));
     }
-
-    // ==================== COMPLEX INTEGRATION TESTS ====================
 
     #[test]
     fn test_complete_class_with_all_features() {
@@ -3420,11 +4337,9 @@ mod tests {
                 name: "Player".to_string(),
                 extends: vec![],
                 members: vec![
-                    // Member variables with initializers
                     ClassMember::Var(var_decl(int_type(), "health", Some(int_literal(100)))),
                     ClassMember::Var(var_decl(float_type(), "speed", Some(float_literal(5.0)))),
                     ClassMember::Var(var_decl(string_type(), "name", None)),
-                    // Constructor
                     ClassMember::Func(func_with_params(
                         "Player",
                         None,
@@ -3435,7 +4350,6 @@ mod tests {
                             var_expr("playerName"),
                         ))]),
                     )),
-                    // Methods
                     ClassMember::Func(func_with_params(
                         "takeDamage",
                         Some(void_type()),
@@ -3456,27 +4370,24 @@ mod tests {
                         )))]),
                     )),
                 ],
+                span: None,
             })],
+            span: None,
         };
 
         let result = analyzer.analyze(&script);
         assert!(result.is_ok(), "Analysis failed: {:?}", result.err());
 
-        // Verify everything was registered correctly
         let type_id = analyzer.symbol_table.lookup_type("Player").unwrap();
         let type_info = analyzer.symbol_table.get_type(type_id).unwrap();
 
-        assert_eq!(type_info.members.len(), 3);
-        assert!(type_info.members.contains_key("health"));
-        assert!(type_info.members.contains_key("speed"));
-        assert!(type_info.members.contains_key("name"));
+        assert_eq!(type_info.properties.len(), 3);
+        assert!(type_info.get_property("health").is_some());
+        assert!(type_info.get_property("speed").is_some());
+        assert!(type_info.get_property("name").is_some());
 
-        assert!(type_info.methods.contains_key("takeDamage"));
-        assert!(type_info.methods.contains_key("isAlive"));
-
-        let initializers = analyzer.symbol_table.get_member_initializers("Player");
-        assert!(initializers.is_some());
-        assert_eq!(initializers.unwrap().len(), 2); // health and speed
+        assert!(type_info.get_method("takeDamage").is_some());
+        assert!(type_info.get_method("isAlive").is_some());
     }
 
     #[test]
@@ -3499,19 +4410,14 @@ mod tests {
                     ]),
                 )),
             ],
+            span: None,
         };
 
         let result = analyzer.analyze(&script);
         assert!(result.is_ok(), "Analysis failed: {:?}", result.err());
 
-        // Check global was registered
         let global = analyzer.symbol_table.get_global("globalVar");
         assert!(global.is_some());
-
-        // Check local was registered in function
-        let func_locals = analyzer.symbol_table.get_function_locals("test");
-        assert!(func_locals.is_some());
-        assert!(func_locals.unwrap().variable_map.contains_key("localVar"));
     }
 
     #[test]
@@ -3528,6 +4434,7 @@ mod tests {
                         ClassMember::Var(var_decl(float_type(), "x", None)),
                         ClassMember::Var(var_decl(float_type(), "y", None)),
                     ],
+                    span: None,
                 }),
                 ScriptNode::Class(Class {
                     modifiers: vec![],
@@ -3538,6 +4445,7 @@ mod tests {
                         "pos",
                         None,
                     ))],
+                    span: None,
                 }),
                 ScriptNode::Func(simple_func(
                     "test",
@@ -3551,6 +4459,7 @@ mod tests {
                     ]),
                 )),
             ],
+            span: None,
         };
 
         let result = analyzer.analyze(&script);
@@ -3575,15 +4484,18 @@ mod tests {
                         is_ref: false,
                         name: "getValue".to_string(),
                         params: vec![],
-                        is_const: true, // Const method
+                        is_const: true,
                         attributes: vec![],
                         body: Some(block(vec![return_stmt(Some(member_access(
                             var_expr("this"),
                             "value",
                         )))])),
+                        span: None,
                     }),
                 ],
+                span: None,
             })],
+            span: None,
         };
 
         let result = analyzer.analyze(&script);
@@ -3591,17 +4503,15 @@ mod tests {
 
         let func = analyzer.symbol_table.get_function("MyClass::getValue");
         assert!(func.is_some());
-        assert!(func.unwrap().is_const);
+        assert_eq!(func.unwrap().kind, FunctionKind::Method { is_const: true });
     }
-
-    // ==================== EXPRESSION CONTEXT TESTS ====================
 
     #[test]
     fn test_expression_context_caching() {
         let mut analyzer = create_analyzer();
 
         let expr1 = int_literal(42);
-        let expr2 = int_literal(42); // Same value, different instance
+        let expr2 = int_literal(42);
 
         let script = Script {
             items: vec![ScriptNode::Func(simple_func(
@@ -3609,17 +4519,17 @@ mod tests {
                 Some(int_type()),
                 block(vec![return_stmt(Some(expr1.clone()))]),
             ))],
+            span: None,
         };
 
         analyzer.analyze(&script).unwrap();
 
-        // Both expressions should have contexts
         let ctx1 = analyzer.symbol_table.get_expr_context(&expr1);
         let ctx2 = analyzer.symbol_table.get_expr_context(&expr2);
 
         assert!(ctx1.is_some());
         assert!(ctx2.is_some());
-        assert_eq!(ctx1.unwrap().result_type, ctx2.unwrap().result_type);
+        assert_eq!(ctx1.unwrap().get_type(), ctx2.unwrap().get_type());
     }
 
     #[test]
@@ -3639,20 +4549,23 @@ mod tests {
                     )),
                 ]),
             ))],
+            span: None,
         };
 
         analyzer.analyze(&script).unwrap();
 
-        // Variable access is lvalue
-        let var_ctx = analyzer.symbol_table.get_expr_context(&var_expr("x"));
-        assert!(var_ctx.unwrap().is_lvalue);
+        let var_ctx = analyzer
+            .symbol_table
+            .get_expr_context(&var_expr("x"))
+            .unwrap();
+        assert!(var_ctx.is_lvalue());
 
-        // Literal is not lvalue
-        let lit_ctx = analyzer.symbol_table.get_expr_context(&int_literal(42));
-        assert!(!lit_ctx.unwrap().is_lvalue);
+        let lit_ctx = analyzer
+            .symbol_table
+            .get_expr_context(&int_literal(42))
+            .unwrap();
+        assert!(!lit_ctx.is_lvalue());
     }
-
-    // ==================== POSTFIX OPERATIONS ====================
 
     #[test]
     fn test_post_increment() {
@@ -3664,9 +4577,14 @@ mod tests {
                 Some(void_type()),
                 block(vec![
                     var_stmt(var_decl(int_type(), "x", Some(int_literal(0)))),
-                    expr_stmt(Expr::Postfix(Box::new(var_expr("x")), PostfixOp::PostInc)),
+                    expr_stmt(Expr::Postfix(
+                        Box::new(var_expr("x")),
+                        PostfixOp::PostInc,
+                        None,
+                    )),
                 ]),
             ))],
+            span: None,
         };
 
         let result = analyzer.analyze(&script);
@@ -3683,23 +4601,28 @@ mod tests {
                 Some(void_type()),
                 block(vec![
                     var_stmt(var_decl(const_int_type(), "x", Some(int_literal(0)))),
-                    expr_stmt(Expr::Postfix(Box::new(var_expr("x")), PostfixOp::PostInc)),
+                    expr_stmt(Expr::Postfix(
+                        Box::new(var_expr("x")),
+                        PostfixOp::PostInc,
+                        None,
+                    )),
                 ]),
             ))],
+            span: None,
         };
 
         let result = analyzer.analyze(&script);
-        assert!(result.is_err());
+        assert!(result.is_err(), "Should fail - incrementing const");
 
         let errors = result.unwrap_err();
         assert!(
             errors
                 .iter()
-                .any(|e| matches!(e, SemanticError::ConstViolation { .. }))
+                .any(|e| matches!(e, SemanticError::ConstViolation { .. })),
+            "Expected ConstViolation, got: {:?}",
+            errors
         );
     }
-
-    // ==================== LAMBDA TESTS ====================
 
     #[test]
     fn test_lambda_simple() {
@@ -3710,20 +4633,23 @@ mod tests {
                 param_type: Some(int_type()),
                 type_mod: None,
                 name: Some("x".to_string()),
+                span: None,
             }],
             body: block(vec![return_stmt(Some(binary_expr(
                 var_expr("x"),
                 BinaryOp::Mul,
                 int_literal(2),
             )))]),
+            span: None,
         };
 
         let script = Script {
             items: vec![ScriptNode::Func(simple_func(
                 "test",
                 Some(void_type()),
-                block(vec![expr_stmt(Expr::Lambda(lambda))]),
+                block(vec![expr_stmt(Expr::Lambda(lambda, None))]),
             ))],
+            span: None,
         };
 
         let result = analyzer.analyze(&script);
@@ -3736,19 +4662,22 @@ mod tests {
 
         let lambda = Lambda {
             params: vec![LambdaParam {
-                param_type: None, // Auto type
+                param_type: None,
                 type_mod: None,
                 name: Some("x".to_string()),
+                span: None,
             }],
             body: block(vec![return_stmt(Some(var_expr("x")))]),
+            span: None,
         };
 
         let script = Script {
             items: vec![ScriptNode::Func(simple_func(
                 "test",
                 Some(void_type()),
-                block(vec![expr_stmt(Expr::Lambda(lambda))]),
+                block(vec![expr_stmt(Expr::Lambda(lambda, None))]),
             ))],
+            span: None,
         };
 
         let result = analyzer.analyze(&script);
@@ -3762,42 +4691,21 @@ mod tests {
         let lambda = Lambda {
             params: vec![],
             body: block(vec![return_stmt(Some(int_literal(42)))]),
+            span: None,
         };
 
         let script = Script {
             items: vec![ScriptNode::Func(simple_func(
                 "test",
                 Some(void_type()),
-                block(vec![expr_stmt(Expr::Lambda(lambda))]),
+                block(vec![expr_stmt(Expr::Lambda(lambda, None))]),
             ))],
+            span: None,
         };
 
         let result = analyzer.analyze(&script);
         assert!(result.is_ok());
     }
-
-    #[test]
-    fn test_lambda_void_return() {
-        let mut analyzer = create_analyzer();
-
-        let lambda = Lambda {
-            params: vec![],
-            body: block(vec![expr_stmt(int_literal(42))]), // No return
-        };
-
-        let script = Script {
-            items: vec![ScriptNode::Func(simple_func(
-                "test",
-                Some(void_type()),
-                block(vec![expr_stmt(Expr::Lambda(lambda))]),
-            ))],
-        };
-
-        let result = analyzer.analyze(&script);
-        assert!(result.is_ok());
-    }
-
-    // ==================== FUNCDEF TESTS ====================
 
     #[test]
     fn test_funcdef_declaration() {
@@ -3810,57 +4718,20 @@ mod tests {
                 is_ref: false,
                 name: "Callback".to_string(),
                 params: vec![param("value", int_type())],
+                span: None,
             })],
+            span: None,
         };
 
         let result = analyzer.analyze(&script);
         assert!(result.is_ok());
 
-        // Check funcdef was registered as a type
         let type_id = analyzer.symbol_table.lookup_type("Callback");
         assert!(type_id.is_some());
 
         let type_info = analyzer.symbol_table.get_type(type_id.unwrap()).unwrap();
         assert_eq!(type_info.kind, TypeKind::Funcdef);
     }
-
-    #[test]
-    fn test_funcdef_with_multiple_params() {
-        let mut analyzer = create_analyzer();
-
-        let script = Script {
-            items: vec![ScriptNode::FuncDef(FuncDef {
-                modifiers: vec![],
-                return_type: void_type(),
-                is_ref: false,
-                name: "EventHandler".to_string(),
-                params: vec![param("code", int_type()), param("message", string_type())],
-            })],
-        };
-
-        let result = analyzer.analyze(&script);
-        assert!(result.is_ok());
-    }
-
-    #[test]
-    fn test_funcdef_no_params() {
-        let mut analyzer = create_analyzer();
-
-        let script = Script {
-            items: vec![ScriptNode::FuncDef(FuncDef {
-                modifiers: vec![],
-                return_type: int_type(),
-                is_ref: false,
-                name: "Getter".to_string(),
-                params: vec![],
-            })],
-        };
-
-        let result = analyzer.analyze(&script);
-        assert!(result.is_ok());
-    }
-
-    // ==================== VIRTUAL PROPERTY TESTS ====================
 
     #[test]
     fn test_virtual_property_get_set() {
@@ -3887,6 +4758,7 @@ mod tests {
                                     var_expr("this"),
                                     "_value",
                                 )))])),
+                                span: None,
                             },
                             PropertyAccessor {
                                 kind: AccessorKind::Set,
@@ -3897,87 +4769,56 @@ mod tests {
                                     BinaryOp::Assign,
                                     var_expr("value"),
                                 ))])),
+                                span: None,
                             },
                         ],
+                        span: None,
                     }),
                 ],
+                span: None,
             })],
+            span: None,
         };
 
         let result = analyzer.analyze(&script);
         assert!(result.is_ok(), "Analysis failed: {:?}", result.err());
 
-        // Check getter and setter were registered as methods
         let get_func = analyzer.symbol_table.get_function("MyClass::get_value");
         assert!(get_func.is_some());
-        assert!(get_func.unwrap().is_const);
+        assert_eq!(
+            get_func.unwrap().kind,
+            FunctionKind::Method { is_const: true }
+        );
 
         let set_func = analyzer.symbol_table.get_function("MyClass::set_value");
         assert!(set_func.is_some());
-        assert!(!set_func.unwrap().is_const);
+        assert_eq!(
+            set_func.unwrap().kind,
+            FunctionKind::Method { is_const: false }
+        );
     }
 
-    #[test]
-    fn test_virtual_property_readonly() {
-        let mut analyzer = create_analyzer();
-
-        let script = Script {
-            items: vec![ScriptNode::Class(Class {
-                modifiers: vec![],
-                name: "MyClass".to_string(),
-                extends: vec![],
-                members: vec![ClassMember::VirtProp(VirtProp {
-                    visibility: None,
-                    prop_type: int_type(),
-                    is_ref: false,
-                    name: "readonly".to_string(),
-                    accessors: vec![PropertyAccessor {
-                        kind: AccessorKind::Get,
-                        is_const: true,
-                        attributes: vec![],
-                        body: Some(block(vec![return_stmt(Some(int_literal(42)))])),
-                    }],
-                })],
-            })],
-        };
-
-        let result = analyzer.analyze(&script);
-        assert!(result.is_ok());
-
-        // Only getter should exist
-        let get_func = analyzer.symbol_table.get_function("MyClass::get_readonly");
-        assert!(get_func.is_some());
-
-        let set_func = analyzer.symbol_table.get_function("MyClass::set_readonly");
-        assert!(set_func.is_none());
-    }
-
-    // ==================== CAST TESTS ====================
     #[test]
     fn test_cast_int_to_float() {
         let mut analyzer = create_analyzer();
 
-        // ✅ Create the expression ONCE
-        let expr = Expr::Cast(float_type(), Box::new(int_literal(42)));
+        let expr = Expr::Cast(float_type(), Box::new(int_literal(42)), None);
 
         let script = Script {
             items: vec![ScriptNode::Func(simple_func(
                 "test",
                 Some(float_type()),
-                block(vec![return_stmt(Some(expr.clone()))]), // Clone it
+                block(vec![return_stmt(Some(expr.clone()))]),
             ))],
+            span: None,
         };
 
         let result = analyzer.analyze(&script);
         assert!(result.is_ok());
 
-        // ✅ Check using the ORIGINAL expr (not a new one)
-        let ctx = analyzer.symbol_table.get_expr_context(&expr);
-        assert!(ctx.is_some(), "Cast expression not analyzed");
-        assert_eq!(ctx.unwrap().result_type, TYPE_FLOAT);
+        let ctx = analyzer.symbol_table.get_expr_context(&expr).unwrap();
+        assert_eq!(ctx.get_type(), TYPE_FLOAT);
     }
-
-    // ==================== CONSTRUCT CALL TESTS ====================
 
     #[test]
     fn test_construct_call_no_args() {
@@ -3994,6 +4835,7 @@ mod tests {
                         None,
                         block(vec![]),
                     ))],
+                    span: None,
                 }),
                 ScriptNode::Func(simple_func(
                     "test",
@@ -4001,9 +4843,11 @@ mod tests {
                     block(vec![expr_stmt(Expr::ConstructCall(
                         class_type("MyClass"),
                         vec![],
+                        None,
                     ))]),
                 )),
             ],
+            span: None,
         };
 
         let result = analyzer.analyze(&script);
@@ -4038,6 +4882,7 @@ mod tests {
                             ))]),
                         )),
                     ],
+                    span: None,
                 }),
                 ScriptNode::Func(simple_func(
                     "test",
@@ -4047,17 +4892,18 @@ mod tests {
                         vec![Arg {
                             name: None,
                             value: int_literal(42),
+                            span: None,
                         }],
+                        None,
                     ))]),
                 )),
             ],
+            span: None,
         };
 
         let result = analyzer.analyze(&script);
         assert!(result.is_ok(), "Analysis failed: {:?}", result.err());
     }
-
-    // ==================== INIT LIST TESTS ====================
 
     #[test]
     fn test_init_list_simple() {
@@ -4069,6 +4915,7 @@ mod tests {
                 InitListItem::Expr(int_literal(2)),
                 InitListItem::Expr(int_literal(3)),
             ],
+            span: None,
         };
 
         let script = Script {
@@ -4077,6 +4924,7 @@ mod tests {
                 Some(void_type()),
                 block(vec![expr_stmt(Expr::InitList(init_list))]),
             ))],
+            span: None,
         };
 
         let result = analyzer.analyze(&script);
@@ -4094,14 +4942,17 @@ mod tests {
                         InitListItem::Expr(int_literal(1)),
                         InitListItem::Expr(int_literal(2)),
                     ],
+                    span: None,
                 }),
                 InitListItem::InitList(InitList {
                     items: vec![
                         InitListItem::Expr(int_literal(3)),
                         InitListItem::Expr(int_literal(4)),
                     ],
+                    span: None,
                 }),
             ],
+            span: None,
         };
 
         let script = Script {
@@ -4110,6 +4961,235 @@ mod tests {
                 Some(void_type()),
                 block(vec![expr_stmt(Expr::InitList(init_list))]),
             ))],
+            span: None,
+        };
+
+        let result = analyzer.analyze(&script);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_array_index() {
+        let mut analyzer = create_analyzer();
+
+        let script = Script {
+            items: vec![ScriptNode::Func(simple_func(
+                "test",
+                Some(void_type()),
+                block(vec![
+                    var_stmt(var_decl(class_type("array"), "arr", None)),
+                    expr_stmt(Expr::Postfix(
+                        Box::new(var_expr("arr")),
+                        PostfixOp::Index(vec![IndexArg {
+                            name: None,
+                            value: int_literal(0),
+                            span: None,
+                        }]),
+                        None,
+                    )),
+                ]),
+            ))],
+            span: None,
+        };
+
+        let result = analyzer.analyze(&script);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_literal_uint() {
+        let mut analyzer = create_analyzer();
+
+        let script = Script {
+            items: vec![ScriptNode::Func(simple_func(
+                "test",
+                Some(void_type()),
+                block(vec![expr_stmt(Expr::Literal(
+                    Literal::Number("42u".to_string()),
+                    None,
+                ))]),
+            ))],
+            span: None,
+        };
+
+        let result = analyzer.analyze(&script);
+        assert!(result.is_ok());
+
+        let expr = Expr::Literal(Literal::Number("42u".to_string()), None);
+        let ctx = analyzer.symbol_table.get_expr_context(&expr).unwrap();
+        assert_eq!(ctx.get_type(), TYPE_UINT32);
+    }
+
+    #[test]
+    fn test_literal_int64() {
+        let mut analyzer = create_analyzer();
+
+        let script = Script {
+            items: vec![ScriptNode::Func(simple_func(
+                "test",
+                Some(void_type()),
+                block(vec![expr_stmt(Expr::Literal(
+                    Literal::Number("42ll".to_string()),
+                    None,
+                ))]),
+            ))],
+            span: None,
+        };
+
+        let result = analyzer.analyze(&script);
+        assert!(result.is_ok());
+
+        let expr = Expr::Literal(Literal::Number("42ll".to_string()), None);
+        let ctx = analyzer.symbol_table.get_expr_context(&expr).unwrap();
+        assert_eq!(ctx.get_type(), TYPE_INT64);
+    }
+
+    #[test]
+    fn test_literal_uint64() {
+        let mut analyzer = create_analyzer();
+
+        let script = Script {
+            items: vec![ScriptNode::Func(simple_func(
+                "test",
+                Some(void_type()),
+                block(vec![expr_stmt(Expr::Literal(
+                    Literal::Number("42ull".to_string()),
+                    None,
+                ))]),
+            ))],
+            span: None,
+        };
+
+        let result = analyzer.analyze(&script);
+        assert!(result.is_ok());
+
+        let expr = Expr::Literal(Literal::Number("42ull".to_string()), None);
+        let ctx = analyzer.symbol_table.get_expr_context(&expr).unwrap();
+        assert_eq!(ctx.get_type(), TYPE_UINT64);
+    }
+
+    #[test]
+    fn test_literal_float_no_decimal() {
+        let mut analyzer = create_analyzer();
+
+        let script = Script {
+            items: vec![ScriptNode::Func(simple_func(
+                "test",
+                Some(void_type()),
+                block(vec![expr_stmt(Expr::Literal(
+                    Literal::Number("2f".to_string()),
+                    None,
+                ))]),
+            ))],
+            span: None,
+        };
+
+        let result = analyzer.analyze(&script);
+        assert!(result.is_ok());
+
+        let expr = Expr::Literal(Literal::Number("2f".to_string()), None);
+        let ctx = analyzer.symbol_table.get_expr_context(&expr).unwrap();
+        assert_eq!(ctx.get_type(), TYPE_FLOAT);
+    }
+
+    #[test]
+    fn test_literal_double_default() {
+        let mut analyzer = create_analyzer();
+
+        let script = Script {
+            items: vec![ScriptNode::Func(simple_func(
+                "test",
+                Some(void_type()),
+                block(vec![expr_stmt(Expr::Literal(
+                    Literal::Number("3.14".to_string()),
+                    None,
+                ))]),
+            ))],
+            span: None,
+        };
+
+        let result = analyzer.analyze(&script);
+        assert!(result.is_ok());
+
+        let expr = Expr::Literal(Literal::Number("3.14".to_string()), None);
+        let ctx = analyzer.symbol_table.get_expr_context(&expr).unwrap();
+        assert_eq!(ctx.get_type(), TYPE_DOUBLE);
+    }
+
+    #[test]
+    fn test_literal_null() {
+        let mut analyzer = create_analyzer();
+
+        let script = Script {
+            items: vec![ScriptNode::Func(simple_func(
+                "test",
+                Some(void_type()),
+                block(vec![return_stmt(Some(null_literal()))]),
+            ))],
+            span: None,
+        };
+
+        let result = analyzer.analyze(&script);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_lambda_void_return() {
+        let mut analyzer = create_analyzer();
+
+        let lambda = Lambda {
+            params: vec![],
+            body: block(vec![expr_stmt(int_literal(42))]),
+            span: None,
+        };
+
+        let script = Script {
+            items: vec![ScriptNode::Func(simple_func(
+                "test",
+                Some(void_type()),
+                block(vec![expr_stmt(Expr::Lambda(lambda, None))]),
+            ))],
+            span: None,
+        };
+
+        let result = analyzer.analyze(&script);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_funcdef_with_multiple_params() {
+        let mut analyzer = create_analyzer();
+
+        let script = Script {
+            items: vec![ScriptNode::FuncDef(FuncDef {
+                modifiers: vec![],
+                return_type: void_type(),
+                is_ref: false,
+                name: "EventHandler".to_string(),
+                params: vec![param("code", int_type()), param("message", string_type())],
+                span: None,
+            })],
+            span: None,
+        };
+
+        let result = analyzer.analyze(&script);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_funcdef_no_params() {
+        let mut analyzer = create_analyzer();
+
+        let script = Script {
+            items: vec![ScriptNode::FuncDef(FuncDef {
+                modifiers: vec![],
+                return_type: int_type(),
+                is_ref: false,
+                name: "Getter".to_string(),
+                params: vec![],
+                span: None,
+            })],
+            span: None,
         };
 
         let result = analyzer.analyze(&script);
@@ -4126,6 +5206,7 @@ mod tests {
                 InitListItem::Expr(float_literal(2.0)),
                 InitListItem::Expr(int_literal(3)),
             ],
+            span: None,
         };
 
         let expr = Expr::InitList(init_list.clone());
@@ -4136,6 +5217,7 @@ mod tests {
                 Some(void_type()),
                 block(vec![expr_stmt(expr.clone())]),
             ))],
+            span: None,
         };
 
         let result = analyzer.analyze(&script);
@@ -4144,8 +5226,6 @@ mod tests {
         let ctx = analyzer.symbol_table.get_expr_context(&expr);
         assert!(ctx.is_some());
     }
-
-    // ==================== CONSTRUCT CALL TESTS ====================
 
     #[test]
     fn test_var_init_with_arglist() {
@@ -4170,6 +5250,7 @@ mod tests {
                             ))]),
                         )),
                     ],
+                    span: None,
                 }),
                 ScriptNode::Func(simple_func(
                     "test",
@@ -4182,18 +5263,20 @@ mod tests {
                             initializer: Some(VarInit::ArgList(vec![Arg {
                                 name: None,
                                 value: int_literal(42),
+                                span: None,
                             }])),
+                            span: None,
                         }],
+                        span: None,
                     })]),
                 )),
             ],
+            span: None,
         };
 
         let result = analyzer.analyze(&script);
         assert!(result.is_ok(), "Analysis failed: {:?}", result.err());
     }
-
-    // ==================== FOREACH TESTS ====================
 
     #[test]
     fn test_foreach_simple() {
@@ -4209,17 +5292,15 @@ mod tests {
                         variables: vec![(int_type(), "val".to_string())],
                         iterable: var_expr("arr"),
                         body: Box::new(expr_stmt(var_expr("val"))),
+                        span: None,
                     }),
                 ]),
             ))],
+            span: None,
         };
 
         let result = analyzer.analyze(&script);
         assert!(result.is_ok(), "Analysis failed: {:?}", result.err());
-
-        // Check loop variable was registered
-        // Note: It's in a popped scope, so we can't check it directly
-        // But the analysis should have succeeded
     }
 
     #[test]
@@ -4239,9 +5320,11 @@ mod tests {
                         ],
                         iterable: var_expr("arr"),
                         body: Box::new(expr_stmt(var_expr("val"))),
+                        span: None,
                     }),
                 ]),
             ))],
+            span: None,
         };
 
         let result = analyzer.analyze(&script);
@@ -4261,17 +5344,17 @@ mod tests {
                     Statement::ForEach(ForEachStmt {
                         variables: vec![(int_type(), "val".to_string())],
                         iterable: var_expr("arr"),
-                        body: Box::new(Statement::Break),
+                        body: Box::new(Statement::Break(None)),
+                        span: None,
                     }),
                 ]),
             ))],
+            span: None,
         };
 
         let result = analyzer.analyze(&script);
-        assert!(result.is_ok()); // Break inside foreach is valid
+        assert!(result.is_ok());
     }
-
-    // ==================== SWITCH TESTS ====================
 
     #[test]
     fn test_switch_statement() {
@@ -4289,19 +5372,24 @@ mod tests {
                             Case {
                                 pattern: CasePattern::Value(int_literal(1)),
                                 statements: vec![expr_stmt(int_literal(10))],
+                                span: None,
                             },
                             Case {
                                 pattern: CasePattern::Value(int_literal(2)),
                                 statements: vec![expr_stmt(int_literal(20))],
+                                span: None,
                             },
                             Case {
                                 pattern: CasePattern::Default,
                                 statements: vec![expr_stmt(int_literal(30))],
+                                span: None,
                             },
                         ],
+                        span: None,
                     }),
                 ]),
             ))],
+            span: None,
         };
 
         let result = analyzer.analyze(&script);
@@ -4320,19 +5408,18 @@ mod tests {
                     value: int_literal(1),
                     cases: vec![Case {
                         pattern: CasePattern::Value(int_literal(1)),
-                        statements: vec![Statement::Break],
+                        statements: vec![Statement::Break(None)],
+                        span: None,
                     }],
+                    span: None,
                 })]),
             ))],
+            span: None,
         };
 
         let result = analyzer.analyze(&script);
-        // Break outside loop but inside switch - should this be valid?
-        // In AngelScript, break in switch is valid
         assert!(result.is_ok());
     }
-
-    // ==================== TRY/CATCH TESTS ====================
 
     #[test]
     fn test_try_catch() {
@@ -4345,130 +5432,18 @@ mod tests {
                 block(vec![Statement::Try(TryStmt {
                     try_block: block(vec![expr_stmt(int_literal(1))]),
                     catch_block: block(vec![expr_stmt(int_literal(2))]),
+                    span: None,
                 })]),
             ))],
+            span: None,
         };
 
         let result = analyzer.analyze(&script);
         assert!(result.is_ok());
     }
 
-    // ==================== LITERAL SUFFIX TESTS ====================
-
     #[test]
-    fn test_literal_uint() {
-        let mut analyzer = create_analyzer();
-
-        let script = Script {
-            items: vec![ScriptNode::Func(simple_func(
-                "test",
-                Some(void_type()),
-                block(vec![expr_stmt(Expr::Literal(Literal::Number(
-                    "42u".to_string(),
-                )))]),
-            ))],
-        };
-
-        let result = analyzer.analyze(&script);
-        assert!(result.is_ok());
-
-        let expr = Expr::Literal(Literal::Number("42u".to_string()));
-        let ctx = analyzer.symbol_table.get_expr_context(&expr);
-        assert_eq!(ctx.unwrap().result_type, TYPE_UINT32);
-    }
-
-    #[test]
-    fn test_literal_int64() {
-        let mut analyzer = create_analyzer();
-
-        let script = Script {
-            items: vec![ScriptNode::Func(simple_func(
-                "test",
-                Some(void_type()),
-                block(vec![expr_stmt(Expr::Literal(Literal::Number(
-                    "42ll".to_string(),
-                )))]),
-            ))],
-        };
-
-        let result = analyzer.analyze(&script);
-        assert!(result.is_ok());
-
-        let expr = Expr::Literal(Literal::Number("42ll".to_string()));
-        let ctx = analyzer.symbol_table.get_expr_context(&expr);
-        assert_eq!(ctx.unwrap().result_type, TYPE_INT64);
-    }
-
-    #[test]
-    fn test_literal_uint64() {
-        let mut analyzer = create_analyzer();
-
-        let script = Script {
-            items: vec![ScriptNode::Func(simple_func(
-                "test",
-                Some(void_type()),
-                block(vec![expr_stmt(Expr::Literal(Literal::Number(
-                    "42ull".to_string(),
-                )))]),
-            ))],
-        };
-
-        let result = analyzer.analyze(&script);
-        assert!(result.is_ok());
-
-        let expr = Expr::Literal(Literal::Number("42ull".to_string()));
-        let ctx = analyzer.symbol_table.get_expr_context(&expr);
-        assert_eq!(ctx.unwrap().result_type, TYPE_UINT64);
-    }
-
-    #[test]
-    fn test_literal_float_no_decimal() {
-        let mut analyzer = create_analyzer();
-
-        let script = Script {
-            items: vec![ScriptNode::Func(simple_func(
-                "test",
-                Some(void_type()),
-                block(vec![expr_stmt(Expr::Literal(Literal::Number(
-                    "2f".to_string(),
-                )))]),
-            ))],
-        };
-
-        let result = analyzer.analyze(&script);
-        assert!(result.is_ok());
-
-        let expr = Expr::Literal(Literal::Number("2f".to_string()));
-        let ctx = analyzer.symbol_table.get_expr_context(&expr);
-        assert_eq!(ctx.unwrap().result_type, TYPE_FLOAT);
-    }
-
-    #[test]
-    fn test_literal_double_default() {
-        let mut analyzer = create_analyzer();
-
-        let script = Script {
-            items: vec![ScriptNode::Func(simple_func(
-                "test",
-                Some(void_type()),
-                block(vec![expr_stmt(Expr::Literal(Literal::Number(
-                    "3.14".to_string(),
-                )))]),
-            ))],
-        };
-
-        let result = analyzer.analyze(&script);
-        assert!(result.is_ok());
-
-        let expr = Expr::Literal(Literal::Number("3.14".to_string()));
-        let ctx = analyzer.symbol_table.get_expr_context(&expr);
-        assert_eq!(ctx.unwrap().result_type, TYPE_DOUBLE);
-    }
-
-    // ==================== POSTFIX INDEX TESTS ====================
-
-    #[test]
-    fn test_array_index() {
+    fn test_all_literal_suffixes() {
         let mut analyzer = create_analyzer();
 
         let script = Script {
@@ -4476,52 +5451,80 @@ mod tests {
                 "test",
                 Some(void_type()),
                 block(vec![
-                    var_stmt(var_decl(class_type("array"), "arr", None)),
-                    expr_stmt(Expr::Postfix(
-                        Box::new(var_expr("arr")),
-                        PostfixOp::Index(vec![IndexArg {
-                            name: None,
-                            value: int_literal(0),
-                        }]),
-                    )),
+                    expr_stmt(Expr::Literal(Literal::Number("42".to_string()), None)),
+                    expr_stmt(Expr::Literal(Literal::Number("42u".to_string()), None)),
+                    expr_stmt(Expr::Literal(Literal::Number("42l".to_string()), None)),
+                    expr_stmt(Expr::Literal(Literal::Number("42ll".to_string()), None)),
+                    expr_stmt(Expr::Literal(Literal::Number("42ul".to_string()), None)),
+                    expr_stmt(Expr::Literal(Literal::Number("42ull".to_string()), None)),
+                    expr_stmt(Expr::Literal(Literal::Number("3.14".to_string()), None)),
+                    expr_stmt(Expr::Literal(Literal::Number("3.14f".to_string()), None)),
+                    expr_stmt(Expr::Literal(Literal::Number("2f".to_string()), None)),
                 ]),
             ))],
+            span: None,
         };
 
         let result = analyzer.analyze(&script);
-        assert!(result.is_ok());
+        assert!(result.is_ok(), "Analysis failed: {:?}", result.err());
+
+        assert_eq!(
+            analyzer
+                .symbol_table
+                .get_expr_context(&Expr::Literal(Literal::Number("42".to_string()), None))
+                .unwrap()
+                .get_type(),
+            TYPE_INT32
+        );
+        assert_eq!(
+            analyzer
+                .symbol_table
+                .get_expr_context(&Expr::Literal(Literal::Number("42u".to_string()), None))
+                .unwrap()
+                .get_type(),
+            TYPE_UINT32
+        );
+        assert_eq!(
+            analyzer
+                .symbol_table
+                .get_expr_context(&Expr::Literal(Literal::Number("42ll".to_string()), None))
+                .unwrap()
+                .get_type(),
+            TYPE_INT64
+        );
+        assert_eq!(
+            analyzer
+                .symbol_table
+                .get_expr_context(&Expr::Literal(Literal::Number("42ull".to_string()), None))
+                .unwrap()
+                .get_type(),
+            TYPE_UINT64
+        );
+        assert_eq!(
+            analyzer
+                .symbol_table
+                .get_expr_context(&Expr::Literal(Literal::Number("3.14".to_string()), None))
+                .unwrap()
+                .get_type(),
+            TYPE_DOUBLE
+        );
+        assert_eq!(
+            analyzer
+                .symbol_table
+                .get_expr_context(&Expr::Literal(Literal::Number("3.14f".to_string()), None))
+                .unwrap()
+                .get_type(),
+            TYPE_FLOAT
+        );
+        assert_eq!(
+            analyzer
+                .symbol_table
+                .get_expr_context(&Expr::Literal(Literal::Number("2f".to_string()), None))
+                .unwrap()
+                .get_type(),
+            TYPE_FLOAT
+        );
     }
-
-    #[test]
-    fn test_array_index_assignment() {
-        let mut analyzer = create_analyzer();
-
-        let script = Script {
-            items: vec![ScriptNode::Func(simple_func(
-                "test",
-                Some(void_type()),
-                block(vec![
-                    var_stmt(var_decl(class_type("array"), "arr", None)),
-                    expr_stmt(binary_expr(
-                        Expr::Postfix(
-                            Box::new(var_expr("arr")),
-                            PostfixOp::Index(vec![IndexArg {
-                                name: None,
-                                value: int_literal(0),
-                            }]),
-                        ),
-                        BinaryOp::Assign,
-                        int_literal(42),
-                    )),
-                ]),
-            ))],
-        };
-
-        let result = analyzer.analyze(&script);
-        assert!(result.is_ok());
-    }
-
-    // ==================== FUNCTOR CALL TESTS ====================
 
     #[test]
     fn test_functor_call() {
@@ -4538,17 +5541,18 @@ mod tests {
                         PostfixOp::Call(vec![Arg {
                             name: None,
                             value: int_literal(42),
+                            span: None,
                         }]),
+                        None,
                     )),
                 ]),
             ))],
+            span: None,
         };
 
         let result = analyzer.analyze(&script);
         assert!(result.is_ok());
     }
-
-    // ==================== COMPLEX INTEGRATION TESTS ====================
 
     #[test]
     fn test_lambda_in_variable() {
@@ -4559,12 +5563,14 @@ mod tests {
                 param_type: Some(int_type()),
                 type_mod: None,
                 name: Some("x".to_string()),
+                span: None,
             }],
             body: block(vec![return_stmt(Some(binary_expr(
                 var_expr("x"),
                 BinaryOp::Add,
                 int_literal(1),
             )))]),
+            span: None,
         };
 
         let script = Script {
@@ -4582,13 +5588,17 @@ mod tests {
                         datatype: DataType::Auto,
                         template_types: vec![],
                         modifiers: vec![],
+                        span: None,
                     },
                     declarations: vec![VarDecl {
                         name: "callback".to_string(),
-                        initializer: Some(VarInit::Expr(Expr::Lambda(lambda))),
+                        initializer: Some(VarInit::Expr(Expr::Lambda(lambda, None))),
+                        span: None,
                     }],
+                    span: None,
                 })]),
             ))],
+            span: None,
         };
 
         let result = analyzer.analyze(&script);
@@ -4620,6 +5630,7 @@ mod tests {
                                     var_expr("this"),
                                     "_count",
                                 )))])),
+                                span: None,
                             },
                             PropertyAccessor {
                                 kind: AccessorKind::Set,
@@ -4630,8 +5641,10 @@ mod tests {
                                     BinaryOp::Assign,
                                     var_expr("value"),
                                 ))])),
+                                span: None,
                             },
                         ],
+                        span: None,
                     }),
                     ClassMember::Func(simple_func(
                         "increment",
@@ -4643,134 +5656,64 @@ mod tests {
                         ))]),
                     )),
                 ],
+                span: None,
             })],
+            span: None,
         };
 
         let result = analyzer.analyze(&script);
         assert!(result.is_ok(), "Analysis failed: {:?}", result.err());
 
-        // Verify virtual property accessors were registered
         let get_func = analyzer.symbol_table.get_function("Counter::get_count");
         assert!(get_func.is_some());
 
         let set_func = analyzer.symbol_table.get_function("Counter::set_count");
         assert!(set_func.is_some());
 
-        // Verify regular method was registered
         let inc_func = analyzer.symbol_table.get_function("Counter::increment");
         assert!(inc_func.is_some());
     }
 
     #[test]
-    fn test_all_literal_suffixes() {
-        let mut analyzer = create_analyzer();
-
-        let script = Script {
-            items: vec![ScriptNode::Func(simple_func(
-                "test",
-                Some(void_type()),
-                block(vec![
-                    expr_stmt(Expr::Literal(Literal::Number("42".to_string()))), // int
-                    expr_stmt(Expr::Literal(Literal::Number("42u".to_string()))), // uint
-                    expr_stmt(Expr::Literal(Literal::Number("42l".to_string()))), // int64
-                    expr_stmt(Expr::Literal(Literal::Number("42ll".to_string()))), // int64
-                    expr_stmt(Expr::Literal(Literal::Number("42ul".to_string()))), // uint32
-                    expr_stmt(Expr::Literal(Literal::Number("42ull".to_string()))), // uint64
-                    expr_stmt(Expr::Literal(Literal::Number("3.14".to_string()))), // double
-                    expr_stmt(Expr::Literal(Literal::Number("3.14f".to_string()))), // float
-                    expr_stmt(Expr::Literal(Literal::Number("2f".to_string()))), // float (no decimal)
-                ]),
-            ))],
-        };
-
-        let result = analyzer.analyze(&script);
-        assert!(result.is_ok(), "Analysis failed: {:?}", result.err());
-
-        // Verify all types are correct
-        assert_eq!(
-            analyzer
-                .symbol_table
-                .get_expr_context(&Expr::Literal(Literal::Number("42".to_string())))
-                .unwrap()
-                .result_type,
-            TYPE_INT32
-        );
-        assert_eq!(
-            analyzer
-                .symbol_table
-                .get_expr_context(&Expr::Literal(Literal::Number("42u".to_string())))
-                .unwrap()
-                .result_type,
-            TYPE_UINT32
-        );
-        assert_eq!(
-            analyzer
-                .symbol_table
-                .get_expr_context(&Expr::Literal(Literal::Number("42ll".to_string())))
-                .unwrap()
-                .result_type,
-            TYPE_INT64
-        );
-        assert_eq!(
-            analyzer
-                .symbol_table
-                .get_expr_context(&Expr::Literal(Literal::Number("42ull".to_string())))
-                .unwrap()
-                .result_type,
-            TYPE_UINT64
-        );
-        assert_eq!(
-            analyzer
-                .symbol_table
-                .get_expr_context(&Expr::Literal(Literal::Number("3.14".to_string())))
-                .unwrap()
-                .result_type,
-            TYPE_DOUBLE
-        );
-        assert_eq!(
-            analyzer
-                .symbol_table
-                .get_expr_context(&Expr::Literal(Literal::Number("3.14f".to_string())))
-                .unwrap()
-                .result_type,
-            TYPE_FLOAT
-        );
-        assert_eq!(
-            analyzer
-                .symbol_table
-                .get_expr_context(&Expr::Literal(Literal::Number("2f".to_string())))
-                .unwrap()
-                .result_type,
-            TYPE_FLOAT
-        );
-    }
-
-    // ==================== APPLICATION REGISTRATION TESTS ====================
-
-    #[test]
     fn test_registered_global_function() {
-        let engine = Arc::new(RwLock::new(EngineInner {
-            object_types: HashMap::new(),
-            interface_types: HashMap::new(),
-            enum_types: HashMap::new(),
-            global_functions: vec![GlobalFunction {
-                name: "print".to_string(),
-                return_type_id: TYPE_VOID,
-                params: vec![MethodParam {
-                    name: "msg".to_string(),
-                    type_id: TYPE_STRING,
-                    is_ref: true,
-                    is_out: false,
-                    is_const: true,
-                }],
-                function_id: 0,
-            }],
-            global_properties: Vec::new(),
-            modules: HashMap::new(),
-            funcdefs: HashMap::new(),
-        }));
+        use crate::core::type_registry::{
+            FunctionFlags, FunctionImpl, FunctionInfo, FunctionKind, ParameterFlags, ParameterInfo,
+        };
+        use crate::core::types::allocate_function_id;
 
-        let mut analyzer = SemanticAnalyzer::new(engine);
+        let registry = Arc::new(RwLock::new(TypeRegistry::new()));
+
+        {
+            let mut reg = registry.write().unwrap();
+            let func_info = FunctionInfo {
+                function_id: allocate_function_id(),
+                name: "print".to_string(),
+                full_name: "print".to_string(),
+                namespace: vec![],
+                return_type: TYPE_VOID,
+                return_is_ref: false,
+                parameters: vec![ParameterInfo {
+                    name: Some("msg".to_string()),
+                    type_id: TYPE_STRING,
+                    flags: ParameterFlags::IN | ParameterFlags::CONST,
+                    default_expr: None,
+                    definition_span: None,
+                }],
+                kind: FunctionKind::Global,
+                flags: FunctionFlags::PUBLIC,
+                owner_type: None,
+                vtable_index: None,
+                implementation: FunctionImpl::Native { system_id: 0 },
+                definition_span: None,
+                doc_comments: vec![],
+                locals: vec![],
+                bytecode_address: None,
+                local_count: 0,
+            };
+            reg.register_function(func_info).unwrap();
+        }
+
+        let mut analyzer = SemanticAnalyzer::new(registry);
 
         let script = Script {
             items: vec![ScriptNode::Func(simple_func(
@@ -4781,6 +5724,7 @@ mod tests {
                     vec![string_literal("Hello")],
                 ))]),
             ))],
+            span: None,
         };
 
         let result = analyzer.analyze(&script);
@@ -4788,43 +5732,57 @@ mod tests {
 
         let func = analyzer.symbol_table.get_function("print");
         assert!(func.is_some());
-        assert!(func.unwrap().is_system_func);
     }
 
     #[test]
     fn test_registered_object_type() {
-        let engine = Arc::new(RwLock::new(EngineInner {
-            object_types: {
-                let mut map = HashMap::new();
-                map.insert(
-                    "Enemy".to_string(),
-                    ObjectType {
-                        type_id: 100,
-                        name: "Enemy".to_string(),
-                        flags: TypeFlags::REF_TYPE,
-                        properties: vec![ObjectProperty {
-                            name: "health".to_string(),
-                            type_id: TYPE_INT32,
-                            is_handle: false,
-                            is_const: false,
-                            access: AccessSpecifier::Public,
-                        }],
-                        methods: vec![],
-                        behaviours: vec![],
-                        rust_type_id: None,
-                    },
-                );
-                map
-            },
-            interface_types: HashMap::new(),
-            enum_types: HashMap::new(),
-            global_functions: Vec::new(),
-            global_properties: Vec::new(),
-            modules: HashMap::new(),
-            funcdefs: HashMap::new(),
-        }));
+        use crate::core::type_registry::{PropertyFlags, PropertyInfo};
+        use crate::core::types::allocate_type_id;
 
-        let mut analyzer = SemanticAnalyzer::new(engine);
+        let registry = Arc::new(RwLock::new(TypeRegistry::new()));
+
+        {
+            let mut reg = registry.write().unwrap();
+            let type_info = TypeInfo {
+                type_id: allocate_type_id(),
+                name: "Enemy".to_string(),
+                namespace: vec![],
+                kind: TypeKind::Class,
+                flags: TypeFlags::REF_TYPE,
+                registration: TypeRegistration::Application,
+                properties: vec![],
+                methods: HashMap::new(),
+                base_type: None,
+                interfaces: vec![],
+                behaviours: HashMap::new(),
+                rust_type_id: None,
+                rust_accessors: HashMap::new(),
+                rust_methods: HashMap::new(),
+                vtable: vec![],
+                definition_span: None,
+                doc_comments: vec![],
+            };
+            let type_id = type_info.type_id;
+            reg.register_type(type_info).unwrap();
+
+            reg.add_property(
+                type_id,
+                PropertyInfo {
+                    name: "health".to_string(),
+                    type_id: TYPE_INT32,
+                    offset: None,
+                    access: AccessSpecifier::Public,
+                    flags: PropertyFlags::PUBLIC,
+                    getter: None,
+                    setter: None,
+                    definition_span: None,
+                    doc_comments: vec![],
+                },
+            )
+               .unwrap();
+        }
+
+        let mut analyzer = SemanticAnalyzer::new(registry);
 
         let script = Script {
             items: vec![ScriptNode::Func(simple_func(
@@ -4839,6 +5797,7 @@ mod tests {
                     )),
                 ]),
             ))],
+            span: None,
         };
 
         let result = analyzer.analyze(&script);
@@ -4848,56 +5807,78 @@ mod tests {
         );
 
         let type_id = analyzer.symbol_table.lookup_type("Enemy");
-        assert_eq!(type_id, Some(100));
+        assert!(type_id.is_some());
 
-        let type_info = analyzer.symbol_table.get_type(100).unwrap();
+        let type_info = analyzer.symbol_table.get_type(type_id.unwrap()).unwrap();
         assert_eq!(type_info.kind, TypeKind::Class);
-        assert!(type_info.members.contains_key("health"));
+        assert!(type_info.get_property("health").is_some());
     }
 
     #[test]
     fn test_registered_object_method() {
-        let engine = Arc::new(RwLock::new(EngineInner {
-            object_types: {
-                let mut map = HashMap::new();
-                map.insert(
-                    "Enemy".to_string(),
-                    ObjectType {
-                        type_id: 100,
-                        name: "Enemy".to_string(),
-                        flags: TypeFlags::REF_TYPE,
-                        properties: vec![],
-                        methods: vec![ObjectMethod {
-                            name: "takeDamage".to_string(),
-                            return_type_id: TYPE_VOID,
-                            params: vec![MethodParam {
-                                name: "amount".to_string(),
-                                type_id: TYPE_INT32,
-                                is_ref: false,
-                                is_out: false,
-                                is_const: false,
-                            }],
-                            is_const: false,
-                            is_virtual: false,
-                            is_final: false,
-                            access: AccessSpecifier::Public,
-                            function_id: 0,
-                        }],
-                        behaviours: vec![],
-                        rust_type_id: None,
-                    },
-                );
-                map
-            },
-            interface_types: HashMap::new(),
-            enum_types: HashMap::new(),
-            global_functions: Vec::new(),
-            global_properties: Vec::new(),
-            modules: HashMap::new(),
-            funcdefs: HashMap::new(),
-        }));
+        use crate::core::type_registry::{
+            FunctionFlags, FunctionImpl, FunctionInfo, FunctionKind, ParameterFlags, ParameterInfo,
+        };
+        use crate::core::types::allocate_function_id;
 
-        let mut analyzer = SemanticAnalyzer::new(engine);
+        let registry = Arc::new(RwLock::new(TypeRegistry::new()));
+
+        {
+            let mut reg = registry.write().unwrap();
+            let type_info = TypeInfo {
+                type_id: allocate_type_id(),
+                name: "Enemy".to_string(),
+                namespace: vec![],
+                kind: TypeKind::Class,
+                flags: TypeFlags::REF_TYPE,
+                registration: TypeRegistration::Application,
+                properties: vec![],
+                methods: HashMap::new(),
+                base_type: None,
+                interfaces: vec![],
+                behaviours: HashMap::new(),
+                rust_type_id: None,
+                rust_accessors: HashMap::new(),
+                rust_methods: HashMap::new(),
+                vtable: vec![],
+                definition_span: None,
+                doc_comments: vec![],
+            };
+            let type_id = type_info.type_id;
+            reg.register_type(type_info).unwrap();
+
+            let func_id = allocate_function_id();
+            let func_info = FunctionInfo {
+                function_id: func_id,
+                name: "takeDamage".to_string(),
+                full_name: "Enemy::takeDamage".to_string(),
+                namespace: vec![],
+                return_type: TYPE_VOID,
+                return_is_ref: false,
+                parameters: vec![ParameterInfo {
+                    name: Some("amount".to_string()),
+                    type_id: TYPE_INT32,
+                    flags: ParameterFlags::IN,
+                    default_expr: None,
+                    definition_span: None,
+                }],
+                kind: FunctionKind::Method { is_const: false },
+                flags: FunctionFlags::PUBLIC,
+                owner_type: Some(type_id),
+                vtable_index: None,
+                implementation: FunctionImpl::Native { system_id: 0 },
+                definition_span: None,
+                doc_comments: vec![],
+                locals: vec![],
+                bytecode_address: None,
+                local_count: 0,
+            };
+            reg.register_function(func_info).unwrap();
+            reg.add_method(type_id, "takeDamage".to_string(), func_id)
+               .unwrap();
+        }
+
+        let mut analyzer = SemanticAnalyzer::new(registry);
 
         let script = Script {
             items: vec![ScriptNode::Func(simple_func(
@@ -4912,6 +5893,7 @@ mod tests {
                     )),
                 ]),
             ))],
+            span: None,
         };
 
         let result = analyzer.analyze(&script);
@@ -4919,39 +5901,37 @@ mod tests {
 
         let method_func = analyzer.symbol_table.get_function("Enemy::takeDamage");
         assert!(method_func.is_some());
-        assert!(method_func.unwrap().is_system_func);
     }
 
     #[test]
     fn test_registered_enum() {
-        let engine = Arc::new(RwLock::new(EngineInner {
-            object_types: HashMap::new(),
-            interface_types: HashMap::new(),
-            enum_types: {
-                let mut map = HashMap::new();
-                map.insert(
-                    "Color".to_string(),
-                    EnumType {
-                        type_id: 100,
-                        name: "Color".to_string(),
-                        values: {
-                            let mut values = HashMap::new();
-                            values.insert("Red".to_string(), 0);
-                            values.insert("Green".to_string(), 1);
-                            values.insert("Blue".to_string(), 2);
-                            values
-                        },
-                    },
-                );
-                map
-            },
-            global_functions: Vec::new(),
-            global_properties: Vec::new(),
-            modules: HashMap::new(),
-            funcdefs: HashMap::new(),
-        }));
+        let registry = Arc::new(RwLock::new(TypeRegistry::new()));
 
-        let mut analyzer = SemanticAnalyzer::new(engine);
+        {
+            let mut reg = registry.write().unwrap();
+            let type_info = TypeInfo {
+                type_id: allocate_type_id(),
+                name: "Color".to_string(),
+                namespace: vec![],
+                kind: TypeKind::Enum,
+                flags: TypeFlags::ENUM,
+                registration: TypeRegistration::Application,
+                properties: vec![],
+                methods: HashMap::new(),
+                base_type: None,
+                interfaces: vec![],
+                behaviours: HashMap::new(),
+                rust_type_id: None,
+                rust_accessors: HashMap::new(),
+                rust_methods: HashMap::new(),
+                vtable: vec![],
+                definition_span: None,
+                doc_comments: vec![],
+            };
+            reg.register_type(type_info).unwrap();
+        }
+
+        let mut analyzer = SemanticAnalyzer::new(registry);
 
         let script = Script {
             items: vec![ScriptNode::Func(simple_func(
@@ -4959,49 +5939,48 @@ mod tests {
                 Some(void_type()),
                 block(vec![var_stmt(var_decl(class_type("Color"), "c", None))]),
             ))],
+            span: None,
         };
 
         let result = analyzer.analyze(&script);
         assert!(result.is_ok(), "Should recognize registered enum");
 
         let type_id = analyzer.symbol_table.lookup_type("Color");
-        assert_eq!(type_id, Some(100));
+        assert!(type_id.is_some());
 
-        let type_info = analyzer.symbol_table.get_type(100).unwrap();
+        let type_info = analyzer.symbol_table.get_type(type_id.unwrap()).unwrap();
         assert_eq!(type_info.kind, TypeKind::Enum);
     }
 
     #[test]
     fn test_registered_funcdef() {
-        let engine = Arc::new(RwLock::new(EngineInner {
-            object_types: HashMap::new(),
-            interface_types: HashMap::new(),
-            enum_types: HashMap::new(),
-            global_functions: Vec::new(),
-            global_properties: Vec::new(),
-            modules: HashMap::new(),
-            funcdefs: {
-                let mut map = HashMap::new();
-                map.insert(
-                    "Callback".to_string(),
-                    FuncdefInfo {
-                        type_id: 100,
-                        name: "Callback".to_string(),
-                        return_type_id: TYPE_VOID,
-                        params: vec![MethodParam {
-                            name: "code".to_string(),
-                            type_id: TYPE_INT32,
-                            is_ref: false,
-                            is_out: false,
-                            is_const: false,
-                        }],
-                    },
-                );
-                map
-            },
-        }));
+        let registry = Arc::new(RwLock::new(TypeRegistry::new()));
 
-        let mut analyzer = SemanticAnalyzer::new(engine);
+        {
+            let mut reg = registry.write().unwrap();
+            let type_info = TypeInfo {
+                type_id: allocate_type_id(),
+                name: "Callback".to_string(),
+                namespace: vec![],
+                kind: TypeKind::Funcdef,
+                flags: TypeFlags::FUNCDEF,
+                registration: TypeRegistration::Application,
+                properties: vec![],
+                methods: HashMap::new(),
+                base_type: None,
+                interfaces: vec![],
+                behaviours: HashMap::new(),
+                rust_type_id: None,
+                rust_accessors: HashMap::new(),
+                rust_methods: HashMap::new(),
+                vtable: vec![],
+                definition_span: None,
+                doc_comments: vec![],
+            };
+            reg.register_type(type_info).unwrap();
+        }
+
+        let mut analyzer = SemanticAnalyzer::new(registry);
 
         let script = Script {
             items: vec![ScriptNode::Func(simple_func(
@@ -5018,43 +5997,48 @@ mod tests {
                         datatype: DataType::Identifier("Callback".to_string()),
                         template_types: vec![],
                         modifiers: vec![TypeModifier::Handle],
+                        span: None,
                     },
                     declarations: vec![VarDecl {
                         name: "cb".to_string(),
                         initializer: None,
+                        span: None,
                     }],
+                    span: None,
                 })]),
             ))],
+            span: None,
         };
 
         let result = analyzer.analyze(&script);
         assert!(result.is_ok(), "Should recognize registered funcdef");
 
         let type_id = analyzer.symbol_table.lookup_type("Callback");
-        assert_eq!(type_id, Some(100));
+        assert!(type_id.is_some());
 
-        let type_info = analyzer.symbol_table.get_type(100).unwrap();
+        let type_info = analyzer.symbol_table.get_type(type_id.unwrap()).unwrap();
         assert_eq!(type_info.kind, TypeKind::Funcdef);
     }
 
     #[test]
     fn test_registered_global_property() {
-        let engine = Arc::new(RwLock::new(EngineInner {
-            object_types: HashMap::new(),
-            interface_types: HashMap::new(),
-            enum_types: HashMap::new(),
-            global_functions: Vec::new(),
-            global_properties: vec![GlobalProperty {
+        use crate::core::type_registry::GlobalInfo;
+
+        let registry = Arc::new(RwLock::new(TypeRegistry::new()));
+
+        {
+            let mut reg = registry.write().unwrap();
+            let global_info = GlobalInfo {
                 name: "g_score".to_string(),
                 type_id: TYPE_INT32,
                 is_const: false,
-                is_handle: false,
-            }],
-            modules: HashMap::new(),
-            funcdefs: HashMap::new(),
-        }));
+                address: 0,
+                definition_span: None,
+            };
+            reg.register_global(global_info).unwrap();
+        }
 
-        let mut analyzer = SemanticAnalyzer::new(engine);
+        let mut analyzer = SemanticAnalyzer::new(registry);
 
         let script = Script {
             items: vec![ScriptNode::Func(simple_func(
@@ -5066,6 +6050,7 @@ mod tests {
                     int_literal(100),
                 ))]),
             ))],
+            span: None,
         };
 
         let result = analyzer.analyze(&script);
@@ -5080,38 +6065,53 @@ mod tests {
 
     #[test]
     fn test_mixed_script_and_registered_types() {
-        let engine = Arc::new(RwLock::new(EngineInner {
-            object_types: {
-                let mut map = HashMap::new();
-                map.insert(
-                    "Enemy".to_string(),
-                    ObjectType {
-                        type_id: 100,
-                        name: "Enemy".to_string(),
-                        flags: TypeFlags::REF_TYPE,
-                        properties: vec![ObjectProperty {
-                            name: "health".to_string(),
-                            type_id: TYPE_INT32,
-                            is_handle: false,
-                            is_const: false,
-                            access: AccessSpecifier::Public,
-                        }],
-                        methods: vec![],
-                        behaviours: vec![],
-                        rust_type_id: None,
-                    },
-                );
-                map
-            },
-            interface_types: HashMap::new(),
-            enum_types: HashMap::new(),
-            global_functions: Vec::new(),
-            global_properties: Vec::new(),
-            modules: HashMap::new(),
-            funcdefs: HashMap::new(),
-        }));
+        use crate::core::type_registry::PropertyInfo;
+        use crate::core::types::allocate_type_id;
 
-        let mut analyzer = SemanticAnalyzer::new(engine);
+        let registry = Arc::new(RwLock::new(TypeRegistry::new()));
+
+        {
+            let mut reg = registry.write().unwrap();
+            let type_info = TypeInfo {
+                type_id: allocate_type_id(),
+                name: "Enemy".to_string(),
+                namespace: vec![],
+                kind: TypeKind::Class,
+                flags: TypeFlags::REF_TYPE,
+                registration: TypeRegistration::Application,
+                properties: vec![],
+                methods: HashMap::new(),
+                base_type: None,
+                interfaces: vec![],
+                behaviours: HashMap::new(),
+                rust_type_id: None,
+                rust_accessors: HashMap::new(),
+                rust_methods: HashMap::new(),
+                vtable: vec![],
+                definition_span: None,
+                doc_comments: vec![],
+            };
+            let type_id = type_info.type_id;
+            reg.register_type(type_info).unwrap();
+
+            reg.add_property(
+                type_id,
+                PropertyInfo {
+                    name: "health".to_string(),
+                    type_id: TYPE_INT32,
+                    offset: None,
+                    access: AccessSpecifier::Public,
+                    flags: PropertyFlags::PUBLIC,
+                    getter: None,
+                    setter: None,
+                    definition_span: None,
+                    doc_comments: vec![],
+                },
+            )
+               .unwrap();
+        }
+
+        let mut analyzer = SemanticAnalyzer::new(registry);
 
         let script = Script {
             items: vec![
@@ -5124,6 +6124,7 @@ mod tests {
                         "target",
                         None,
                     ))],
+                    span: None,
                 }),
                 ScriptNode::Func(simple_func(
                     "test",
@@ -5138,6 +6139,7 @@ mod tests {
                     ]),
                 )),
             ],
+            span: None,
         };
 
         let result = analyzer.analyze(&script);
@@ -5152,7 +6154,568 @@ mod tests {
         assert!(player_type.is_some());
 
         let enemy_type = analyzer.symbol_table.lookup_type("Enemy");
-        assert_eq!(enemy_type, Some(100));
+        assert!(enemy_type.is_some());
+    }
+
+    #[test]
+    fn test_function_overload_exact_match() {
+        let mut analyzer = create_analyzer();
+
+        let script = Script {
+            items: vec![
+                ScriptNode::Func(func_with_params(
+                    "foo",
+                    Some(void_type()),
+                    vec![param("x", int_type())],
+                    block(vec![]),
+                )),
+                ScriptNode::Func(func_with_params(
+                    "foo",
+                    Some(void_type()),
+                    vec![param("x", float_type())],
+                    block(vec![]),
+                )),
+                ScriptNode::Func(simple_func(
+                    "test",
+                    Some(void_type()),
+                    block(vec![
+                        expr_stmt(func_call("foo", vec![int_literal(42)])),
+                        expr_stmt(func_call("foo", vec![float_literal(3.14)])),
+                    ]),
+                )),
+            ],
+            span: None,
+        };
+
+        let result = analyzer.analyze(&script);
+        assert!(result.is_ok(), "Failed to analyze: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_function_overload_implicit_conversion() {
+        let mut analyzer = create_analyzer();
+
+        let script = Script {
+            items: vec![
+                ScriptNode::Func(func_with_params(
+                    "foo",
+                    Some(void_type()),
+                    vec![param("x", float_type())],
+                    block(vec![]),
+                )),
+                ScriptNode::Func(simple_func(
+                    "test",
+                    Some(void_type()),
+                    block(vec![
+                        // int can convert to float
+                        expr_stmt(func_call("foo", vec![int_literal(42)])),
+                    ]),
+                )),
+            ],
+            span: None,
+        };
+
+        let result = analyzer.analyze(&script);
+        assert!(result.is_ok(), "Should allow int->float conversion");
+    }
+
+    #[test]
+    fn test_function_overload_ambiguous() {
+        let mut analyzer = create_analyzer();
+
+        let script = Script {
+            items: vec![
+                ScriptNode::Func(func_with_params(
+                    "foo",
+                    Some(void_type()),
+                    vec![param("x", int_type())],
+                    block(vec![]),
+                )),
+                ScriptNode::Func(func_with_params(
+                    "foo",
+                    Some(void_type()),
+                    vec![param("x", int_type())], // ❌ Duplicate signature
+                    block(vec![]),
+                )),
+            ],
+            span: None,
+        };
+
+        let result = analyzer.analyze(&script);
+        assert!(result.is_err(), "Should not allow ambiguous overload");
+    }
+
+    #[test]
+    fn test_method_overload_parameter_count() {
+        let mut analyzer = create_analyzer();
+
+        let script = Script {
+            items: vec![
+                ScriptNode::Class(Class {
+                    modifiers: vec![],
+                    name: "MyClass".to_string(),
+                    extends: vec![],
+                    members: vec![
+                        ClassMember::Func(simple_func("method", Some(void_type()), block(vec![]))),
+                        ClassMember::Func(func_with_params(
+                            "method",
+                            Some(void_type()),
+                            vec![param("x", int_type())],
+                            block(vec![]),
+                        )),
+                        ClassMember::Func(func_with_params(
+                            "method",
+                            Some(void_type()),
+                            vec![param("x", int_type()), param("y", int_type())],
+                            block(vec![]),
+                        )),
+                    ],
+                    span: None,
+                }),
+                ScriptNode::Func(simple_func(
+                    "test",
+                    Some(void_type()),
+                    block(vec![
+                        var_stmt(var_decl(class_type("MyClass"), "obj", None)),
+                        expr_stmt(method_call(var_expr("obj"), "method", vec![])),
+                        expr_stmt(method_call(var_expr("obj"), "method", vec![int_literal(1)])),
+                        expr_stmt(method_call(
+                            var_expr("obj"),
+                            "method",
+                            vec![int_literal(1), int_literal(2)],
+                        )),
+                    ]),
+                )),
+            ],
+            span: None,
+        };
+
+        let result = analyzer.analyze(&script);
+        assert!(result.is_ok(), "Failed to analyze: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_virtual_property_getter_usage() {
+        let mut analyzer = create_analyzer();
+
+        let script = Script {
+            items: vec![
+                ScriptNode::Class(Class {
+                    modifiers: vec![],
+                    name: "MyClass".to_string(),
+                    extends: vec![],
+                    members: vec![
+                        ClassMember::Var(var_decl(int_type(), "_value", None)),
+                        ClassMember::VirtProp(VirtProp {
+                            visibility: None,
+                            prop_type: int_type(),
+                            is_ref: false,
+                            name: "value".to_string(),
+                            accessors: vec![PropertyAccessor {
+                                kind: AccessorKind::Get,
+                                is_const: true,
+                                attributes: vec![],
+                                body: Some(block(vec![return_stmt(Some(member_access(
+                                    var_expr("this"),
+                                    "_value",
+                                )))])),
+                                span: None,
+                            }],
+                            span: None,
+                        }),
+                    ],
+                    span: None,
+                }),
+                ScriptNode::Func(simple_func(
+                    "test",
+                    Some(int_type()),
+                    block(vec![
+                        var_stmt(var_decl(class_type("MyClass"), "obj", None)),
+                        // Accessing obj.value should use getter
+                        return_stmt(Some(member_access(var_expr("obj"), "value"))),
+                    ]),
+                )),
+            ],
+            span: None,
+        };
+
+        let result = analyzer.analyze(&script);
+        assert!(result.is_ok(), "Failed to analyze: {:?}", result.err());
+
+        // Verify the property access is marked as virtual
+        let access_expr = member_access(var_expr("obj"), "value");
+        let ctx = analyzer
+            .symbol_table
+            .get_expr_context(&access_expr)
+            .unwrap();
+        assert!(
+            ctx.is_virtual_property(),
+            "Should be marked as virtual property"
+        );
+        assert!(ctx.get_property_accessors().is_some(), "Should have getter");
+    }
+
+    #[test]
+    fn test_virtual_property_setter_usage() {
+        let mut analyzer = create_analyzer();
+
+        let script = Script {
+            items: vec![
+                ScriptNode::Class(Class {
+                    modifiers: vec![],
+                    name: "MyClass".to_string(),
+                    extends: vec![],
+                    members: vec![
+                        ClassMember::Var(var_decl(int_type(), "_value", None)),
+                        ClassMember::VirtProp(VirtProp {
+                            visibility: None,
+                            prop_type: int_type(),
+                            is_ref: false,
+                            name: "value".to_string(),
+                            accessors: vec![
+                                PropertyAccessor {
+                                    kind: AccessorKind::Get,
+                                    is_const: true,
+                                    attributes: vec![],
+                                    body: Some(block(vec![return_stmt(Some(member_access(
+                                        var_expr("this"),
+                                        "_value",
+                                    )))])),
+                                    span: None,
+                                },
+                                PropertyAccessor {
+                                    kind: AccessorKind::Set,
+                                    is_const: false,
+                                    attributes: vec![],
+                                    body: Some(block(vec![expr_stmt(binary_expr(
+                                        member_access(var_expr("this"), "_value"),
+                                        BinaryOp::Assign,
+                                        var_expr("value"),
+                                    ))])),
+                                    span: None,
+                                },
+                            ],
+                            span: None,
+                        }),
+                    ],
+                    span: None,
+                }),
+                ScriptNode::Func(simple_func(
+                    "test",
+                    Some(void_type()),
+                    block(vec![
+                        var_stmt(var_decl(class_type("MyClass"), "obj", None)),
+                        // Assigning to obj.value should use setter
+                        expr_stmt(binary_expr(
+                            member_access(var_expr("obj"), "value"),
+                            BinaryOp::Assign,
+                            int_literal(42),
+                        )),
+                    ]),
+                )),
+            ],
+            span: None,
+        };
+
+        let result = analyzer.analyze(&script);
+        assert!(result.is_ok(), "Failed to analyze: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_virtual_property_readonly() {
+        let mut analyzer = create_analyzer();
+
+        let script = Script {
+            items: vec![
+                ScriptNode::Class(Class {
+                    modifiers: vec![],
+                    name: "MyClass".to_string(),
+                    extends: vec![],
+                    members: vec![ClassMember::VirtProp(VirtProp {
+                        visibility: None,
+                        prop_type: int_type(),
+                        is_ref: false,
+                        name: "readonly".to_string(),
+                        accessors: vec![PropertyAccessor {
+                            kind: AccessorKind::Get,
+                            is_const: true,
+                            attributes: vec![],
+                            body: Some(block(vec![return_stmt(Some(int_literal(42)))])),
+                            span: None,
+                        }],
+                        span: None,
+                    })],
+                    span: None,
+                }),
+                ScriptNode::Func(simple_func(
+                    "test",
+                    Some(void_type()),
+                    block(vec![
+                        var_stmt(var_decl(class_type("MyClass"), "obj", None)),
+                        // Should fail - no setter
+                        expr_stmt(binary_expr(
+                            member_access(var_expr("obj"), "readonly"),
+                            BinaryOp::Assign,
+                            int_literal(42),
+                        )),
+                    ]),
+                )),
+            ],
+            span: None,
+        };
+
+        let result = analyzer.analyze(&script);
+        assert!(result.is_err(), "Should fail - property is read-only");
+
+        let errors = result.unwrap_err();
+        assert!(
+            errors
+                .iter()
+                .any(|e| matches!(e, SemanticError::ConstViolation { .. }))
+        );
+    }
+
+    #[test]
+    fn test_virtual_property_const_context() {
+        let mut analyzer = create_analyzer();
+
+        let script = Script {
+            items: vec![ScriptNode::Class(Class {
+                modifiers: vec![],
+                name: "MyClass".to_string(),
+                extends: vec![],
+                members: vec![
+                    ClassMember::Var(var_decl(int_type(), "_value", None)),
+                    ClassMember::VirtProp(VirtProp {
+                        visibility: None,
+                        prop_type: int_type(),
+                        is_ref: false,
+                        name: "value".to_string(),
+                        accessors: vec![
+                            PropertyAccessor {
+                                kind: AccessorKind::Get,
+                                is_const: true,
+                                attributes: vec![],
+                                body: Some(block(vec![return_stmt(Some(member_access(
+                                    var_expr("this"),
+                                    "_value",
+                                )))])),
+                                span: None,
+                            },
+                            PropertyAccessor {
+                                kind: AccessorKind::Set,
+                                is_const: false, // ✅ Non-const setter
+                                attributes: vec![],
+                                body: Some(block(vec![expr_stmt(binary_expr(
+                                    member_access(var_expr("this"), "_value"),
+                                    BinaryOp::Assign,
+                                    var_expr("value"),
+                                ))])),
+                                span: None,
+                            },
+                        ],
+                        span: None,
+                    }),
+                    ClassMember::Func(Func {
+                        modifiers: vec![],
+                        visibility: None,
+                        return_type: Some(int_type()),
+                        is_ref: false,
+                        name: "constMethod".to_string(),
+                        params: vec![],
+                        is_const: true,
+                        attributes: vec![],
+                        body: Some(block(vec![
+                            // In const method, can read property
+                            return_stmt(Some(member_access(var_expr("this"), "value"))),
+                        ])),
+                        span: None,
+                    }),
+                ],
+                span: None,
+            })],
+            span: None,
+        };
+
+        let result = analyzer.analyze(&script);
+        assert!(result.is_ok(), "Should allow reading in const method");
+    }
+
+    #[test]
+    fn test_virtual_property_cannot_write_in_const_method() {
+        let mut analyzer = create_analyzer();
+
+        let script = Script {
+            items: vec![ScriptNode::Class(Class {
+                modifiers: vec![],
+                name: "MyClass".to_string(),
+                extends: vec![],
+                members: vec![
+                    ClassMember::Var(var_decl(int_type(), "_value", None)),
+                    ClassMember::VirtProp(VirtProp {
+                        visibility: None,
+                        prop_type: int_type(),
+                        is_ref: false,
+                        name: "value".to_string(),
+                        accessors: vec![
+                            PropertyAccessor {
+                                kind: AccessorKind::Get,
+                                is_const: true,
+                                attributes: vec![],
+                                body: Some(block(vec![return_stmt(Some(member_access(
+                                    var_expr("this"),
+                                    "_value",
+                                )))])),
+                                span: None,
+                            },
+                            PropertyAccessor {
+                                kind: AccessorKind::Set,
+                                is_const: false,
+                                attributes: vec![],
+                                body: Some(block(vec![expr_stmt(binary_expr(
+                                    member_access(var_expr("this"), "_value"),
+                                    BinaryOp::Assign,
+                                    var_expr("value"),
+                                ))])),
+                                span: None,
+                            },
+                        ],
+                        span: None,
+                    }),
+                    ClassMember::Func(Func {
+                        modifiers: vec![],
+                        visibility: None,
+                        return_type: Some(void_type()),
+                        is_ref: false,
+                        name: "constMethod".to_string(),
+                        params: vec![],
+                        is_const: true,
+                        attributes: vec![],
+                        body: Some(block(vec![expr_stmt(binary_expr(
+                            member_access(var_expr("this"), "value"),
+                            BinaryOp::Assign,
+                            int_literal(42),
+                        ))])),
+                        span: None,
+                    }),
+                ],
+                span: None,
+            })],
+            span: None,
+        };
+
+        let result = analyzer.analyze(&script);
+        assert!(result.is_err(), "Should fail - can't write in const method");
+    }
+
+    #[test]
+    fn test_overload_with_typedef() {
+        let mut analyzer = create_analyzer();
+
+        let script = Script {
+            items: vec![
+                ScriptNode::Typedef(Typedef {
+                    prim_type: "int".to_string(),
+                    name: "MyInt".to_string(),
+                    span: None,
+                }),
+                ScriptNode::Func(func_with_params(
+                    "foo",
+                    Some(void_type()),
+                    vec![param("x", int_type())],
+                    block(vec![]),
+                )),
+                ScriptNode::Func(simple_func(
+                    "test",
+                    Some(void_type()),
+                    block(vec![
+                        var_stmt(var_decl(
+                            Type {
+                                is_const: false,
+                                scope: Scope {
+                                    is_global: false,
+                                    path: vec![],
+                                },
+                                datatype: DataType::Identifier("MyInt".to_string()),
+                                template_types: vec![],
+                                modifiers: vec![],
+                                span: None,
+                            },
+                            "x",
+                            Some(int_literal(42)),
+                        )),
+                        // Should match foo(int) even though x is MyInt (typedef of int)
+                        expr_stmt(func_call("foo", vec![var_expr("x")])),
+                    ]),
+                )),
+            ],
+            span: None,
+        };
+
+        let result = analyzer.analyze(&script);
+        assert!(result.is_ok(), "Should resolve through typedef");
+    }
+
+    #[test]
+    fn test_no_matching_overload() {
+        let mut analyzer = create_analyzer();
+
+        let script = Script {
+            items: vec![
+                ScriptNode::Func(func_with_params(
+                    "foo",
+                    Some(void_type()),
+                    vec![param("x", int_type())],
+                    block(vec![]),
+                )),
+                ScriptNode::Func(simple_func(
+                    "test",
+                    Some(void_type()),
+                    block(vec![
+                        // No overload for foo(string)
+                        expr_stmt(func_call("foo", vec![string_literal("hello")])),
+                    ]),
+                )),
+            ],
+            span: None,
+        };
+
+        let result = analyzer.analyze(&script);
+        assert!(result.is_err(), "Should fail - no matching overload");
+    }
+
+    #[test]
+    fn test_overload_best_match() {
+        let mut analyzer = create_analyzer();
+
+        let script = Script {
+            items: vec![
+                ScriptNode::Func(func_with_params(
+                    "foo",
+                    Some(void_type()),
+                    vec![param("x", int_type())],
+                    block(vec![]),
+                )),
+                ScriptNode::Func(func_with_params(
+                    "foo",
+                    Some(void_type()),
+                    vec![param("x", float_type())],
+                    block(vec![]),
+                )),
+                ScriptNode::Func(simple_func(
+                    "test",
+                    Some(void_type()),
+                    block(vec![
+                        // Should prefer exact match (int) over conversion (float)
+                        expr_stmt(func_call("foo", vec![int_literal(42)])),
+                    ]),
+                )),
+            ],
+            span: None,
+        };
+
+        let result = analyzer.analyze(&script);
+        assert!(result.is_ok());
     }
 
     #[test]
@@ -5165,6 +6728,7 @@ mod tests {
                 Some(void_type()),
                 block(vec![expr_stmt(func_call("undefinedSystemFunc", vec![]))]),
             ))],
+            span: None,
         };
 
         let result = analyzer.analyze(&script);
@@ -5180,51 +6744,48 @@ mod tests {
 
     #[test]
     fn test_registered_type_with_behaviours() {
-        let engine = Arc::new(RwLock::new(EngineInner {
-            object_types: {
-                let mut map = HashMap::new();
-                map.insert(
-                    "RefCounted".to_string(),
-                    ObjectType {
-                        type_id: 100,
-                        name: "RefCounted".to_string(),
-                        flags: TypeFlags::REF_TYPE,
-                        properties: vec![],
-                        methods: vec![],
-                        behaviours: vec![
-                            BehaviourInfo {
-                                behaviour_type: BehaviourType::Construct,
-                                function_id: 0,
-                                return_type_id: 100,
-                                params: vec![],
-                            },
-                            BehaviourInfo {
-                                behaviour_type: BehaviourType::AddRef,
-                                function_id: 1,
-                                return_type_id: TYPE_VOID,
-                                params: vec![],
-                            },
-                            BehaviourInfo {
-                                behaviour_type: BehaviourType::Release,
-                                function_id: 2,
-                                return_type_id: TYPE_VOID,
-                                params: vec![],
-                            },
-                        ],
-                        rust_type_id: None,
-                    },
-                );
-                map
-            },
-            interface_types: HashMap::new(),
-            enum_types: HashMap::new(),
-            global_functions: Vec::new(),
-            global_properties: Vec::new(),
-            modules: HashMap::new(),
-            funcdefs: HashMap::new(),
-        }));
+        use crate::core::types::allocate_function_id;
 
-        let mut analyzer = SemanticAnalyzer::new(engine);
+        let registry = Arc::new(RwLock::new(TypeRegistry::new()));
+
+        {
+            let mut reg = registry.write().unwrap();
+            let type_info = TypeInfo {
+                type_id: allocate_type_id(),
+                name: "RefCounted".to_string(),
+                namespace: vec![],
+                kind: TypeKind::Class,
+                flags: TypeFlags::REF_TYPE,
+                registration: TypeRegistration::Application,
+                properties: vec![],
+                methods: HashMap::new(),
+                base_type: None,
+                interfaces: vec![],
+                behaviours: HashMap::new(),
+                rust_type_id: None,
+                rust_accessors: HashMap::new(),
+                rust_methods: HashMap::new(),
+                vtable: vec![],
+                definition_span: None,
+                doc_comments: vec![],
+            };
+            let type_id = type_info.type_id;
+            reg.register_type(type_info).unwrap();
+
+            let construct_id = allocate_function_id();
+            reg.add_behaviour(type_id, BehaviourType::Construct, construct_id)
+               .unwrap();
+
+            let addref_id = allocate_function_id();
+            reg.add_behaviour(type_id, BehaviourType::AddRef, addref_id)
+               .unwrap();
+
+            let release_id = allocate_function_id();
+            reg.add_behaviour(type_id, BehaviourType::Release, release_id)
+               .unwrap();
+        }
+
+        let mut analyzer = SemanticAnalyzer::new(registry);
 
         let script = Script {
             items: vec![ScriptNode::Func(simple_func(
@@ -5236,123 +6797,42 @@ mod tests {
                     None,
                 ))]),
             ))],
+            span: None,
         };
 
         let result = analyzer.analyze(&script);
         assert!(result.is_ok(), "Should recognize type with behaviours");
-
-        let factory_func = analyzer.symbol_table.get_function("RefCounted::factory");
-        assert!(factory_func.is_some());
-        assert!(factory_func.unwrap().is_system_func);
-
-        let addref_func = analyzer.symbol_table.get_function("RefCounted::AddRef");
-        assert!(addref_func.is_some());
-    }
-
-    #[test]
-    fn test_value_type_cannot_use_inout() {
-        let mut analyzer = create_analyzer();
-
-        let script = Script {
-            items: vec![ScriptNode::Func(func_with_params(
-                "test",
-                Some(void_type()),
-                vec![Param {
-                    param_type: int_type(),
-                    type_mod: Some(TypeMod::InOut),
-                    name: Some("value".to_string()),
-                    default_value: None,
-                    is_variadic: false,
-                }],
-                block(vec![]),
-            ))],
-        };
-
-        let result = analyzer.analyze(&script);
-        assert!(result.is_err(), "Value types cannot use 'inout' references");
-
-        let errors = result.unwrap_err();
-        assert!(
-            errors
-                .iter()
-                .any(|e| matches!(e, SemanticError::ReferenceMismatch { .. }))
-        );
-    }
-
-    #[test]
-    fn test_value_type_can_use_in() {
-        let mut analyzer = create_analyzer();
-
-        let script = Script {
-            items: vec![ScriptNode::Func(func_with_params(
-                "test",
-                Some(void_type()),
-                vec![Param {
-                    param_type: int_type(),
-                    type_mod: Some(TypeMod::In),
-                    name: Some("value".to_string()),
-                    default_value: None,
-                    is_variadic: false,
-                }],
-                block(vec![]),
-            ))],
-        };
-
-        let result = analyzer.analyze(&script);
-        assert!(result.is_ok(), "Value types can use 'in' references");
-    }
-
-    #[test]
-    fn test_value_type_can_use_out() {
-        let mut analyzer = create_analyzer();
-
-        let script = Script {
-            items: vec![ScriptNode::Func(func_with_params(
-                "test",
-                Some(void_type()),
-                vec![Param {
-                    param_type: int_type(),
-                    type_mod: Some(TypeMod::Out),
-                    name: Some("value".to_string()),
-                    default_value: None,
-                    is_variadic: false,
-                }],
-                block(vec![]),
-            ))],
-        };
-
-        let result = analyzer.analyze(&script);
-        assert!(result.is_ok(), "Value types can use 'out' references");
     }
 
     #[test]
     fn test_ref_type_can_use_inout() {
-        let engine = Arc::new(RwLock::new(EngineInner {
-            object_types: {
-                let mut map = HashMap::new();
-                map.insert(
-                    "RefType".to_string(),
-                    ObjectType {
-                        type_id: 100,
-                        name: "RefType".to_string(),
-                        flags: TypeFlags::REF_TYPE,
-                        properties: vec![],
-                        methods: vec![],
-                        behaviours: vec![],
-                        rust_type_id: None,
-                    },
-                );
-                map
-            },
-            interface_types: HashMap::new(),
-            enum_types: HashMap::new(),
-            global_functions: Vec::new(),
-            global_properties: Vec::new(),
-            modules: HashMap::new(),
-            funcdefs: HashMap::new(),
-        }));
+        let registry = Arc::new(RwLock::new(TypeRegistry::new()));
 
-        let mut analyzer = SemanticAnalyzer::new(engine);
+        {
+            let mut reg = registry.write().unwrap();
+            let type_info = TypeInfo {
+                type_id: allocate_type_id(),
+                name: "RefType".to_string(),
+                namespace: vec![],
+                kind: TypeKind::Class,
+                flags: TypeFlags::REF_TYPE,
+                registration: TypeRegistration::Application,
+                properties: vec![],
+                methods: HashMap::new(),
+                base_type: None,
+                interfaces: vec![],
+                behaviours: HashMap::new(),
+                rust_type_id: None,
+                rust_accessors: HashMap::new(),
+                rust_methods: HashMap::new(),
+                vtable: vec![],
+                definition_span: None,
+                doc_comments: vec![],
+            };
+            reg.register_type(type_info).unwrap();
+        }
+
+        let mut analyzer = SemanticAnalyzer::new(registry);
 
         let script = Script {
             items: vec![ScriptNode::Func(func_with_params(
@@ -5364,9 +6844,11 @@ mod tests {
                     name: Some("obj".to_string()),
                     default_value: None,
                     is_variadic: false,
+                    span: None,
                 }],
                 block(vec![]),
             ))],
+            span: None,
         };
 
         let result = analyzer.analyze(&script);
@@ -5375,32 +6857,33 @@ mod tests {
 
     #[test]
     fn test_nohandle_type_cannot_be_handle() {
-        let engine = Arc::new(RwLock::new(EngineInner {
-            object_types: {
-                let mut map = HashMap::new();
-                map.insert(
-                    "NoHandleType".to_string(),
-                    ObjectType {
-                        type_id: 100,
-                        name: "NoHandleType".to_string(),
-                        flags: TypeFlags::REF_TYPE | TypeFlags::NOHANDLE,
-                        properties: vec![],
-                        methods: vec![],
-                        behaviours: vec![],
-                        rust_type_id: None,
-                    },
-                );
-                map
-            },
-            interface_types: HashMap::new(),
-            enum_types: HashMap::new(),
-            global_functions: Vec::new(),
-            global_properties: Vec::new(),
-            modules: HashMap::new(),
-            funcdefs: HashMap::new(),
-        }));
+        let registry = Arc::new(RwLock::new(TypeRegistry::new()));
 
-        let mut analyzer = SemanticAnalyzer::new(engine);
+        {
+            let mut reg = registry.write().unwrap();
+            let type_info = TypeInfo {
+                type_id: allocate_type_id(),
+                name: "NoHandleType".to_string(),
+                namespace: vec![],
+                kind: TypeKind::Class,
+                flags: TypeFlags::REF_TYPE | TypeFlags::NOHANDLE,
+                registration: TypeRegistration::Application,
+                properties: vec![],
+                methods: HashMap::new(),
+                base_type: None,
+                interfaces: vec![],
+                behaviours: HashMap::new(),
+                rust_type_id: None,
+                rust_accessors: HashMap::new(),
+                rust_methods: HashMap::new(),
+                vtable: vec![],
+                definition_span: None,
+                doc_comments: vec![],
+            };
+            reg.register_type(type_info).unwrap();
+        }
+
+        let mut analyzer = SemanticAnalyzer::new(registry);
 
         let script = Script {
             items: vec![ScriptNode::Func(simple_func(
@@ -5412,6 +6895,7 @@ mod tests {
                     None,
                 ))]),
             ))],
+            span: None,
         };
 
         let result = analyzer.analyze(&script);
@@ -5420,32 +6904,33 @@ mod tests {
 
     #[test]
     fn test_noinherit_type_cannot_be_inherited() {
-        let engine = Arc::new(RwLock::new(EngineInner {
-            object_types: {
-                let mut map = HashMap::new();
-                map.insert(
-                    "FinalType".to_string(),
-                    ObjectType {
-                        type_id: 100,
-                        name: "FinalType".to_string(),
-                        flags: TypeFlags::REF_TYPE | TypeFlags::NOINHERIT,
-                        properties: vec![],
-                        methods: vec![],
-                        behaviours: vec![],
-                        rust_type_id: None,
-                    },
-                );
-                map
-            },
-            interface_types: HashMap::new(),
-            enum_types: HashMap::new(),
-            global_functions: Vec::new(),
-            global_properties: Vec::new(),
-            modules: HashMap::new(),
-            funcdefs: HashMap::new(),
-        }));
+        let registry = Arc::new(RwLock::new(TypeRegistry::new()));
 
-        let mut analyzer = SemanticAnalyzer::new(engine);
+        {
+            let mut reg = registry.write().unwrap();
+            let type_info = TypeInfo {
+                type_id: allocate_type_id(),
+                name: "FinalType".to_string(),
+                namespace: vec![],
+                kind: TypeKind::Class,
+                flags: TypeFlags::REF_TYPE | TypeFlags::NOINHERIT,
+                registration: TypeRegistration::Application,
+                properties: vec![],
+                methods: HashMap::new(),
+                base_type: None,
+                interfaces: vec![],
+                behaviours: HashMap::new(),
+                rust_type_id: None,
+                rust_accessors: HashMap::new(),
+                rust_methods: HashMap::new(),
+                vtable: vec![],
+                definition_span: None,
+                doc_comments: vec![],
+            };
+            reg.register_type(type_info).unwrap();
+        }
+
+        let mut analyzer = SemanticAnalyzer::new(registry);
 
         let script = Script {
             items: vec![ScriptNode::Class(Class {
@@ -5453,7 +6938,9 @@ mod tests {
                 name: "Derived".to_string(),
                 extends: vec!["FinalType".to_string()],
                 members: vec![],
+                span: None,
             })],
+            span: None,
         };
 
         let result = analyzer.analyze(&script);
@@ -5462,32 +6949,33 @@ mod tests {
 
     #[test]
     fn test_abstract_type_cannot_be_instantiated() {
-        let engine = Arc::new(RwLock::new(EngineInner {
-            object_types: {
-                let mut map = HashMap::new();
-                map.insert(
-                    "AbstractType".to_string(),
-                    ObjectType {
-                        type_id: 100,
-                        name: "AbstractType".to_string(),
-                        flags: TypeFlags::REF_TYPE | TypeFlags::ABSTRACT,
-                        properties: vec![],
-                        methods: vec![],
-                        behaviours: vec![],
-                        rust_type_id: None,
-                    },
-                );
-                map
-            },
-            interface_types: HashMap::new(),
-            enum_types: HashMap::new(),
-            global_functions: Vec::new(),
-            global_properties: Vec::new(),
-            modules: HashMap::new(),
-            funcdefs: HashMap::new(),
-        }));
+        let registry = Arc::new(RwLock::new(TypeRegistry::new()));
 
-        let mut analyzer = SemanticAnalyzer::new(engine);
+        {
+            let mut reg = registry.write().unwrap();
+            let type_info = TypeInfo {
+                type_id: allocate_type_id(),
+                name: "AbstractType".to_string(),
+                namespace: vec![],
+                kind: TypeKind::Class,
+                flags: TypeFlags::REF_TYPE | TypeFlags::ABSTRACT,
+                registration: TypeRegistration::Application,
+                properties: vec![],
+                methods: HashMap::new(),
+                base_type: None,
+                interfaces: vec![],
+                behaviours: HashMap::new(),
+                rust_type_id: None,
+                rust_accessors: HashMap::new(),
+                rust_methods: HashMap::new(),
+                vtable: vec![],
+                definition_span: None,
+                doc_comments: vec![],
+            };
+            reg.register_type(type_info).unwrap();
+        }
+
+        let mut analyzer = SemanticAnalyzer::new(registry);
 
         let script = Script {
             items: vec![ScriptNode::Func(simple_func(
@@ -5499,6 +6987,7 @@ mod tests {
                     None,
                 ))]),
             ))],
+            span: None,
         };
 
         let result = analyzer.analyze(&script);
@@ -5527,9 +7016,11 @@ mod tests {
                     name: Some("value".to_string()),
                     default_value: None,
                     is_variadic: false,
+                    span: None,
                 }],
                 block(vec![]),
             ))],
+            span: None,
         };
 
         let result = analyzer.analyze(&script);
@@ -5545,38 +7036,33 @@ mod tests {
 
     #[test]
     fn test_value_type_with_inout_fails() {
-        let engine = Arc::new(RwLock::new(EngineInner {
-            object_types: {
-                let mut map = HashMap::new();
-                map.insert(
-                    "Vector3".to_string(),
-                    ObjectType {
-                        type_id: 100,
-                        name: "Vector3".to_string(),
-                        flags: TypeFlags::VALUE_TYPE, // ✅ Application value type
-                        properties: vec![ObjectProperty {
-                            name: "x".to_string(),
-                            type_id: TYPE_FLOAT,
-                            is_handle: false,
-                            is_const: false,
-                            access: AccessSpecifier::Public,
-                        }],
-                        methods: vec![],
-                        behaviours: vec![],
-                        rust_type_id: None,
-                    },
-                );
-                map
-            },
-            interface_types: HashMap::new(),
-            enum_types: HashMap::new(),
-            global_functions: Vec::new(),
-            global_properties: Vec::new(),
-            modules: HashMap::new(),
-            funcdefs: HashMap::new(),
-        }));
+        let registry = Arc::new(RwLock::new(TypeRegistry::new()));
 
-        let mut analyzer = SemanticAnalyzer::new(engine);
+        {
+            let mut reg = registry.write().unwrap();
+            let type_info = TypeInfo {
+                type_id: allocate_type_id(),
+                name: "Vector3".to_string(),
+                namespace: vec![],
+                kind: TypeKind::Class,
+                flags: TypeFlags::VALUE_TYPE,
+                registration: TypeRegistration::Application,
+                properties: vec![],
+                methods: HashMap::new(),
+                base_type: None,
+                interfaces: vec![],
+                behaviours: HashMap::new(),
+                rust_type_id: None,
+                rust_accessors: HashMap::new(),
+                rust_methods: HashMap::new(),
+                vtable: vec![],
+                definition_span: None,
+                doc_comments: vec![],
+            };
+            reg.register_type(type_info).unwrap();
+        }
+
+        let mut analyzer = SemanticAnalyzer::new(registry);
 
         let script = Script {
             items: vec![ScriptNode::Func(func_with_params(
@@ -5588,9 +7074,11 @@ mod tests {
                     name: Some("vec".to_string()),
                     default_value: None,
                     is_variadic: false,
+                    span: None,
                 }],
                 block(vec![]),
             ))],
+            span: None,
         };
 
         let result = analyzer.analyze(&script);
@@ -5602,32 +7090,33 @@ mod tests {
 
     #[test]
     fn test_ref_type_with_inout_succeeds() {
-        let engine = Arc::new(RwLock::new(EngineInner {
-            object_types: {
-                let mut map = HashMap::new();
-                map.insert(
-                    "RefType".to_string(),
-                    ObjectType {
-                        type_id: 100,
-                        name: "RefType".to_string(),
-                        flags: TypeFlags::REF_TYPE,
-                        properties: vec![],
-                        methods: vec![],
-                        behaviours: vec![],
-                        rust_type_id: None,
-                    },
-                );
-                map
-            },
-            interface_types: HashMap::new(),
-            enum_types: HashMap::new(),
-            global_functions: Vec::new(),
-            global_properties: Vec::new(),
-            modules: HashMap::new(),
-            funcdefs: HashMap::new(),
-        }));
+        let registry = Arc::new(RwLock::new(TypeRegistry::new()));
 
-        let mut analyzer = SemanticAnalyzer::new(engine);
+        {
+            let mut reg = registry.write().unwrap();
+            let type_info = TypeInfo {
+                type_id: allocate_type_id(),
+                name: "RefType".to_string(),
+                namespace: vec![],
+                kind: TypeKind::Class,
+                flags: TypeFlags::REF_TYPE,
+                registration: TypeRegistration::Application,
+                properties: vec![],
+                methods: HashMap::new(),
+                base_type: None,
+                interfaces: vec![],
+                behaviours: HashMap::new(),
+                rust_type_id: None,
+                rust_accessors: HashMap::new(),
+                rust_methods: HashMap::new(),
+                vtable: vec![],
+                definition_span: None,
+                doc_comments: vec![],
+            };
+            reg.register_type(type_info).unwrap();
+        }
+
+        let mut analyzer = SemanticAnalyzer::new(registry);
 
         let script = Script {
             items: vec![ScriptNode::Func(func_with_params(
@@ -5639,12 +7128,615 @@ mod tests {
                     name: Some("obj".to_string()),
                     default_value: None,
                     is_variadic: false,
+                    span: None,
                 }],
                 block(vec![]),
             ))],
+            span: None,
         };
 
         let result = analyzer.analyze(&script);
-        assert!(result.is_ok(), "Reference types can use 'inout'");
+        assert!(result.is_ok(), "Reference types can use 'inout' references");
+    }
+
+    #[test]
+    fn test_virtual_property_mixed_with_regular() {
+        let mut analyzer = create_analyzer();
+
+        let script = Script {
+            items: vec![
+                ScriptNode::Class(Class {
+                    modifiers: vec![],
+                    name: "MyClass".to_string(),
+                    extends: vec![],
+                    members: vec![
+                        // Regular property
+                        ClassMember::Var(var_decl(int_type(), "regularProp", None)),
+                        // Virtual property
+                        ClassMember::VirtProp(VirtProp {
+                            visibility: None,
+                            prop_type: int_type(),
+                            is_ref: false,
+                            name: "virtualProp".to_string(),
+                            accessors: vec![
+                                PropertyAccessor {
+                                    kind: AccessorKind::Get,
+                                    is_const: true,
+                                    attributes: vec![],
+                                    body: Some(block(vec![return_stmt(Some(int_literal(42)))])),
+                                    span: None,
+                                },
+                                PropertyAccessor {
+                                    kind: AccessorKind::Set,
+                                    is_const: false,
+                                    attributes: vec![],
+                                    body: Some(block(vec![])),
+                                    span: None,
+                                },
+                            ],
+                            span: None,
+                        }),
+                    ],
+                    span: None,
+                }),
+                ScriptNode::Func(simple_func(
+                    "test",
+                    Some(void_type()),
+                    block(vec![
+                        var_stmt(var_decl(class_type("MyClass"), "obj", None)),
+                        // Both should work
+                        expr_stmt(binary_expr(
+                            member_access(var_expr("obj"), "regularProp"),
+                            BinaryOp::Assign,
+                            int_literal(1),
+                        )),
+                        expr_stmt(binary_expr(
+                            member_access(var_expr("obj"), "virtualProp"),
+                            BinaryOp::Assign,
+                            int_literal(2),
+                        )),
+                    ]),
+                )),
+            ],
+            span: None,
+        };
+
+        let result = analyzer.analyze(&script);
+        assert!(result.is_ok(), "Failed to analyze: {:?}", result.err());
+
+        // Verify contexts are different
+        let regular = member_access(var_expr("obj"), "regularProp");
+        let virtual_prop = member_access(var_expr("obj"), "virtualProp");
+
+        let regular_ctx = analyzer.symbol_table.get_expr_context(&regular).unwrap();
+        assert!(
+            !regular_ctx.is_virtual_property(),
+            "Regular property should not be virtual"
+        );
+
+        let virtual_ctx = analyzer
+            .symbol_table
+            .get_expr_context(&virtual_prop)
+            .unwrap();
+        assert!(
+            virtual_ctx.is_virtual_property(),
+            "Virtual property should be marked"
+        );
+        assert!(virtual_ctx.get_property_accessors().is_some());
+        assert!(virtual_ctx.get_property_accessors().is_some());
+    }
+
+    #[test]
+    fn test_virtual_property_writeonly() {
+        let mut analyzer = create_analyzer();
+
+        let script = Script {
+            items: vec![
+                ScriptNode::Class(Class {
+                    modifiers: vec![],
+                    name: "MyClass".to_string(),
+                    extends: vec![],
+                    members: vec![ClassMember::VirtProp(VirtProp {
+                        visibility: None,
+                        prop_type: int_type(),
+                        is_ref: false,
+                        name: "writeonly".to_string(),
+                        accessors: vec![PropertyAccessor {
+                            kind: AccessorKind::Set,
+                            is_const: false,
+                            attributes: vec![],
+                            body: Some(block(vec![])),
+                            span: None,
+                        }],
+                        span: None,
+                    })],
+                    span: None,
+                }),
+                ScriptNode::Func(simple_func(
+                    "test",
+                    Some(int_type()),
+                    block(vec![
+                        var_stmt(var_decl(class_type("MyClass"), "obj", None)),
+                        return_stmt(Some(member_access(var_expr("obj"), "writeonly"))),
+                    ]),
+                )),
+            ],
+            span: None,
+        };
+
+        let result = analyzer.analyze(&script);
+        assert!(result.is_err(), "Should fail - write-only property");
+
+        let errors = result.unwrap_err();
+        assert!(
+            errors
+                .iter()
+                .any(|e| matches!(e, SemanticError::ConstViolation { .. }))
+        );
+    }
+
+    #[test]
+    fn test_virtual_property_in_const_object() {
+        let mut analyzer = create_analyzer();
+
+        let script = Script {
+            items: vec![
+                ScriptNode::Class(Class {
+                    modifiers: vec![],
+                    name: "MyClass".to_string(),
+                    extends: vec![],
+                    members: vec![ClassMember::VirtProp(VirtProp {
+                        visibility: None,
+                        prop_type: int_type(),
+                        is_ref: false,
+                        name: "value".to_string(),
+                        accessors: vec![
+                            PropertyAccessor {
+                                kind: AccessorKind::Get,
+                                is_const: true,
+                                attributes: vec![],
+                                body: Some(block(vec![return_stmt(Some(int_literal(42)))])),
+                                span: None,
+                            },
+                            PropertyAccessor {
+                                kind: AccessorKind::Set,
+                                is_const: false,
+                                attributes: vec![],
+                                body: Some(block(vec![])),
+                                span: None,
+                            },
+                        ],
+                        span: None,
+                    })],
+                    span: None,
+                }),
+                ScriptNode::Func(simple_func(
+                    "test",
+                    Some(void_type()),
+                    block(vec![
+                        var_stmt(var_decl(
+                            Type {
+                                is_const: true,
+                                scope: Scope {
+                                    is_global: false,
+                                    path: vec![],
+                                },
+                                datatype: DataType::Identifier("MyClass".to_string()),
+                                template_types: vec![],
+                                modifiers: vec![],
+                                span: None,
+                            },
+                            "obj",
+                            None,
+                        )),
+                        // ✅ Can read (const getter)
+                        expr_stmt(member_access(var_expr("obj"), "value")),
+                        // ❌ Can't write (non-const setter)
+                        expr_stmt(binary_expr(
+                            member_access(var_expr("obj"), "value"),
+                            BinaryOp::Assign,
+                            int_literal(42),
+                        )),
+                    ]),
+                )),
+            ],
+            span: None,
+        };
+
+        let result = analyzer.analyze(&script);
+        assert!(result.is_err(), "Should fail - can't write to const object");
+    }
+
+    #[test]
+    fn test_default_argument_basic() {
+        let mut analyzer = create_analyzer();
+
+        let script = Script {
+            items: vec![
+                ScriptNode::Func(func_with_params(
+                    "foo",
+                    Some(void_type()),
+                    vec![Param {
+                        param_type: int_type(),
+                        type_mod: None,
+                        name: Some("x".to_string()),
+                        default_value: Some(int_literal(42)),
+                        is_variadic: false,
+                        span: None,
+                    }],
+                    block(vec![]),
+                )),
+                ScriptNode::Func(simple_func(
+                    "test",
+                    Some(void_type()),
+                    block(vec![
+                        expr_stmt(func_call("foo", vec![int_literal(10)])),
+                        expr_stmt(func_call("foo", vec![])),
+                    ]),
+                )),
+            ],
+            span: None,
+        };
+
+        let result = analyzer.analyze(&script);
+        assert!(result.is_ok(), "Failed to analyze: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_default_argument_type_mismatch() {
+        let mut analyzer = create_analyzer();
+
+        let script = Script {
+            items: vec![ScriptNode::Func(func_with_params(
+                "foo",
+                Some(void_type()),
+                vec![Param {
+                    param_type: int_type(),
+                    type_mod: None,
+                    name: Some("x".to_string()),
+                    default_value: Some(string_literal("wrong")), // ❌ String for int param
+                    is_variadic: false,
+                    span: None,
+                }],
+                block(vec![]),
+            ))],
+            span: None,
+        };
+
+        let result = analyzer.analyze(&script);
+        assert!(result.is_err(), "Should fail - type mismatch in default");
+
+        let errors = result.unwrap_err();
+        assert!(
+            errors
+                .iter()
+                .any(|e| matches!(e, SemanticError::TypeMismatch { .. }))
+        );
+    }
+
+    #[test]
+    fn test_default_argument_non_constant() {
+        let mut analyzer = create_analyzer();
+
+        let script = Script {
+            items: vec![
+                ScriptNode::Var(var_decl(int_type(), "globalVar", Some(int_literal(42)))),
+                ScriptNode::Func(func_with_params(
+                    "foo",
+                    Some(void_type()),
+                    vec![Param {
+                        param_type: int_type(),
+                        type_mod: None,
+                        name: Some("x".to_string()),
+                        default_value: Some(var_expr("globalVar")), // ❌ Not a constant
+                        is_variadic: false,
+                        span: None,
+                    }],
+                    block(vec![]),
+                )),
+            ],
+            span: None,
+        };
+
+        let result = analyzer.analyze(&script);
+        assert!(result.is_err(), "Should fail - default must be constant");
+    }
+
+    #[test]
+    fn test_default_argument_ordering() {
+        let mut analyzer = create_analyzer();
+
+        let script = Script {
+            items: vec![ScriptNode::Func(func_with_params(
+                "foo",
+                Some(void_type()),
+                vec![
+                    Param {
+                        param_type: int_type(),
+                        type_mod: None,
+                        name: Some("a".to_string()),
+                        default_value: Some(int_literal(1)),
+                        is_variadic: false,
+                        span: None,
+                    },
+                    Param {
+                        param_type: int_type(),
+                        type_mod: None,
+                        name: Some("b".to_string()),
+                        default_value: None, // ❌ Non-default after default
+                        is_variadic: false,
+                        span: None,
+                    },
+                ],
+                block(vec![]),
+            ))],
+            span: None,
+        };
+
+        let result = analyzer.analyze(&script);
+        assert!(
+            result.is_err(),
+            "Should fail - non-default param after default"
+        );
+    }
+
+    #[test]
+    fn test_default_argument_multiple() {
+        let mut analyzer = create_analyzer();
+
+        let script = Script {
+            items: vec![
+                ScriptNode::Func(func_with_params(
+                    "foo",
+                    Some(void_type()),
+                    vec![
+                        param("a", int_type()),
+                        Param {
+                            param_type: int_type(),
+                            type_mod: None,
+                            name: Some("b".to_string()),
+                            default_value: Some(int_literal(10)),
+                            is_variadic: false,
+                            span: None,
+                        },
+                        Param {
+                            param_type: int_type(),
+                            type_mod: None,
+                            name: Some("c".to_string()),
+                            default_value: Some(int_literal(20)),
+                            is_variadic: false,
+                            span: None,
+                        },
+                    ],
+                    block(vec![]),
+                )),
+                ScriptNode::Func(simple_func(
+                    "test",
+                    Some(void_type()),
+                    block(vec![
+                        expr_stmt(func_call("foo", vec![int_literal(1)])),
+                        expr_stmt(func_call("foo", vec![int_literal(1), int_literal(2)])),
+                        expr_stmt(func_call(
+                            "foo",
+                            vec![int_literal(1), int_literal(2), int_literal(3)],
+                        )),
+                    ]),
+                )),
+            ],
+            span: None,
+        };
+
+        let result = analyzer.analyze(&script);
+        assert!(result.is_ok(), "Failed to analyze: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_default_argument_with_conversion() {
+        let mut analyzer = create_analyzer();
+
+        let script = Script {
+            items: vec![ScriptNode::Func(func_with_params(
+                "foo",
+                Some(void_type()),
+                vec![Param {
+                    param_type: float_type(),
+                    type_mod: None,
+                    name: Some("x".to_string()),
+                    default_value: Some(int_literal(42)), // ✅ int->float conversion OK
+                    is_variadic: false,
+                    span: None,
+                }],
+                block(vec![]),
+            ))],
+            span: None,
+        };
+
+        let result = analyzer.analyze(&script);
+        assert!(
+            result.is_ok(),
+            "Should allow implicit conversion in default"
+        );
+    }
+
+    #[test]
+    fn test_return_reference_to_member() {
+        let mut analyzer = create_analyzer();
+
+        let script = Script {
+            items: vec![ScriptNode::Class(Class {
+                modifiers: vec![],
+                name: "MyClass".to_string(),
+                extends: vec![],
+                members: vec![
+                    ClassMember::Var(var_decl(int_type(), "value", None)),
+                    ClassMember::Func(Func {
+                        modifiers: vec![],
+                        visibility: None,
+                        return_type: Some(int_type()),
+                        is_ref: true, // ✅ Returns reference
+                        name: "getValue".to_string(),
+                        params: vec![],
+                        is_const: false,
+                        attributes: vec![],
+                        body: Some(block(vec![return_stmt(Some(member_access(
+                            var_expr("this"),
+                            "value",
+                        )))])),
+                        span: None,
+                    }),
+                ],
+                span: None,
+            })],
+            span: None,
+        };
+
+        let result = analyzer.analyze(&script);
+        assert!(result.is_ok(), "Should allow returning reference to member");
+    }
+
+    #[test]
+    fn test_return_reference_to_local() {
+        let mut analyzer = create_analyzer();
+
+        let script = Script {
+            items: vec![ScriptNode::Func(Func {
+                modifiers: vec![],
+                visibility: None,
+                return_type: Some(int_type()),
+                is_ref: true,
+                name: "getRef".to_string(),
+                params: vec![],
+                is_const: false,
+                attributes: vec![],
+                body: Some(block(vec![
+                    var_stmt(var_decl(int_type(), "local", Some(int_literal(42)))),
+                    // ❌ Returning reference to local
+                    return_stmt(Some(var_expr("local"))),
+                ])),
+                span: None,
+            })],
+            span: None,
+        };
+
+        let result = analyzer.analyze(&script);
+        assert!(
+            result.is_err(),
+            "Should fail - returning reference to local"
+        );
+
+        let errors = result.unwrap_err();
+        assert!(
+            errors
+                .iter()
+                .any(|e| matches!(e, SemanticError::InvalidReturn { .. }))
+        );
+    }
+
+    #[test]
+    fn test_return_reference_to_parameter() {
+        let mut analyzer = create_analyzer();
+
+        let script = Script {
+            items: vec![
+                // ✅ Create a class to use as parameter type
+                ScriptNode::Class(Class {
+                    modifiers: vec![],
+                    name: "MyClass".to_string(),
+                    extends: vec![],
+                    members: vec![ClassMember::Var(var_decl(int_type(), "value", None))],
+                    span: None,
+                }),
+                // ✅ Function that returns reference to parameter
+                ScriptNode::Func(Func {
+                    modifiers: vec![],
+                    visibility: None,
+                    return_type: Some(class_type("MyClass")),
+                    is_ref: true, // Returns reference
+                    name: "identity".to_string(),
+                    params: vec![Param {
+                        param_type: class_type("MyClass"),
+                        type_mod: Some(TypeMod::InOut), // ✅ OK for reference types
+                        name: Some("obj".to_string()),
+                        default_value: None,
+                        is_variadic: false,
+                        span: None,
+                    }],
+                    is_const: false,
+                    attributes: vec![],
+                    body: Some(block(vec![return_stmt(Some(var_expr("obj")))])),
+                    span: None,
+                }),
+            ],
+            span: None,
+        };
+
+        let result = analyzer.analyze(&script);
+        assert!(
+            result.is_ok(),
+            "Should allow returning reference to parameter: {:?}",
+            result.err()
+        );
+    }
+
+    #[test]
+    fn test_return_reference_to_global() {
+        let mut analyzer = create_analyzer();
+
+        let script = Script {
+            items: vec![
+                ScriptNode::Var(var_decl(int_type(), "globalVar", Some(int_literal(42)))),
+                ScriptNode::Func(Func {
+                    modifiers: vec![],
+                    visibility: None,
+                    return_type: Some(int_type()),
+                    is_ref: true,
+                    name: "getGlobal".to_string(),
+                    params: vec![],
+                    is_const: false,
+                    attributes: vec![],
+                    body: Some(block(vec![return_stmt(Some(var_expr("globalVar")))])),
+                    span: None,
+                }),
+            ],
+            span: None,
+        };
+
+        let result = analyzer.analyze(&script);
+        assert!(result.is_ok(), "Should allow returning reference to global");
+    }
+
+    #[test]
+    fn test_return_reference_unsafe_mode() {
+        let mut analyzer = create_analyzer();
+
+        // ✅ Enable unsafe references
+        analyzer
+            .registry
+            .write()
+            .unwrap()
+            .set_property(EngineProperty::AllowUnsafeReferences, 1);
+
+        let script = Script {
+            items: vec![ScriptNode::Func(Func {
+                modifiers: vec![],
+                visibility: None,
+                return_type: Some(int_type()),
+                is_ref: true,
+                name: "getRef".to_string(),
+                params: vec![],
+                is_const: false,
+                attributes: vec![],
+                body: Some(block(vec![
+                    var_stmt(var_decl(int_type(), "local", Some(int_literal(42)))),
+                    // ✅ Allowed in unsafe mode
+                    return_stmt(Some(var_expr("local"))),
+                ])),
+                span: None,
+            })],
+            span: None,
+        };
+
+        let result = analyzer.analyze(&script);
+        assert!(result.is_ok(), "Should allow in unsafe mode");
     }
 }

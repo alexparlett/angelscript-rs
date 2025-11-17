@@ -1,147 +1,195 @@
-use crate::core::types::{
-    TypeFlags, TypeId, TypeKind, TypeRegistration, TYPE_BOOL, TYPE_DOUBLE, TYPE_FLOAT, TYPE_INT16,
-    TYPE_INT32, TYPE_INT64, TYPE_INT8, TYPE_STRING, TYPE_UINT16, TYPE_UINT32, TYPE_UINT64, TYPE_UINT8,
-    TYPE_VOID,
-};
-use crate::parser::ast::*;
+use crate::core::span::Span;
+use crate::core::type_registry::{LocalVarInfo, TypeRegistry};
+use crate::core::types::{FunctionId, TypeId};
+use crate::parser::ast::{DataType, Expr, Type};
 use std::collections::HashMap;
 use std::hash::{DefaultHasher, Hash, Hasher};
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 
+/// Context information for an analyzed expression
 #[derive(Debug, Clone)]
-pub struct ExprContext {
-    pub result_type: TypeId,
-    pub is_handle: bool,
-    pub is_const: bool,
-    pub is_ref: bool,
-    pub is_lvalue: bool,
-    pub is_temporary: bool,
-    pub resolved_var_index: Option<usize>,
-    pub is_global: bool,
-    pub global_address: Option<u32>,
+pub enum ExprContext {
+    /// Literal value
+    Literal { type_id: TypeId },
+
+    /// Local variable
+    LocalVar {
+        type_id: TypeId,
+        var_index: usize,
+        is_const: bool,
+    },
+
+    /// Global variable
+    GlobalVar {
+        type_id: TypeId,
+        global_address: u32,
+        is_const: bool,
+    },
+
+    /// Function call (resolved to specific function)
+    FunctionCall {
+        return_type: TypeId,
+        function_id: FunctionId,
+    },
+
+    /// Method call (resolved to specific method)
+    MethodCall {
+        return_type: TypeId,
+        function_id: FunctionId,
+    },
+
+    /// Regular property access (direct HashMap access)
+    PropertyAccess {
+        property_type: TypeId,
+        property_name: String,
+        is_const: bool,
+    },
+
+    /// Virtual property access (uses getter/setter functions)
+    VirtualProperty {
+        property_type: TypeId,
+        getter_id: Option<FunctionId>,
+        setter_id: Option<FunctionId>,
+        is_const: bool,
+    },
+
+    /// Temporary value (result of operation)
+    Temporary { type_id: TypeId },
+
+    /// Object handle
+    Handle { type_id: TypeId },
+
+    /// Reference to a value
+    Reference { type_id: TypeId, is_const: bool },
 }
 
 impl ExprContext {
-    pub fn new(result_type: TypeId) -> Self {
-        Self {
-            result_type,
-            is_handle: false,
-            is_const: false,
-            is_ref: false,
-            is_lvalue: false,
-            is_temporary: true,
-            resolved_var_index: None,
-            is_global: false,
-            global_address: None,
+    /// Get the type of this expression
+    pub fn get_type(&self) -> TypeId {
+        match self {
+            ExprContext::Literal { type_id } => *type_id,
+            ExprContext::LocalVar { type_id, .. } => *type_id,
+            ExprContext::GlobalVar { type_id, .. } => *type_id,
+            ExprContext::FunctionCall { return_type, .. } => *return_type,
+            ExprContext::MethodCall { return_type, .. } => *return_type,
+            ExprContext::PropertyAccess { property_type, .. } => *property_type,
+            ExprContext::VirtualProperty { property_type, .. } => *property_type,
+            ExprContext::Temporary { type_id } => *type_id,
+            ExprContext::Handle { type_id } => *type_id,
+            ExprContext::Reference { type_id, .. } => *type_id,
         }
     }
 
-    pub fn lvalue(result_type: TypeId, is_const: bool) -> Self {
-        Self {
-            result_type,
-            is_handle: false,
-            is_const,
-            is_ref: false,
-            is_lvalue: true,
-            is_temporary: false,
-            resolved_var_index: None,
-            is_global: false,
-            global_address: None,
+    /// Check if this expression can be assigned to (is an lvalue)
+    pub fn is_lvalue(&self) -> bool {
+        match self {
+            // ✅ All variables are lvalues (const is checked separately)
+            ExprContext::LocalVar { .. } => true,
+            ExprContext::GlobalVar { .. } => true,
+            ExprContext::PropertyAccess { .. } => true,
+            ExprContext::VirtualProperty { setter_id, .. } => setter_id.is_some(),
+            ExprContext::Reference { .. } => true,
+            ExprContext::Literal { .. } => false,
+            ExprContext::FunctionCall { .. } => false,
+            ExprContext::MethodCall { .. } => false,
+            ExprContext::Temporary { .. } => false,
+            ExprContext::Handle { .. } => false,
         }
     }
 
-    pub fn local_var(result_type: TypeId, is_const: bool, var_index: usize) -> Self {
-        Self {
-            result_type,
-            is_handle: false,
-            is_const,
-            is_ref: false,
-            is_lvalue: true,
-            is_temporary: false,
-            resolved_var_index: Some(var_index),
-            is_global: false,
-            global_address: None,
+    /// Check if this expression is const
+    pub fn is_const(&self) -> bool {
+        match self {
+            ExprContext::LocalVar { is_const, .. } => *is_const,
+            ExprContext::GlobalVar { is_const, .. } => *is_const,
+            ExprContext::PropertyAccess { is_const, .. } => *is_const,
+            ExprContext::VirtualProperty { is_const, .. } => *is_const,
+            ExprContext::Reference { is_const, .. } => *is_const,
+            _ => false,
         }
     }
 
-    pub fn global_var(result_type: TypeId, is_const: bool, global_addr: u32) -> Self {
-        Self {
-            result_type,
-            is_handle: false,
-            is_const,
-            is_ref: false,
-            is_lvalue: true,
-            is_temporary: false,
-            resolved_var_index: None,
-            is_global: true,
-            global_address: Some(global_addr),
+    /// Check if this is a temporary value
+    pub fn is_temporary(&self) -> bool {
+        matches!(self, ExprContext::Temporary { .. })
+    }
+
+    /// Get resolved function ID (for function/method calls)
+    pub fn get_function_id(&self) -> Option<FunctionId> {
+        match self {
+            ExprContext::FunctionCall { function_id, .. } => Some(*function_id),
+            ExprContext::MethodCall { function_id, .. } => Some(*function_id),
+            _ => None,
         }
     }
 
-    pub fn handle(result_type: TypeId) -> Self {
-        Self {
-            result_type,
-            is_handle: true,
-            is_const: false,
-            is_ref: false,
-            is_lvalue: false,
-            is_temporary: false,
-            resolved_var_index: None,
-            is_global: false,
-            global_address: None,
+    /// Get resolved variable index (for local variables)
+    pub fn get_var_index(&self) -> Option<usize> {
+        match self {
+            ExprContext::LocalVar { var_index, .. } => Some(*var_index),
+            _ => None,
         }
     }
 
-    pub fn reference(result_type: TypeId, is_const: bool) -> Self {
-        Self {
-            result_type,
-            is_handle: false,
-            is_const,
-            is_ref: true,
-            is_lvalue: true,
-            is_temporary: false,
-            resolved_var_index: None,
-            is_global: false,
-            global_address: None,
+    /// Get global address
+    pub fn get_global_address(&self) -> Option<u32> {
+        match self {
+            ExprContext::GlobalVar { global_address, .. } => Some(*global_address),
+            _ => None,
         }
+    }
+
+    /// Get property name (for regular properties)
+    pub fn get_property_name(&self) -> Option<&str> {
+        match self {
+            ExprContext::PropertyAccess { property_name, .. } => Some(property_name),
+            _ => None,
+        }
+    }
+
+    /// Get virtual property accessors (getter/setter IDs)
+    pub fn get_property_accessors(&self) -> Option<(Option<FunctionId>, Option<FunctionId>)> {
+        match self {
+            ExprContext::VirtualProperty {
+                getter_id,
+                setter_id,
+                ..
+            } => Some((*getter_id, *setter_id)),
+            _ => None,
+        }
+    }
+
+    /// Check if this is a virtual property
+    pub fn is_virtual_property(&self) -> bool {
+        matches!(self, ExprContext::VirtualProperty { .. })
+    }
+
+    /// Check if this is a handle
+    pub fn is_handle(&self) -> bool {
+        matches!(self, ExprContext::Handle { .. })
+    }
+
+    /// Check if this is a reference
+    pub fn is_ref(&self) -> bool {
+        matches!(self, ExprContext::Reference { .. })
     }
 }
 
 pub struct SymbolTable {
-    types: HashMap<TypeId, Arc<TypeInfo>>,
-    types_by_name: HashMap<String, TypeId>,
-    functions: HashMap<String, Arc<FunctionInfo>>,
-    globals: HashMap<String, Arc<GlobalVarInfo>>,
+    registry: Arc<RwLock<TypeRegistry>>,
+
     pub scopes: Vec<Scope>,
-    function_locals: HashMap<String, Arc<FunctionLocals>>,
-    expr_types: HashMap<ExprId, TypeId>,
+
     expr_contexts: HashMap<ExprId, ExprContext>,
-    member_initializers: HashMap<String, HashMap<String, Expr>>,
-    vtables: HashMap<TypeId, Vec<String>>,
-}
 
-#[derive(Debug, Clone)]
-pub struct FunctionLocals {
-    pub locals: Vec<LocalVarInfo>,
-    pub variable_map: HashMap<String, usize>,
-    pub param_count: usize,
-    pub total_count: usize,
-}
-
-#[derive(Debug, Clone)]
-pub struct LocalVarInfo {
-    pub name: String,
-    pub type_id: TypeId,
-    pub is_const: bool,
-    pub is_param: bool,
-    pub index: usize,
+    current_namespace: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
 pub struct Scope {
-    variables: HashMap<String, LocalVarInfo>,
-    scope_type: ScopeType,
-    next_index: usize,
+    pub variables: HashMap<String, LocalVarInfo>,
+    pub scope_type: ScopeType,
+    pub next_index: usize,
 }
 
 impl Scope {
@@ -158,59 +206,6 @@ pub enum ScopeType {
     Loop,
 }
 
-#[derive(Debug, Clone)]
-pub struct TypeInfo {
-    pub type_id: TypeId,
-    pub name: String,
-    pub kind: TypeKind,
-    pub flags: TypeFlags,
-    pub members: HashMap<String, MemberInfo>,
-    pub methods: HashMap<String, Vec<String>>,
-    pub base_class: Option<TypeId>,
-    pub registration: TypeRegistration,
-}
-
-#[derive(Debug, Clone)]
-pub struct MemberInfo {
-    pub name: String,
-    pub type_id: TypeId,
-    pub is_const: bool,
-    pub visibility: Option<Visibility>,
-}
-
-#[derive(Debug, Clone)]
-pub struct FunctionInfo {
-    pub name: String,
-    pub full_name: String,
-    pub return_type: TypeId,
-    pub params: Vec<ParamInfo>,
-    pub is_method: bool,
-    pub class_type: Option<TypeId>,
-    pub is_const: bool,
-    pub is_virtual: bool,
-    pub is_override: bool,
-    pub address: u32,
-    pub is_system_func: bool,
-    pub system_func_id: Option<u32>,
-}
-
-#[derive(Debug, Clone)]
-pub struct ParamInfo {
-    pub name: Option<String>,
-    pub type_id: TypeId,
-    pub is_ref: bool,
-    pub is_out: bool,
-    pub default_value: Option<Expr>,
-}
-
-#[derive(Debug, Clone)]
-pub struct GlobalVarInfo {
-    pub name: String,
-    pub type_id: TypeId,
-    pub is_const: bool,
-    pub address: u32,
-}
-
 #[derive(Debug, Clone, Hash, Eq, PartialEq)]
 pub struct ExprId(u64);
 
@@ -222,130 +217,64 @@ impl ExprId {
     }
 }
 
-#[derive(Debug, Clone)]
-pub enum VariableLocation {
-    Local(LocalVarInfo),
-    Global(Arc<GlobalVarInfo>),
-}
-
-#[derive(Debug, Clone, Copy)]
-pub enum TypeUsage {
-    AsHandle,
-    AsBaseClass,
-    AsVariable,
-    InAssignment,
-}
-
 impl SymbolTable {
-    pub fn new() -> Self {
-        let mut table = Self {
-            types: HashMap::new(),
-            types_by_name: HashMap::new(),
-            functions: HashMap::new(),
-            globals: HashMap::new(),
+    pub fn new(registry: Arc<RwLock<TypeRegistry>>) -> Self {
+        Self {
+            registry,
             scopes: vec![Scope {
                 variables: HashMap::new(),
                 scope_type: ScopeType::Global,
                 next_index: 0,
             }],
-            function_locals: HashMap::new(),
-            expr_types: HashMap::new(),
             expr_contexts: HashMap::new(),
-            member_initializers: HashMap::new(),
-            vtables: HashMap::new(),
-        };
-
-        table.register_primitives();
-        table
-    }
-
-    fn register_primitives(&mut self) {
-        let primitives = vec![
-            ("void", TYPE_VOID),
-            ("bool", TYPE_BOOL),
-            ("int8", TYPE_INT8),
-            ("int16", TYPE_INT16),
-            ("int", TYPE_INT32),
-            ("int64", TYPE_INT64),
-            ("uint8", TYPE_UINT8),
-            ("uint16", TYPE_UINT16),
-            ("uint", TYPE_UINT32),
-            ("uint64", TYPE_UINT64),
-            ("float", TYPE_FLOAT),
-            ("double", TYPE_DOUBLE),
-            ("string", TYPE_STRING),
-        ];
-
-        for (name, type_id) in primitives {
-            let type_info = TypeInfo {
-                type_id,
-                name: name.to_string(),
-                kind: TypeKind::Primitive,
-                flags: TypeFlags::POD_TYPE | TypeFlags::VALUE_TYPE,
-                members: HashMap::new(),
-                methods: HashMap::new(),
-                base_class: None,
-                registration: TypeRegistration::Script,
-            };
-
-            self.types.insert(type_id, Arc::new(type_info));
-            self.types_by_name.insert(name.to_string(), type_id);
+            current_namespace: Vec::new(),
         }
     }
 
-    pub fn register_type(&mut self, type_info: TypeInfo) {
-        let name = type_info.name.clone();
-        self.types_by_name.insert(name, type_info.type_id.clone());
-        self.types.insert(type_info.type_id, Arc::new(type_info));
-    }
-
-    pub fn get_type(&self, type_id: TypeId) -> Option<Arc<TypeInfo>> {
-        self.types.get(&type_id).cloned()
+    pub fn get_type(&self, type_id: TypeId) -> Option<Arc<crate::core::type_registry::TypeInfo>> {
+        self.registry.read().unwrap().get_type(type_id)
     }
 
     pub fn lookup_type(&self, name: &str) -> Option<TypeId> {
-        self.types_by_name.get(name).copied()
+        self.registry
+            .read()
+            .unwrap()
+            .lookup_type(name, &self.current_namespace)
     }
 
     pub fn resolve_type_from_ast(&self, type_def: &Type) -> TypeId {
-        let result = match &type_def.datatype {
-            DataType::PrimType(name) => self.lookup_type(name).unwrap_or(TYPE_VOID),
-            DataType::Identifier(name) => self.lookup_type(name).unwrap_or(TYPE_VOID),
-            _ => TYPE_VOID,
+        let name = match &type_def.datatype {
+            DataType::PrimType(n) => n,
+            DataType::Identifier(n) => n,
+            DataType::Auto => return crate::core::types::TYPE_AUTO,
+            DataType::Question => return crate::core::types::TYPE_VOID,
         };
-        result
+
+        let type_id = self
+            .lookup_type(name)
+            .unwrap_or(crate::core::types::TYPE_VOID);
+
+        // Resolve typedefs
+        let registry = self.registry.read().unwrap();
+        registry.resolve_typedef(type_id)
     }
 
-    pub fn register_function(&mut self, func_info: FunctionInfo) {
-        let name = func_info.full_name.clone();
-        self.functions.insert(name, Arc::new(func_info));
+    pub fn get_function(
+        &self,
+        name: &str,
+    ) -> Option<Arc<crate::core::type_registry::FunctionInfo>> {
+        self.registry
+            .read()
+            .unwrap()
+            .find_function(name, &self.current_namespace)
     }
 
-    pub fn get_function(&self, name: &str) -> Option<Arc<FunctionInfo>> {
-        self.functions.get(name).cloned()
-    }
-
-    pub fn update_function_address(&mut self, name: &str, address: u32) {
-        if let Some(func) = self.functions.get_mut(name) {
-            Arc::make_mut(func).address = address;
-        }
-    }
-
-    pub fn register_global(&mut self, global_info: GlobalVarInfo) {
-        let name = global_info.name.clone();
-        self.globals.insert(name, Arc::new(global_info));
-    }
-
-    pub fn get_global(&self, name: &str) -> Option<Arc<GlobalVarInfo>> {
-        self.globals.get(name).cloned()
+    pub fn get_global(&self, name: &str) -> Option<Arc<crate::core::type_registry::GlobalInfo>> {
+        self.registry.read().unwrap().get_global(name)
     }
 
     pub fn push_scope(&mut self, scope_type: ScopeType) {
-        let next_index = if let Some(last_scope) = self.scopes.last() {
-            last_scope.next_index
-        } else {
-            0
-        };
+        let next_index = self.scopes.last().map(|s| s.next_index).unwrap_or(0);
 
         self.scopes.push(Scope {
             variables: HashMap::new(),
@@ -382,7 +311,10 @@ impl SymbolTable {
         type_id: TypeId,
         is_const: bool,
         is_param: bool,
+        span: Option<Span>,
     ) -> usize {
+        let track_scopes = self.registry.read().unwrap().track_local_scopes();
+
         if let Some(scope) = self.scopes.last_mut() {
             let index = scope.next_index;
             scope.next_index += 1;
@@ -393,6 +325,9 @@ impl SymbolTable {
                 is_const,
                 is_param,
                 index,
+                definition_span: span,
+                scope_start: if track_scopes { Some(0) } else { None },
+                scope_end: if track_scopes { Some(0) } else { None },
             };
 
             scope.variables.insert(name, var_info);
@@ -411,104 +346,14 @@ impl SymbolTable {
         None
     }
 
-    pub fn lookup_variable(&self, name: &str) -> Option<VariableLocation> {
-        if let Some(local) = self.lookup_local(name) {
-            return Some(VariableLocation::Local(local.clone()));
-        }
-
-        if let Some(global) = self.get_global(name) {
-            return Some(VariableLocation::Global(global));
-        }
-
-        None
-    }
-
-    pub fn save_function_locals(&mut self, func_name: String) {
-        let func_scope_idx = self
-            .scopes
-            .iter()
-            .position(|s| matches!(&s.scope_type, ScopeType::Function(name) if name == &func_name));
-
-        if let Some(func_idx) = func_scope_idx {
-            let mut all_locals = Vec::new();
-
-            for (idx, scope) in self.scopes.iter().enumerate() {
-                if idx >= func_idx {
-                    all_locals.extend(scope.variables.values().cloned());
-                }
-            }
-
-            all_locals.sort_by_key(|v| v.index);
-
-            let param_count = all_locals.iter().filter(|v| v.is_param).count();
-            let total_count = all_locals.len();
-
-            let variable_map: HashMap<_, _> = all_locals
-                .iter()
-                .map(|v| (v.name.clone(), v.index))
-                .collect();
-
-            let func_locals = FunctionLocals {
-                locals: all_locals,
-                variable_map,
-                param_count,
-                total_count,
-            };
-
-            self.function_locals
-                .insert(func_name, Arc::new(func_locals));
-        }
-    }
-
-    pub fn get_function_locals(&self, func_name: &str) -> Option<Arc<FunctionLocals>> {
-        self.function_locals.get(func_name).cloned()
-    }
-
-    pub fn set_expr_type(&mut self, expr: &Expr, type_id: TypeId) {
-        let expr_id = ExprId::from_expr(expr);
-        self.expr_types.insert(expr_id, type_id);
-    }
-
-    pub fn get_expr_type(&self, expr: &Expr) -> Option<TypeId> {
-        let expr_id = ExprId::from_expr(expr);
-        self.expr_types.get(&expr_id).copied()
-    }
-
     pub fn set_expr_context(&mut self, expr: &Expr, context: ExprContext) {
         let expr_id = ExprId::from_expr(expr);
-        self.expr_types.insert(expr_id.clone(), context.result_type);
         self.expr_contexts.insert(expr_id, context);
     }
 
     pub fn get_expr_context(&self, expr: &Expr) -> Option<&ExprContext> {
         let expr_id = ExprId::from_expr(expr);
         self.expr_contexts.get(&expr_id)
-    }
-
-    pub fn set_member_initializer(&mut self, class_name: String, member_name: String, expr: Expr) {
-        self.member_initializers
-            .entry(class_name)
-            .or_insert_with(HashMap::new)
-            .insert(member_name, expr);
-    }
-
-    pub fn get_member_initializers(&self, class_name: &str) -> Option<&HashMap<String, Expr>> {
-        self.member_initializers.get(class_name)
-    }
-
-    pub fn get_member_initializers_cloned(
-        &self,
-        class_name: &str,
-    ) -> Option<HashMap<String, Expr>> {
-        self.member_initializers.get(class_name).cloned()
-    }
-
-    pub fn set_vtable(&mut self, type_id: TypeId, methods: Vec<String>) {
-        self.vtables.insert(type_id, methods);
-    }
-
-    pub fn get_vtable(&self, type_id: TypeId) -> Option<&Vec<String>> {
-        self.vtables.get(&type_id)
     }
 
     pub fn current_function_name(&self) -> Option<&str> {
@@ -524,46 +369,39 @@ impl SymbolTable {
         self.scopes.iter().any(|s| s.scope_type == ScopeType::Loop)
     }
 
-    pub fn create_funcdef_type(&mut self, return_type: TypeId, param_types: Vec<TypeId>) -> TypeId {
-        let signature = format!(
-            "funcdef_{}_({})",
-            return_type,
-            param_types
-                .iter()
-                .map(|t| t.to_string())
-                .collect::<Vec<_>>()
-                .join("_")
-        );
-
-        if let Some(existing_id) = self.lookup_type(&signature) {
-            return existing_id;
-        }
-
-        let type_id = crate::core::types::allocate_type_id();
-
-        let type_info = TypeInfo {
-            type_id,
-            name: signature,
-            kind: TypeKind::Funcdef,
-            flags: TypeFlags::FUNCDEF,
-            members: HashMap::new(),
-            methods: HashMap::new(),
-            base_class: None,
-            registration: TypeRegistration::Script,
-        };
-
-        self.register_type(type_info);
-
-        type_id
+    pub fn set_namespace(&mut self, namespace: Vec<String>) {
+        self.current_namespace = namespace;
     }
 
-    pub fn get_or_create_funcdef(&mut self, return_type: TypeId, param_types: &[TypeId]) -> TypeId {
-        self.create_funcdef_type(return_type, param_types.to_vec())
+    pub fn get_namespace(&self) -> &[String] {
+        &self.current_namespace
+    }
+
+    pub fn collect_function_locals(&self, func_name: &str) -> Vec<LocalVarInfo> {
+        let func_scope_idx = self
+            .scopes
+            .iter()
+            .position(|s| matches!(&s.scope_type, ScopeType::Function(name) if name == func_name));
+
+        if let Some(func_idx) = func_scope_idx {
+            let mut all_locals = Vec::new();
+
+            for (idx, scope) in self.scopes.iter().enumerate() {
+                if idx >= func_idx {
+                    all_locals.extend(scope.variables.values().cloned());
+                }
+            }
+
+            all_locals.sort_by_key(|v| v.index);
+            all_locals
+        } else {
+            Vec::new()
+        }
     }
 }
 
 impl Default for SymbolTable {
     fn default() -> Self {
-        Self::new()
+        Self::new(Arc::new(RwLock::new(TypeRegistry::new())))
     }
 }

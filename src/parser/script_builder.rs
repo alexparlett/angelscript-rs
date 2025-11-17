@@ -4,34 +4,20 @@ use crate::parser::lexer::Lexer;
 use crate::parser::preprocessor::Preprocessor;
 use std::collections::HashSet;
 
-/// Callback trait for handling #include directives
 pub trait IncludeCallback {
-    /// Called when an #include directive is encountered
-    ///
-    /// The callback should return the source code for the included file
-    ///
-    /// # Arguments
-    /// * `include_path` - The path specified in the #include directive
-    /// * `from_source` - The source code that contains the #include directive
-    ///
-    /// # Returns
-    /// * `Ok(source_code)` with the content of the included file
-    /// * `Err(ParseError)` to abort compilation with an error
     fn on_include(&mut self, include_path: &str, from_source: &str) -> ParseResult<String>;
 }
 
-/// Callback trait for handling #pragma directives
 pub trait PragmaCallback {
-    /// Called when a #pragma directive is encountered
     fn on_pragma(&mut self, pragma_text: &str) -> ParseResult<()>;
 }
 
-/// Script builder that processes preprocessor directives
 pub struct ScriptBuilder {
     defined_words: HashSet<String>,
     include_callback: Option<Box<dyn IncludeCallback>>,
     pragma_callback: Option<Box<dyn PragmaCallback>>,
-    included_sources: HashSet<String>, // Track what we've included to prevent circular includes
+    included_sources: HashSet<String>,
+    sections: Vec<(String, String)>,
 }
 
 impl ScriptBuilder {
@@ -41,77 +27,75 @@ impl ScriptBuilder {
             include_callback: None,
             pragma_callback: None,
             included_sources: HashSet::new(),
+            sections: Vec::new(),
         }
     }
 
-    /// Set the include callback
     pub fn set_include_callback<C: IncludeCallback + 'static>(&mut self, callback: C) {
         self.include_callback = Some(Box::new(callback));
     }
 
-    /// Set the pragma callback
     pub fn set_pragma_callback<C: PragmaCallback + 'static>(&mut self, callback: C) {
         self.pragma_callback = Some(Box::new(callback));
     }
 
-    /// Define a word for conditional compilation
     pub fn define_word(&mut self, word: String) {
         self.defined_words.insert(word);
     }
 
-    /// Check if a word is defined
     pub fn is_defined(&self, word: &str) -> bool {
         self.defined_words.contains(word)
     }
 
-    /// Clear all state
+    pub fn add_section(&mut self, name: &str, code: &str) {
+        self.sections.push((name.to_string(), code.to_string()));
+    }
+
     pub fn clear(&mut self) {
         self.defined_words.clear();
         self.included_sources.clear();
+        self.sections.clear();
     }
 
-    /// Parse AngelScript source code with preprocessing
-    ///
-    /// This is the main entry point for parsing AngelScript code.
-    /// It handles:
-    /// - Tokenization
-    /// - Preprocessor directives (#if, #include, #pragma, etc.)
-    /// - Conditional compilation
-    /// - Include file resolution
-    ///
-    /// # Example
-    /// ```
-    /// let mut builder = ScriptBuilder::new();
-    /// builder.define_word("DEBUG".to_string());
-    ///
-    /// let source = r#"
-    ///     #if DEBUG
-    ///         void debugFunction() {}
-    ///     #endif
-    ///     
-    ///     void main() {}
-    /// "#;
-    ///
-    /// let script = builder.build_from_source(source)?;
-    /// ```
-    pub fn build_from_source(&mut self, source: &str) -> ParseResult<Script> {
-        // Tokenize
-        let lexer = Lexer::new(source);
+    pub fn build(&mut self) -> ParseResult<Script> {
+        if self.sections.is_empty() {
+            return Err(ParseError::SyntaxError {
+                span: None,
+                message: "No source sections to build".to_string(),
+            });
+        }
+
+        let mut all_items = Vec::new();
+
+        for i in 0..self.sections.len() {
+            let script = self.build_section(i)?;
+            all_items.extend(script.items);
+        }
+
+        Ok(Script {
+            items: all_items,
+            span: None,
+        })
+    }
+
+    fn build_section(&mut self, idx: usize) -> ParseResult<Script> {
+        let section_name = &self.sections[idx].0.clone();
+        let source = &self.sections[idx].1;
+        
+        let lexer = Lexer::new_with_name(section_name, source, true);
         let tokens = lexer.tokenize()?;
 
-        // Parse with preprocessor
-        let preprocessor = Preprocessor::new(tokens, self);
+        let preprocessor = Preprocessor::new(tokens, self, section_name);
         let mut script = preprocessor.parse()?;
 
-        // Process includes and pragmas
-        script.items = self.process_items(source, script.items)?;
+        script.items = self.process_items(section_name, script.items)?;
 
         Ok(script)
     }
 
     fn process_items(
         &mut self,
-        current_source: &str,
+        current_section: &str,
         items: Vec<ScriptNode>,
     ) -> ParseResult<Vec<ScriptNode>> {
         let mut result = Vec::new();
@@ -119,27 +103,20 @@ impl ScriptBuilder {
         for item in items {
             match item {
                 ScriptNode::Include(include) => {
-                    // Handle include
-                    let included_items = self.handle_include(&include.path, current_source)?;
+                    let included_items = self.handle_include(&include.path, current_section)?;
                     result.extend(included_items);
                 }
                 ScriptNode::Namespace(mut ns) => {
-                    // Recursively process namespace contents
-                    ns.items = self.process_items(current_source, ns.items)?;
+                    ns.items = self.process_items(current_section, ns.items)?;
                     result.push(ScriptNode::Namespace(ns));
                 }
                 ScriptNode::Pragma(pragma) => {
-                    // Call pragma callback if set
                     if let Some(ref mut callback) = self.pragma_callback {
                         callback.on_pragma(&pragma.content)?;
                     }
-                    // Don't include pragmas in output
                 }
-                ScriptNode::CustomDirective(_) => {
-                    // Skip custom directives (or handle them)
-                }
+                ScriptNode::CustomDirective(_) => {}
                 _ => {
-                    // Keep other items as-is
                     result.push(item);
                 }
             }
@@ -151,50 +128,33 @@ impl ScriptBuilder {
     fn handle_include(
         &mut self,
         include_path: &str,
-        from_source: &str,
+        from_section: &str,
     ) -> ParseResult<Vec<ScriptNode>> {
-        // Check for circular includes
         if self.included_sources.contains(include_path) {
-            // Already included, skip
             return Ok(Vec::new());
         }
 
-        // Get the source code via callback
         let included_source = if let Some(ref mut callback) = self.include_callback {
-            callback.on_include(include_path, from_source)?
+            callback.on_include(include_path, from_section)?
         } else {
             return Err(ParseError::SyntaxError {
-                span: Span::new(
-                    Position::new(0, 0, 0),
-                    Position::new(0, 0, 0),
-                    String::new(),
-                ),
+                span: None,
                 message: format!("No include callback set, cannot resolve: {}", include_path),
             });
         };
 
-        // Mark as included
         self.included_sources.insert(include_path.to_string());
 
-        // Parse the included source recursively
-        let included_script =
-            self.build_from_source(&included_source)
-                .map_err(|e| ParseError::SyntaxError {
-                    span: e.span().clone(),
-                    message: format!("Failed to parse included file '{}': {}", include_path, e),
-                })?;
+        let lexer = Lexer::new_with_name(include_path, &included_source, true);
+        let tokens = lexer.tokenize()?;
 
-        Ok(included_script.items)
+        let preprocessor = Preprocessor::new(tokens, self, include_path);
+        let included_script = preprocessor.parse()?;
+
+        self.process_items(include_path, included_script.items)
     }
 }
 
-impl Default for ScriptBuilder {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-/// Default include callback that loads files from the filesystem
 pub struct DefaultIncludeCallback {
     include_paths: Vec<std::path::PathBuf>,
 }
@@ -215,12 +175,10 @@ impl DefaultIncludeCallback {
 
         let path = Path::new(filename);
 
-        // Try absolute path
         if path.is_absolute() && path.exists() {
             return Some(path.to_path_buf());
         }
 
-        // Try include paths
         for include_path in &self.include_paths {
             let full_path = include_path.join(filename);
             if full_path.exists() {
@@ -237,20 +195,12 @@ impl IncludeCallback for DefaultIncludeCallback {
         let resolved_path =
             self.resolve_path(include_path)
                 .ok_or_else(|| ParseError::SyntaxError {
-                    span: Span::new(
-                        Position::new(0, 0, 0),
-                        Position::new(0, 0, 0),
-                        include_path.to_string(),
-                    ),
+                    span: None,
                     message: format!("Include file not found: '{}'", include_path),
                 })?;
 
         std::fs::read_to_string(&resolved_path).map_err(|e| ParseError::SyntaxError {
-            span: Span::new(
-                Position::new(0, 0, 0),
-                Position::new(0, 0, 0),
-                resolved_path.display().to_string(),
-            ),
+            span: None,
             message: format!("Failed to read '{}': {}", resolved_path.display(), e),
         })
     }

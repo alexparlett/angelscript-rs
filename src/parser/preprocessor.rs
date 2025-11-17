@@ -1,38 +1,38 @@
 use crate::core::error::*;
 use crate::parser::ast::*;
 use crate::parser::parser::Parser;
-use crate::parser::script_builder::ScriptBuilder;
+use crate::parser::script_builder::{IncludeCallback, ScriptBuilder};
 use crate::parser::token::*;
 
 pub struct Preprocessor<'a> {
     tokens: Vec<Token>,
     pos: usize,
     builder: &'a mut ScriptBuilder,
+    source_name: String,
 }
 
 impl<'a> Preprocessor<'a> {
-    pub fn new(tokens: Vec<Token>, builder: &'a mut ScriptBuilder) -> Self {
+    pub fn new(tokens: Vec<Token>, builder: &'a mut ScriptBuilder, source_name: &str) -> Self {
         Self {
             tokens,
             pos: 0,
             builder,
+            source_name: source_name.to_string(),
         }
     }
 
     pub fn parse(mut self) -> ParseResult<Script> {
         let items = self.parse_items()?;
-        Ok(Script { items })
+        Ok(Script { items, span: None })
     }
 
     fn parse_items(&mut self) -> ParseResult<Vec<ScriptNode>> {
         let mut items = Vec::new();
 
         while !self.is_at_end() {
-            // Check for preprocessor directives
             if self.check(&TokenKind::Hash) {
                 self.handle_directive(&mut items)?;
             } else {
-                // Parse regular script item
                 let item_tokens = self.collect_until_next_directive();
                 if !item_tokens.is_empty() {
                     let parser = Parser::new(item_tokens);
@@ -85,16 +85,14 @@ impl<'a> Preprocessor<'a> {
                 let mut found_match = is_defined;
                 let mut selected_items = if is_defined { Some(if_items) } else { None };
 
-                // Parse elif and else branches
                 loop {
                     if !self.check(&TokenKind::Hash) {
                         break;
                     }
 
                     let checkpoint = self.pos;
-                    self.advance(); // consume #
+                    self.advance();
 
-                    // Get the directive name (elif, else, or endif)
                     let branch_name = match &self.current().kind {
                         TokenKind::Identifier(name) => {
                             let n = name.clone();
@@ -106,7 +104,6 @@ impl<'a> Preprocessor<'a> {
                             "else".to_string()
                         }
                         _ => {
-                            // Not a conditional directive, rewind
                             self.pos = checkpoint;
                             break;
                         }
@@ -136,14 +133,12 @@ impl<'a> Preprocessor<'a> {
                             break;
                         }
                         _ => {
-                            // Unknown directive, rewind
                             self.pos = checkpoint;
                             break;
                         }
                     }
                 }
 
-                // Add selected items directly to the output
                 if let Some(selected) = selected_items {
                     items.extend(selected);
                 }
@@ -172,26 +167,22 @@ impl<'a> Preprocessor<'a> {
                 let checkpoint = self.pos;
                 self.advance();
 
-                // Check if this is a conditional end directive
                 let is_conditional_end = match &self.current().kind {
                     TokenKind::Identifier(name) => {
                         matches!(name.as_str(), "elif" | "else" | "endif")
                     }
-                    TokenKind::Else => true, // ✅ Handle TokenKind::Else
+                    TokenKind::Else => true,
                     _ => false,
                 };
 
                 if is_conditional_end {
-                    // End of this conditional block
                     self.pos = checkpoint;
                     break;
                 }
 
-                // Not a conditional end, rewind and parse as directive
                 self.pos = checkpoint;
                 self.handle_directive(&mut items)?;
             } else {
-                // Parse regular script item
                 let item_tokens = self.collect_until_next_directive();
                 if !item_tokens.is_empty() {
                     let parser = Parser::new(item_tokens);
@@ -216,16 +207,8 @@ impl<'a> Preprocessor<'a> {
             self.advance();
         }
 
-        // Add EOF token
         if !tokens.is_empty() {
-            tokens.push(Token::new(
-                TokenKind::Eof,
-                Span::new(
-                    Position::new(0, 0, 0),
-                    Position::new(0, 0, 0),
-                    String::new(),
-                ),
-            ));
+            tokens.push(Token::eof());
         }
 
         tokens
@@ -247,21 +230,21 @@ impl<'a> Preprocessor<'a> {
     fn read_until_newline(&mut self) -> String {
         let mut content = String::new();
         let start_line = if self.pos < self.tokens.len() {
-            self.tokens[self.pos].span.start.line
+            self.current().line()
         } else {
             0
         };
 
         while !self.is_at_end() {
             let token = self.current();
-            if token.span.start.line != start_line {
+            if token.line() != start_line {
                 break;
             }
 
             if !content.is_empty() {
                 content.push(' ');
             }
-            content.push_str(&token.span.source);
+            content.push_str(&token.lexeme());
             self.advance();
         }
 
@@ -279,7 +262,7 @@ impl<'a> Preprocessor<'a> {
     }
 
     fn is_at_end(&self) -> bool {
-        self.pos >= self.tokens.len() || self.current().kind == TokenKind::Eof
+        self.pos >= self.tokens.len() || matches!(self.current().kind, TokenKind::Eof)
     }
 
     fn check(&self, kind: &TokenKind) -> bool {
@@ -292,9 +275,9 @@ impl<'a> Preprocessor<'a> {
             Ok(())
         } else {
             Err(ParseError::UnexpectedToken {
-                span: self.current().span.clone(),
                 expected: format!("{:?}", kind),
                 found: format!("{:?}", self.current().kind),
+                span: None,
             })
         }
     }
@@ -321,7 +304,7 @@ impl<'a> Preprocessor<'a> {
 
     fn error(&self, message: &str) -> ParseError {
         ParseError::SyntaxError {
-            span: self.current().span.clone(),
+            span: None,
             message: message.to_string(),
         }
     }

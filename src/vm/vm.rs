@@ -1,23 +1,24 @@
-use std::any::Any;
 use crate::compiler::bytecode::{BytecodeModule, Instruction};
-use crate::core::types::{ScriptValue, TypeRegistration};
+use crate::core::type_registry::TypeRegistry;
+use crate::core::types::{FunctionId, ScriptValue, TypeId, TypeRegistration};
 use crate::vm::memory::*;
+use std::any::Any;
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
 pub struct VM {
+    registry: Arc<RwLock<TypeRegistry>>,
     module: BytecodeModule,
     call_stack: Vec<StackFrame>,
     value_stack: Vec<ScriptValue>,
     heap: ObjectHeap,
     globals: Vec<ScriptValue>,
-    type_registry: Arc<RwLock<TypeRegistry>>,
     object_register: Option<u64>,
     value_register: ScriptValue,
     ip: u32,
     state: VMState,
     init_list_buffer: Option<Vec<ScriptValue>>,
-    system_functions: HashMap<u32, SystemFunction>,
+    system_functions: HashMap<FunctionId, SystemFunction>,
 }
 
 type SystemFunction =
@@ -28,12 +29,11 @@ pub enum VMState {
     Running,
     Suspended,
     Finished,
-    Error(String),
 }
 
 #[derive(Debug, Clone)]
 pub struct StackFrame {
-    function_id: u32,
+    function_id: FunctionId,
     return_address: u32,
     locals: Vec<ScriptValue>,
     frame_pointer: usize,
@@ -41,7 +41,7 @@ pub struct StackFrame {
 
 impl StackFrame {
     pub fn new(
-        function_id: u32,
+        function_id: FunctionId,
         return_address: u32,
         local_count: u32,
         frame_pointer: usize,
@@ -64,17 +64,17 @@ impl StackFrame {
 }
 
 impl VM {
-    pub fn new(module: BytecodeModule, type_registry: Arc<RwLock<TypeRegistry>>) -> Self {
-        let heap = ObjectHeap::new(type_registry.clone());
-        let global_count = module.globals.len();
+    pub fn new(module: BytecodeModule, registry: Arc<RwLock<TypeRegistry>>) -> Self {
+        let heap = ObjectHeap::new(Arc::clone(&registry));
+        let global_count = registry.read().unwrap().get_all_globals().len();
 
         Self {
+            registry,
             module,
             call_stack: Vec::new(),
             value_stack: Vec::new(),
             heap,
             globals: vec![ScriptValue::Void; global_count],
-            type_registry,
             object_register: None,
             value_register: ScriptValue::Void,
             ip: 0,
@@ -84,13 +84,11 @@ impl VM {
         }
     }
 
-    /// Load a module's bytecode (for script function execution)
     pub fn load_module(&mut self, bytecode: BytecodeModule) {
         self.module = bytecode;
         self.ip = 0;
     }
 
-    /// Clear execution stacks (for prepare/unprepare)
     pub fn clear_stacks(&mut self) {
         self.value_stack.clear();
         self.call_stack.clear();
@@ -98,30 +96,38 @@ impl VM {
         self.value_register = ScriptValue::Void;
     }
 
-    /// Push argument onto value stack (for SetArg methods)
     pub fn push_arg(&mut self, value: ScriptValue) {
         self.value_stack.push(value);
     }
 
-    /// Execute a script function by ID (already has bytecode loaded)
-    pub fn execute_function_by_id(&mut self, func_id: u32) -> Result<(), String> {
-        let func = self.module.functions.get(func_id as usize)
-                       .ok_or("Invalid function ID")?;
+    pub fn execute_function_by_id(&mut self, func_id: FunctionId) -> Result<(), String> {
+        let func_info = self
+            .registry
+            .read()
+            .unwrap()
+            .get_function(func_id)
+            .ok_or("Invalid function ID")?;
 
-        let mut frame = StackFrame::new(func_id, 0, func.local_count, 0);
+        let local_count = func_info.local_count;
+        let param_count = func_info.parameters.len();
+        let bytecode_address = func_info
+            .bytecode_address
+            .ok_or("Function has no bytecode address")?;
 
-        // Pop args from value_stack into frame
-        for i in (0..func.param_count).rev() {
+        drop(func_info);
+
+        let mut frame = StackFrame::new(func_id, 0, local_count, 0);
+
+        for i in (0..param_count).rev() {
             if let Some(arg) = self.value_stack.pop() {
-                frame.locals[i as usize] = arg;
+                frame.locals[i] = arg;
             }
         }
 
         self.call_stack.push(frame);
-        self.ip = func.address;
+        self.ip = bytecode_address;
         self.state = VMState::Running;
 
-        // Execute bytecode loop
         while self.state == VMState::Running {
             self.execute_instruction()?;
         }
@@ -129,22 +135,18 @@ impl VM {
         Ok(())
     }
 
-    /// Call a system function directly (no bytecode)
-    pub fn call_system_function_direct(&mut self, sys_func_id: u32) -> Result<(), String> {
-        // Pop args from value_stack
+    pub fn call_system_function_direct(&mut self, sys_func_id: FunctionId) -> Result<(), String> {
         let mut args = Vec::new();
         while let Some(arg) = self.value_stack.pop() {
             args.push(arg);
         }
         args.reverse();
 
-        // Call the registered system function
         self.execute_system_call(sys_func_id)?;
 
         Ok(())
     }
 
-    /// Get return value helpers
     pub fn get_return_byte(&self) -> u8 {
         match &self.value_register {
             ScriptValue::UInt8(v) => *v,
@@ -191,11 +193,9 @@ impl VM {
         }
     }
 
-    pub fn get_return_object(&self, heap: Arc<RwLock<ObjectHeap>>) -> Option<ScriptObject> {
+    pub fn get_return_object(&self) -> Option<u64> {
         match &self.value_register {
-            ScriptValue::ObjectHandle(handle) => {
-                Some(ScriptObject::new(*handle, heap))
-            }
+            ScriptValue::ObjectHandle(handle) => Some(*handle),
             _ => None,
         }
     }
@@ -219,13 +219,18 @@ impl VM {
         self.call_stack.len() as u32
     }
 
-    pub fn get_address_of_var(&mut self, var_index: u32, stack_level: u32) -> Option<&mut ScriptValue> {
+    pub fn get_address_of_var(
+        &mut self,
+        var_index: u32,
+        stack_level: u32,
+    ) -> Option<&mut ScriptValue> {
         if stack_level >= self.call_stack.len() as u32 {
             return None;
         }
 
         let frame_idx = self.call_stack.len() - 1 - stack_level as usize;
-        self.call_stack.get_mut(frame_idx)
+        self.call_stack
+            .get_mut(frame_idx)
             .and_then(|frame| frame.locals.get_mut(var_index as usize))
     }
 
@@ -1909,8 +1914,6 @@ impl VM {
         Ok(())
     }
 
-    // src/vm/vm.rs - continued
-
     fn current_frame(&self) -> &StackFrame {
         self.call_stack.last().expect("No stack frame")
     }
@@ -1919,13 +1922,13 @@ impl VM {
         self.call_stack.last_mut().expect("No stack frame")
     }
 
-    fn execute_alloc(&mut self, type_id: u32, func_id: u32) -> Result<(), String> {
-        let type_registry = self.type_registry.read().unwrap();
+    fn execute_alloc(&mut self, type_id: TypeId, func_id: FunctionId) -> Result<(), String> {
+        let type_registry = self.registry.read().unwrap();
         let type_info = type_registry
             .get_type(type_id)
             .ok_or_else(|| format!("Type {} not found", type_id))?;
 
-        let is_rust_type = type_info.type_registration == TypeRegistration::Application;
+        let is_rust_type = type_info.registration == TypeRegistration::Application;
         drop(type_registry);
 
         if is_rust_type && func_id != 0 {
@@ -1948,7 +1951,7 @@ impl VM {
         Ok(())
     }
 
-    fn execute_free(&mut self, var: u32, func_id: u32) -> Result<(), String> {
+    fn execute_free(&mut self, var: u32, func_id: FunctionId) -> Result<(), String> {
         let handle = self
             .current_frame()
             .get_local(var)
@@ -1972,10 +1975,10 @@ impl VM {
         if let ScriptValue::ObjectHandle(src_handle) = value {
             let (type_id, is_rust_type, is_value_type, has_op_assign) = {
                 if let Some(src_object) = self.heap.get_object(src_handle) {
-                    let type_registry = self.type_registry.read().unwrap();
+                    let type_registry = self.registry.read().unwrap();
                     if let Some(type_info) = type_registry.get_type(src_object.type_id()) {
                         let type_id = src_object.type_id();
-                        let is_rust = type_info.type_registration == TypeRegistration::Application;
+                        let is_rust = type_info.registration == TypeRegistration::Application;
                         let is_value = type_info.is_value_type();
                         let has_assign = type_info.rust_methods.contains_key("opAssign");
 
@@ -1996,7 +1999,7 @@ impl VM {
                     .ok_or("COPY: destination not an object handle")?;
 
                 let op_assign_fn = {
-                    let type_registry = self.type_registry.read().unwrap();
+                    let type_registry = self.registry.read().unwrap();
                     let type_info = type_registry.get_type(type_id).unwrap();
                     type_info
                         .rust_methods
@@ -2067,12 +2070,12 @@ impl VM {
             .ok_or("GetProperty: invalid property name")?;
 
         let value = {
-            let type_registry = self.type_registry.read().unwrap();
+            let type_registry = self.registry.read().unwrap();
             let type_info = type_registry
                 .get_type(object.type_id())
                 .ok_or("GetProperty: type not found")?;
 
-            if type_info.type_registration == TypeRegistration::Application {
+            if type_info.registration == TypeRegistration::Application {
                 if let Some(accessor) = type_info.rust_accessors.get(prop_name) {
                     if let Some(getter) = &accessor.getter {
                         getter(object)
@@ -2113,7 +2116,7 @@ impl VM {
             .get_property_name(prop_name_id)
             .ok_or("SetProperty: invalid property name")?;
 
-        let type_registry = self.type_registry.read().unwrap();
+        let type_registry = self.registry.read().unwrap();
         let object = self
             .heap
             .get_object(obj_handle)
@@ -2122,7 +2125,7 @@ impl VM {
             .get_type(object.type_id())
             .ok_or("SetProperty: type not found")?;
 
-        if type_info.type_registration == TypeRegistration::Application {
+        if type_info.registration == TypeRegistration::Application {
             if let Some(accessor) = type_info.rust_accessors.get(prop_name) {
                 if let Some(setter) = &accessor.setter {
                     drop(type_registry);
@@ -2165,12 +2168,12 @@ impl VM {
             .ok_or("GetThisProperty: invalid property name")?;
 
         let value = {
-            let type_registry = self.type_registry.read().unwrap();
+            let type_registry = self.registry.read().unwrap();
             let type_info = type_registry
                 .get_type(object.type_id())
                 .ok_or("GetThisProperty: type not found")?;
 
-            if type_info.type_registration == TypeRegistration::Application {
+            if type_info.registration == TypeRegistration::Application {
                 if let Some(accessor) = type_info.rust_accessors.get(prop_name) {
                     if let Some(getter) = &accessor.getter {
                         getter(object)
@@ -2204,7 +2207,7 @@ impl VM {
             .get_property_name(prop_name_id)
             .ok_or("SetThisProperty: invalid property name")?;
 
-        let type_registry = self.type_registry.read().unwrap();
+        let type_registry = self.registry.read().unwrap();
         let object = self
             .heap
             .get_object(this_handle)
@@ -2213,7 +2216,7 @@ impl VM {
             .get_type(object.type_id())
             .ok_or("SetThisProperty: type not found")?;
 
-        if type_info.type_registration == TypeRegistration::Application {
+        if type_info.registration == TypeRegistration::Application {
             if let Some(accessor) = type_info.rust_accessors.get(prop_name) {
                 if let Some(setter) = &accessor.setter {
                     drop(type_registry);
@@ -2240,28 +2243,39 @@ impl VM {
         Ok(())
     }
 
-    pub(crate) fn execute_call(&mut self, func_id: u32) -> Result<(), String> {
-        let func = self
+    pub(crate) fn execute_call(&mut self, func_id: FunctionId) -> Result<(), String> {
+        let func_address = self
             .module
-            .functions
-            .get(func_id as usize)
+            .get_function_address(func_id)
+            .ok_or_else(|| format!("Function {} has no bytecode address", func_id))?;
+
+        let func_info = self
+            .registry
+            .read()
+            .unwrap()
+            .get_function(func_id)
             .ok_or("Call: invalid function ID")?;
 
-        let mut frame = StackFrame::new(func_id, self.ip, func.local_count, self.call_stack.len());
+        let local_count = func_info.local_count;
+        let param_count = func_info.parameters.len();
 
-        for i in (0..func.param_count).rev() {
+        drop(func_info);
+
+        let mut frame = StackFrame::new(func_id, self.ip, local_count, self.call_stack.len());
+
+        for i in (0..param_count).rev() {
             if let Some(arg) = self.value_stack.pop() {
-                frame.locals[i as usize] = arg;
+                frame.locals[i] = arg;
             }
         }
 
         self.call_stack.push(frame);
-        self.ip = func.address;
+        self.ip = func_address;
 
         Ok(())
     }
 
-    pub(crate) fn execute_system_call(&mut self, sys_func_id: u32) -> Result<(), String> {
+    pub(crate) fn execute_system_call(&mut self, sys_func_id: FunctionId) -> Result<(), String> {
         let sys_func = self
             .system_functions
             .get(&sys_func_id)
@@ -2284,13 +2298,11 @@ impl VM {
         Ok(())
     }
 
-    fn can_cast(&self, from_type: u32, to_type: u32) -> bool {
+    fn can_cast(&self, from_type: TypeId, to_type: TypeId) -> bool {
         from_type == to_type
     }
 
     pub fn collect_garbage(&mut self) {
-        // Collect root handles from:
-        // 1. Global variables
         let mut roots = Vec::new();
 
         for global in &self.globals {
@@ -2299,7 +2311,6 @@ impl VM {
             }
         }
 
-        // 2. Call stack locals
         for frame in &self.call_stack {
             for local in &frame.locals {
                 if let ScriptValue::ObjectHandle(handle) = local {
@@ -2308,14 +2319,12 @@ impl VM {
             }
         }
 
-        // 3. Value stack
         for value in &self.value_stack {
             if let ScriptValue::ObjectHandle(handle) = value {
                 roots.push(*handle);
             }
         }
 
-        // 4. Registers
         if let Some(handle) = self.object_register {
             roots.push(handle);
         }
@@ -2323,12 +2332,10 @@ impl VM {
             roots.push(*handle);
         }
 
-        // ✅ Run GC
         self.heap.collect_garbage(&roots);
     }
 
     pub fn maybe_collect_garbage(&mut self) {
-        // Trigger GC if we have too many objects
         if self.heap.object_count() > 1000 {
             self.collect_garbage();
         }

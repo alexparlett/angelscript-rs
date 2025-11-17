@@ -1,22 +1,33 @@
 use crate::core::error::*;
+use crate::core::span::SpanBuilder;
 use crate::parser::token::*;
 
-pub struct Lexer<'a> {
-    source: &'a str,
+pub struct Lexer {
+    source: String,
     chars: Vec<char>,
     pos: usize,
     line: usize,
     column: usize,
+    span_builder: SpanBuilder,
+    include_spans: bool,
 }
 
-impl<'a> Lexer<'a> {
-    pub fn new(source: &'a str) -> Self {
+impl Lexer {
+    pub fn new(source: &str) -> Self {
+        Self::new_with_name("<input>", source, false)
+    }
+
+    pub fn new_with_name(source_name: &str, source: &str, include_spans: bool) -> Self {
+        let span_builder = SpanBuilder::new(source_name.to_string(), source);
+
         Self {
-            source,
+            source: source.to_string(),
             chars: source.chars().collect(),
             pos: 0,
             line: 1,
             column: 1,
+            span_builder,
+            include_spans,
         }
     }
 
@@ -39,288 +50,252 @@ impl<'a> Lexer<'a> {
         self.skip_whitespace_and_comments()?;
 
         if self.is_at_end() {
-            return Ok(self.make_token(TokenKind::Eof));
+            return Ok(Token::eof());
         }
 
-        let start = self.current_position();
+        let start_offset = self.pos;
         let ch = self.current_char();
 
-        match ch {
-            // Identifiers and keywords
-            'a'..='z' | 'A'..='Z' | '_' => self.read_identifier(),
-
-            // Numbers
-            '0'..='9' => self.read_number(),
-
-            // Strings
-            '"' | '\'' => self.read_string(ch),
-
-            // Preprocessor
+        let token = match ch {
+            'a'..='z' | 'A'..='Z' | '_' => self.read_identifier(start_offset)?,
+            '0'..='9' => self.read_number(start_offset)?,
+            '"' | '\'' => self.read_string(ch, start_offset)?,
             '#' => {
                 self.advance();
-                Ok(self.make_token_from(TokenKind::Hash, start))
+                self.make_token(TokenKind::Hash, start_offset)
             }
-
-            // Operators and punctuation
-            '+' => self.read_plus(),
-            '-' => self.read_minus(),
-            '*' => self.read_star(),
-            '/' => self.read_slash(),
-            '%' => self.read_percent(),
-            '=' => self.read_equals(),
-            '!' => self.read_bang(),
-            '<' => self.read_less(),
-            '>' => self.read_greater(),
-            '&' => self.read_ampersand(),
-            '|' => self.read_pipe(),
-            '^' => self.read_caret(),
+            '+' => self.read_plus(start_offset)?,
+            '-' => self.read_minus(start_offset)?,
+            '*' => self.read_star(start_offset)?,
+            '/' => self.read_slash(start_offset)?,
+            '%' => self.read_percent(start_offset)?,
+            '=' => self.read_equals(start_offset)?,
+            '!' => self.read_bang(start_offset)?,
+            '<' => self.read_less(start_offset)?,
+            '>' => self.read_greater(start_offset)?,
+            '&' => self.read_ampersand(start_offset)?,
+            '|' => self.read_pipe(start_offset)?,
+            '^' => self.read_caret(start_offset)?,
             '~' => {
                 self.advance();
-                Ok(self.make_token_from(TokenKind::BitNot, start))
+                self.make_token(TokenKind::BitNot, start_offset)
             }
             '@' => {
                 self.advance();
-                Ok(self.make_token_from(TokenKind::At, start))
+                self.make_token(TokenKind::At, start_offset)
             }
             '?' => {
                 self.advance();
-                Ok(self.make_token_from(TokenKind::Question, start))
+                self.make_token(TokenKind::Question, start_offset)
             }
-
-            // Delimiters
             '(' => {
                 self.advance();
-                Ok(self.make_token_from(TokenKind::LParen, start))
+                self.make_token(TokenKind::LParen, start_offset)
             }
             ')' => {
                 self.advance();
-                Ok(self.make_token_from(TokenKind::RParen, start))
+                self.make_token(TokenKind::RParen, start_offset)
             }
             '[' => {
                 self.advance();
-                Ok(self.make_token_from(TokenKind::LBracket, start))
+                self.make_token(TokenKind::LBracket, start_offset)
             }
             ']' => {
                 self.advance();
-                Ok(self.make_token_from(TokenKind::RBracket, start))
+                self.make_token(TokenKind::RBracket, start_offset)
             }
             '{' => {
                 self.advance();
-                Ok(self.make_token_from(TokenKind::LBrace, start))
+                self.make_token(TokenKind::LBrace, start_offset)
             }
             '}' => {
                 self.advance();
-                Ok(self.make_token_from(TokenKind::RBrace, start))
+                self.make_token(TokenKind::RBrace, start_offset)
             }
             ',' => {
                 self.advance();
-                Ok(self.make_token_from(TokenKind::Comma, start))
+                self.make_token(TokenKind::Comma, start_offset)
             }
             ';' => {
                 self.advance();
-                Ok(self.make_token_from(TokenKind::Semicolon, start))
+                self.make_token(TokenKind::Semicolon, start_offset)
             }
             '.' => {
                 self.advance();
-                Ok(self.make_token_from(TokenKind::Dot, start))
+                self.make_token(TokenKind::Dot, start_offset)
             }
-            ':' => self.read_colon(),
+            ':' => self.read_colon(start_offset)?,
+            _ => {
+                return Err(ParseError::SyntaxError {
+                    span: if self.include_spans {
+                        Some(self.span_builder.span(start_offset, self.pos))
+                    } else {
+                        None
+                    },
+                    message: format!("Unexpected character: '{}'", ch),
+                });
+            }
+        };
 
-            _ => Err(ParseError::SyntaxError {
-                span: self.make_span_from(start),
-                message: format!("Unexpected character: '{}'", ch),
-            }),
-        }
+        Ok(token)
     }
 
-    // Operator readers
-
-    fn read_plus(&mut self) -> ParseResult<Token> {
-        let start = self.current_position();
+    fn read_plus(&mut self, start: usize) -> ParseResult<Token> {
         self.advance();
-
         if self.match_char('+') {
-            Ok(self.make_token_from(TokenKind::Inc, start))
+            Ok(self.make_token(TokenKind::Inc, start))
         } else if self.match_char('=') {
-            Ok(self.make_token_from(TokenKind::AddAssign, start))
+            Ok(self.make_token(TokenKind::AddAssign, start))
         } else {
-            Ok(self.make_token_from(TokenKind::Add, start))
+            Ok(self.make_token(TokenKind::Add, start))
         }
     }
 
-    fn read_minus(&mut self) -> ParseResult<Token> {
-        let start = self.current_position();
+    fn read_minus(&mut self, start: usize) -> ParseResult<Token> {
         self.advance();
-
         if self.match_char('-') {
-            Ok(self.make_token_from(TokenKind::Dec, start))
+            Ok(self.make_token(TokenKind::Dec, start))
         } else if self.match_char('=') {
-            Ok(self.make_token_from(TokenKind::SubAssign, start))
+            Ok(self.make_token(TokenKind::SubAssign, start))
         } else {
-            Ok(self.make_token_from(TokenKind::Sub, start))
+            Ok(self.make_token(TokenKind::Sub, start))
         }
     }
 
-    fn read_star(&mut self) -> ParseResult<Token> {
-        let start = self.current_position();
+    fn read_star(&mut self, start: usize) -> ParseResult<Token> {
         self.advance();
-
         if self.match_char('*') {
             if self.match_char('=') {
-                Ok(self.make_token_from(TokenKind::PowAssign, start))
+                Ok(self.make_token(TokenKind::PowAssign, start))
             } else {
-                Ok(self.make_token_from(TokenKind::Pow, start))
+                Ok(self.make_token(TokenKind::Pow, start))
             }
         } else if self.match_char('=') {
-            Ok(self.make_token_from(TokenKind::MulAssign, start))
+            Ok(self.make_token(TokenKind::MulAssign, start))
         } else {
-            Ok(self.make_token_from(TokenKind::Mul, start))
+            Ok(self.make_token(TokenKind::Mul, start))
         }
     }
 
-    fn read_slash(&mut self) -> ParseResult<Token> {
-        let start = self.current_position();
+    fn read_slash(&mut self, start: usize) -> ParseResult<Token> {
         self.advance();
-
         if self.match_char('=') {
-            Ok(self.make_token_from(TokenKind::DivAssign, start))
+            Ok(self.make_token(TokenKind::DivAssign, start))
         } else {
-            Ok(self.make_token_from(TokenKind::Div, start))
+            Ok(self.make_token(TokenKind::Div, start))
         }
     }
 
-    fn read_percent(&mut self) -> ParseResult<Token> {
-        let start = self.current_position();
+    fn read_percent(&mut self, start: usize) -> ParseResult<Token> {
         self.advance();
-
         if self.match_char('=') {
-            Ok(self.make_token_from(TokenKind::ModAssign, start))
+            Ok(self.make_token(TokenKind::ModAssign, start))
         } else {
-            Ok(self.make_token_from(TokenKind::Mod, start))
+            Ok(self.make_token(TokenKind::Mod, start))
         }
     }
 
-    fn read_equals(&mut self) -> ParseResult<Token> {
-        let start = self.current_position();
+    fn read_equals(&mut self, start: usize) -> ParseResult<Token> {
         self.advance();
-
         if self.match_char('=') {
-            Ok(self.make_token_from(TokenKind::Eq, start))
+            Ok(self.make_token(TokenKind::Eq, start))
         } else {
-            Ok(self.make_token_from(TokenKind::Assign, start))
+            Ok(self.make_token(TokenKind::Assign, start))
         }
     }
 
-    fn read_bang(&mut self) -> ParseResult<Token> {
-        let start = self.current_position();
+    fn read_bang(&mut self, start: usize) -> ParseResult<Token> {
         self.advance();
-
         if self.match_char('=') {
-            Ok(self.make_token_from(TokenKind::Ne, start))
+            Ok(self.make_token(TokenKind::Ne, start))
         } else if self.peek_keyword("is") {
-            // Check if 'is' follows, treating it as !is operator
-            self.advance(); // 'i'
-            self.advance(); // 's'
-            Ok(self.make_token_from(TokenKind::IsNot, start))
+            self.advance();
+            self.advance();
+            Ok(self.make_token(TokenKind::IsNot, start))
         } else {
-            Ok(self.make_token_from(TokenKind::Not, start))
+            Ok(self.make_token(TokenKind::Not, start))
         }
     }
 
-    fn read_less(&mut self) -> ParseResult<Token> {
-        let start = self.current_position();
+    fn read_less(&mut self, start: usize) -> ParseResult<Token> {
         self.advance();
-
         if self.match_char('<') {
             if self.match_char('=') {
-                Ok(self.make_token_from(TokenKind::ShlAssign, start))
+                Ok(self.make_token(TokenKind::ShlAssign, start))
             } else {
-                Ok(self.make_token_from(TokenKind::Shl, start))
+                Ok(self.make_token(TokenKind::Shl, start))
             }
         } else if self.match_char('=') {
-            Ok(self.make_token_from(TokenKind::Le, start))
+            Ok(self.make_token(TokenKind::Le, start))
         } else {
-            Ok(self.make_token_from(TokenKind::Lt, start))
+            Ok(self.make_token(TokenKind::Lt, start))
         }
     }
 
-    fn read_greater(&mut self) -> ParseResult<Token> {
-        let start = self.current_position();
+    fn read_greater(&mut self, start: usize) -> ParseResult<Token> {
         self.advance();
-
         if self.match_char('>') {
             if self.match_char('>') {
                 if self.match_char('=') {
-                    Ok(self.make_token_from(TokenKind::UShrAssign, start))
+                    Ok(self.make_token(TokenKind::UShrAssign, start))
                 } else {
-                    Ok(self.make_token_from(TokenKind::UShr, start))
+                    Ok(self.make_token(TokenKind::UShr, start))
                 }
             } else if self.match_char('=') {
-                Ok(self.make_token_from(TokenKind::ShrAssign, start))
+                Ok(self.make_token(TokenKind::ShrAssign, start))
             } else {
-                Ok(self.make_token_from(TokenKind::Shr, start))
+                Ok(self.make_token(TokenKind::Shr, start))
             }
         } else if self.match_char('=') {
-            Ok(self.make_token_from(TokenKind::Ge, start))
+            Ok(self.make_token(TokenKind::Ge, start))
         } else {
-            Ok(self.make_token_from(TokenKind::Gt, start))
+            Ok(self.make_token(TokenKind::Gt, start))
         }
     }
 
-    fn read_ampersand(&mut self) -> ParseResult<Token> {
-        let start = self.current_position();
+    fn read_ampersand(&mut self, start: usize) -> ParseResult<Token> {
         self.advance();
-
         if self.match_char('&') {
-            Ok(self.make_token_from(TokenKind::And, start))
+            Ok(self.make_token(TokenKind::And, start))
         } else if self.match_char('=') {
-            Ok(self.make_token_from(TokenKind::BitAndAssign, start))
+            Ok(self.make_token(TokenKind::BitAndAssign, start))
         } else {
-            Ok(self.make_token_from(TokenKind::BitAnd, start))
+            Ok(self.make_token(TokenKind::BitAnd, start))
         }
     }
 
-    fn read_pipe(&mut self) -> ParseResult<Token> {
-        let start = self.current_position();
+    fn read_pipe(&mut self, start: usize) -> ParseResult<Token> {
         self.advance();
-
         if self.match_char('|') {
-            Ok(self.make_token_from(TokenKind::Or, start))
+            Ok(self.make_token(TokenKind::Or, start))
         } else if self.match_char('=') {
-            Ok(self.make_token_from(TokenKind::BitOrAssign, start))
+            Ok(self.make_token(TokenKind::BitOrAssign, start))
         } else {
-            Ok(self.make_token_from(TokenKind::BitOr, start))
+            Ok(self.make_token(TokenKind::BitOr, start))
         }
     }
 
-    fn read_caret(&mut self) -> ParseResult<Token> {
-        let start = self.current_position();
+    fn read_caret(&mut self, start: usize) -> ParseResult<Token> {
         self.advance();
-
         if self.match_char('^') {
-            Ok(self.make_token_from(TokenKind::Xor, start))
+            Ok(self.make_token(TokenKind::Xor, start))
         } else if self.match_char('=') {
-            Ok(self.make_token_from(TokenKind::BitXorAssign, start))
+            Ok(self.make_token(TokenKind::BitXorAssign, start))
         } else {
-            Ok(self.make_token_from(TokenKind::BitXor, start))
+            Ok(self.make_token(TokenKind::BitXor, start))
         }
     }
 
-    fn read_colon(&mut self) -> ParseResult<Token> {
-        let start = self.current_position();
+    fn read_colon(&mut self, start: usize) -> ParseResult<Token> {
         self.advance();
-
         if self.match_char(':') {
-            Ok(self.make_token_from(TokenKind::DoubleColon, start))
+            Ok(self.make_token(TokenKind::DoubleColon, start))
         } else {
-            Ok(self.make_token_from(TokenKind::Colon, start))
+            Ok(self.make_token(TokenKind::Colon, start))
         }
     }
 
-    // Complex token readers
-
-    fn read_identifier(&mut self) -> ParseResult<Token> {
-        let start = self.current_position();
+    fn read_identifier(&mut self, start: usize) -> ParseResult<Token> {
         let mut text = String::new();
 
         while !self.is_at_end() {
@@ -334,15 +309,12 @@ impl<'a> Lexer<'a> {
         }
 
         let kind = TokenKind::keyword(&text).unwrap_or_else(|| TokenKind::Identifier(text));
-
-        Ok(self.make_token_from(kind, start))
+        Ok(self.make_token(kind, start))
     }
 
-    fn read_number(&mut self) -> ParseResult<Token> {
-        let start = self.current_position();
+    fn read_number(&mut self, start: usize) -> ParseResult<Token> {
         let mut text = String::new();
 
-        // Handle hex, binary, octal
         if self.current_char() == '0' && !self.is_at_end() {
             text.push(self.current_char());
             self.advance();
@@ -357,7 +329,7 @@ impl<'a> Lexer<'a> {
                             text.push(self.current_char());
                             self.advance();
                         }
-                        return Ok(self.make_token_from(TokenKind::Number(text), start));
+                        return Ok(self.make_token(TokenKind::Number(text), start));
                     }
                     'b' | 'B' => {
                         text.push(next);
@@ -366,7 +338,7 @@ impl<'a> Lexer<'a> {
                             text.push(self.current_char());
                             self.advance();
                         }
-                        return Ok(self.make_token_from(TokenKind::Bits(text), start));
+                        return Ok(self.make_token(TokenKind::Bits(text), start));
                     }
                     'o' | 'O' => {
                         text.push(next);
@@ -375,7 +347,7 @@ impl<'a> Lexer<'a> {
                             text.push(self.current_char());
                             self.advance();
                         }
-                        return Ok(self.make_token_from(TokenKind::Number(text), start));
+                        return Ok(self.make_token(TokenKind::Number(text), start));
                     }
                     'd' | 'D' => {
                         text.push(next);
@@ -384,20 +356,18 @@ impl<'a> Lexer<'a> {
                             text.push(self.current_char());
                             self.advance();
                         }
-                        return Ok(self.make_token_from(TokenKind::Bits(text), start));
+                        return Ok(self.make_token(TokenKind::Bits(text), start));
                     }
                     _ => {}
                 }
             }
         }
 
-        // Regular decimal number
         while !self.is_at_end() && self.current_char().is_ascii_digit() {
             text.push(self.current_char());
             self.advance();
         }
 
-        // Decimal point
         if !self.is_at_end() && self.current_char() == '.' {
             let next_pos = self.pos + 1;
             if next_pos < self.chars.len() && self.chars[next_pos].is_ascii_digit() {
@@ -410,7 +380,6 @@ impl<'a> Lexer<'a> {
             }
         }
 
-        // Exponent
         if !self.is_at_end() && matches!(self.current_char(), 'e' | 'E') {
             text.push(self.current_char());
             self.advance();
@@ -424,21 +393,19 @@ impl<'a> Lexer<'a> {
             }
         }
 
-        Ok(self.make_token_from(TokenKind::Number(text), start))
+        Ok(self.make_token(TokenKind::Number(text), start))
     }
 
-    fn read_string(&mut self, quote: char) -> ParseResult<Token> {
-        let start = self.current_position();
+    fn read_string(&mut self, quote: char, start: usize) -> ParseResult<Token> {
         let mut text = String::new();
-
-        self.advance(); // Skip opening quote
+        self.advance();
 
         while !self.is_at_end() {
             let ch = self.current_char();
 
             if ch == quote {
-                self.advance(); // Skip closing quote
-                return Ok(self.make_token_from(TokenKind::String(text), start));
+                self.advance();
+                return Ok(self.make_token(TokenKind::String(text), start));
             }
 
             if ch == '\\' {
@@ -464,12 +431,14 @@ impl<'a> Lexer<'a> {
         }
 
         Err(ParseError::InvalidString {
-            span: self.make_span_from(start),
+            span: if self.include_spans {
+                Some(self.span_builder.span(start, self.pos))
+            } else {
+                None
+            },
             message: "Unterminated string literal".to_string(),
         })
     }
-
-    // Helper methods
 
     fn skip_whitespace_and_comments(&mut self) -> ParseResult<()> {
         loop {
@@ -484,7 +453,6 @@ impl<'a> Lexer<'a> {
                 continue;
             }
 
-            // Single-line comment
             if ch == '/' && self.peek() == Some('/') {
                 while !self.is_at_end() && self.current_char() != '\n' {
                     self.advance();
@@ -492,15 +460,14 @@ impl<'a> Lexer<'a> {
                 continue;
             }
 
-            // Multi-line comment
             if ch == '/' && self.peek() == Some('*') {
-                self.advance(); // /
-                self.advance(); // *
+                self.advance();
+                self.advance();
 
                 while !self.is_at_end() {
                     if self.current_char() == '*' && self.peek() == Some('/') {
-                        self.advance(); // *
-                        self.advance(); // /
+                        self.advance();
+                        self.advance();
                         break;
                     }
                     self.advance();
@@ -529,19 +496,16 @@ impl<'a> Lexer<'a> {
     fn peek_keyword(&self, keyword: &str) -> bool {
         let chars: Vec<char> = keyword.chars().collect();
 
-        // Check if we have enough characters
         if self.pos + chars.len() > self.chars.len() {
             return false;
         }
 
-        // Check if the characters match
         for (i, &ch) in chars.iter().enumerate() {
             if self.chars[self.pos + i] != ch {
                 return false;
             }
         }
 
-        // Make sure it's not part of a longer identifier
         let next_pos = self.pos + chars.len();
         if next_pos < self.chars.len() {
             let next_char = self.chars[next_pos];
@@ -578,30 +542,14 @@ impl<'a> Lexer<'a> {
         self.pos >= self.chars.len()
     }
 
-    fn current_position(&self) -> Position {
-        Position::new(self.line, self.column, self.pos)
-    }
+    fn make_token(&self, kind: TokenKind, start_offset: usize) -> Token {
+        let lexeme = self.source[start_offset..self.pos].to_string();
+        let span = if self.include_spans {
+            Some(self.span_builder.span(start_offset, self.pos))
+        } else {
+            None
+        };
 
-    fn make_token(&self, kind: TokenKind) -> Token {
-        Token::new(
-            kind,
-            Span::new(
-                self.current_position(),
-                self.current_position(),
-                String::new(),
-            ),
-        )
-    }
-
-    fn make_token_from(&self, kind: TokenKind, start: Position) -> Token {
-        let end = self.current_position();
-        let source = self.source[start.offset..end.offset].to_string();
-        Token::new(kind, Span::new(start, end, source))
-    }
-
-    fn make_span_from(&self, start: Position) -> Span {
-        let end = self.current_position();
-        let source = self.source[start.offset..end.offset].to_string();
-        Span::new(start, end, source)
+        Token::new(kind, span, lexeme)
     }
 }
