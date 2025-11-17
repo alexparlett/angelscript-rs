@@ -78,7 +78,6 @@ impl ScriptEngine {
             vtable: Vec::new(),
 
             definition_span: None,
-            doc_comments: Vec::new(),
         };
 
         let mut registry = self.registry.write().unwrap();
@@ -114,7 +113,6 @@ impl ScriptEngine {
                 getter: None,
                 setter: None,
                 definition_span: None,
-                doc_comments: Vec::new(),
             },
         )
     }
@@ -172,7 +170,6 @@ impl ScriptEngine {
             },
 
             definition_span: None,
-            doc_comments: Vec::new(),
 
             locals: Vec::new(),
 
@@ -241,7 +238,6 @@ impl ScriptEngine {
             },
 
             definition_span: None,
-            doc_comments: Vec::new(),
 
             locals: Vec::new(),
 
@@ -290,7 +286,6 @@ impl ScriptEngine {
             },
 
             definition_span: None,
-            doc_comments: Vec::new(),
 
             locals: Vec::new(),
 
@@ -333,7 +328,6 @@ impl ScriptEngine {
             vtable: Vec::new(),
 
             definition_span: None,
-            doc_comments: Vec::new(),
         };
 
         let mut registry = self.registry.write().unwrap();
@@ -385,7 +379,6 @@ impl ScriptEngine {
                     getter: None,
                     setter: None,
                     definition_span: None,
-                    doc_comments: vec![],
                 })
                 .collect(),
 
@@ -401,7 +394,6 @@ impl ScriptEngine {
             vtable: vec![],
 
             definition_span: None,
-            doc_comments: vec![],
         };
 
         registry.register_type(type_info)

@@ -1,7 +1,7 @@
 use crate::core::error::*;
 use crate::parser::ast::*;
 use crate::parser::parser::Parser;
-use crate::parser::script_builder::{IncludeCallback, ScriptBuilder};
+use crate::parser::script_builder::ScriptBuilder;
 use crate::parser::token::*;
 
 pub struct Preprocessor<'a> {

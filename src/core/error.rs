@@ -82,10 +82,7 @@ pub enum SemanticError {
     },
 
     #[error("Duplicate function defined '{name}'")]
-    DuplicateFunction {
-        name: String,
-        span: Option<Span>,
-    },
+    DuplicateFunction { name: String, span: Option<Span> },
 
     #[error("Type mismatch: expected '{expected}', found '{found}'")]
     TypeMismatch {

@@ -44,7 +44,6 @@ pub struct TypeInfo {
     pub vtable: Vec<VTableEntry>,
 
     pub definition_span: Option<Span>,
-    pub doc_comments: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -59,7 +58,6 @@ pub struct PropertyInfo {
     pub setter: Option<FunctionId>,
 
     pub definition_span: Option<Span>,
-    pub doc_comments: Vec<String>,
 }
 
 bitflags::bitflags! {
@@ -99,7 +97,6 @@ pub struct FunctionInfo {
     pub implementation: FunctionImpl,
 
     pub definition_span: Option<Span>,
-    pub doc_comments: Vec<String>,
 
     pub locals: Vec<LocalVarInfo>,
 
@@ -189,9 +186,6 @@ pub struct LocalVarInfo {
     pub index: usize,
 
     pub definition_span: Option<Span>,
-
-    pub scope_start: Option<u32>,
-    pub scope_end: Option<u32>,
 }
 
 #[derive(Debug, Clone)]
@@ -311,7 +305,6 @@ impl TypeRegistry {
                 rust_methods: HashMap::new(),
                 vtable: Vec::new(),
                 definition_span: None,
-                doc_comments: Vec::new(),
             };
 
             self.types.insert(type_id, Arc::new(type_info));
@@ -325,18 +318,6 @@ impl TypeRegistry {
 
     pub fn get_property(&self, property: EngineProperty) -> usize {
         self.properties.get(&property).copied().unwrap_or(0)
-    }
-
-    pub fn debug_enabled(&self) -> bool {
-        self.get_property(EngineProperty::IncludeDebugInfo) != 0
-    }
-
-    pub fn track_local_scopes(&self) -> bool {
-        self.debug_enabled() && self.get_property(EngineProperty::TrackLocalScopes) != 0
-    }
-
-    pub fn store_doc_comments(&self) -> bool {
-        self.debug_enabled() && self.get_property(EngineProperty::StoreDocComments) != 0
     }
 
     pub fn can_implicitly_convert(&self, from: TypeId, to: TypeId) -> bool {

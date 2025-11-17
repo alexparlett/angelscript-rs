@@ -315,6 +315,7 @@ impl Lexer {
     fn read_number(&mut self, start: usize) -> ParseResult<Token> {
         let mut text = String::new();
 
+        // Handle hex, binary, octal, decimal prefixes
         if self.current_char() == '0' && !self.is_at_end() {
             text.push(self.current_char());
             self.advance();
@@ -325,61 +326,112 @@ impl Lexer {
                     'x' | 'X' => {
                         text.push(next);
                         self.advance();
-                        while !self.is_at_end() && self.current_char().is_ascii_hexdigit() {
-                            text.push(self.current_char());
-                            self.advance();
+                        while !self.is_at_end() {
+                            let ch = self.current_char();
+                            if ch.is_ascii_hexdigit() {
+                                text.push(ch);
+                                self.advance();
+                            } else if ch == '\'' {
+                                // Skip separator
+                                self.advance();
+                            } else {
+                                break;
+                            }
                         }
                         return Ok(self.make_token(TokenKind::Number(text), start));
                     }
                     'b' | 'B' => {
                         text.push(next);
                         self.advance();
-                        while !self.is_at_end() && matches!(self.current_char(), '0' | '1') {
-                            text.push(self.current_char());
-                            self.advance();
+                        while !self.is_at_end() {
+                            let ch = self.current_char();
+                            if matches!(ch, '0' | '1') {
+                                text.push(ch);
+                                self.advance();
+                            } else if ch == '\'' {
+                                // Skip separator
+                                self.advance();
+                            } else {
+                                break;
+                            }
                         }
                         return Ok(self.make_token(TokenKind::Bits(text), start));
                     }
                     'o' | 'O' => {
                         text.push(next);
                         self.advance();
-                        while !self.is_at_end() && matches!(self.current_char(), '0'..='7') {
-                            text.push(self.current_char());
-                            self.advance();
+                        while !self.is_at_end() {
+                            let ch = self.current_char();
+                            if matches!(ch, '0'..='7') {
+                                text.push(ch);
+                                self.advance();
+                            } else if ch == '\'' {
+                                // Skip separator
+                                self.advance();
+                            } else {
+                                break;
+                            }
                         }
                         return Ok(self.make_token(TokenKind::Number(text), start));
                     }
                     'd' | 'D' => {
                         text.push(next);
                         self.advance();
-                        while !self.is_at_end() && self.current_char().is_ascii_digit() {
-                            text.push(self.current_char());
-                            self.advance();
+                        while !self.is_at_end() {
+                            let ch = self.current_char();
+                            if ch.is_ascii_digit() {
+                                text.push(ch);
+                                self.advance();
+                            } else if ch == '\'' {
+                                // Skip separator
+                                self.advance();
+                            } else {
+                                break;
+                            }
                         }
-                        return Ok(self.make_token(TokenKind::Bits(text), start));
+                        return Ok(self.make_token(TokenKind::Number(text), start));
                     }
                     _ => {}
                 }
             }
         }
 
-        while !self.is_at_end() && self.current_char().is_ascii_digit() {
-            text.push(self.current_char());
-            self.advance();
+        // Regular decimal number with separators
+        while !self.is_at_end() {
+            let ch = self.current_char();
+            if ch.is_ascii_digit() {
+                text.push(ch);
+                self.advance();
+            } else if ch == '\'' {
+                // Skip separator, continue
+                self.advance();
+            } else {
+                break;
+            }
         }
 
+        // Decimal point
         if !self.is_at_end() && self.current_char() == '.' {
             let next_pos = self.pos + 1;
             if next_pos < self.chars.len() && self.chars[next_pos].is_ascii_digit() {
                 text.push('.');
                 self.advance();
-                while !self.is_at_end() && self.current_char().is_ascii_digit() {
-                    text.push(self.current_char());
-                    self.advance();
+                while !self.is_at_end() {
+                    let ch = self.current_char();
+                    if ch.is_ascii_digit() {
+                        text.push(ch);
+                        self.advance();
+                    } else if ch == '\'' {
+                        // Skip separator in fractional part
+                        self.advance();
+                    } else {
+                        break;
+                    }
                 }
             }
         }
 
+        // Exponent
         if !self.is_at_end() && matches!(self.current_char(), 'e' | 'E') {
             text.push(self.current_char());
             self.advance();
@@ -387,32 +439,54 @@ impl Lexer {
                 text.push(self.current_char());
                 self.advance();
             }
-            while !self.is_at_end() && self.current_char().is_ascii_digit() {
-                text.push(self.current_char());
-                self.advance();
+            while !self.is_at_end() {
+                let ch = self.current_char();
+                if ch.is_ascii_digit() {
+                    text.push(ch);
+                    self.advance();
+                } else if ch == '\'' {
+                    // Skip separator in exponent
+                    self.advance();
+                } else {
+                    break;
+                }
             }
         }
 
         Ok(self.make_token(TokenKind::Number(text), start))
     }
 
-    fn read_string(&mut self, quote: char, start: usize) -> ParseResult<Token> {
+    fn read_string(&mut self, quote: char, start_offset: usize) -> ParseResult<Token> {
         let mut text = String::new();
-        self.advance();
+
+        self.advance(); // Skip opening quote
+
+        // Check for heredoc (triple quotes)
+        if quote == '"' && !self.is_at_end() && self.current_char() == '"' {
+            self.advance();
+            if !self.is_at_end() && self.current_char() == '"' {
+                self.advance();
+                // Heredoc mode: read until """
+                return self.read_heredoc(start_offset);
+            } else {
+                // Just two quotes, return empty string
+                return Ok(self.make_token(TokenKind::String(String::new()), start_offset));
+            }
+        }
 
         while !self.is_at_end() {
             let ch = self.current_char();
 
             if ch == quote {
-                self.advance();
-                return Ok(self.make_token(TokenKind::String(text), start));
+                self.advance(); // Skip closing quote
+                return Ok(self.make_token(TokenKind::String(text), start_offset));
             }
 
             if ch == '\\' {
                 self.advance();
                 if !self.is_at_end() {
                     let escaped = self.current_char();
-                    text.push(match escaped {
+                    let result = match escaped {
                         'n' => '\n',
                         'r' => '\r',
                         't' => '\t',
@@ -420,8 +494,46 @@ impl Lexer {
                         '\'' => '\'',
                         '"' => '"',
                         '0' => '\0',
+                        'a' => '\x07', // alert/bell
+                        'b' => '\x08', // backspace
+                        'f' => '\x0C', // form feed
+                        'v' => '\x0B', // vertical tab
+                        'x' => {
+                            self.advance();
+                            let mut hex = String::new();
+                            for _ in 0..2 {
+                                if !self.is_at_end() && self.current_char().is_ascii_hexdigit() {
+                                    hex.push(self.current_char());
+                                    self.advance();
+                                }
+                            }
+                            if let Ok(byte) = u8::from_str_radix(&hex, 16) {
+                                text.push(byte as char);
+                                continue; // Skip the advance at line 535
+                            } else {
+                                '?'
+                            }
+                        }
+                        'u' => {
+                            self.advance();
+                            let mut hex = String::new();
+                            for _ in 0..4 {
+                                if !self.is_at_end() && self.current_char().is_ascii_hexdigit() {
+                                    hex.push(self.current_char());
+                                    self.advance();
+                                }
+                            }
+                            if let Ok(code) = u32::from_str_radix(&hex, 16) {
+                                if let Some(ch) = char::from_u32(code) {
+                                    text.push(ch);
+                                    continue; // Skip the advance at line 535
+                                }
+                            }
+                            '?'
+                        }
                         _ => escaped,
-                    });
+                    };
+                    text.push(result);
                     self.advance();
                 }
             } else {
@@ -432,7 +544,7 @@ impl Lexer {
 
         Err(ParseError::InvalidString {
             span: if self.include_spans {
-                Some(self.span_builder.span(start, self.pos))
+                Some(self.span_builder.span(start_offset, self.pos))
             } else {
                 None
             },
@@ -440,6 +552,40 @@ impl Lexer {
         })
     }
 
+    fn read_heredoc(&mut self, start_offset: usize) -> ParseResult<Token> {
+        let mut text = String::new();
+
+        // Read until we find """
+        while !self.is_at_end() {
+            if self.current_char() == '"' {
+                // Check for """
+                if self.pos + 2 < self.chars.len()
+                    && self.chars[self.pos + 1] == '"'
+                    && self.chars[self.pos + 2] == '"'
+                {
+                    // Found closing """
+                    self.advance(); // First "
+                    self.advance(); // Second "
+                    self.advance(); // Third "
+                    return Ok(self.make_token(TokenKind::String(text), start_offset));
+                }
+            }
+
+            // Regular character
+            text.push(self.current_char());
+            self.advance();
+        }
+
+        Err(ParseError::InvalidString {
+            span: if self.include_spans {
+                Some(self.span_builder.span(start_offset, self.pos))
+            } else {
+                None
+            },
+            message: "Unterminated heredoc string (missing closing \"\"\")".to_string(),
+        })
+    }
+    
     fn skip_whitespace_and_comments(&mut self) -> ParseResult<()> {
         loop {
             if self.is_at_end() {

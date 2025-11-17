@@ -5306,7 +5306,6 @@ mod tests {
                 vtable_index: None,
                 implementation: FunctionImpl::Native { system_id: 0 },
                 definition_span: None,
-                doc_comments: vec![],
                 locals: vec![],
                 bytecode_address: None,
                 local_count: 0,
@@ -5381,7 +5380,6 @@ mod tests {
                 rust_methods: HashMap::new(),
                 vtable: vec![],
                 definition_span: None,
-                doc_comments: vec![],
             };
             let type_id = type_info.type_id;
             reg.register_type(type_info).unwrap();
@@ -5397,7 +5395,6 @@ mod tests {
                     getter: None,
                     setter: None,
                     definition_span: None,
-                    doc_comments: vec![],
                 },
             )
                .unwrap();
@@ -5475,7 +5472,6 @@ mod tests {
                 rust_methods: HashMap::new(),
                 vtable: vec![],
                 definition_span: None,
-                doc_comments: vec![],
             };
             let type_id = type_info.type_id;
             reg.register_type(type_info).unwrap();
@@ -5501,7 +5497,6 @@ mod tests {
                 vtable_index: None,
                 implementation: FunctionImpl::Native { system_id: 0 },
                 definition_span: None,
-                doc_comments: vec![],
                 locals: vec![],
                 bytecode_address: None,
                 local_count: 0,
@@ -5591,7 +5586,6 @@ mod tests {
                 rust_methods: HashMap::new(),
                 vtable: vec![],
                 definition_span: None,
-                doc_comments: vec![],
             };
             reg.register_type(type_info).unwrap();
 
@@ -5618,7 +5612,6 @@ mod tests {
                 },
 
                 definition_span: None,
-                doc_comments: vec![],
 
                 locals: vec![],
 
@@ -5654,7 +5647,6 @@ mod tests {
                 },
 
                 definition_span: None,
-                doc_comments: vec![],
 
                 locals: vec![],
 
@@ -5689,7 +5681,6 @@ mod tests {
                 },
 
                 definition_span: None,
-                doc_comments: vec![],
 
                 locals: vec![],
 
@@ -5773,7 +5764,6 @@ mod tests {
                 rust_methods: HashMap::new(),
                 vtable: vec![],
                 definition_span: None,
-                doc_comments: vec![],
             };
             let type_id = type_info.type_id;
             reg.register_type(type_info).unwrap();
@@ -5789,7 +5779,6 @@ mod tests {
                     getter: None,
                     setter: None,
                     definition_span: None,
-                    doc_comments: vec![],
                 },
             )
                .unwrap();

@@ -1586,4 +1586,442 @@ mod tests {
             _ => panic!("Expected function"),
         }
     }
+
+    #[test]
+    fn test_number_separator_decimal() {
+        let source = r#"
+            void test() {
+                int million = 1'000'000;
+                int billion = 1'000'000'000;
+                int mixed = 12'34'567;
+            }
+        "#;
+
+        let result = parse(source);
+        assert!(result.is_ok(), "Failed to parse: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_number_separator_hex() {
+        let source = r#"
+            void test() {
+                int hex1 = 0xFF'FF'FF'FF;
+                int hex2 = 0x00'11'22'33;
+                int hex3 = 0xDEAD'BEEF;
+            }
+        "#;
+
+        let result = parse(source);
+        assert!(result.is_ok(), "Failed to parse: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_number_separator_binary() {
+        let source = r#"
+            void test() {
+                int bin1 = 0b1111'0000'1010'0101;
+                int bin2 = 0b1'0'1'0;
+            }
+        "#;
+
+        let result = parse(source);
+        assert!(result.is_ok(), "Failed to parse: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_number_separator_octal() {
+        let source = r#"
+            void test() {
+                int oct1 = 0o755'644;
+                int oct2 = 0o1'2'3'4;
+            }
+        "#;
+
+        let result = parse(source);
+        assert!(result.is_ok(), "Failed to parse: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_number_separator_float() {
+        let source = r#"
+            void test() {
+                float f1 = 1'234.567'890;
+                float f2 = 3'141'592.653'589;
+                double d = 1'000.0e10;
+            }
+        "#;
+
+        let result = parse(source);
+        assert!(result.is_ok(), "Failed to parse: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_heredoc_simple() {
+        let source = r####"
+            void test() {
+                string sql = """SELECT * FROM users WHERE id = 1""";
+            }
+        "####;
+
+        let result = parse(source);
+        assert!(result.is_ok(), "Failed to parse: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_heredoc_multiline() {
+        let source = r####"
+            void test() {
+                string query = """
+                    SELECT u.name, u.email
+                    FROM users u
+                    WHERE u.active = 1
+                    ORDER BY u.created_at DESC
+                """;
+            }
+        "####;
+
+        let result = parse(source);
+        assert!(result.is_ok(), "Failed to parse: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_heredoc_with_quotes() {
+        let source = r####"
+            void test() {
+                string html = """
+                    <div class="container">
+                        <p>Hello "World"</p>
+                        <a href="/test">Link</a>
+                    </div>
+                """;
+            }
+        "####;
+
+        let result = parse(source);
+        assert!(result.is_ok(), "Failed to parse: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_bit_formats_lowercase() {
+        let source = r#"
+            void test() {
+                int b1 = 0b1010;
+                int o1 = 0o755;
+                int d1 = 0d123;
+                int h1 = 0xff;
+            }
+        "#;
+
+        let result = parse(source);
+        assert!(result.is_ok(), "Failed to parse: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_bit_formats_uppercase() {
+        let source = r#"
+            void test() {
+                int b2 = 0B1111;
+                int o2 = 0O644;
+                int d2 = 0D999;
+                int h2 = 0XFF;
+            }
+        "#;
+
+        let result = parse(source);
+        assert!(result.is_ok(), "Failed to parse: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_bit_formats_mixed_case() {
+        let source = r#"
+            void test() {
+                int h1 = 0xAbCdEf;
+                int h2 = 0XFEDCBA;
+                int h3 = 0xDeAdBeEf;
+            }
+        "#;
+
+        let result = parse(source);
+        assert!(result.is_ok(), "Failed to parse: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_escape_sequences_basic() {
+        let source = r#"
+            void test() {
+                string newline = "Line1\nLine2";
+                string tab = "Col1\tCol2";
+                string carriage = "Return\rHere";
+                string backslash = "Path\\to\\file";
+                string quote = "Say \"Hello\"";
+                string singleQuote = 'It\'s working';
+            }
+        "#;
+
+        let result = parse(source);
+        assert!(result.is_ok(), "Failed to parse: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_escape_sequences_extended() {
+        let source = r#"
+            void test() {
+                string nullEscape = "Null\0char";
+                string bell = "Alert\a";
+                string backspace = "Back\bspace";
+                string formfeed = "Form\ffeed";
+                string vtab = "Vertical\vtab";
+            }
+        "#;
+
+        let result = parse(source);
+        assert!(result.is_ok(), "Failed to parse: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_escape_sequences_hex() {
+        let source = r#"
+            void test() {
+                string hex1 = "Hex\x41"; // 'A'
+                string hex2 = "Hex\x0A"; // newline
+                string hex3 = "Hex\xFF"; // max byte
+            }
+        "#;
+
+        let result = parse(source);
+        assert!(result.is_ok(), "Failed to parse: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_escape_sequences_unicode() {
+        let source = r#"
+            void test() {
+                string unicode1 = "Unicode\u0041"; // 'A'
+                string unicode2 = "Unicode\u263A"; // smiley ☺
+                string unicode3 = "Unicode\u00A9"; // copyright ©
+            }
+        "#;
+
+        let result = parse(source);
+        assert!(result.is_ok(), "Failed to parse: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_simple_init_list() {
+        let source = r#"
+            void test() {
+                int[] arr = {1, 2, 3, 4, 5};
+                array<int> nums = {10, 20, 30};
+            }
+        "#;
+
+        let result = parse(source);
+        assert!(result.is_ok(), "Failed to parse: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_nested_init_list_2d() {
+        let source = r#"
+            void test() {
+                int[][] matrix = {
+                    {1, 2, 3},
+                    {4, 5, 6},
+                    {7, 8, 9}
+                };
+            }
+        "#;
+
+        let result = parse(source);
+        assert!(result.is_ok(), "Failed to parse: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_nested_init_list_complex() {
+        let source = r#"
+            void test() {
+                array<array<int>> data = {
+                    {1, 2},
+                    {3, 4, 5},
+                    {6}
+                };
+            }
+        "#;
+
+        let result = parse(source);
+        assert!(result.is_ok(), "Failed to parse: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_nested_init_list_mixed() {
+        let source = r#"
+            void test() {
+                auto complex = {
+                    {1, 2, 3},
+                    {4, 5},
+                    {6, 7, 8, 9}
+                };
+
+                auto strings = {
+                    {"hello", "world"},
+                    {"foo", "bar", "baz"}
+                };
+            }
+        "#;
+
+        let result = parse(source);
+        assert!(result.is_ok(), "Failed to parse: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_combined_features() {
+        let source = r####"
+            void test() {
+                // Number separators in various formats
+                int count = 1'000'000;
+                int flags = 0xFF'00'AA'BB;
+                float precise = 3'141.592'653;
+
+                // Heredoc with embedded content
+                string template = """
+                    SELECT * FROM users
+                    WHERE id IN (1, 2, 3)
+                    AND status = 'active'
+                """;
+
+                // Escaped characters
+                string path = "C:\\Users\\Name\\Documents";
+                string json = "{\"key\": \"value\"}";
+                string unicode = "Copyright \u00A9 2024";
+
+                // Nested init lists
+                int[][] grid = {
+                    {1, 2, 3},
+                    {4, 5, 6}
+                };
+
+                configure(1'920, 1'080, true);
+            }
+
+            void configure(int width = 800, int height = 600, bool fullscreen = false) {}
+        "####;
+
+        let result = parse(source);
+        assert!(result.is_ok(), "Failed to parse: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_reserved_as_variable() {
+        assert!(parse("void f() { int null = 5; }").is_err());
+        assert!(parse("void f() { int void = 5; }").is_err());
+        assert!(parse("void f() { int class = 5; }").is_err());
+        assert!(parse("void f() { int if = 5; }").is_err());
+        assert!(parse("void f() { int for = 5; }").is_err());
+        assert!(parse("void f() { int while = 5; }").is_err());
+        assert!(parse("void f() { bool true = false; }").is_err());
+        assert!(parse("void f() { bool false = true; }").is_err());
+    }
+
+    #[test]
+    fn test_reserved_as_function() {
+        assert!(parse("void null() {}").is_err());
+        assert!(parse("void class() {}").is_err());
+        assert!(parse("void if() {}").is_err());
+        assert!(parse("int return() { return 0; }").is_err());
+    }
+
+    #[test]
+    fn test_reserved_as_parameter() {
+        assert!(parse("void f(int null) {}").is_err());
+        assert!(parse("void f(int void) {}").is_err());
+        assert!(parse("void f(bool true) {}").is_err());
+    }
+
+    #[test]
+    fn test_reserved_as_class() {
+        assert!(parse("class null {}").is_err());
+        assert!(parse("class void {}").is_err());
+        assert!(parse("class if {}").is_err());
+        assert!(parse("class for {}").is_err());
+    }
+
+    #[test]
+    fn test_reserved_as_interface() {
+        assert!(parse("interface null {}").is_err());
+        assert!(parse("interface void {}").is_err());
+    }
+
+    #[test]
+    fn test_reserved_as_enum() {
+        assert!(parse("enum null { A, B }").is_err());
+        assert!(parse("enum void { A, B }").is_err());
+        assert!(parse("enum MyEnum { null, B }").is_err());
+        assert!(parse("enum MyEnum { A, void }").is_err());
+    }
+
+    #[test]
+    fn test_reserved_as_namespace() {
+        assert!(parse("namespace null {}").is_err());
+        assert!(parse("namespace void {}").is_err());
+    }
+
+    #[test]
+    fn test_reserved_as_typedef() {
+        assert!(parse("typedef int null;").is_err());
+        assert!(parse("typedef float void;").is_err());
+    }
+
+    #[test]
+    fn test_reserved_as_funcdef() {
+        assert!(parse("funcdef void null();").is_err());
+        assert!(parse("funcdef void class();").is_err());
+    }
+
+    #[test]
+    fn test_reserved_as_property() {
+        assert!(parse("class C { int null { get { return 0; } } }").is_err());
+    }
+
+    #[test]
+    fn test_contextual_keywords_allowed() {
+        assert!(parse("void f() { int shared = 5; }").is_ok());
+        assert!(parse("void f() { int override = 5; }").is_ok());
+        assert!(parse("void f() { int property = 5; }").is_ok());
+        assert!(parse("void f() { int final = 5; }").is_ok());
+        assert!(parse("void f() { int abstract = 5; }").is_ok());
+        assert!(parse("class shared {}").is_ok());
+        assert!(parse("void override() {}").is_ok());
+    }
+
+    #[test]
+    fn test_valid_similar_identifiers() {
+        assert!(parse("void f() { int nullable = 5; }").is_ok());
+        assert!(parse("void f() { int my_null = 5; }").is_ok());
+        assert!(parse("void f() { int null_ = 5; }").is_ok());
+        assert!(parse("void f() { int _void = 5; }").is_ok());
+        assert!(parse("class MyClass {}").is_ok());
+        assert!(parse("void myFunction() {}").is_ok());
+    }
+
+    #[test]
+    fn test_all_reserved_keywords() {
+        let keywords = vec![
+            "class", "enum", "interface", "namespace", "typedef", "funcdef",
+            "import", "mixin", "void", "int", "int8", "int16", "int32", "int64",
+            "uint", "uint8", "uint16", "uint32", "uint64", "float", "double",
+            "bool", "auto", "const", "private", "protected", "if", "else",
+            "for", "foreach", "while", "do", "switch", "case", "default",
+            "break", "continue", "return", "try", "catch", "in", "out",
+            "inout", "cast", "true", "false", "null", "and", "or", "xor",
+            "not", "is",
+        ];
+
+        for keyword in keywords {
+            let source = format!("void f() {{ int {} = 5; }}", keyword);
+            assert!(
+                parse(&source).is_err(),
+                "Keyword '{}' should be rejected as variable name",
+                keyword
+            );
+        }
+    }
 }

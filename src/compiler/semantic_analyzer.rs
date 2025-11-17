@@ -383,7 +383,7 @@ impl SemanticAnalyzer {
 
                     return Ok(ExprContext::Temporary {
                         type_id: left_ctx.get_type(),
-                    })
+                    });
                 }
 
                 if !left_ctx.is_lvalue() {
@@ -662,14 +662,14 @@ impl SemanticAnalyzer {
             .iter()
             .filter(|f| {
                 f.parameters
-                 .iter()
-                 .take(arg_types.len())
-                 .zip(arg_types)
-                 .all(|(param, &arg_type)| {
-                     let param_type = registry.resolve_typedef(param.type_id);
-                     let arg_type = registry.resolve_typedef(arg_type);
-                     param_type == arg_type
-                 })
+                    .iter()
+                    .take(arg_types.len())
+                    .zip(arg_types)
+                    .all(|(param, &arg_type)| {
+                        let param_type = registry.resolve_typedef(param.type_id);
+                        let arg_type = registry.resolve_typedef(arg_type);
+                        param_type == arg_type
+                    })
             })
             .map(|f| f.function_id)
             .collect();
@@ -687,16 +687,16 @@ impl SemanticAnalyzer {
             .iter()
             .filter(|f| {
                 f.parameters
-                 .iter()
-                 .take(arg_types.len())
-                 .zip(arg_types)
-                 .all(|(param, &arg_type)| {
-                     let param_type = registry.resolve_typedef(param.type_id);
-                     let arg_type = registry.resolve_typedef(arg_type);
+                    .iter()
+                    .take(arg_types.len())
+                    .zip(arg_types)
+                    .all(|(param, &arg_type)| {
+                        let param_type = registry.resolve_typedef(param.type_id);
+                        let arg_type = registry.resolve_typedef(arg_type);
 
-                     param_type == arg_type
-                         || registry.can_implicitly_convert(arg_type, param_type)
-                 })
+                        param_type == arg_type
+                            || registry.can_implicitly_convert(arg_type, param_type)
+                    })
             })
             .map(|f| f.function_id)
             .collect();
@@ -913,7 +913,6 @@ impl SemanticAnalyzer {
             },
 
             definition_span: span.cloned(),
-            doc_comments: Vec::new(),
 
             locals,
 
@@ -976,7 +975,6 @@ impl SemanticAnalyzer {
             vtable: Vec::new(),
 
             definition_span: None,
-            doc_comments: Vec::new(),
         };
 
         let type_id = type_info.type_id;
@@ -1064,8 +1062,6 @@ impl SemanticAnalyzer {
     }
 
     fn register_typedef(&mut self, typedef: &Typedef) {
-        let debug_enabled = self.registry.read().unwrap().debug_enabled();
-
         let aliased_type_id = self.symbol_table.lookup_type(&typedef.prim_type);
 
         if aliased_type_id.is_none() {
@@ -1100,12 +1096,7 @@ impl SemanticAnalyzer {
 
             vtable: Vec::new(),
 
-            definition_span: if debug_enabled {
-                typedef.span.clone()
-            } else {
-                None
-            },
-            doc_comments: Vec::new(),
+            definition_span: typedef.span.clone(),
         };
 
         if let Err(e) = self.registry.write().unwrap().register_type(type_info) {
@@ -1117,9 +1108,6 @@ impl SemanticAnalyzer {
     }
 
     fn register_class_type(&mut self, class: &Class) {
-        let debug_enabled = self.registry.read().unwrap().debug_enabled();
-        let store_docs = self.registry.read().unwrap().store_doc_comments();
-
         let base_class = if !class.extends.is_empty() {
             let base_type_id = self.symbol_table.lookup_type(&class.extends[0]);
 
@@ -1158,12 +1146,7 @@ impl SemanticAnalyzer {
 
             vtable: Vec::new(),
 
-            definition_span: if debug_enabled {
-                class.span.clone()
-            } else {
-                None
-            },
-            doc_comments: if store_docs { Vec::new() } else { Vec::new() },
+            definition_span: class.span.clone(),
         };
 
         if let Err(e) = self.registry.write().unwrap().register_type(type_info) {
@@ -1175,8 +1158,6 @@ impl SemanticAnalyzer {
     }
 
     fn register_funcdef_type(&mut self, funcdef: &FuncDef) {
-        let debug_enabled = self.registry.read().unwrap().debug_enabled();
-
         let _return_type = self
             .symbol_table
             .resolve_type_from_ast(&funcdef.return_type);
@@ -1203,12 +1184,7 @@ impl SemanticAnalyzer {
 
             vtable: Vec::new(),
 
-            definition_span: if debug_enabled {
-                funcdef.span.clone()
-            } else {
-                None
-            },
-            doc_comments: Vec::new(),
+            definition_span: funcdef.span.clone(),
         };
 
         if let Err(e) = self.registry.write().unwrap().register_type(type_info) {
@@ -1223,8 +1199,6 @@ impl SemanticAnalyzer {
         if let Err(e) = self.validate_function_params(func) {
             self.errors.push(e);
         }
-
-        let debug_enabled = self.registry.read().unwrap().debug_enabled();
 
         let return_type = func
             .return_type
@@ -1249,7 +1223,7 @@ impl SemanticAnalyzer {
                     ParameterFlags::empty()
                 },
                 default_expr: p.default_value.as_ref().map(|expr| Arc::new(expr.clone())),
-                definition_span: if debug_enabled { p.span.clone() } else { None },
+                definition_span: p.span.clone(),
             })
             .collect();
 
@@ -1316,13 +1290,7 @@ impl SemanticAnalyzer {
                 module_id: 0,
             },
 
-            definition_span: if debug_enabled {
-                func.span.clone()
-            } else {
-                None
-            },
-            doc_comments: Vec::new(),
-
+            definition_span: func.span.clone(),
             locals: Vec::new(),
 
             bytecode_address: None,
@@ -1368,7 +1336,11 @@ impl SemanticAnalyzer {
         }
     }
 
-    fn is_duplicate_signature(&self, new_func: &FunctionInfo, existing: &Arc<FunctionInfo>) -> bool {
+    fn is_duplicate_signature(
+        &self,
+        new_func: &FunctionInfo,
+        existing: &Arc<FunctionInfo>,
+    ) -> bool {
         // Same namespace
         if new_func.namespace != existing.namespace {
             return false;
@@ -1391,7 +1363,8 @@ impl SemanticAnalyzer {
             }
             // Parameter const-ness matters for overload resolution
             if new_param.flags.contains(ParameterFlags::CONST)
-                != existing_param.flags.contains(ParameterFlags::CONST) {
+                != existing_param.flags.contains(ParameterFlags::CONST)
+            {
                 return false;
             }
         }
@@ -1510,8 +1483,8 @@ impl SemanticAnalyzer {
             if matches!(type_mod, TypeMod::InOut) {
                 return Err(SemanticError::ReferenceMismatch {
                     message:
-                    "Primitive types cannot use 'inout' references. Use 'in' or 'out' instead."
-                        .to_string(),
+                        "Primitive types cannot use 'inout' references. Use 'in' or 'out' instead."
+                            .to_string(),
                     span: span.cloned(),
                 });
             }
@@ -1575,7 +1548,6 @@ impl SemanticAnalyzer {
 
     fn register_global_var(&mut self, var: &Var) {
         let type_id = self.symbol_table.resolve_type_from_ast(&var.var_type);
-        let debug_enabled = self.registry.read().unwrap().debug_enabled();
 
         for (idx, decl) in var.declarations.iter().enumerate() {
             let full_name = if !self.current_namespace.is_empty() {
@@ -1589,11 +1561,7 @@ impl SemanticAnalyzer {
                 type_id,
                 is_const: var.var_type.is_const,
                 address: idx as u32,
-                definition_span: if debug_enabled {
-                    decl.span.clone()
-                } else {
-                    None
-                },
+                definition_span: decl.span.clone(),
             };
 
             if let Err(e) = self.registry.write().unwrap().register_global(global_info) {
@@ -1618,8 +1586,6 @@ impl SemanticAnalyzer {
             match member {
                 ClassMember::Var(var) => {
                     let member_type = self.symbol_table.resolve_type_from_ast(&var.var_type);
-                    let debug_enabled = self.registry.read().unwrap().debug_enabled();
-
                     for decl in &var.declarations {
                         let property_info = PropertyInfo {
                             name: decl.name.clone(),
@@ -1637,12 +1603,7 @@ impl SemanticAnalyzer {
                             },
                             getter: None,
                             setter: None,
-                            definition_span: if debug_enabled {
-                                decl.span.clone()
-                            } else {
-                                None
-                            },
-                            doc_comments: Vec::new(),
+                            definition_span: decl.span.clone(),
                         };
 
                         if let Err(e) = self
@@ -1706,7 +1667,6 @@ impl SemanticAnalyzer {
     }
 
     fn register_virtual_property(&mut self, type_id: TypeId, prop: &VirtProp) {
-        let debug_enabled = self.registry.read().unwrap().debug_enabled();
         let prop_type = self.symbol_table.resolve_type_from_ast(&prop.prop_type);
 
         let mut getter_id = None;
@@ -1769,13 +1729,7 @@ impl SemanticAnalyzer {
                     module_id: 0,
                 },
 
-                definition_span: if debug_enabled {
-                    accessor.span.clone()
-                } else {
-                    None
-                },
-                doc_comments: Vec::new(),
-
+                definition_span: accessor.span.clone(),
                 locals: Vec::new(),
 
                 bytecode_address: None,
@@ -1819,12 +1773,7 @@ impl SemanticAnalyzer {
             flags: PropertyFlags::VIRTUAL | PropertyFlags::PUBLIC,
             getter: getter_id,
             setter: setter_id,
-            definition_span: if debug_enabled {
-                prop.span.clone()
-            } else {
-                None
-            },
-            doc_comments: Vec::new(),
+            definition_span: prop.span.clone(),
         };
 
         if let Err(e) = self
@@ -5705,7 +5654,6 @@ mod tests {
                 vtable_index: None,
                 implementation: FunctionImpl::Native { system_id: 0 },
                 definition_span: None,
-                doc_comments: vec![],
                 locals: vec![],
                 bytecode_address: None,
                 local_count: 0,
@@ -5760,7 +5708,6 @@ mod tests {
                 rust_methods: HashMap::new(),
                 vtable: vec![],
                 definition_span: None,
-                doc_comments: vec![],
             };
             let type_id = type_info.type_id;
             reg.register_type(type_info).unwrap();
@@ -5776,10 +5723,9 @@ mod tests {
                     getter: None,
                     setter: None,
                     definition_span: None,
-                    doc_comments: vec![],
                 },
             )
-               .unwrap();
+            .unwrap();
         }
 
         let mut analyzer = SemanticAnalyzer::new(registry);
@@ -5842,7 +5788,6 @@ mod tests {
                 rust_methods: HashMap::new(),
                 vtable: vec![],
                 definition_span: None,
-                doc_comments: vec![],
             };
             let type_id = type_info.type_id;
             reg.register_type(type_info).unwrap();
@@ -5868,14 +5813,13 @@ mod tests {
                 vtable_index: None,
                 implementation: FunctionImpl::Native { system_id: 0 },
                 definition_span: None,
-                doc_comments: vec![],
                 locals: vec![],
                 bytecode_address: None,
                 local_count: 0,
             };
             reg.register_function(func_info).unwrap();
             reg.add_method(type_id, "takeDamage".to_string(), func_id)
-               .unwrap();
+                .unwrap();
         }
 
         let mut analyzer = SemanticAnalyzer::new(registry);
@@ -5926,7 +5870,6 @@ mod tests {
                 rust_methods: HashMap::new(),
                 vtable: vec![],
                 definition_span: None,
-                doc_comments: vec![],
             };
             reg.register_type(type_info).unwrap();
         }
@@ -5975,7 +5918,6 @@ mod tests {
                 rust_methods: HashMap::new(),
                 vtable: vec![],
                 definition_span: None,
-                doc_comments: vec![],
             };
             reg.register_type(type_info).unwrap();
         }
@@ -6089,7 +6031,6 @@ mod tests {
                 rust_methods: HashMap::new(),
                 vtable: vec![],
                 definition_span: None,
-                doc_comments: vec![],
             };
             let type_id = type_info.type_id;
             reg.register_type(type_info).unwrap();
@@ -6105,10 +6046,9 @@ mod tests {
                     getter: None,
                     setter: None,
                     definition_span: None,
-                    doc_comments: vec![],
                 },
             )
-               .unwrap();
+            .unwrap();
         }
 
         let mut analyzer = SemanticAnalyzer::new(registry);
@@ -6767,22 +6707,21 @@ mod tests {
                 rust_methods: HashMap::new(),
                 vtable: vec![],
                 definition_span: None,
-                doc_comments: vec![],
             };
             let type_id = type_info.type_id;
             reg.register_type(type_info).unwrap();
 
             let construct_id = allocate_function_id();
             reg.add_behaviour(type_id, BehaviourType::Construct, construct_id)
-               .unwrap();
+                .unwrap();
 
             let addref_id = allocate_function_id();
             reg.add_behaviour(type_id, BehaviourType::AddRef, addref_id)
-               .unwrap();
+                .unwrap();
 
             let release_id = allocate_function_id();
             reg.add_behaviour(type_id, BehaviourType::Release, release_id)
-               .unwrap();
+                .unwrap();
         }
 
         let mut analyzer = SemanticAnalyzer::new(registry);
@@ -6827,7 +6766,6 @@ mod tests {
                 rust_methods: HashMap::new(),
                 vtable: vec![],
                 definition_span: None,
-                doc_comments: vec![],
             };
             reg.register_type(type_info).unwrap();
         }
@@ -6878,7 +6816,6 @@ mod tests {
                 rust_methods: HashMap::new(),
                 vtable: vec![],
                 definition_span: None,
-                doc_comments: vec![],
             };
             reg.register_type(type_info).unwrap();
         }
@@ -6925,7 +6862,6 @@ mod tests {
                 rust_methods: HashMap::new(),
                 vtable: vec![],
                 definition_span: None,
-                doc_comments: vec![],
             };
             reg.register_type(type_info).unwrap();
         }
@@ -6970,7 +6906,6 @@ mod tests {
                 rust_methods: HashMap::new(),
                 vtable: vec![],
                 definition_span: None,
-                doc_comments: vec![],
             };
             reg.register_type(type_info).unwrap();
         }
@@ -7057,7 +6992,6 @@ mod tests {
                 rust_methods: HashMap::new(),
                 vtable: vec![],
                 definition_span: None,
-                doc_comments: vec![],
             };
             reg.register_type(type_info).unwrap();
         }
@@ -7111,7 +7045,6 @@ mod tests {
                 rust_methods: HashMap::new(),
                 vtable: vec![],
                 definition_span: None,
-                doc_comments: vec![],
             };
             reg.register_type(type_info).unwrap();
         }

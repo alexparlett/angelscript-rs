@@ -1533,6 +1533,19 @@ impl Parser {
         }
     }
 
+    fn check_reserved_keyword(&self, name: &str, context: &str) -> ParseResult<()> {
+        if TokenKind::keyword(name).is_some() {
+            return Err(ParseError::SyntaxError {
+                span: self.previous().span.clone(),
+                message: format!(
+                    "'{}' is a reserved keyword and cannot be used as {}",
+                    name, context
+                ),
+            });
+        }
+        Ok(())
+    }
+
     fn parse_foreach(&mut self) -> ParseResult<Statement> {
         let start_offset = self.current().span.as_ref().map(|s| s.start).unwrap_or(0);
 
@@ -2160,6 +2173,9 @@ impl Parser {
             TokenKind::Identifier(name) => {
                 let name = name.clone();
                 self.advance();
+
+                self.check_reserved_keyword(&name, "a variable name")?;
+
                 Ok(name)
             }
             _ => Err(self.error("Expected identifier")),

@@ -313,8 +313,6 @@ impl SymbolTable {
         is_param: bool,
         span: Option<Span>,
     ) -> usize {
-        let track_scopes = self.registry.read().unwrap().track_local_scopes();
-
         if let Some(scope) = self.scopes.last_mut() {
             let index = scope.next_index;
             scope.next_index += 1;
@@ -326,8 +324,6 @@ impl SymbolTable {
                 is_param,
                 index,
                 definition_span: span,
-                scope_start: if track_scopes { Some(0) } else { None },
-                scope_end: if track_scopes { Some(0) } else { None },
             };
 
             scope.variables.insert(name, var_info);
