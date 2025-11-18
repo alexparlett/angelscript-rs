@@ -1,0 +1,13 @@
+*.log
+.env
+node_modules/
+__pycache__/
+.git/
+.idea/
+venv/
+reference/
+target/
+Cargo.lock
+.gitignore
+LICENSE
+README.md
