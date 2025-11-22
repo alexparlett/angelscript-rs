@@ -81,7 +81,7 @@ impl ScriptBuilder {
     fn build_section(&mut self, idx: usize) -> ParseResult<Script> {
         let section_name = &self.sections[idx].0.clone();
         let source = &self.sections[idx].1;
-        
+
         let lexer = Lexer::new_with_name(section_name, source, true);
         let tokens = lexer.tokenize()?;
 

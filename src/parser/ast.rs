@@ -242,6 +242,7 @@ pub enum TypeModifier {
     Array,
     Handle,
     ConstHandle,
+    AutoHandle, // @+ (auto-managed handle)
 }
 
 #[derive(Debug, Clone, PartialEq, Hash)]

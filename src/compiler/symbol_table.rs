@@ -1,5 +1,5 @@
 use crate::core::span::Span;
-use crate::core::type_registry::{LocalVarInfo, TypeRegistry};
+use crate::core::type_registry::{LocalVarInfo, ReturnFlags, TypeRegistry};
 use crate::core::types::{FunctionId, TypeId};
 use crate::parser::ast::{DataType, Expr, Type};
 use std::collections::HashMap;
@@ -30,12 +30,14 @@ pub enum ExprContext {
     FunctionCall {
         return_type: TypeId,
         function_id: FunctionId,
+        return_flags: ReturnFlags,
     },
 
     /// Method call (resolved to specific method)
     MethodCall {
         return_type: TypeId,
         function_id: FunctionId,
+        return_flags: ReturnFlags,
     },
 
     /// Regular property access (direct HashMap access)
@@ -89,9 +91,12 @@ impl ExprContext {
             ExprContext::PropertyAccess { .. } => true,
             ExprContext::VirtualProperty { setter_id, .. } => setter_id.is_some(),
             ExprContext::Reference { .. } => true,
+            // Functions that return references are lvalues
+            ExprContext::FunctionCall { return_flags, .. } => {
+                return_flags.contains(ReturnFlags::REF)
+            }
+            ExprContext::MethodCall { return_flags, .. } => return_flags.contains(ReturnFlags::REF),
             ExprContext::Literal { .. } => false,
-            ExprContext::FunctionCall { .. } => false,
-            ExprContext::MethodCall { .. } => false,
             ExprContext::Temporary { .. } => false,
             ExprContext::Handle { .. } => false,
         }
@@ -105,6 +110,13 @@ impl ExprContext {
             ExprContext::PropertyAccess { is_const, .. } => *is_const,
             ExprContext::VirtualProperty { is_const, .. } => *is_const,
             ExprContext::Reference { is_const, .. } => *is_const,
+            // Functions/methods that return const references are const
+            ExprContext::FunctionCall { return_flags, .. } => {
+                return_flags.contains(ReturnFlags::CONST)
+            }
+            ExprContext::MethodCall { return_flags, .. } => {
+                return_flags.contains(ReturnFlags::CONST)
+            }
             _ => false,
         }
     }
@@ -156,6 +168,26 @@ impl ExprContext {
                 ..
             } => Some((*getter_id, *setter_id)),
             _ => None,
+        }
+    }
+
+    /// Get return flags (for function/method calls)
+    pub fn get_return_flags(&self) -> Option<ReturnFlags> {
+        match self {
+            ExprContext::FunctionCall { return_flags, .. } => Some(*return_flags),
+            ExprContext::MethodCall { return_flags, .. } => Some(*return_flags),
+            _ => None,
+        }
+    }
+
+    /// Check if this expression returns a reference (for function/method calls)
+    pub fn returns_ref(&self) -> bool {
+        match self {
+            ExprContext::FunctionCall { return_flags, .. } => {
+                return_flags.contains(ReturnFlags::REF)
+            }
+            ExprContext::MethodCall { return_flags, .. } => return_flags.contains(ReturnFlags::REF),
+            _ => false,
         }
     }
 

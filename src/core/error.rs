@@ -1,5 +1,4 @@
 use crate::core::span::Span;
-use crate::core::types::{FunctionId, TypeId};
 use std::fmt;
 use thiserror::Error;
 

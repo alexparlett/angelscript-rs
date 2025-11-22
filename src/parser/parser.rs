@@ -961,6 +961,10 @@ impl Parser {
                 if self.check(&TokenKind::Const) {
                     self.advance();
                     modifiers.push(TypeModifier::ConstHandle);
+                } else if self.check(&TokenKind::Add) {
+                    // @+ (AutoHandle) - FFI-only, for auto reference management
+                    self.advance();
+                    modifiers.push(TypeModifier::AutoHandle);
                 } else {
                     modifiers.push(TypeModifier::Handle);
                 }

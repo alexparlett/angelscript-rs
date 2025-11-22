@@ -1,15 +1,25 @@
+//! Type Registry
+//!
+//! This module provides the central registry for all types in the AngelScript engine.
+//! It stores type information, function signatures, and global variables.
+//!
+//! Note: Native function implementations (callables) are NOT stored here.
+//! They are stored in SystemFunctionRegistry (in the callfunc module).
+//! This registry only stores metadata and FunctionIds which can be used
+//! to look up the actual callables.
+
 use crate::core::engine_properties::EngineProperty;
 use crate::core::span::Span;
 use crate::core::types::{
-    AccessSpecifier, BehaviourType, FunctionId, ModuleId, ScriptValue, TypeFlags, TypeId,
-    TypeKind, TypeRegistration, TYPE_BOOL, TYPE_DOUBLE, TYPE_FLOAT, TYPE_INT16, TYPE_INT32,
-    TYPE_INT64, TYPE_INT8, TYPE_STRING, TYPE_UINT16, TYPE_UINT32, TYPE_UINT64, TYPE_UINT8,
-    TYPE_VOID,
+    AccessSpecifier, BehaviourType, FunctionId, ModuleId, ScriptValue, TYPE_BOOL, TYPE_DOUBLE,
+    TYPE_FLOAT, TYPE_INT8, TYPE_INT16, TYPE_INT32, TYPE_INT64, TYPE_STRING, TYPE_UINT8,
+    TYPE_UINT16, TYPE_UINT32, TYPE_UINT64, TYPE_VOID, TypeFlags, TypeId, TypeKind,
+    TypeRegistration,
 };
+use crate::parser::ast::Expr;
 use std::any::TypeId as StdTypeId;
 use std::collections::HashMap;
 use std::sync::Arc;
-use crate::parser::ast::Expr;
 
 pub struct TypeRegistry {
     types: HashMap<TypeId, Arc<TypeInfo>>,
@@ -35,11 +45,12 @@ pub struct TypeInfo {
     pub base_type: Option<TypeId>,
     pub interfaces: Vec<TypeId>,
 
+    /// Behaviours map BehaviourType -> FunctionId
+    /// The actual callables are stored in SystemFunctionRegistry
     pub behaviours: HashMap<BehaviourType, FunctionId>,
 
+    /// The Rust TypeId for application-registered types
     pub rust_type_id: Option<StdTypeId>,
-    pub rust_accessors: HashMap<String, PropertyAccessor>,
-    pub rust_methods: HashMap<String, RustMethod>,
 
     pub vtable: Vec<VTableEntry>,
 
@@ -54,7 +65,12 @@ pub struct PropertyInfo {
     pub access: AccessSpecifier,
     pub flags: PropertyFlags,
 
+    /// FunctionId of the getter (if any)
+    /// The actual callable is stored in SystemFunctionRegistry
     pub getter: Option<FunctionId>,
+    
+    /// FunctionId of the setter (if any)
+    /// The actual callable is stored in SystemFunctionRegistry
     pub setter: Option<FunctionId>,
 
     pub definition_span: Option<Span>,
@@ -85,7 +101,7 @@ pub struct FunctionInfo {
     pub namespace: Vec<String>,
 
     pub return_type: TypeId,
-    pub return_is_ref: bool,
+    pub return_flags: ReturnFlags,
     pub parameters: Vec<ParameterInfo>,
 
     pub kind: FunctionKind,
@@ -144,17 +160,26 @@ bitflags::bitflags! {
     }
 }
 
+bitflags::bitflags! {
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub struct ReturnFlags: u32 {
+        const REF = 0x01;
+        const CONST = 0x02;
+        const AUTO_HANDLE = 0x04;
+    }
+}
+
 #[derive(Debug, Clone)]
 pub enum FunctionImpl {
+    /// Native function - the actual callable is stored in SystemFunctionRegistry
+    /// system_id is the FunctionId used to look up the callable
     Native {
         system_id: u32,
     },
+    /// Script function - bytecode is stored in the module
     Script {
         bytecode_offset: u32,
         module_id: ModuleId,
-    },
-    Virtual {
-        vtable_index: usize,
     },
 }
 
@@ -172,8 +197,9 @@ bitflags::bitflags! {
     pub struct ParameterFlags: u32 {
         const IN = 0x01;
         const OUT = 0x02;
-        const INOUT = 0x03;
-        const CONST = 0x04;
+        const INOUT = 0x04;
+        const CONST = 0x08;
+        const AUTO_HANDLE = 0x010;
     }
 }
 
@@ -203,32 +229,6 @@ pub struct VTableEntry {
     pub method_name: String,
     pub function_id: FunctionId,
     pub override_of: Option<FunctionId>,
-}
-
-#[derive(Clone)]
-pub struct PropertyAccessor {
-    pub getter: Option<Arc<dyn Fn(&dyn std::any::Any) -> ScriptValue + Send + Sync>>,
-    pub setter: Option<Arc<dyn Fn(&mut dyn std::any::Any, ScriptValue) + Send + Sync>>,
-}
-
-impl std::fmt::Debug for PropertyAccessor {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("PropertyAccessor")
-            .field("has_getter", &self.getter.is_some())
-            .field("has_setter", &self.setter.is_some())
-            .finish()
-    }
-}
-
-#[derive(Clone)]
-pub struct RustMethod {
-    pub function: Arc<dyn Fn(&mut dyn std::any::Any, &[ScriptValue]) -> ScriptValue + Send + Sync>,
-}
-
-impl std::fmt::Debug for RustMethod {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("RustMethod").finish()
-    }
 }
 
 impl TypeRegistry {
@@ -293,22 +293,28 @@ impl TypeRegistry {
                 name: name.to_string(),
                 namespace: Vec::new(),
                 kind: TypeKind::Primitive,
-                flags: TypeFlags::POD_TYPE | TypeFlags::VALUE_TYPE,
+                flags: if name == "string" {
+                    TypeFlags::VALUE_TYPE
+                } else {
+                    TypeFlags::VALUE_TYPE | TypeFlags::POD_TYPE
+                },
                 registration: TypeRegistration::Application,
+
                 properties: Vec::new(),
                 methods: HashMap::new(),
                 base_type: None,
                 interfaces: Vec::new(),
                 behaviours: HashMap::new(),
+
                 rust_type_id: None,
-                rust_accessors: HashMap::new(),
-                rust_methods: HashMap::new(),
+
                 vtable: Vec::new(),
+
                 definition_span: None,
             };
 
-            self.types.insert(type_id, Arc::new(type_info));
             self.types_by_name.insert(name.to_string(), type_id);
+            self.types.insert(type_id, Arc::new(type_info));
         }
     }
 
@@ -317,39 +323,10 @@ impl TypeRegistry {
     }
 
     pub fn get_property(&self, property: EngineProperty) -> usize {
-        self.properties.get(&property).copied().unwrap_or(0)
-    }
-
-    pub fn can_implicitly_convert(&self, from: TypeId, to: TypeId) -> bool {
-        use crate::core::types::*;
-
-        if from == to {
-            return true;
-        }
-
-        // Numeric conversions (following C++ rules)
-        match (from, to) {
-            // int8/16 -> int32
-            (TYPE_INT8 | TYPE_INT16, TYPE_INT32) => true,
-            (TYPE_UINT8 | TYPE_UINT16, TYPE_UINT32) => true,
-
-            // int32 -> int64
-            (TYPE_INT32, TYPE_INT64) => true,
-            (TYPE_UINT32, TYPE_UINT64) => true,
-
-            // int -> float (with potential precision loss)
-            (TYPE_INT8 | TYPE_INT16 | TYPE_INT32, TYPE_FLOAT) => true,
-            (TYPE_UINT8 | TYPE_UINT16 | TYPE_UINT32, TYPE_FLOAT) => true,
-
-            // int -> double
-            (TYPE_INT8 | TYPE_INT16 | TYPE_INT32 | TYPE_INT64, TYPE_DOUBLE) => true,
-            (TYPE_UINT8 | TYPE_UINT16 | TYPE_UINT32 | TYPE_UINT64, TYPE_DOUBLE) => true,
-
-            // float -> double
-            (TYPE_FLOAT, TYPE_DOUBLE) => true,
-
-            _ => false,
-        }
+        self.properties
+            .get(&property)
+            .copied()
+            .unwrap_or_else(|| property.default_value())
     }
 
     pub fn register_type(&mut self, type_info: TypeInfo) -> Result<TypeId, String> {

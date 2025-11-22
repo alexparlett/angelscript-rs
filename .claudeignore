@@ -1,7 +1,3 @@
-*.log
-.env
-node_modules/
-__pycache__/
 .git/
 .idea/
 venv/
@@ -11,3 +7,4 @@ Cargo.lock
 .gitignore
 LICENSE
 README.md
+.claudeignore

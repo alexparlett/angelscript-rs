@@ -585,7 +585,7 @@ impl Lexer {
             message: "Unterminated heredoc string (missing closing \"\"\")".to_string(),
         })
     }
-    
+
     fn skip_whitespace_and_comments(&mut self) -> ParseResult<()> {
         loop {
             if self.is_at_end() {

@@ -4,13 +4,13 @@ use crate::core::error::{SemanticError, SemanticResult};
 use crate::core::span::Span;
 use crate::core::type_registry::{
     FunctionFlags, FunctionImpl, FunctionInfo, FunctionKind, GlobalInfo, ParameterFlags,
-    ParameterInfo, PropertyFlags, PropertyInfo, TypeInfo, TypeRegistry, VTableEntry,
+    ParameterInfo, PropertyFlags, PropertyInfo, ReturnFlags, TypeInfo, TypeRegistry, VTableEntry,
 };
 use crate::core::types::{
-    allocate_function_id, allocate_type_id, AccessSpecifier, BehaviourType, FunctionId, TypeFlags, TypeId,
-    TypeKind, TypeRegistration, TYPE_AUTO, TYPE_BOOL, TYPE_DOUBLE, TYPE_FLOAT, TYPE_INT16,
-    TYPE_INT32, TYPE_INT64, TYPE_INT8, TYPE_STRING, TYPE_UINT16, TYPE_UINT32, TYPE_UINT64,
-    TYPE_UINT8, TYPE_VOID,
+    AccessSpecifier, BehaviourType, FunctionId, TYPE_AUTO, TYPE_BOOL, TYPE_DOUBLE, TYPE_FLOAT,
+    TYPE_INT8, TYPE_INT16, TYPE_INT32, TYPE_INT64, TYPE_STRING, TYPE_UINT8, TYPE_UINT16,
+    TYPE_UINT32, TYPE_UINT64, TYPE_VOID, TypeFlags, TypeId, TypeKind, TypeRegistration,
+    allocate_function_id, allocate_type_id,
 };
 use crate::parser::ast::*;
 use std::collections::HashMap;
@@ -250,6 +250,7 @@ impl SemanticAnalyzer {
                         ExprContext::FunctionCall {
                             return_type: func_info.return_type,
                             function_id,
+                            return_flags: func_info.return_flags,
                         }
                     }
                     Err(candidates) if candidates.is_empty() => {
@@ -581,6 +582,7 @@ impl SemanticAnalyzer {
                         Ok(ExprContext::MethodCall {
                             return_type: func_info.return_type,
                             function_id,
+                            return_flags: func_info.return_flags,
                         })
                     }
                     Err(candidates) if candidates.is_empty() => {
@@ -898,7 +900,7 @@ impl SemanticAnalyzer {
             namespace: self.current_namespace.clone(),
 
             return_type,
-            return_is_ref: false,
+            return_flags: ReturnFlags::empty(),
             parameters,
 
             kind: FunctionKind::Lambda,
@@ -969,8 +971,6 @@ impl SemanticAnalyzer {
             behaviours: HashMap::new(),
 
             rust_type_id: None,
-            rust_accessors: HashMap::new(),
-            rust_methods: HashMap::new(),
 
             vtable: Vec::new(),
 
@@ -1091,8 +1091,6 @@ impl SemanticAnalyzer {
             behaviours: HashMap::new(),
 
             rust_type_id: None,
-            rust_accessors: HashMap::new(),
-            rust_methods: HashMap::new(),
 
             vtable: Vec::new(),
 
@@ -1141,8 +1139,6 @@ impl SemanticAnalyzer {
             behaviours: HashMap::new(),
 
             rust_type_id: None,
-            rust_accessors: HashMap::new(),
-            rust_methods: HashMap::new(),
 
             vtable: Vec::new(),
 
@@ -1179,8 +1175,6 @@ impl SemanticAnalyzer {
             behaviours: HashMap::new(),
 
             rust_type_id: None,
-            rust_accessors: HashMap::new(),
-            rust_methods: HashMap::new(),
 
             vtable: Vec::new(),
 
@@ -1260,6 +1254,17 @@ impl SemanticAnalyzer {
             flags |= FunctionFlags::PROTECTED;
         }
 
+        let mut return_flags = ReturnFlags::empty();
+        if func.is_ref {
+            return_flags |= ReturnFlags::REF;
+        }
+        // Check if the return type itself is const (for const references)
+        if let Some(ret_type) = &func.return_type {
+            if ret_type.is_const {
+                return_flags |= ReturnFlags::CONST;
+            }
+        }
+
         let func_info = FunctionInfo {
             function_id,
             name: func.name.clone(),
@@ -1267,7 +1272,8 @@ impl SemanticAnalyzer {
             namespace: self.current_namespace.clone(),
 
             return_type,
-            return_is_ref: func.is_ref,
+            return_flags,
+
             parameters,
 
             kind: if self.current_class.is_some() {
@@ -1710,6 +1716,7 @@ impl SemanticAnalyzer {
 
                 return_type,
                 return_is_ref: false,
+                return_is_auto_handle: false,
                 parameters,
 
                 kind: FunctionKind::Method {
@@ -1790,6 +1797,22 @@ impl SemanticAnalyzer {
     }
 
     fn analyze_function(&mut self, func: &Func) -> SemanticResult<()> {
+        // Phase 6: Reject @+ (AutoHandle) in script code - it's FFI-only
+        if let Some(return_type) = &func.return_type {
+            if return_type
+                .modifiers
+                .iter()
+                .any(|m| matches!(m, TypeModifier::AutoHandle))
+            {
+                return Err(SemanticError::new(
+                    format!(
+                        "Auto handles (@+) are only allowed in FFI function registration, not in script code"
+                    ),
+                    func.span.clone(),
+                ));
+            }
+        }
+
         let func_name = if let Some(class_name) = &self.current_class {
             format!("{}::{}", class_name, func.name)
         } else if !self.current_namespace.is_empty() {
@@ -1821,6 +1844,21 @@ impl SemanticAnalyzer {
         }
 
         for param in &func.params {
+            // Phase 6: Reject @+ (AutoHandle) in script code - it's FFI-only
+            if param
+                .param_type
+                .modifiers
+                .iter()
+                .any(|m| matches!(m, TypeModifier::AutoHandle))
+            {
+                return Err(SemanticError::new(
+                    format!(
+                        "Auto handles (@+) are only allowed in FFI function registration, not in script code"
+                    ),
+                    param.span.clone(),
+                ));
+            }
+
             if let Some(name) = &param.name {
                 let type_id = self.symbol_table.resolve_type_from_ast(&param.param_type);
                 self.symbol_table.register_local(
@@ -2370,16 +2408,36 @@ impl SemanticAnalyzer {
             None => return Ok(()),
         };
 
+        // Check if the return type is const
+        let return_is_const = func
+            .return_type
+            .as_ref()
+            .map(|t| t.is_const)
+            .unwrap_or(false);
+
         match value {
-            Expr::Postfix(obj, PostfixOp::MemberAccess(_), _) => {
+            Expr::Postfix(obj, PostfixOp::MemberAccess(member_name), _) => {
                 if let Expr::VarAccess(_, name, _) = obj.as_ref() {
                     if name == "this" {
+                        // Check const-correctness: if returning non-const reference,
+                        // must be from non-const method
+                        if !return_is_const && func.is_const {
+                            return Err(SemanticError::InvalidReturn {
+                                span: ret_stmt.span.clone(),
+                            });
+                        }
                         return Ok(());
                     }
                 }
 
                 if let Some(ctx) = self.symbol_table.get_expr_context(obj) {
                     if ctx.is_lvalue() && !ctx.is_temporary() {
+                        // Validate const-correctness
+                        if !return_is_const && ctx.is_const() {
+                            return Err(SemanticError::InvalidReturn {
+                                span: ret_stmt.span.clone(),
+                            });
+                        }
                         return Ok(());
                     }
                 }
@@ -2391,14 +2449,27 @@ impl SemanticAnalyzer {
 
             Expr::VarAccess(_, name, _) => {
                 if let Some(local) = self.symbol_table.lookup_local(name) {
-                    return if local.is_param {
-                        Ok(())
+                    if local.is_param {
+                        // Check const-correctness for parameters
+                        if !return_is_const && local.is_const {
+                            return Err(SemanticError::InvalidReturn {
+                                span: ret_stmt.span.clone(),
+                            });
+                        }
+                        return Ok(());
                     } else {
-                        Err(SemanticError::InvalidReturn {
+                        // Cannot return reference to local variable
+                        return Err(SemanticError::InvalidReturn {
                             span: ret_stmt.span.clone(),
-                        })
-                    };
-                } else if self.symbol_table.get_global(name).is_some() {
+                        });
+                    }
+                } else if let Some(global) = self.symbol_table.get_global(name) {
+                    // Check const-correctness for globals
+                    if !return_is_const && global.is_const {
+                        return Err(SemanticError::InvalidReturn {
+                            span: ret_stmt.span.clone(),
+                        });
+                    }
                     return Ok(());
                 }
 
@@ -2407,7 +2478,20 @@ impl SemanticAnalyzer {
                 })
             }
 
-            Expr::Postfix(_, PostfixOp::Index(_), _) => Ok(()),
+            Expr::Postfix(_, PostfixOp::Index(_), _) => {
+                // For indexed access, check the base expression
+                if let Expr::Postfix(base, _, _) = value {
+                    if let Some(ctx) = self.symbol_table.get_expr_context(base) {
+                        // Validate const-correctness
+                        if !return_is_const && ctx.is_const() {
+                            return Err(SemanticError::InvalidReturn {
+                                span: ret_stmt.span.clone(),
+                            });
+                        }
+                    }
+                }
+                Ok(())
+            }
 
             _ => Err(SemanticError::InvalidReturn {
                 span: ret_stmt.span.clone(),
@@ -5641,10 +5725,12 @@ mod tests {
                 namespace: vec![],
                 return_type: TYPE_VOID,
                 return_is_ref: false,
+                return_is_auto_handle: false,
                 parameters: vec![ParameterInfo {
                     name: Some("msg".to_string()),
                     type_id: TYPE_STRING,
                     flags: ParameterFlags::IN | ParameterFlags::CONST,
+                    is_auto_handle: false,
                     default_expr: None,
                     definition_span: None,
                 }],
@@ -5704,8 +5790,6 @@ mod tests {
                 interfaces: vec![],
                 behaviours: HashMap::new(),
                 rust_type_id: None,
-                rust_accessors: HashMap::new(),
-                rust_methods: HashMap::new(),
                 vtable: vec![],
                 definition_span: None,
             };
@@ -5784,8 +5868,6 @@ mod tests {
                 interfaces: vec![],
                 behaviours: HashMap::new(),
                 rust_type_id: None,
-                rust_accessors: HashMap::new(),
-                rust_methods: HashMap::new(),
                 vtable: vec![],
                 definition_span: None,
             };
@@ -5800,10 +5882,12 @@ mod tests {
                 namespace: vec![],
                 return_type: TYPE_VOID,
                 return_is_ref: false,
+                return_is_auto_handle: false,
                 parameters: vec![ParameterInfo {
                     name: Some("amount".to_string()),
                     type_id: TYPE_INT32,
                     flags: ParameterFlags::IN,
+                    is_auto_handle: false,
                     default_expr: None,
                     definition_span: None,
                 }],
@@ -5866,8 +5950,6 @@ mod tests {
                 interfaces: vec![],
                 behaviours: HashMap::new(),
                 rust_type_id: None,
-                rust_accessors: HashMap::new(),
-                rust_methods: HashMap::new(),
                 vtable: vec![],
                 definition_span: None,
             };
@@ -5914,8 +5996,6 @@ mod tests {
                 interfaces: vec![],
                 behaviours: HashMap::new(),
                 rust_type_id: None,
-                rust_accessors: HashMap::new(),
-                rust_methods: HashMap::new(),
                 vtable: vec![],
                 definition_span: None,
             };
@@ -6027,8 +6107,6 @@ mod tests {
                 interfaces: vec![],
                 behaviours: HashMap::new(),
                 rust_type_id: None,
-                rust_accessors: HashMap::new(),
-                rust_methods: HashMap::new(),
                 vtable: vec![],
                 definition_span: None,
             };
@@ -6703,8 +6781,6 @@ mod tests {
                 interfaces: vec![],
                 behaviours: HashMap::new(),
                 rust_type_id: None,
-                rust_accessors: HashMap::new(),
-                rust_methods: HashMap::new(),
                 vtable: vec![],
                 definition_span: None,
             };
@@ -6762,8 +6838,6 @@ mod tests {
                 interfaces: vec![],
                 behaviours: HashMap::new(),
                 rust_type_id: None,
-                rust_accessors: HashMap::new(),
-                rust_methods: HashMap::new(),
                 vtable: vec![],
                 definition_span: None,
             };
@@ -6812,8 +6886,6 @@ mod tests {
                 interfaces: vec![],
                 behaviours: HashMap::new(),
                 rust_type_id: None,
-                rust_accessors: HashMap::new(),
-                rust_methods: HashMap::new(),
                 vtable: vec![],
                 definition_span: None,
             };
@@ -6858,8 +6930,6 @@ mod tests {
                 interfaces: vec![],
                 behaviours: HashMap::new(),
                 rust_type_id: None,
-                rust_accessors: HashMap::new(),
-                rust_methods: HashMap::new(),
                 vtable: vec![],
                 definition_span: None,
             };
@@ -6902,8 +6972,6 @@ mod tests {
                 interfaces: vec![],
                 behaviours: HashMap::new(),
                 rust_type_id: None,
-                rust_accessors: HashMap::new(),
-                rust_methods: HashMap::new(),
                 vtable: vec![],
                 definition_span: None,
             };
@@ -6988,8 +7056,6 @@ mod tests {
                 interfaces: vec![],
                 behaviours: HashMap::new(),
                 rust_type_id: None,
-                rust_accessors: HashMap::new(),
-                rust_methods: HashMap::new(),
                 vtable: vec![],
                 definition_span: None,
             };
@@ -7041,8 +7107,6 @@ mod tests {
                 interfaces: vec![],
                 behaviours: HashMap::new(),
                 rust_type_id: None,
-                rust_accessors: HashMap::new(),
-                rust_methods: HashMap::new(),
                 vtable: vec![],
                 definition_span: None,
             };
@@ -7671,5 +7735,236 @@ mod tests {
 
         let result = analyzer.analyze(&script);
         assert!(result.is_ok(), "Should allow in unsafe mode");
+    }
+
+    #[test]
+    fn test_const_return_reference_to_member() {
+        let mut analyzer = create_analyzer();
+
+        let script = Script {
+            items: vec![ScriptNode::Class(Class {
+                modifiers: vec![],
+                name: "MyClass".to_string(),
+                extends: vec![],
+                members: vec![
+                    ClassMember::Var(var_decl(int_type(), "value", None)),
+                    ClassMember::Func(Func {
+                        modifiers: vec![],
+                        visibility: None,
+                        return_type: Some(const_int_type()),
+                        is_ref: true, // const int& getValue()
+                        name: "getValue".to_string(),
+                        params: vec![],
+                        is_const: true, // const method
+                        attributes: vec![],
+                        body: Some(block(vec![return_stmt(Some(member_access(
+                            var_expr("this"),
+                            "value",
+                        )))])),
+                        span: None,
+                    }),
+                ],
+                span: None,
+            })],
+            span: None,
+        };
+
+        let result = analyzer.analyze(&script);
+        assert!(
+            result.is_ok(),
+            "Should allow const method to return const reference to member: {:?}",
+            result.err()
+        );
+    }
+
+    #[test]
+    fn test_const_return_reference_prevents_mutable_from_const_method() {
+        let mut analyzer = create_analyzer();
+
+        let script = Script {
+            items: vec![ScriptNode::Class(Class {
+                modifiers: vec![],
+                name: "MyClass".to_string(),
+                extends: vec![],
+                members: vec![
+                    ClassMember::Var(var_decl(int_type(), "value", None)),
+                    ClassMember::Func(Func {
+                        modifiers: vec![],
+                        visibility: None,
+                        return_type: Some(int_type()), // Non-const reference
+                        is_ref: true,
+                        name: "getValue".to_string(),
+                        params: vec![],
+                        is_const: true, // const method trying to return non-const ref - ERROR
+                        attributes: vec![],
+                        body: Some(block(vec![return_stmt(Some(member_access(
+                            var_expr("this"),
+                            "value",
+                        )))])),
+                        span: None,
+                    }),
+                ],
+                span: None,
+            })],
+            span: None,
+        };
+
+        let result = analyzer.analyze(&script);
+        assert!(
+            result.is_err(),
+            "Should NOT allow const method to return non-const reference"
+        );
+    }
+
+    #[test]
+    fn test_const_return_reference_to_const_global() {
+        let mut analyzer = create_analyzer();
+
+        let script = Script {
+            items: vec![
+                ScriptNode::Var(var_decl(
+                    const_int_type(),
+                    "CONSTANT",
+                    Some(int_literal(42)),
+                )),
+                ScriptNode::Func(Func {
+                    modifiers: vec![],
+                    visibility: None,
+                    return_type: Some(const_int_type()),
+                    is_ref: true, // const int&
+                    name: "getConstant".to_string(),
+                    params: vec![],
+                    is_const: false,
+                    attributes: vec![],
+                    body: Some(block(vec![return_stmt(Some(var_expr("CONSTANT")))])),
+                    span: None,
+                }),
+            ],
+            span: None,
+        };
+
+        let result = analyzer.analyze(&script);
+        assert!(
+            result.is_ok(),
+            "Should allow returning const ref to const global: {:?}",
+            result.err()
+        );
+    }
+
+    #[test]
+    fn test_const_return_reference_prevents_mutable_from_const_global() {
+        let mut analyzer = create_analyzer();
+
+        let script = Script {
+            items: vec![
+                ScriptNode::Var(var_decl(
+                    const_int_type(),
+                    "CONSTANT",
+                    Some(int_literal(42)),
+                )),
+                ScriptNode::Func(Func {
+                    modifiers: vec![],
+                    visibility: None,
+                    return_type: Some(int_type()), // Non-const reference
+                    is_ref: true,
+                    name: "getConstant".to_string(),
+                    params: vec![],
+                    is_const: false,
+                    attributes: vec![],
+                    body: Some(block(vec![return_stmt(Some(var_expr("CONSTANT")))])),
+                    span: None,
+                }),
+            ],
+            span: None,
+        };
+
+        let result = analyzer.analyze(&script);
+        assert!(
+            result.is_err(),
+            "Should NOT allow returning non-const ref to const global"
+        );
+    }
+
+    #[test]
+    fn test_const_return_reference_to_const_param() {
+        let mut analyzer = create_analyzer();
+
+        let script = Script {
+            items: vec![ScriptNode::Func(Func {
+                modifiers: vec![],
+                visibility: None,
+                return_type: Some(const_int_type()),
+                is_ref: true, // const int&
+                name: "echo".to_string(),
+                params: vec![param_with_mod("value", const_int_type(), TypeMod::In)],
+                is_const: false,
+                attributes: vec![],
+                body: Some(block(vec![return_stmt(Some(var_expr("value")))])),
+                span: None,
+            })],
+            span: None,
+        };
+
+        let result = analyzer.analyze(&script);
+        assert!(
+            result.is_ok(),
+            "Should allow returning const ref to const param: {:?}",
+            result.err()
+        );
+    }
+
+    #[test]
+    fn test_const_return_reference_prevents_mutable_from_const_param() {
+        let mut analyzer = create_analyzer();
+
+        let script = Script {
+            items: vec![ScriptNode::Func(Func {
+                modifiers: vec![],
+                visibility: None,
+                return_type: Some(int_type()), // Non-const reference
+                is_ref: true,
+                name: "echo".to_string(),
+                params: vec![param_with_mod("value", const_int_type(), TypeMod::In)],
+                is_const: false,
+                attributes: vec![],
+                body: Some(block(vec![return_stmt(Some(var_expr("value")))])),
+                span: None,
+            })],
+            span: None,
+        };
+
+        let result = analyzer.analyze(&script);
+        assert!(
+            result.is_err(),
+            "Should NOT allow returning non-const ref to const param"
+        );
+    }
+
+    #[test]
+    fn test_mutable_return_reference_allows_mutable_param() {
+        let mut analyzer = create_analyzer();
+
+        let script = Script {
+            items: vec![ScriptNode::Func(Func {
+                modifiers: vec![],
+                visibility: None,
+                return_type: Some(int_type()), // Mutable reference
+                is_ref: true,
+                name: "echo".to_string(),
+                params: vec![param_with_mod("value", int_type(), TypeMod::InOut)], // Mutable param
+                is_const: false,
+                attributes: vec![],
+                body: Some(block(vec![return_stmt(Some(var_expr("value")))])),
+                span: None,
+            })],
+            span: None,
+        };
+
+        let result = analyzer.analyze(&script);
+        assert!(
+            result.is_ok(),
+            "Should allow returning mutable ref to mutable param: {:?}",
+            result.err()
+        );
     }
 }

@@ -2,7 +2,7 @@ use crate::compiler::bytecode::{BytecodeModule, Instruction};
 use crate::compiler::semantic_analyzer::SemanticAnalyzer;
 use crate::compiler::symbol_table::ExprContext;
 use crate::core::error::{CodegenError, CodegenResult, CompileError, CompileResult};
-use crate::core::type_registry::{FunctionImpl, TypeRegistry};
+use crate::core::type_registry::{FunctionImpl, ParameterFlags, ReturnFlags, TypeRegistry};
 use crate::core::types::{
     BehaviourType, FunctionId, ScriptValue, TypeFlags, TypeId, TypeRegistration, TYPE_BOOL,
     TYPE_DOUBLE, TYPE_FLOAT, TYPE_INT16, TYPE_INT32, TYPE_INT64, TYPE_INT8, TYPE_STRING,
@@ -10,6 +10,18 @@ use crate::core::types::{
 };
 use crate::parser::ast::*;
 use std::sync::{Arc, RwLock};
+
+#[derive(Debug, Clone)]
+struct HandleInfo {
+    var_index: u32,
+    type_id: TypeId,
+    is_moved: bool, // True if ownership transferred (e.g., via return)
+}
+
+#[derive(Debug)]
+struct HandleTracker {
+    scopes: Vec<Vec<HandleInfo>>, // Stack of scopes, each containing handles
+}
 
 pub struct Compiler {
     registry: Arc<RwLock<TypeRegistry>>,
@@ -22,6 +34,7 @@ pub struct Compiler {
     break_targets: Vec<Vec<u32>>,
     continue_targets: Vec<Vec<u32>>,
     lambda_count: u32,
+    handle_tracker: HandleTracker, // Phase 4: Tracks handles for automatic cleanup
 }
 
 #[derive(Debug, Clone)]
@@ -30,6 +43,7 @@ struct FunctionContext {
     name: String,
     has_return: bool,
     full_name: String,
+    return_flags: ReturnFlags,
 }
 
 impl Compiler {
@@ -47,6 +61,7 @@ impl Compiler {
             break_targets: Vec::new(),
             continue_targets: Vec::new(),
             lambda_count: 0,
+            handle_tracker: HandleTracker { scopes: Vec::new() },
         }
     }
 
@@ -72,9 +87,7 @@ impl Compiler {
                     }
                 }
 
-                ExprContext::LocalVar { var_index, .. } => {
-                    Ok(var_index as u32)
-                }
+                ExprContext::LocalVar { var_index, .. } => Ok(var_index as u32),
 
                 ExprContext::GlobalVar {
                     global_address,
@@ -93,10 +106,11 @@ impl Compiler {
                 ExprContext::FunctionCall {
                     function_id,
                     return_type,
+                    return_flags,
                 } => {
                     // ✅ Function already resolved!
                     if let Expr::FuncCall(call, _) = expr {
-                        self.generate_resolved_func_call(function_id, return_type, &call.args)
+                        self.generate_resolved_func_call(function_id, return_type, return_flags, &call.args)
                     } else {
                         Err(CodegenError::Internal(
                             "Context mismatch: expected function call".to_string(),
@@ -107,6 +121,7 @@ impl Compiler {
                 ExprContext::MethodCall {
                     function_id,
                     return_type,
+                    return_flags,
                 } => {
                     // ✅ Method already resolved!
                     if let Expr::Postfix(obj, PostfixOp::MemberCall(call), _) = expr {
@@ -114,6 +129,7 @@ impl Compiler {
                             obj,
                             function_id,
                             return_type,
+                            return_flags,
                             &call.args,
                         )
                     } else {
@@ -160,36 +176,104 @@ impl Compiler {
 
                 ExprContext::Temporary { .. }
                 | ExprContext::Handle { .. }
-                | ExprContext::Reference { .. } => {
-                    match expr {
-                        Expr::Binary(left, op, right, _) => self.generate_binary(left, op, right),
-                        Expr::Unary(op, operand, _) => self.generate_unary(op, operand),
-                        Expr::Postfix(expr_inner, op, _) => self.generate_postfix(expr_inner, op),
-                        Expr::Ternary(cond, then_expr, else_expr, _) => {
-                            self.generate_ternary(cond, then_expr, else_expr)
-                        }
-                        Expr::Lambda(lambda, _) => self.generate_lambda(lambda),
-                        Expr::InitList(init_list) => {
-                            let temp = self.allocate_temp(TYPE_VOID);
-                            self.generate_init_list_expr(init_list)?;
-                            Ok(temp)
-                        }
-                        Expr::Void(_) => {
-                            let temp = self.allocate_temp(TYPE_VOID);
-                            Ok(temp)
-                        }
-                        Expr::ConstructCall(type_def, args, _) => {
-                            self.generate_construct_call(type_def, args)
-                        }
-                        Expr::Cast(target_type, expr_inner, _) => {
-                            self.generate_cast(target_type, expr_inner)
-                        }
-                        Expr::Literal(lit, _) => self.generate_literal(lit),
-                        _ => Err(CodegenError::Internal(format!(
-                            "Unhandled expression type: {:?}",
-                            expr
-                        ))),
+                | ExprContext::Reference { .. } => match expr {
+                    Expr::Binary(left, op, right, _) => self.generate_binary(left, op, right),
+                    Expr::Unary(op, operand, _) => self.generate_unary(op, operand),
+                    Expr::Postfix(expr_inner, op, _) => self.generate_postfix(expr_inner, op),
+                    Expr::Ternary(cond, then_expr, else_expr, _) => {
+                        self.generate_ternary(cond, then_expr, else_expr)
                     }
+                    Expr::Lambda(lambda, _) => self.generate_lambda(lambda),
+                    Expr::InitList(init_list) => {
+                        let temp = self.allocate_temp(TYPE_VOID);
+                        self.generate_init_list_expr(init_list)?;
+                        Ok(temp)
+                    }
+                    Expr::Void(_) => {
+                        let temp = self.allocate_temp(TYPE_VOID);
+                        Ok(temp)
+                    }
+                    Expr::ConstructCall(type_def, args, _) => {
+                        self.generate_construct_call(type_def, args)
+                    }
+                    Expr::Cast(target_type, expr_inner, _) => {
+                        self.generate_cast(target_type, expr_inner)
+                    }
+                    Expr::Literal(lit, _) => self.generate_literal(lit),
+                    _ => Err(CodegenError::Internal(format!(
+                        "Unhandled expression type: {:?}",
+                        expr
+                    ))),
+                },
+            }
+        } else {
+            Err(CodegenError::Internal(
+                "Expression not analyzed".to_string(),
+            ))
+        }
+    }
+
+    /// Generate code for an lvalue expression - returns a variable containing
+    /// the address/reference to the value rather than the value itself.
+    /// Used for reference returns and out parameters.
+    fn generate_expr_lvalue(&mut self, expr: &Expr) -> CodegenResult<u32> {
+        if let Some(ctx) = self.analyzer.symbol_table.get_expr_context(expr).cloned() {
+            match ctx {
+                ExprContext::LocalVar { var_index, .. } => {
+                    // Local variables are already addressable by their index
+                    Ok(var_index as u32)
+                }
+
+                ExprContext::GlobalVar {
+                    global_address,
+                    type_id,
+                    ..
+                } => {
+                    // For globals, we need to get the address, not the value
+                    // The global_address is already the address we need
+                    let temp = self.allocate_temp(type_id);
+                    // Load the global address into a temp
+                    // Note: This depends on how the VM handles global references
+                    self.emit(Instruction::CpyGtoV {
+                        var: temp,
+                        global_id: global_address,
+                    });
+                    Ok(temp)
+                }
+
+                ExprContext::PropertyAccess {
+                    property_name,
+                    property_type,
+                    ..
+                } => {
+                    // For property access, generate code to get the property reference
+                    if let Expr::Postfix(obj, PostfixOp::MemberAccess(_), _) = expr {
+                        self.generate_property_access_lvalue(obj, &property_name, property_type)
+                    } else {
+                        Err(CodegenError::Internal(
+                            "Context mismatch: expected property access".to_string(),
+                        ))
+                    }
+                }
+
+                ExprContext::Reference { type_id, .. } => {
+                    // Already a reference - just generate the expression
+                    self.generate_expr(expr)
+                }
+
+                ExprContext::FunctionCall { return_flags, .. } 
+                | ExprContext::MethodCall { return_flags, .. } 
+                    if return_flags.contains(ReturnFlags::REF) => {
+                    // Function/method returns a reference - generate the call normally
+                    // The result will be a reference
+                    self.generate_expr(expr)
+                }
+
+                _ => {
+                    // Fall back to generating a regular expression
+                    // This might not be valid for all cases, but the semantic
+                    // analyzer should have caught invalid lvalue usage
+                    self.generate_expr(expr)
                 }
             }
         } else {
@@ -199,30 +283,74 @@ impl Compiler {
         }
     }
 
+    /// Generate property access that returns a reference (for lvalue context)
+    fn generate_property_access_lvalue(
+        &mut self,
+        obj: &Expr,
+        property_name: &str,
+        property_type: TypeId,
+    ) -> CodegenResult<u32> {
+        let obj_var = self.generate_expr(obj)?;
+        let prop_name_id = self.module.intern_string(property_name);
+        let result = self.allocate_temp(property_type);
+
+        // For lvalue property access, we want the address of the property
+        // GetProperty loads the value; for references we need the address
+        self.emit(Instruction::GetProperty {
+            obj_var,
+            prop_name_id,
+            dst_var: result,
+        });
+
+        if self.is_temp_var(obj_var) {
+            self.free_temp(obj_var);
+        }
+
+        Ok(result)
+    }
+
     fn generate_resolved_func_call(
         &mut self,
         function_id: FunctionId,
         return_type: TypeId,
+        return_flags: ReturnFlags,
         args: &[Arg],
     ) -> CodegenResult<u32> {
-        let (param_count, is_native) = {
+        let (param_count, is_native, return_is_auto_handle, auto_handle_params) = {
             let registry = self.registry.read().unwrap();
             let func_info = registry
                 .get_function(function_id)
                 .ok_or_else(|| CodegenError::Internal("Function not found".to_string()))?;
 
+            let auto_params: Vec<(usize, TypeId, bool)> = func_info
+                .parameters
+                .iter()
+                .enumerate()
+                .map(|(idx, p)| (idx, p.type_id, p.flags.contains(ParameterFlags::AUTO_HANDLE)))
+                .collect();
+
             (
                 func_info.parameters.len(),
                 matches!(func_info.implementation, FunctionImpl::Native { .. }),
+                func_info.return_flags.contains(ReturnFlags::AUTO_HANDLE),
+                auto_params,
             )
         };
 
         let provided_args = args.len();
 
+        // Phase 6: Track @+ parameters for auto-release (LIFO order)
+        // We need to track variables pushed to stack for @+ params
+        let mut pushed_param_vars: Vec<Option<u32>> = Vec::new();
+
         // Push provided arguments (in reverse)
-        for arg in args.iter().rev() {
+        for (idx, arg) in args.iter().enumerate().rev() {
             let arg_var = self.generate_expr(&arg.value)?;
             self.emit(Instruction::PshV { var: arg_var });
+
+            // Track this parameter variable for potential auto-release
+            // Store in reverse order since we're pushing in reverse
+            pushed_param_vars.insert(0, Some(arg_var));
 
             if self.is_temp_var(arg_var) {
                 self.free_temp(arg_var);
@@ -236,9 +364,7 @@ impl Compiler {
                 let func_info = registry.get_function(function_id).unwrap();
 
                 (provided_args..param_count)
-                    .filter_map(|i| {
-                        func_info.parameters[i].default_expr.clone()
-                    })
+                    .filter_map(|i| func_info.parameters[i].default_expr.clone())
                     .collect()
             };
 
@@ -301,6 +427,7 @@ impl Compiler {
                             // Strings require setup via Str instruction, so fall back to generate_expr
                             let default_var = self.generate_expr(&default_expr)?;
                             self.emit(Instruction::PshV { var: default_var });
+                            pushed_param_vars.insert(0, Some(default_var));
                             if self.is_temp_var(default_var) {
                                 self.free_temp(default_var);
                             }
@@ -315,9 +442,12 @@ impl Compiler {
                     };
 
                     self.emit(Instruction::PshC { value });
+                    // Constants pushed via PshC don't have associated variables
+                    pushed_param_vars.insert(0, None);
                 } else {
                     let default_var = self.generate_expr(&default_expr)?;
                     self.emit(Instruction::PshV { var: default_var });
+                    pushed_param_vars.insert(0, Some(default_var));
 
                     if self.is_temp_var(default_var) {
                         self.free_temp(default_var);
@@ -330,6 +460,61 @@ impl Compiler {
             self.emit(Instruction::CALLSYS {
                 sys_func_id: function_id,
             });
+
+            // Phase 6: Auto-handle management for FFI functions
+            // CRITICAL ORDER: Return increment BEFORE param release!
+
+            // 1. Handle @+ return: increment refcount BEFORE releasing params
+            // This makes it safe to return one of the parameters
+            if return_is_auto_handle && return_type != TYPE_VOID {
+                // The return value is in object_register
+                // We need to increment its refcount before we release any parameters
+                let temp_return = self.allocate_temp(return_type);
+                self.emit(Instruction::PopR);
+                self.emit(Instruction::CpyRtoV { var: temp_return });
+
+                // Increment refcount using RefCpy (copies handle and increments ref)
+                let temp_incremented = self.allocate_temp(return_type);
+                self.emit(Instruction::RefCpy {
+                    dst: temp_incremented,
+                    src: temp_return,
+                });
+                self.free_temp(temp_return);
+
+                // Store result for later
+                self.emit(Instruction::LoadObj {
+                    var: temp_incremented,
+                });
+                self.free_temp(temp_incremented);
+            }
+
+            // 2. Release @+ parameters in LIFO order (reverse of push order)
+            // This is critical for correctness
+            for (param_idx, (_, param_type_id, is_auto)) in
+                auto_handle_params.iter().enumerate().rev()
+            {
+                if *is_auto {
+                    // Get the variable that was pushed for this parameter
+                    if let Some(Some(param_var)) = pushed_param_vars.get(param_idx) {
+                        // Emit Free instruction to release the handle
+                        // The destructor will decrement the refcount
+                        let destructor_id = self.get_destructor_id(*param_type_id);
+                        let temp_param = self.allocate_temp(*param_type_id);
+
+                        // Copy the param to a temp so we can free it
+                        self.emit(Instruction::RefCpy {
+                            dst: temp_param,
+                            src: *param_var,
+                        });
+
+                        self.emit(Instruction::Free {
+                            var: temp_param,
+                            func_id: destructor_id,
+                        });
+                        self.free_temp(temp_param);
+                    }
+                }
+            }
         } else {
             self.emit(Instruction::CALL {
                 func_id: function_id,
@@ -339,8 +524,23 @@ impl Compiler {
         let result = self.allocate_temp(return_type);
 
         if return_type != TYPE_VOID {
-            self.emit(Instruction::PopR);
-            self.emit(Instruction::CpyRtoV { var: result });
+            // If we already handled @+ return above, pop from object register
+            // Otherwise, pop normally
+            if is_native && return_is_auto_handle {
+                // Already in object_register from above
+                self.emit(Instruction::CpyRtoV { var: result });
+            } else if return_flags.contains(ReturnFlags::REF) {
+                // Reference return: the return value is already a reference/address
+                // Just copy from register - the VM treats this as a reference
+                self.emit(Instruction::PopR);
+                self.emit(Instruction::CpyRtoV { var: result });
+                // Note: For reference returns, 'result' now contains a reference
+                // to the original data, not a copy of the value
+            } else {
+                // Value return: copy the value
+                self.emit(Instruction::PopR);
+                self.emit(Instruction::CpyRtoV { var: result });
+            }
         }
 
         Ok(result)
@@ -352,19 +552,29 @@ impl Compiler {
         obj: &Expr,
         function_id: FunctionId,
         return_type: TypeId,
+        return_flags: ReturnFlags,
         args: &[Arg],
     ) -> CodegenResult<u32> {
         let obj_var = self.generate_expr(obj)?;
 
-        let (param_count, is_native) = {
+        let (param_count, is_native, return_is_auto_handle, auto_handle_params) = {
             let registry = self.registry.read().unwrap();
             let func_info = registry
                 .get_function(function_id)
                 .ok_or_else(|| CodegenError::Internal("Method not found".to_string()))?;
 
+            let auto_params: Vec<(usize, TypeId, bool)> = func_info
+                .parameters
+                .iter()
+                .enumerate()
+                .map(|(idx, p)| (idx, p.type_id, p.flags.contains(ParameterFlags::AUTO_HANDLE)))
+                .collect();
+
             (
                 func_info.parameters.len(),
                 matches!(func_info.implementation, FunctionImpl::Native { .. }),
+                func_info.return_flags.contains(ReturnFlags::AUTO_HANDLE),
+                auto_params,
             )
         };
 
@@ -372,10 +582,15 @@ impl Compiler {
 
         self.emit(Instruction::PshV { var: obj_var });
 
+        // Phase 6: Track @+ parameters for auto-release
+        let mut pushed_param_vars: Vec<Option<u32>> = Vec::new();
+
         // Push provided arguments
-        for arg in args.iter().rev() {
+        for (idx, arg) in args.iter().enumerate().rev() {
             let arg_var = self.generate_expr(&arg.value)?;
             self.emit(Instruction::PshV { var: arg_var });
+
+            pushed_param_vars.insert(0, Some(arg_var));
 
             if self.is_temp_var(arg_var) {
                 self.free_temp(arg_var);
@@ -398,6 +613,7 @@ impl Compiler {
 
             for default_val in default_values.into_iter().rev() {
                 self.emit(Instruction::PshC { value: default_val });
+                pushed_param_vars.insert(0, None);
             }
         }
 
@@ -405,6 +621,51 @@ impl Compiler {
             self.emit(Instruction::CALLSYS {
                 sys_func_id: function_id,
             });
+
+            // Phase 6: Auto-handle management for FFI methods
+            // Same logic as functions: return increment BEFORE param release
+
+            // 1. Handle @+ return
+            if return_is_auto_handle && return_type != TYPE_VOID {
+                let temp_return = self.allocate_temp(return_type);
+                self.emit(Instruction::PopR);
+                self.emit(Instruction::CpyRtoV { var: temp_return });
+
+                let temp_incremented = self.allocate_temp(return_type);
+                self.emit(Instruction::RefCpy {
+                    dst: temp_incremented,
+                    src: temp_return,
+                });
+                self.free_temp(temp_return);
+
+                self.emit(Instruction::LoadObj {
+                    var: temp_incremented,
+                });
+                self.free_temp(temp_incremented);
+            }
+
+            // 2. Release @+ parameters in LIFO order
+            for (param_idx, (_, param_type_id, is_auto)) in
+                auto_handle_params.iter().enumerate().rev()
+            {
+                if *is_auto {
+                    if let Some(Some(param_var)) = pushed_param_vars.get(param_idx) {
+                        let destructor_id = self.get_destructor_id(*param_type_id);
+                        let temp_param = self.allocate_temp(*param_type_id);
+
+                        self.emit(Instruction::RefCpy {
+                            dst: temp_param,
+                            src: *param_var,
+                        });
+
+                        self.emit(Instruction::Free {
+                            var: temp_param,
+                            func_id: destructor_id,
+                        });
+                        self.free_temp(temp_param);
+                    }
+                }
+            }
         } else {
             self.emit(Instruction::CALL {
                 func_id: function_id,
@@ -414,8 +675,17 @@ impl Compiler {
         let result = self.allocate_temp(return_type);
 
         if return_type != TYPE_VOID {
-            self.emit(Instruction::PopR);
-            self.emit(Instruction::CpyRtoV { var: result });
+            if is_native && return_is_auto_handle {
+                self.emit(Instruction::CpyRtoV { var: result });
+            } else if return_flags.contains(ReturnFlags::REF) {
+                // Reference return: the return value is already a reference/address
+                self.emit(Instruction::PopR);
+                self.emit(Instruction::CpyRtoV { var: result });
+                // Note: For reference returns, 'result' now contains a reference
+            } else {
+                self.emit(Instruction::PopR);
+                self.emit(Instruction::CpyRtoV { var: result });
+            }
         }
 
         if self.is_temp_var(obj_var) {
@@ -550,16 +820,14 @@ impl Compiler {
                 property_type,
                 getter_id,
                 ..
-            } => {
-                self.generate_virtual_property_assignment(
-                    left,
-                    op,
-                    right,
-                    *setter_id,
-                    *getter_id,
-                    *property_type,
-                )
-            }
+            } => self.generate_virtual_property_assignment(
+                left,
+                op,
+                right,
+                *setter_id,
+                *getter_id,
+                *property_type,
+            ),
 
             ExprContext::VirtualProperty {
                 setter_id: None, ..
@@ -722,6 +990,18 @@ impl Compiler {
             ));
         };
 
+        // Get property type from semantic analysis
+        let property_type = self
+            .analyzer
+            .symbol_table
+            .get_expr_context(left)
+            .and_then(|ctx| match ctx {
+                ExprContext::PropertyAccess { property_type, .. } => Some(*property_type),
+                _ => None,
+            })
+            .unwrap_or(TYPE_INT32);
+
+        let is_handle_property = self.is_handle_type(property_type);
         let right_var = self.generate_expr(right)?;
 
         // Check if accessing 'this'
@@ -730,12 +1010,46 @@ impl Compiler {
                 let prop_name_id = self.module.add_property_name(property_name.to_string());
 
                 if matches!(op, BinaryOp::Assign) {
-                    self.emit(Instruction::SetThisProperty {
-                        prop_name_id,
-                        src_var: right_var,
-                    });
+                    // Phase 5: Handle property assignment with reference counting
+                    if is_handle_property {
+                        // 1. Get the old handle value
+                        let old_handle = self.allocate_temp(property_type);
+                        self.emit(Instruction::GetThisProperty {
+                            prop_name_id,
+                            dst_var: old_handle,
+                        });
+
+                        // 2. Free the old handle (if not null)
+                        self.emit(Instruction::Free {
+                            var: old_handle,
+                            func_id: self.get_destructor_id(property_type),
+                        });
+                        self.free_temp(old_handle);
+
+                        // 3. RefCpy the new handle (increment refcount)
+                        let new_handle = self.allocate_temp(property_type);
+                        self.emit(Instruction::RefCpy {
+                            dst: new_handle,
+                            src: right_var,
+                        });
+
+                        // 4. Set the property
+                        self.emit(Instruction::SetThisProperty {
+                            prop_name_id,
+                            src_var: new_handle,
+                        });
+
+                        self.free_temp(new_handle);
+                    } else {
+                        // Regular property assignment (non-handle)
+                        self.emit(Instruction::SetThisProperty {
+                            prop_name_id,
+                            src_var: right_var,
+                        });
+                    }
                 } else {
-                    let temp = self.allocate_temp(TYPE_INT32);
+                    // Compound assignment
+                    let temp = self.allocate_temp(property_type);
 
                     self.emit(Instruction::GetThisProperty {
                         prop_name_id,
@@ -766,13 +1080,49 @@ impl Compiler {
         let prop_name_id = self.module.add_property_name(property_name.to_string());
 
         if matches!(op, BinaryOp::Assign) {
-            self.emit(Instruction::SetProperty {
-                obj_var,
-                prop_name_id,
-                src_var: right_var,
-            });
+            // Phase 5: Handle property assignment with reference counting
+            if is_handle_property {
+                // 1. Get the old handle value
+                let old_handle = self.allocate_temp(property_type);
+                self.emit(Instruction::GetProperty {
+                    obj_var,
+                    prop_name_id,
+                    dst_var: old_handle,
+                });
+
+                // 2. Free the old handle (if not null)
+                self.emit(Instruction::Free {
+                    var: old_handle,
+                    func_id: self.get_destructor_id(property_type),
+                });
+                self.free_temp(old_handle);
+
+                // 3. RefCpy the new handle (increment refcount)
+                let new_handle = self.allocate_temp(property_type);
+                self.emit(Instruction::RefCpy {
+                    dst: new_handle,
+                    src: right_var,
+                });
+
+                // 4. Set the property
+                self.emit(Instruction::SetProperty {
+                    obj_var,
+                    prop_name_id,
+                    src_var: new_handle,
+                });
+
+                self.free_temp(new_handle);
+            } else {
+                // Regular property assignment (non-handle)
+                self.emit(Instruction::SetProperty {
+                    obj_var,
+                    prop_name_id,
+                    src_var: right_var,
+                });
+            }
         } else {
-            let temp = self.allocate_temp(TYPE_INT32);
+            // Compound assignment
+            let temp = self.allocate_temp(property_type);
 
             self.emit(Instruction::GetProperty {
                 obj_var,
@@ -924,15 +1274,23 @@ impl Compiler {
                 let instr = match (op, operand_type) {
                     (UnaryOp::PreInc, TYPE_INT8) => Instruction::INCi8 { var: operand_var },
                     (UnaryOp::PreInc, TYPE_INT16) => Instruction::INCi16 { var: operand_var },
-                    (UnaryOp::PreInc, TYPE_INT32 | TYPE_UINT32) => Instruction::INCi { var: operand_var },
-                    (UnaryOp::PreInc, TYPE_INT64 | TYPE_UINT64) => Instruction::INCi64 { var: operand_var },
+                    (UnaryOp::PreInc, TYPE_INT32 | TYPE_UINT32) => {
+                        Instruction::INCi { var: operand_var }
+                    }
+                    (UnaryOp::PreInc, TYPE_INT64 | TYPE_UINT64) => {
+                        Instruction::INCi64 { var: operand_var }
+                    }
                     (UnaryOp::PreInc, TYPE_FLOAT) => Instruction::INCf { var: operand_var },
                     (UnaryOp::PreInc, TYPE_DOUBLE) => Instruction::INCd { var: operand_var },
 
                     (UnaryOp::PreDec, TYPE_INT8) => Instruction::DECi8 { var: operand_var },
                     (UnaryOp::PreDec, TYPE_INT16) => Instruction::DECi16 { var: operand_var },
-                    (UnaryOp::PreDec, TYPE_INT32 | TYPE_UINT32) => Instruction::DECi { var: operand_var },
-                    (UnaryOp::PreDec, TYPE_INT64 | TYPE_UINT64) => Instruction::DECi64 { var: operand_var },
+                    (UnaryOp::PreDec, TYPE_INT32 | TYPE_UINT32) => {
+                        Instruction::DECi { var: operand_var }
+                    }
+                    (UnaryOp::PreDec, TYPE_INT64 | TYPE_UINT64) => {
+                        Instruction::DECi64 { var: operand_var }
+                    }
                     (UnaryOp::PreDec, TYPE_FLOAT) => Instruction::DECf { var: operand_var },
                     (UnaryOp::PreDec, TYPE_DOUBLE) => Instruction::DECd { var: operand_var },
 
@@ -966,8 +1324,12 @@ impl Compiler {
                     (UnaryOp::Neg, TYPE_INT64 | TYPE_UINT64) => Instruction::NEGi64 { var: result },
 
                     (UnaryOp::Not, _) => Instruction::NOT { var: result },
-                    (UnaryOp::BitNot, TYPE_INT32 | TYPE_UINT32) => Instruction::BNOT { var: result },
-                    (UnaryOp::BitNot, TYPE_INT64 | TYPE_UINT64) => Instruction::BNOT64 { var: result },
+                    (UnaryOp::BitNot, TYPE_INT32 | TYPE_UINT32) => {
+                        Instruction::BNOT { var: result }
+                    }
+                    (UnaryOp::BitNot, TYPE_INT64 | TYPE_UINT64) => {
+                        Instruction::BNOT64 { var: result }
+                    }
 
                     (UnaryOp::Handle, _) => {
                         return Ok(result);
@@ -1208,6 +1570,107 @@ impl Compiler {
     }
 
     fn free_temp(&mut self, _var: u32) {}
+
+    // ============================================================================
+    // PHASE 4: HandleTracker Methods - Automatic Reference Counting
+    // ============================================================================
+
+    /// Check if a type is a handle type that needs reference counting
+    fn is_handle_type(&self, type_id: TypeId) -> bool {
+        let registry = self.registry.read().unwrap();
+        if let Some(type_info) = registry.get_type(type_id) {
+            // Handle types are reference types (classes) that use @ modifier
+            return type_info.flags.contains(TypeFlags::REF_TYPE);
+        }
+        false
+    }
+
+    /// Check if a Type AST node has a handle modifier
+    fn has_handle_modifier(type_node: &Type) -> bool {
+        type_node.modifiers.iter().any(|m| {
+            matches!(
+                m,
+                TypeModifier::Handle | TypeModifier::ConstHandle | TypeModifier::AutoHandle
+            )
+        })
+    }
+
+    /// Push a new scope for handle tracking
+    fn handle_push_scope(&mut self) {
+        self.handle_tracker.scopes.push(Vec::new());
+    }
+
+    /// Pop a scope and emit cleanup code for all handles in LIFO order
+    fn handle_pop_scope(&mut self) {
+        if let Some(handles) = self.handle_tracker.scopes.pop() {
+            // Emit Free instructions in LIFO order (reverse of registration)
+            for handle in handles.iter().rev() {
+                if !handle.is_moved {
+                    // Only emit Free if ownership wasn't transferred
+                    self.emit(Instruction::Free {
+                        var: handle.var_index,
+                        func_id: self.get_destructor_id(handle.type_id),
+                    });
+                }
+            }
+        }
+    }
+
+    /// Register a handle variable for automatic cleanup
+    fn handle_register(&mut self, var_index: u32, type_id: TypeId) {
+        if let Some(current_scope) = self.handle_tracker.scopes.last_mut() {
+            current_scope.push(HandleInfo {
+                var_index,
+                type_id,
+                is_moved: false,
+            });
+        }
+    }
+
+    /// Mark a handle as moved (ownership transferred), so it won't be freed
+    fn handle_mark_moved(&mut self, var_index: u32) {
+        // Search all scopes (starting from innermost) to find and mark the handle
+        for scope in self.handle_tracker.scopes.iter_mut().rev() {
+            if let Some(handle) = scope.iter_mut().find(|h| h.var_index == var_index) {
+                handle.is_moved = true;
+                return;
+            }
+        }
+    }
+
+    /// Emit cleanup for current scope without popping it (for early returns)
+    fn handle_emit_current_scope_cleanup(&mut self) {
+        if let Some(handles) = self.handle_tracker.scopes.last() {
+            // Emit Free instructions in LIFO order
+            for handle in handles.iter().rev() {
+                if !handle.is_moved {
+                    self.emit(Instruction::Free {
+                        var: handle.var_index,
+                        func_id: self.get_destructor_id(handle.type_id),
+                    });
+                }
+            }
+        }
+    }
+
+    /// Emit cleanup for all scopes (for early returns from nested scopes)
+    fn handle_emit_all_scope_cleanup(&mut self) {
+        // Process scopes in reverse order (innermost to outermost)
+        for scope in self.handle_tracker.scopes.iter().rev() {
+            for handle in scope.iter().rev() {
+                if !handle.is_moved {
+                    self.emit(Instruction::Free {
+                        var: handle.var_index,
+                        func_id: self.get_destructor_id(handle.type_id),
+                    });
+                }
+            }
+        }
+    }
+
+    // ============================================================================
+    // End of HandleTracker Methods
+    // ============================================================================
 
     fn emit(&mut self, instr: Instruction) -> u32 {
         let addr = self.current_address;
@@ -1492,16 +1955,43 @@ impl Compiler {
         self.current_function = Some(FunctionContext {
             function_id,
             name: func_info.name.clone(),
-            full_name: func_full_name,
+            full_name: func_full_name.clone(),
             has_return: false,
+            return_flags: func_info.return_flags,
         });
+
+        // Phase 4: Push scope for function body (includes parameters)
+        self.handle_push_scope();
+
+        // Phase 4: Register handle parameters for automatic cleanup
+        for param in &func.params {
+            if Self::has_handle_modifier(&param.param_type) {
+                let type_id = self
+                    .analyzer
+                    .symbol_table
+                    .resolve_type_from_ast(&param.param_type);
+                if self.is_handle_type(type_id) {
+                    // Find parameter index from function info
+                    if let Some(func_info) = self.registry.read().unwrap().get_function(function_id)
+                    {
+                        if let Some(local) = func_info.locals.iter().find(|l| l.name == param.name)
+                        {
+                            self.handle_register(local.index as u32, type_id);
+                        }
+                    }
+                }
+            }
+        }
 
         if self.is_constructor(func) {
             self.generate_constructor_prologue(&func.name)?;
         }
 
         if let Some(body) = &func.body {
-            self.generate_statement_block(body)?;
+            // Don't push/pop scope here - already done above for parameters
+            for stmt in &body.statements {
+                self.generate_statement(stmt)?;
+            }
         }
 
         if self.is_destructor(func) {
@@ -1509,12 +1999,18 @@ impl Compiler {
         }
 
         if !self.last_instruction_is_return() {
+            // Phase 4: Emit cleanup before return
+            self.handle_emit_all_scope_cleanup();
+
             if return_type == TYPE_VOID {
                 self.emit(Instruction::RET { stack_size: 0 });
             } else {
                 self.emit_default_return(return_type);
             }
         }
+
+        // Phase 4: Pop function scope (for parameters)
+        self.handle_pop_scope();
 
         self.module.set_function_address(function_id, func_address);
 
@@ -1732,9 +2228,16 @@ impl Compiler {
     }
 
     fn generate_statement_block(&mut self, block: &StatBlock) -> CodegenResult<()> {
+        // Phase 4: Push new scope for handle tracking
+        self.handle_push_scope();
+
         for stmt in &block.statements {
             self.generate_statement(stmt)?;
         }
+
+        // Phase 4: Pop scope and emit cleanup for all handles in this scope
+        self.handle_pop_scope();
+
         Ok(())
     }
 
@@ -1774,6 +2277,13 @@ impl Compiler {
             .find_function(&func_full_name, &[])
             .ok_or_else(|| CodegenError::Internal("Current function not found".to_string()))?;
 
+        // Phase 4: Check if this is a handle type
+        let is_handle = Self::has_handle_modifier(&var.var_type);
+        let type_id = self
+            .analyzer
+            .symbol_table
+            .resolve_type_from_ast(&var.var_type);
+
         for decl in &var.declarations {
             let var_idx = func_info
                 .locals
@@ -1786,10 +2296,20 @@ impl Compiler {
                 match init {
                     VarInit::Expr(expr) => {
                         let result_var = self.generate_expr(expr)?;
-                        self.emit(Instruction::CpyV {
-                            dst: var_idx,
-                            src: result_var,
-                        });
+
+                        // Phase 4: Use RefCpy for handle assignments (increments refcount)
+                        if is_handle && self.is_handle_type(type_id) {
+                            self.emit(Instruction::RefCpy {
+                                dst: var_idx,
+                                src: result_var,
+                            });
+                        } else {
+                            self.emit(Instruction::CpyV {
+                                dst: var_idx,
+                                src: result_var,
+                            });
+                        }
+
                         if self.is_temp_var(result_var) {
                             self.free_temp(result_var);
                         }
@@ -1801,18 +2321,36 @@ impl Compiler {
                     }
                     VarInit::ArgList(args) => {
                         let temp = self.generate_construct_call(&var.var_type, args)?;
-                        self.emit(Instruction::CpyV {
-                            dst: var_idx,
-                            src: temp,
-                        });
+
+                        // Phase 4: Use RefCpy for handle assignments
+                        if is_handle && self.is_handle_type(type_id) {
+                            self.emit(Instruction::RefCpy {
+                                dst: var_idx,
+                                src: temp,
+                            });
+                        } else {
+                            self.emit(Instruction::CpyV {
+                                dst: var_idx,
+                                src: temp,
+                            });
+                        }
+
                         if self.is_temp_var(temp) {
                             self.free_temp(temp);
                         }
                     }
                 }
             } else {
-                let var_type = self.analyzer.symbol_table.resolve_type_from_ast(&var.var_type);
+                let var_type = self
+                    .analyzer
+                    .symbol_table
+                    .resolve_type_from_ast(&var.var_type);
                 self.emit_default_init(var_idx, var_type);
+            }
+
+            // Phase 4: Register handle for automatic cleanup
+            if is_handle && self.is_handle_type(type_id) {
+                self.handle_register(var_idx, type_id);
             }
         }
         Ok(())
@@ -2024,14 +2562,62 @@ impl Compiler {
     }
 
     fn generate_return(&mut self, ret: &ReturnStmt) -> CodegenResult<()> {
-        if let Some(value) = &ret.value {
-            let result_var = self.generate_expr(value)?;
-            self.emit(Instruction::CpyVtoR { var: result_var });
+        // Phase 5: Handle ownership transfer and cleanup
 
-            if self.is_temp_var(result_var) {
-                self.free_temp(result_var);
+        if let Some(value) = &ret.value {
+            // Check if this function returns by reference
+            let returns_ref = self
+                .current_function
+                .as_ref()
+                .map(|ctx| ctx.return_flags.contains(ReturnFlags::REF))
+                .unwrap_or(false);
+
+            if returns_ref {
+                // For reference returns, we need to return the address of the variable
+                // rather than copying its value. The semantic analyzer has already
+                // validated that we're returning something with sufficient lifetime.
+                let result_var = self.generate_expr_lvalue(value)?;
+                
+                // Load the object reference (address) into the return register
+                self.emit(Instruction::LoadObj { var: result_var });
+                
+                if self.is_temp_var(result_var) {
+                    self.free_temp(result_var);
+                }
+            } else {
+                // Normal value return
+                let result_var = self.generate_expr(value)?;
+
+                // Phase 5: If returning a handle, mark it as moved (ownership transferred)
+                // This prevents it from being freed at scope exit
+                if let Some(func_ctx) = &self.current_function {
+                    let func_full_name = func_ctx.full_name.clone();
+                    let registry = self.registry.read().unwrap();
+                    let function = registry.find_function(&func_full_name, &[]);
+
+                    drop(registry);
+
+                    if let Some(func_info) = function {
+                        if self.is_handle_type(func_info.return_type) {
+                            // Check if the return value is a local variable (not a temp)
+                            if !self.is_temp_var(result_var) {
+                                self.handle_mark_moved(result_var);
+                            }
+                        }
+                    }
+                }
+
+                self.emit(Instruction::CpyVtoR { var: result_var });
+
+                if self.is_temp_var(result_var) {
+                    self.free_temp(result_var);
+                }
             }
         }
+
+        // Phase 5: Emit cleanup for ALL scopes before returning
+        // This handles early returns from nested scopes
+        self.handle_emit_all_scope_cleanup();
 
         self.emit(Instruction::RET { stack_size: 0 });
 
@@ -2210,9 +2796,14 @@ impl Compiler {
 
         self.emit(Instruction::Alloc { type_id, func_id });
 
+        // Phase 6: Track @+ parameters for constructors
+        let mut pushed_param_vars: Vec<Option<u32>> = Vec::new();
+
         for arg in args.iter().rev() {
             let arg_var = self.generate_expr(&arg.value)?;
             self.emit(Instruction::PshV { var: arg_var });
+
+            pushed_param_vars.insert(0, Some(arg_var));
 
             if self.is_temp_var(arg_var) {
                 self.free_temp(arg_var);
@@ -2220,17 +2811,51 @@ impl Compiler {
         }
 
         if func_id != 0 {
-            let is_native =
+            let (is_native, auto_handle_params) =
                 if let Some(func_info) = self.registry.read().unwrap().get_function(func_id) {
-                    matches!(func_info.implementation, FunctionImpl::Native { .. })
+                    let auto_params: Vec<(usize, TypeId, bool)> = func_info
+                        .parameters
+                        .iter()
+                        .enumerate()
+                        .map(|(idx, p)| (idx, p.type_id, p.is_auto_handle))
+                        .collect();
+
+                    (
+                        matches!(func_info.implementation, FunctionImpl::Native { .. }),
+                        auto_params,
+                    )
                 } else {
-                    false
+                    (false, Vec::new())
                 };
 
             if is_native {
                 self.emit(Instruction::CALLSYS {
                     sys_func_id: func_id,
                 });
+
+                // Phase 6: Release @+ constructor parameters in LIFO order
+                // Constructors don't have @+ returns (they return the object itself)
+                for (param_idx, (_, param_type_id, is_auto)) in
+                    auto_handle_params.iter().enumerate().rev()
+                {
+                    if *is_auto {
+                        if let Some(Some(param_var)) = pushed_param_vars.get(param_idx) {
+                            let destructor_id = self.get_destructor_id(*param_type_id);
+                            let temp_param = self.allocate_temp(*param_type_id);
+
+                            self.emit(Instruction::RefCpy {
+                                dst: temp_param,
+                                src: *param_var,
+                            });
+
+                            self.emit(Instruction::Free {
+                                var: temp_param,
+                                func_id: destructor_id,
+                            });
+                            self.free_temp(temp_param);
+                        }
+                    }
+                }
             } else {
                 self.emit(Instruction::CALL { func_id });
             }
@@ -2837,7 +3462,9 @@ impl Compiler {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::type_registry::{FunctionFlags, FunctionInfo, FunctionKind, PropertyFlags, TypeInfo, TypeRegistry};
+    use crate::core::type_registry::{
+        FunctionFlags, FunctionInfo, FunctionKind, PropertyFlags, TypeInfo, TypeRegistry,
+    };
     use crate::core::types::{
         allocate_function_id, allocate_type_id, AccessSpecifier, ScriptValue, TypeFlags, TypeKind,
     };
@@ -5293,10 +5920,12 @@ mod tests {
                 namespace: vec![],
                 return_type: TYPE_VOID,
                 return_is_ref: false,
+                return_is_auto_handle: false,
                 parameters: vec![ParameterInfo {
                     name: Some("msg".to_string()),
                     type_id: TYPE_STRING,
                     flags: ParameterFlags::IN | ParameterFlags::CONST,
+                    is_auto_handle: false,
                     default_expr: None,
                     definition_span: None,
                 }],
@@ -5376,8 +6005,6 @@ mod tests {
                 interfaces: vec![],
                 behaviours: HashMap::new(),
                 rust_type_id: None,
-                rust_accessors: HashMap::new(),
-                rust_methods: HashMap::new(),
                 vtable: vec![],
                 definition_span: None,
             };
@@ -5397,7 +6024,7 @@ mod tests {
                     definition_span: None,
                 },
             )
-               .unwrap();
+            .unwrap();
         }
 
         let compiler = Compiler::new(Arc::clone(&registry));
@@ -5468,8 +6095,6 @@ mod tests {
                 interfaces: vec![],
                 behaviours: HashMap::new(),
                 rust_type_id: None,
-                rust_accessors: HashMap::new(),
-                rust_methods: HashMap::new(),
                 vtable: vec![],
                 definition_span: None,
             };
@@ -5483,7 +6108,6 @@ mod tests {
                 full_name: "Enemy::takeDamage".to_string(),
                 namespace: vec![],
                 return_type: TYPE_VOID,
-                return_is_ref: false,
                 parameters: vec![ParameterInfo {
                     name: Some("amount".to_string()),
                     type_id: TYPE_INT32,
@@ -5503,7 +6127,7 @@ mod tests {
             };
             reg.register_function(func_info).unwrap();
             reg.add_method(type_id, "takeDamage".to_string(), func_id)
-               .unwrap();
+                .unwrap();
         }
 
         let compiler = Compiler::new(Arc::clone(&registry));
@@ -5582,8 +6206,6 @@ mod tests {
                 interfaces: vec![],
                 behaviours: HashMap::new(),
                 rust_type_id: None,
-                rust_accessors: HashMap::new(),
-                rust_methods: HashMap::new(),
                 vtable: vec![],
                 definition_span: None,
             };
@@ -5599,6 +6221,7 @@ mod tests {
 
                 return_type: enemy_type_id,
                 return_is_ref: false,
+                return_is_auto_handle: false,
                 parameters: vec![],
 
                 kind: FunctionKind::Constructor,
@@ -5620,7 +6243,7 @@ mod tests {
             };
 
             reg.add_behaviour(enemy_type_id, BehaviourType::Construct, construct_id)
-               .unwrap();
+                .unwrap();
             reg.register_function(construct_info).unwrap();
 
             // Repeat for AddRef and Release behaviours
@@ -5634,6 +6257,7 @@ mod tests {
 
                 return_type: TYPE_VOID,
                 return_is_ref: false,
+                return_is_auto_handle: false,
                 parameters: vec![],
 
                 kind: FunctionKind::Method { is_const: false },
@@ -5655,7 +6279,7 @@ mod tests {
             };
 
             reg.add_behaviour(enemy_type_id, BehaviourType::AddRef, addref_id)
-               .unwrap();
+                .unwrap();
             reg.register_function(addref_info).unwrap();
 
             let release_id = allocate_function_id();
@@ -5668,6 +6292,7 @@ mod tests {
 
                 return_type: TYPE_VOID,
                 return_is_ref: false,
+                return_is_auto_handle: false,
                 parameters: vec![],
 
                 kind: FunctionKind::Method { is_const: false },
@@ -5689,7 +6314,7 @@ mod tests {
             };
 
             reg.add_behaviour(enemy_type_id, BehaviourType::Release, release_id)
-               .unwrap();
+                .unwrap();
             reg.register_function(release_info).unwrap();
         }
 
@@ -5760,8 +6385,6 @@ mod tests {
                 interfaces: vec![],
                 behaviours: HashMap::new(),
                 rust_type_id: None,
-                rust_accessors: HashMap::new(),
-                rust_methods: HashMap::new(),
                 vtable: vec![],
                 definition_span: None,
             };
@@ -5781,7 +6404,7 @@ mod tests {
                     definition_span: None,
                 },
             )
-               .unwrap();
+            .unwrap();
         }
 
         let compiler = Compiler::new(Arc::clone(&registry));

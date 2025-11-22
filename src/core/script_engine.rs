@@ -1,21 +1,44 @@
+//! ScriptEngine - The central object for AngelScript-in-Rust
+//!
+//! This is where the application registers the application interface that
+//! the scripts should be able to use, and where the application can request
+//! modules to build scripts and contexts to execute them.
+
+use crate::callfunc::registry::SystemFunctionRegistry;
+use crate::callfunc::interface::SystemFunctionInterface;
 use crate::core::engine_properties::EngineProperty;
 use crate::core::script_module::ScriptModule;
+use crate::core::script_object::{register_script_object_behaviours, ScriptObject, ScriptObjectBehaviourIds};
 use crate::core::type_registry::{
     FunctionFlags, FunctionImpl, FunctionInfo, FunctionKind, GlobalInfo, ParameterInfo,
     PropertyFlags, PropertyInfo, TypeInfo, TypeRegistry,
 };
 use crate::core::types::{
-    allocate_function_id, allocate_type_id, AccessSpecifier, BehaviourType, FunctionId, TypeFlags, TypeId,
-    TypeKind, TypeRegistration, TYPE_VOID,
+    AccessSpecifier, BehaviourType, FunctionId, TypeFlags, TypeId, TypeKind, TypeRegistration,
+    TYPE_VOID, allocate_function_id, allocate_type_id,
 };
 use crate::parser::declaration_parser::DeclarationParser;
 use std::any::TypeId as StdTypeId;
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
+/// The script engine is the central object for AngelScript-in-Rust
+///
+/// It is where the application registers the application interface that
+/// the scripts should be able to use, and where the application can request
+/// modules to build scripts and contexts to execute them.
 pub struct ScriptEngine {
     pub registry: Arc<RwLock<TypeRegistry>>,
     modules: HashMap<String, Box<ScriptModule>>,
+
+    /// Registry of all native/system function implementations
+    /// This is the authoritative source for callable native functions.
+    /// All native functions (methods, behaviours, property accessors, global functions)
+    /// are stored here, keyed by FunctionId.
+    system_functions: SystemFunctionRegistry,
+
+    /// Cached IDs for ScriptObject behaviours
+    script_object_behaviours: Option<ScriptObjectBehaviourIds>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -27,33 +50,58 @@ pub enum GetModuleFlag {
 
 impl ScriptEngine {
     pub fn new() -> Self {
-        Self {
+        let engine = Self {
             registry: Arc::new(RwLock::new(TypeRegistry::new())),
             modules: HashMap::new(),
-        }
+            system_functions: SystemFunctionRegistry::new(),
+            script_object_behaviours: None,
+        };
+
+        engine
     }
 
-    pub fn set_engine_property(
-        &mut self,
-        property: EngineProperty,
-        value: usize,
-    ) -> Result<(), String> {
-        let mut registry = self.registry.write().unwrap();
-        registry.set_property(property, value);
+    /// Initialize the ScriptObject behaviours
+    /// 
+    /// This registers the default script class behaviours that all script
+    /// objects inherit. This is equivalent to RegisterScriptObject() in C++.
+    /// 
+    /// Call this after creating the engine if you need script object support.
+    pub fn register_script_object(&mut self) -> Result<(), String> {
+        if self.script_object_behaviours.is_some() {
+            return Err("ScriptObject behaviours already registered".to_string());
+        }
+        
+        let ids = register_script_object_behaviours(self)?;
+        self.script_object_behaviours = Some(ids);
         Ok(())
     }
 
-    pub fn get_engine_property(&self, property: EngineProperty) -> usize {
-        let registry = self.registry.read().unwrap();
-        registry.get_property(property)
+    /// Get the ScriptObject behaviour IDs
+    pub fn get_script_object_behaviours(&self) -> Option<&ScriptObjectBehaviourIds> {
+        self.script_object_behaviours.as_ref()
     }
 
-    pub fn register_object_type<T: 'static>(
+    /// Get a reference to the system function registry
+    pub fn system_functions(&self) -> &SystemFunctionRegistry {
+        &self.system_functions
+    }
+
+    /// Get a mutable reference to the system function registry
+    pub fn system_functions_mut(&mut self) -> &mut SystemFunctionRegistry {
+        &mut self.system_functions
+    }
+    
+    /// Register the internal $obj type for script objects
+    /// 
+    /// This is called by register_script_object_behaviours().
+    /// Similar to how C++ sets up engine->scriptTypeBehaviours.
+    pub(crate) fn register_script_object_type(
         &mut self,
         name: &str,
         flags: TypeFlags,
-    ) -> Result<u32, String> {
-        let rust_type_id = StdTypeId::of::<T>();
+    ) -> Result<TypeId, String> {
+        // ScriptObject is the actual storage type for script-defined classes
+        let rust_type_id = std::any::TypeId::of::<ScriptObject>();
 
         let type_info = TypeInfo {
             type_id: allocate_type_id(),
@@ -72,8 +120,6 @@ impl ScriptEngine {
             behaviours: HashMap::new(),
 
             rust_type_id: Some(rust_type_id),
-            rust_accessors: HashMap::new(),
-            rust_methods: HashMap::new(),
 
             vtable: Vec::new(),
 
@@ -84,20 +130,111 @@ impl ScriptEngine {
         registry.register_type(type_info)
     }
 
-    pub fn register_object_property(
+    pub fn set_engine_property(
+        &mut self,
+        property: EngineProperty,
+        value: usize,
+    ) -> Result<(), String> {
+        let mut registry = self.registry.write().unwrap();
+        registry.set_property(property, value);
+        Ok(())
+    }
+
+    pub fn get_engine_property(&self, property: EngineProperty) -> usize {
+        let registry = self.registry.read().unwrap();
+        registry.get_property(property)
+    }
+
+    /// Register an object type
+    ///
+    /// flags should include:
+    /// - TypeFlags::REF_TYPE for reference types
+    /// - TypeFlags::VALUE_TYPE for value types
+    /// - TypeFlags::GC_TYPE for types that may form circular references
+    ///
+    /// If GC_TYPE is specified, the type must also register the GC behaviors:
+    /// - GetRefCount, SetGCFlag, GetGCFlag, EnumRefs, ReleaseRefs
+    pub fn register_object_type<T: 'static>(
+        &mut self,
+        name: &str,
+        flags: TypeFlags,
+    ) -> Result<u32, String> {
+        let rust_type_id = StdTypeId::of::<T>();
+
+        // Validate GC flag requirements
+        if flags.contains(TypeFlags::GC_TYPE) && !flags.contains(TypeFlags::REF_TYPE) {
+            return Err(
+                "GC_TYPE flag requires REF_TYPE flag: only reference types can be GC'd".to_string(),
+            );
+        }
+
+        let type_info = TypeInfo {
+            type_id: allocate_type_id(),
+            name: name.to_string(),
+            namespace: Vec::new(),
+            kind: TypeKind::Class,
+            flags,
+            registration: TypeRegistration::Application,
+
+            properties: Vec::new(),
+            methods: HashMap::new(),
+
+            base_type: None,
+            interfaces: Vec::new(),
+
+            behaviours: HashMap::new(),
+
+            rust_type_id: Some(rust_type_id),
+
+            vtable: Vec::new(),
+
+            definition_span: None,
+        };
+
+        let mut registry = self.registry.write().unwrap();
+        registry.register_type(type_info)
+    }
+
+    /// Register an object property with getter/setter implementations
+    ///
+    /// The getter and setter are registered as system functions and their
+    /// FunctionIds are stored on the PropertyInfo.
+    pub fn register_object_property_with_accessors(
         &mut self,
         type_name: &str,
         declaration: &str,
+        getter: Option<SystemFunctionInterface>,
+        setter: Option<SystemFunctionInterface>,
     ) -> Result<(), String> {
         let parser = DeclarationParser::new(Arc::clone(&self.registry));
         let sig = parser.parse_property_declaration(declaration)?;
 
+        let type_id = {
+            let registry = self.registry.read().unwrap();
+            registry
+                .lookup_type(type_name, &[])
+                .ok_or_else(|| format!("Type '{}' not found", type_name))?
+        };
+
+        // Register getter if provided
+        let getter_id = if let Some(getter_impl) = getter {
+            let func_id = allocate_function_id();
+            self.system_functions.register(func_id, getter_impl);
+            Some(func_id)
+        } else {
+            None
+        };
+
+        // Register setter if provided
+        let setter_id = if let Some(setter_impl) = setter {
+            let func_id = allocate_function_id();
+            self.system_functions.register(func_id, setter_impl);
+            Some(func_id)
+        } else {
+            None
+        };
+
         let mut registry = self.registry.write().unwrap();
-
-        let type_id = registry
-            .lookup_type(type_name, &[])
-            .ok_or_else(|| format!("Type '{}' not found", type_name))?;
-
         registry.add_property(
             type_id,
             PropertyInfo {
@@ -110,13 +247,101 @@ impl ScriptEngine {
                 } else {
                     PropertyFlags::PUBLIC
                 },
-                getter: None,
-                setter: None,
+                getter: getter_id,
+                setter: setter_id,
                 definition_span: None,
             },
         )
     }
 
+    /// Register an object property (without accessors)
+    pub fn register_object_property(
+        &mut self,
+        type_name: &str,
+        declaration: &str,
+    ) -> Result<(), String> {
+        self.register_object_property_with_accessors(type_name, declaration, None, None)
+    }
+
+    /// Register an object method with its native implementation
+    ///
+    /// This registers both the method signature in the type registry AND
+    /// the actual callable in the system function registry.
+    pub fn register_object_method_with_impl(
+        &mut self,
+        type_name: &str,
+        declaration: &str,
+        interface: SystemFunctionInterface,
+    ) -> Result<FunctionId, String> {
+        let parser = DeclarationParser::new(Arc::clone(&self.registry));
+        let sig = parser.parse_function_declaration(declaration)?;
+
+        let function_id = allocate_function_id();
+
+        let type_id = {
+            let registry = self.registry.read().unwrap();
+            registry
+                .lookup_type(type_name, &[])
+                .ok_or_else(|| format!("Type '{}' not found", type_name))?
+        };
+
+        let func_info = FunctionInfo {
+            function_id,
+            name: sig.name.clone(),
+            full_name: format!("{}::{}", type_name, sig.name),
+            namespace: Vec::new(),
+
+            return_type: sig.return_type_id,
+            return_flags: sig.return_flags,
+            parameters: sig
+                .parameters
+                .into_iter()
+                .map(|p| ParameterInfo {
+                    name: p.name,
+                    type_id: p.type_id,
+                    flags: p.flags,
+                    default_expr: p.default_expr,
+                    definition_span: p.definition_span,
+                })
+                .collect(),
+
+            kind: FunctionKind::Method {
+                is_const: sig.is_const,
+            },
+            flags: if sig.is_const {
+                FunctionFlags::PUBLIC | FunctionFlags::CONST
+            } else {
+                FunctionFlags::PUBLIC
+            },
+
+            owner_type: Some(type_id),
+            vtable_index: None,
+
+            implementation: FunctionImpl::Native {
+                system_id: function_id,
+            },
+
+            definition_span: None,
+
+            locals: Vec::new(),
+
+            bytecode_address: None,
+            local_count: 0,
+        };
+
+        // Register the callable in the system function registry
+        self.system_functions.register(function_id, interface);
+
+        let mut registry = self.registry.write().unwrap();
+        registry.add_method(type_id, sig.name, function_id)?;
+        registry.register_function(func_info)
+    }
+
+    /// Register an object method (legacy - no callable stored)
+    ///
+    /// DEPRECATED: This method does NOT register the actual callable.
+    /// Use `register_object_method_with_impl` to register both signature and implementation.
+    #[deprecated(note = "Use register_object_method_with_impl instead")]
     pub fn register_object_method(
         &mut self,
         type_name: &str,
@@ -140,7 +365,7 @@ impl ScriptEngine {
             namespace: Vec::new(),
 
             return_type: sig.return_type_id,
-            return_is_ref: sig.is_ref,
+            return_flags: sig.return_flags,
             parameters: sig
                 .parameters
                 .into_iter()
@@ -181,6 +406,100 @@ impl ScriptEngine {
         registry.register_function(func_info)
     }
 
+    /// Register a behaviour for an object type with its native implementation
+    ///
+    /// This registers both the behaviour in the type registry AND
+    /// the actual callable in the system function registry.
+    ///
+    /// For GC-enabled types, the following behaviours should be registered:
+    /// - BehaviourType::AddRef - "void f()"
+    /// - BehaviourType::Release - "void f()"
+    /// - BehaviourType::GetRefCount - "int f()"
+    /// - BehaviourType::SetGCFlag - "void f()"
+    /// - BehaviourType::GetGCFlag - "bool f()"
+    /// - BehaviourType::EnumRefs - "void f(int&in)"
+    /// - BehaviourType::ReleaseRefs - "void f(int&in)"
+    pub fn register_object_behaviour_with_impl(
+        &mut self,
+        type_name: &str,
+        behaviour: BehaviourType,
+        declaration: &str,
+        interface: SystemFunctionInterface,
+    ) -> Result<FunctionId, String> {
+        let parser = DeclarationParser::new(Arc::clone(&self.registry));
+        let sig = parser.parse_behaviour_declaration(declaration)?;
+
+        let function_id = allocate_function_id();
+
+        let type_id = {
+            let registry = self.registry.read().unwrap();
+            registry
+                .lookup_type(type_name, &[])
+                .ok_or_else(|| format!("Type '{}' not found", type_name))?
+        };
+
+        let behaviour_name = format!("{:?}", behaviour);
+
+        let func_info = FunctionInfo {
+            function_id,
+            name: behaviour_name.clone(),
+            full_name: format!("{}::{}", type_name, behaviour_name),
+            namespace: Vec::new(),
+
+            return_type: match behaviour {
+                BehaviourType::Construct | BehaviourType::ListFactory => type_id,
+                BehaviourType::GetRefCount => crate::core::types::TYPE_INT32,
+                BehaviourType::GetGCFlag => crate::core::types::TYPE_BOOL,
+                _ => TYPE_VOID,
+            },
+            return_flags: sig.return_flags,
+            parameters: sig
+                .parameters
+                .into_iter()
+                .map(|p| ParameterInfo {
+                    name: p.name,
+                    type_id: p.type_id,
+                    flags: p.flags,
+                    default_expr: p.default_expr,
+                    definition_span: p.definition_span,
+                })
+                .collect(),
+
+            kind: match behaviour {
+                BehaviourType::Construct => FunctionKind::Constructor,
+                BehaviourType::Destruct => FunctionKind::Destructor,
+                _ => FunctionKind::Method { is_const: false },
+            },
+            flags: FunctionFlags::PUBLIC,
+
+            owner_type: Some(type_id),
+            vtable_index: None,
+
+            implementation: FunctionImpl::Native {
+                system_id: function_id,
+            },
+
+            definition_span: None,
+
+            locals: Vec::new(),
+
+            bytecode_address: None,
+            local_count: 0,
+        };
+
+        // Register the callable in the system function registry
+        self.system_functions.register(function_id, interface);
+
+        let mut registry = self.registry.write().unwrap();
+        registry.add_behaviour(type_id, behaviour, function_id)?;
+        registry.register_function(func_info)
+    }
+
+    /// Register a behaviour for an object type (legacy - no callable stored)
+    ///
+    /// DEPRECATED: This method does NOT register the actual callable.
+    /// Use `register_object_behaviour_with_impl` to register both signature and implementation.
+    #[deprecated(note = "Use register_object_behaviour_with_impl instead")]
     pub fn register_object_behaviour(
         &mut self,
         type_name: &str,
@@ -208,9 +527,11 @@ impl ScriptEngine {
 
             return_type: match behaviour {
                 BehaviourType::Construct | BehaviourType::ListFactory => type_id,
+                BehaviourType::GetRefCount => crate::core::types::TYPE_INT32,
+                BehaviourType::GetGCFlag => crate::core::types::TYPE_BOOL,
                 _ => TYPE_VOID,
             },
-            return_is_ref: sig.is_ref,
+            return_flags: sig.return_flags,
             parameters: sig
                 .parameters
                 .into_iter()
@@ -249,6 +570,64 @@ impl ScriptEngine {
         registry.register_function(func_info)
     }
 
+    /// Register a global function with its native implementation
+    pub fn register_global_function_with_impl(
+        &mut self,
+        declaration: &str,
+        interface: SystemFunctionInterface,
+    ) -> Result<FunctionId, String> {
+        let parser = DeclarationParser::new(Arc::clone(&self.registry));
+        let sig = parser.parse_function_declaration(declaration)?;
+
+        let function_id = allocate_function_id();
+
+        let func_info = FunctionInfo {
+            function_id,
+            name: sig.name.clone(),
+            full_name: sig.name,
+            namespace: Vec::new(),
+
+            return_type: sig.return_type_id,
+            return_flags: sig.return_flags,
+            parameters: sig
+                .parameters
+                .into_iter()
+                .map(|p| ParameterInfo {
+                    name: p.name,
+                    type_id: p.type_id,
+                    flags: p.flags,
+                    default_expr: p.default_expr,
+                    definition_span: p.definition_span,
+                })
+                .collect(),
+
+            kind: FunctionKind::Global,
+            flags: FunctionFlags::PUBLIC,
+
+            owner_type: None,
+            vtable_index: None,
+
+            implementation: FunctionImpl::Native {
+                system_id: function_id,
+            },
+
+            definition_span: None,
+
+            locals: Vec::new(),
+
+            bytecode_address: None,
+            local_count: 0,
+        };
+
+        // Register the callable in the system function registry
+        self.system_functions.register(function_id, interface);
+
+        let mut registry = self.registry.write().unwrap();
+        registry.register_function(func_info)
+    }
+
+    /// Register a global function (legacy - no callable stored)
+    #[deprecated(note = "Use register_global_function_with_impl instead")]
     pub fn register_global_function(&mut self, declaration: &str) -> Result<FunctionId, String> {
         let parser = DeclarationParser::new(Arc::clone(&self.registry));
         let sig = parser.parse_function_declaration(declaration)?;
@@ -262,7 +641,7 @@ impl ScriptEngine {
             namespace: Vec::new(),
 
             return_type: sig.return_type_id,
-            return_is_ref: sig.is_ref,
+            return_flags: sig.return_flags,
             parameters: sig
                 .parameters
                 .into_iter()
@@ -322,10 +701,8 @@ impl ScriptEngine {
             behaviours: HashMap::new(),
 
             rust_type_id: None,
-            rust_accessors: HashMap::new(),
-            rust_methods: HashMap::new(),
 
-            vtable: Vec::new(),
+            vtable: vec![],
 
             definition_span: None,
         };
@@ -388,8 +765,6 @@ impl ScriptEngine {
             behaviours: HashMap::new(),
 
             rust_type_id: None,
-            rust_accessors: HashMap::new(),
-            rust_methods: HashMap::new(),
 
             vtable: vec![],
 

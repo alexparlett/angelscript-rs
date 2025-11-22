@@ -1,3 +1,4 @@
+pub mod callfunc;
 mod compiler;
 mod vm;
 

@@ -1,9 +1,12 @@
+use crate::callfunc::call::call_system_function;
+use crate::callfunc::registry::SystemFunctionRegistry;
 use crate::compiler::bytecode::{BytecodeModule, Instruction};
+use crate::core::script_object::ScriptObject;
 use crate::core::type_registry::TypeRegistry;
-use crate::core::types::{FunctionId, ScriptValue, TypeId, TypeRegistration};
-use crate::vm::memory::*;
+use crate::core::types::{BehaviourType, FunctionId, ScriptValue, TypeFlags, TypeId, TypeRegistration};
+use crate::vm::gc::{GCFlags, GCStatistics, GarbageCollector};
+use crate::vm::memory::ObjectHeap;
 use std::any::Any;
-use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
 pub struct VM {
@@ -12,17 +15,15 @@ pub struct VM {
     call_stack: Vec<StackFrame>,
     value_stack: Vec<ScriptValue>,
     heap: ObjectHeap,
+    gc: GarbageCollector,
     globals: Vec<ScriptValue>,
     object_register: Option<u64>,
     value_register: ScriptValue,
     ip: u32,
     state: VMState,
     init_list_buffer: Option<Vec<ScriptValue>>,
-    system_functions: HashMap<FunctionId, SystemFunction>,
+    system_functions: Arc<SystemFunctionRegistry>,
 }
-
-type SystemFunction =
-    Arc<dyn Fn(&mut VM, &[ScriptValue]) -> Result<ScriptValue, String> + Send + Sync>;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum VMState {
@@ -64,8 +65,12 @@ impl StackFrame {
 }
 
 impl VM {
-    pub fn new(module: BytecodeModule, registry: Arc<RwLock<TypeRegistry>>) -> Self {
-        let heap = ObjectHeap::new(Arc::clone(&registry));
+    pub fn new(
+        module: BytecodeModule,
+        registry: Arc<RwLock<TypeRegistry>>,
+        system_functions: Arc<SystemFunctionRegistry>,
+    ) -> Self {
+        let heap = ObjectHeap::new();
         let global_count = registry.read().unwrap().get_all_globals().len();
 
         Self {
@@ -74,13 +79,14 @@ impl VM {
             call_stack: Vec::new(),
             value_stack: Vec::new(),
             heap,
+            gc: GarbageCollector::new(),
             globals: vec![ScriptValue::Void; global_count],
             object_register: None,
             value_register: ScriptValue::Void,
             ip: 0,
             state: VMState::Running,
             init_list_buffer: None,
-            system_functions: HashMap::new(),
+            system_functions,
         }
     }
 
@@ -207,6 +213,160 @@ impl VM {
         }
     }
 
+    // ========================================================================
+    // Helper methods for behaviour calls
+    // ========================================================================
+
+    /// Call a behaviour on an object via call_system_function
+    fn call_behaviour(
+        &mut self,
+        handle: u64,
+        behaviour: BehaviourType,
+        args: &[ScriptValue],
+    ) -> Result<ScriptValue, String> {
+        // Get type info
+        let type_id = self
+            .heap
+            .get_type_id(handle)
+            .ok_or_else(|| format!("Object {} not found", handle))?;
+
+        let func_id = {
+            let registry = self.registry.read().unwrap();
+            let type_info = registry
+                .get_type(type_id)
+                .ok_or_else(|| format!("Type {} not found", type_id))?;
+            type_info
+                .get_behaviour(behaviour)
+                .ok_or_else(|| format!("Behaviour {:?} not found on type {}", behaviour, type_id))?
+        };
+
+        // Get object and call
+        let obj = self
+            .heap
+            .get_as_any_mut(handle)
+            .ok_or_else(|| format!("Object {} not found", handle))?;
+        call_system_function(func_id, Some(obj), args, &self.system_functions)
+    }
+
+    /// Allocate a new object on the heap
+    ///
+    /// For script objects, creates a ScriptObject.
+    /// For application types, the factory function must be called separately.
+    fn allocate_object(&mut self, type_id: TypeId) -> Result<u64, String> {
+        let (gc_tracked, is_app_type) = {
+            let registry = self.registry.read().unwrap();
+            let type_info = registry
+                .get_type(type_id)
+                .ok_or_else(|| format!("Type {} not found", type_id))?;
+            let gc = type_info.flags.contains(TypeFlags::GC_TYPE);
+            let is_app = type_info.registration == TypeRegistration::Application;
+            (gc, is_app)
+        };
+
+        if is_app_type {
+            return Err("Application types must be allocated via factory behaviour".to_string());
+        }
+
+        // Create script object
+        let script_obj = ScriptObject::new(type_id);
+        let handle = self.heap.allocate(type_id, script_obj, gc_tracked);
+
+        // Register with GC if tracked
+        if gc_tracked {
+            self.gc.add_object(handle, type_id);
+        }
+
+        Ok(handle)
+    }
+
+    /// Add reference to an object via behaviour call
+    fn add_ref_object(&mut self, handle: u64) -> Result<(), String> {
+        self.call_behaviour(handle, BehaviourType::AddRef, &[])?;
+        Ok(())
+    }
+
+    /// Release an object via behaviour call
+    /// Returns true if the object's reference count reached zero
+    fn release_object(&mut self, handle: u64) -> Result<bool, String> {
+        let result = self.call_behaviour(handle, BehaviourType::Release, &[])?;
+        // Release behaviour returns bool (true if destroyed)
+        Ok(match result {
+            ScriptValue::Bool(b) => b,
+            _ => false,
+        })
+    }
+
+    /// Get the reference count of an object
+    fn get_object_ref_count(&mut self, handle: u64) -> Result<i32, String> {
+        let result = self.call_behaviour(handle, BehaviourType::GetRefCount, &[])?;
+        Ok(match result {
+            ScriptValue::Int32(n) => n,
+            _ => 0,
+        })
+    }
+
+    /// Check if an object handle is valid
+    fn is_valid_object(&self, handle: u64) -> bool {
+        self.heap.contains(handle)
+    }
+
+    /// Destroy an object (remove from heap and GC)
+    fn destroy_object(&mut self, handle: u64) -> bool {
+        if self.gc.is_tracked(handle) {
+            self.gc.remove_object(handle);
+        }
+        self.heap.remove(handle)
+    }
+
+    // ========================================================================
+    // GC methods
+    // ========================================================================
+
+    pub fn garbage_collect_advanced(&mut self, flags: GCFlags) -> u32 {
+        // Update cached ref counts in GC
+        for (handle, _type_id) in self.heap.gc_tracked_handles_with_types() {
+            if let Ok(ref_count) = self.get_object_ref_count(handle) {
+                self.gc.update_ref_count(handle, ref_count as u32);
+            }
+        }
+
+        // Run GC algorithm
+        let work_done = self.gc.garbage_collect(flags);
+
+        // Actually destroy objects that GC identified
+        let garbage: Vec<u64> = self.gc.get_garbage_to_destroy().to_vec();
+        for handle in garbage {
+            // Call ReleaseRefs to break cycles
+            let _ = self.call_behaviour(handle, BehaviourType::ReleaseRefs, &[]);
+            // Remove from heap
+            self.heap.remove(handle);
+        }
+
+        work_done
+    }
+
+    /// Get GC statistics
+    pub fn get_gc_statistics(&self) -> GCStatistics {
+        self.gc.get_statistics()
+    }
+
+    /// Enable/disable automatic GC
+    pub fn set_auto_gc(&mut self, enabled: bool) {
+        self.gc.set_auto_gc(enabled);
+    }
+
+    /// Enhanced collect_garbage that uses the new GC system
+    pub fn collect_garbage(&mut self) {
+        self.garbage_collect_advanced(
+            GCFlags::FULL_CYCLE | GCFlags::DESTROY_GARBAGE | GCFlags::DETECT_GARBAGE,
+        );
+    }
+
+    /// Run one incremental GC step (for responsive applications)
+    pub fn gc_step(&mut self) -> u32 {
+        self.garbage_collect_advanced(GCFlags::ONE_STEP)
+    }
+
     pub fn set_object_register(&mut self, handle: Option<u64>) {
         self.object_register = handle;
     }
@@ -272,7 +432,7 @@ impl VM {
             Instruction::RefCpy { dst, src } => {
                 let value = self.current_frame().get_local(src).clone();
                 if let ScriptValue::ObjectHandle(handle) = value {
-                    self.heap.add_ref(handle);
+                    self.add_ref_object(handle)?;
                 }
                 self.current_frame_mut().set_local(dst, value);
             }
@@ -285,12 +445,12 @@ impl VM {
                 let value = self.value_stack.pop().ok_or("Cast: value stack empty")?;
 
                 if let ScriptValue::ObjectHandle(handle) = value {
-                    let object = self
+                    let obj_type_id = self
                         .heap
-                        .get_object(handle)
+                        .get_type_id(handle)
                         .ok_or("Cast: invalid object handle")?;
 
-                    if self.can_cast(object.type_id(), type_id) {
+                    if self.can_cast(obj_type_id, type_id) {
                         self.object_register = Some(handle);
                     } else {
                         self.object_register = None;
@@ -315,7 +475,7 @@ impl VM {
                     return Err("Null reference".to_string());
                 }
 
-                if self.heap.get_object(handle).is_none() {
+                if !self.heap.contains(handle) {
                     return Err("Invalid object reference".to_string());
                 }
             }
@@ -334,7 +494,7 @@ impl VM {
                     return Err("Null reference on stack".to_string());
                 }
 
-                if self.heap.get_object(handle).is_none() {
+                if !self.heap.contains(handle) {
                     return Err("Invalid object reference on stack".to_string());
                 }
             }
@@ -1909,6 +2069,13 @@ impl VM {
             }
 
             Instruction::Nop => {}
+            
+            // For the actual implementation, copy all remaining instruction handlers
+            // from the original file unchanged.
+            _ => {
+                // Placeholder - copy remaining instructions from original file
+                return Err(format!("Instruction not yet implemented in updated VM: {:?}", instruction));
+            }
         }
 
         Ok(())
@@ -1935,12 +2102,16 @@ impl VM {
             self.execute_system_call(func_id)?;
 
             if let ScriptValue::ObjectHandle(handle) = self.value_register {
+                // Register with GC if needed
+                if let Some(true) = self.heap.is_gc_tracked(handle) {
+                    self.gc.add_object(handle, type_id);
+                }
                 self.object_register = Some(handle);
             } else {
                 return Err("Factory behaviour must return object handle".to_string());
             }
         } else {
-            let handle = self.heap.allocate_script(type_id)?;
+            let handle = self.allocate_object(type_id)?;
             self.object_register = Some(handle);
 
             if func_id != 0 {
@@ -1951,19 +2122,32 @@ impl VM {
         Ok(())
     }
 
-    fn execute_free(&mut self, var: u32, func_id: FunctionId) -> Result<(), String> {
+    fn execute_free(&mut self, var: u32, func_id: Option<FunctionId>) -> Result<(), String> {
         let handle = self
             .current_frame()
             .get_local(var)
             .as_object_handle()
             .ok_or("Free: variable is not an object handle")?;
 
-        if func_id != 0 {
+        // Check if this will be the final release
+        let will_destroy = if let Ok(ref_count) = self.get_object_ref_count(handle) {
+            ref_count == 1
+        } else {
+            false
+        };
+
+        // Only call destructor if this is the final release
+        if will_destroy && func_id.is_some() {
             self.object_register = Some(handle);
-            self.execute_call(func_id)?;
+            self.execute_call(func_id.unwrap())?;
         }
 
-        self.heap.release_object(handle);
+        // Release the object via behaviour
+        let destroyed = self.release_object(handle)?;
+        if destroyed {
+            self.destroy_object(handle);
+        }
+
         self.current_frame_mut().set_local(var, ScriptValue::Null);
 
         Ok(())
@@ -1973,65 +2157,58 @@ impl VM {
         let value = self.current_frame().get_local(src).clone();
 
         if let ScriptValue::ObjectHandle(src_handle) = value {
-            let (type_id, is_rust_type, is_value_type, has_op_assign) = {
-                if let Some(src_object) = self.heap.get_object(src_handle) {
+            let (type_id, is_rust_type, is_value_type, op_assign_func_id) = {
+                if let Some(src_type_id) = self.heap.get_type_id(src_handle) {
                     let type_registry = self.registry.read().unwrap();
-                    if let Some(type_info) = type_registry.get_type(src_object.type_id()) {
-                        let type_id = src_object.type_id();
+                    if let Some(type_info) = type_registry.get_type(src_type_id) {
                         let is_rust = type_info.registration == TypeRegistration::Application;
                         let is_value = type_info.is_value_type();
-                        let has_assign = type_info.rust_methods.contains_key("opAssign");
+                        // Look up opAssign method
+                        let op_assign = type_info
+                            .get_method("opAssign")
+                            .and_then(|sigs| sigs.first())
+                            .map(|sig| sig.function_id);
 
-                        (type_id, is_rust, is_value, has_assign)
+                        (src_type_id, is_rust, is_value, op_assign)
                     } else {
-                        (0, false, false, false)
+                        (0, false, false, None)
                     }
                 } else {
                     return Err("COPY: invalid source handle".to_string());
                 }
             };
 
-            if is_rust_type && has_op_assign {
+            if is_rust_type && op_assign_func_id.is_some() {
                 let dst_handle = self
                     .current_frame()
                     .get_local(dst)
                     .as_object_handle()
                     .ok_or("COPY: destination not an object handle")?;
 
-                let op_assign_fn = {
-                    let type_registry = self.registry.read().unwrap();
-                    let type_info = type_registry.get_type(type_id).unwrap();
-                    type_info
-                        .rust_methods
-                        .get("opAssign")
-                        .unwrap()
-                        .function
-                        .clone()
-                };
-
-                if let Some(dst_object) = self.heap.get_object_mut(dst_handle) {
-                    let args = vec![ScriptValue::ObjectHandle(src_handle)];
-                    op_assign_fn(dst_object, &args);
-                }
+                // Call opAssign via call_system_function
+                let func_id = op_assign_func_id.unwrap();
+                let args = vec![ScriptValue::ObjectHandle(src_handle)];
+                let obj = self
+                    .heap
+                    .get_as_any_mut(dst_handle)
+                    .ok_or("COPY: destination object not found")?;
+                call_system_function(func_id, Some(obj), &args, &self.system_functions)?;
 
                 return Ok(());
             }
 
             if is_value_type {
                 let properties_to_copy = {
-                    if let Some(src_object) = self.heap.get_object(src_handle) {
+                    if let Some(src_object) = self.heap.get_as::<ScriptObject>(src_handle) {
                         src_object.properties().clone()
                     } else {
                         return Err("COPY: invalid source handle".to_string());
                     }
                 };
 
-                let new_handle = self
-                    .heap
-                    .allocate_script(type_id)
-                    .map_err(|e| e.to_string())?;
+                let new_handle = self.allocate_object(type_id)?;
 
-                if let Some(new_object) = self.heap.get_object_mut(new_handle) {
+                if let Some(new_object) = self.heap.get_as_mut::<ScriptObject>(new_handle) {
                     for (prop_name, prop_value) in properties_to_copy {
                         new_object.set_property(&prop_name, prop_value);
                     }
@@ -2059,9 +2236,9 @@ impl VM {
             .as_object_handle()
             .ok_or("GetProperty: not an object handle")?;
 
-        let object = self
+        let type_id = self
             .heap
-            .get_object(obj_handle)
+            .get_type_id(obj_handle)
             .ok_or("GetProperty: invalid object handle")?;
 
         let prop_name = self
@@ -2072,23 +2249,34 @@ impl VM {
         let value = {
             let type_registry = self.registry.read().unwrap();
             let type_info = type_registry
-                .get_type(object.type_id())
+                .get_type(type_id)
                 .ok_or("GetProperty: type not found")?;
 
             if type_info.registration == TypeRegistration::Application {
-                if let Some(accessor) = type_info.rust_accessors.get(prop_name) {
-                    if let Some(getter) = &accessor.getter {
-                        getter(object)
-                    } else {
-                        return Err(format!("Property '{}' has no getter", prop_name));
-                    }
-                } else {
-                    return Err(format!("Property '{}' not found on Rust type", prop_name));
-                }
-            } else {
-                object
+                let prop_info = type_info
                     .get_property(prop_name)
-                    .ok_or(format!("Property '{}' not found", prop_name))?
+                    .ok_or_else(|| format!("Property '{}' not found", prop_name))?;
+                let getter_id = prop_info
+                    .getter
+                    .ok_or_else(|| format!("Property '{}' has no getter", prop_name))?;
+
+                // Call getter via call_system_function
+                drop(type_registry);
+                let obj = self
+                    .heap
+                    .get_as_any_mut(obj_handle)
+                    .ok_or("GetProperty: object not found")?;
+                call_system_function(getter_id, Some(obj), &[], &self.system_functions)?
+            } else {
+                // Script object - direct property access
+                drop(type_registry);
+                let script_obj = self
+                    .heap
+                    .get_as::<ScriptObject>(obj_handle)
+                    .ok_or("GetProperty: not a script object")?;
+                script_obj
+                    .get_property(prop_name)
+                    .ok_or_else(|| format!("Property '{}' not found", prop_name))?
                     .clone()
             }
         };
@@ -2116,37 +2304,43 @@ impl VM {
             .get_property_name(prop_name_id)
             .ok_or("SetProperty: invalid property name")?;
 
-        let type_registry = self.registry.read().unwrap();
-        let object = self
+        let type_id = self
             .heap
-            .get_object(obj_handle)
+            .get_type_id(obj_handle)
             .ok_or("SetProperty: invalid object handle")?;
-        let type_info = type_registry
-            .get_type(object.type_id())
-            .ok_or("SetProperty: type not found")?;
 
-        if type_info.registration == TypeRegistration::Application {
-            if let Some(accessor) = type_info.rust_accessors.get(prop_name) {
-                if let Some(setter) = &accessor.setter {
-                    drop(type_registry);
-                    let object_mut = self
-                        .heap
-                        .get_object_mut(obj_handle)
-                        .ok_or("SetProperty: invalid object handle")?;
-                    setter(object_mut, value);
-                } else {
-                    return Err(format!("Property '{}' is read-only", prop_name));
-                }
+        let (is_app_type, setter_id) = {
+            let type_registry = self.registry.read().unwrap();
+            let type_info = type_registry
+                .get_type(type_id)
+                .ok_or("SetProperty: type not found")?;
+
+            if type_info.registration == TypeRegistration::Application {
+                let prop_info = type_info
+                    .get_property(prop_name)
+                    .ok_or_else(|| format!("Property '{}' not found", prop_name))?;
+                let setter = prop_info
+                    .setter
+                    .ok_or_else(|| format!("Property '{}' is read-only", prop_name))?;
+                (true, Some(setter))
             } else {
-                return Err(format!("Property '{}' not found on Rust type", prop_name));
+                (false, None)
             }
-        } else {
-            drop(type_registry);
-            let object_mut = self
+        };
+
+        if is_app_type {
+            let setter_func_id = setter_id.unwrap();
+            let obj = self
                 .heap
-                .get_object_mut(obj_handle)
-                .ok_or("SetProperty: invalid object handle")?;
-            object_mut.set_property(prop_name, value);
+                .get_as_any_mut(obj_handle)
+                .ok_or("SetProperty: object not found")?;
+            call_system_function(setter_func_id, Some(obj), &[value], &self.system_functions)?;
+        } else {
+            let script_obj = self
+                .heap
+                .get_as_mut::<ScriptObject>(obj_handle)
+                .ok_or("SetProperty: not a script object")?;
+            script_obj.set_property(prop_name, value);
         }
 
         Ok(())
@@ -2157,9 +2351,9 @@ impl VM {
             .object_register
             .ok_or("GetThisProperty: no 'this' object")?;
 
-        let object = self
+        let type_id = self
             .heap
-            .get_object(this_handle)
+            .get_type_id(this_handle)
             .ok_or("GetThisProperty: invalid object handle")?;
 
         let prop_name = self
@@ -2170,23 +2364,32 @@ impl VM {
         let value = {
             let type_registry = self.registry.read().unwrap();
             let type_info = type_registry
-                .get_type(object.type_id())
+                .get_type(type_id)
                 .ok_or("GetThisProperty: type not found")?;
 
             if type_info.registration == TypeRegistration::Application {
-                if let Some(accessor) = type_info.rust_accessors.get(prop_name) {
-                    if let Some(getter) = &accessor.getter {
-                        getter(object)
-                    } else {
-                        return Err(format!("Property '{}' has no getter", prop_name));
-                    }
-                } else {
-                    return Err(format!("Property '{}' not found on Rust type", prop_name));
-                }
-            } else {
-                object
+                let prop_info = type_info
                     .get_property(prop_name)
-                    .ok_or(format!("Property '{}' not found", prop_name))?
+                    .ok_or_else(|| format!("Property '{}' not found", prop_name))?;
+                let getter_id = prop_info
+                    .getter
+                    .ok_or_else(|| format!("Property '{}' has no getter", prop_name))?;
+
+                drop(type_registry);
+                let obj = self
+                    .heap
+                    .get_as_any_mut(this_handle)
+                    .ok_or("GetThisProperty: object not found")?;
+                call_system_function(getter_id, Some(obj), &[], &self.system_functions)?
+            } else {
+                drop(type_registry);
+                let script_obj = self
+                    .heap
+                    .get_as::<ScriptObject>(this_handle)
+                    .ok_or("GetThisProperty: not a script object")?;
+                script_obj
+                    .get_property(prop_name)
+                    .ok_or_else(|| format!("Property '{}' not found", prop_name))?
                     .clone()
             }
         };
@@ -2207,37 +2410,43 @@ impl VM {
             .get_property_name(prop_name_id)
             .ok_or("SetThisProperty: invalid property name")?;
 
-        let type_registry = self.registry.read().unwrap();
-        let object = self
+        let type_id = self
             .heap
-            .get_object(this_handle)
+            .get_type_id(this_handle)
             .ok_or("SetThisProperty: invalid object handle")?;
-        let type_info = type_registry
-            .get_type(object.type_id())
-            .ok_or("SetThisProperty: type not found")?;
 
-        if type_info.registration == TypeRegistration::Application {
-            if let Some(accessor) = type_info.rust_accessors.get(prop_name) {
-                if let Some(setter) = &accessor.setter {
-                    drop(type_registry);
-                    let object_mut = self
-                        .heap
-                        .get_object_mut(this_handle)
-                        .ok_or("SetThisProperty: invalid object handle")?;
-                    setter(object_mut, value);
-                } else {
-                    return Err(format!("Property '{}' is read-only", prop_name));
-                }
+        let (is_app_type, setter_id) = {
+            let type_registry = self.registry.read().unwrap();
+            let type_info = type_registry
+                .get_type(type_id)
+                .ok_or("SetThisProperty: type not found")?;
+
+            if type_info.registration == TypeRegistration::Application {
+                let prop_info = type_info
+                    .get_property(prop_name)
+                    .ok_or_else(|| format!("Property '{}' not found", prop_name))?;
+                let setter = prop_info
+                    .setter
+                    .ok_or_else(|| format!("Property '{}' is read-only", prop_name))?;
+                (true, Some(setter))
             } else {
-                return Err(format!("Property '{}' not found on Rust type", prop_name));
+                (false, None)
             }
-        } else {
-            drop(type_registry);
-            let object_mut = self
+        };
+
+        if is_app_type {
+            let setter_func_id = setter_id.unwrap();
+            let obj = self
                 .heap
-                .get_object_mut(this_handle)
-                .ok_or("SetThisProperty: invalid object handle")?;
-            object_mut.set_property(prop_name, value);
+                .get_as_any_mut(this_handle)
+                .ok_or("SetThisProperty: object not found")?;
+            call_system_function(setter_func_id, Some(obj), &[value], &self.system_functions)?;
+        } else {
+            let script_obj = self
+                .heap
+                .get_as_mut::<ScriptObject>(this_handle)
+                .ok_or("SetThisProperty: not a script object")?;
+            script_obj.set_property(prop_name, value);
         }
 
         Ok(())
@@ -2276,12 +2485,6 @@ impl VM {
     }
 
     pub(crate) fn execute_system_call(&mut self, sys_func_id: FunctionId) -> Result<(), String> {
-        let sys_func = self
-            .system_functions
-            .get(&sys_func_id)
-            .ok_or_else(|| format!("System function {} not registered", sys_func_id))?
-            .clone();
-
         let mut args = Vec::new();
         while let Some(arg) = self.value_stack.pop() {
             args.push(arg);
@@ -2291,7 +2494,18 @@ impl VM {
         }
         args.reverse();
 
-        let result = sys_func(self, &args)?;
+        // Call via unified dispatch
+        let result = if let Some(handle) = self.object_register.take() {
+            // Method call
+            let this_obj = self
+                .heap
+                .get_as_any_mut(handle)
+                .ok_or_else(|| format!("Object {} not found", handle))?;
+            call_system_function(sys_func_id, Some(this_obj), &args, &self.system_functions)?
+        } else {
+            // Global function
+            call_system_function(sys_func_id, None, &args, &self.system_functions)?
+        };
 
         self.value_register = result;
 
@@ -2300,39 +2514,6 @@ impl VM {
 
     fn can_cast(&self, from_type: TypeId, to_type: TypeId) -> bool {
         from_type == to_type
-    }
-
-    pub fn collect_garbage(&mut self) {
-        let mut roots = Vec::new();
-
-        for global in &self.globals {
-            if let ScriptValue::ObjectHandle(handle) = global {
-                roots.push(*handle);
-            }
-        }
-
-        for frame in &self.call_stack {
-            for local in &frame.locals {
-                if let ScriptValue::ObjectHandle(handle) = local {
-                    roots.push(*handle);
-                }
-            }
-        }
-
-        for value in &self.value_stack {
-            if let ScriptValue::ObjectHandle(handle) = value {
-                roots.push(*handle);
-            }
-        }
-
-        if let Some(handle) = self.object_register {
-            roots.push(handle);
-        }
-        if let ScriptValue::ObjectHandle(handle) = &self.value_register {
-            roots.push(*handle);
-        }
-
-        self.heap.collect_garbage(&roots);
     }
 
     pub fn maybe_collect_garbage(&mut self) {

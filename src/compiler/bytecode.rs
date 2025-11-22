@@ -12,7 +12,7 @@ pub enum Instruction {
 
     Free {
         var: u32,
-        func_id: FunctionId,
+        func_id: Option<FunctionId>,
     },
 
     LoadObj {
@@ -723,7 +723,7 @@ impl fmt::Display for Instruction {
             Instruction::Alloc { type_id, func_id } => {
                 write!(f, "ALLOC t{}, f{}", type_id, func_id)
             }
-            Instruction::Free { var, func_id } => write!(f, "FREE v{}, f{}", var, func_id),
+            Instruction::Free { var, func_id } => write!(f, "FREE v{}, f{:?}", var, func_id),
             Instruction::LoadObj { var } => write!(f, "LOADOBJ v{}", var),
             Instruction::StoreObj { var } => write!(f, "STOREOBJ v{}", var),
             Instruction::RefCpy { dst, src } => write!(f, "REFCPY v{}, v{}", dst, src),
