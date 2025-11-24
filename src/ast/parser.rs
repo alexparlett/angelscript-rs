@@ -30,19 +30,58 @@ pub struct Parser<'src, 'ast> {
 
 impl<'src, 'ast> Parser<'src, 'ast> {
     /// Create a new parser for the given source code.
+    ///
+    /// This performs eager tokenization - the entire source is tokenized
+    /// upfront into a buffer. This eliminates the overhead of lazy tokenization
+    /// and provides better performance for complete file parsing.
     pub fn new(source: &'src str, arena: &'ast Bump) -> Self {
-        let mut parser = Self {
+        let mut lexer = Lexer::new(source);
+        let mut buffer = Vec::with_capacity(Self::estimate_token_count(source));
+        let mut errors = ParseErrors::new();
+
+        // Pre-tokenize the entire source
+        loop {
+            let token = lexer.next_token();
+
+            // Collect any lexer errors immediately
+            if token.kind == TokenKind::Error {
+                for lexer_error in lexer.take_errors() {
+                    let parse_error = ParseError::new(
+                        ParseErrorKind::InvalidSyntax,
+                        lexer_error.span,
+                        format!("lexer error: {}", lexer_error.message),
+                    );
+                    errors.push(parse_error);
+                }
+            }
+
+            let is_eof = token.kind == TokenKind::Eof;
+            buffer.push(token);
+
+            if is_eof {
+                break;
+            }
+        }
+
+        Self {
             source,
-            lexer: Lexer::new(source),
-            buffer: Vec::with_capacity(32),
+            lexer,
+            buffer,
             position: 0,
-            errors: ParseErrors::new(),
+            errors,
             panic_mode: false,
             arena,
-        };
-        // Buffer the first token
-        parser.fill_buffer(1);
-        parser
+        }
+    }
+
+    /// Estimate the number of tokens based on source length.
+    ///
+    /// Uses a heuristic of ~10 characters per token on average.
+    /// Clamped to a minimum of 512 and maximum of 16384 to prevent
+    /// excessive allocation for very small or very large files.
+    fn estimate_token_count(source: &str) -> usize {
+        let estimate = source.len() / 10;
+        estimate.clamp(512, 16384)
     }
 
     /// Get the source code being parsed.
@@ -141,24 +180,13 @@ impl<'src, 'ast> Parser<'src, 'ast> {
     }
 
     /// Fill the token buffer to have at least `needed` tokens available.
-    fn fill_buffer(&mut self, needed: usize) {
-        while self.position + needed > self.buffer.len() {
-            let token = self.lexer.next_token();
-
-            // If we got an error token, immediately collect any lexer errors
-            if token.kind == TokenKind::Error {
-                for lexer_error in self.lexer.take_errors() {
-                    let parse_error = ParseError::new(
-                        ParseErrorKind::InvalidSyntax,
-                        lexer_error.span,
-                        format!("lexer error: {}", lexer_error.message),
-                    );
-                    self.errors.push(parse_error);
-                }
-            }
-
-            self.buffer.push(token);
-        }
+    ///
+    /// With eager tokenization, this is now a no-op since all tokens are
+    /// already buffered during Parser::new(). We keep this method for API
+    /// compatibility and to avoid panics if code tries to read past EOF.
+    #[inline]
+    fn fill_buffer(&mut self, _needed: usize) {
+        // No-op: all tokens are pre-loaded during construction
     }
 
     // ========================================================================

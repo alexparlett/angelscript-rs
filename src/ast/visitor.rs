@@ -6,7 +6,7 @@
 //! # Example: Using the Visitor Pattern
 //!
 //! ```
-//! use angelscript::{parse_lenient, visitor::Visitor, FunctionDecl, Item};
+//! use angelscript::{parse_lenient, visitor::Visitor, FunctionDecl, Item, Script};
 //!
 //! struct FunctionCounter {
 //!     count: usize,
@@ -20,7 +20,7 @@
 //! let (script, _) = parse_lenient(source);
 //!
 //! // Or just count directly
-//! let func_count = script.items.iter()
+//! let func_count = script.items().iter()
 //!     .filter(|item| matches!(item, Item::Function(_)))
 //!     .count();
 //!
@@ -34,6 +34,7 @@ use crate::ast::decl::*;
 use crate::ast::expr::*;
 use crate::ast::stmt::*;
 use crate::ast::types::*;
+use crate::ast::Script;
 
 /// Visitor trait for traversing AST nodes.
 ///
@@ -311,7 +312,7 @@ pub trait Visitor: Sized {
 
 /// Walk a script (root node).
 pub fn walk_script<V: Visitor>(visitor: &mut V, script: &Script) {
-    for item in script.items {
+    for item in script.items() {
         visitor.visit_item(item);
     }
 }
@@ -781,49 +782,9 @@ mod tests {
 
     #[test]
     fn test_function_counter() {
-        use bumpalo::Bump;
-        let arena = Bump::new();
-
-        // Create a script with multiple functions
-        let script = Script {
-            items: bumpalo::vec![in &arena;
-                Item::Function(FunctionDecl {
-                    modifiers: DeclModifiers::new(),
-                    visibility: Visibility::Public,
-                    return_type: Some(ReturnType {
-                        ty: TypeExpr::primitive(PrimitiveType::Void, Span::new(1, 0 + 1, 4 - 0)),
-                        is_ref: false,
-                        span: Span::new(1, 0 + 1, 4 - 0),
-                    }),
-                    name: Ident::new("foo", Span::new(1, 5 + 1, 8 - 5)),
-                    template_params: &[],
-                    params: &[],
-                    is_const: false,
-                    attrs: FuncAttr::new(),
-                    body: None,
-                    is_destructor: false,
-                    span: Span::new(1, 0 + 1, 10 - 0),
-                }),
-                Item::Function(FunctionDecl {
-                    modifiers: DeclModifiers::new(),
-                    visibility: Visibility::Public,
-                    return_type: Some(ReturnType {
-                        ty: TypeExpr::primitive(PrimitiveType::Int, Span::new(1, 0 + 1, 3 - 0)),
-                        is_ref: false,
-                        span: Span::new(1, 0 + 1, 4 - 0),
-                    }),
-                    name: Ident::new("bar", Span::new(1, 4 + 1, 7 - 4)),
-                    template_params: &[],
-                    params: &[],
-                    is_const: false,
-                    attrs: FuncAttr::new(),
-                    body: None,
-                    is_destructor: false,
-                    span: Span::new(1, 0 + 1, 10 - 0),
-                }),
-            ].into_bump_slice(),
-            span: Span::new(1, 0 + 1, 20 - 0),
-        };
+        // Parse a simple script with two functions
+        let source = "void foo() {} int bar() { return 0; }";
+        let script = crate::parse(source).expect("Failed to parse test script");
 
         let mut counter = FunctionCounter { count: 0 };
         walk_script(&mut counter, &script);

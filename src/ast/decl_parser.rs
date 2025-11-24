@@ -13,7 +13,8 @@ impl<'src, 'ast> Parser<'src, 'ast> {
     /// Parse a complete script.
     ///
     /// This is the main entry point for parsing AngelScript source code.
-    pub fn parse_script(&mut self) -> Result<Script<'src, 'ast>, ParseError> {
+    /// Returns the items slice and span for the entire script.
+    pub fn parse_script(&mut self) -> Result<(&'ast [Item<'src, 'ast>], crate::lexer::Span), ParseError> {
         let start_span = self.peek().span;
         let mut items = Vec::new();
 
@@ -39,11 +40,9 @@ impl<'src, 'ast> Parser<'src, 'ast> {
         };
 
         let items_slice = self.arena.alloc_slice_clone(&items);
+        let span = start_span.merge(end_span);
 
-        Ok(Script {
-            items: items_slice,
-            span: start_span.merge(end_span),
-        })
+        Ok((items_slice, span))
     }
 
     /// Parse a top-level item.
@@ -1389,8 +1388,8 @@ mod tests {
     fn parse_script_empty() {
         let arena = bumpalo::Bump::new();
         let mut parser = Parser::new("", &arena);
-        let script = parser.parse_script().unwrap();
-        assert_eq!(script.items.len(), 0);
+        let (items, _span) = parser.parse_script().unwrap();
+        assert_eq!(items.len(), 0);
     }
 
     #[test]
@@ -1401,8 +1400,8 @@ mod tests {
             int x = 0;
             class Bar { }
         "#, &arena);
-        let script = parser.parse_script().unwrap();
-        assert_eq!(script.items.len(), 3);
+        let (items, _span) = parser.parse_script().unwrap();
+        assert_eq!(items.len(), 3);
     }
 
     #[test]
@@ -1415,8 +1414,8 @@ mod tests {
             int x = 0;
             ;;
         "#, &arena);
-        let script = parser.parse_script().unwrap();
-        assert_eq!(script.items.len(), 2);
+        let (items, _span) = parser.parse_script().unwrap();
+        assert_eq!(items.len(), 2);
     }
 }
 

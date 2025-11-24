@@ -116,21 +116,48 @@ impl<'src> Cursor<'src> {
     ///
     /// Returns the consumed character, or `None` if at EOF.
     /// Updates line/column tracking.
+    ///
+    /// Optimized with a fast path for ASCII characters, which are the most
+    /// common case in source code. Falls back to full UTF-8 handling for
+    /// multi-byte characters.
+    #[inline(always)]
     pub fn advance(&mut self) -> Option<char> {
-        let ch = self.rest.chars().next()?;
-        let len = ch.len_utf8() as u32;
-
-        self.rest = &self.rest[len as usize..];
-        self.offset += len;
-
-        if ch == '\n' {
-            self.line += 1;
-            self.column = 1;
-        } else {
-            self.column += len;
+        let bytes = self.rest.as_bytes();
+        if bytes.is_empty() {
+            return None;
         }
 
-        Some(ch)
+        let first_byte = bytes[0];
+
+        // Fast path: ASCII character (most common case)
+        if first_byte < 128 {
+            let ch = first_byte as char;
+            self.rest = unsafe {
+                // SAFETY: We know first_byte < 128, so it's valid UTF-8
+                // and we're advancing by exactly 1 byte
+                std::str::from_utf8_unchecked(&bytes[1..])
+            };
+            self.offset += 1;
+
+            if ch == '\n' {
+                self.line += 1;
+                self.column = 1;
+            } else {
+                self.column += 1;
+            }
+
+            Some(ch)
+        } else {
+            // Slow path: Multi-byte UTF-8 character
+            let ch = self.rest.chars().next()?;
+            let len = ch.len_utf8() as u32;
+
+            self.rest = &self.rest[len as usize..];
+            self.offset += len;
+            self.column += len;
+
+            Some(ch)
+        }
     }
 
     /// Advance by n bytes without checking character boundaries.

@@ -15,15 +15,6 @@ use crate::ast::stmt::Block;
 use crate::ast::types::{ParamType, ReturnType, TypeExpr};
 use crate::lexer::Span;
 
-/// A script (top-level AST node).
-#[derive(Debug, Clone, PartialEq)]
-pub struct Script<'src, 'ast> {
-    /// Top-level items
-    pub items: &'ast [Item<'src, 'ast>],
-    /// Source location
-    pub span: Span,
-}
-
 /// A top-level item in a script.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Item<'src, 'ast> {

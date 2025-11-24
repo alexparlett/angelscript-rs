@@ -22,7 +22,7 @@
 //! "#;
 //!
 //! match parse(source) {
-//!     Ok(ast) => println!("Parsed successfully: {} items", ast.items.len()),
+//!     Ok(script) => println!("Parsed successfully: {} items", script.items().len()),
 //!     Err(errors) => eprintln!("Parse errors: {}", errors),
 //! }
 //! ```
@@ -56,23 +56,33 @@ pub use parser::Parser;
 pub use stmt::*;
 pub use types::*;
 
-/// Container for a parsed script that owns its arena.
+/// A parsed AngelScript script with owned arena.
+///
+/// This struct owns the parsed AST and its arena allocator.
+/// All AST nodes are allocated in the arena and remain valid
+/// for the lifetime of this struct.
 #[derive(Debug)]
-pub struct ParsedScript {
+pub struct Script {
     arena: bumpalo::Bump,
-    pub script: Script<'static, 'static>,
+    items: &'static [Item<'static, 'static>],
+    span: crate::lexer::Span,
 }
 
-impl ParsedScript {
-    /// Get a reference to the script.
-    pub fn script(&self) -> &Script<'static, 'static> {
-        &self.script
+impl Script {
+    /// Get the top-level items in this script.
+    pub fn items(&self) -> &[Item<'static, 'static>] {
+        self.items
+    }
+
+    /// Get the source location span of this script.
+    pub fn span(&self) -> crate::lexer::Span {
+        self.span
     }
 }
 
 /// Parse AngelScript source code into an AST.
 ///
-/// Returns `Ok(ParsedScript)` if parsing succeeds with no errors, or `Err(ParseErrors)`
+/// Returns `Ok(Script)` if parsing succeeds with no errors, or `Err(ParseErrors)`
 /// if any errors occurred during parsing.
 ///
 /// # Example
@@ -90,15 +100,15 @@ impl ParsedScript {
 /// "#;
 ///
 /// match parse(source) {
-///     Ok(parsed) => {
-///         println!("Parsed {} items", parsed.script.items.len());
+///     Ok(script) => {
+///         println!("Parsed {} items", script.items().len());
 ///     }
 ///     Err(errors) => {
 ///         eprintln!("Parse errors: {}", errors);
 ///     }
 /// }
 /// ```
-pub fn parse(source: &str) -> Result<ParsedScript, ParseErrors> {
+pub fn parse(source: &str) -> Result<Script, ParseErrors> {
     let arena = bumpalo::Bump::new();
     let mut parser = Parser::new(source, &arena);
 
@@ -117,16 +127,15 @@ pub fn parse(source: &str) -> Result<ParsedScript, ParseErrors> {
     }
 
     match result {
-        Ok(script) => {
+        Ok((items, span)) => {
             if parser.has_errors() {
                 Err(parser.take_errors())
             } else {
-                // SAFETY: The script borrows from the arena, and we're moving both into ParsedScript.
-                // The arena will live as long as the ParsedScript, so the references remain valid.
-                // We transmute the lifetime to 'static temporarily, then back to the proper lifetime
-                // when ParsedScript is used.
-                let script = unsafe { std::mem::transmute::<Script<'_, '_>, Script<'static, 'static>>(script) };
-                Ok(ParsedScript { arena, script })
+                // SAFETY: The items slice borrows from the arena, and we're moving both into Script.
+                // The arena will live as long as the Script, so the references remain valid.
+                // We transmute the lifetime to 'static since the arena is owned by Script.
+                let items = unsafe { std::mem::transmute::<&[Item<'_, '_>], &'static [Item<'static, 'static>]>(items) };
+                Ok(Script { arena, items, span })
             }
         }
         Err(err) => {
@@ -138,11 +147,11 @@ pub fn parse(source: &str) -> Result<ParsedScript, ParseErrors> {
 
 /// Parse AngelScript source code leniently, returning both the AST and any errors.
 ///
-/// This function always returns a `ParsedScript`, even if errors occurred. The script
+/// This function always returns a `Script`, even if errors occurred. The script
 /// may be incomplete, but it can still be useful for analysis, error recovery,
 /// or partial processing.
 ///
-/// Returns a tuple of `(ParsedScript, Vec<ParseError>)` where the error vector may be empty.
+/// Returns a tuple of `(Script, Vec<ParseError>)` where the error vector may be empty.
 ///
 /// # Example
 ///
@@ -158,13 +167,13 @@ pub fn parse(source: &str) -> Result<ParsedScript, ParseErrors> {
 ///     }
 /// "#;
 ///
-/// let (parsed, errors) = parse_lenient(source);
+/// let (script, errors) = parse_lenient(source);
 ///
-/// println!("Parsed {} items", parsed.script.items.len());
+/// println!("Parsed {} items", script.items().len());
 /// println!("Found {} errors", errors.len());
 ///
 /// // Can still work with the partial AST
-/// for item in parsed.script.items {
+/// for item in script.items() {
 ///     // Process items...
 /// }
 ///
@@ -173,16 +182,13 @@ pub fn parse(source: &str) -> Result<ParsedScript, ParseErrors> {
 ///     eprintln!("Warning: {}", error);
 /// }
 /// ```
-pub fn parse_lenient(source: &str) -> (ParsedScript, Vec<ParseError>) {
+pub fn parse_lenient(source: &str) -> (Script, Vec<ParseError>) {
     let arena = bumpalo::Bump::new();
     let mut parser = Parser::new(source, &arena);
 
-    let script = parser.parse_script().unwrap_or_else(|err| {
+    let (items, span) = parser.parse_script().unwrap_or_else(|err| {
         parser.errors.push(err);
-        Script {
-            items: &[],
-            span: crate::lexer::Span::new(1, 1, 0),
-        }
+        (&[][..], crate::lexer::Span::new(1, 1, 0))
     });
 
     // Check for any remaining lexer errors
@@ -198,11 +204,11 @@ pub fn parse_lenient(source: &str) -> (ParsedScript, Vec<ParseError>) {
 
     let errors = parser.take_errors().into_vec();
 
-    // SAFETY: The script borrows from the arena, and we're moving both into ParsedScript.
-    // The arena will live as long as the ParsedScript, so the references remain valid.
-    let script = unsafe { std::mem::transmute::<Script<'_, '_>, Script<'static, 'static>>(script) };
+    // SAFETY: The items slice borrows from the arena, and we're moving both into Script.
+    // The arena will live as long as the Script, so the references remain valid.
+    let items = unsafe { std::mem::transmute::<&[Item<'_, '_>], &'static [Item<'static, 'static>]>(items) };
 
-    (ParsedScript { arena, script }, errors)
+    (Script { arena, items, span }, errors)
 }
 
 /// Container for a parsed expression that owns its arena.
@@ -401,7 +407,7 @@ mod tests {
         let result = parse(source);
         assert!(result.is_ok());
         let script = result.unwrap();
-        assert_eq!(script.script.items.len(), 1);
+        assert_eq!(script.items().len(), 1);
     }
 
     #[test]
@@ -417,7 +423,7 @@ mod tests {
         let result = parse(source);
         assert!(result.is_ok());
         let script = result.unwrap();
-        assert_eq!(script.script.items.len(), 1);
+        assert_eq!(script.items().len(), 1);
     }
 
     #[test]
@@ -440,7 +446,7 @@ mod tests {
         // Should have errors but still parse something
         assert!(!errors.is_empty());
         // Should recover and parse the second declaration
-        assert!(!script.script.items.is_empty());
+        assert!(!script.items().is_empty());
     }
 
     #[test]
@@ -449,7 +455,7 @@ mod tests {
         let (script, errors) = parse_lenient(source);
 
         assert!(errors.is_empty());
-        assert_eq!(script.script.items.len(), 1);
+        assert_eq!(script.items().len(), 1);
     }
 
     #[test]
@@ -548,7 +554,7 @@ mod tests {
         assert!(result.is_ok(), "Failed to parse complete program");
 
         let script = result.unwrap();
-        assert_eq!(script.script.items.len(), 3); // namespace, global var, function
+        assert_eq!(script.items().len(), 3); // namespace, global var, function
     }
 
     #[test]
@@ -608,7 +614,7 @@ mod tests {
         assert!(result.is_ok());
 
         let script = result.unwrap();
-        assert_eq!(script.script.items.len(), 2);
+        assert_eq!(script.items().len(), 2);
     }
 
     #[test]
@@ -692,6 +698,6 @@ mod tests {
         assert!(result.is_ok());
 
         let script = result.unwrap();
-        assert_eq!(script.script.items.len(), 3);
+        assert_eq!(script.items().len(), 3);
     }
 }

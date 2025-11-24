@@ -27,14 +27,14 @@
 //!
 //! let (script, errors) = parse_lenient(source);
 //! if errors.is_empty() {
-//!     println!("Successfully parsed {} items", script.items.len());
+//!     println!("Successfully parsed {} items", script.items().len());
 //! }
 //! ```
 
 mod ast;
 mod lexer;
 
-pub use ast::{parse, parse_expression, parse_lenient, parse_statement, parse_type_expr, ParsedScript};
+pub use ast::{parse, parse_expression, parse_lenient, parse_statement, parse_type_expr};
 
 // Re-export visitor for AST traversal
 pub use ast::visitor;
