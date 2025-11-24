@@ -45,7 +45,7 @@ impl ParseError {
 
         // Show the relevant source line
         if let Some(line_text) = Self::get_line(source, line) {
-            output.push_str(&"  |\n".to_string());
+            output.push_str("  |\n");
             output.push_str(&format!("{:>3} | {}\n", line, line_text));
 
             // Add a caret pointer

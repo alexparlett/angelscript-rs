@@ -122,7 +122,7 @@ impl<'src, 'ast> Parser<'src, 'ast> {
 
     /// Parse a prefix expression (the start of an expression).
     fn parse_prefix(&mut self) -> Result<&'ast Expr<'src, 'ast>, ParseError> {
-        let token = self.peek().clone();
+        let token = *self.peek();
 
         match token.kind {
             // Literals
@@ -537,7 +537,12 @@ impl<'src, 'ast> Parser<'src, 'ast> {
             if let Expr::InitList(init_list) = *self.parse_init_list()? {
                 Ok(InitElement::InitList(init_list))
             } else {
-                unreachable!()
+                let span = self.peek().span;
+                Err(ParseError::new(
+                    ParseErrorKind::InternalError,
+                    span,
+                    "parse_init_list() returned non-InitList expression"
+                ))
             }
         } else {
             // Expression element
@@ -627,8 +632,8 @@ impl<'src, 'ast> Parser<'src, 'ast> {
                 }
             } else {
                 // Lookahead said it was constructor call, but '(' is missing
-                let token = self.peek().clone();
-                return Err(ParseError::new(
+                let token = *self.peek();
+                Err(ParseError::new(
 
                     ParseErrorKind::ExpectedToken,
 
@@ -636,7 +641,7 @@ impl<'src, 'ast> Parser<'src, 'ast> {
 
                     format!("expected '(' after type name for constructor call, found {}", token.kind),
 
-                ));
+                ))
             }
         } else {
             // Parse as simple identifier (possibly scoped)

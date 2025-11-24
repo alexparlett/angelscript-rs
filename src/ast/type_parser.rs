@@ -209,7 +209,7 @@ impl<'src, 'ast> Parser<'src, 'ast> {
     ///
     /// Grammar: `IDENTIFIER | PRIMTYPE | '?' | 'auto'`
     fn parse_type_base(&mut self) -> Result<TypeBase<'src>, ParseError> {
-        let token = self.peek().clone();
+        let token = *self.peek();
 
         match token.kind {
             // Primitive types
@@ -360,7 +360,7 @@ impl<'src, 'ast> Parser<'src, 'ast> {
     /// which produce a >>> token that should be treated as three closing angle brackets.
     fn split_greater_greater_greater(&mut self) {
         if self.check(TokenKind::GreaterGreaterGreater) {
-            let token = self.buffer[self.position].clone();
+            let token = self.buffer[self.position];
             
             // Replace >>> with three > tokens
             let first_greater = lexer::Token {
@@ -392,7 +392,7 @@ impl<'src, 'ast> Parser<'src, 'ast> {
     /// produce a >> token that should be treated as two closing angle brackets.
     fn split_greater_greater(&mut self) {
         if self.check(TokenKind::GreaterGreater) {
-            let token = self.buffer[self.position].clone();
+            let token = self.buffer[self.position];
 
             // Replace >> with two > tokens
             let first_greater = lexer::Token {

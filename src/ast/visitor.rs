@@ -534,8 +534,8 @@ pub fn walk_block<V: Visitor>(visitor: &mut V, block: &Block) {
 
 /// Walk an if statement.
 pub fn walk_if_stmt<V: Visitor>(visitor: &mut V, stmt: &IfStmt) {
-    visitor.visit_expr(&stmt.condition);
-    visitor.visit_stmt(&stmt.then_stmt);
+    visitor.visit_expr(stmt.condition);
+    visitor.visit_stmt(stmt.then_stmt);
     if let Some(else_stmt) = &stmt.else_stmt {
         visitor.visit_stmt(else_stmt);
     }
@@ -543,14 +543,14 @@ pub fn walk_if_stmt<V: Visitor>(visitor: &mut V, stmt: &IfStmt) {
 
 /// Walk a while statement.
 pub fn walk_while_stmt<V: Visitor>(visitor: &mut V, stmt: &WhileStmt) {
-    visitor.visit_expr(&stmt.condition);
-    visitor.visit_stmt(&stmt.body);
+    visitor.visit_expr(stmt.condition);
+    visitor.visit_stmt(stmt.body);
 }
 
 /// Walk a do-while statement.
 pub fn walk_do_while_stmt<V: Visitor>(visitor: &mut V, stmt: &DoWhileStmt) {
-    visitor.visit_stmt(&stmt.body);
-    visitor.visit_expr(&stmt.condition);
+    visitor.visit_stmt(stmt.body);
+    visitor.visit_expr(stmt.condition);
 }
 
 /// Walk a for statement.
@@ -574,7 +574,7 @@ pub fn walk_for_stmt<V: Visitor>(visitor: &mut V, stmt: &ForStmt) {
     }
 
     // Visit body
-    visitor.visit_stmt(&stmt.body);
+    visitor.visit_stmt(stmt.body);
 }
 
 /// Walk a foreach statement.
@@ -585,15 +585,15 @@ pub fn walk_foreach_stmt<V: Visitor>(visitor: &mut V, stmt: &ForeachStmt) {
     }
 
     // Visit iterable expression
-    visitor.visit_expr(&stmt.expr);
+    visitor.visit_expr(stmt.expr);
 
     // Visit body
-    visitor.visit_stmt(&stmt.body);
+    visitor.visit_stmt(stmt.body);
 }
 
 /// Walk a switch statement.
 pub fn walk_switch_stmt<V: Visitor>(visitor: &mut V, stmt: &SwitchStmt) {
-    visitor.visit_expr(&stmt.expr);
+    visitor.visit_expr(stmt.expr);
     for case in stmt.cases {
         for value in case.values {
             visitor.visit_expr(value);
@@ -634,63 +634,63 @@ pub fn walk_expr<V: Visitor>(visitor: &mut V, expr: &Expr) {
 
 /// Walk a binary expression.
 pub fn walk_binary_expr<V: Visitor>(visitor: &mut V, expr: &BinaryExpr) {
-    visitor.visit_expr(&expr.left);
-    visitor.visit_expr(&expr.right);
+    visitor.visit_expr(expr.left);
+    visitor.visit_expr(expr.right);
 }
 
 /// Walk a unary expression.
 pub fn walk_unary_expr<V: Visitor>(visitor: &mut V, expr: &UnaryExpr) {
-    visitor.visit_expr(&expr.operand);
+    visitor.visit_expr(expr.operand);
 }
 
 /// Walk an assignment expression.
 pub fn walk_assign_expr<V: Visitor>(visitor: &mut V, expr: &AssignExpr) {
-    visitor.visit_expr(&expr.target);
-    visitor.visit_expr(&expr.value);
+    visitor.visit_expr(expr.target);
+    visitor.visit_expr(expr.value);
 }
 
 /// Walk a ternary expression.
 pub fn walk_ternary_expr<V: Visitor>(visitor: &mut V, expr: &TernaryExpr) {
-    visitor.visit_expr(&expr.condition);
-    visitor.visit_expr(&expr.then_expr);
-    visitor.visit_expr(&expr.else_expr);
+    visitor.visit_expr(expr.condition);
+    visitor.visit_expr(expr.then_expr);
+    visitor.visit_expr(expr.else_expr);
 }
 
 /// Walk a call expression.
 pub fn walk_call_expr<V: Visitor>(visitor: &mut V, expr: &CallExpr) {
-    visitor.visit_expr(&expr.callee);
+    visitor.visit_expr(expr.callee);
     for arg in expr.args {
-        visitor.visit_expr(&arg.value);
+        visitor.visit_expr(arg.value);
     }
 }
 
 /// Walk an index expression.
 pub fn walk_index_expr<V: Visitor>(visitor: &mut V, expr: &IndexExpr) {
-    visitor.visit_expr(&expr.object);
+    visitor.visit_expr(expr.object);
     for index in expr.indices {
-        visitor.visit_expr(&index.index);
+        visitor.visit_expr(index.index);
     }
 }
 
 /// Walk a member expression.
 pub fn walk_member_expr<V: Visitor>(visitor: &mut V, expr: &MemberExpr) {
-    visitor.visit_expr(&expr.object);
+    visitor.visit_expr(expr.object);
     if let MemberAccess::Method { args, .. } = &expr.member {
         for arg in *args {
-            visitor.visit_expr(&arg.value);
+            visitor.visit_expr(arg.value);
         }
     }
 }
 
 /// Walk a postfix expression.
 pub fn walk_postfix_expr<V: Visitor>(visitor: &mut V, expr: &PostfixExpr) {
-    visitor.visit_expr(&expr.operand);
+    visitor.visit_expr(expr.operand);
 }
 
 /// Walk a cast expression.
 pub fn walk_cast_expr<V: Visitor>(visitor: &mut V, expr: &CastExpr) {
     visitor.visit_type_expr(&expr.target_type);
-    visitor.visit_expr(&expr.expr);
+    visitor.visit_expr(expr.expr);
 }
 
 /// Walk a lambda expression.
@@ -708,7 +708,7 @@ pub fn walk_lambda_expr<V: Visitor>(visitor: &mut V, expr: &LambdaExpr) {
     }
 
     // Visit body
-    visitor.visit_block(&expr.body);
+    visitor.visit_block(expr.body);
 }
 
 /// Walk an initializer list expression.
@@ -719,14 +719,14 @@ pub fn walk_init_list_expr<V: Visitor>(visitor: &mut V, expr: &InitListExpr) {
     for element in expr.elements {
         match element {
             InitElement::Expr(e) => visitor.visit_expr(e),
-            InitElement::InitList(list) => visitor.visit_init_list_expr(&list),
+            InitElement::InitList(list) => visitor.visit_init_list_expr(list),
         }
     }
 }
 
 /// Walk a parenthesized expression.
 pub fn walk_paren_expr<V: Visitor>(visitor: &mut V, expr: &ParenExpr) {
-    visitor.visit_expr(&expr.expr);
+    visitor.visit_expr(expr.expr);
 }
 
 // === Types ===

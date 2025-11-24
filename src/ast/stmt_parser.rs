@@ -16,7 +16,7 @@ impl<'src, 'ast> Parser<'src, 'ast> {
     /// This is the main entry point for statement parsing and dispatches
     /// to specific statement parsers based on the current token.
     pub fn parse_statement(&mut self) -> Result<Stmt<'src, 'ast>, ParseError> {
-        let token = self.peek().clone();
+        let token = *self.peek();
 
         match token.kind {
             // Control flow statements
@@ -121,7 +121,7 @@ impl<'src, 'ast> Parser<'src, 'ast> {
             None
         };
 
-        let span = if let Some(ref init_expr) = init {
+        let span = if let Some(init_expr) = init {
             name.span.merge(init_expr.span())
         } else {
             name.span
@@ -160,7 +160,7 @@ impl<'src, 'ast> Parser<'src, 'ast> {
 
                 args.push(Argument { name, value, span });
 
-                if !self.eat(TokenKind::Comma).is_some() {
+                if self.eat(TokenKind::Comma).is_none() {
                     break;
                 }
             }
@@ -171,7 +171,7 @@ impl<'src, 'ast> Parser<'src, 'ast> {
         // Extract the type name to use as the callee
         // Convert TypeExpr to IdentExpr for the callee
         let (scope, ident) = match &ty.base {
-            crate::ast::types::TypeBase::Named(name) => (ty.scope.clone(), name.clone()),
+            crate::ast::types::TypeBase::Named(name) => (ty.scope, *name),
             _ => {
                 return Err(ParseError::new(
 
@@ -361,7 +361,12 @@ impl<'src, 'ast> Parser<'src, 'ast> {
             if let Stmt::VarDecl(decl) = var_decl {
                 Some(ForInit::VarDecl(decl))
             } else {
-                unreachable!()
+                let span = self.peek().span;
+                return Err(ParseError::new(
+                    ParseErrorKind::InternalError,
+                    span,
+                    "parse_var_decl() returned non-VarDecl statement"
+                ));
             }
         } else {
             let expr = self.parse_expr(0)?;
@@ -427,7 +432,7 @@ impl<'src, 'ast> Parser<'src, 'ast> {
             // Variables in foreach can start with types (keywords, identifiers) or reference (&)
             // Note: We check BEFORE the colon check to catch trailing commas
             if !self.is_type_start() && !self.check(TokenKind::Amp) && !self.check(TokenKind::Colon) {
-                let token = self.peek().clone();
+                let token = *self.peek();
                 return Err(ParseError::new(
 
                     crate::ast::ParseErrorKind::ExpectedToken,

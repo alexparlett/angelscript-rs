@@ -110,7 +110,7 @@ impl<'src, 'ast> Parser<'src, 'ast> {
     /// Get the current token and advance to the next.
     pub fn advance(&mut self) -> Token<'src> {
         self.fill_buffer(1);
-        let token = self.buffer[self.position].clone();
+        let token = self.buffer[self.position];
         self.position += 1;
         token
     }
@@ -141,7 +141,7 @@ impl<'src, 'ast> Parser<'src, 'ast> {
         if self.check(kind) {
             Ok(self.advance())
         } else {
-            let token = self.peek().clone();
+            let token = *self.peek();
             Err(ParseError::new(
                 ParseErrorKind::ExpectedToken,
                 token.span,
@@ -205,7 +205,7 @@ impl<'src, 'ast> Parser<'src, 'ast> {
         while !self.is_eof() {
             // If we just passed a semicolon, we're at a statement boundary
             if self.buffer.get(self.position.saturating_sub(1))
-                .map_or(false, |t| t.kind == TokenKind::Semicolon)
+                .is_some_and(|t| t.kind == TokenKind::Semicolon)
             {
                 // Only stop if we've advanced at least once
                 if self.position > start_pos {
@@ -345,11 +345,10 @@ impl<'src, 'ast> Parser<'src, 'ast> {
         }
 
         // Skip template arguments
-        if self.check(TokenKind::Less) {
-            if !self.try_skip_template_args() {
+        if self.check(TokenKind::Less)
+            && !self.try_skip_template_args() {
                 return false;
             }
-        }
 
         // Skip type suffixes (@, &)
         // Note: [] is NOT a type suffix - it's only an index operator
@@ -396,7 +395,7 @@ impl<'src, 'ast> Parser<'src, 'ast> {
 
     /// Try to skip past template arguments in angle brackets.
     fn try_skip_template_args(&mut self) -> bool {
-        if !self.eat(TokenKind::Less).is_some() {
+        if self.eat(TokenKind::Less).is_none() {
             return false;
         }
 

@@ -56,7 +56,7 @@ impl<'src, 'ast> Parser<'src, 'ast> {
         let modifiers = self.parse_modifiers()?;
         let visibility = self.parse_visibility()?;
 
-        let token = self.peek().clone();
+        let token = *self.peek();
 
         match token.kind {
             TokenKind::Class => self.parse_class(modifiers, visibility),
@@ -302,7 +302,7 @@ impl<'src, 'ast> Parser<'src, 'ast> {
             None
         };
 
-        let span = if let Some(ref default_expr) = default {
+        let span = if let Some(default_expr) = default {
             start_span.merge(default_expr.span())
         } else if let Some(ref n) = name {
             start_span.merge(n.span)
@@ -330,11 +330,7 @@ impl<'src, 'ast> Parser<'src, 'ast> {
         let start_span = self.peek().span;
 
         // Check for destructor (~ClassName)
-        let is_destructor = if self.eat(TokenKind::Tilde).is_some() {
-            true
-        } else {
-            false
-        };
+        let is_destructor = self.eat(TokenKind::Tilde).is_some();
 
         // Parse return type (or type for variable)
         let return_type = if is_destructor {
@@ -1525,7 +1521,12 @@ impl<'src, 'ast> Parser<'src, 'ast> {
             if let Item::Funcdef(fd) = funcdef {
                 return Ok(ClassMember::Funcdef(fd));
             } else {
-                unreachable!()
+                let span = self.peek().span;
+                return Err(ParseError::new(
+                    ParseErrorKind::InternalError,
+                    span,
+                    "parse_funcdef() returned non-Funcdef item"
+                ));
             }
         }
 
@@ -1892,7 +1893,7 @@ impl<'src, 'ast> Parser<'src, 'ast> {
             None
         };
 
-        let span = if let Some(ref v) = value {
+        let span = if let Some(v) = value {
             name.span.merge(v.span())
         } else {
             name.span
@@ -2001,7 +2002,12 @@ impl<'src, 'ast> Parser<'src, 'ast> {
             let span = start_span.merge(class.span);
             Ok(Item::Mixin(MixinDecl { class, span }))
         } else {
-            unreachable!()
+            let span = self.peek().span;
+            Err(ParseError::new(
+                ParseErrorKind::InternalError,
+                span,
+                "parse_class() returned non-Class item"
+            ))
         }
     }
 
