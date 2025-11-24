@@ -13,7 +13,7 @@ use crate::ast::types::*;
 use crate::lexer::{self, Span, TokenKind};
 use super::parser::Parser;
 
-impl<'src> Parser<'src> {
+impl<'src, 'ast> Parser<'src, 'ast> {
     /// Parse a complete type expression.
     ///
     /// Grammar: `'const'? SCOPE DATATYPE TEMPLTYPELIST? ( ('[' ']') | ('@' 'const'?) )*`
@@ -23,7 +23,7 @@ impl<'src> Parser<'src> {
     /// - `const array<int>[]`
     /// - `Namespace::MyClass@`
     /// - `const MyClass@ const`
-    pub fn parse_type(&mut self) -> Result<TypeExpr, ParseError> {
+    pub fn parse_type(&mut self) -> Result<TypeExpr<'src, 'ast>, ParseError> {
         let start_span = self.peek().span;
 
         // Leading const (makes the object const, not the handle)
@@ -39,7 +39,7 @@ impl<'src> Parser<'src> {
         let template_args = if self.check(TokenKind::Less) {
             self.parse_template_args()?
         } else {
-            Vec::new()
+            &[]
         };
 
         // Type suffixes (arrays and handles)
@@ -72,7 +72,7 @@ impl<'src> Parser<'src> {
     /// - `void`
     /// - `int&`
     /// - `const string&`
-    pub fn parse_return_type(&mut self) -> Result<ReturnType, ParseError> {
+    pub fn parse_return_type(&mut self) -> Result<ReturnType<'src, 'ast>, ParseError> {
         let ty = self.parse_type()?;
         let is_ref = self.eat(TokenKind::Amp).is_some();
         let span = if is_ref {
@@ -96,9 +96,9 @@ impl<'src> Parser<'src> {
     /// - `int& in`
     /// - `int& out`
     /// - `int& inout`
-    pub fn parse_param_type(&mut self) -> Result<ParamType, ParseError> {
+    pub fn parse_param_type(&mut self) -> Result<ParamType<'src, 'ast>, ParseError> {
         let ty = self.parse_type()?;
-        
+
         let ref_kind = if self.eat(TokenKind::Amp).is_some() {
             // Check for flow direction
             if self.eat(TokenKind::In).is_some() {
@@ -132,13 +132,13 @@ impl<'src> Parser<'src> {
     /// - `Namespace::`
     /// - `::Namespace::SubSpace::`
     /// - `Container<T>::`
-    pub fn parse_optional_scope(&mut self) -> Result<Option<Scope>, ParseError> {
+    pub fn parse_optional_scope(&mut self) -> Result<Option<Scope<'src, 'ast>>, ParseError> {
         let start_span = self.peek().span;
 
         // Check for leading ::
         let is_absolute = self.eat(TokenKind::ColonColon).is_some();
 
-        let mut segments = Vec::new();
+        let mut segments = bumpalo::collections::Vec::new_in(self.arena);
         let mut last_span = start_span;
 
         // Parse namespace segments
@@ -193,7 +193,13 @@ impl<'src> Parser<'src> {
         // If we have an absolute marker or segments, create a scope
         if is_absolute || !segments.is_empty() {
             let span = start_span.merge(last_span);
-            Ok(Some(Scope::new(is_absolute, segments, span)))
+            let segments_slice = segments.into_bump_slice();
+            let scope = Scope::new(is_absolute, segments_slice, span);
+            // SAFETY: Scope borrows from the arena which outlives the parser.
+            // We transmute the lifetime from the local borrow to 'ast which is sound
+            // because the arena (&'ast Bump) lives for 'ast.
+            let scope = unsafe { std::mem::transmute::<Scope<'_, '_>, Scope<'src, 'ast>>(scope) };
+            Ok(Some(scope))
         } else {
             Ok(None)
         }
@@ -202,7 +208,7 @@ impl<'src> Parser<'src> {
     /// Parse the base type (primitive, identifier, auto, or ?).
     ///
     /// Grammar: `IDENTIFIER | PRIMTYPE | '?' | 'auto'`
-    fn parse_type_base(&mut self) -> Result<TypeBase, ParseError> {
+    fn parse_type_base(&mut self) -> Result<TypeBase<'src>, ParseError> {
         let token = self.peek().clone();
 
         match token.kind {
@@ -289,10 +295,10 @@ impl<'src> Parser<'src> {
     /// Grammar: `'<' TYPE (',' TYPE)* '>'`
     ///
     /// Note: Handles >> splitting for nested templates.
-    fn parse_template_args(&mut self) -> Result<Vec<TypeExpr>, ParseError> {
+    fn parse_template_args(&mut self) -> Result<&'ast [TypeExpr<'src, 'ast>], ParseError> {
         self.expect(TokenKind::Less)?;
 
-        let mut args = Vec::new();
+        let mut args = bumpalo::collections::Vec::new_in(self.arena);
 
         // Parse first argument
         if !self.is_template_close() {
@@ -307,7 +313,7 @@ impl<'src> Parser<'src> {
         // Expect closing > (handles >>, >>>, etc. automatically via splitting)
         self.expect_template_close()?;
 
-        Ok(args)
+        Ok(args.into_bump_slice())
     }
 
     /// Check if we're at a template closing token (>, >>, or >>>).
@@ -416,8 +422,8 @@ impl<'src> Parser<'src> {
     /// - `@ const` - const handle
     /// - `[]@` - array of handles
     /// - `[]@ const` - const handle to array
-    fn parse_type_suffixes(&mut self) -> Result<Vec<TypeSuffix>, ParseError> {
-        let mut suffixes = Vec::new();
+    fn parse_type_suffixes(&mut self) -> Result<&'ast [TypeSuffix], ParseError> {
+        let mut suffixes = bumpalo::collections::Vec::new_in(self.arena);
 
         loop {
             if self.check(TokenKind::LeftBracket) {
@@ -436,7 +442,7 @@ impl<'src> Parser<'src> {
             }
         }
 
-        Ok(suffixes)
+        Ok(suffixes.into_bump_slice())
     }
 }
 
@@ -446,7 +452,9 @@ mod tests {
 
     #[test]
     fn parse_primitive_type() {
-        let mut parser = Parser::new("int");
+        let arena = bumpalo::Bump::new();
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("int", &arena);
         let ty = parser.parse_type().unwrap();
         assert!(!ty.is_const);
         assert!(matches!(ty.base, TypeBase::Primitive(PrimitiveType::Int)));
@@ -455,7 +463,9 @@ mod tests {
 
     #[test]
     fn parse_const_primitive() {
-        let mut parser = Parser::new("const int");
+        let arena = bumpalo::Bump::new();
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("const int", &arena);
         let ty = parser.parse_type().unwrap();
         assert!(ty.is_const);
         assert!(matches!(ty.base, TypeBase::Primitive(PrimitiveType::Int)));
@@ -463,14 +473,17 @@ mod tests {
 
     #[test]
     fn parse_named_type() {
-        let mut parser = Parser::new("MyClass");
+        let arena = bumpalo::Bump::new();
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("MyClass", &arena);
         let ty = parser.parse_type().unwrap();
         assert!(matches!(ty.base, TypeBase::Named(_)));
     }
 
     #[test]
     fn parse_handle() {
-        let mut parser = Parser::new("MyClass@");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("MyClass@", &arena);
         let ty = parser.parse_type().unwrap();
         assert_eq!(ty.suffixes.len(), 1);
         assert!(matches!(ty.suffixes[0], TypeSuffix::Handle { is_const: false }));
@@ -478,7 +491,8 @@ mod tests {
 
     #[test]
     fn parse_const_handle() {
-        let mut parser = Parser::new("MyClass@ const");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("MyClass@ const", &arena);
         let ty = parser.parse_type().unwrap();
         assert_eq!(ty.suffixes.len(), 1);
         assert!(matches!(ty.suffixes[0], TypeSuffix::Handle { is_const: true }));
@@ -486,7 +500,8 @@ mod tests {
 
     #[test]
     fn parse_array() {
-        let mut parser = Parser::new("int[]");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("int[]", &arena);
         let ty = parser.parse_type().unwrap();
         assert_eq!(ty.suffixes.len(), 1);
         assert!(matches!(ty.suffixes[0], TypeSuffix::Array));
@@ -494,7 +509,8 @@ mod tests {
 
     #[test]
     fn parse_array_handle() {
-        let mut parser = Parser::new("int[]@");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("int[]@", &arena);
         let ty = parser.parse_type().unwrap();
         assert_eq!(ty.suffixes.len(), 2);
         assert!(matches!(ty.suffixes[0], TypeSuffix::Array));
@@ -503,7 +519,8 @@ mod tests {
 
     #[test]
     fn parse_template_type() {
-        let mut parser = Parser::new("array<int>");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("array<int>", &arena);
         let ty = parser.parse_type().unwrap();
         assert!(matches!(ty.base, TypeBase::Named(_)));
         assert_eq!(ty.template_args.len(), 1);
@@ -511,7 +528,8 @@ mod tests {
 
     #[test]
     fn parse_complex_type() {
-        let mut parser = Parser::new("const array<int>[]@ const");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("const array<int>[]@ const", &arena);
         let ty = parser.parse_type().unwrap();
         assert!(ty.is_const);
         assert_eq!(ty.template_args.len(), 1);
@@ -522,7 +540,8 @@ mod tests {
 
     #[test]
     fn parse_return_type() {
-        let mut parser = Parser::new("int&");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("int&", &arena);
         let ret_ty = parser.parse_return_type().unwrap();
         assert!(ret_ty.is_ref);
         assert!(matches!(ret_ty.ty.base, TypeBase::Primitive(PrimitiveType::Int)));
@@ -530,28 +549,32 @@ mod tests {
 
     #[test]
     fn parse_param_type_in() {
-        let mut parser = Parser::new("int& in");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("int& in", &arena);
         let param_ty = parser.parse_param_type().unwrap();
         assert!(matches!(param_ty.ref_kind, RefKind::RefIn));
     }
 
     #[test]
     fn parse_param_type_out() {
-        let mut parser = Parser::new("int& out");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("int& out", &arena);
         let param_ty = parser.parse_param_type().unwrap();
         assert!(matches!(param_ty.ref_kind, RefKind::RefOut));
     }
 
     #[test]
     fn parse_param_type_inout() {
-        let mut parser = Parser::new("int& inout");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("int& inout", &arena);
         let param_ty = parser.parse_param_type().unwrap();
         assert!(matches!(param_ty.ref_kind, RefKind::RefInOut));
     }
 
     #[test]
     fn parse_scoped_type() {
-        let mut parser = Parser::new("Namespace::MyClass");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("Namespace::MyClass", &arena);
         let ty = parser.parse_type().unwrap();
         assert!(ty.scope.is_some());
         let scope = ty.scope.unwrap();
@@ -561,7 +584,8 @@ mod tests {
 
     #[test]
     fn parse_absolute_scoped_type() {
-        let mut parser = Parser::new("::GlobalType");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("::GlobalType", &arena);
         let ty = parser.parse_type().unwrap();
         assert!(ty.scope.is_some());
         let scope = ty.scope.unwrap();
@@ -571,7 +595,8 @@ mod tests {
     #[test]
     fn parse_nested_template_with_double_greater() {
         // This tests the >> splitting for nested templates
-        let mut parser = Parser::new("array<array<int>>");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("array<array<int>>", &arena);
         let ty = parser.parse_type().unwrap();
         
         // Should parse as array with template arg of (array with template arg of int)
@@ -588,7 +613,8 @@ mod tests {
 
     #[test]
     fn parse_triple_nested_template() {
-        let mut parser = Parser::new("array<array<array<int>>>");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("array<array<array<int>>>", &arena);
         let ty = parser.parse_type().unwrap();
         
         // Should handle even deeper nesting
@@ -600,7 +626,8 @@ mod tests {
     fn parse_deeply_nested_template_four_levels() {
         // Test the exact case from the user: array<array<weakref<Foo<string>>>>
         // All these are registered application types, parsed as Named
-        let mut parser = Parser::new("array<array<weakref<Foo<string>>>>");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("array<array<weakref<Foo<string>>>>", &arena);
         let ty = parser.parse_type().unwrap();
         
         // Verify outer array
@@ -633,7 +660,8 @@ mod tests {
     #[test]
     fn parse_five_level_nested_template() {
         // Test even deeper: array<dict<array<map<vector<int>>>>>
-        let mut parser = Parser::new("array<dict<array<map<vector<int>>>>>");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("array<dict<array<map<vector<int>>>>>", &arena);
         let ty = parser.parse_type().unwrap();
         
         // Just verify it parses without error and has correct structure
@@ -668,7 +696,8 @@ mod tests {
         // ANY depth correctly. Each level's expect_template_close() splits
         // compound tokens (>>, >>>) as needed and consumes one >,
         // leaving the rest for parent levels.
-        let mut parser = Parser::new("a<b<c<d<e<f<g<h<i<j>>>>>>>>>>");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("a<b<c<d<e<f<g<h<i<j>>>>>>>>>>", &arena);
         let ty = parser.parse_type().unwrap();
 
         // Verify outer type
@@ -707,7 +736,8 @@ mod tests {
         ];
 
         for (type_str, expected) in types {
-            let mut parser = Parser::new(type_str);
+            let arena = bumpalo::Bump::new();
+            let mut parser = Parser::new(type_str, &arena);
             let ty = parser.parse_type().unwrap();
             match ty.base {
                 TypeBase::Primitive(prim) => {
@@ -724,14 +754,16 @@ mod tests {
 
     #[test]
     fn parse_auto_type() {
-        let mut parser = Parser::new("auto");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("auto", &arena);
         let ty = parser.parse_type().unwrap();
         assert!(matches!(ty.base, TypeBase::Auto));
     }
 
     #[test]
     fn parse_unknown_type() {
-        let mut parser = Parser::new("?");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("?", &arena);
         let ty = parser.parse_type().unwrap();
         assert!(matches!(ty.base, TypeBase::Unknown));
     }
@@ -742,7 +774,8 @@ mod tests {
 
     #[test]
     fn parse_scope_empty_global() {
-        let mut parser = Parser::new("::int");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("::int", &arena);
         let ty = parser.parse_type().unwrap();
         assert!(ty.scope.is_some());
         let scope = ty.scope.unwrap();
@@ -752,7 +785,8 @@ mod tests {
 
     #[test]
     fn parse_scope_multi_segment() {
-        let mut parser = Parser::new("A::B::C::Type");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("A::B::C::Type", &arena);
         let ty = parser.parse_type().unwrap();
         assert!(ty.scope.is_some());
         let scope = ty.scope.unwrap();
@@ -762,7 +796,8 @@ mod tests {
 
     #[test]
     fn parse_scope_absolute_multi_segment() {
-        let mut parser = Parser::new("::A::B::Type");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("::A::B::Type", &arena);
         let ty = parser.parse_type().unwrap();
         assert!(ty.scope.is_some());
         let scope = ty.scope.unwrap();
@@ -776,7 +811,8 @@ mod tests {
 
     #[test]
     fn parse_multiple_array_suffixes() {
-        let mut parser = Parser::new("int[][]");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("int[][]", &arena);
         let ty = parser.parse_type().unwrap();
         assert_eq!(ty.suffixes.len(), 2);
         assert!(matches!(ty.suffixes[0], TypeSuffix::Array));
@@ -785,7 +821,8 @@ mod tests {
 
     #[test]
     fn parse_handle_then_array() {
-        let mut parser = Parser::new("int@[]");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("int@[]", &arena);
         let ty = parser.parse_type().unwrap();
         assert_eq!(ty.suffixes.len(), 2);
         assert!(matches!(ty.suffixes[0], TypeSuffix::Handle { .. }));
@@ -794,7 +831,8 @@ mod tests {
 
     #[test]
     fn parse_const_handle_array() {
-        let mut parser = Parser::new("int@ const[]");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("int@ const[]", &arena);
         let ty = parser.parse_type().unwrap();
         assert_eq!(ty.suffixes.len(), 2);
         match &ty.suffixes[0] {
@@ -806,7 +844,8 @@ mod tests {
 
     #[test]
     fn parse_complex_suffix_chain() {
-        let mut parser = Parser::new("int[]@[]@ const");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("int[]@[]@ const", &arena);
         let ty = parser.parse_type().unwrap();
         assert_eq!(ty.suffixes.len(), 4);
     }
@@ -817,21 +856,24 @@ mod tests {
 
     #[test]
     fn parse_template_empty() {
-        let mut parser = Parser::new("Container<>");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("Container<>", &arena);
         let ty = parser.parse_type().unwrap();
         assert_eq!(ty.template_args.len(), 0);
     }
 
     #[test]
     fn parse_template_multiple_args() {
-        let mut parser = Parser::new("map<string, int>");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("map<string, int>", &arena);
         let ty = parser.parse_type().unwrap();
         assert_eq!(ty.template_args.len(), 2);
     }
 
     #[test]
     fn parse_template_with_const() {
-        let mut parser = Parser::new("array<const int>");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("array<const int>", &arena);
         let ty = parser.parse_type().unwrap();
         assert_eq!(ty.template_args.len(), 1);
         assert!(ty.template_args[0].is_const);
@@ -839,7 +881,8 @@ mod tests {
 
     #[test]
     fn parse_template_with_handle() {
-        let mut parser = Parser::new("array<Foo@>");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("array<Foo@>", &arena);
         let ty = parser.parse_type().unwrap();
         assert_eq!(ty.template_args.len(), 1);
         assert_eq!(ty.template_args[0].suffixes.len(), 1);
@@ -847,7 +890,8 @@ mod tests {
 
     #[test]
     fn parse_template_complex_args() {
-        let mut parser = Parser::new("map<const string@, array<int>[]>");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("map<const string@, array<int>[]>", &arena);
         let ty = parser.parse_type().unwrap();
         assert_eq!(ty.template_args.len(), 2);
     }
@@ -858,21 +902,24 @@ mod tests {
 
     #[test]
     fn parse_return_type_no_ref() {
-        let mut parser = Parser::new("int");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("int", &arena);
         let ret_ty = parser.parse_return_type().unwrap();
         assert!(!ret_ty.is_ref);
     }
 
     #[test]
     fn parse_return_type_with_ref() {
-        let mut parser = Parser::new("string&");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("string&", &arena);
         let ret_ty = parser.parse_return_type().unwrap();
         assert!(ret_ty.is_ref);
     }
 
     #[test]
     fn parse_return_type_handle_ref() {
-        let mut parser = Parser::new("Foo@&");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("Foo@&", &arena);
         let ret_ty = parser.parse_return_type().unwrap();
         assert!(ret_ty.is_ref);
         assert_eq!(ret_ty.ty.suffixes.len(), 1);
@@ -884,21 +931,24 @@ mod tests {
 
     #[test]
     fn parse_param_type_no_ref() {
-        let mut parser = Parser::new("int");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("int", &arena);
         let param_ty = parser.parse_param_type().unwrap();
         assert!(matches!(param_ty.ref_kind, RefKind::None));
     }
 
     #[test]
     fn parse_param_type_ref() {
-        let mut parser = Parser::new("int&");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("int&", &arena);
         let param_ty = parser.parse_param_type().unwrap();
         assert!(matches!(param_ty.ref_kind, RefKind::Ref));
     }
 
     #[test]
     fn parse_param_type_ref_in() {
-        let mut parser = Parser::new("const string& in");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("const string& in", &arena);
         let param_ty = parser.parse_param_type().unwrap();
         assert!(matches!(param_ty.ref_kind, RefKind::RefIn));
         assert!(param_ty.ty.is_const);
@@ -906,14 +956,16 @@ mod tests {
 
     #[test]
     fn parse_param_type_ref_out() {
-        let mut parser = Parser::new("int& out");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("int& out", &arena);
         let param_ty = parser.parse_param_type().unwrap();
         assert!(matches!(param_ty.ref_kind, RefKind::RefOut));
     }
 
     #[test]
     fn parse_param_type_ref_inout() {
-        let mut parser = Parser::new("array<int>& inout");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("array<int>& inout", &arena);
         let param_ty = parser.parse_param_type().unwrap();
         assert!(matches!(param_ty.ref_kind, RefKind::RefInOut));
     }
@@ -924,7 +976,8 @@ mod tests {
 
     #[test]
     fn parse_const_scoped_template_handle() {
-        let mut parser = Parser::new("const A::B::Container<int>@");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("const A::B::Container<int>@", &arena);
         let ty = parser.parse_type().unwrap();
         assert!(ty.is_const);
         assert!(ty.scope.is_some());
@@ -934,7 +987,8 @@ mod tests {
 
     #[test]
     fn parse_global_scoped_template_array() {
-        let mut parser = Parser::new("::std::vector<string>[]");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("::std::vector<string>[]", &arena);
         let ty = parser.parse_type().unwrap();
         let scope = ty.scope.unwrap();
         assert!(scope.is_absolute);
@@ -944,7 +998,8 @@ mod tests {
 
     #[test]
     fn parse_all_features_combined() {
-        let mut parser = Parser::new("const ::A::B::map<string, int>[]@ const");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("const ::A::B::map<string, int>[]@ const", &arena);
         let ty = parser.parse_type().unwrap();
         assert!(ty.is_const);
         assert!(ty.scope.is_some());
@@ -960,7 +1015,8 @@ mod tests {
     fn parse_template_with_shift_operator_lookalike() {
         // Make sure we properly handle >> that's NOT a template close
         // This is parsed as array<array<int>> not array<(array<int >> something)
-        let mut parser = Parser::new("array<array<int>>");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("array<array<int>>", &arena);
         let ty = parser.parse_type().unwrap();
         assert_eq!(ty.template_args.len(), 1);
         assert_eq!(ty.template_args[0].template_args.len(), 1);
@@ -968,7 +1024,8 @@ mod tests {
 
     #[test]
     fn parse_template_mixed_nesting_levels() {
-        let mut parser = Parser::new("map<int, array<string>>");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("map<int, array<string>>", &arena);
         let ty = parser.parse_type().unwrap();
         assert_eq!(ty.template_args.len(), 2);
         // Second arg is nested template
@@ -981,7 +1038,8 @@ mod tests {
 
     #[test]
     fn parse_const_before_type() {
-        let mut parser = Parser::new("const int");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("const int", &arena);
         let ty = parser.parse_type().unwrap();
         assert!(ty.is_const);
     }
@@ -989,7 +1047,8 @@ mod tests {
     #[test]
     fn parse_const_handle_variations() {
         // const Type@ - const object, non-const handle
-        let mut parser = Parser::new("const Foo@");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("const Foo@", &arena);
         let ty = parser.parse_type().unwrap();
         assert!(ty.is_const);
         match &ty.suffixes[0] {
@@ -998,7 +1057,8 @@ mod tests {
         }
 
         // Type@ const - non-const object, const handle
-        let mut parser = Parser::new("Foo@ const");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("Foo@ const", &arena);
         let ty = parser.parse_type().unwrap();
         assert!(!ty.is_const);
         match &ty.suffixes[0] {
@@ -1007,7 +1067,8 @@ mod tests {
         }
 
         // const Type@ const - const object, const handle
-        let mut parser = Parser::new("const Foo@ const");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("const Foo@ const", &arena);
         let ty = parser.parse_type().unwrap();
         assert!(ty.is_const);
         match &ty.suffixes[0] {

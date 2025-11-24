@@ -311,7 +311,7 @@ pub trait Visitor: Sized {
 
 /// Walk a script (root node).
 pub fn walk_script<V: Visitor>(visitor: &mut V, script: &Script) {
-    for item in &script.items {
+    for item in script.items {
         visitor.visit_item(item);
     }
 }
@@ -340,7 +340,7 @@ pub fn walk_function_decl<V: Visitor>(visitor: &mut V, func: &FunctionDecl) {
     }
 
     // Visit parameters
-    for param in &func.params {
+    for param in func.params {
         visitor.visit_param_type(&param.ty);
         if let Some(default) = &param.default {
             visitor.visit_expr(default);
@@ -355,21 +355,21 @@ pub fn walk_function_decl<V: Visitor>(visitor: &mut V, func: &FunctionDecl) {
 
 /// Walk a class declaration.
 pub fn walk_class_decl<V: Visitor>(visitor: &mut V, class: &ClassDecl) {
-    for member in &class.members {
+    for member in class.members {
         visitor.visit_class_member(member);
     }
 }
 
 /// Walk an interface declaration.
 pub fn walk_interface_decl<V: Visitor>(visitor: &mut V, interface: &InterfaceDecl) {
-    for member in &interface.members {
+    for member in interface.members {
         visitor.visit_interface_member(member);
     }
 }
 
 /// Walk an enum declaration.
 pub fn walk_enum_decl<V: Visitor>(visitor: &mut V, enum_decl: &EnumDecl) {
-    for enumerator in &enum_decl.enumerators {
+    for enumerator in enum_decl.enumerators {
         if let Some(value) = &enumerator.value {
             visitor.visit_expr(value);
         }
@@ -386,7 +386,7 @@ pub fn walk_global_var_decl<V: Visitor>(visitor: &mut V, var: &GlobalVarDecl) {
 
 /// Walk a namespace declaration.
 pub fn walk_namespace_decl<V: Visitor>(visitor: &mut V, namespace: &NamespaceDecl) {
-    for item in &namespace.items {
+    for item in namespace.items {
         visitor.visit_item(item);
     }
 }
@@ -399,7 +399,7 @@ pub fn walk_typedef_decl<V: Visitor>(visitor: &mut V, typedef: &TypedefDecl) {
 /// Walk a funcdef declaration.
 pub fn walk_funcdef_decl<V: Visitor>(visitor: &mut V, funcdef: &FuncdefDecl) {
     visitor.visit_return_type(&funcdef.return_type);
-    for param in &funcdef.params {
+    for param in funcdef.params {
         visitor.visit_param_type(&param.ty);
         if let Some(default) = &param.default {
             visitor.visit_expr(default);
@@ -415,7 +415,7 @@ pub fn walk_mixin_decl<V: Visitor>(visitor: &mut V, mixin: &MixinDecl) {
 /// Walk an import declaration.
 pub fn walk_import_decl<V: Visitor>(visitor: &mut V, import: &ImportDecl) {
     visitor.visit_return_type(&import.return_type);
-    for param in &import.params {
+    for param in import.params {
         visitor.visit_param_type(&param.ty);
         if let Some(default) = &param.default {
             visitor.visit_expr(default);
@@ -446,7 +446,7 @@ pub fn walk_field_decl<V: Visitor>(visitor: &mut V, field: &FieldDecl) {
 /// Walk a virtual property declaration.
 pub fn walk_virtual_property_decl<V: Visitor>(visitor: &mut V, prop: &VirtualPropertyDecl) {
     visitor.visit_return_type(&prop.ty);
-    for accessor in &prop.accessors {
+    for accessor in prop.accessors {
         visitor.visit_property_accessor(accessor);
     }
 }
@@ -471,7 +471,7 @@ pub fn walk_interface_member<V: Visitor>(visitor: &mut V, member: &InterfaceMemb
 /// Walk an interface method.
 pub fn walk_interface_method<V: Visitor>(visitor: &mut V, method: &InterfaceMethod) {
     visitor.visit_return_type(&method.return_type);
-    for param in &method.params {
+    for param in method.params {
         visitor.visit_param_type(&param.ty);
         if let Some(default) = &param.default {
             visitor.visit_expr(default);
@@ -510,7 +510,7 @@ pub fn walk_expr_stmt<V: Visitor>(visitor: &mut V, stmt: &ExprStmt) {
 /// Walk a variable declaration statement.
 pub fn walk_var_decl_stmt<V: Visitor>(visitor: &mut V, stmt: &VarDeclStmt) {
     visitor.visit_type_expr(&stmt.ty);
-    for var in &stmt.vars {
+    for var in stmt.vars {
         if let Some(init) = &var.init {
             visitor.visit_expr(init);
         }
@@ -526,7 +526,7 @@ pub fn walk_return_stmt<V: Visitor>(visitor: &mut V, stmt: &ReturnStmt) {
 
 /// Walk a block.
 pub fn walk_block<V: Visitor>(visitor: &mut V, block: &Block) {
-    for stmt in &block.stmts {
+    for stmt in block.stmts {
         visitor.visit_stmt(stmt);
     }
 }
@@ -568,7 +568,7 @@ pub fn walk_for_stmt<V: Visitor>(visitor: &mut V, stmt: &ForStmt) {
     }
 
     // Visit update
-    for expr in &stmt.update {
+    for expr in stmt.update {
         visitor.visit_expr(expr);
     }
 
@@ -579,7 +579,7 @@ pub fn walk_for_stmt<V: Visitor>(visitor: &mut V, stmt: &ForStmt) {
 /// Walk a foreach statement.
 pub fn walk_foreach_stmt<V: Visitor>(visitor: &mut V, stmt: &ForeachStmt) {
     // Visit variable types
-    for var in &stmt.vars {
+    for var in stmt.vars {
         visitor.visit_type_expr(&var.ty);
     }
 
@@ -593,11 +593,11 @@ pub fn walk_foreach_stmt<V: Visitor>(visitor: &mut V, stmt: &ForeachStmt) {
 /// Walk a switch statement.
 pub fn walk_switch_stmt<V: Visitor>(visitor: &mut V, stmt: &SwitchStmt) {
     visitor.visit_expr(&stmt.expr);
-    for case in &stmt.cases {
-        for value in &case.values {
+    for case in stmt.cases {
+        for value in case.values {
             visitor.visit_expr(value);
         }
-        for stmt in &case.stmts {
+        for stmt in case.stmts {
             visitor.visit_stmt(stmt);
         }
     }
@@ -658,7 +658,7 @@ pub fn walk_ternary_expr<V: Visitor>(visitor: &mut V, expr: &TernaryExpr) {
 /// Walk a call expression.
 pub fn walk_call_expr<V: Visitor>(visitor: &mut V, expr: &CallExpr) {
     visitor.visit_expr(&expr.callee);
-    for arg in &expr.args {
+    for arg in expr.args {
         visitor.visit_expr(&arg.value);
     }
 }
@@ -666,7 +666,7 @@ pub fn walk_call_expr<V: Visitor>(visitor: &mut V, expr: &CallExpr) {
 /// Walk an index expression.
 pub fn walk_index_expr<V: Visitor>(visitor: &mut V, expr: &IndexExpr) {
     visitor.visit_expr(&expr.object);
-    for index in &expr.indices {
+    for index in expr.indices {
         visitor.visit_expr(&index.index);
     }
 }
@@ -675,7 +675,7 @@ pub fn walk_index_expr<V: Visitor>(visitor: &mut V, expr: &IndexExpr) {
 pub fn walk_member_expr<V: Visitor>(visitor: &mut V, expr: &MemberExpr) {
     visitor.visit_expr(&expr.object);
     if let MemberAccess::Method { args, .. } = &expr.member {
-        for arg in args {
+        for arg in *args {
             visitor.visit_expr(&arg.value);
         }
     }
@@ -695,7 +695,7 @@ pub fn walk_cast_expr<V: Visitor>(visitor: &mut V, expr: &CastExpr) {
 /// Walk a lambda expression.
 pub fn walk_lambda_expr<V: Visitor>(visitor: &mut V, expr: &LambdaExpr) {
     // Visit parameter types
-    for param in &expr.params {
+    for param in expr.params {
         if let Some(ty) = &param.ty {
             visitor.visit_param_type(ty);
         }
@@ -715,10 +715,10 @@ pub fn walk_init_list_expr<V: Visitor>(visitor: &mut V, expr: &InitListExpr) {
     if let Some(ty) = &expr.ty {
         visitor.visit_type_expr(ty);
     }
-    for element in &expr.elements {
+    for element in expr.elements {
         match element {
             InitElement::Expr(e) => visitor.visit_expr(e),
-            InitElement::InitList(list) => visitor.visit_init_list_expr(list),
+            InitElement::InitList(list) => visitor.visit_init_list_expr(&list),
         }
     }
 }
@@ -733,7 +733,7 @@ pub fn walk_paren_expr<V: Visitor>(visitor: &mut V, expr: &ParenExpr) {
 /// Walk a type expression.
 pub fn walk_type_expr<V: Visitor>(visitor: &mut V, ty: &TypeExpr) {
     // Visit template arguments
-    for arg in &ty.template_args {
+    for arg in ty.template_args {
         visitor.visit_type_expr(arg);
     }
 }
@@ -775,15 +775,18 @@ mod tests {
 
     impl Visitor for IdentCollector {
         fn visit_ident_expr(&mut self, expr: &IdentExpr) {
-            self.names.push(expr.ident.name.clone());
+            self.names.push(expr.ident.name.to_string());
         }
     }
 
     #[test]
     fn test_function_counter() {
+        use bumpalo::Bump;
+        let arena = Bump::new();
+
         // Create a script with multiple functions
         let script = Script {
-            items: vec![
+            items: bumpalo::vec![in &arena;
                 Item::Function(FunctionDecl {
                     modifiers: DeclModifiers::new(),
                     visibility: Visibility::Public,
@@ -793,8 +796,8 @@ mod tests {
                         span: Span::new(1, 0 + 1, 4 - 0),
                     }),
                     name: Ident::new("foo", Span::new(1, 5 + 1, 8 - 5)),
-                    template_params: Vec::new(),
-                    params: Vec::new(),
+                    template_params: &[],
+                    params: &[],
                     is_const: false,
                     attrs: FuncAttr::new(),
                     body: None,
@@ -810,15 +813,15 @@ mod tests {
                         span: Span::new(1, 0 + 1, 4 - 0),
                     }),
                     name: Ident::new("bar", Span::new(1, 4 + 1, 7 - 4)),
-                    template_params: Vec::new(),
-                    params: Vec::new(),
+                    template_params: &[],
+                    params: &[],
                     is_const: false,
                     attrs: FuncAttr::new(),
                     body: None,
                     is_destructor: false,
                     span: Span::new(1, 0 + 1, 10 - 0),
                 }),
-            ],
+            ].into_bump_slice(),
             span: Span::new(1, 0 + 1, 20 - 0),
         };
 
@@ -846,19 +849,21 @@ mod tests {
     fn test_binary_expr_traversal() {
         use crate::ast::expr::{Expr, BinaryExpr, IdentExpr, LiteralExpr, LiteralKind};
         use crate::ast::BinaryOp;
+        use bumpalo::Bump;
+        let arena = Bump::new();
 
         // Create: x + 42
-        let expr = Expr::Binary(Box::new(BinaryExpr {
-            left: Expr::Ident(IdentExpr {
+        let expr = Expr::Binary(arena.alloc(BinaryExpr {
+            left: arena.alloc(Expr::Ident(IdentExpr {
                 scope: None,
                 ident: Ident::new("x", Span::new(1, 0 + 1, 1 - 0)),
                 span: Span::new(1, 0 + 1, 1 - 0),
-            }),
+            })),
             op: BinaryOp::Add,
-            right: Expr::Literal(LiteralExpr {
+            right: arena.alloc(Expr::Literal(LiteralExpr {
                 kind: LiteralKind::Int(42),
                 span: Span::new(1, 4 + 1, 6 - 4),
-            }),
+            })),
             span: Span::new(1, 0 + 1, 6 - 0),
         }));
 

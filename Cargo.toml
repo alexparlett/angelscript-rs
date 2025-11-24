@@ -7,6 +7,7 @@ edition = "2024"
 thiserror = "2.0"
 bitflags = "2.10"
 num_enum = "0.7"
+bumpalo = { version = "3.16", features = ["collections"] }
 
 [dev-dependencies]
 criterion = "0.7"

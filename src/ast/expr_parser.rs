@@ -3,18 +3,17 @@
 //! This module implements expression parsing with proper operator precedence
 //! and associativity using the Pratt parsing algorithm.
 
-use crate::ast::{AssignOp, BinaryOp, Ident, ParseError, ParseErrorKind, PostfixOp, Scope, UnaryOp, stmt};
+use crate::ast::{AssignOp, BinaryOp, Ident, ParseError, ParseErrorKind, PostfixOp, Scope, UnaryOp};
 use crate::ast::expr::*;
-use crate::ast::types::ParamType;
-use crate::lexer::{Span, TokenKind};
+use crate::lexer::TokenKind;
 use super::parser::Parser;
 
-impl<'src> Parser<'src> {
+impl<'src, 'ast> Parser<'src, 'ast> {
     /// Parse an expression with a minimum binding power.
     ///
     /// This is the core of the Pratt parser. It handles operator precedence
     /// by only consuming operators with sufficient binding power.
-    pub fn parse_expr(&mut self, min_bp: u8) -> Result<Expr, ParseError> {
+    pub fn parse_expr(&mut self, min_bp: u8) -> Result<&'ast Expr<'src, 'ast>, ParseError> {
         // Parse the prefix expression (literals, identifiers, unary ops, etc.)
         let mut lhs = self.parse_prefix()?;
         
@@ -29,11 +28,11 @@ impl<'src> Parser<'src> {
 
                 let op_token = self.advance();
                 let span = lhs.span().merge(op_token.span);
-                lhs = Expr::Postfix(Box::new(PostfixExpr {
+                lhs = self.arena.alloc(Expr::Postfix(self.arena.alloc(PostfixExpr {
                     operand: lhs,
                     op: postfix_op,
                     span,
-                    }));
+                    })));
                 continue;
             }
 
@@ -87,12 +86,12 @@ impl<'src> Parser<'src> {
                 self.advance();
                 let rhs = self.parse_expr(r_bp)?;
                 let span = lhs.span().merge(rhs.span());
-                lhs = Expr::Assign(Box::new(AssignExpr {
+                lhs = self.arena.alloc(Expr::Assign(self.arena.alloc(AssignExpr {
                     target: lhs,
                     op: assign_op,
                     value: rhs,
                     span,
-                }));
+                })));
                 continue;
             }
 
@@ -106,12 +105,12 @@ impl<'src> Parser<'src> {
                 self.advance();
                 let rhs = self.parse_expr(r_bp)?;
                 let span = lhs.span().merge(rhs.span());
-                lhs = Expr::Binary(Box::new(BinaryExpr {
+                lhs = self.arena.alloc(Expr::Binary(self.arena.alloc(BinaryExpr {
                     left: lhs,
                     op: bin_op,
                     right: rhs,
                     span,
-                }));
+                })));
                 continue;
             }
 
@@ -123,7 +122,7 @@ impl<'src> Parser<'src> {
     }
 
     /// Parse a prefix expression (the start of an expression).
-    fn parse_prefix(&mut self) -> Result<Expr, ParseError> {
+    fn parse_prefix(&mut self) -> Result<&'ast Expr<'src, 'ast>, ParseError> {
         let token = self.peek().clone();
 
         match token.kind {
@@ -131,10 +130,10 @@ impl<'src> Parser<'src> {
             TokenKind::IntLiteral => {
                 self.advance();
                 let value = token.lexeme.parse::<i64>().unwrap_or(0);
-                Ok(Expr::Literal(LiteralExpr {
+                Ok(self.arena.alloc(Expr::Literal(LiteralExpr {
                     kind: LiteralKind::Int(value),
                     span: token.span,
-                }))
+                })))
             }
 
             TokenKind::BitsLiteral => {
@@ -156,10 +155,10 @@ impl<'src> Parser<'src> {
                     // Fallback: try to parse as regular integer
                     token.lexeme.parse::<i64>().unwrap_or(0)
                 };
-                Ok(Expr::Literal(LiteralExpr {
+                Ok(self.arena.alloc(Expr::Literal(LiteralExpr {
                     kind: LiteralKind::Int(value),
                     span: token.span,
-                }))
+                })))
             }
 
             TokenKind::FloatLiteral => {
@@ -168,19 +167,19 @@ impl<'src> Parser<'src> {
                     .trim_end_matches('F')
                     .parse::<f32>()
                     .unwrap_or(0.0);
-                Ok(Expr::Literal(LiteralExpr {
+                Ok(self.arena.alloc(Expr::Literal(LiteralExpr {
                     kind: LiteralKind::Float(value),
                     span: token.span,
-                }))
+                })))
             }
 
             TokenKind::DoubleLiteral => {
                 self.advance();
                 let value = token.lexeme.parse::<f64>().unwrap_or(0.0);
-                Ok(Expr::Literal(LiteralExpr {
+                Ok(self.arena.alloc(Expr::Literal(LiteralExpr {
                     kind: LiteralKind::Double(value),
                     span: token.span,
-                }))
+                })))
             }
 
             TokenKind::StringLiteral | TokenKind::HeredocLiteral => {
@@ -195,34 +194,34 @@ impl<'src> Parser<'src> {
                     // Regular string
                     token.lexeme.trim_matches('"').to_string()
                 };
-                Ok(Expr::Literal(LiteralExpr {
+                Ok(self.arena.alloc(Expr::Literal(LiteralExpr {
                     kind: LiteralKind::String(content),
                     span: token.span,
-                }))
+                })))
             }
 
             TokenKind::True => {
                 self.advance();
-                Ok(Expr::Literal(LiteralExpr {
+                Ok(self.arena.alloc(Expr::Literal(LiteralExpr {
                     kind: LiteralKind::Bool(true),
                     span: token.span,
-                }))
+                })))
             }
 
             TokenKind::False => {
                 self.advance();
-                Ok(Expr::Literal(LiteralExpr {
+                Ok(self.arena.alloc(Expr::Literal(LiteralExpr {
                     kind: LiteralKind::Bool(false),
                     span: token.span,
-                }))
+                })))
             }
 
             TokenKind::Null => {
                 self.advance();
-                Ok(Expr::Literal(LiteralExpr {
+                Ok(self.arena.alloc(Expr::Literal(LiteralExpr {
                     kind: LiteralKind::Null,
                     span: token.span,
-                }))
+                })))
             }
 
             // Unary prefix operators
@@ -232,11 +231,11 @@ impl<'src> Parser<'src> {
                 let bp = UnaryOp::binding_power();
                 let operand = self.parse_expr(bp)?;
                 let span = token.span.merge(operand.span());
-                Ok(Expr::Unary(Box::new(UnaryExpr {
+                Ok(self.arena.alloc(Expr::Unary(self.arena.alloc(UnaryExpr {
                     op,
                     operand,
                     span,
-                })))
+                }))))
             }
 
             // Parenthesized expression
@@ -244,10 +243,10 @@ impl<'src> Parser<'src> {
                 let start_span = self.advance().span;
                 let expr = self.parse_expr(0)?;
                 let end_span = self.expect(TokenKind::RightParen)?.span;
-                Ok(Expr::Paren(Box::new(ParenExpr {
+                Ok(self.arena.alloc(Expr::Paren(self.arena.alloc(ParenExpr {
                     expr,
                     span: start_span.merge(end_span),
-                })))
+                }))))
             }
 
             // Cast expression
@@ -290,7 +289,7 @@ impl<'src> Parser<'src> {
     }
 
     /// Parse member access (dot operator).
-    fn parse_member_access(&mut self, object: Expr) -> Result<Expr, ParseError> {
+    fn parse_member_access(&mut self, object: &'ast Expr<'src, 'ast>) -> Result<&'ast Expr<'src, 'ast>, ParseError> {
         let dot_span = self.expect(TokenKind::Dot)?.span;
 
         // The member must be an identifier
@@ -306,27 +305,27 @@ impl<'src> Parser<'src> {
                     .unwrap_or(dot_span)
             );
 
-            Ok(Expr::Member(Box::new(MemberExpr {
+            Ok(self.arena.alloc(Expr::Member(self.arena.alloc(MemberExpr {
                 object,
                 member: MemberAccess::Method {
                     name: member_ident,
                     args,
                 },
                 span,
-            })))
+            }))))
         } else {
             // Field access
             let span = object.span().merge(member_ident.span);
-            Ok(Expr::Member(Box::new(MemberExpr {
+            Ok(self.arena.alloc(Expr::Member(self.arena.alloc(MemberExpr {
                 object,
                 member: MemberAccess::Field(member_ident),
                 span,
-            })))
+            }))))
         }
     }
 
     /// Parse function call.
-    fn parse_call(&mut self, callee: Expr) -> Result<Expr, ParseError> {
+    fn parse_call(&mut self, callee: &'ast Expr<'src, 'ast>) -> Result<&'ast Expr<'src, 'ast>, ParseError> {
         let args = self.parse_arguments()?;
         let span = callee.span().merge(
             self.buffer.get(self.position.saturating_sub(1))
@@ -334,18 +333,18 @@ impl<'src> Parser<'src> {
                 .unwrap_or(callee.span())
         );
 
-        Ok(Expr::Call(Box::new(CallExpr {
+        Ok(self.arena.alloc(Expr::Call(self.arena.alloc(CallExpr {
             callee,
             args,
             span,
-        })))
+        }))))
     }
 
     /// Parse array indexing.
-    fn parse_index(&mut self, object: Expr) -> Result<Expr, ParseError> {
+    fn parse_index(&mut self, object: &'ast Expr<'src, 'ast>) -> Result<&'ast Expr<'src, 'ast>, ParseError> {
         self.expect(TokenKind::LeftBracket)?;
 
-        let mut indices = Vec::new();
+        let mut indices = bumpalo::collections::Vec::new_in(self.arena);
 
         // Parse first index
         if !self.check(TokenKind::RightBracket) {
@@ -360,15 +359,15 @@ impl<'src> Parser<'src> {
         let end_span = self.expect(TokenKind::RightBracket)?.span;
         let span = object.span().merge(end_span);
 
-        Ok(Expr::Index(Box::new(IndexExpr {
+        Ok(self.arena.alloc(Expr::Index(self.arena.alloc(IndexExpr {
             object,
-            indices,
+            indices: indices.into_bump_slice(),
             span,
-        })))
+        }))))
     }
 
     /// Parse a single index item (can be named).
-    fn parse_index_item(&mut self) -> Result<IndexItem, ParseError> {
+    fn parse_index_item(&mut self) -> Result<IndexItem<'src, 'ast>, ParseError> {
         let start_span = self.peek().span;
 
         // Check for named index: identifier :
@@ -387,23 +386,23 @@ impl<'src> Parser<'src> {
     }
 
     /// Parse ternary conditional (condition ? then : else).
-    fn parse_ternary(&mut self, condition: Expr) -> Result<Expr, ParseError> {
+    fn parse_ternary(&mut self, condition: &'ast Expr<'src, 'ast>) -> Result<&'ast Expr<'src, 'ast>, ParseError> {
         self.expect(TokenKind::Question)?;
         let then_expr = self.parse_expr(0)?;
         self.expect(TokenKind::Colon)?;
         let else_expr = self.parse_expr(1)?; // Right-associative
         let span = condition.span().merge(else_expr.span());
 
-        Ok(Expr::Ternary(Box::new(TernaryExpr {
+        Ok(self.arena.alloc(Expr::Ternary(self.arena.alloc(TernaryExpr {
             condition,
             then_expr,
             else_expr,
             span,
-        })))
+        }))))
     }
 
     /// Parse cast expression: cast<Type>(expr)
-    fn parse_cast(&mut self) -> Result<Expr, ParseError> {
+    fn parse_cast(&mut self) -> Result<&'ast Expr<'src, 'ast>, ParseError> {
         let start_span = self.expect(TokenKind::Cast)?.span;
         self.expect(TokenKind::Less)?;
         let target_type = self.parse_type()?;
@@ -412,15 +411,15 @@ impl<'src> Parser<'src> {
         let expr = self.parse_expr(0)?;
         let end_span = self.expect(TokenKind::RightParen)?.span;
 
-        Ok(Expr::Cast(Box::new(CastExpr {
+        Ok(self.arena.alloc(Expr::Cast(self.arena.alloc(CastExpr {
             target_type,
             expr,
             span: start_span.merge(end_span),
-        })))
+        }))))
     }
 
     /// Parse lambda expression: function(params) { body }
-    fn parse_lambda(&mut self) -> Result<Expr, ParseError> {
+    fn parse_lambda(&mut self) -> Result<&'ast Expr<'src, 'ast>, ParseError> {
         let start_span = self.eat_contextual("function")
             .ok_or_else(|| {
                 let span = self.peek().span;
@@ -434,7 +433,7 @@ impl<'src> Parser<'src> {
 
         self.expect(TokenKind::LeftParen)?;
 
-        let mut params = Vec::new();
+        let mut params = bumpalo::collections::Vec::new_in(self.arena);
 
         // Parse parameters
         if !self.check(TokenKind::RightParen) {
@@ -450,18 +449,18 @@ impl<'src> Parser<'src> {
         // Parse body
         let body = self.parse_block()?;
 
-        let end_span = body.span.clone();
+        let end_span = body.span;
 
-        Ok(Expr::Lambda(Box::new(LambdaExpr {
-            params,
+        Ok(self.arena.alloc(Expr::Lambda(self.arena.alloc(LambdaExpr {
+            params: params.into_bump_slice(),
             return_type: None,
-            body: Box::new(body),
+            body: self.arena.alloc(body),
             span: start_span.merge(end_span),
-        })))
+        }))))
     }
 
     /// Parse a lambda parameter.
-    fn parse_lambda_param(&mut self) -> Result<LambdaParam, ParseError> {
+    fn parse_lambda_param(&mut self) -> Result<LambdaParam<'src, 'ast>, ParseError> {
         let start_span = self.peek().span;
 
         // Try to parse type
@@ -506,10 +505,10 @@ impl<'src> Parser<'src> {
     }
 
     /// Parse initializer list: { elements }
-    fn parse_init_list(&mut self) -> Result<Expr, ParseError> {
+    fn parse_init_list(&mut self) -> Result<&'ast Expr<'src, 'ast>, ParseError> {
         let start_span = self.expect(TokenKind::LeftBrace)?.span;
 
-        let mut elements = Vec::new();
+        let mut elements = bumpalo::collections::Vec::new_in(self.arena);
 
         // Parse elements
         if !self.check(TokenKind::RightBrace) {
@@ -525,18 +524,18 @@ impl<'src> Parser<'src> {
 
         let end_span = self.expect(TokenKind::RightBrace)?.span;
 
-        Ok(Expr::InitList(InitListExpr {
+        Ok(self.arena.alloc(Expr::InitList(InitListExpr {
             ty: None,
-            elements,
+            elements: elements.into_bump_slice(),
             span: start_span.merge(end_span),
-        }))
+        })))
     }
 
     /// Parse an initializer list element.
-    fn parse_init_element(&mut self) -> Result<InitElement, ParseError> {
+    fn parse_init_element(&mut self) -> Result<InitElement<'src, 'ast>, ParseError> {
         if self.check(TokenKind::LeftBrace) {
             // Nested initializer list
-            if let Expr::InitList(init_list) = self.parse_init_list()? {
+            if let Expr::InitList(init_list) = *self.parse_init_list()? {
                 Ok(InitElement::InitList(init_list))
             } else {
                 unreachable!()
@@ -555,7 +554,7 @@ impl<'src> Parser<'src> {
     /// - Scoped identifier: `Namespace::foo`
     /// - Type call (constructor or cast): `MyClass(args)`
     /// - Scoped type call: `Namespace::MyClass(args)`
-    fn parse_ident_or_constructor(&mut self) -> Result<Expr, ParseError> {
+    fn parse_ident_or_constructor(&mut self) -> Result<&'ast Expr<'src, 'ast>, ParseError> {
         let start_span = self.peek().span;
 
         // First check if this looks like a type call using lookahead
@@ -591,12 +590,12 @@ impl<'src> Parser<'src> {
 
                         ));
                     }
-                    
-                    Ok(Expr::Cast(Box::new(CastExpr {
+
+                    Ok(self.arena.alloc(Expr::Cast(self.arena.alloc(CastExpr {
                         target_type: ty,
-                        expr: args[0].value.clone(),
+                        expr: args[0].value,
                         span,
-                    })))
+                    }))))
                 } else {
                     // User-defined type: convert to Call expression
                     // The VM/interpreter will determine if this is a constructor or function call
@@ -615,17 +614,17 @@ impl<'src> Parser<'src> {
                         }
                     };
 
-                    let callee = Expr::Ident(IdentExpr {
+                    let callee = self.arena.alloc(Expr::Ident(IdentExpr {
                         scope,
                         ident,
                         span: ty.span,
-                    });
+                    }));
 
-                    Ok(Expr::Call(Box::new(CallExpr {
+                    Ok(self.arena.alloc(Expr::Call(self.arena.alloc(CallExpr {
                         callee,
                         args,
                         span,
-                    })))
+                    }))))
                 }
             } else {
                 // Lookahead said it was constructor call, but '(' is missing
@@ -647,7 +646,7 @@ impl<'src> Parser<'src> {
                 // Global scope: ::identifier
                 Some(Scope {
                     is_absolute: true,
-                    segments: Vec::new(),
+                    segments: &[],
                     span: start_span,
                 })
             } else {
@@ -658,37 +657,39 @@ impl<'src> Parser<'src> {
             let mut scope = scope;
             let mut ident_token = self.expect(TokenKind::Identifier)?;
             let mut ident = Ident::new(ident_token.lexeme, ident_token.span);
+            let mut segments = bumpalo::collections::Vec::new_in(self.arena);
 
             while self.check(TokenKind::ColonColon) && self.peek_nth(1).kind == TokenKind::Identifier {
                 // Build scope path
                 self.advance(); // consume ::
-                
+
                 if scope.is_none() {
                     scope = Some(Scope {
                         is_absolute: false,
-                        segments: Vec::new(),
+                        segments: &[],
                         span: start_span,
                     });
                 }
-                
-                scope.as_mut().unwrap().segments.push(ident.clone());
-                
+
+                segments.push(ident);
+
                 ident_token = self.advance();
                 ident = Ident::new(ident_token.lexeme, ident_token.span);
             }
 
-            // Update scope span to include all segments
+            // Update scope with segments and span
             if let Some(ref mut s) = scope {
+                s.segments = segments.into_bump_slice();
                 s.span = start_span.merge(ident.span);
             }
 
-            let span = ident.span.clone();
+            let span = ident.span;
 
-            Ok(Expr::Ident(IdentExpr {
+            Ok(self.arena.alloc(Expr::Ident(IdentExpr {
                 scope,
                 ident,
                 span: start_span.merge(span),
-            }))
+            })))
         }
     }
 
@@ -771,10 +772,10 @@ impl<'src> Parser<'src> {
     }
 
     /// Parse function arguments: (arg1, arg2, ...)
-    fn parse_arguments(&mut self) -> Result<Vec<Argument>, ParseError> {
+    fn parse_arguments(&mut self) -> Result<&'ast [Argument<'src, 'ast>], ParseError> {
         self.expect(TokenKind::LeftParen)?;
 
-        let mut args = Vec::new();
+        let mut args = bumpalo::collections::Vec::new_in(self.arena);
 
         if !self.check(TokenKind::RightParen) {
             args.push(self.parse_argument()?);
@@ -785,11 +786,11 @@ impl<'src> Parser<'src> {
         }
 
         self.expect(TokenKind::RightParen)?;
-        Ok(args)
+        Ok(args.into_bump_slice())
     }
 
     /// Parse a single argument (can be named).
-    fn parse_argument(&mut self) -> Result<Argument, ParseError> {
+    fn parse_argument(&mut self) -> Result<Argument<'src, 'ast>, ParseError> {
         let start_span = self.peek().span;
 
         // Check for named argument: identifier :
@@ -814,7 +815,9 @@ mod tests {
 
     #[test]
     fn parse_int_literal() {
-        let mut parser = Parser::new("42");
+        let arena = bumpalo::Bump::new();
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("42", &arena);
         let expr = parser.parse_expr(0).unwrap();
         match expr {
             Expr::Literal(lit) => {
@@ -826,7 +829,8 @@ mod tests {
 
     #[test]
     fn parse_binary_expr() {
-        let mut parser = Parser::new("1 + 2");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("1 + 2", &arena);
         let expr = parser.parse_expr(0).unwrap();
         match expr {
             Expr::Binary(bin) => {
@@ -839,7 +843,8 @@ mod tests {
     #[test]
     fn parse_precedence() {
         // 1 + 2 * 3 should parse as 1 + (2 * 3)
-        let mut parser = Parser::new("1 + 2 * 3");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("1 + 2 * 3", &arena);
         let expr = parser.parse_expr(0).unwrap();
         match expr {
             Expr::Binary(bin) => {
@@ -857,7 +862,8 @@ mod tests {
 
     #[test]
     fn parse_unary() {
-        let mut parser = Parser::new("-42");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("-42", &arena);
         let expr = parser.parse_expr(0).unwrap();
         match expr {
             Expr::Unary(un) => {
@@ -869,7 +875,8 @@ mod tests {
 
     #[test]
     fn parse_parenthesized() {
-        let mut parser = Parser::new("(42)");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("(42)", &arena);
         let expr = parser.parse_expr(0).unwrap();
         match expr {
             Expr::Paren(_) => {}
@@ -879,7 +886,8 @@ mod tests {
 
     #[test]
     fn parse_call() {
-        let mut parser = Parser::new("foo()");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("foo()", &arena);
         let expr = parser.parse_expr(0).unwrap();
         match expr {
             Expr::Call(_) => {}
@@ -889,7 +897,8 @@ mod tests {
 
     #[test]
     fn parse_member_access() {
-        let mut parser = Parser::new("obj.field");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("obj.field", &arena);
         let expr = parser.parse_expr(0).unwrap();
         match expr {
             Expr::Member(mem) => {
@@ -901,7 +910,8 @@ mod tests {
 
     #[test]
     fn parse_index() {
-        let mut parser = Parser::new("arr[0]");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("arr[0]", &arena);
         let expr = parser.parse_expr(0).unwrap();
         match expr {
             Expr::Index(_) => {}
@@ -911,7 +921,8 @@ mod tests {
 
     #[test]
     fn parse_ternary() {
-        let mut parser = Parser::new("a ? b : c");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("a ? b : c", &arena);
         let expr = parser.parse_expr(0).unwrap();
         match expr {
             Expr::Ternary(_) => {}
@@ -921,7 +932,8 @@ mod tests {
 
     #[test]
     fn parse_assignment() {
-        let mut parser = Parser::new("x = 42");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("x = 42", &arena);
         let expr = parser.parse_expr(0).unwrap();
         match expr {
             Expr::Assign(assign) => {
@@ -937,7 +949,8 @@ mod tests {
 
     #[test]
     fn parse_float_literal() {
-        let mut parser = Parser::new("3.14f");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("3.14f", &arena);
         let expr = parser.parse_expr(0).unwrap();
         match expr {
             Expr::Literal(lit) => {
@@ -953,7 +966,8 @@ mod tests {
 
     #[test]
     fn parse_double_literal() {
-        let mut parser = Parser::new("2.71828");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("2.71828", &arena);
         let expr = parser.parse_expr(0).unwrap();
         match expr {
             Expr::Literal(lit) => {
@@ -965,7 +979,8 @@ mod tests {
 
     #[test]
     fn parse_bits_literal_hex() {
-        let mut parser = Parser::new("0xFF");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("0xFF", &arena);
         let expr = parser.parse_expr(0).unwrap();
         match expr {
             Expr::Literal(lit) => {
@@ -977,7 +992,8 @@ mod tests {
 
     #[test]
     fn parse_bits_literal_binary() {
-        let mut parser = Parser::new("0b1010");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("0b1010", &arena);
         let expr = parser.parse_expr(0).unwrap();
         match expr {
             Expr::Literal(lit) => {
@@ -989,7 +1005,8 @@ mod tests {
 
     #[test]
     fn parse_bits_literal_octal() {
-        let mut parser = Parser::new("0o77");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("0o77", &arena);
         let expr = parser.parse_expr(0).unwrap();
         match expr {
             Expr::Literal(lit) => {
@@ -1001,11 +1018,12 @@ mod tests {
 
     #[test]
     fn parse_string_literal() {
-        let mut parser = Parser::new(r#""hello world""#);
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new(r#""hello world""#, &arena);
         let expr = parser.parse_expr(0).unwrap();
         match expr {
             Expr::Literal(lit) => {
-                if let LiteralKind::String(s) = lit.kind {
+                if let LiteralKind::String(s) = &lit.kind {
                     assert_eq!(s, "hello world");
                 } else {
                     panic!("Expected string literal");
@@ -1017,7 +1035,8 @@ mod tests {
 
     #[test]
     fn parse_true_literal() {
-        let mut parser = Parser::new("true");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("true", &arena);
         let expr = parser.parse_expr(0).unwrap();
         match expr {
             Expr::Literal(lit) => {
@@ -1029,7 +1048,8 @@ mod tests {
 
     #[test]
     fn parse_false_literal() {
-        let mut parser = Parser::new("false");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("false", &arena);
         let expr = parser.parse_expr(0).unwrap();
         match expr {
             Expr::Literal(lit) => {
@@ -1041,7 +1061,8 @@ mod tests {
 
     #[test]
     fn parse_null_literal() {
-        let mut parser = Parser::new("null");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("null", &arena);
         let expr = parser.parse_expr(0).unwrap();
         match expr {
             Expr::Literal(lit) => {
@@ -1084,7 +1105,8 @@ mod tests {
 
         for (op_str, expected_op) in operators {
             let source = format!("a {} b", op_str);
-            let mut parser = Parser::new(&source);
+            let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new(&source, &arena);
             let expr = parser.parse_expr(0).unwrap();
             match expr {
                 Expr::Binary(bin) => {
@@ -1116,7 +1138,8 @@ mod tests {
 
         for (op_str, expected_op) in operators {
             let source = format!("{}x", op_str);
-            let mut parser = Parser::new(&source);
+            let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new(&source, &arena);
             let expr = parser.parse_expr(0).unwrap();
             match expr {
                 Expr::Unary(un) => {
@@ -1137,7 +1160,8 @@ mod tests {
 
     #[test]
     fn parse_postfix_increment() {
-        let mut parser = Parser::new("x++");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("x++", &arena);
         let expr = parser.parse_expr(0).unwrap();
         match expr {
             Expr::Postfix(post) => {
@@ -1149,7 +1173,8 @@ mod tests {
 
     #[test]
     fn parse_postfix_decrement() {
-        let mut parser = Parser::new("x--");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("x--", &arena);
         let expr = parser.parse_expr(0).unwrap();
         match expr {
             Expr::Postfix(post) => {
@@ -1182,7 +1207,8 @@ mod tests {
 
         for (op_str, expected_op) in operators {
             let source = format!("x {} 42", op_str);
-            let mut parser = Parser::new(&source);
+            let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new(&source, &arena);
             let expr = parser.parse_expr(0).unwrap();
             match expr {
                 Expr::Assign(assign) => {
@@ -1203,7 +1229,8 @@ mod tests {
 
     #[test]
     fn parse_call_with_args() {
-        let mut parser = Parser::new("obj.foo(1, 2, 3)");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("obj.foo(1, 2, 3)", &arena);
         let expr = parser.parse_expr(0).unwrap();
         match expr {
             Expr::Member(mem) => {
@@ -1220,7 +1247,8 @@ mod tests {
 
     #[test]
     fn parse_call_empty_args() {
-        let mut parser = Parser::new("obj.bar()");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("obj.bar()", &arena);
         let expr = parser.parse_expr(0).unwrap();
         match expr {
             Expr::Member(mem) => {
@@ -1237,7 +1265,8 @@ mod tests {
 
     #[test]
     fn parse_named_argument() {
-        let mut parser = Parser::new("obj.foo(x: 42)");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("obj.foo(x: 42)", &arena);
         let expr = parser.parse_expr(0).unwrap();
         match expr {
             Expr::Member(mem) => {
@@ -1255,7 +1284,8 @@ mod tests {
 
     #[test]
     fn parse_method_call() {
-        let mut parser = Parser::new("obj.method()");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("obj.method()", &arena);
         let expr = parser.parse_expr(0).unwrap();
         match expr {
             Expr::Member(mem) => {
@@ -1267,7 +1297,8 @@ mod tests {
 
     #[test]
     fn parse_chained_member_access() {
-        let mut parser = Parser::new("a.b.c");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("a.b.c", &arena);
         let expr = parser.parse_expr(0).unwrap();
         // Should parse as ((a.b).c)
         match expr {
@@ -1287,7 +1318,8 @@ mod tests {
 
     #[test]
     fn parse_index_single() {
-        let mut parser = Parser::new("arr[0]");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("arr[0]", &arena);
         let expr = parser.parse_expr(0).unwrap();
         match expr {
             Expr::Index(idx) => {
@@ -1299,7 +1331,8 @@ mod tests {
 
     #[test]
     fn parse_index_multiple() {
-        let mut parser = Parser::new("matrix[i, j]");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("matrix[i, j]", &arena);
         let expr = parser.parse_expr(0).unwrap();
         match expr {
             Expr::Index(idx) => {
@@ -1311,7 +1344,8 @@ mod tests {
 
     #[test]
     fn parse_named_index() {
-        let mut parser = Parser::new("dict[key: x]");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("dict[key: x]", &arena);
         let expr = parser.parse_expr(0).unwrap();
         match expr {
             Expr::Index(idx) => {
@@ -1324,7 +1358,8 @@ mod tests {
 
     #[test]
     fn parse_empty_index() {
-        let mut parser = Parser::new("arr[]");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("arr[]", &arena);
         let expr = parser.parse_expr(0).unwrap();
         match expr {
             Expr::Index(idx) => {
@@ -1340,7 +1375,8 @@ mod tests {
 
     #[test]
     fn parse_cast_expression() {
-        let mut parser = Parser::new("cast<int>(3.14)");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("cast<int>(3.14)", &arena);
         let expr = parser.parse_expr(0).unwrap();
         match expr {
             Expr::Cast(_) => {}
@@ -1350,7 +1386,8 @@ mod tests {
 
     #[test]
     fn parse_primitive_cast_via_constructor() {
-        let mut parser = Parser::new("int(3.14)");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("int(3.14)", &arena);
         let expr = parser.parse_expr(0).unwrap();
         match expr {
             Expr::Cast(_) => {}
@@ -1360,7 +1397,8 @@ mod tests {
 
     #[test]
     fn parse_constructor_expression() {
-        let mut parser = Parser::new("MyClass(1, 2)");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("MyClass(1, 2)", &arena);
         let expr = parser.parse_expr(0).unwrap();
         match expr {
             Expr::Call(call) => {
@@ -1383,7 +1421,8 @@ mod tests {
 
     #[test]
     fn parse_lambda_no_params() {
-        let mut parser = Parser::new("function() { return 42; }");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("function() { return 42; }", &arena);
         let expr = parser.parse_expr(0).unwrap();
         match expr {
             Expr::Lambda(lambda) => {
@@ -1396,7 +1435,8 @@ mod tests {
 
     #[test]
     fn parse_lambda_with_params() {
-        let mut parser = Parser::new("function(int x, int y) { return x + y; }");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("function(int x, int y) { return x + y; }", &arena);
         let expr = parser.parse_expr(0).unwrap();
         match expr {
             Expr::Lambda(lambda) => {
@@ -1408,7 +1448,8 @@ mod tests {
 
     #[test]
     fn parse_lambda_with_return_type() {
-        let mut parser = Parser::new("function() { return 42; }");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("function() { return 42; }", &arena);
         let expr = parser.parse_expr(0).unwrap();
         match expr {
             Expr::Lambda(lambda) => {
@@ -1425,7 +1466,8 @@ mod tests {
 
     #[test]
     fn parse_init_list_simple() {
-        let mut parser = Parser::new("{ 1, 2, 3 }");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("{ 1, 2, 3 }", &arena);
         let expr = parser.parse_expr(0).unwrap();
         match expr {
             Expr::InitList(init) => {
@@ -1437,7 +1479,8 @@ mod tests {
 
     #[test]
     fn parse_init_list_empty() {
-        let mut parser = Parser::new("{ }");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("{ }", &arena);
         let expr = parser.parse_expr(0).unwrap();
         match expr {
             Expr::InitList(init) => {
@@ -1449,7 +1492,8 @@ mod tests {
 
     #[test]
     fn parse_init_list_nested() {
-        let mut parser = Parser::new("{ {1, 2}, {3, 4} }");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("{ {1, 2}, {3, 4} }", &arena);
         let expr = parser.parse_expr(0).unwrap();
         match expr {
             Expr::InitList(init) => {
@@ -1465,7 +1509,8 @@ mod tests {
 
     #[test]
     fn parse_init_list_trailing_comma() {
-        let mut parser = Parser::new("{ 1, 2, }");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("{ 1, 2, }", &arena);
         let expr = parser.parse_expr(0).unwrap();
         match expr {
             Expr::InitList(init) => {
@@ -1481,7 +1526,8 @@ mod tests {
 
     #[test]
     fn parse_simple_identifier() {
-        let mut parser = Parser::new("myVar");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("myVar", &arena);
         let expr = parser.parse_expr(0).unwrap();
         match expr {
             Expr::Ident(ident) => {
@@ -1494,7 +1540,8 @@ mod tests {
 
     #[test]
     fn parse_scoped_identifier() {
-        let mut parser = Parser::new("Namespace::myVar");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("Namespace::myVar", &arena);
         let expr = parser.parse_expr(0).unwrap();
         match expr {
             Expr::Ident(ident) => {
@@ -1509,7 +1556,8 @@ mod tests {
 
     #[test]
     fn parse_global_scoped_identifier() {
-        let mut parser = Parser::new("::globalVar");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("::globalVar", &arena);
         let expr = parser.parse_expr(0).unwrap();
         match expr {
             Expr::Ident(ident) => {
@@ -1523,7 +1571,8 @@ mod tests {
 
     #[test]
     fn parse_deeply_nested_scope() {
-        let mut parser = Parser::new("A::B::C::var");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("A::B::C::var", &arena);
         let expr = parser.parse_expr(0).unwrap();
         match expr {
             Expr::Ident(ident) => {
@@ -1542,7 +1591,8 @@ mod tests {
     #[test]
     fn parse_precedence_mul_over_add() {
         // 1 + 2 * 3 should parse as 1 + (2 * 3)
-        let mut parser = Parser::new("1 + 2 * 3");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("1 + 2 * 3", &arena);
         let expr = parser.parse_expr(0).unwrap();
         match expr {
             Expr::Binary(bin) => {
@@ -1562,7 +1612,8 @@ mod tests {
     #[test]
     fn parse_precedence_parentheses() {
         // (1 + 2) * 3 should parse as (1 + 2) * 3
-        let mut parser = Parser::new("(1 + 2) * 3");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("(1 + 2) * 3", &arena);
         let expr = parser.parse_expr(0).unwrap();
         match expr {
             Expr::Binary(bin) => {
@@ -1580,7 +1631,8 @@ mod tests {
     #[test]
     fn parse_right_associative_ternary() {
         // a ? b : c ? d : e should parse as a ? b : (c ? d : e)
-        let mut parser = Parser::new("a ? b : c ? d : e");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("a ? b : c ? d : e", &arena);
         let expr = parser.parse_expr(0).unwrap();
         match expr {
             Expr::Ternary(tern) => {
@@ -1600,7 +1652,8 @@ mod tests {
 
     #[test]
     fn parse_complex_chained_expression() {
-        let mut parser = Parser::new("obj.method(1, 2)[0].field++");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("obj.method(1, 2)[0].field++", &arena);
         let expr = parser.parse_expr(0).unwrap();
         // Should parse as (((obj.method(1,2))[0]).field)++
         match expr {
@@ -1611,7 +1664,8 @@ mod tests {
 
     #[test]
     fn parse_mixed_operators() {
-        let mut parser = Parser::new("a + b * c - d / e");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("a + b * c - d / e", &arena);
         let expr = parser.parse_expr(0).unwrap();
         // Should respect precedence: (a + (b * c)) - (d / e)
         match expr {
@@ -1626,7 +1680,8 @@ mod tests {
 
     #[test]
     fn parse_expr_invalid_start() {
-        let mut parser = Parser::new(";");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new(";", &arena);
         let result = parser.parse_expr(0);
         assert!(result.is_err());
         // Record the error so we can check it
@@ -1638,7 +1693,8 @@ mod tests {
 
     #[test]
     fn parse_primitive_cast_wrong_arg_count() {
-        let mut parser = Parser::new("int(1, 2)");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("int(1, 2)", &arena);
         let result = parser.parse_expr(0);
         assert!(result.is_err());
         // Record the error so we can check it

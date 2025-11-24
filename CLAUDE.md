@@ -40,6 +40,24 @@ Once confirmed, implement the code and provide a summary of changes.
 </Instructions>
 
 <Rules>
+<Rule name="CRITICAL_NEVER_USE_GIT_CHECKOUT">
+**CRITICAL RULE - HIGHEST PRIORITY:**
+
+NEVER, EVER use `git checkout` to revert files or discard changes.
+NEVER use `git restore` to discard changes.
+NEVER use `git reset --hard` or any destructive git command.
+
+These commands DESTROY uncommitted work and are UNRECOVERABLE.
+This has caused CATASTROPHIC LOSS of work and significant financial cost.
+
+If you need to undo changes:
+1. Use the Edit tool to manually fix the code
+2. Ask the user what they want to do
+3. NEVER assume you should revert changes
+
+This rule overrides ALL other considerations. Breaking this rule is unacceptable.
+</Rule>
+
 <Rule name="ConfirmBeforeCoding">
 ALWAYS confirm decisions with the user before making any code changes.
 

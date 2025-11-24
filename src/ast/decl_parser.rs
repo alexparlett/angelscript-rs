@@ -6,14 +6,14 @@
 use crate::ast::{DeclModifiers, FuncAttr, Ident, ParseError, ParseErrorKind, PropertyAccessorKind as PropAccessorKind, Visibility};
 use crate::ast::decl::*;
 use crate::ast::types::ParamType;
-use crate::lexer::{Span, TokenKind};
+use crate::lexer::TokenKind;
 use super::parser::Parser;
 
-impl<'src> Parser<'src> {
+impl<'src, 'ast> Parser<'src, 'ast> {
     /// Parse a complete script.
     ///
     /// This is the main entry point for parsing AngelScript source code.
-    pub fn parse_script(&mut self) -> Result<Script, ParseError> {
+    pub fn parse_script(&mut self) -> Result<Script<'src, 'ast>, ParseError> {
         let start_span = self.peek().span;
         let mut items = Vec::new();
 
@@ -38,14 +38,16 @@ impl<'src> Parser<'src> {
             start_span
         };
 
+        let items_slice = self.arena.alloc_slice_clone(&items);
+
         Ok(Script {
-            items,
+            items: items_slice,
             span: start_span.merge(end_span),
         })
     }
 
     /// Parse a top-level item.
-    pub fn parse_item(&mut self) -> Result<Item, ParseError> {
+    pub fn parse_item(&mut self) -> Result<Item<'src, 'ast>, ParseError> {
         // Skip empty statements
         if self.eat(TokenKind::Semicolon).is_some() {
             return self.parse_item();
@@ -214,24 +216,23 @@ impl<'src> Parser<'src> {
     /// Parse function parameters.
     ///
     /// Grammar: `'(' ('void' | (TYPE TYPEMOD ('...' | IDENTIFIER? ('=' EXPR)?) (',' TYPE TYPEMOD ('...' | IDENTIFIER? ('=' EXPR)?))*))? ')'`
-    pub fn parse_function_params(&mut self) -> Result<Vec<FunctionParam>, ParseError> {
+    pub fn parse_function_params(&mut self) -> Result<&'ast [FunctionParam<'src, 'ast>], ParseError> {
         self.expect(TokenKind::LeftParen)?;
-
-        let mut params = Vec::new();
 
         // Check for void or empty parameter list
         if self.check(TokenKind::RightParen) {
             self.advance();
-            return Ok(params);
+            return Ok(self.arena.alloc_slice_copy(&[]));
         }
 
         // Check for explicit void
         if self.eat(TokenKind::Void).is_some() {
             self.expect(TokenKind::RightParen)?;
-            return Ok(params);
+            return Ok(self.arena.alloc_slice_copy(&[]));
         }
 
-        // Parse parameters
+        // Parse parameters into a standard Vec first
+        let mut params = Vec::new();
         params.push(self.parse_function_param()?);
 
         while self.eat(TokenKind::Comma).is_some() {
@@ -239,11 +240,13 @@ impl<'src> Parser<'src> {
         }
 
         self.expect(TokenKind::RightParen)?;
-        Ok(params)
+
+        // Now allocate in arena
+        Ok(self.arena.alloc_slice_copy(&params))
     }
 
     /// Parse a single function parameter.
-    fn parse_function_param(&mut self) -> Result<FunctionParam, ParseError> {
+    fn parse_function_param(&mut self) -> Result<FunctionParam<'src, 'ast>, ParseError> {
         let start_span = self.peek().span;
 
         // Check for variadic parameter (...)
@@ -324,7 +327,7 @@ impl<'src> Parser<'src> {
         &mut self,
         modifiers: DeclModifiers,
         visibility: Visibility,
-    ) -> Result<Item, ParseError> {
+    ) -> Result<Item<'src, 'ast>, ParseError> {
         let start_span = self.peek().span;
 
         // Check for destructor (~ClassName)
@@ -351,7 +354,7 @@ impl<'src> Parser<'src> {
         let template_params = if self.check(TokenKind::Less) {
             self.parse_template_param_names()?
         } else {
-            Vec::new()
+            self.arena.alloc_slice_copy(&[])
         };
 
         // Disambiguate: function has '(', variable has '=' or ';'
@@ -435,7 +438,8 @@ mod tests {
 
     #[test]
     fn parse_simple_function() {
-        let mut parser = Parser::new("void foo() { }");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("void foo() { }", &arena);
         let item = parser.parse_item().unwrap();
         match item {
             Item::Function(func) => {
@@ -448,7 +452,8 @@ mod tests {
 
     #[test]
     fn parse_function_with_params() {
-        let mut parser = Parser::new("int add(int a, int b) { return a + b; }");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("int add(int a, int b) { return a + b; }", &arena);
         let item = parser.parse_item().unwrap();
         match item {
             Item::Function(func) => {
@@ -460,7 +465,8 @@ mod tests {
 
     #[test]
     fn parse_function_with_default_param() {
-        let mut parser = Parser::new("void foo(int x = 42) { }");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("void foo(int x = 42) { }", &arena);
         let item = parser.parse_item().unwrap();
         match item {
             Item::Function(func) => {
@@ -473,7 +479,8 @@ mod tests {
 
     #[test]
     fn parse_const_method() {
-        let mut parser = Parser::new("int getValue() const { return 42; }");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("int getValue() const { return 42; }", &arena);
         let item = parser.parse_item().unwrap();
         match item {
             Item::Function(func) => {
@@ -485,7 +492,8 @@ mod tests {
 
     #[test]
     fn parse_global_var() {
-        let mut parser = Parser::new("int globalCounter = 0;");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("int globalCounter = 0;", &arena);
         let item = parser.parse_item().unwrap();
         match item {
             Item::GlobalVar(var) => {
@@ -498,7 +506,8 @@ mod tests {
 
     #[test]
     fn parse_destructor() {
-        let mut parser = Parser::new("~MyClass() { }");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("~MyClass() { }", &arena);
         let item = parser.parse_item().unwrap();
         match item {
             Item::Function(func) => {
@@ -515,7 +524,8 @@ mod tests {
 
     #[test]
     fn parse_shared_modifier() {
-        let mut parser = Parser::new("shared class Foo { }");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("shared class Foo { }", &arena);
         let item = parser.parse_item().unwrap();
         match item {
             Item::Class(class) => {
@@ -527,7 +537,8 @@ mod tests {
 
     #[test]
     fn parse_external_modifier() {
-        let mut parser = Parser::new("external void foo();");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("external void foo();", &arena);
         let item = parser.parse_item().unwrap();
         match item {
             Item::Function(func) => {
@@ -539,7 +550,8 @@ mod tests {
 
     #[test]
     fn parse_abstract_modifier() {
-        let mut parser = Parser::new("abstract class Base { }");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("abstract class Base { }", &arena);
         let item = parser.parse_item().unwrap();
         match item {
             Item::Class(class) => {
@@ -551,7 +563,8 @@ mod tests {
 
     #[test]
     fn parse_final_modifier() {
-        let mut parser = Parser::new("final class Sealed { }");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("final class Sealed { }", &arena);
         let item = parser.parse_item().unwrap();
         match item {
             Item::Class(class) => {
@@ -563,7 +576,8 @@ mod tests {
 
     #[test]
     fn parse_multiple_modifiers() {
-        let mut parser = Parser::new("shared final class Foo { }");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("shared final class Foo { }", &arena);
         let item = parser.parse_item().unwrap();
         match item {
             Item::Class(class) => {
@@ -576,7 +590,8 @@ mod tests {
 
     #[test]
     fn parse_private_visibility() {
-        let mut parser = Parser::new("private int x = 0;");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("private int x = 0;", &arena);
         let item = parser.parse_item().unwrap();
         match item {
             Item::GlobalVar(var) => {
@@ -588,7 +603,8 @@ mod tests {
 
     #[test]
     fn parse_protected_visibility() {
-        let mut parser = Parser::new("protected void foo() { }");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("protected void foo() { }", &arena);
         let item = parser.parse_item().unwrap();
         match item {
             Item::Function(func) => {
@@ -600,7 +616,8 @@ mod tests {
 
     #[test]
     fn parse_default_public_visibility() {
-        let mut parser = Parser::new("void foo() { }");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("void foo() { }", &arena);
         let item = parser.parse_item().unwrap();
         match item {
             Item::Function(func) => {
@@ -616,7 +633,8 @@ mod tests {
 
     #[test]
     fn parse_override_attribute() {
-        let mut parser = Parser::new("void foo() override { }");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("void foo() override { }", &arena);
         let item = parser.parse_item().unwrap();
         match item {
             Item::Function(func) => {
@@ -628,7 +646,8 @@ mod tests {
 
     #[test]
     fn parse_final_attribute() {
-        let mut parser = Parser::new("void foo() final { }");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("void foo() final { }", &arena);
         let item = parser.parse_item().unwrap();
         match item {
             Item::Function(func) => {
@@ -640,7 +659,8 @@ mod tests {
 
     #[test]
     fn parse_explicit_attribute() {
-        let mut parser = Parser::new("MyClass(int x) explicit { }");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("MyClass(int x) explicit { }", &arena);
         let item = parser.parse_class_member().unwrap();
         match item {
             ClassMember::Method(func) => {
@@ -652,7 +672,8 @@ mod tests {
 
     #[test]
     fn parse_property_attribute() {
-        let mut parser = Parser::new("void setValue(int v) property { }");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("void setValue(int v) property { }", &arena);
         let item = parser.parse_class_member().unwrap();
         match item {
             ClassMember::Method(func) => {
@@ -664,7 +685,8 @@ mod tests {
 
     #[test]
     fn parse_delete_attribute() {
-        let mut parser = Parser::new("class MyClass { MyClass(const MyClass& in) delete; }");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("class MyClass { MyClass(const MyClass& in) delete; }", &arena);
         let item = parser.parse_item().unwrap();
         match item {
             Item::Class(class) => {
@@ -688,7 +710,8 @@ mod tests {
 
     #[test]
     fn parse_function_void_params() {
-        let mut parser = Parser::new("void foo(void) { }");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("void foo(void) { }", &arena);
         let item = parser.parse_item().unwrap();
         match item {
             Item::Function(func) => {
@@ -700,7 +723,8 @@ mod tests {
 
     #[test]
     fn parse_function_no_params() {
-        let mut parser = Parser::new("void foo() { }");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("void foo() { }", &arena);
         let item = parser.parse_item().unwrap();
         match item {
             Item::Function(func) => {
@@ -712,7 +736,8 @@ mod tests {
 
     #[test]
     fn parse_function_unnamed_param() {
-        let mut parser = Parser::new("void foo(int) { }");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("void foo(int) { }", &arena);
         let item = parser.parse_item().unwrap();
         match item {
             Item::Function(func) => {
@@ -725,7 +750,8 @@ mod tests {
 
     #[test]
     fn parse_function_variadic() {
-        let mut parser = Parser::new("void printf(const string& in fmt, ...) { }");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("void printf(const string& in fmt, ...) { }", &arena);
         let item = parser.parse_item().unwrap();
         match item {
             Item::Function(func) => {
@@ -738,7 +764,8 @@ mod tests {
 
     #[test]
     fn parse_function_template_params() {
-        let mut parser = Parser::new("void swap<T>(T& inout a, T& inout b) { }");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("void swap<T>(T& inout a, T& inout b) { }", &arena);
         let item = parser.parse_item().unwrap();
         match item {
             Item::Function(func) => {
@@ -751,7 +778,8 @@ mod tests {
 
     #[test]
     fn parse_function_declaration_only() {
-        let mut parser = Parser::new("void foo();");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("void foo();", &arena);
         let item = parser.parse_item().unwrap();
         match item {
             Item::Function(func) => {
@@ -767,7 +795,8 @@ mod tests {
 
     #[test]
     fn parse_class_forward_declaration() {
-        let mut parser = Parser::new("class Foo;");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("class Foo;", &arena);
         let item = parser.parse_item().unwrap();
         match item {
             Item::Class(class) => {
@@ -780,7 +809,8 @@ mod tests {
 
     #[test]
     fn parse_class_with_inheritance() {
-        let mut parser = Parser::new("class Derived : Base { }");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("class Derived : Base { }", &arena);
         let item = parser.parse_item().unwrap();
         match item {
             Item::Class(class) => {
@@ -793,7 +823,8 @@ mod tests {
 
     #[test]
     fn parse_class_multiple_inheritance() {
-        let mut parser = Parser::new("class Multi : Base1, Base2, Base3 { }");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("class Multi : Base1, Base2, Base3 { }", &arena);
         let item = parser.parse_item().unwrap();
         match item {
             Item::Class(class) => {
@@ -805,7 +836,8 @@ mod tests {
 
     #[test]
     fn parse_class_template() {
-        let mut parser = Parser::new("class Container<T> { }");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("class Container<T> { }", &arena);
         let item = parser.parse_item().unwrap();
         match item {
             Item::Class(class) => {
@@ -818,11 +850,12 @@ mod tests {
 
     #[test]
     fn parse_class_with_constructor() {
+        let arena = bumpalo::Bump::new();
         let mut parser = Parser::new(r#"
             class Point {
                 Point(int x, int y) { }
             }
-        "#);
+        "#, &arena);
         let item = parser.parse_item().unwrap();
         match item {
             Item::Class(class) => {
@@ -840,11 +873,12 @@ mod tests {
 
     #[test]
     fn parse_class_with_destructor() {
+        let arena = bumpalo::Bump::new();
         let mut parser = Parser::new(r#"
             class Foo {
                 ~Foo() { }
             }
-        "#);
+        "#, &arena);
         let item = parser.parse_item().unwrap();
         match item {
             Item::Class(class) => {
@@ -862,11 +896,12 @@ mod tests {
 
     #[test]
     fn parse_class_with_field() {
+        let arena = bumpalo::Bump::new();
         let mut parser = Parser::new(r#"
             class Data {
                 int value;
             }
-        "#);
+        "#, &arena);
         let item = parser.parse_item().unwrap();
         match item {
             Item::Class(class) => {
@@ -882,11 +917,12 @@ mod tests {
 
     #[test]
     fn parse_class_with_field_initializer() {
+        let arena = bumpalo::Bump::new();
         let mut parser = Parser::new(r#"
             class Data {
                 int value = 42;
             }
-        "#);
+        "#, &arena);
         let item = parser.parse_item().unwrap();
         match item {
             Item::Class(class) => {
@@ -903,11 +939,12 @@ mod tests {
 
     #[test]
     fn parse_class_with_method() {
+        let arena = bumpalo::Bump::new();
         let mut parser = Parser::new(r#"
             class Calculator {
                 int add(int a, int b) { return a + b; }
             }
-        "#);
+        "#, &arena);
         let item = parser.parse_item().unwrap();
         match item {
             Item::Class(class) => {
@@ -926,11 +963,12 @@ mod tests {
 
     #[test]
     fn parse_class_with_const_method() {
+        let arena = bumpalo::Bump::new();
         let mut parser = Parser::new(r#"
             class Foo {
                 int getValue() const { return 0; }
             }
-        "#);
+        "#, &arena);
         let item = parser.parse_item().unwrap();
         match item {
             Item::Class(class) => {
@@ -947,6 +985,7 @@ mod tests {
 
     #[test]
     fn parse_class_with_virtual_property() {
+        let arena = bumpalo::Bump::new();
         let mut parser = Parser::new(r#"
             class Foo {
                 int Value {
@@ -954,7 +993,7 @@ mod tests {
                     set { }
                 }
             }
-        "#);
+        "#, &arena);
         let item = parser.parse_item().unwrap();
         match item {
             Item::Class(class) => {
@@ -972,11 +1011,12 @@ mod tests {
 
     #[test]
     fn parse_class_with_funcdef() {
+        let arena = bumpalo::Bump::new();
         let mut parser = Parser::new(r#"
             class Foo {
                 funcdef void Callback(int x);
             }
-        "#);
+        "#, &arena);
         let item = parser.parse_item().unwrap();
         match item {
             Item::Class(class) => {
@@ -992,13 +1032,14 @@ mod tests {
 
     #[test]
     fn parse_class_member_visibility() {
+        let arena = bumpalo::Bump::new();
         let mut parser = Parser::new(r#"
             class Foo {
                 private int privateField;
                 protected int protectedField;
                 int publicField;
             }
-        "#);
+        "#, &arena);
         let item = parser.parse_item().unwrap();
         match item {
             Item::Class(class) => {
@@ -1026,7 +1067,8 @@ mod tests {
 
     #[test]
     fn parse_interface_simple() {
-        let mut parser = Parser::new("interface IFoo { }");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("interface IFoo { }", &arena);
         let item = parser.parse_item().unwrap();
         match item {
             Item::Interface(iface) => {
@@ -1039,7 +1081,8 @@ mod tests {
 
     #[test]
     fn parse_interface_forward_declaration() {
-        let mut parser = Parser::new("interface IFoo;");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("interface IFoo;", &arena);
         let item = parser.parse_item().unwrap();
         match item {
             Item::Interface(iface) => {
@@ -1052,7 +1095,8 @@ mod tests {
 
     #[test]
     fn parse_interface_with_base() {
-        let mut parser = Parser::new("interface IDerived : IBase { }");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("interface IDerived : IBase { }", &arena);
         let item = parser.parse_item().unwrap();
         match item {
             Item::Interface(iface) => {
@@ -1064,11 +1108,12 @@ mod tests {
 
     #[test]
     fn parse_interface_with_method() {
+        let arena = bumpalo::Bump::new();
         let mut parser = Parser::new(r#"
             interface IFoo {
                 void doSomething();
             }
-        "#);
+        "#, &arena);
         let item = parser.parse_item().unwrap();
         match item {
             Item::Interface(iface) => {
@@ -1084,11 +1129,12 @@ mod tests {
 
     #[test]
     fn parse_interface_with_virtual_property() {
+        let arena = bumpalo::Bump::new();
         let mut parser = Parser::new(r#"
             interface IFoo {
                 int Value { get const; set; }
             }
-        "#);
+        "#, &arena);
         let item = parser.parse_item().unwrap();
         match item {
             Item::Interface(iface) => {
@@ -1108,7 +1154,8 @@ mod tests {
 
     #[test]
     fn parse_enum_simple() {
-        let mut parser = Parser::new("enum Color { Red, Green, Blue }");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("enum Color { Red, Green, Blue }", &arena);
         let item = parser.parse_item().unwrap();
         match item {
             Item::Enum(e) => {
@@ -1121,7 +1168,8 @@ mod tests {
 
     #[test]
     fn parse_enum_with_values() {
-        let mut parser = Parser::new("enum Value { A = 1, B = 2, C = 4 }");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("enum Value { A = 1, B = 2, C = 4 }", &arena);
         let item = parser.parse_item().unwrap();
         match item {
             Item::Enum(e) => {
@@ -1136,7 +1184,8 @@ mod tests {
 
     #[test]
     fn parse_enum_trailing_comma() {
-        let mut parser = Parser::new("enum Foo { A, B, C, }");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("enum Foo { A, B, C, }", &arena);
         let item = parser.parse_item().unwrap();
         match item {
             Item::Enum(e) => {
@@ -1148,7 +1197,8 @@ mod tests {
 
     #[test]
     fn parse_enum_forward_declaration() {
-        let mut parser = Parser::new("enum Foo;");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("enum Foo;", &arena);
         let item = parser.parse_item().unwrap();
         match item {
             Item::Enum(e) => {
@@ -1165,7 +1215,8 @@ mod tests {
 
     #[test]
     fn parse_namespace_simple() {
-        let mut parser = Parser::new("namespace Foo { }");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("namespace Foo { }", &arena);
         let item = parser.parse_item().unwrap();
         match item {
             Item::Namespace(ns) => {
@@ -1179,7 +1230,8 @@ mod tests {
 
     #[test]
     fn parse_namespace_nested_path() {
-        let mut parser = Parser::new("namespace A::B::C { }");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("namespace A::B::C { }", &arena);
         let item = parser.parse_item().unwrap();
         match item {
             Item::Namespace(ns) => {
@@ -1191,12 +1243,13 @@ mod tests {
 
     #[test]
     fn parse_namespace_with_contents() {
+        let arena = bumpalo::Bump::new();
         let mut parser = Parser::new(r#"
             namespace Foo {
                 void bar() { }
                 int x = 0;
             }
-        "#);
+        "#, &arena);
         let item = parser.parse_item().unwrap();
         match item {
             Item::Namespace(ns) => {
@@ -1212,7 +1265,8 @@ mod tests {
 
     #[test]
     fn parse_typedef_simple() {
-        let mut parser = Parser::new("typedef int MyInt;");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("typedef int MyInt;", &arena);
         let item = parser.parse_item().unwrap();
         match item {
             Item::Typedef(td) => {
@@ -1224,7 +1278,8 @@ mod tests {
 
     #[test]
     fn parse_typedef_complex() {
-        let mut parser = Parser::new("typedef array<int>@ IntArrayHandle;");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("typedef array<int>@ IntArrayHandle;", &arena);
         let item = parser.parse_item().unwrap();
         match item {
             Item::Typedef(td) => {
@@ -1240,7 +1295,8 @@ mod tests {
 
     #[test]
     fn parse_funcdef_simple() {
-        let mut parser = Parser::new("funcdef void Callback();");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("funcdef void Callback();", &arena);
         let item = parser.parse_item().unwrap();
         match item {
             Item::Funcdef(fd) => {
@@ -1253,7 +1309,8 @@ mod tests {
 
     #[test]
     fn parse_funcdef_with_params() {
-        let mut parser = Parser::new("funcdef void EventHandler(int eventId, string data);");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("funcdef void EventHandler(int eventId, string data);", &arena);
         let item = parser.parse_item().unwrap();
         match item {
             Item::Funcdef(fd) => {
@@ -1265,7 +1322,8 @@ mod tests {
 
     #[test]
     fn parse_funcdef_template() {
-        let mut parser = Parser::new("funcdef void Handler<T>(T value);");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("funcdef void Handler<T>(T value);", &arena);
         let item = parser.parse_item().unwrap();
         match item {
             Item::Funcdef(fd) => {
@@ -1281,7 +1339,8 @@ mod tests {
 
     #[test]
     fn parse_import_simple() {
-        let mut parser = Parser::new(r#"import void foo() from "module";"#);
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new(r#"import void foo() from "module";"#, &arena);
         let item = parser.parse_item().unwrap();
         match item {
             Item::Import(imp) => {
@@ -1294,7 +1353,8 @@ mod tests {
 
     #[test]
     fn parse_import_with_params() {
-        let mut parser = Parser::new(r#"import int add(int a, int b) from "math";"#);
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new(r#"import int add(int a, int b) from "math";"#, &arena);
         let item = parser.parse_item().unwrap();
         match item {
             Item::Import(imp) => {
@@ -1310,7 +1370,8 @@ mod tests {
 
     #[test]
     fn parse_mixin() {
-        let mut parser = Parser::new("mixin class Foo { }");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("mixin class Foo { }", &arena);
         let item = parser.parse_item();
         match item {
             Ok(Item::Mixin(mix)) => {
@@ -1326,37 +1387,40 @@ mod tests {
 
     #[test]
     fn parse_script_empty() {
-        let mut parser = Parser::new("");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("", &arena);
         let script = parser.parse_script().unwrap();
         assert_eq!(script.items.len(), 0);
     }
 
     #[test]
     fn parse_script_multiple_items() {
+        let arena = bumpalo::Bump::new();
         let mut parser = Parser::new(r#"
             void foo() { }
             int x = 0;
             class Bar { }
-        "#);
+        "#, &arena);
         let script = parser.parse_script().unwrap();
         assert_eq!(script.items.len(), 3);
     }
 
     #[test]
     fn parse_script_with_semicolons() {
+        let arena = bumpalo::Bump::new();
         let mut parser = Parser::new(r#"
             ;;
             void foo() { }
             ;
             int x = 0;
             ;;
-        "#);
+        "#, &arena);
         let script = parser.parse_script().unwrap();
         assert_eq!(script.items.len(), 2);
     }
 }
 
-impl<'src> Parser<'src> {
+impl<'src, 'ast> Parser<'src, 'ast> {
     /// Parse a class declaration.
     ///
     /// Grammar: `'class' IDENTIFIER ((':' IDENTIFIER (',' IDENTIFIER)*)? '{' (VIRTPROP | FUNC | VAR | FUNCDEF)* '}')?`
@@ -1364,7 +1428,7 @@ impl<'src> Parser<'src> {
         &mut self,
         modifiers: DeclModifiers,
         _visibility: Visibility,
-    ) -> Result<Item, ParseError> {
+    ) -> Result<Item<'src, 'ast>, ParseError> {
         let start_span = self.expect(TokenKind::Class)?.span;
 
         let name_token = self.expect(TokenKind::Identifier)?;
@@ -1374,38 +1438,46 @@ impl<'src> Parser<'src> {
         // Example: class Container<T> { }
         // Note: Scripts cannot define template classes, but parser accepts them
         // Semantic analyzer will reject template class definitions in scripts
-        let template_params = if self.check(TokenKind::Less) {
-            self.parse_template_param_names()?
+        let template_params_vec: Vec<Ident<'src>> = if self.check(TokenKind::Less) {
+            let result = self.parse_template_param_names()?;
+            result.to_vec()
         } else {
             Vec::new()
         };
 
         // Optional inheritance
-        let inheritance = if self.eat(TokenKind::Colon).is_some() {
-            let mut bases = Vec::new();
-            bases.push(self.parse_ident()?);
-
-            while self.eat(TokenKind::Comma).is_some() {
-                bases.push(self.parse_ident()?);
-            }
-            bases
+        let inheritance_slice = if self.eat(TokenKind::Colon).is_some() {
+            let inheritance_vec = self.parse_ident_list()?;
+            self.arena.alloc_slice_copy(&inheritance_vec)
         } else {
-            Vec::new()
+            self.arena.alloc_slice_copy::<Ident>(&[])
         };
 
         // Check for forward declaration (just semicolon)
-        if self.eat(TokenKind::Semicolon).is_some() {
+        let is_forward_decl = self.check(TokenKind::Semicolon);
+        let end_token_pos = if is_forward_decl {
+            let pos = self.position.saturating_sub(1);
+            self.advance();
+            Some(pos)
+        } else {
+            None
+        };
+
+        if is_forward_decl {
             let span = start_span.merge(
-                self.buffer.get(self.position.saturating_sub(1))
+                self.buffer.get(end_token_pos.unwrap())
                     .map(|t| t.span)
                     .unwrap_or(start_span)
             );
+            let template_params = self.arena.alloc_slice_copy(&template_params_vec);
+            let inheritance = inheritance_slice;
+            let members = self.arena.alloc_slice_copy(&[]);
             return Ok(Item::Class(ClassDecl {
                 modifiers,
                 name,
-                template_params: template_params.clone(),
+                template_params,
                 inheritance,
-                members: Vec::new(),
+                members,
                 span,
             }));
         }
@@ -1428,19 +1500,22 @@ impl<'src> Parser<'src> {
         }
 
         let end_span = self.expect(TokenKind::RightBrace)?.span;
+        let template_params = self.arena.alloc_slice_copy(&template_params_vec);
+        let inheritance = inheritance_slice;
+        let members_slice = self.arena.alloc_slice_copy(&members);
 
         Ok(Item::Class(ClassDecl {
             modifiers,
             name,
             template_params,
             inheritance,
-            members,
+            members: members_slice,
             span: start_span.merge(end_span),
         }))
     }
 
     /// Parse a class member.
-    fn parse_class_member(&mut self) -> Result<ClassMember, ParseError> {
+    fn parse_class_member(&mut self) -> Result<ClassMember<'src, 'ast>, ParseError> {
         // Parse visibility and modifiers
         let visibility = self.parse_visibility()?;
         let modifiers = self.parse_modifiers()?;
@@ -1494,7 +1569,7 @@ impl<'src> Parser<'src> {
         let template_params = if self.check(TokenKind::Less) {
             self.parse_template_param_names()?
         } else {
-            Vec::new()
+            self.arena.alloc_slice_copy(&[])
         };
 
         if self.check(TokenKind::LeftBrace) {
@@ -1519,12 +1594,13 @@ impl<'src> Parser<'src> {
             }
 
             let end_span = self.expect(TokenKind::RightBrace)?.span;
+            let accessors_slice = self.arena.alloc_slice_copy(&accessors);
 
             Ok(ClassMember::VirtualProperty(VirtualPropertyDecl {
                 visibility,
                 ty: return_type.unwrap(),
                 name,
-                accessors,
+                accessors: accessors_slice,
                 span: ty_start.merge(end_span),
             }))
         } else if self.check(TokenKind::LeftParen) {
@@ -1594,7 +1670,7 @@ impl<'src> Parser<'src> {
     }
 
     /// Parse a property accessor (get or set).
-    fn parse_property_accessor(&mut self) -> Result<PropertyAccessor, ParseError> {
+    fn parse_property_accessor(&mut self) -> Result<PropertyAccessor<'src, 'ast>, ParseError> {
         let start_span = self.peek().span;
 
         // Parse accessor kind
@@ -1643,37 +1719,43 @@ impl<'src> Parser<'src> {
     }
 
     /// Parse an interface declaration.
-    pub fn parse_interface(&mut self, modifiers: DeclModifiers) -> Result<Item, ParseError> {
+    pub fn parse_interface(&mut self, modifiers: DeclModifiers) -> Result<Item<'src, 'ast>, ParseError> {
         let start_span = self.expect(TokenKind::Interface)?.span;
 
         let name_token = self.expect(TokenKind::Identifier)?;
         let name = Ident::new(name_token.lexeme, name_token.span);
 
         // Optional base interfaces
-        let bases = if self.eat(TokenKind::Colon).is_some() {
-            let mut bases = Vec::new();
-            bases.push(self.parse_ident()?);
-
-            while self.eat(TokenKind::Comma).is_some() {
-                bases.push(self.parse_ident()?);
-            }
-            bases
+        let bases_slice = if self.eat(TokenKind::Colon).is_some() {
+            let bases_vec = self.parse_ident_list()?;
+            self.arena.alloc_slice_copy(&bases_vec)
         } else {
-            Vec::new()
+            self.arena.alloc_slice_copy::<Ident>(&[])
         };
 
         // Check for forward declaration
-        if self.eat(TokenKind::Semicolon).is_some() {
+        let is_forward_decl = self.check(TokenKind::Semicolon);
+        let end_token_pos = if is_forward_decl {
+            let pos = self.position.saturating_sub(1);
+            self.advance();
+            Some(pos)
+        } else {
+            None
+        };
+
+        if is_forward_decl {
             let span = start_span.merge(
-                self.buffer.get(self.position.saturating_sub(1))
+                self.buffer.get(end_token_pos.unwrap())
                     .map(|t| t.span)
                     .unwrap_or(start_span)
             );
+            let bases = bases_slice;
+            let members = self.arena.alloc_slice_copy(&[]);
             return Ok(Item::Interface(InterfaceDecl {
                 modifiers,
                 name,
                 bases,
-                members: Vec::new(),
+                members,
                 span,
             }));
         }
@@ -1696,18 +1778,20 @@ impl<'src> Parser<'src> {
         }
 
         let end_span = self.expect(TokenKind::RightBrace)?.span;
+        let bases = bases_slice;
+        let members_slice = self.arena.alloc_slice_copy(&members);
 
         Ok(Item::Interface(InterfaceDecl {
             modifiers,
             name,
             bases,
-            members,
+            members: members_slice,
             span: start_span.merge(end_span),
         }))
     }
 
     /// Parse an interface member.
-    fn parse_interface_member(&mut self) -> Result<InterfaceMember, ParseError> {
+    fn parse_interface_member(&mut self) -> Result<InterfaceMember<'src, 'ast>, ParseError> {
         let start_span = self.peek().span;
 
         let return_type = self.parse_return_type()?;
@@ -1724,12 +1808,13 @@ impl<'src> Parser<'src> {
             }
 
             let end_span = self.expect(TokenKind::RightBrace)?.span;
+            let accessors_slice = self.arena.alloc_slice_copy(&accessors);
 
             Ok(InterfaceMember::VirtualProperty(VirtualPropertyDecl {
                 visibility: Visibility::Public,
                 ty: return_type,
                 name,
-                accessors,
+                accessors: accessors_slice,
                 span: start_span.merge(end_span),
             }))
         } else {
@@ -1749,7 +1834,7 @@ impl<'src> Parser<'src> {
     }
 
     /// Parse an enum declaration.
-    pub fn parse_enum(&mut self, modifiers: DeclModifiers) -> Result<Item, ParseError> {
+    pub fn parse_enum(&mut self, modifiers: DeclModifiers) -> Result<Item<'src, 'ast>, ParseError> {
         let start_span = self.expect(TokenKind::Enum)?.span;
 
         let name_token = self.expect(TokenKind::Identifier)?;
@@ -1765,7 +1850,7 @@ impl<'src> Parser<'src> {
             return Ok(Item::Enum(EnumDecl {
                 modifiers,
                 name,
-                enumerators: Vec::new(),
+                enumerators: self.arena.alloc_slice_copy(&[]),
                 span,
             }));
         }
@@ -1787,17 +1872,18 @@ impl<'src> Parser<'src> {
         }
 
         let end_span = self.expect(TokenKind::RightBrace)?.span;
+        let enumerators_slice = self.arena.alloc_slice_copy(&enumerators);
 
         Ok(Item::Enum(EnumDecl {
             modifiers,
             name,
-            enumerators,
+            enumerators: enumerators_slice,
             span: start_span.merge(end_span),
         }))
     }
 
     /// Parse an enumerator.
-    fn parse_enumerator(&mut self) -> Result<Enumerator, ParseError> {
+    fn parse_enumerator(&mut self) -> Result<Enumerator<'src, 'ast>, ParseError> {
         let name_token = self.expect(TokenKind::Identifier)?;
         let name = Ident::new(name_token.lexeme, name_token.span);
 
@@ -1817,16 +1903,12 @@ impl<'src> Parser<'src> {
     }
 
     /// Parse a namespace declaration.
-    pub fn parse_namespace(&mut self) -> Result<Item, ParseError> {
+    pub fn parse_namespace(&mut self) -> Result<Item<'src, 'ast>, ParseError> {
         let start_span = self.expect(TokenKind::Namespace)?.span;
 
         // Parse namespace path (can be nested: A::B::C)
-        let mut path = Vec::new();
-        path.push(self.parse_ident()?);
-
-        while self.eat(TokenKind::ColonColon).is_some() {
-            path.push(self.parse_ident()?);
-        }
+        let path_vec = self.parse_namespace_path()?;
+        let path_slice = self.arena.alloc_slice_copy(&path_vec);
 
         self.expect(TokenKind::LeftBrace)?;
 
@@ -1846,16 +1928,17 @@ impl<'src> Parser<'src> {
         }
 
         let end_span = self.expect(TokenKind::RightBrace)?.span;
+        let items_slice = self.arena.alloc_slice_clone(&items);
 
         Ok(Item::Namespace(NamespaceDecl {
-            path,
-            items,
+            path: path_slice,
+            items: items_slice,
             span: start_span.merge(end_span),
         }))
     }
 
     /// Parse a typedef declaration.
-    pub fn parse_typedef(&mut self) -> Result<Item, ParseError> {
+    pub fn parse_typedef(&mut self) -> Result<Item<'src, 'ast>, ParseError> {
         let start_span = self.expect(TokenKind::Typedef)?.span;
 
         let base_type = self.parse_type()?;
@@ -1871,7 +1954,7 @@ impl<'src> Parser<'src> {
     }
 
     /// Parse a funcdef declaration.
-    pub fn parse_funcdef(&mut self, modifiers: DeclModifiers) -> Result<Item, ParseError> {
+    pub fn parse_funcdef(&mut self, modifiers: DeclModifiers) -> Result<Item<'src, 'ast>, ParseError> {
         let start_span = self.expect(TokenKind::FuncDef)?.span;
 
         let return_type = self.parse_return_type()?;
@@ -1884,7 +1967,7 @@ impl<'src> Parser<'src> {
         let template_params = if self.check(TokenKind::Less) {
             self.parse_template_param_names()?
         } else {
-            Vec::new()
+            self.arena.alloc_slice_copy(&[])
         };
 
         let params = self.parse_function_params()?;
@@ -1901,7 +1984,7 @@ impl<'src> Parser<'src> {
     }
 
     /// Parse a mixin declaration.
-    pub fn parse_mixin(&mut self) -> Result<Item, ParseError> {
+    pub fn parse_mixin(&mut self) -> Result<Item<'src, 'ast>, ParseError> {
         let start_span = self.eat(TokenKind::Mixin)
             .ok_or_else(|| {
                 let span = self.peek().span;
@@ -1924,7 +2007,7 @@ impl<'src> Parser<'src> {
     }
 
     /// Parse an import declaration.
-    pub fn parse_import(&mut self) -> Result<Item, ParseError> {
+    pub fn parse_import(&mut self) -> Result<Item<'src, 'ast>, ParseError> {
         let start_span = self.expect(TokenKind::Import)?.span;
 
         let return_type = self.parse_return_type()?;
@@ -1970,27 +2053,60 @@ impl<'src> Parser<'src> {
         Ok(Ident::new(token.lexeme, token.span))
     }
 
+    /// Parse a comma-separated list of identifiers.
+    fn parse_ident_list(&mut self) -> Result<Vec<Ident<'src>>, ParseError> {
+        let mut tokens = Vec::new();
+        loop {
+            let token = self.expect(TokenKind::Identifier)?;
+            tokens.push((token.lexeme, token.span));
+            if !self.check(TokenKind::Comma) {
+                break;
+            }
+            self.eat(TokenKind::Comma);
+        }
+        // Convert tokens to Idents after all parsing is done
+        Ok(tokens.into_iter().map(|(name, span)| Ident::new(name, span)).collect())
+    }
+
+    /// Parse a ::-separated list of identifiers (namespace path).
+    fn parse_namespace_path(&mut self) -> Result<Vec<Ident<'src>>, ParseError> {
+        let mut tokens = Vec::new();
+        let token = self.expect(TokenKind::Identifier)?;
+        tokens.push((token.lexeme, token.span));
+        while self.eat(TokenKind::ColonColon).is_some() {
+            let token = self.expect(TokenKind::Identifier)?;
+            tokens.push((token.lexeme, token.span));
+        }
+        // Convert tokens to Idents after all parsing is done
+        Ok(tokens.into_iter().map(|(name, span)| Ident::new(name, span)).collect())
+    }
+
     /// Parse template parameter names for class/funcdef declarations.
     ///
     /// This is used for application-registered template types.
     /// Scripts cannot define template classes/functions, but the parser accepts them.
     ///
     /// Example: `<T>`, `<T, U>`, `<K, V>`
-    fn parse_template_param_names(&mut self) -> Result<Vec<Ident>, ParseError> {
+    fn parse_template_param_names(&mut self) -> Result<&'ast [Ident<'src>], ParseError> {
         self.expect(TokenKind::Less)?;
 
-        let mut params = Vec::new();
+        let mut tokens = Vec::new();
 
         if !self.check(TokenKind::Greater) {
-            params.push(self.parse_ident()?);
+            let token = self.expect(TokenKind::Identifier)?;
+            tokens.push((token.lexeme, token.span));
 
             while self.eat(TokenKind::Comma).is_some() {
-                params.push(self.parse_ident()?);
+                let token = self.expect(TokenKind::Identifier)?;
+                tokens.push((token.lexeme, token.span));
             }
         }
 
         self.expect(TokenKind::Greater)?;
 
-        Ok(params)
+        // Convert tokens to Idents after all parsing is done
+        let params: Vec<Ident<'src>> = tokens.into_iter().map(|(name, span)| Ident::new(name, span)).collect();
+        let result = self.arena.alloc_slice_copy(&params);
+        Ok(result)
     }
 }

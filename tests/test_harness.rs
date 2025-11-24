@@ -11,7 +11,7 @@ use std::path::PathBuf;
 /// Test result that includes parsed AST and any errors
 #[derive(Debug)]
 pub struct TestResult {
-    pub script: Script,
+    pub script: ParsedScript,
     pub errors: Vec<ParseError>,
     pub source: String,
 }
@@ -62,12 +62,13 @@ impl TestResult {
 
     /// Get the number of top-level items in the script
     pub fn item_count(&self) -> usize {
-        self.script.items.len()
+        self.script.script().items.len()
     }
 
     /// Get items of a specific type
     pub fn get_functions(&self) -> Vec<&FunctionDecl> {
         self.script
+            .script()
             .items
             .iter()
             .filter_map(|item| {
@@ -82,6 +83,7 @@ impl TestResult {
 
     pub fn get_classes(&self) -> Vec<&ClassDecl> {
         self.script
+            .script()
             .items
             .iter()
             .filter_map(|item| {
@@ -96,6 +98,7 @@ impl TestResult {
 
     pub fn get_interfaces(&self) -> Vec<&InterfaceDecl> {
         self.script
+            .script()
             .items
             .iter()
             .filter_map(|item| {
@@ -110,6 +113,7 @@ impl TestResult {
 
     pub fn get_enums(&self) -> Vec<&EnumDecl> {
         self.script
+            .script()
             .items
             .iter()
             .filter_map(|item| {
@@ -124,6 +128,7 @@ impl TestResult {
 
     pub fn get_global_vars(&self) -> Vec<&GlobalVarDecl> {
         self.script
+            .script()
             .items
             .iter()
             .filter_map(|item| {
@@ -167,8 +172,8 @@ impl AstCounter {
     }
 
     /// Count nodes in a script
-    pub fn count_script(mut self, script: &Script) -> Self {
-        for item in &script.items {
+    pub fn count_script(mut self, script: &ParsedScript) -> Self {
+        for item in script.script().items {
             self.count_item(item);
         }
         self
@@ -184,7 +189,7 @@ impl AstCounter {
             }
             Item::Class(c) => {
                 self.class_count += 1;
-                for member in &c.members {
+                for member in c.members {
                     if let ClassMember::Method(m) = member {
                         self.function_count += 1;
                         if let Some(body) = &m.body {
@@ -195,7 +200,7 @@ impl AstCounter {
             }
             Item::Namespace(ns) => {
                 // ✅ NEW: Recursively count items inside the namespace
-                for item in &ns.items {
+                for item in ns.items {
                     self.count_item(item);
                 }
             }
@@ -204,7 +209,7 @@ impl AstCounter {
     }
 
     fn count_block(&mut self, block: &Block) {
-        for stmt in &block.stmts {
+        for stmt in block.stmts {
             self.count_stmt(stmt);
         }
     }
@@ -229,7 +234,7 @@ impl AstCounter {
                 if let Some(init) = &s.init {
                     match init {
                         ForInit::VarDecl(v) => {
-                            for var in &v.vars {
+                            for var in v.vars {
                                 if let Some(init_expr) = &var.init {
                                     self.count_expr(init_expr);
                                 }
@@ -241,7 +246,7 @@ impl AstCounter {
                 if let Some(cond) = &s.condition {
                     self.count_expr(cond);
                 }
-                for update in &s.update {
+                for update in s.update {
                     self.count_expr(update);
                 }
                 self.count_stmt(&s.body);
@@ -253,7 +258,7 @@ impl AstCounter {
             }
             Stmt::Block(b) => self.count_block(b),
             Stmt::VarDecl(v) => {
-                for var in &v.vars {
+                for var in v.vars {
                     if let Some(init) = &var.init {
                         self.count_expr(init);
                     }
@@ -273,14 +278,14 @@ impl AstCounter {
             Expr::Call(c) => {
                 self.call_count += 1;
                 self.count_expr(&c.callee);
-                for arg in &c.args {
+                for arg in c.args {
                     self.count_expr(&arg.value);
                 }
             }
             Expr::Unary(u) => self.count_expr(&u.operand),
             Expr::Index(i) => {
                 self.count_expr(&i.object);
-                for idx in &i.indices {
+                for idx in i.indices {
                     self.count_expr(&idx.index);
                 }
             }

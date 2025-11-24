@@ -56,9 +56,23 @@ pub use parser::Parser;
 pub use stmt::*;
 pub use types::*;
 
+/// Container for a parsed script that owns its arena.
+#[derive(Debug)]
+pub struct ParsedScript {
+    arena: bumpalo::Bump,
+    pub script: Script<'static, 'static>,
+}
+
+impl ParsedScript {
+    /// Get a reference to the script.
+    pub fn script(&self) -> &Script<'static, 'static> {
+        &self.script
+    }
+}
+
 /// Parse AngelScript source code into an AST.
 ///
-/// Returns `Ok(Script)` if parsing succeeds with no errors, or `Err(ParseErrors)`
+/// Returns `Ok(ParsedScript)` if parsing succeeds with no errors, or `Err(ParseErrors)`
 /// if any errors occurred during parsing.
 ///
 /// # Example
@@ -76,16 +90,17 @@ pub use types::*;
 /// "#;
 ///
 /// match parse(source) {
-///     Ok(script) => {
-///         println!("Parsed {} items", script.items.len());
+///     Ok(parsed) => {
+///         println!("Parsed {} items", parsed.script.items.len());
 ///     }
 ///     Err(errors) => {
 ///         eprintln!("Parse errors: {}", errors);
 ///     }
 /// }
 /// ```
-pub fn parse(source: &str) -> Result<Script, ParseErrors> {
-    let mut parser = Parser::new(source);
+pub fn parse(source: &str) -> Result<ParsedScript, ParseErrors> {
+    let arena = bumpalo::Bump::new();
+    let mut parser = Parser::new(source, &arena);
 
     let result = parser.parse_script();
 
@@ -106,7 +121,12 @@ pub fn parse(source: &str) -> Result<Script, ParseErrors> {
             if parser.has_errors() {
                 Err(parser.take_errors())
             } else {
-                Ok(script)
+                // SAFETY: The script borrows from the arena, and we're moving both into ParsedScript.
+                // The arena will live as long as the ParsedScript, so the references remain valid.
+                // We transmute the lifetime to 'static temporarily, then back to the proper lifetime
+                // when ParsedScript is used.
+                let script = unsafe { std::mem::transmute::<Script<'_, '_>, Script<'static, 'static>>(script) };
+                Ok(ParsedScript { arena, script })
             }
         }
         Err(err) => {
@@ -118,11 +138,11 @@ pub fn parse(source: &str) -> Result<Script, ParseErrors> {
 
 /// Parse AngelScript source code leniently, returning both the AST and any errors.
 ///
-/// This function always returns a `Script`, even if errors occurred. The script
+/// This function always returns a `ParsedScript`, even if errors occurred. The script
 /// may be incomplete, but it can still be useful for analysis, error recovery,
 /// or partial processing.
 ///
-/// Returns a tuple of `(Script, Vec<ParseError>)` where the error vector may be empty.
+/// Returns a tuple of `(ParsedScript, Vec<ParseError>)` where the error vector may be empty.
 ///
 /// # Example
 ///
@@ -138,13 +158,13 @@ pub fn parse(source: &str) -> Result<Script, ParseErrors> {
 ///     }
 /// "#;
 ///
-/// let (script, errors) = parse_lenient(source);
+/// let (parsed, errors) = parse_lenient(source);
 ///
-/// println!("Parsed {} items", script.items.len());
+/// println!("Parsed {} items", parsed.script.items.len());
 /// println!("Found {} errors", errors.len());
 ///
 /// // Can still work with the partial AST
-/// for item in &script.items {
+/// for item in parsed.script.items {
 ///     // Process items...
 /// }
 ///
@@ -153,13 +173,14 @@ pub fn parse(source: &str) -> Result<Script, ParseErrors> {
 ///     eprintln!("Warning: {}", error);
 /// }
 /// ```
-pub fn parse_lenient(source: &str) -> (Script, Vec<ParseError>) {
-    let mut parser = Parser::new(source);
+pub fn parse_lenient(source: &str) -> (ParsedScript, Vec<ParseError>) {
+    let arena = bumpalo::Bump::new();
+    let mut parser = Parser::new(source, &arena);
 
     let script = parser.parse_script().unwrap_or_else(|err| {
         parser.errors.push(err);
         Script {
-            items: Vec::new(),
+            items: &[],
             span: crate::lexer::Span::new(1, 1, 0),
         }
     });
@@ -177,7 +198,50 @@ pub fn parse_lenient(source: &str) -> (Script, Vec<ParseError>) {
 
     let errors = parser.take_errors().into_vec();
 
-    (script, errors)
+    // SAFETY: The script borrows from the arena, and we're moving both into ParsedScript.
+    // The arena will live as long as the ParsedScript, so the references remain valid.
+    let script = unsafe { std::mem::transmute::<Script<'_, '_>, Script<'static, 'static>>(script) };
+
+    (ParsedScript { arena, script }, errors)
+}
+
+/// Container for a parsed expression that owns its arena.
+pub struct ParsedExpr {
+    arena: bumpalo::Bump,
+    pub expr: &'static Expr<'static, 'static>,
+}
+
+impl ParsedExpr {
+    /// Get a reference to the expression.
+    pub fn expr(&self) -> &Expr<'static, 'static> {
+        self.expr
+    }
+}
+
+/// Container for a parsed statement that owns its arena.
+pub struct ParsedStmt {
+    arena: bumpalo::Bump,
+    pub stmt: Stmt<'static, 'static>,
+}
+
+impl ParsedStmt {
+    /// Get a reference to the statement.
+    pub fn stmt(&self) -> &Stmt<'static, 'static> {
+        &self.stmt
+    }
+}
+
+/// Container for a parsed type expression that owns its arena.
+pub struct ParsedTypeExpr {
+    arena: bumpalo::Bump,
+    pub type_expr: TypeExpr<'static, 'static>,
+}
+
+impl ParsedTypeExpr {
+    /// Get a reference to the type expression.
+    pub fn type_expr(&self) -> &TypeExpr<'static, 'static> {
+        &self.type_expr
+    }
 }
 
 /// Parse a single expression from source code.
@@ -190,12 +254,13 @@ pub fn parse_lenient(source: &str) -> (Script, Vec<ParseError>) {
 /// use angelscript::parse_expression;
 ///
 /// match parse_expression("1 + 2 * 3") {
-///     Ok(expr) => println!("Parsed expression successfully"),
+///     Ok(parsed) => println!("Parsed expression successfully"),
 ///     Err(errors) => eprintln!("Errors: {}", errors),
 /// }
 /// ```
-pub fn parse_expression(source: &str) -> Result<Expr, ParseErrors> {
-    let mut parser = Parser::new(source);
+pub fn parse_expression(source: &str) -> Result<ParsedExpr, ParseErrors> {
+    let arena = bumpalo::Bump::new();
+    let mut parser = Parser::new(source, &arena);
 
     let result = parser.parse_expr(0);
 
@@ -215,7 +280,10 @@ pub fn parse_expression(source: &str) -> Result<Expr, ParseErrors> {
             if parser.has_errors() {
                 Err(parser.take_errors())
             } else {
-                Ok(expr)
+                // SAFETY: The expr borrows from the arena, and we're moving both into ParsedExpr.
+                // The arena will live as long as the ParsedExpr, so the references remain valid.
+                let expr = unsafe { std::mem::transmute::<&Expr<'_, '_>, &'static Expr<'static, 'static>>(expr) };
+                Ok(ParsedExpr { arena, expr })
             }
         }
         Err(err) => {
@@ -239,8 +307,9 @@ pub fn parse_expression(source: &str) -> Result<Expr, ParseErrors> {
 ///     Err(errors) => eprintln!("Errors: {}", errors),
 /// }
 /// ```
-pub fn parse_statement(source: &str) -> Result<Stmt, ParseErrors> {
-    let mut parser = Parser::new(source);
+pub fn parse_statement(source: &str) -> Result<ParsedStmt, ParseErrors> {
+    let arena = bumpalo::Bump::new();
+    let mut parser = Parser::new(source, &arena);
 
     let result = parser.parse_statement();
 
@@ -260,7 +329,10 @@ pub fn parse_statement(source: &str) -> Result<Stmt, ParseErrors> {
             if parser.has_errors() {
                 Err(parser.take_errors())
             } else {
-                Ok(stmt)
+                // SAFETY: The stmt borrows from the arena, and we're moving both into ParsedStmt.
+                // The arena will live as long as the ParsedStmt, so the references remain valid.
+                let stmt = unsafe { std::mem::transmute::<Stmt<'_, '_>, Stmt<'static, 'static>>(stmt) };
+                Ok(ParsedStmt { arena, stmt })
             }
         }
         Err(err) => {
@@ -284,8 +356,9 @@ pub fn parse_statement(source: &str) -> Result<Stmt, ParseErrors> {
 ///     Err(errors) => eprintln!("Errors: {}", errors),
 /// }
 /// ```
-pub fn parse_type_expr(source: &str) -> Result<TypeExpr, ParseErrors> {
-    let mut parser = Parser::new(source);
+pub fn parse_type_expr(source: &str) -> Result<ParsedTypeExpr, ParseErrors> {
+    let arena = bumpalo::Bump::new();
+    let mut parser = Parser::new(source, &arena);
 
     let result = parser.parse_type();
 
@@ -301,11 +374,14 @@ pub fn parse_type_expr(source: &str) -> Result<TypeExpr, ParseErrors> {
     }
 
     match result {
-        Ok(ty) => {
+        Ok(type_expr) => {
             if parser.has_errors() {
                 Err(parser.take_errors())
             } else {
-                Ok(ty)
+                // SAFETY: The type_expr borrows from the arena, and we're moving both into ParsedTypeExpr.
+                // The arena will live as long as the ParsedTypeExpr, so the references remain valid.
+                let type_expr = unsafe { std::mem::transmute::<TypeExpr<'_, '_>, TypeExpr<'static, 'static>>(type_expr) };
+                Ok(ParsedTypeExpr { arena, type_expr })
             }
         }
         Err(err) => {
@@ -325,7 +401,7 @@ mod tests {
         let result = parse(source);
         assert!(result.is_ok());
         let script = result.unwrap();
-        assert_eq!(script.items.len(), 1);
+        assert_eq!(script.script.items.len(), 1);
     }
 
     #[test]
@@ -341,7 +417,7 @@ mod tests {
         let result = parse(source);
         assert!(result.is_ok());
         let script = result.unwrap();
-        assert_eq!(script.items.len(), 1);
+        assert_eq!(script.script.items.len(), 1);
     }
 
     #[test]
@@ -364,7 +440,7 @@ mod tests {
         // Should have errors but still parse something
         assert!(!errors.is_empty());
         // Should recover and parse the second declaration
-        assert!(!script.items.is_empty());
+        assert!(!script.script.items.is_empty());
     }
 
     #[test]
@@ -373,7 +449,7 @@ mod tests {
         let (script, errors) = parse_lenient(source);
 
         assert!(errors.is_empty());
-        assert_eq!(script.items.len(), 1);
+        assert_eq!(script.script.items.len(), 1);
     }
 
     #[test]
@@ -472,7 +548,7 @@ mod tests {
         assert!(result.is_ok(), "Failed to parse complete program");
 
         let script = result.unwrap();
-        assert_eq!(script.items.len(), 3); // namespace, global var, function
+        assert_eq!(script.script.items.len(), 3); // namespace, global var, function
     }
 
     #[test]
@@ -532,7 +608,7 @@ mod tests {
         assert!(result.is_ok());
 
         let script = result.unwrap();
-        assert_eq!(script.items.len(), 2);
+        assert_eq!(script.script.items.len(), 2);
     }
 
     #[test]
@@ -616,6 +692,6 @@ mod tests {
         assert!(result.is_ok());
 
         let script = result.unwrap();
-        assert_eq!(script.items.len(), 3);
+        assert_eq!(script.script.items.len(), 3);
     }
 }

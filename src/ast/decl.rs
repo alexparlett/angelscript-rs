@@ -17,39 +17,39 @@ use crate::lexer::Span;
 
 /// A script (top-level AST node).
 #[derive(Debug, Clone, PartialEq)]
-pub struct Script {
+pub struct Script<'src, 'ast> {
     /// Top-level items
-    pub items: Vec<Item>,
+    pub items: &'ast [Item<'src, 'ast>],
     /// Source location
     pub span: Span,
 }
 
 /// A top-level item in a script.
 #[derive(Debug, Clone, PartialEq)]
-pub enum Item {
+pub enum Item<'src, 'ast> {
     /// Function declaration
-    Function(FunctionDecl),
+    Function(FunctionDecl<'src, 'ast>),
     /// Class declaration
-    Class(ClassDecl),
+    Class(ClassDecl<'src, 'ast>),
     /// Interface declaration
-    Interface(InterfaceDecl),
+    Interface(InterfaceDecl<'src, 'ast>),
     /// Enum declaration
-    Enum(EnumDecl),
+    Enum(EnumDecl<'src, 'ast>),
     /// Global variable declaration
-    GlobalVar(GlobalVarDecl),
+    GlobalVar(GlobalVarDecl<'src, 'ast>),
     /// Namespace declaration
-    Namespace(NamespaceDecl),
+    Namespace(NamespaceDecl<'src, 'ast>),
     /// Typedef declaration
-    Typedef(TypedefDecl),
+    Typedef(TypedefDecl<'src, 'ast>),
     /// Funcdef declaration
-    Funcdef(FuncdefDecl),
+    Funcdef(FuncdefDecl<'src, 'ast>),
     /// Mixin declaration
-    Mixin(MixinDecl),
+    Mixin(MixinDecl<'src, 'ast>),
     /// Import statement
-    Import(ImportDecl),
+    Import(ImportDecl<'src, 'ast>),
 }
 
-impl Item {
+impl<'src, 'ast> Item<'src, 'ast> {
     /// Get the span of this item.
     pub fn span(&self) -> Span {
         match self {
@@ -74,34 +74,34 @@ impl Item {
 /// - `int add(int a, int b) { return a + b; }`
 /// - `void method() const { }`
 /// - `~MyClass() { }` (destructor)
-#[derive(Debug, Clone, PartialEq)]
-pub struct FunctionDecl {
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct FunctionDecl<'src, 'ast> {
     /// Declaration modifiers (shared, external)
     pub modifiers: DeclModifiers,
     /// Visibility (for class members)
     pub visibility: Visibility,
     /// Return type (None for constructors/destructors)
-    pub return_type: Option<ReturnType>,
+    pub return_type: Option<ReturnType<'src, 'ast>>,
     /// Function name
-    pub name: Ident,
+    pub name: Ident<'src>,
     /// Template parameters (for application-registered template functions)
     /// Example: swap<T> has template_params = ["T"]
-    pub template_params: Vec<Ident>,
+    pub template_params: &'ast [Ident<'src>],
     /// Parameters
-    pub params: Vec<FunctionParam>,
+    pub params: &'ast [FunctionParam<'src, 'ast>],
     /// Whether this is a const method
     pub is_const: bool,
     /// Function attributes (override, final, etc.)
     pub attrs: FuncAttr,
     /// Body (None for declarations without implementation)
-    pub body: Option<Block>,
+    pub body: Option<Block<'src, 'ast>>,
     /// Whether this is a destructor
     pub is_destructor: bool,
     /// Source location
     pub span: Span,
 }
 
-impl FunctionDecl {
+impl<'src, 'ast> FunctionDecl<'src, 'ast> {
     /// Check if this is a constructor.
     pub fn is_constructor(&self) -> bool {
         self.return_type.is_none() && !self.is_destructor
@@ -109,14 +109,14 @@ impl FunctionDecl {
 }
 
 /// A function parameter.
-#[derive(Debug, Clone, PartialEq)]
-pub struct FunctionParam {
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct FunctionParam<'src, 'ast> {
     /// Parameter type
-    pub ty: ParamType,
+    pub ty: ParamType<'src, 'ast>,
     /// Parameter name (optional for interface methods)
-    pub name: Option<Ident>,
+    pub name: Option<Ident<'src>>,
     /// Default value
-    pub default: Option<Expr>,
+    pub default: Option<&'ast Expr<'src, 'ast>>,
     /// Whether this is a variadic parameter (...)
     pub is_variadic: bool,
     /// Source location
@@ -129,53 +129,53 @@ pub struct FunctionParam {
 /// ```as
 /// class Player : Enemy, IDrawable {
 ///     private int health = 100;
-///     
+///
 ///     void takeDamage(int amount) {
 ///         health -= amount;
 ///     }
 /// }
 /// ```
-#[derive(Debug, Clone, PartialEq)]
-pub struct ClassDecl {
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ClassDecl<'src, 'ast> {
     /// Declaration modifiers (shared, abstract, final, external)
     pub modifiers: DeclModifiers,
     /// Class name
-    pub name: Ident,
+    pub name: Ident<'src>,
     /// Template parameters (for application-registered template classes)
     /// Example: Container<T> has template_params = ["T"]
-    pub template_params: Vec<Ident>,
+    pub template_params: &'ast [Ident<'src>],
     /// Base class and interfaces
-    pub inheritance: Vec<Ident>,
+    pub inheritance: &'ast [Ident<'src>],
     /// Class members
-    pub members: Vec<ClassMember>,
+    pub members: &'ast [ClassMember<'src, 'ast>],
     /// Source location
     pub span: Span,
 }
 
 /// A class member.
-#[derive(Debug, Clone, PartialEq)]
-pub enum ClassMember {
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum ClassMember<'src, 'ast> {
     /// Method
-    Method(FunctionDecl),
+    Method(FunctionDecl<'src, 'ast>),
     /// Field (variable)
-    Field(FieldDecl),
+    Field(FieldDecl<'src, 'ast>),
     /// Virtual property
-    VirtualProperty(VirtualPropertyDecl),
+    VirtualProperty(VirtualPropertyDecl<'src, 'ast>),
     /// Nested funcdef
-    Funcdef(FuncdefDecl),
+    Funcdef(FuncdefDecl<'src, 'ast>),
 }
 
 /// A field declaration in a class.
-#[derive(Debug, Clone, PartialEq)]
-pub struct FieldDecl {
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct FieldDecl<'src, 'ast> {
     /// Visibility
     pub visibility: Visibility,
     /// Field type
-    pub ty: TypeExpr,
+    pub ty: TypeExpr<'src, 'ast>,
     /// Field name
-    pub name: Ident,
+    pub name: Ident<'src>,
     /// Optional initializer
-    pub init: Option<Expr>,
+    pub init: Option<&'ast Expr<'src, 'ast>>,
     /// Source location
     pub span: Span,
 }
@@ -189,23 +189,23 @@ pub struct FieldDecl {
 ///     set { _health = value; }
 /// }
 /// ```
-#[derive(Debug, Clone, PartialEq)]
-pub struct VirtualPropertyDecl {
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct VirtualPropertyDecl<'src, 'ast> {
     /// Visibility
     pub visibility: Visibility,
     /// Property type
-    pub ty: ReturnType,
+    pub ty: ReturnType<'src, 'ast>,
     /// Property name
-    pub name: Ident,
+    pub name: Ident<'src>,
     /// Accessors (get/set)
-    pub accessors: Vec<PropertyAccessor>,
+    pub accessors: &'ast [PropertyAccessor<'src, 'ast>],
     /// Source location
     pub span: Span,
 }
 
 /// A property accessor (get or set).
-#[derive(Debug, Clone, PartialEq)]
-pub struct PropertyAccessor {
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PropertyAccessor<'src, 'ast> {
     /// Accessor kind (get or set)
     pub kind: crate::ast::PropertyAccessorKind,
     /// Whether this accessor is const
@@ -213,7 +213,7 @@ pub struct PropertyAccessor {
     /// Function attributes
     pub attrs: FuncAttr,
     /// Body (None for interface)
-    pub body: Option<Block>,
+    pub body: Option<Block<'src, 'ast>>,
     /// Source location
     pub span: Span,
 }
@@ -226,38 +226,38 @@ pub struct PropertyAccessor {
 ///     void draw();
 /// }
 /// ```
-#[derive(Debug, Clone, PartialEq)]
-pub struct InterfaceDecl {
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct InterfaceDecl<'src, 'ast> {
     /// Declaration modifiers (external, shared)
     pub modifiers: DeclModifiers,
     /// Interface name
-    pub name: Ident,
+    pub name: Ident<'src>,
     /// Base interfaces
-    pub bases: Vec<Ident>,
+    pub bases: &'ast [Ident<'src>],
     /// Interface members
-    pub members: Vec<InterfaceMember>,
+    pub members: &'ast [InterfaceMember<'src, 'ast>],
     /// Source location
     pub span: Span,
 }
 
 /// An interface member.
-#[derive(Debug, Clone, PartialEq)]
-pub enum InterfaceMember {
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum InterfaceMember<'src, 'ast> {
     /// Method signature
-    Method(InterfaceMethod),
+    Method(InterfaceMethod<'src, 'ast>),
     /// Virtual property
-    VirtualProperty(VirtualPropertyDecl),
+    VirtualProperty(VirtualPropertyDecl<'src, 'ast>),
 }
 
 /// An interface method signature.
-#[derive(Debug, Clone, PartialEq)]
-pub struct InterfaceMethod {
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct InterfaceMethod<'src, 'ast> {
     /// Return type
-    pub return_type: ReturnType,
+    pub return_type: ReturnType<'src, 'ast>,
     /// Method name
-    pub name: Ident,
+    pub name: Ident<'src>,
     /// Parameters
-    pub params: Vec<FunctionParam>,
+    pub params: &'ast [FunctionParam<'src, 'ast>],
     /// Whether this is a const method
     pub is_const: bool,
     /// Source location
@@ -274,25 +274,25 @@ pub struct InterfaceMethod {
 ///     Blue
 /// }
 /// ```
-#[derive(Debug, Clone, PartialEq)]
-pub struct EnumDecl {
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct EnumDecl<'src, 'ast> {
     /// Declaration modifiers (shared, external)
     pub modifiers: DeclModifiers,
     /// Enum name
-    pub name: Ident,
+    pub name: Ident<'src>,
     /// Enumerators
-    pub enumerators: Vec<Enumerator>,
+    pub enumerators: &'ast [Enumerator<'src, 'ast>],
     /// Source location
     pub span: Span,
 }
 
 /// An enumerator (enum value).
-#[derive(Debug, Clone, PartialEq)]
-pub struct Enumerator {
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Enumerator<'src, 'ast> {
     /// Enumerator name
-    pub name: Ident,
+    pub name: Ident<'src>,
     /// Optional value
-    pub value: Option<Expr>,
+    pub value: Option<&'ast Expr<'src, 'ast>>,
     /// Source location
     pub span: Span,
 }
@@ -300,16 +300,16 @@ pub struct Enumerator {
 /// A global variable declaration.
 ///
 /// Example: `int globalCounter = 0;`
-#[derive(Debug, Clone, PartialEq)]
-pub struct GlobalVarDecl {
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct GlobalVarDecl<'src, 'ast> {
     /// Visibility
     pub visibility: Visibility,
     /// Variable type
-    pub ty: TypeExpr,
+    pub ty: TypeExpr<'src, 'ast>,
     /// Variable name
-    pub name: Ident,
+    pub name: Ident<'src>,
     /// Optional initializer
-    pub init: Option<Expr>,
+    pub init: Option<&'ast Expr<'src, 'ast>>,
     /// Source location
     pub span: Span,
 }
@@ -322,12 +322,12 @@ pub struct GlobalVarDecl {
 ///     class Entity { }
 /// }
 /// ```
-#[derive(Debug, Clone, PartialEq)]
-pub struct NamespaceDecl {
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct NamespaceDecl<'src, 'ast> {
     /// Namespace path (can be nested: A::B::C)
-    pub path: Vec<Ident>,
+    pub path: &'ast [Ident<'src>],
     /// Namespace contents
-    pub items: Vec<Item>,
+    pub items: &'ast [Item<'src, 'ast>],
     /// Source location
     pub span: Span,
 }
@@ -335,12 +335,12 @@ pub struct NamespaceDecl {
 /// A typedef declaration.
 ///
 /// Example: `typedef int EntityId;`
-#[derive(Debug, Clone, PartialEq)]
-pub struct TypedefDecl {
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct TypedefDecl<'src, 'ast> {
     /// Base type (must be primitive)
-    pub base_type: TypeExpr,
+    pub base_type: TypeExpr<'src, 'ast>,
     /// New type name
-    pub name: Ident,
+    pub name: Ident<'src>,
     /// Source location
     pub span: Span,
 }
@@ -348,19 +348,19 @@ pub struct TypedefDecl {
 /// A funcdef declaration (function signature type).
 ///
 /// Example: `funcdef void Callback(int);`
-#[derive(Debug, Clone, PartialEq)]
-pub struct FuncdefDecl {
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct FuncdefDecl<'src, 'ast> {
     /// Declaration modifiers (external, shared)
     pub modifiers: DeclModifiers,
     /// Return type
-    pub return_type: ReturnType,
+    pub return_type: ReturnType<'src, 'ast>,
     /// Funcdef name
-    pub name: Ident,
+    pub name: Ident<'src>,
     /// Template parameters (for application-registered template funcdefs)
     /// Example: Callback<T> has template_params = ["T"]
-    pub template_params: Vec<Ident>,
+    pub template_params: &'ast [Ident<'src>],
     /// Parameters
-    pub params: Vec<FunctionParam>,
+    pub params: &'ast [FunctionParam<'src, 'ast>],
     /// Source location
     pub span: Span,
 }
@@ -368,10 +368,10 @@ pub struct FuncdefDecl {
 /// A mixin declaration.
 ///
 /// Example: `mixin class MyMixin { }`
-#[derive(Debug, Clone, PartialEq)]
-pub struct MixinDecl {
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct MixinDecl<'src, 'ast> {
     /// The class being declared as a mixin
-    pub class: ClassDecl,
+    pub class: ClassDecl<'src, 'ast>,
     /// Source location
     pub span: Span,
 }
@@ -380,13 +380,13 @@ pub struct MixinDecl {
 ///
 /// Example: `import void func(int) from "module";`
 #[derive(Debug, Clone, PartialEq)]
-pub struct ImportDecl {
+pub struct ImportDecl<'src, 'ast> {
     /// Return type
-    pub return_type: ReturnType,
+    pub return_type: ReturnType<'src, 'ast>,
     /// Function name
-    pub name: Ident,
+    pub name: Ident<'src>,
     /// Parameters
-    pub params: Vec<FunctionParam>,
+    pub params: &'ast [FunctionParam<'src, 'ast>],
     /// Function attributes
     pub attrs: FuncAttr,
     /// Module to import from
@@ -406,8 +406,8 @@ mod tests {
             visibility: Visibility::Public,
             return_type: None,
             name: Ident::new("MyClass", Span::new(1, 0 + 1, 7 - 0)),
-            template_params: Vec::new(),
-            params: Vec::new(),
+            template_params: &[],
+            params: &[],
             is_const: false,
             attrs: FuncAttr::new(),
             body: None,
@@ -424,8 +424,8 @@ mod tests {
             visibility: Visibility::Public,
             return_type: None,
             name: Ident::new("MyClass", Span::new(1, 0 + 1, 7 - 0)),
-            template_params: Vec::new(),
-            params: Vec::new(),
+            template_params: &[],
+            params: &[],
             is_const: false,
             attrs: FuncAttr::new(),
             body: None,
@@ -443,8 +443,8 @@ mod tests {
             visibility: Visibility::Public,
             return_type: None,
             name: Ident::new("foo", Span::new(1, 0 + 1, 3 - 0)),
-            template_params: Vec::new(),
-            params: Vec::new(),
+            template_params: &[],
+            params: &[],
             is_const: false,
             attrs: FuncAttr::new(),
             body: None,
@@ -469,8 +469,8 @@ mod tests {
                 Span::new(1, 1, 4),
             )),
             name: Ident::new("test", Span::new(1, 6, 4)),
-            template_params: Vec::new(),
-            params: Vec::new(),
+            template_params: &[],
+            params: &[],
             is_const: false,
             attrs: FuncAttr::new(),
             body: None,
@@ -483,9 +483,9 @@ mod tests {
         let class_item = Item::Class(ClassDecl {
             modifiers: DeclModifiers::new(),
             name: Ident::new("MyClass", Span::new(1, 7, 7)),
-            template_params: Vec::new(),
-            inheritance: Vec::new(),
-            members: Vec::new(),
+            template_params: &[],
+            inheritance: &[],
+            members: &[],
             span: Span::new(1, 1, 20),
         });
         assert_eq!(class_item.span(), Span::new(1, 1, 20));
@@ -494,8 +494,8 @@ mod tests {
         let interface_item = Item::Interface(InterfaceDecl {
             modifiers: DeclModifiers::new(),
             name: Ident::new("IFoo", Span::new(1, 11, 4)),
-            bases: Vec::new(),
-            members: Vec::new(),
+            bases: &[],
+            members: &[],
             span: Span::new(1, 1, 20),
         });
         assert_eq!(interface_item.span(), Span::new(1, 1, 20));
@@ -504,7 +504,7 @@ mod tests {
         let enum_item = Item::Enum(EnumDecl {
             modifiers: DeclModifiers::new(),
             name: Ident::new("Color", Span::new(1, 6, 5)),
-            enumerators: Vec::new(),
+            enumerators: &[],
             span: Span::new(1, 1, 15),
         });
         assert_eq!(enum_item.span(), Span::new(1, 1, 15));
@@ -520,9 +520,10 @@ mod tests {
         assert_eq!(var_item.span(), Span::new(1, 1, 13));
 
         // Namespace
+        let arena = bumpalo::Bump::new();
         let ns_item = Item::Namespace(NamespaceDecl {
-            path: vec![Ident::new("Game", Span::new(1, 11, 4))],
-            items: Vec::new(),
+            path: bumpalo::vec![in &arena; Ident::new("Game", Span::new(1, 11, 4))].into_bump_slice(),
+            items: &[],
             span: Span::new(1, 1, 20),
         });
         assert_eq!(ns_item.span(), Span::new(1, 1, 20));
@@ -544,8 +545,8 @@ mod tests {
                 Span::new(1, 9, 4),
             ),
             name: Ident::new("Callback", Span::new(1, 14, 8)),
-            template_params: Vec::new(),
-            params: Vec::new(),
+            template_params: &[],
+            params: &[],
             span: Span::new(1, 1, 24),
         });
         assert_eq!(funcdef_item.span(), Span::new(1, 1, 24));
@@ -555,9 +556,9 @@ mod tests {
             class: ClassDecl {
                 modifiers: DeclModifiers::new(),
                 name: Ident::new("MyMixin", Span::new(1, 12, 7)),
-                template_params: Vec::new(),
-                inheritance: Vec::new(),
-                members: Vec::new(),
+                template_params: &[],
+                inheritance: &[],
+                members: &[],
                 span: Span::new(1, 6, 20),
             },
             span: Span::new(1, 1, 25),
@@ -572,7 +573,7 @@ mod tests {
                 Span::new(1, 8, 4),
             ),
             name: Ident::new("func", Span::new(1, 13, 4)),
-            params: Vec::new(),
+            params: &[],
             attrs: FuncAttr::new(),
             module: "module".to_string(),
             span: Span::new(1, 1, 30),
@@ -589,12 +590,12 @@ mod tests {
             visibility: Visibility::Public,
             return_type: None,
             name: Ident::new("MyClass", Span::new(1, 1, 7)),
-            template_params: Vec::new(),
-            params: Vec::new(),
+            template_params: &[],
+            params: &[],
             is_const: false,
             attrs: FuncAttr::new(),
             body: Some(Block {
-                stmts: Vec::new(),
+                stmts: &[],
                 span: Span::new(1, 10, 2),
             }),
             is_destructor: false,
@@ -608,6 +609,8 @@ mod tests {
     fn function_param_with_default() {
         use crate::ast::types::{ParamType, TypeExpr, PrimitiveType};
         use crate::ast::expr::{Expr, LiteralExpr, LiteralKind};
+        use bumpalo::Bump;
+        let arena = Bump::new();
 
         let param = FunctionParam {
             ty: ParamType::new(
@@ -616,10 +619,10 @@ mod tests {
                 Span::new(1, 1, 3),
             ),
             name: Some(Ident::new("x", Span::new(1, 5, 1))),
-            default: Some(Expr::Literal(LiteralExpr {
+            default: Some(arena.alloc(Expr::Literal(LiteralExpr {
                 kind: LiteralKind::Int(10),
                 span: Span::new(1, 9, 2),
-            })),
+            }))),
             is_variadic: false,
             span: Span::new(1, 1, 10),
         };
@@ -655,8 +658,8 @@ mod tests {
             visibility: Visibility::Public,
             return_type: None,
             name: Ident::new("foo", Span::new(1, 1, 3)),
-            template_params: Vec::new(),
-            params: Vec::new(),
+            template_params: &[],
+            params: &[],
             is_const: false,
             attrs: FuncAttr::new(),
             body: None,
@@ -686,7 +689,7 @@ mod tests {
                 Span::new(1, 1, 4),
             ),
             name: Ident::new("draw", Span::new(1, 6, 4)),
-            params: Vec::new(),
+            params: &[],
             is_const: false,
             span: Span::new(1, 1, 12),
         });
@@ -696,13 +699,15 @@ mod tests {
     #[test]
     fn enumerator_with_value() {
         use crate::ast::expr::{Expr, LiteralExpr, LiteralKind};
+        use bumpalo::Bump;
+        let arena = Bump::new();
 
         let enumerator = Enumerator {
             name: Ident::new("Red", Span::new(1, 1, 3)),
-            value: Some(Expr::Literal(LiteralExpr {
+            value: Some(arena.alloc(Expr::Literal(LiteralExpr {
                 kind: LiteralKind::Int(1),
                 span: Span::new(1, 7, 1),
-            })),
+            }))),
             span: Span::new(1, 1, 7),
         };
         assert!(enumerator.value.is_some());
@@ -712,15 +717,17 @@ mod tests {
     fn field_with_init() {
         use crate::ast::types::{TypeExpr, PrimitiveType};
         use crate::ast::expr::{Expr, LiteralExpr, LiteralKind};
+        use bumpalo::Bump;
+        let arena = Bump::new();
 
         let field = FieldDecl {
             visibility: Visibility::Private,
             ty: TypeExpr::primitive(PrimitiveType::Int, Span::new(1, 9, 3)),
             name: Ident::new("count", Span::new(1, 13, 5)),
-            init: Some(Expr::Literal(LiteralExpr {
+            init: Some(arena.alloc(Expr::Literal(LiteralExpr {
                 kind: LiteralKind::Int(0),
                 span: Span::new(1, 21, 1),
-            })),
+            }))),
             span: Span::new(1, 1, 22),
         };
         assert!(field.init.is_some());
@@ -735,7 +742,7 @@ mod tests {
             is_const: true,
             attrs: FuncAttr::new(),
             body: Some(Block {
-                stmts: Vec::new(),
+                stmts: &[],
                 span: Span::new(1, 15, 2),
             }),
             span: Span::new(1, 5, 12),
@@ -746,12 +753,15 @@ mod tests {
 
     #[test]
     fn namespace_with_nested_path() {
+        use bumpalo::Bump;
+        let arena = Bump::new();
+
         let ns = NamespaceDecl {
-            path: vec![
+            path: bumpalo::vec![in &arena;
                 Ident::new("Game", Span::new(1, 11, 4)),
                 Ident::new("Utils", Span::new(1, 17, 5)),
-            ],
-            items: Vec::new(),
+            ].into_bump_slice(),
+            items: &[],
             span: Span::new(1, 1, 30),
         };
         assert_eq!(ns.path.len(), 2);

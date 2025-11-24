@@ -7,25 +7,25 @@ use crate::lexer::Span;
 use std::fmt;
 
 /// An identifier with source location.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct Ident {
-    /// The identifier name.
-    pub name: String,
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct Ident<'src> {
+    /// The identifier name (reference to source).
+    pub name: &'src str,
     /// Source location.
     pub span: Span,
 }
 
-impl Ident {
-    /// Create a new identifier.
-    pub fn new(name: impl Into<String>, span: Span) -> Self {
+impl<'src> Ident<'src> {
+    /// Create a new identifier from source.
+    pub fn new(name: &'src str, span: Span) -> Self {
         Self {
-            name: name.into(),
+            name,
             span,
         }
     }
 }
 
-impl fmt::Display for Ident {
+impl<'src> fmt::Display for Ident<'src> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.name)
     }
@@ -37,19 +37,19 @@ impl fmt::Display for Ident {
 /// - `::global` - absolute scope
 /// - `Namespace::Type` - relative scope
 /// - `::Namespace::SubNamespace::Type` - absolute nested scope
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Scope {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Scope<'src, 'ast> {
     /// Whether this is an absolute scope (starts with `::`)
     pub is_absolute: bool,
     /// The path segments (namespace names)
-    pub segments: Vec<Ident>,
+    pub segments: &'ast [Ident<'src>],
     /// Source location covering the entire scope
     pub span: Span,
 }
 
-impl Scope {
+impl<'src, 'ast> Scope<'src, 'ast> {
     /// Create a new scope.
-    pub fn new(is_absolute: bool, segments: Vec<Ident>, span: Span) -> Self {
+    pub fn new(is_absolute: bool, segments: &'ast [Ident<'src>], span: Span) -> Self {
         Self {
             is_absolute,
             segments,
@@ -61,7 +61,7 @@ impl Scope {
     pub fn empty(span: Span) -> Self {
         Self {
             is_absolute: false,
-            segments: Vec::new(),
+            segments: &[],
             span,
         }
     }
@@ -72,7 +72,7 @@ impl Scope {
     }
 }
 
-impl fmt::Display for Scope {
+impl<'src, 'ast> fmt::Display for Scope<'src, 'ast> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         if self.is_absolute {
             write!(f, "::")?;
@@ -287,14 +287,15 @@ mod tests {
 
     #[test]
     fn scope_display() {
-        let segments = vec![
+        let arena = bumpalo::Bump::new();
+        let segments = bumpalo::vec![in &arena;
             Ident::new("Namespace", Span::new(1, 1, 9)),
             Ident::new("Type", Span::new(1, 12, 4)),
         ];
-        let scope = Scope::new(false, segments, Span::new(1, 1, 15));
+        let scope = Scope::new(false, segments.into_bump_slice(), Span::new(1, 1, 15));
         assert_eq!(format!("{}", scope), "Namespace::Type");
 
-        let absolute = Scope::new(true, vec![], Span::new(1, 1, 2));
+        let absolute = Scope::new(true, &[], Span::new(1, 1, 2));
         assert_eq!(format!("{}", absolute), "::");
     }
 
@@ -479,18 +480,20 @@ mod tests {
 
     #[test]
     fn scope_is_empty_with_segments() {
-        let segments = vec![Ident::new("Test", Span::new(1, 1, 4))];
-        let scope = Scope::new(false, segments, Span::new(1, 1, 4));
+        let arena = bumpalo::Bump::new();
+        let segments = bumpalo::vec![in &arena; Ident::new("Test", Span::new(1, 1, 4))];
+        let scope = Scope::new(false, segments.into_bump_slice(), Span::new(1, 1, 4));
         assert!(!scope.is_empty());
     }
 
     #[test]
     fn scope_display_absolute() {
-        let segments = vec![
+        let arena = bumpalo::Bump::new();
+        let segments = bumpalo::vec![in &arena;
             Ident::new("A", Span::new(1, 3, 1)),
             Ident::new("B", Span::new(1, 7, 1)),
         ];
-        let scope = Scope::new(true, segments, Span::new(1, 1, 9));
+        let scope = Scope::new(true, segments.into_bump_slice(), Span::new(1, 1, 9));
         assert_eq!(format!("{}", scope), "::A::B");
     }
 

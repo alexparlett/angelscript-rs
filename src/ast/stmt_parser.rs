@@ -6,15 +6,16 @@
 use crate::ast::{Ident, ParseError, ParseErrorKind};
 use crate::ast::stmt::*;
 use crate::ast::expr::Expr;
-use crate::lexer::{Span, TokenKind};
+use crate::lexer::TokenKind;
 use super::parser::Parser;
+use bumpalo::collections::Vec as BVec;
 
-impl<'src> Parser<'src> {
+impl<'src, 'ast> Parser<'src, 'ast> {
     /// Parse a statement.
     ///
     /// This is the main entry point for statement parsing and dispatches
     /// to specific statement parsers based on the current token.
-    pub fn parse_statement(&mut self) -> Result<Stmt, ParseError> {
+    pub fn parse_statement(&mut self) -> Result<Stmt<'src, 'ast>, ParseError> {
         let token = self.peek().clone();
 
         match token.kind {
@@ -55,7 +56,7 @@ impl<'src> Parser<'src> {
     /// Parse an expression statement.
     ///
     /// Grammar: `ASSIGN? ';'`
-    pub fn parse_expr_stmt(&mut self) -> Result<Stmt, ParseError> {
+    pub fn parse_expr_stmt(&mut self) -> Result<Stmt<'src, 'ast>, ParseError> {
         let start_span = self.peek().span;
 
         // Check for empty statement (just semicolon)
@@ -77,14 +78,14 @@ impl<'src> Parser<'src> {
     /// Parse a variable declaration statement.
     ///
     /// Grammar: `TYPE IDENTIFIER ('=' EXPR)? (',' IDENTIFIER ('=' EXPR)?)* ';'`
-    pub fn parse_var_decl(&mut self) -> Result<Stmt, ParseError> {
+    pub fn parse_var_decl(&mut self) -> Result<Stmt<'src, 'ast>, ParseError> {
         let start_span = self.peek().span;
 
         // Parse type
         let ty = self.parse_type()?;
 
         // Parse variable declarators (pass type for constructor calls)
-        let mut vars = Vec::new();
+        let mut vars = BVec::new_in(self.arena);
         vars.push(self.parse_var_declarator(&ty)?);
 
         // Parse additional declarators
@@ -96,13 +97,13 @@ impl<'src> Parser<'src> {
 
         Ok(Stmt::VarDecl(VarDeclStmt {
             ty,
-            vars,
+            vars: self.arena.alloc_slice_copy(&vars),
             span: start_span.merge(end_span),
         }))
     }
 
     /// Parse a variable declarator (name with optional initializer).
-    fn parse_var_declarator(&mut self, var_type: &crate::ast::types::TypeExpr) -> Result<VarDeclarator, ParseError> {
+    fn parse_var_declarator(&mut self, var_type: &crate::ast::types::TypeExpr<'src, 'ast>) -> Result<VarDeclarator<'src, 'ast>, ParseError> {
         let name_token = self.expect(TokenKind::Identifier)?;
         let name = Ident::new(name_token.lexeme, name_token.span);
 
@@ -131,13 +132,13 @@ impl<'src> Parser<'src> {
 
     /// Parse constructor call arguments for variable initialization.
     /// This handles: `Point p(1, 2);` as a call expression.
-    fn parse_constructor_call(&mut self, ty: &crate::ast::types::TypeExpr) -> Result<Expr, ParseError> {
+    fn parse_constructor_call(&mut self, ty: &crate::ast::types::TypeExpr<'src, 'ast>) -> Result<&'ast Expr<'src, 'ast>, ParseError> {
         use crate::ast::expr::{CallExpr, Argument, IdentExpr};
 
         let start_span = self.expect(TokenKind::LeftParen)?.span;
 
         // Parse arguments
-        let mut args = Vec::new();
+        let mut args = BVec::new_in(self.arena);
 
         if !self.check(TokenKind::RightParen) {
             loop {
@@ -184,25 +185,25 @@ impl<'src> Parser<'src> {
             }
         };
 
-        let callee = Expr::Ident(IdentExpr {
+        let callee = self.arena.alloc(Expr::Ident(IdentExpr {
             scope,
             ident,
             span: ty.span,
-        });
+        }));
 
         // Create a call expression with the type name as the callee
         // The VM/interpreter will determine if this is a constructor call
-        Ok(Expr::Call(Box::new(CallExpr {
+        Ok(self.arena.alloc(Expr::Call(self.arena.alloc(CallExpr {
             callee,
-            args,
+            args: self.arena.alloc_slice_copy(&args),
             span: start_span.merge(end_span),
-        })))
+        }))))
     }
 
     /// Parse a return statement.
     ///
     /// Grammar: `'return' ASSIGN? ';'`
-    pub fn parse_return(&mut self) -> Result<Stmt, ParseError> {
+    pub fn parse_return(&mut self) -> Result<Stmt<'src, 'ast>, ParseError> {
         let start_span = self.expect(TokenKind::Return)?.span;
 
         // Optional return value
@@ -223,7 +224,7 @@ impl<'src> Parser<'src> {
     /// Parse a break statement.
     ///
     /// Grammar: `'break' ';'`
-    pub fn parse_break(&mut self) -> Result<Stmt, ParseError> {
+    pub fn parse_break(&mut self) -> Result<Stmt<'src, 'ast>, ParseError> {
         let start_span = self.expect(TokenKind::Break)?.span;
         let end_span = self.expect(TokenKind::Semicolon)?.span;
 
@@ -235,7 +236,7 @@ impl<'src> Parser<'src> {
     /// Parse a continue statement.
     ///
     /// Grammar: `'continue' ';'`
-    pub fn parse_continue(&mut self) -> Result<Stmt, ParseError> {
+    pub fn parse_continue(&mut self) -> Result<Stmt<'src, 'ast>, ParseError> {
         let start_span = self.expect(TokenKind::Continue)?.span;
         let end_span = self.expect(TokenKind::Semicolon)?.span;
 
@@ -247,10 +248,10 @@ impl<'src> Parser<'src> {
     /// Parse a block statement.
     ///
     /// Grammar: `'{' STATEMENT* '}'`
-    pub fn parse_block(&mut self) -> Result<Block, ParseError> {
+    pub fn parse_block(&mut self) -> Result<Block<'src, 'ast>, ParseError> {
         let start_span = self.expect(TokenKind::LeftBrace)?.span;
 
-        let mut stmts = Vec::new();
+        let mut stmts = BVec::new_in(self.arena);
 
         // Parse statements until we hit the closing brace
         while !self.check(TokenKind::RightBrace) && !self.is_eof() {
@@ -270,7 +271,7 @@ impl<'src> Parser<'src> {
         let end_span = self.expect(TokenKind::RightBrace)?.span;
 
         Ok(Block {
-            stmts,
+            stmts: self.arena.alloc_slice_copy(&stmts),
             span: start_span.merge(end_span),
         })
     }
@@ -278,27 +279,27 @@ impl<'src> Parser<'src> {
     /// Parse an if statement.
     ///
     /// Grammar: `'if' '(' ASSIGN ')' STATEMENT ('else' STATEMENT)?`
-    pub fn parse_if(&mut self) -> Result<Stmt, ParseError> {
+    pub fn parse_if(&mut self) -> Result<Stmt<'src, 'ast>, ParseError> {
         let start_span = self.expect(TokenKind::If)?.span;
         self.expect(TokenKind::LeftParen)?;
         let condition = self.parse_expr(0)?;
         self.expect(TokenKind::RightParen)?;
 
-        let then_stmt = self.parse_statement()?;
+        let then_stmt: &'ast Stmt<'src, 'ast> = self.arena.alloc(self.parse_statement()?);
 
-        let else_stmt = if self.eat(TokenKind::Else).is_some() {
-            Some(self.parse_statement()?)
+        let else_stmt: Option<&'ast Stmt<'src, 'ast>> = if self.eat(TokenKind::Else).is_some() {
+            Some(self.arena.alloc(self.parse_statement()?))
         } else {
             None
         };
 
-        let span = if let Some(ref else_s) = else_stmt {
+        let span = if let Some(else_s) = else_stmt {
             start_span.merge(else_s.span())
         } else {
             start_span.merge(then_stmt.span())
         };
 
-        Ok(Stmt::If(Box::new(IfStmt {
+        Ok(Stmt::If(self.arena.alloc(IfStmt {
             condition,
             then_stmt,
             else_stmt,
@@ -309,16 +310,16 @@ impl<'src> Parser<'src> {
     /// Parse a while loop.
     ///
     /// Grammar: `'while' '(' ASSIGN ')' STATEMENT`
-    pub fn parse_while(&mut self) -> Result<Stmt, ParseError> {
+    pub fn parse_while(&mut self) -> Result<Stmt<'src, 'ast>, ParseError> {
         let start_span = self.expect(TokenKind::While)?.span;
         self.expect(TokenKind::LeftParen)?;
         let condition = self.parse_expr(0)?;
         self.expect(TokenKind::RightParen)?;
 
-        let body = self.parse_statement()?;
+        let body: &'ast Stmt<'src, 'ast> = self.arena.alloc(self.parse_statement()?);
         let span = start_span.merge(body.span());
 
-        Ok(Stmt::While(Box::new(WhileStmt {
+        Ok(Stmt::While(self.arena.alloc(WhileStmt {
             condition,
             body,
             span,
@@ -328,16 +329,16 @@ impl<'src> Parser<'src> {
     /// Parse a do-while loop.
     ///
     /// Grammar: `'do' STATEMENT 'while' '(' ASSIGN ')' ';'`
-    pub fn parse_do_while(&mut self) -> Result<Stmt, ParseError> {
+    pub fn parse_do_while(&mut self) -> Result<Stmt<'src, 'ast>, ParseError> {
         let start_span = self.expect(TokenKind::Do)?.span;
-        let body = self.parse_statement()?;
+        let body: &'ast Stmt<'src, 'ast> = self.arena.alloc(self.parse_statement()?);
         self.expect(TokenKind::While)?;
         self.expect(TokenKind::LeftParen)?;
         let condition = self.parse_expr(0)?;
         self.expect(TokenKind::RightParen)?;
         let end_span = self.expect(TokenKind::Semicolon)?.span;
 
-        Ok(Stmt::DoWhile(Box::new(DoWhileStmt {
+        Ok(Stmt::DoWhile(self.arena.alloc(DoWhileStmt {
             body,
             condition,
             span: start_span.merge(end_span),
@@ -347,7 +348,7 @@ impl<'src> Parser<'src> {
     /// Parse a for loop.
     ///
     /// Grammar: `'for' '(' (VAR | EXPRSTAT) EXPRSTAT (ASSIGN (',' ASSIGN)*)? ')' STATEMENT`
-    pub fn parse_for(&mut self) -> Result<Stmt, ParseError> {
+    pub fn parse_for(&mut self) -> Result<Stmt<'src, 'ast>, ParseError> {
         let start_span = self.expect(TokenKind::For)?.span;
         self.expect(TokenKind::LeftParen)?;
 
@@ -377,7 +378,7 @@ impl<'src> Parser<'src> {
         self.expect(TokenKind::Semicolon)?;
 
         // Parse update expressions
-        let mut update = Vec::new();
+        let mut update = BVec::new_in(self.arena);
         if !self.check(TokenKind::RightParen) {
             update.push(self.parse_expr(0)?);
 
@@ -388,13 +389,13 @@ impl<'src> Parser<'src> {
 
         self.expect(TokenKind::RightParen)?;
 
-        let body = self.parse_statement()?;
+        let body: &'ast Stmt<'src, 'ast> = self.arena.alloc(self.parse_statement()?);
         let span = start_span.merge(body.span());
 
-        Ok(Stmt::For(Box::new(ForStmt {
+        Ok(Stmt::For(self.arena.alloc(ForStmt {
             init,
             condition,
-            update,
+            update: self.arena.alloc_slice_copy(&update),
             body,
             span,
         })))
@@ -403,7 +404,7 @@ impl<'src> Parser<'src> {
     /// Parse a foreach loop.
     ///
     /// Grammar: `'foreach' '(' TYPE IDENTIFIER (',' TYPE IDENTIFIER)* ':' ASSIGN ')' STATEMENT`
-    pub fn parse_foreach(&mut self) -> Result<Stmt, ParseError> {
+    pub fn parse_foreach(&mut self) -> Result<Stmt<'src, 'ast>, ParseError> {
         let start_span = self.eat_contextual("foreach")
             .ok_or_else(|| {
                 let span = self.peek().span;
@@ -418,7 +419,7 @@ impl<'src> Parser<'src> {
         self.expect(TokenKind::LeftParen)?;
 
         // Parse iteration variables
-        let mut vars = Vec::new();
+        let mut vars = BVec::new_in(self.arena);
         vars.push(self.parse_foreach_var()?);
 
         while self.eat(TokenKind::Comma).is_some() {
@@ -462,11 +463,11 @@ impl<'src> Parser<'src> {
 
         self.expect(TokenKind::RightParen)?;
 
-        let body = self.parse_statement()?;
+        let body: &'ast Stmt<'src, 'ast> = self.arena.alloc(self.parse_statement()?);
         let span = start_span.merge(body.span());
 
-        Ok(Stmt::Foreach(Box::new(ForeachStmt {
-            vars,
+        Ok(Stmt::Foreach(self.arena.alloc(ForeachStmt {
+            vars: self.arena.alloc_slice_copy(&vars),
             expr,
             body,
             span,
@@ -474,7 +475,7 @@ impl<'src> Parser<'src> {
     }
 
     /// Parse a foreach iteration variable.
-    fn parse_foreach_var(&mut self) -> Result<ForeachVar, ParseError> {
+    fn parse_foreach_var(&mut self) -> Result<ForeachVar<'src, 'ast>, ParseError> {
         let ty = self.parse_type()?;
         let name_token = self.expect(TokenKind::Identifier)?;
         let name = Ident::new(name_token.lexeme, name_token.span);
@@ -486,14 +487,14 @@ impl<'src> Parser<'src> {
     /// Parse a switch statement.
     ///
     /// Grammar: `'switch' '(' ASSIGN ')' '{' CASE* '}'`
-    pub fn parse_switch(&mut self) -> Result<Stmt, ParseError> {
+    pub fn parse_switch(&mut self) -> Result<Stmt<'src, 'ast>, ParseError> {
         let start_span = self.expect(TokenKind::Switch)?.span;
         self.expect(TokenKind::LeftParen)?;
         let expr = self.parse_expr(0)?;
         self.expect(TokenKind::RightParen)?;
         self.expect(TokenKind::LeftBrace)?;
 
-        let mut cases = Vec::new();
+        let mut cases = BVec::new_in(self.arena);
 
         // Parse cases
         while !self.check(TokenKind::RightBrace) && !self.is_eof() {
@@ -502,9 +503,9 @@ impl<'src> Parser<'src> {
 
         let end_span = self.expect(TokenKind::RightBrace)?.span;
 
-        Ok(Stmt::Switch(Box::new(SwitchStmt {
+        Ok(Stmt::Switch(self.arena.alloc(SwitchStmt {
             expr,
-            cases,
+            cases: self.arena.alloc_slice_copy(&cases),
             span: start_span.merge(end_span),
         })))
     }
@@ -512,9 +513,9 @@ impl<'src> Parser<'src> {
     /// Parse a switch case.
     ///
     /// Grammar: `(('case' EXPR) | 'default') ':' STATEMENT*`
-    fn parse_switch_case(&mut self) -> Result<SwitchCase, ParseError> {
+    fn parse_switch_case(&mut self) -> Result<SwitchCase<'src, 'ast>, ParseError> {
         let start_span = self.peek().span;
-        let mut values = Vec::new();
+        let mut values = BVec::new_in(self.arena);
 
         // Parse case labels (can have multiple case labels before statements)
         loop {
@@ -531,7 +532,7 @@ impl<'src> Parser<'src> {
         }
 
         // Parse statements until we hit another case/default or closing brace
-        let mut stmts = Vec::new();
+        let mut stmts = BVec::new_in(self.arena);
         while !self.check(TokenKind::Case)
             && !self.check(TokenKind::Default)
             && !self.check(TokenKind::RightBrace)
@@ -569,8 +570,8 @@ impl<'src> Parser<'src> {
         };
 
         Ok(SwitchCase {
-            values,
-            stmts,
+            values: self.arena.alloc_slice_copy(&values),
+            stmts: self.arena.alloc_slice_copy(&stmts),
             span,
         })
     }
@@ -578,14 +579,14 @@ impl<'src> Parser<'src> {
     /// Parse a try-catch statement.
     ///
     /// Grammar: `'try' STATBLOCK 'catch' STATBLOCK`
-    pub fn parse_try_catch(&mut self) -> Result<Stmt, ParseError> {
+    pub fn parse_try_catch(&mut self) -> Result<Stmt<'src, 'ast>, ParseError> {
         let start_span = self.expect(TokenKind::Try)?.span;
         let try_block = self.parse_block()?;
         self.expect(TokenKind::Catch)?;
         let catch_block = self.parse_block()?;
         let span = start_span.merge(catch_block.span);
 
-        Ok(Stmt::TryCatch(Box::new(TryCatchStmt {
+        Ok(Stmt::TryCatch(self.arena.alloc(TryCatchStmt {
             try_block,
             catch_block,
             span,
@@ -601,14 +602,16 @@ mod tests {
 
     #[test]
     fn parse_expr_stmt() {
-        let mut parser = Parser::new("x = 42;");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("x = 42;", &arena);
         let stmt = parser.parse_statement().unwrap();
         assert!(matches!(stmt, Stmt::Expr(_)));
     }
 
     #[test]
     fn parse_empty_stmt() {
-        let mut parser = Parser::new(";");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new(";", &arena);
         let stmt = parser.parse_statement().unwrap();
         match stmt {
             Stmt::Expr(expr_stmt) => assert!(expr_stmt.expr.is_none()),
@@ -618,7 +621,8 @@ mod tests {
 
     #[test]
     fn parse_var_decl() {
-        let mut parser = Parser::new("int x = 42;");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("int x = 42;", &arena);
         let stmt = parser.parse_statement().unwrap();
         match stmt {
             Stmt::VarDecl(decl) => {
@@ -631,7 +635,8 @@ mod tests {
 
     #[test]
     fn parse_multiple_var_decl() {
-        let mut parser = Parser::new("int x = 1, y = 2;");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("int x = 1, y = 2;", &arena);
         let stmt = parser.parse_statement().unwrap();
         match stmt {
             Stmt::VarDecl(decl) => {
@@ -643,7 +648,8 @@ mod tests {
 
     #[test]
     fn parse_return() {
-        let mut parser = Parser::new("return 42;");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("return 42;", &arena);
         let stmt = parser.parse_statement().unwrap();
         match stmt {
             Stmt::Return(ret) => assert!(ret.value.is_some()),
@@ -653,7 +659,8 @@ mod tests {
 
     #[test]
     fn parse_return_void() {
-        let mut parser = Parser::new("return;");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("return;", &arena);
         let stmt = parser.parse_statement().unwrap();
         match stmt {
             Stmt::Return(ret) => assert!(ret.value.is_none()),
@@ -663,21 +670,24 @@ mod tests {
 
     #[test]
     fn parse_break() {
-        let mut parser = Parser::new("break;");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("break;", &arena);
         let stmt = parser.parse_statement().unwrap();
         assert!(matches!(stmt, Stmt::Break(_)));
     }
 
     #[test]
     fn parse_continue() {
-        let mut parser = Parser::new("continue;");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("continue;", &arena);
         let stmt = parser.parse_statement().unwrap();
         assert!(matches!(stmt, Stmt::Continue(_)));
     }
 
     #[test]
     fn parse_block() {
-        let mut parser = Parser::new("{ x = 1; y = 2; }");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("{ x = 1; y = 2; }", &arena);
         let stmt = parser.parse_statement().unwrap();
         match stmt {
             Stmt::Block(block) => {
@@ -689,7 +699,8 @@ mod tests {
 
     #[test]
     fn parse_if() {
-        let mut parser = Parser::new("if (x > 0) y = 1;");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("if (x > 0) y = 1;", &arena);
         let stmt = parser.parse_statement().unwrap();
         match stmt {
             Stmt::If(if_stmt) => {
@@ -701,7 +712,8 @@ mod tests {
 
     #[test]
     fn parse_if_else() {
-        let mut parser = Parser::new("if (x > 0) y = 1; else y = 2;");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("if (x > 0) y = 1; else y = 2;", &arena);
         let stmt = parser.parse_statement().unwrap();
         match stmt {
             Stmt::If(if_stmt) => {
@@ -713,28 +725,32 @@ mod tests {
 
     #[test]
     fn parse_while() {
-        let mut parser = Parser::new("while (x > 0) x--;");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("while (x > 0) x--;", &arena);
         let stmt = parser.parse_statement().unwrap();
         assert!(matches!(stmt, Stmt::While(_)));
     }
 
     #[test]
     fn parse_do_while() {
-        let mut parser = Parser::new("do x--; while (x > 0);");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("do x--; while (x > 0);", &arena);
         let stmt = parser.parse_statement().unwrap();
         assert!(matches!(stmt, Stmt::DoWhile(_)));
     }
 
     #[test]
     fn parse_for() {
-        let mut parser = Parser::new("for (int i = 0; i < 10; i++) sum += i;");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("for (int i = 0; i < 10; i++) sum += i;", &arena);
         let stmt = parser.parse_statement().unwrap();
         assert!(matches!(stmt, Stmt::For(_)));
     }
 
     #[test]
     fn parse_switch() {
-        let mut parser = Parser::new("switch (x) { case 1: break; default: break; }");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("switch (x) { case 1: break; default: break; }", &arena);
         let stmt = parser.parse_statement().unwrap();
         match stmt {
             Stmt::Switch(switch) => {
@@ -746,7 +762,8 @@ mod tests {
 
     #[test]
     fn parse_try_catch() {
-        let mut parser = Parser::new("try { x = 1; } catch { x = 0; }");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("try { x = 1; } catch { x = 0; }", &arena);
         let stmt = parser.parse_statement().unwrap();
         assert!(matches!(stmt, Stmt::TryCatch(_)));
     }
@@ -757,7 +774,8 @@ mod tests {
 
     #[test]
     fn parse_nested_blocks() {
-        let mut parser = Parser::new("{ { { x = 1; } } }");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("{ { { x = 1; } } }", &arena);
         let stmt = parser.parse_statement().unwrap();
         match stmt {
             Stmt::Block(block) => {
@@ -774,7 +792,8 @@ mod tests {
 
     #[test]
     fn parse_empty_block() {
-        let mut parser = Parser::new("{ }");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("{ }", &arena);
         let stmt = parser.parse_statement().unwrap();
         match stmt {
             Stmt::Block(block) => {
@@ -786,7 +805,8 @@ mod tests {
 
     #[test]
     fn parse_var_decl_no_init() {
-        let mut parser = Parser::new("int x;");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("int x;", &arena);
         let stmt = parser.parse_statement().unwrap();
         match stmt {
             Stmt::VarDecl(decl) => {
@@ -799,7 +819,8 @@ mod tests {
 
     #[test]
     fn parse_var_decl_constructor_style() {
-        let mut parser = Parser::new("Point p(1, 2);");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("Point p(1, 2);", &arena);
         let stmt = parser.parse_statement().unwrap();
         match stmt {
             Stmt::VarDecl(decl) => {
@@ -812,7 +833,8 @@ mod tests {
 
     #[test]
     fn parse_var_decl_multiple_mixed() {
-        let mut parser = Parser::new("int a = 1, b, c = 3;");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("int a = 1, b, c = 3;", &arena);
         let stmt = parser.parse_statement().unwrap();
         match stmt {
             Stmt::VarDecl(decl) => {
@@ -827,7 +849,8 @@ mod tests {
 
     #[test]
     fn parse_for_empty_init() {
-        let mut parser = Parser::new("for (; i < 10; i++) { }");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("for (; i < 10; i++) { }", &arena);
         let stmt = parser.parse_statement().unwrap();
         match stmt {
             Stmt::For(for_stmt) => {
@@ -840,7 +863,8 @@ mod tests {
 
     #[test]
     fn parse_for_empty_condition() {
-        let mut parser = Parser::new("for (int i = 0; ; i++) { }");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("for (int i = 0; ; i++) { }", &arena);
         let stmt = parser.parse_statement().unwrap();
         match stmt {
             Stmt::For(for_stmt) => {
@@ -853,7 +877,8 @@ mod tests {
 
     #[test]
     fn parse_for_empty_update() {
-        let mut parser = Parser::new("for (int i = 0; i < 10;) { }");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("for (int i = 0; i < 10;) { }", &arena);
         let stmt = parser.parse_statement().unwrap();
         match stmt {
             Stmt::For(for_stmt) => {
@@ -865,7 +890,8 @@ mod tests {
 
     #[test]
     fn parse_for_all_empty() {
-        let mut parser = Parser::new("for (;;) { break; }");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("for (;;) { break; }", &arena);
         let stmt = parser.parse_statement().unwrap();
         match stmt {
             Stmt::For(for_stmt) => {
@@ -879,7 +905,8 @@ mod tests {
 
     #[test]
     fn parse_for_multiple_updates() {
-        let mut parser = Parser::new("for (int i = 0; i < 10; i++, j--) { }");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("for (int i = 0; i < 10; i++, j--) { }", &arena);
         let stmt = parser.parse_statement().unwrap();
         match stmt {
             Stmt::For(for_stmt) => {
@@ -891,7 +918,8 @@ mod tests {
 
     #[test]
     fn parse_for_expr_init() {
-        let mut parser = Parser::new("for (i = 0; i < 10; i++) { }");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("for (i = 0; i < 10; i++) { }", &arena);
         let stmt = parser.parse_statement().unwrap();
         match stmt {
             Stmt::For(for_stmt) => {
@@ -906,7 +934,8 @@ mod tests {
 
     #[test]
     fn parse_foreach_single_var() {
-        let mut parser = Parser::new("foreach (int x : arr) { }");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("foreach (int x : arr) { }", &arena);
         let stmt = parser.parse_statement().unwrap();
         match stmt {
             Stmt::Foreach(foreach) => {
@@ -918,7 +947,8 @@ mod tests {
 
     #[test]
     fn parse_foreach_multiple_vars() {
-        let mut parser = Parser::new("foreach (int key, string value : dict) { }");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("foreach (int key, string value : dict) { }", &arena);
         let stmt = parser.parse_statement().unwrap();
         match stmt {
             Stmt::Foreach(foreach) => {
@@ -930,6 +960,7 @@ mod tests {
 
     #[test]
     fn parse_switch_multiple_cases() {
+        let arena = bumpalo::Bump::new();
         let mut parser = Parser::new(r#"
             switch (x) {
                 case 1:
@@ -941,7 +972,7 @@ mod tests {
                 default:
                     a = 0;
             }
-        "#);
+        "#, &arena);
         let stmt = parser.parse_statement().unwrap();
         match stmt {
             Stmt::Switch(switch) => {
@@ -953,6 +984,7 @@ mod tests {
 
     #[test]
     fn parse_switch_multiple_case_labels() {
+        let arena = bumpalo::Bump::new();
         let mut parser = Parser::new(r#"
             switch (x) {
                 case 1:
@@ -961,7 +993,7 @@ mod tests {
                     a = 123;
                     break;
             }
-        "#);
+        "#, &arena);
         let stmt = parser.parse_statement().unwrap();
         match stmt {
             Stmt::Switch(switch) => {
@@ -975,6 +1007,7 @@ mod tests {
 
     #[test]
     fn parse_switch_fallthrough() {
+        let arena = bumpalo::Bump::new();
         let mut parser = Parser::new(r#"
             switch (x) {
                 case 1:
@@ -983,7 +1016,7 @@ mod tests {
                     b = 2;
                     break;
             }
-        "#);
+        "#, &arena);
         let stmt = parser.parse_statement().unwrap();
         match stmt {
             Stmt::Switch(switch) => {
@@ -996,12 +1029,13 @@ mod tests {
     #[test]
     fn parse_switch_empty_case_error() {
         // Last case with no statements should be a parse error
+        let arena = bumpalo::Bump::new();
         let mut parser = Parser::new(r#"
             switch (x) {
                 case 1:
                 default:
             }
-        "#);
+        "#, &arena);
         let result = parser.parse_statement();
         assert!(result.is_err());
         // Record the error so we can check it
@@ -1014,6 +1048,7 @@ mod tests {
     #[test]
     fn parse_switch_empty_intermediate_case_ok() {
         // Empty intermediate cases are OK (fall-through)
+        let arena = bumpalo::Bump::new();
         let mut parser = Parser::new(r#"
             switch (x) {
                 case 1:
@@ -1021,7 +1056,7 @@ mod tests {
                     doSomething();
                     break;
             }
-        "#);
+        "#, &arena);
         let stmt = parser.parse_statement().unwrap();
         match stmt {
             Stmt::Switch(switch) => {
@@ -1035,6 +1070,7 @@ mod tests {
 
     #[test]
     fn parse_if_else_if_chain() {
+        let arena = bumpalo::Bump::new();
         let mut parser = Parser::new(r#"
             if (x > 10)
                 a = 1;
@@ -1044,7 +1080,7 @@ mod tests {
                 a = 3;
             else
                 a = 0;
-        "#);
+        "#, &arena);
         let stmt = parser.parse_statement().unwrap();
         match stmt {
             Stmt::If(if_stmt) => {
@@ -1061,7 +1097,8 @@ mod tests {
 
     #[test]
     fn parse_while_with_block() {
-        let mut parser = Parser::new("while (true) { x++; }");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("while (true) { x++; }", &arena);
         let stmt = parser.parse_statement().unwrap();
         match stmt {
             Stmt::While(while_stmt) => {
@@ -1076,7 +1113,8 @@ mod tests {
 
     #[test]
     fn parse_while_single_statement() {
-        let mut parser = Parser::new("while (x > 0) x--;");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("while (x > 0) x--;", &arena);
         let stmt = parser.parse_statement().unwrap();
         match stmt {
             Stmt::While(while_stmt) => {
@@ -1091,7 +1129,8 @@ mod tests {
 
     #[test]
     fn parse_do_while_with_complex_condition() {
-        let mut parser = Parser::new("do { x++; } while (x < 10 && y > 0);");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("do { x++; } while (x < 10 && y > 0);", &arena);
         let stmt = parser.parse_statement().unwrap();
         match stmt {
             Stmt::DoWhile(_) => {}
@@ -1101,13 +1140,14 @@ mod tests {
 
     #[test]
     fn parse_nested_loops() {
+        let arena = bumpalo::Bump::new();
         let mut parser = Parser::new(r#"
             for (int i = 0; i < 10; i++) {
                 for (int j = 0; j < 10; j++) {
                     matrix[i, j] = 0;
                 }
             }
-        "#);
+        "#, &arena);
         let stmt = parser.parse_statement().unwrap();
         match stmt {
             Stmt::For(for_stmt) => {
@@ -1129,12 +1169,13 @@ mod tests {
 
     #[test]
     fn parse_nested_if_in_loop() {
+        let arena = bumpalo::Bump::new();
         let mut parser = Parser::new(r#"
             while (true) {
                 if (x > 0)
                     break;
             }
-        "#);
+        "#, &arena);
         let stmt = parser.parse_statement().unwrap();
         match stmt {
             Stmt::While(_) => {}
@@ -1144,7 +1185,8 @@ mod tests {
 
     #[test]
     fn parse_expr_stmt_with_call() {
-        let mut parser = Parser::new("foo(1, 2, 3);");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("foo(1, 2, 3);", &arena);
         let stmt = parser.parse_statement().unwrap();
         match stmt {
             Stmt::Expr(expr_stmt) => {
@@ -1156,7 +1198,8 @@ mod tests {
 
     #[test]
     fn parse_expr_stmt_with_assignment() {
-        let mut parser = Parser::new("x += 42;");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("x += 42;", &arena);
         let stmt = parser.parse_statement().unwrap();
         match stmt {
             Stmt::Expr(_) => {}
@@ -1166,7 +1209,8 @@ mod tests {
 
     #[test]
     fn parse_complex_return() {
-        let mut parser = Parser::new("return a + b * c;");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("return a + b * c;", &arena);
         let stmt = parser.parse_statement().unwrap();
         match stmt {
             Stmt::Return(ret) => {

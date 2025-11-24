@@ -34,7 +34,7 @@
 mod ast;
 mod lexer;
 
-pub use ast::{parse, parse_expression, parse_lenient, parse_statement, parse_type_expr};
+pub use ast::{parse, parse_expression, parse_lenient, parse_statement, parse_type_expr, ParsedScript};
 
 // Re-export visitor for AST traversal
 pub use ast::visitor;

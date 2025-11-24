@@ -103,7 +103,8 @@ let source = r#"
     }
 "#;
 
-let mut parser = Parser::new(source);
+let arena = bumpalo::Bump::new();
+let mut parser = Parser::new(source, &arena);
 let script = parser.parse_script().expect("Parse failed");
 
 // Use visitor pattern to analyze

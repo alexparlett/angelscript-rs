@@ -32,38 +32,38 @@ use crate::lexer::Span;
 
 /// An expression.
 #[derive(Debug, Clone, PartialEq)]
-pub enum Expr {
+pub enum Expr<'src, 'ast> {
     /// Literal value
     Literal(LiteralExpr),
     /// Identifier reference
-    Ident(IdentExpr),
+    Ident(IdentExpr<'src, 'ast>),
     /// Binary operation
-    Binary(Box<BinaryExpr>),
+    Binary(&'ast BinaryExpr<'src, 'ast>),
     /// Unary prefix operation
-    Unary(Box<UnaryExpr>),
+    Unary(&'ast UnaryExpr<'src, 'ast>),
     /// Assignment
-    Assign(Box<AssignExpr>),
+    Assign(&'ast AssignExpr<'src, 'ast>),
     /// Ternary conditional (? :)
-    Ternary(Box<TernaryExpr>),
+    Ternary(&'ast TernaryExpr<'src, 'ast>),
     /// Function call
-    Call(Box<CallExpr>),
+    Call(&'ast CallExpr<'src, 'ast>),
     /// Array/object indexing
-    Index(Box<IndexExpr>),
+    Index(&'ast IndexExpr<'src, 'ast>),
     /// Member access (.)
-    Member(Box<MemberExpr>),
+    Member(&'ast MemberExpr<'src, 'ast>),
     /// Postfix operation (++ or --)
-    Postfix(Box<PostfixExpr>),
+    Postfix(&'ast PostfixExpr<'src, 'ast>),
     /// Cast expression
-    Cast(Box<CastExpr>),
+    Cast(&'ast CastExpr<'src, 'ast>),
     /// Lambda (anonymous function)
-    Lambda(Box<LambdaExpr>),
+    Lambda(&'ast LambdaExpr<'src, 'ast>),
     /// Initializer list
-    InitList(InitListExpr),
+    InitList(InitListExpr<'src, 'ast>),
     /// Parenthesized expression
-    Paren(Box<ParenExpr>),
+    Paren(&'ast ParenExpr<'src, 'ast>),
 }
 
-impl Expr {
+impl<'src, 'ast> Expr<'src, 'ast> {
     /// Get the span of this expression.
     pub fn span(&self) -> Span {
         match self {
@@ -112,135 +112,135 @@ pub enum LiteralKind {
 }
 
 /// An identifier expression.
-#[derive(Debug, Clone, PartialEq)]
-pub struct IdentExpr {
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct IdentExpr<'src, 'ast> {
     /// Optional scope
-    pub scope: Option<Scope>,
+    pub scope: Option<Scope<'src, 'ast>>,
     /// The identifier
-    pub ident: Ident,
+    pub ident: Ident<'src>,
     /// Source location
     pub span: Span,
 }
 
 /// A binary operation.
-#[derive(Debug, Clone, PartialEq)]
-pub struct BinaryExpr {
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct BinaryExpr<'src, 'ast> {
     /// Left operand
-    pub left: Expr,
+    pub left: &'ast Expr<'src, 'ast>,
     /// Operator
     pub op: BinaryOp,
     /// Right operand
-    pub right: Expr,
+    pub right: &'ast Expr<'src, 'ast>,
     /// Source location
     pub span: Span,
 }
 
 /// A unary prefix operation.
-#[derive(Debug, Clone, PartialEq)]
-pub struct UnaryExpr {
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct UnaryExpr<'src, 'ast> {
     /// Operator
     pub op: UnaryOp,
     /// Operand
-    pub operand: Expr,
+    pub operand: &'ast Expr<'src, 'ast>,
     /// Source location
     pub span: Span,
 }
 
 /// An assignment expression.
-#[derive(Debug, Clone, PartialEq)]
-pub struct AssignExpr {
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct AssignExpr<'src, 'ast> {
     /// Left-hand side (target)
-    pub target: Expr,
+    pub target: &'ast Expr<'src, 'ast>,
     /// Assignment operator
     pub op: AssignOp,
     /// Right-hand side (value)
-    pub value: Expr,
+    pub value: &'ast Expr<'src, 'ast>,
     /// Source location
     pub span: Span,
 }
 
 /// A ternary conditional expression (condition ? then : else).
-#[derive(Debug, Clone, PartialEq)]
-pub struct TernaryExpr {
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct TernaryExpr<'src, 'ast> {
     /// Condition
-    pub condition: Expr,
+    pub condition: &'ast Expr<'src, 'ast>,
     /// Then branch (if condition is true)
-    pub then_expr: Expr,
+    pub then_expr: &'ast Expr<'src, 'ast>,
     /// Else branch (if condition is false)
-    pub else_expr: Expr,
+    pub else_expr: &'ast Expr<'src, 'ast>,
     /// Source location
     pub span: Span,
 }
 
 /// A function call.
-#[derive(Debug, Clone, PartialEq)]
-pub struct CallExpr {
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct CallExpr<'src, 'ast> {
     /// The function being called (can be any expression)
-    pub callee: Expr,
+    pub callee: &'ast Expr<'src, 'ast>,
     /// Arguments
-    pub args: Vec<Argument>,
+    pub args: &'ast [Argument<'src, 'ast>],
     /// Source location
     pub span: Span,
 }
 
 /// A function call argument.
-#[derive(Debug, Clone, PartialEq)]
-pub struct Argument {
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Argument<'src, 'ast> {
     /// Optional named argument
-    pub name: Option<Ident>,
+    pub name: Option<Ident<'src>>,
     /// Argument value
-    pub value: Expr,
+    pub value: &'ast Expr<'src, 'ast>,
     /// Source location
     pub span: Span,
 }
 
 /// Array or object indexing.
-#[derive(Debug, Clone, PartialEq)]
-pub struct IndexExpr {
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct IndexExpr<'src, 'ast> {
     /// The object being indexed
-    pub object: Expr,
+    pub object: &'ast Expr<'src, 'ast>,
     /// Indices (can be multiple for multi-dimensional access)
-    pub indices: Vec<IndexItem>,
+    pub indices: &'ast [IndexItem<'src, 'ast>],
     /// Source location
     pub span: Span,
 }
 
 /// A single index item (can be named).
-#[derive(Debug, Clone, PartialEq)]
-pub struct IndexItem {
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct IndexItem<'src, 'ast> {
     /// Optional name for associative arrays
-    pub name: Option<Ident>,
+    pub name: Option<Ident<'src>>,
     /// Index expression
-    pub index: Expr,
+    pub index: &'ast Expr<'src, 'ast>,
     /// Source location
     pub span: Span,
 }
 
 /// Member access (dot operator).
-#[derive(Debug, Clone, PartialEq)]
-pub struct MemberExpr {
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct MemberExpr<'src, 'ast> {
     /// The object
-    pub object: Expr,
+    pub object: &'ast Expr<'src, 'ast>,
     /// The member being accessed
-    pub member: MemberAccess,
+    pub member: MemberAccess<'src, 'ast>,
     /// Source location
     pub span: Span,
 }
 
 /// What is being accessed via the dot operator.
-#[derive(Debug, Clone, PartialEq)]
-pub enum MemberAccess {
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum MemberAccess<'src, 'ast> {
     /// Field access: obj.field
-    Field(Ident),
+    Field(Ident<'src>),
     /// Method call: obj.method(args)
-    Method { name: Ident, args: Vec<Argument> },
+    Method { name: Ident<'src>, args: &'ast [Argument<'src, 'ast>] },
 }
 
 /// A postfix operation (++ or --).
-#[derive(Debug, Clone, PartialEq)]
-pub struct PostfixExpr {
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PostfixExpr<'src, 'ast> {
     /// The operand
-    pub operand: Expr,
+    pub operand: &'ast Expr<'src, 'ast>,
     /// The operator
     pub op: PostfixOp,
     /// Source location
@@ -248,65 +248,65 @@ pub struct PostfixExpr {
 }
 
 /// A cast expression.
-#[derive(Debug, Clone, PartialEq)]
-pub struct CastExpr {
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct CastExpr<'src, 'ast> {
     /// The target type
-    pub target_type: TypeExpr,
+    pub target_type: TypeExpr<'src, 'ast>,
     /// The expression being cast
-    pub expr: Expr,
+    pub expr: &'ast Expr<'src, 'ast>,
     /// Source location
     pub span: Span,
 }
 
 /// A lambda (anonymous function).
-#[derive(Debug, Clone, PartialEq)]
-pub struct LambdaExpr {
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct LambdaExpr<'src, 'ast> {
     /// Parameters
-    pub params: Vec<LambdaParam>,
+    pub params: &'ast [LambdaParam<'src, 'ast>],
     /// Return type (if specified)
-    pub return_type: Option<ReturnType>,
+    pub return_type: Option<ReturnType<'src, 'ast>>,
     /// Body (statement block)
-    pub body: Box<super::stmt::Block>,
+    pub body: &'ast super::stmt::Block<'src, 'ast>,
     /// Source location
     pub span: Span,
 }
 
 /// A lambda parameter.
-#[derive(Debug, Clone, PartialEq)]
-pub struct LambdaParam {
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct LambdaParam<'src, 'ast> {
     /// Parameter type (optional)
-    pub ty: Option<ParamType>,
+    pub ty: Option<ParamType<'src, 'ast>>,
     /// Parameter name (optional for unused params)
-    pub name: Option<Ident>,
+    pub name: Option<Ident<'src>>,
     /// Source location
     pub span: Span,
 }
 
 /// An initializer list.
-#[derive(Debug, Clone, PartialEq)]
-pub struct InitListExpr {
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct InitListExpr<'src, 'ast> {
     /// Optional type annotation
-    pub ty: Option<TypeExpr>,
+    pub ty: Option<TypeExpr<'src, 'ast>>,
     /// Elements
-    pub elements: Vec<InitElement>,
+    pub elements: &'ast [InitElement<'src, 'ast>],
     /// Source location
     pub span: Span,
 }
 
 /// An element in an initializer list.
-#[derive(Debug, Clone, PartialEq)]
-pub enum InitElement {
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum InitElement<'src, 'ast> {
     /// Expression element
-    Expr(Expr),
+    Expr(&'ast Expr<'src, 'ast>),
     /// Nested initializer list
-    InitList(InitListExpr),
+    InitList(InitListExpr<'src, 'ast>),
 }
 
 /// A parenthesized expression.
-#[derive(Debug, Clone, PartialEq)]
-pub struct ParenExpr {
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ParenExpr<'src, 'ast> {
     /// The inner expression
-    pub expr: Expr,
+    pub expr: &'ast Expr<'src, 'ast>,
     /// Source location
     pub span: Span,
 }
@@ -343,7 +343,7 @@ mod tests {
 
         let method = MemberAccess::Method {
             name: Ident::new("foo", Span::new(1, 0 + 1, 3 - 0)),
-            args: Vec::new(),
+            args: &[],
         };
         assert!(matches!(method, MemberAccess::Method { .. }));
     }
@@ -351,6 +351,9 @@ mod tests {
     #[test]
     fn all_expr_span_variants() {
         use crate::ast::types::TypeExpr;
+        use bumpalo::Bump;
+
+        let arena = Bump::new();
 
         // Literal
         let lit = Expr::Literal(LiteralExpr {
@@ -368,132 +371,146 @@ mod tests {
         assert_eq!(ident.span(), Span::new(1, 1, 1));
 
         // Binary
-        let binary = Expr::Binary(Box::new(BinaryExpr {
-            left: Expr::Literal(LiteralExpr {
-                kind: LiteralKind::Int(1),
-                span: Span::new(1, 1, 1),
-            }),
+        let left = arena.alloc(Expr::Literal(LiteralExpr {
+            kind: LiteralKind::Int(1),
+            span: Span::new(1, 1, 1),
+        }));
+        let right = arena.alloc(Expr::Literal(LiteralExpr {
+            kind: LiteralKind::Int(2),
+            span: Span::new(1, 5, 1),
+        }));
+        let binary = Expr::Binary(arena.alloc(BinaryExpr {
+            left,
             op: crate::ast::BinaryOp::Add,
-            right: Expr::Literal(LiteralExpr {
-                kind: LiteralKind::Int(2),
-                span: Span::new(1, 5, 1),
-            }),
+            right,
             span: Span::new(1, 1, 5),
         }));
         assert_eq!(binary.span(), Span::new(1, 1, 5));
 
         // Unary
-        let unary = Expr::Unary(Box::new(UnaryExpr {
+        let operand = arena.alloc(Expr::Literal(LiteralExpr {
+            kind: LiteralKind::Int(5),
+            span: Span::new(1, 2, 1),
+        }));
+        let unary = Expr::Unary(arena.alloc(UnaryExpr {
             op: crate::ast::UnaryOp::Neg,
-            operand: Expr::Literal(LiteralExpr {
-                kind: LiteralKind::Int(5),
-                span: Span::new(1, 2, 1),
-            }),
+            operand,
             span: Span::new(1, 1, 2),
         }));
         assert_eq!(unary.span(), Span::new(1, 1, 2));
 
         // Assign
-        let assign = Expr::Assign(Box::new(AssignExpr {
-            target: Expr::Ident(IdentExpr {
-                scope: None,
-                ident: Ident::new("x", Span::new(1, 1, 1)),
-                span: Span::new(1, 1, 1),
-            }),
+        let target = arena.alloc(Expr::Ident(IdentExpr {
+            scope: None,
+            ident: Ident::new("x", Span::new(1, 1, 1)),
+            span: Span::new(1, 1, 1),
+        }));
+        let value = arena.alloc(Expr::Literal(LiteralExpr {
+            kind: LiteralKind::Int(10),
+            span: Span::new(1, 5, 2),
+        }));
+        let assign = Expr::Assign(arena.alloc(AssignExpr {
+            target,
             op: crate::ast::AssignOp::Assign,
-            value: Expr::Literal(LiteralExpr {
-                kind: LiteralKind::Int(10),
-                span: Span::new(1, 5, 2),
-            }),
+            value,
             span: Span::new(1, 1, 6),
         }));
         assert_eq!(assign.span(), Span::new(1, 1, 6));
 
         // Ternary
-        let ternary = Expr::Ternary(Box::new(TernaryExpr {
-            condition: Expr::Literal(LiteralExpr {
-                kind: LiteralKind::Bool(true),
-                span: Span::new(1, 1, 4),
-            }),
-            then_expr: Expr::Literal(LiteralExpr {
-                kind: LiteralKind::Int(1),
-                span: Span::new(1, 8, 1),
-            }),
-            else_expr: Expr::Literal(LiteralExpr {
-                kind: LiteralKind::Int(2),
-                span: Span::new(1, 12, 1),
-            }),
+        let condition = arena.alloc(Expr::Literal(LiteralExpr {
+            kind: LiteralKind::Bool(true),
+            span: Span::new(1, 1, 4),
+        }));
+        let then_expr = arena.alloc(Expr::Literal(LiteralExpr {
+            kind: LiteralKind::Int(1),
+            span: Span::new(1, 8, 1),
+        }));
+        let else_expr = arena.alloc(Expr::Literal(LiteralExpr {
+            kind: LiteralKind::Int(2),
+            span: Span::new(1, 12, 1),
+        }));
+        let ternary = Expr::Ternary(arena.alloc(TernaryExpr {
+            condition,
+            then_expr,
+            else_expr,
             span: Span::new(1, 1, 12),
         }));
         assert_eq!(ternary.span(), Span::new(1, 1, 12));
 
         // Call
-        let call = Expr::Call(Box::new(CallExpr {
-            callee: Expr::Ident(IdentExpr {
-                scope: None,
-                ident: Ident::new("foo", Span::new(1, 1, 3)),
-                span: Span::new(1, 1, 3),
-            }),
-            args: Vec::new(),
+        let callee = arena.alloc(Expr::Ident(IdentExpr {
+            scope: None,
+            ident: Ident::new("foo", Span::new(1, 1, 3)),
+            span: Span::new(1, 1, 3),
+        }));
+        let call = Expr::Call(arena.alloc(CallExpr {
+            callee,
+            args: &[],
             span: Span::new(1, 1, 6),
         }));
         assert_eq!(call.span(), Span::new(1, 1, 6));
 
         // Index
-        let index = Expr::Index(Box::new(IndexExpr {
-            object: Expr::Ident(IdentExpr {
-                scope: None,
-                ident: Ident::new("arr", Span::new(1, 1, 3)),
-                span: Span::new(1, 1, 3),
-            }),
-            indices: Vec::new(),
+        let object = arena.alloc(Expr::Ident(IdentExpr {
+            scope: None,
+            ident: Ident::new("arr", Span::new(1, 1, 3)),
+            span: Span::new(1, 1, 3),
+        }));
+        let index = Expr::Index(arena.alloc(IndexExpr {
+            object,
+            indices: &[],
             span: Span::new(1, 1, 6),
         }));
         assert_eq!(index.span(), Span::new(1, 1, 6));
 
         // Member
-        let member = Expr::Member(Box::new(MemberExpr {
-            object: Expr::Ident(IdentExpr {
-                scope: None,
-                ident: Ident::new("obj", Span::new(1, 1, 3)),
-                span: Span::new(1, 1, 3),
-            }),
+        let object = arena.alloc(Expr::Ident(IdentExpr {
+            scope: None,
+            ident: Ident::new("obj", Span::new(1, 1, 3)),
+            span: Span::new(1, 1, 3),
+        }));
+        let member = Expr::Member(arena.alloc(MemberExpr {
+            object,
             member: MemberAccess::Field(Ident::new("x", Span::new(1, 5, 1))),
             span: Span::new(1, 1, 5),
         }));
         assert_eq!(member.span(), Span::new(1, 1, 5));
 
         // Postfix
-        let postfix = Expr::Postfix(Box::new(PostfixExpr {
-            operand: Expr::Ident(IdentExpr {
-                scope: None,
-                ident: Ident::new("i", Span::new(1, 1, 1)),
-                span: Span::new(1, 1, 1),
-            }),
+        let operand = arena.alloc(Expr::Ident(IdentExpr {
+            scope: None,
+            ident: Ident::new("i", Span::new(1, 1, 1)),
+            span: Span::new(1, 1, 1),
+        }));
+        let postfix = Expr::Postfix(arena.alloc(PostfixExpr {
+            operand,
             op: crate::ast::PostfixOp::PostInc,
             span: Span::new(1, 1, 3),
         }));
         assert_eq!(postfix.span(), Span::new(1, 1, 3));
 
         // Cast
-        let cast = Expr::Cast(Box::new(CastExpr {
+        let expr = arena.alloc(Expr::Literal(LiteralExpr {
+            kind: LiteralKind::Int(10),
+            span: Span::new(1, 12, 2),
+        }));
+        let cast = Expr::Cast(arena.alloc(CastExpr {
             target_type: TypeExpr::primitive(crate::ast::types::PrimitiveType::Float, Span::new(1, 6, 5)),
-            expr: Expr::Literal(LiteralExpr {
-                kind: LiteralKind::Int(10),
-                span: Span::new(1, 12, 2),
-            }),
+            expr,
             span: Span::new(1, 1, 13),
         }));
         assert_eq!(cast.span(), Span::new(1, 1, 13));
 
         // Lambda
-        let lambda = Expr::Lambda(Box::new(LambdaExpr {
-            params: Vec::new(),
+        let body = arena.alloc(crate::ast::stmt::Block {
+            stmts: &[],
+            span: Span::new(1, 10, 2),
+        });
+        let lambda = Expr::Lambda(arena.alloc(LambdaExpr {
+            params: &[],
             return_type: None,
-            body: Box::new(crate::ast::stmt::Block {
-                stmts: Vec::new(),
-                span: Span::new(1, 10, 2),
-            }),
+            body,
             span: Span::new(1, 1, 12),
         }));
         assert_eq!(lambda.span(), Span::new(1, 1, 12));
@@ -501,17 +518,18 @@ mod tests {
         // InitList
         let init_list = Expr::InitList(InitListExpr {
             ty: None,
-            elements: Vec::new(),
+            elements: &[],
             span: Span::new(1, 1, 2),
         });
         assert_eq!(init_list.span(), Span::new(1, 1, 2));
 
         // Paren
-        let paren = Expr::Paren(Box::new(ParenExpr {
-            expr: Expr::Literal(LiteralExpr {
-                kind: LiteralKind::Int(5),
-                span: Span::new(1, 2, 1),
-            }),
+        let expr = arena.alloc(Expr::Literal(LiteralExpr {
+            kind: LiteralKind::Int(5),
+            span: Span::new(1, 2, 1),
+        }));
+        let paren = Expr::Paren(arena.alloc(ParenExpr {
+            expr,
             span: Span::new(1, 1, 3),
         }));
         assert_eq!(paren.span(), Span::new(1, 1, 3));
@@ -540,12 +558,16 @@ mod tests {
 
     #[test]
     fn argument_with_name() {
+        use bumpalo::Bump;
+        let arena = Bump::new();
+
+        let value = arena.alloc(Expr::Literal(LiteralExpr {
+            kind: LiteralKind::Int(10),
+            span: Span::new(1, 8, 2),
+        }));
         let arg = Argument {
             name: Some(Ident::new("value", Span::new(1, 1, 5))),
-            value: Expr::Literal(LiteralExpr {
-                kind: LiteralKind::Int(10),
-                span: Span::new(1, 8, 2),
-            }),
+            value,
             span: Span::new(1, 1, 9),
         };
         assert!(arg.name.is_some());
@@ -553,12 +575,16 @@ mod tests {
 
     #[test]
     fn index_item_with_name() {
+        use bumpalo::Bump;
+        let arena = Bump::new();
+
+        let index = arena.alloc(Expr::Literal(LiteralExpr {
+            kind: LiteralKind::String("value".to_string()),
+            span: Span::new(1, 10, 7),
+        }));
         let item = IndexItem {
             name: Some(Ident::new("key", Span::new(1, 5, 3))),
-            index: Expr::Literal(LiteralExpr {
-                kind: LiteralKind::String("value".to_string()),
-                span: Span::new(1, 10, 7),
-            }),
+            index,
             span: Span::new(1, 5, 12),
         };
         assert!(item.name.is_some());
@@ -566,15 +592,19 @@ mod tests {
 
     #[test]
     fn init_element_variants() {
-        let expr_elem = InitElement::Expr(Expr::Literal(LiteralExpr {
+        use bumpalo::Bump;
+        let arena = Bump::new();
+
+        let expr = arena.alloc(Expr::Literal(LiteralExpr {
             kind: LiteralKind::Int(1),
             span: Span::new(1, 1, 1),
         }));
+        let expr_elem = InitElement::Expr(expr);
         assert!(matches!(expr_elem, InitElement::Expr(_)));
 
         let list_elem = InitElement::InitList(InitListExpr {
             ty: None,
-            elements: Vec::new(),
+            elements: &[],
             span: Span::new(1, 1, 2),
         });
         assert!(matches!(list_elem, InitElement::InitList(_)));

@@ -15,37 +15,37 @@ use crate::ast::types::TypeExpr;
 use crate::lexer::Span;
 
 /// A statement.
-#[derive(Debug, Clone, PartialEq)]
-pub enum Stmt {
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Stmt<'src, 'ast> {
     /// Expression statement (expr;)
-    Expr(ExprStmt),
+    Expr(ExprStmt<'src, 'ast>),
     /// Variable declaration
-    VarDecl(VarDeclStmt),
+    VarDecl(VarDeclStmt<'src, 'ast>),
     /// Return statement
-    Return(ReturnStmt),
+    Return(ReturnStmt<'src, 'ast>),
     /// Break statement
     Break(BreakStmt),
     /// Continue statement
     Continue(ContinueStmt),
     /// Block statement
-    Block(Block),
+    Block(Block<'src, 'ast>),
     /// If statement
-    If(Box<IfStmt>),
+    If(&'ast IfStmt<'src, 'ast>),
     /// While loop
-    While(Box<WhileStmt>),
+    While(&'ast WhileStmt<'src, 'ast>),
     /// Do-while loop
-    DoWhile(Box<DoWhileStmt>),
+    DoWhile(&'ast DoWhileStmt<'src, 'ast>),
     /// For loop
-    For(Box<ForStmt>),
+    For(&'ast ForStmt<'src, 'ast>),
     /// Foreach loop
-    Foreach(Box<ForeachStmt>),
+    Foreach(&'ast ForeachStmt<'src, 'ast>),
     /// Switch statement
-    Switch(Box<SwitchStmt>),
+    Switch(&'ast SwitchStmt<'src, 'ast>),
     /// Try-catch statement
-    TryCatch(Box<TryCatchStmt>),
+    TryCatch(&'ast TryCatchStmt<'src, 'ast>),
 }
 
-impl Stmt {
+impl<'src, 'ast> Stmt<'src, 'ast> {
     /// Get the span of this statement.
     pub fn span(&self) -> Span {
         match self {
@@ -67,10 +67,10 @@ impl Stmt {
 }
 
 /// An expression statement (expression followed by semicolon).
-#[derive(Debug, Clone, PartialEq)]
-pub struct ExprStmt {
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ExprStmt<'src, 'ast> {
     /// The expression (can be None for empty statement `;`)
-    pub expr: Option<Expr>,
+    pub expr: Option<&'ast Expr<'src, 'ast>>,
     /// Source location
     pub span: Span,
 }
@@ -82,23 +82,23 @@ pub struct ExprStmt {
 /// - `int x = 5;`
 /// - `int x = 5, y = 10;`
 /// - `MyClass@ obj = MyClass();`
-#[derive(Debug, Clone, PartialEq)]
-pub struct VarDeclStmt {
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct VarDeclStmt<'src, 'ast> {
     /// The type of the variable(s)
-    pub ty: TypeExpr,
+    pub ty: TypeExpr<'src, 'ast>,
     /// Variable declarations (can be multiple)
-    pub vars: Vec<VarDeclarator>,
+    pub vars: &'ast [VarDeclarator<'src, 'ast>],
     /// Source location
     pub span: Span,
 }
 
 /// A single variable declarator within a variable declaration.
-#[derive(Debug, Clone, PartialEq)]
-pub struct VarDeclarator {
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct VarDeclarator<'src, 'ast> {
     /// Variable name
-    pub name: Ident,
+    pub name: Ident<'src>,
     /// Optional initializer
-    pub init: Option<Expr>,
+    pub init: Option<&'ast Expr<'src, 'ast>>,
     /// Source location
     pub span: Span,
 }
@@ -108,33 +108,33 @@ pub struct VarDeclarator {
 /// Examples:
 /// - `return;`
 /// - `return expr;`
-#[derive(Debug, Clone, PartialEq)]
-pub struct ReturnStmt {
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ReturnStmt<'src, 'ast> {
     /// Optional return value
-    pub value: Option<Expr>,
+    pub value: Option<&'ast Expr<'src, 'ast>>,
     /// Source location
     pub span: Span,
 }
 
 /// A break statement.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct BreakStmt {
     /// Source location
     pub span: Span,
 }
 
 /// A continue statement.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ContinueStmt {
     /// Source location
     pub span: Span,
 }
 
 /// A block of statements.
-#[derive(Debug, Clone, PartialEq)]
-pub struct Block {
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Block<'src, 'ast> {
     /// Statements in the block
-    pub stmts: Vec<Stmt>,
+    pub stmts: &'ast [Stmt<'src, 'ast>],
     /// Source location
     pub span: Span,
 }
@@ -144,14 +144,14 @@ pub struct Block {
 /// Examples:
 /// - `if (condition) statement`
 /// - `if (condition) statement else statement`
-#[derive(Debug, Clone, PartialEq)]
-pub struct IfStmt {
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct IfStmt<'src, 'ast> {
     /// Condition
-    pub condition: Expr,
+    pub condition: &'ast Expr<'src, 'ast>,
     /// Then branch
-    pub then_stmt: Stmt,
+    pub then_stmt: &'ast Stmt<'src, 'ast>,
     /// Optional else branch
-    pub else_stmt: Option<Stmt>,
+    pub else_stmt: Option<&'ast Stmt<'src, 'ast>>,
     /// Source location
     pub span: Span,
 }
@@ -159,12 +159,12 @@ pub struct IfStmt {
 /// A while loop.
 ///
 /// Example: `while (condition) statement`
-#[derive(Debug, Clone, PartialEq)]
-pub struct WhileStmt {
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct WhileStmt<'src, 'ast> {
     /// Condition
-    pub condition: Expr,
+    pub condition: &'ast Expr<'src, 'ast>,
     /// Body
-    pub body: Stmt,
+    pub body: &'ast Stmt<'src, 'ast>,
     /// Source location
     pub span: Span,
 }
@@ -172,12 +172,12 @@ pub struct WhileStmt {
 /// A do-while loop.
 ///
 /// Example: `do statement while (condition);`
-#[derive(Debug, Clone, PartialEq)]
-pub struct DoWhileStmt {
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct DoWhileStmt<'src, 'ast> {
     /// Body
-    pub body: Stmt,
+    pub body: &'ast Stmt<'src, 'ast>,
     /// Condition
-    pub condition: Expr,
+    pub condition: &'ast Expr<'src, 'ast>,
     /// Source location
     pub span: Span,
 }
@@ -187,27 +187,27 @@ pub struct DoWhileStmt {
 /// Example: `for (init; condition; update) statement`
 ///
 /// The init can be either a variable declaration or an expression.
-#[derive(Debug, Clone, PartialEq)]
-pub struct ForStmt {
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ForStmt<'src, 'ast> {
     /// Initializer (variable declaration or expression)
-    pub init: Option<ForInit>,
+    pub init: Option<ForInit<'src, 'ast>>,
     /// Condition
-    pub condition: Option<Expr>,
+    pub condition: Option<&'ast Expr<'src, 'ast>>,
     /// Update expressions
-    pub update: Vec<Expr>,
+    pub update: &'ast [&'ast Expr<'src, 'ast>],
     /// Body
-    pub body: Stmt,
+    pub body: &'ast Stmt<'src, 'ast>,
     /// Source location
     pub span: Span,
 }
 
 /// The initializer in a for loop.
-#[derive(Debug, Clone, PartialEq)]
-pub enum ForInit {
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum ForInit<'src, 'ast> {
     /// Variable declaration
-    VarDecl(VarDeclStmt),
+    VarDecl(VarDeclStmt<'src, 'ast>),
     /// Expression
-    Expr(Expr),
+    Expr(&'ast Expr<'src, 'ast>),
 }
 
 /// A foreach loop.
@@ -216,25 +216,25 @@ pub enum ForInit {
 ///
 /// AngelScript also supports multiple iteration variables:
 /// `foreach (Type1 var1, Type2 var2 : expr) statement`
-#[derive(Debug, Clone, PartialEq)]
-pub struct ForeachStmt {
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ForeachStmt<'src, 'ast> {
     /// Iteration variables
-    pub vars: Vec<ForeachVar>,
+    pub vars: &'ast [ForeachVar<'src, 'ast>],
     /// Expression to iterate over
-    pub expr: Expr,
+    pub expr: &'ast Expr<'src, 'ast>,
     /// Body
-    pub body: Stmt,
+    pub body: &'ast Stmt<'src, 'ast>,
     /// Source location
     pub span: Span,
 }
 
 /// A foreach iteration variable.
-#[derive(Debug, Clone, PartialEq)]
-pub struct ForeachVar {
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ForeachVar<'src, 'ast> {
     /// Variable type
-    pub ty: TypeExpr,
+    pub ty: TypeExpr<'src, 'ast>,
     /// Variable name
-    pub name: Ident,
+    pub name: Ident<'src>,
     /// Source location
     pub span: Span,
 }
@@ -252,28 +252,28 @@ pub struct ForeachVar {
 ///         statement;
 /// }
 /// ```
-#[derive(Debug, Clone, PartialEq)]
-pub struct SwitchStmt {
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SwitchStmt<'src, 'ast> {
     /// Expression to switch on
-    pub expr: Expr,
+    pub expr: &'ast Expr<'src, 'ast>,
     /// Cases
-    pub cases: Vec<SwitchCase>,
+    pub cases: &'ast [SwitchCase<'src, 'ast>],
     /// Source location
     pub span: Span,
 }
 
 /// A switch case.
-#[derive(Debug, Clone, PartialEq)]
-pub struct SwitchCase {
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SwitchCase<'src, 'ast> {
     /// Case values (empty for default)
-    pub values: Vec<Expr>,
+    pub values: &'ast [&'ast Expr<'src, 'ast>],
     /// Statements
-    pub stmts: Vec<Stmt>,
+    pub stmts: &'ast [Stmt<'src, 'ast>],
     /// Source location
     pub span: Span,
 }
 
-impl SwitchCase {
+impl<'src, 'ast> SwitchCase<'src, 'ast> {
     /// Check if this is the default case.
     pub fn is_default(&self) -> bool {
         self.values.is_empty()
@@ -290,12 +290,12 @@ impl SwitchCase {
 ///     statement;
 /// }
 /// ```
-#[derive(Debug, Clone, PartialEq)]
-pub struct TryCatchStmt {
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct TryCatchStmt<'src, 'ast> {
     /// Try block
-    pub try_block: Block,
+    pub try_block: Block<'src, 'ast>,
     /// Catch block
-    pub catch_block: Block,
+    pub catch_block: Block<'src, 'ast>,
     /// Source location
     pub span: Span,
 }
@@ -314,19 +314,25 @@ mod tests {
 
     #[test]
     fn switch_case_default() {
+        use bumpalo::Bump;
+        let arena = Bump::new();
+
         let default_case = SwitchCase {
-            values: Vec::new(),
-            stmts: Vec::new(),
+            values: &[],
+            stmts: &[],
             span: Span::new(1, 0 + 1, 1 - 0),
         };
         assert!(default_case.is_default());
 
+        let expr: &Expr = arena.alloc(Expr::Literal(crate::ast::expr::LiteralExpr {
+            kind: crate::ast::expr::LiteralKind::Int(1),
+            span: Span::new(1, 0 + 1, 1 - 0),
+        }));
+        let mut values_vec = bumpalo::vec![in &arena; expr];
+        let values: &[&Expr] = values_vec.into_bump_slice();
         let case_1 = SwitchCase {
-            values: vec![Expr::Literal(crate::ast::expr::LiteralExpr {
-                kind: crate::ast::expr::LiteralKind::Int(1),
-                span: Span::new(1, 0 + 1, 1 - 0),
-            })],
-            stmts: Vec::new(),
+            values,
+            stmts: &[],
             span: Span::new(1, 0 + 1, 1 - 0),
         };
         assert!(!case_1.is_default());
@@ -334,16 +340,23 @@ mod tests {
 
     #[test]
     fn for_init_variants() {
-        let expr_init = ForInit::Expr(Expr::Literal(crate::ast::expr::LiteralExpr {
+        use bumpalo::Bump;
+        let arena = Bump::new();
+
+        let expr = arena.alloc(Expr::Literal(crate::ast::expr::LiteralExpr {
             kind: crate::ast::expr::LiteralKind::Int(0),
             span: Span::new(1, 0 + 1, 1 - 0),
         }));
+        let expr_init = ForInit::Expr(expr);
         assert!(matches!(expr_init, ForInit::Expr(_)));
     }
 
     #[test]
     fn all_stmt_span_variants() {
         use crate::ast::types::{TypeExpr, PrimitiveType};
+        use bumpalo::Bump;
+
+        let arena = Bump::new();
 
         // ExprStmt
         let expr_stmt = Stmt::Expr(ExprStmt {
@@ -355,7 +368,7 @@ mod tests {
         // VarDecl
         let var_decl = Stmt::VarDecl(VarDeclStmt {
             ty: TypeExpr::primitive(PrimitiveType::Int, Span::new(1, 1, 3)),
-            vars: Vec::new(),
+            vars: &[],
             span: Span::new(1, 1, 10),
         });
         assert_eq!(var_decl.span(), Span::new(1, 1, 10));
@@ -381,101 +394,111 @@ mod tests {
 
         // Block
         let block = Stmt::Block(Block {
-            stmts: Vec::new(),
+            stmts: &[],
             span: Span::new(1, 1, 2),
         });
         assert_eq!(block.span(), Span::new(1, 1, 2));
 
         // If
-        let if_stmt = Stmt::If(Box::new(IfStmt {
-            condition: Expr::Literal(crate::ast::expr::LiteralExpr {
-                kind: crate::ast::expr::LiteralKind::Bool(true),
-                span: Span::new(1, 4, 4),
-            }),
-            then_stmt: Stmt::Block(Block {
-                stmts: Vec::new(),
-                span: Span::new(1, 9, 2),
-            }),
+        let condition = arena.alloc(Expr::Literal(crate::ast::expr::LiteralExpr {
+            kind: crate::ast::expr::LiteralKind::Bool(true),
+            span: Span::new(1, 4, 4),
+        }));
+        let then_stmt = arena.alloc(Stmt::Block(Block {
+            stmts: &[],
+            span: Span::new(1, 9, 2),
+        }));
+        let if_stmt = Stmt::If(arena.alloc(IfStmt {
+            condition,
+            then_stmt,
             else_stmt: None,
             span: Span::new(1, 1, 11),
         }));
         assert_eq!(if_stmt.span(), Span::new(1, 1, 11));
 
         // While
-        let while_stmt = Stmt::While(Box::new(WhileStmt {
-            condition: Expr::Literal(crate::ast::expr::LiteralExpr {
-                kind: crate::ast::expr::LiteralKind::Bool(true),
-                span: Span::new(1, 7, 4),
-            }),
-            body: Stmt::Block(Block {
-                stmts: Vec::new(),
-                span: Span::new(1, 12, 2),
-            }),
+        let condition = arena.alloc(Expr::Literal(crate::ast::expr::LiteralExpr {
+            kind: crate::ast::expr::LiteralKind::Bool(true),
+            span: Span::new(1, 7, 4),
+        }));
+        let body = arena.alloc(Stmt::Block(Block {
+            stmts: &[],
+            span: Span::new(1, 12, 2),
+        }));
+        let while_stmt = Stmt::While(arena.alloc(WhileStmt {
+            condition,
+            body,
             span: Span::new(1, 1, 14),
         }));
         assert_eq!(while_stmt.span(), Span::new(1, 1, 14));
 
         // DoWhile
-        let do_while = Stmt::DoWhile(Box::new(DoWhileStmt {
-            body: Stmt::Block(Block {
-                stmts: Vec::new(),
-                span: Span::new(1, 4, 2),
-            }),
-            condition: Expr::Literal(crate::ast::expr::LiteralExpr {
-                kind: crate::ast::expr::LiteralKind::Bool(true),
-                span: Span::new(1, 13, 4),
-            }),
+        let body = arena.alloc(Stmt::Block(Block {
+            stmts: &[],
+            span: Span::new(1, 4, 2),
+        }));
+        let condition = arena.alloc(Expr::Literal(crate::ast::expr::LiteralExpr {
+            kind: crate::ast::expr::LiteralKind::Bool(true),
+            span: Span::new(1, 13, 4),
+        }));
+        let do_while = Stmt::DoWhile(arena.alloc(DoWhileStmt {
+            body,
+            condition,
             span: Span::new(1, 1, 18),
         }));
         assert_eq!(do_while.span(), Span::new(1, 1, 18));
 
         // For
-        let for_stmt = Stmt::For(Box::new(ForStmt {
+        let body = arena.alloc(Stmt::Block(Block {
+            stmts: &[],
+            span: Span::new(1, 10, 2),
+        }));
+        let for_stmt = Stmt::For(arena.alloc(ForStmt {
             init: None,
             condition: None,
-            update: Vec::new(),
-            body: Stmt::Block(Block {
-                stmts: Vec::new(),
-                span: Span::new(1, 10, 2),
-            }),
+            update: &[],
+            body,
             span: Span::new(1, 1, 12),
         }));
         assert_eq!(for_stmt.span(), Span::new(1, 1, 12));
 
         // Foreach
-        let foreach = Stmt::Foreach(Box::new(ForeachStmt {
-            vars: Vec::new(),
-            expr: Expr::Literal(crate::ast::expr::LiteralExpr {
-                kind: crate::ast::expr::LiteralKind::Int(0),
-                span: Span::new(1, 10, 1),
-            }),
-            body: Stmt::Block(Block {
-                stmts: Vec::new(),
-                span: Span::new(1, 12, 2),
-            }),
+        let expr = arena.alloc(Expr::Literal(crate::ast::expr::LiteralExpr {
+            kind: crate::ast::expr::LiteralKind::Int(0),
+            span: Span::new(1, 10, 1),
+        }));
+        let body = arena.alloc(Stmt::Block(Block {
+            stmts: &[],
+            span: Span::new(1, 12, 2),
+        }));
+        let foreach = Stmt::Foreach(arena.alloc(ForeachStmt {
+            vars: &[],
+            expr,
+            body,
             span: Span::new(1, 1, 14),
         }));
         assert_eq!(foreach.span(), Span::new(1, 1, 14));
 
         // Switch
-        let switch = Stmt::Switch(Box::new(SwitchStmt {
-            expr: Expr::Literal(crate::ast::expr::LiteralExpr {
-                kind: crate::ast::expr::LiteralKind::Int(0),
-                span: Span::new(1, 8, 1),
-            }),
-            cases: Vec::new(),
+        let expr = arena.alloc(Expr::Literal(crate::ast::expr::LiteralExpr {
+            kind: crate::ast::expr::LiteralKind::Int(0),
+            span: Span::new(1, 8, 1),
+        }));
+        let switch = Stmt::Switch(arena.alloc(SwitchStmt {
+            expr,
+            cases: &[],
             span: Span::new(1, 1, 15),
         }));
         assert_eq!(switch.span(), Span::new(1, 1, 15));
 
         // TryCatch
-        let try_catch = Stmt::TryCatch(Box::new(TryCatchStmt {
+        let try_catch = Stmt::TryCatch(arena.alloc(TryCatchStmt {
             try_block: Block {
-                stmts: Vec::new(),
+                stmts: &[],
                 span: Span::new(1, 5, 2),
             },
             catch_block: Block {
-                stmts: Vec::new(),
+                stmts: &[],
                 span: Span::new(1, 15, 2),
             },
             span: Span::new(1, 1, 17),
@@ -485,18 +508,22 @@ mod tests {
 
     #[test]
     fn switch_case_multiple_values() {
+        use bumpalo::Bump;
+        let arena = Bump::new();
+
+        let expr1: &Expr = arena.alloc(Expr::Literal(crate::ast::expr::LiteralExpr {
+            kind: crate::ast::expr::LiteralKind::Int(1),
+            span: Span::new(1, 6, 1),
+        }));
+        let expr2: &Expr = arena.alloc(Expr::Literal(crate::ast::expr::LiteralExpr {
+            kind: crate::ast::expr::LiteralKind::Int(2),
+            span: Span::new(1, 14, 1),
+        }));
+        let mut values_vec = bumpalo::vec![in &arena; expr1, expr2];
+        let values: &[&Expr] = values_vec.into_bump_slice();
         let case = SwitchCase {
-            values: vec![
-                Expr::Literal(crate::ast::expr::LiteralExpr {
-                    kind: crate::ast::expr::LiteralKind::Int(1),
-                    span: Span::new(1, 6, 1),
-                }),
-                Expr::Literal(crate::ast::expr::LiteralExpr {
-                    kind: crate::ast::expr::LiteralKind::Int(2),
-                    span: Span::new(1, 14, 1),
-                }),
-            ],
-            stmts: Vec::new(),
+            values,
+            stmts: &[],
             span: Span::new(1, 1, 20),
         };
         assert!(!case.is_default());
@@ -505,11 +532,15 @@ mod tests {
 
     #[test]
     fn expr_stmt_with_expr() {
+        use bumpalo::Bump;
+        let arena = Bump::new();
+
+        let expr = arena.alloc(Expr::Literal(crate::ast::expr::LiteralExpr {
+            kind: crate::ast::expr::LiteralKind::Int(42),
+            span: Span::new(1, 1, 2),
+        }));
         let stmt = ExprStmt {
-            expr: Some(Expr::Literal(crate::ast::expr::LiteralExpr {
-                kind: crate::ast::expr::LiteralKind::Int(42),
-                span: Span::new(1, 1, 2),
-            })),
+            expr: Some(expr),
             span: Span::new(1, 1, 3),
         };
         assert!(stmt.expr.is_some());
@@ -517,12 +548,16 @@ mod tests {
 
     #[test]
     fn var_declarator_with_init() {
+        use bumpalo::Bump;
+        let arena = Bump::new();
+
+        let init = arena.alloc(Expr::Literal(crate::ast::expr::LiteralExpr {
+            kind: crate::ast::expr::LiteralKind::Int(10),
+            span: Span::new(1, 9, 2),
+        }));
         let decl = VarDeclarator {
             name: Ident::new("x", Span::new(1, 5, 1)),
-            init: Some(Expr::Literal(crate::ast::expr::LiteralExpr {
-                kind: crate::ast::expr::LiteralKind::Int(10),
-                span: Span::new(1, 9, 2),
-            })),
+            init: Some(init),
             span: Span::new(1, 5, 6),
         };
         assert!(decl.init.is_some());

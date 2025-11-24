@@ -5,12 +5,13 @@
 
 use crate::ast::{ParseError, ParseErrorKind, ParseErrors};
 use crate::lexer::{Lexer, Span, Token, TokenKind};
+use bumpalo::Bump;
 
 /// The main parser for AngelScript source code.
 ///
 /// The parser uses a lookahead approach with buffered tokens, allowing
 /// arbitrary peeking ahead without consuming tokens.
-pub struct Parser<'src> {
+pub struct Parser<'src, 'ast> {
     /// The source code being parsed
     source: &'src str,
     /// Lexer for tokenizing the source
@@ -23,11 +24,13 @@ pub struct Parser<'src> {
     pub(super) errors: ParseErrors,
     /// Whether we're in panic mode (skipping to synchronization point)
     pub(super) panic_mode: bool,
+    /// Arena allocator for AST nodes
+    pub(super) arena: &'ast Bump,
 }
 
-impl<'src> Parser<'src> {
+impl<'src, 'ast> Parser<'src, 'ast> {
     /// Create a new parser for the given source code.
-    pub fn new(source: &'src str) -> Self {
+    pub fn new(source: &'src str, arena: &'ast Bump) -> Self {
         let mut parser = Self {
             source,
             lexer: Lexer::new(source),
@@ -35,6 +38,7 @@ impl<'src> Parser<'src> {
             position: 0,
             errors: ParseErrors::new(),
             panic_mode: false,
+            arena,
         };
         // Buffer the first token
         parser.fill_buffer(1);
@@ -547,14 +551,16 @@ mod tests {
     #[test]
     fn parser_creation() {
         let source = "int x = 42;";
-        let mut parser = Parser::new(source);
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new(source, &arena);
         assert_eq!(parser.peek().kind, TokenKind::Int);
     }
 
     #[test]
     fn token_navigation() {
         let source = "int x = 42;";
-        let mut parser = Parser::new(source);
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new(source, &arena);
 
         assert_eq!(parser.peek().kind, TokenKind::Int);
         assert_eq!(parser.peek_nth(1).kind, TokenKind::Identifier);
@@ -568,7 +574,8 @@ mod tests {
     #[test]
     fn check_and_eat() {
         let source = "int x;";
-        let mut parser = Parser::new(source);
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new(source, &arena);
 
         assert!(parser.check(TokenKind::Int));
         assert!(!parser.check(TokenKind::Float));
@@ -584,7 +591,8 @@ mod tests {
     #[test]
     fn expect_success() {
         let source = "int x;";
-        let mut parser = Parser::new(source);
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new(source, &arena);
 
         let result = parser.expect(TokenKind::Int);
         assert!(result.is_ok());
@@ -594,7 +602,8 @@ mod tests {
     #[test]
     fn expect_failure() {
         let source = "int x;";
-        let mut parser = Parser::new(source);
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new(source, &arena);
 
         let result = parser.expect(TokenKind::Float);
         assert!(result.is_err());
@@ -608,7 +617,8 @@ mod tests {
     #[test]
     fn contextual_keywords() {
         let source = "shared class";
-        let mut parser = Parser::new(source);
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new(source, &arena);
 
         assert!(parser.check_contextual("shared"));
         let token = parser.eat_contextual("shared");
@@ -621,7 +631,8 @@ mod tests {
     #[test]
     fn error_accumulation() {
         let source = "int x;";
-        let mut parser = Parser::new(source);
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new(source, &arena);
 
         parser.error(ParseErrorKind::ExpectedToken, Span::new(1, 1, 3), "test error 1");
         parser.error(ParseErrorKind::ExpectedToken, Span::new(1, 5, 1), "test error 2");
@@ -632,72 +643,84 @@ mod tests {
     #[test]
     fn is_type_start_primitives() {
         let source = "int x;";
-        let mut parser = Parser::new(source);
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new(source, &arena);
         assert!(parser.is_type_start());
 
         let source = "float x;";
-        let mut parser = Parser::new(source);
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new(source, &arena);
         assert!(parser.is_type_start());
 
         let source = "void func();";
-        let mut parser = Parser::new(source);
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new(source, &arena);
         assert!(parser.is_type_start());
     }
 
     #[test]
     fn is_type_start_const() {
         let source = "const int x;";
-        let mut parser = Parser::new(source);
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new(source, &arena);
         assert!(parser.is_type_start());
     }
 
     #[test]
     fn is_type_start_identifier() {
         let source = "MyClass obj;";
-        let mut parser = Parser::new(source);
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new(source, &arena);
         assert!(parser.is_type_start());
     }
 
     #[test]
     fn is_type_start_not_type() {
         let source = "if (x)";
-        let mut parser = Parser::new(source);
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new(source, &arena);
         assert!(!parser.is_type_start());
 
         let source = "return x;";
-        let mut parser = Parser::new(source);
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new(source, &arena);
         assert!(!parser.is_type_start());
     }
 
     #[test]
     fn is_var_decl_simple() {
         let source = "int x;";
-        let mut parser = Parser::new(source);
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new(source, &arena);
         assert!(parser.is_var_decl());
     }
 
     #[test]
     fn is_var_decl_complex_type() {
         let source = "const array<int>@ x;";
-        let mut parser = Parser::new(source);
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new(source, &arena);
         assert!(parser.is_var_decl());
     }
 
     #[test]
     fn is_lambda_detection() {
         let source = "function() { }";
-        let mut parser = Parser::new(source);
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new(source, &arena);
         assert!(parser.is_lambda());
 
         let source = "if (x)";
-        let mut parser = Parser::new(source);
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new(source, &arena);
         assert!(!parser.is_lambda());
     }
 
     #[test]
     fn split_right_shift_basic() {
         let source = "array<array<int>>";
-        let mut parser = Parser::new(source);
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new(source, &arena);
 
         // Advance to >>
         while !parser.check(TokenKind::GreaterGreater) && !parser.is_eof() {
@@ -716,7 +739,8 @@ mod tests {
     #[test]
     fn synchronize_on_semicolon() {
         let source = "error tokens here ; int x;";
-        let mut parser = Parser::new(source);
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new(source, &arena);
 
         // Trigger panic mode
         parser.panic_mode = true;
@@ -732,7 +756,8 @@ mod tests {
     #[test]
     fn synchronize_on_keyword() {
         let source = "error tokens if (x) { }";
-        let mut parser = Parser::new(source);
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new(source, &arena);
 
         parser.panic_mode = true;
         parser.synchronize();
@@ -745,7 +770,8 @@ mod tests {
     #[test]
     fn synchronize_at_eof() {
         let source = "error tokens";
-        let mut parser = Parser::new(source);
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new(source, &arena);
 
         parser.panic_mode = true;
         parser.synchronize();
@@ -758,7 +784,8 @@ mod tests {
     fn synchronize_advances_at_least_once() {
         // Critical test: ensure we don't infinite loop
         let source = "if while for";
-        let mut parser = Parser::new(source);
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new(source, &arena);
 
         parser.panic_mode = true;
         let start_pos = parser.position;
@@ -772,7 +799,8 @@ mod tests {
     #[test]
     fn peek_nth_multiple() {
         let source = "int x = 42;";
-        let mut parser = Parser::new(source);
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new(source, &arena);
 
         assert_eq!(parser.peek_nth(0).kind, TokenKind::Int);
         assert_eq!(parser.peek_nth(1).kind, TokenKind::Identifier);
@@ -784,7 +812,8 @@ mod tests {
     #[test]
     fn is_eof_check() {
         let source = "int";
-        let mut parser = Parser::new(source);
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new(source, &arena);
 
         assert!(!parser.is_eof());
         parser.advance(); // int
@@ -794,7 +823,8 @@ mod tests {
     #[test]
     fn take_errors() {
         let source = "int x;";
-        let mut parser = Parser::new(source);
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new(source, &arena);
 
         parser.error(ParseErrorKind::ExpectedToken, Span::new(1, 1, 1), "error 1");
         parser.error(ParseErrorKind::ExpectedToken, Span::new(1, 2, 1), "error 2");
@@ -808,7 +838,8 @@ mod tests {
 
     #[test]
     fn clear_panic_mode() {
-        let mut parser = Parser::new("test");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("test", &arena);
 
         parser.panic_mode = true;
         assert!(parser.is_panicking());
@@ -825,24 +856,28 @@ mod tests {
         ];
 
         for ty in types {
-            let mut parser = Parser::new(ty);
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new(ty, &arena);
             assert!(parser.is_primitive_type(), "Failed for type: {}", ty);
         }
     }
 
     #[test]
     fn is_primitive_type_negative() {
-        let mut parser = Parser::new("MyClass");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("MyClass", &arena);
         assert!(!parser.is_primitive_type());
 
-        let mut parser = Parser::new("if");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("if", &arena);
         assert!(!parser.is_primitive_type());
     }
 
     #[test]
     fn try_skip_template_args() {
         let source = "<int, float> rest";
-        let mut parser = Parser::new(source);
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new(source, &arena);
 
         let saved = parser.position;
         assert!(parser.try_skip_template_args());
@@ -855,7 +890,8 @@ mod tests {
     #[test]
     fn try_skip_nested_template_args() {
         let source = "<array<int>> rest";
-        let mut parser = Parser::new(source);
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new(source, &arena);
 
         assert!(parser.try_skip_template_args());
         assert_eq!(parser.peek().lexeme, "rest");
@@ -872,7 +908,8 @@ mod tests {
         ];
 
         for test in tests {
-            let mut parser = Parser::new(test);
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new(test, &arena);
             assert!(parser.is_var_decl(), "Failed for: {}", test);
         }
     }
@@ -880,14 +917,16 @@ mod tests {
     #[test]
     fn is_var_decl_with_reference() {
         let source = "int& x";
-        let mut parser = Parser::new(source);
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new(source, &arena);
         assert!(parser.is_var_decl());
     }
 
     #[test]
     fn is_var_decl_with_handle() {
         let source = "MyClass@ obj";
-        let mut parser = Parser::new(source);
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new(source, &arena);
         assert!(parser.is_var_decl());
     }
 
@@ -900,7 +939,8 @@ mod tests {
         ];
 
         for test in tests {
-            let mut parser = Parser::new(test);
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new(test, &arena);
             assert!(!parser.is_var_decl(), "Incorrectly identified as var decl: {}", test);
         }
     }
@@ -908,33 +948,38 @@ mod tests {
     #[test]
     fn is_virtual_property_true() {
         let source = "int Value { get; set; }";
-        let mut parser = Parser::new(source);
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new(source, &arena);
         assert!(parser.is_virtual_property());
     }
 
     #[test]
     fn is_virtual_property_false_method() {
         let source = "int getValue()";
-        let mut parser = Parser::new(source);
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new(source, &arena);
         assert!(!parser.is_virtual_property());
     }
 
     #[test]
     fn is_lambda_true() {
-        let mut parser = Parser::new("function() { }");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("function() { }", &arena);
         assert!(parser.is_lambda());
     }
 
     #[test]
     fn is_lambda_false() {
-        let mut parser = Parser::new("if (x)");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("if (x)", &arena);
         assert!(!parser.is_lambda());
     }
 
     #[test]
     fn should_split_right_shift_true() {
         let source = "a >> b";
-        let mut parser = Parser::new(source);
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new(source, &arena);
         parser.advance(); // Skip 'a'
         assert!(parser.should_split_right_shift());
     }
@@ -942,7 +987,8 @@ mod tests {
     #[test]
     fn should_split_right_shift_false() {
         let source = "a > b";
-        let mut parser = Parser::new(source);
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new(source, &arena);
         parser.advance(); // Skip 'a'
         assert!(!parser.should_split_right_shift());
     }
@@ -950,7 +996,8 @@ mod tests {
     #[test]
     fn eat_contextual_success() {
         let source = "shared class";
-        let mut parser = Parser::new(source);
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new(source, &arena);
 
         let token = parser.eat_contextual("shared");
         assert!(token.is_some());
@@ -961,7 +1008,8 @@ mod tests {
     #[test]
     fn eat_contextual_wrong_name() {
         let source = "shared class";
-        let mut parser = Parser::new(source);
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new(source, &arena);
 
         let token = parser.eat_contextual("external");
         assert!(token.is_none());
@@ -971,7 +1019,8 @@ mod tests {
     #[test]
     fn eat_contextual_not_identifier() {
         let source = "class Foo";
-        let mut parser = Parser::new(source);
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new(source, &arena);
 
         let token = parser.eat_contextual("class");
         assert!(token.is_none());
@@ -980,13 +1029,15 @@ mod tests {
     #[test]
     fn source_accessor() {
         let source = "int x = 42;";
-        let parser = Parser::new(source);
+        let arena = bumpalo::Bump::new();
+        let parser = Parser::new(source, &arena);
         assert_eq!(parser.source(), source);
     }
 
     #[test]
     fn multiple_errors_accumulate() {
-        let mut parser = Parser::new("test");
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("test", &arena);
 
         for i in 0..5 {
             parser.error(
