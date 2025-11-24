@@ -9,7 +9,7 @@
 //! - Typedefs and funcdefs
 //! - Imports and mixins
 
-use crate::ast::{DeclModifiers, FuncAttr, Ident, Scope, Visibility};
+use crate::ast::{DeclModifiers, FuncAttr, Ident, Visibility};
 use crate::ast::expr::Expr;
 use crate::ast::stmt::Block;
 use crate::ast::types::{ParamType, ReturnType, TypeExpr};

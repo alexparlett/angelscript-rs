@@ -68,8 +68,7 @@ impl<'src, 'ast> Parser<'src, 'ast> {
 
             // Check for ternary operator (?:)
             if self.check(TokenKind::Question) {
-                let (l_bp, r_bp) = (2, 1); // Ternary precedence
-                if l_bp < min_bp {
+                if 2 < min_bp {
                     break;
                 }
                 lhs = self.parse_ternary(lhs)?;
@@ -815,7 +814,6 @@ mod tests {
 
     #[test]
     fn parse_int_literal() {
-        let arena = bumpalo::Bump::new();
         let arena = bumpalo::Bump::new();
         let mut parser = Parser::new("42", &arena);
         let expr = parser.parse_expr(0).unwrap();

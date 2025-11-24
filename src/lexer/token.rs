@@ -23,24 +23,6 @@ impl<'src> Token<'src> {
     pub fn new(kind: TokenKind, lexeme: &'src str, span: Span) -> Self {
         Self { kind, lexeme, span }
     }
-
-    /// Check if this token is a keyword.
-    #[inline]
-    pub fn is_keyword(&self) -> bool {
-        self.kind.is_keyword()
-    }
-
-    /// Check if this token is a literal value.
-    #[inline]
-    pub fn is_literal(&self) -> bool {
-        self.kind.is_literal()
-    }
-
-    /// Check if this token is an operator.
-    #[inline]
-    pub fn is_operator(&self) -> bool {
-        self.kind.is_operator()
-    }
 }
 
 impl fmt::Debug for Token<'_> {
@@ -685,26 +667,6 @@ pub fn lookup_keyword(ident: &str) -> Option<TokenKind> {
     })
 }
 
-/// Contextual keywords that are identifiers unless the parser
-/// gives them special meaning.
-pub const CONTEXTUAL_KEYWORDS: &[&str] = &[
-    "this",
-    "from",
-    "super",
-    "shared",
-    "final",
-    "override",
-    "get",
-    "set",
-    "abstract",
-    "function",
-    "if_handle_then_const",
-    "external",
-    "explicit",
-    "property",
-    "delete",
-];
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -726,64 +688,11 @@ mod tests {
     }
 
     #[test]
-    fn contextual_keywords_are_not_keywords() {
-        for kw in CONTEXTUAL_KEYWORDS {
-            assert!(
-                lookup_keyword(kw).is_none(),
-                "{} should not be a keyword",
-                kw
-            );
-        }
-    }
-
-    #[test]
     fn token_new() {
         let token = Token::new(TokenKind::Identifier, "foo", Span::new(1, 5, 3));
         assert_eq!(token.kind, TokenKind::Identifier);
         assert_eq!(token.lexeme, "foo");
         assert_eq!(token.span, Span::new(1, 5, 3));
-    }
-
-    #[test]
-    fn token_is_keyword() {
-        let kw_token = Token::new(TokenKind::If, "if", Span::new(1, 1, 2));
-        assert!(kw_token.is_keyword());
-
-        let ident_token = Token::new(TokenKind::Identifier, "foo", Span::new(1, 1, 3));
-        assert!(!ident_token.is_keyword());
-
-        let literal_token = Token::new(TokenKind::IntLiteral, "42", Span::new(1, 1, 2));
-        assert!(!literal_token.is_keyword());
-    }
-
-    #[test]
-    fn token_is_literal() {
-        let int_token = Token::new(TokenKind::IntLiteral, "42", Span::new(1, 1, 2));
-        assert!(int_token.is_literal());
-
-        let str_token = Token::new(TokenKind::StringLiteral, "\"hello\"", Span::new(1, 1, 7));
-        assert!(str_token.is_literal());
-
-        let kw_token = Token::new(TokenKind::If, "if", Span::new(1, 1, 2));
-        assert!(!kw_token.is_literal());
-
-        let op_token = Token::new(TokenKind::Plus, "+", Span::new(1, 1, 1));
-        assert!(!op_token.is_literal());
-    }
-
-    #[test]
-    fn token_is_operator() {
-        let plus_token = Token::new(TokenKind::Plus, "+", Span::new(1, 1, 1));
-        assert!(plus_token.is_operator());
-
-        let eq_token = Token::new(TokenKind::EqualEqual, "==", Span::new(1, 1, 2));
-        assert!(eq_token.is_operator());
-
-        let kw_token = Token::new(TokenKind::If, "if", Span::new(1, 1, 2));
-        assert!(!kw_token.is_operator());
-
-        let delim_token = Token::new(TokenKind::LeftParen, "(", Span::new(1, 1, 1));
-        assert!(!delim_token.is_operator());
     }
 
     #[test]

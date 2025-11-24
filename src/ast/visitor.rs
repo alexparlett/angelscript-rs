@@ -752,8 +752,7 @@ pub fn walk_return_type<V: Visitor>(visitor: &mut V, ty: &ReturnType) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ast::{Ident, Visibility, DeclModifiers, FuncAttr};
-    use crate::ast::types::{TypeExpr, PrimitiveType};
+    use crate::ast::Ident;
     use crate::lexer::Span;
 
     /// Example visitor that counts function declarations.

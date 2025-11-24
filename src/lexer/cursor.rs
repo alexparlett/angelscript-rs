@@ -1,10 +1,3 @@
-//! Low-level character iteration for the lexer.
-//!
-//! The [`Cursor`] provides peek/advance operations over source text
-//! while tracking line and column positions.
-
-use super::span::Position;
-
 /// A cursor over source text that tracks position.
 ///
 /// Provides low-level character access with peek/advance semantics.
@@ -40,22 +33,10 @@ impl<'src> Cursor<'src> {
         self.source
     }
 
-    /// Get the remaining source text from current position.
-    #[inline]
-    pub fn rest(&self) -> &'src str {
-        self.rest
-    }
-
     /// Current byte offset from start of source.
     #[inline]
     pub fn offset(&self) -> u32 {
         self.offset
-    }
-
-    /// Current position (offset, line, column).
-    #[inline]
-    pub fn position(&self) -> Position {
-        Position::new(self.offset, self.line, self.column)
     }
 
     /// Current line number (1-indexed).
@@ -86,18 +67,6 @@ impl<'src> Cursor<'src> {
     #[inline]
     pub fn peek_nth(&self, n: usize) -> Option<char> {
         self.rest.chars().nth(n)
-    }
-
-    /// Peek at the current byte without consuming it.
-    #[inline]
-    pub fn peek_byte(&self) -> Option<u8> {
-        self.rest.as_bytes().first().copied()
-    }
-
-    /// Peek at the nth byte ahead (0 = current).
-    #[inline]
-    pub fn peek_byte_nth(&self, n: usize) -> Option<u8> {
-        self.rest.as_bytes().get(n).copied()
     }
 
     /// Check if the current character satisfies a predicate.
@@ -191,17 +160,6 @@ impl<'src> Cursor<'src> {
         }
     }
 
-    /// Consume if the upcoming bytes match the string.
-    #[inline]
-    pub fn eat_str(&mut self, s: &str) -> bool {
-        if self.check_str(s) {
-            self.advance_bytes(s.len());
-            true
-        } else {
-            false
-        }
-    }
-
     /// Consume characters while the predicate matches.
     ///
     /// Returns the consumed slice.
@@ -217,14 +175,6 @@ impl<'src> Cursor<'src> {
     #[inline]
     pub fn slice_from(&self, start: u32) -> &'src str {
         &self.source[start as usize..self.offset as usize]
-    }
-
-    /// Check if the next characters form an identifier continuation.
-    ///
-    /// Used to ensure keywords don't match partial identifiers.
-    #[inline]
-    pub fn followed_by_ident_char(&self) -> bool {
-        self.check(is_ident_continue)
     }
 }
 
@@ -254,24 +204,7 @@ mod tests {
         assert_eq!(cursor.peek(), Some('e'));
         assert_eq!(cursor.offset(), 1);
     }
-
-    #[test]
-    fn cursor_position_tracking() {
-        let mut cursor = Cursor::new("ab\ncd");
-
-        cursor.advance(); // a
-        assert_eq!(cursor.position(), Position::new(1, 1, 2));
-
-        cursor.advance(); // b
-        assert_eq!(cursor.position(), Position::new(2, 1, 3));
-
-        cursor.advance(); // \n
-        assert_eq!(cursor.position(), Position::new(3, 2, 1));
-
-        cursor.advance(); // c
-        assert_eq!(cursor.position(), Position::new(4, 2, 2));
-    }
-
+    
     #[test]
     fn cursor_eat() {
         let mut cursor = Cursor::new("hello");
@@ -279,17 +212,6 @@ mod tests {
         assert!(cursor.eat('h'));
         assert!(!cursor.eat('h')); // Already consumed
         assert!(cursor.eat('e'));
-    }
-
-    #[test]
-    fn cursor_eat_str() {
-        let mut cursor = Cursor::new("hello world");
-
-        assert!(cursor.eat_str("hello"));
-        assert!(!cursor.eat_str("world")); // Space first
-        assert!(cursor.eat(' '));
-        assert!(cursor.eat_str("world"));
-        assert!(cursor.is_eof());
     }
 
     #[test]
@@ -340,46 +262,6 @@ mod tests {
     }
 
     #[test]
-    fn cursor_rest() {
-        let mut cursor = Cursor::new("hello world");
-        assert_eq!(cursor.rest(), "hello world");
-
-        cursor.advance(); // consume 'h'
-        assert_eq!(cursor.rest(), "ello world");
-
-        cursor.eat_str("ello ");
-        assert_eq!(cursor.rest(), "world");
-    }
-
-    #[test]
-    fn cursor_peek_byte() {
-        let cursor = Cursor::new("abc");
-        assert_eq!(cursor.peek_byte(), Some(b'a'));
-
-        let cursor_empty = Cursor::new("");
-        assert_eq!(cursor_empty.peek_byte(), None);
-    }
-
-    #[test]
-    fn cursor_peek_byte_nth() {
-        let cursor = Cursor::new("hello");
-        assert_eq!(cursor.peek_byte_nth(0), Some(b'h'));
-        assert_eq!(cursor.peek_byte_nth(1), Some(b'e'));
-        assert_eq!(cursor.peek_byte_nth(4), Some(b'o'));
-        assert_eq!(cursor.peek_byte_nth(5), None);
-    }
-
-    #[test]
-    fn cursor_peek_byte_utf8() {
-        let cursor = Cursor::new("héllo");
-        assert_eq!(cursor.peek_byte_nth(0), Some(b'h'));
-        // 'é' is 2 bytes: 0xC3 0xA9
-        assert_eq!(cursor.peek_byte_nth(1), Some(0xC3));
-        assert_eq!(cursor.peek_byte_nth(2), Some(0xA9));
-        assert_eq!(cursor.peek_byte_nth(3), Some(b'l'));
-    }
-
-    #[test]
     fn cursor_check() {
         let cursor = Cursor::new("hello");
         assert!(cursor.check(|c| c == 'h'));
@@ -406,12 +288,12 @@ mod tests {
         let mut cursor = Cursor::new("hello world");
         let start = cursor.offset();
 
-        cursor.eat_str("hello");
+        cursor.eat_while(|ch| "hello".contains(ch));
         assert_eq!(cursor.slice_from(start), "hello");
 
         cursor.eat(' ');
         let word_start = cursor.offset();
-        cursor.eat_str("world");
+        cursor.eat_while(|ch| "world".contains(ch));
         assert_eq!(cursor.slice_from(word_start), "world");
     }
 
@@ -423,21 +305,6 @@ mod tests {
         cursor.advance(); // h
         cursor.advance(); // é
         assert_eq!(cursor.slice_from(start), "hé");
-    }
-
-    #[test]
-    fn cursor_followed_by_ident_char() {
-        let cursor_yes = Cursor::new("abc");
-        assert!(cursor_yes.followed_by_ident_char());
-
-        let cursor_num = Cursor::new("123");
-        assert!(cursor_num.followed_by_ident_char()); // digits continue idents
-
-        let cursor_no = Cursor::new(" ");
-        assert!(!cursor_no.followed_by_ident_char());
-
-        let cursor_eof = Cursor::new("");
-        assert!(!cursor_eof.followed_by_ident_char());
     }
 
     #[test]
@@ -493,7 +360,6 @@ mod tests {
 
         cursor.advance_bytes(5); // "hello"
         assert_eq!(cursor.slice_from(start), "hello");
-        assert_eq!(cursor.rest(), " world");
     }
 
     #[test]
@@ -503,6 +369,5 @@ mod tests {
         cursor.advance_bytes(3); // "ab\n"
         assert_eq!(cursor.line(), 2);
         assert_eq!(cursor.column(), 1);
-        assert_eq!(cursor.rest(), "cd");
     }
 }

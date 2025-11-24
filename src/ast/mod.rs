@@ -63,7 +63,7 @@ pub use types::*;
 /// for the lifetime of this struct.
 #[derive(Debug)]
 pub struct Script {
-    arena: bumpalo::Bump,
+    pub arena: bumpalo::Bump,
     items: &'static [Item<'static, 'static>],
     span: crate::lexer::Span,
 }
@@ -213,7 +213,7 @@ pub fn parse_lenient(source: &str) -> (Script, Vec<ParseError>) {
 
 /// Container for a parsed expression that owns its arena.
 pub struct ParsedExpr {
-    arena: bumpalo::Bump,
+    pub arena: bumpalo::Bump,
     pub expr: &'static Expr<'static, 'static>,
 }
 
@@ -226,7 +226,7 @@ impl ParsedExpr {
 
 /// Container for a parsed statement that owns its arena.
 pub struct ParsedStmt {
-    arena: bumpalo::Bump,
+    pub arena: bumpalo::Bump,
     pub stmt: Stmt<'static, 'static>,
 }
 
@@ -239,7 +239,7 @@ impl ParsedStmt {
 
 /// Container for a parsed type expression that owns its arena.
 pub struct ParsedTypeExpr {
-    arena: bumpalo::Bump,
+    pub arena: bumpalo::Bump,
     pub type_expr: TypeExpr<'static, 'static>,
 }
 
@@ -565,13 +565,10 @@ mod tests {
             int y
         "#;
 
-        let (script, errors) = parse_lenient(source);
+        let (_, errors) = parse_lenient(source);
 
         // Should have multiple errors
         assert!(errors.len() >= 2, "Should detect multiple errors");
-
-        // Should still produce some AST
-        // (may be empty or partial depending on recovery)
     }
 
     #[test]

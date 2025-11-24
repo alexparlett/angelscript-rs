@@ -6,8 +6,9 @@
 //! - Real-world: Game logic, utilities, data structures
 //! - Parsing modes: Strict vs lenient parsing
 
-use criterion::{black_box, criterion_group, criterion_main, Criterion, BenchmarkId, Throughput};
+use criterion::{criterion_group, criterion_main, Criterion, Throughput};
 use angelscript::parse_lenient;
+use std::hint::black_box;
 
 /// Benchmark parsing performance across different file sizes
 fn size_based_benchmarks(c: &mut Criterion) {

@@ -2046,12 +2046,6 @@ impl<'src, 'ast> Parser<'src, 'ast> {
         }))
     }
 
-    /// Parse an identifier.
-    fn parse_ident(&mut self) -> Result<Ident, ParseError> {
-        let token = self.expect(TokenKind::Identifier)?;
-        Ok(Ident::new(token.lexeme, token.span))
-    }
-
     /// Parse a comma-separated list of identifiers.
     fn parse_ident_list(&mut self) -> Result<Vec<Ident<'src>>, ParseError> {
         let mut tokens = Vec::new();

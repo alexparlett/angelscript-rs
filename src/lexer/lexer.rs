@@ -21,8 +21,6 @@ pub struct Lexer<'src> {
     lookahead: VecDeque<Token<'src>>,
     /// Accumulated errors.
     errors: Vec<LexerError>,
-    /// Whether we've hit EOF.
-    eof: bool,
 }
 
 impl<'src> Lexer<'src> {
@@ -32,18 +30,7 @@ impl<'src> Lexer<'src> {
             cursor: Cursor::new(source),
             lookahead: VecDeque::with_capacity(4),
             errors: Vec::new(),
-            eof: false,
         }
-    }
-
-    /// Get the source text being lexed.
-    pub fn source(&self) -> &'src str {
-        self.cursor.source()
-    }
-
-    /// Get accumulated lexer errors.
-    pub fn errors(&self) -> &[LexerError] {
-        &self.errors
     }
 
     /// Take accumulated errors, leaving an empty vec.
@@ -56,52 +43,12 @@ impl<'src> Lexer<'src> {
         !self.errors.is_empty()
     }
 
-    /// Peek at the next token without consuming it.
-    pub fn peek(&mut self) -> &Token<'src> {
-        self.ensure_lookahead(1);
-        &self.lookahead[0]
-    }
-
-    /// Peek at the nth token ahead (0 = next token).
-    pub fn peek_nth(&mut self, n: usize) -> &Token<'src> {
-        self.ensure_lookahead(n + 1);
-        &self.lookahead[n]
-    }
-
     /// Consume and return the next token.
     pub fn next_token(&mut self) -> Token<'src> {
         if let Some(token) = self.lookahead.pop_front() {
             return token;
         }
         self.scan_token()
-    }
-
-    /// Check if the next token matches the given kind.
-    pub fn check(&mut self, kind: TokenKind) -> bool {
-        self.peek().kind == kind
-    }
-
-    /// Consume the next token if it matches the given kind.
-    pub fn eat(&mut self, kind: TokenKind) -> Option<Token<'src>> {
-        if self.check(kind) {
-            Some(self.next_token())
-        } else {
-            None
-        }
-    }
-
-    // =========================================
-    // Internal: Lookahead management
-    // =========================================
-
-    fn ensure_lookahead(&mut self, count: usize) {
-        while self.lookahead.len() < count && !self.eof {
-            let token = self.scan_token();
-            if token.kind == TokenKind::Eof {
-                self.eof = true;
-            }
-            self.lookahead.push_back(token);
-        }
     }
 
     // =========================================
@@ -1079,24 +1026,6 @@ string
     }
 
     // =========================================
-    // Lookahead
-    // =========================================
-
-    #[test]
-    fn peek_and_peek_nth() {
-        let mut lexer = Lexer::new("a b c");
-
-        assert_eq!(lexer.peek().lexeme, "a");
-        assert_eq!(lexer.peek_nth(0).lexeme, "a");
-        assert_eq!(lexer.peek_nth(1).lexeme, "b");
-        assert_eq!(lexer.peek_nth(2).lexeme, "c");
-
-        // Peeking doesn't consume
-        assert_eq!(lexer.next_token().lexeme, "a");
-        assert_eq!(lexer.peek().lexeme, "b");
-    }
-
-    // =========================================
     // Error recovery
     // =========================================
 
@@ -1171,86 +1100,6 @@ string
     // =========================================
     // Public API methods
     // =========================================
-
-    #[test]
-    fn source_getter() {
-        let source = "int x = 42;";
-        let lexer = Lexer::new(source);
-        assert_eq!(lexer.source(), source);
-    }
-
-    #[test]
-    fn take_errors_removes_errors() {
-        let source = "$ #"; // Two unexpected characters
-        let mut lexer = Lexer::new(source);
-
-        // Consume all tokens
-        while lexer.next_token().kind != TokenKind::Eof {}
-
-        assert!(lexer.has_errors());
-        assert_eq!(lexer.errors().len(), 2);
-
-        // Take errors
-        let errors = lexer.take_errors();
-        assert_eq!(errors.len(), 2);
-
-        // Errors should be cleared
-        assert!(!lexer.has_errors());
-        assert_eq!(lexer.errors().len(), 0);
-    }
-
-    #[test]
-    fn check_method() {
-        let mut lexer = Lexer::new("if else");
-
-        assert!(lexer.check(TokenKind::If));
-        assert!(!lexer.check(TokenKind::Else));
-
-        lexer.next_token(); // Consume 'if'
-        assert!(lexer.check(TokenKind::Else));
-        assert!(!lexer.check(TokenKind::If));
-    }
-
-    #[test]
-    fn eat_method_matches() {
-        let mut lexer = Lexer::new("int x");
-
-        let token = lexer.eat(TokenKind::Int);
-        assert!(token.is_some());
-        assert_eq!(token.unwrap().kind, TokenKind::Int);
-
-        // Next token is identifier
-        assert!(lexer.check(TokenKind::Identifier));
-    }
-
-    #[test]
-    fn eat_method_no_match() {
-        let mut lexer = Lexer::new("int x");
-
-        let token = lexer.eat(TokenKind::Void);
-        assert!(token.is_none());
-
-        // Token should not be consumed
-        assert!(lexer.check(TokenKind::Int));
-    }
-
-    #[test]
-    fn errors_getter() {
-        let source = "$";
-        let mut lexer = Lexer::new(source);
-
-        // Initially no errors
-        assert_eq!(lexer.errors().len(), 0);
-
-        // Consume token (triggers error)
-        lexer.next_token();
-
-        // Now we have an error
-        let errors = lexer.errors();
-        assert_eq!(errors.len(), 1);
-        // Can't check error kind directly as error module is private
-        assert!(errors[0].message.contains("unexpected character"));
-    }
 
     #[test]
     fn has_errors_method() {

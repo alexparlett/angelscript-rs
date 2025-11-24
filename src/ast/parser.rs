@@ -12,8 +12,6 @@ use bumpalo::Bump;
 /// The parser uses a lookahead approach with buffered tokens, allowing
 /// arbitrary peeking ahead without consuming tokens.
 pub struct Parser<'src, 'ast> {
-    /// The source code being parsed
-    source: &'src str,
     /// Lexer for tokenizing the source
     pub(super) lexer: Lexer<'src>,
     /// Buffered tokens for lookahead
@@ -64,7 +62,6 @@ impl<'src, 'ast> Parser<'src, 'ast> {
         }
 
         Self {
-            source,
             lexer,
             buffer,
             position: 0,
@@ -82,16 +79,6 @@ impl<'src, 'ast> Parser<'src, 'ast> {
     fn estimate_token_count(source: &str) -> usize {
         let estimate = source.len() / 10;
         estimate.clamp(512, 16384)
-    }
-
-    /// Get the source code being parsed.
-    pub fn source(&self) -> &'src str {
-        self.source
-    }
-
-    /// Get all accumulated errors.
-    pub fn errors(&self) -> &ParseErrors {
-        &self.errors
     }
 
     /// Check if there are any errors.
@@ -259,64 +246,6 @@ impl<'src, 'ast> Parser<'src, 'ast> {
                     self.advance();
                 }
             }
-        }
-    }
-
-    /// Clear panic mode.
-    pub fn clear_panic(&mut self) {
-        self.panic_mode = false;
-    }
-
-    /// Check if we're in panic mode.
-    pub fn is_panicking(&self) -> bool {
-        self.panic_mode
-    }
-
-    // ========================================================================
-    // Validation Helpers
-    // ========================================================================
-
-    /// Validates that at least one condition is true, returning an error if all are false.
-    ///
-    /// This is useful for validating that a required element is present when
-    /// there are multiple valid forms it could take.
-    ///
-    /// # Example
-    /// ```ignore
-    /// // Lambda parameter must have either a type or a name
-    /// self.require_any(
-    ///     &[ty.is_some(), name.is_some()],
-    ///     span,
-    ///     "lambda parameter must have a type or name"
-    /// )?;
-    /// ```
-    pub fn require_any(&mut self, conditions: &[bool], span: Span, message: impl Into<String>) -> Result<(), ParseError> {
-        if conditions.iter().any(|&c| c) {
-            Ok(())
-        } else {
-            Err(ParseError::new(ParseErrorKind::InvalidSyntax, span, message))
-        }
-    }
-
-    /// Validates that the next token matches one of the expected kinds.
-    ///
-    /// This is useful when multiple token kinds are valid at a particular position,
-    /// but we need to ensure we have one of them.
-    ///
-    /// # Example
-    /// ```ignore
-    /// // After a comma in foreach, expect either a variable or colon
-    /// self.expect_one_of(
-    ///     &[TokenKind::Identifier, TokenKind::Colon],
-    ///     "expected variable name or ':' after ','"
-    /// )?;
-    /// ```
-    pub fn expect_one_of(&mut self, kinds: &[TokenKind], message: impl Into<String>) -> Result<Token<'src>, ParseError> {
-        let token = self.peek().clone();
-        if kinds.iter().any(|k| token.kind == *k) {
-            Ok(self.advance())
-        } else {
-            Err(ParseError::new(ParseErrorKind::ExpectedToken, token.span, message))
         }
     }
 
@@ -504,72 +433,6 @@ impl<'src, 'ast> Parser<'src, 'ast> {
 
         depth == 0
     }
-
-    /// Check if the current position looks like a virtual property.
-    ///
-    /// Virtual properties have the form: TYPE NAME { get/set ... }
-    /// Regular methods have: TYPE NAME ( params )
-    pub fn is_virtual_property(&mut self) -> bool {
-        if !self.is_type_start() {
-            return false;
-        }
-
-        // Save position
-        let saved_pos = self.position;
-
-        // Try to skip type and name
-        let result = self.try_skip_type() && {
-            // Skip identifier (property name)
-            self.eat(TokenKind::Identifier).is_some() && self.check(TokenKind::LeftBrace)
-        };
-
-        // Restore position
-        self.position = saved_pos;
-
-        result
-    }
-
-    /// Check if the current position looks like a lambda expression.
-    ///
-    /// Lambdas have the form: function [TYPE] ( params ) { body }
-    pub fn is_lambda(&mut self) -> bool {
-        self.check_contextual("function")
-    }
-
-    /// Split a >> token into two > tokens for template parsing.
-    ///
-    /// In template contexts, >> needs to be treated as two closing angle brackets.
-    /// This modifies the token buffer to split the >> token.
-    pub fn split_right_shift(&mut self) {
-        if self.check(TokenKind::GreaterGreater) {
-            let token = self.buffer[self.position].clone();
-
-            // Replace >> with two > tokens
-            let first_greater = Token {
-                kind: TokenKind::Greater,
-                lexeme: ">",
-                span: Span::new(token.span.line, token.span.col, 1),
-            };
-            let second_greater = Token {
-                kind: TokenKind::Greater,
-                lexeme: ">",
-                span: Span::new(token.span.line, token.span.col + 1, 1),
-            };
-
-            // Replace the >> token with two > tokens
-            self.buffer[self.position] = first_greater;
-            self.buffer.insert(self.position + 1, second_greater);
-        }
-    }
-
-    /// Check if we need to split >> in a template context.
-    ///
-    /// Returns true if the current token is >> and we're likely in a template.
-    pub fn should_split_right_shift(&mut self) -> bool {
-        // Only split if we have >> and we're not in a shift expression context
-        // This is a simplified heuristic - in practice, we track template depth
-        self.check(TokenKind::GreaterGreater)
-    }
 }
 
 #[cfg(test)]
@@ -665,7 +528,7 @@ mod tests {
         parser.error(ParseErrorKind::ExpectedToken, Span::new(1, 1, 3), "test error 1");
         parser.error(ParseErrorKind::ExpectedToken, Span::new(1, 5, 1), "test error 2");
 
-        assert_eq!(parser.errors().len(), 2);
+        assert_eq!(parser.errors.len(), 2);
     }
 
     #[test]
@@ -729,39 +592,6 @@ mod tests {
         let arena = bumpalo::Bump::new();
         let mut parser = Parser::new(source, &arena);
         assert!(parser.is_var_decl());
-    }
-
-    #[test]
-    fn is_lambda_detection() {
-        let source = "function() { }";
-        let arena = bumpalo::Bump::new();
-        let mut parser = Parser::new(source, &arena);
-        assert!(parser.is_lambda());
-
-        let source = "if (x)";
-        let arena = bumpalo::Bump::new();
-        let mut parser = Parser::new(source, &arena);
-        assert!(!parser.is_lambda());
-    }
-
-    #[test]
-    fn split_right_shift_basic() {
-        let source = "array<array<int>>";
-        let arena = bumpalo::Bump::new();
-        let mut parser = Parser::new(source, &arena);
-
-        // Advance to >>
-        while !parser.check(TokenKind::GreaterGreater) && !parser.is_eof() {
-            parser.advance();
-        }
-
-        assert!(parser.check(TokenKind::GreaterGreater));
-        parser.split_right_shift();
-
-        // Should now see two > tokens
-        assert!(parser.check(TokenKind::Greater));
-        parser.advance();
-        assert!(parser.check(TokenKind::Greater));
     }
 
     #[test]
@@ -857,23 +687,11 @@ mod tests {
         parser.error(ParseErrorKind::ExpectedToken, Span::new(1, 1, 1), "error 1");
         parser.error(ParseErrorKind::ExpectedToken, Span::new(1, 2, 1), "error 2");
 
-        assert_eq!(parser.errors().len(), 2);
+        assert_eq!(parser.errors.len(), 2);
 
         let errors = parser.take_errors();
         assert_eq!(errors.len(), 2);
-        assert_eq!(parser.errors().len(), 0);
-    }
-
-    #[test]
-    fn clear_panic_mode() {
-        let arena = bumpalo::Bump::new();
-        let mut parser = Parser::new("test", &arena);
-
-        parser.panic_mode = true;
-        assert!(parser.is_panicking());
-
-        parser.clear_panic();
-        assert!(!parser.is_panicking());
+        assert_eq!(parser.errors.len(), 0);
     }
 
     #[test]
@@ -974,54 +792,6 @@ mod tests {
     }
 
     #[test]
-    fn is_virtual_property_true() {
-        let source = "int Value { get; set; }";
-        let arena = bumpalo::Bump::new();
-        let mut parser = Parser::new(source, &arena);
-        assert!(parser.is_virtual_property());
-    }
-
-    #[test]
-    fn is_virtual_property_false_method() {
-        let source = "int getValue()";
-        let arena = bumpalo::Bump::new();
-        let mut parser = Parser::new(source, &arena);
-        assert!(!parser.is_virtual_property());
-    }
-
-    #[test]
-    fn is_lambda_true() {
-        let arena = bumpalo::Bump::new();
-        let mut parser = Parser::new("function() { }", &arena);
-        assert!(parser.is_lambda());
-    }
-
-    #[test]
-    fn is_lambda_false() {
-        let arena = bumpalo::Bump::new();
-        let mut parser = Parser::new("if (x)", &arena);
-        assert!(!parser.is_lambda());
-    }
-
-    #[test]
-    fn should_split_right_shift_true() {
-        let source = "a >> b";
-        let arena = bumpalo::Bump::new();
-        let mut parser = Parser::new(source, &arena);
-        parser.advance(); // Skip 'a'
-        assert!(parser.should_split_right_shift());
-    }
-
-    #[test]
-    fn should_split_right_shift_false() {
-        let source = "a > b";
-        let arena = bumpalo::Bump::new();
-        let mut parser = Parser::new(source, &arena);
-        parser.advance(); // Skip 'a'
-        assert!(!parser.should_split_right_shift());
-    }
-
-    #[test]
     fn eat_contextual_success() {
         let source = "shared class";
         let arena = bumpalo::Bump::new();
@@ -1055,14 +825,6 @@ mod tests {
     }
 
     #[test]
-    fn source_accessor() {
-        let source = "int x = 42;";
-        let arena = bumpalo::Bump::new();
-        let parser = Parser::new(source, &arena);
-        assert_eq!(parser.source(), source);
-    }
-
-    #[test]
     fn multiple_errors_accumulate() {
         let arena = bumpalo::Bump::new();
         let mut parser = Parser::new("test", &arena);
@@ -1075,7 +837,7 @@ mod tests {
             );
         }
 
-        assert_eq!(parser.errors().len(), 5);
+        assert_eq!(parser.errors.len(), 5);
         assert!(parser.has_errors());
     }
 }

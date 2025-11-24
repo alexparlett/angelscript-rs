@@ -328,7 +328,7 @@ mod tests {
             kind: crate::ast::expr::LiteralKind::Int(1),
             span: Span::new(1, 0 + 1, 1 - 0),
         }));
-        let mut values_vec = bumpalo::vec![in &arena; expr];
+        let values_vec = bumpalo::vec![in &arena; expr];
         let values: &[&Expr] = values_vec.into_bump_slice();
         let case_1 = SwitchCase {
             values,
@@ -519,7 +519,7 @@ mod tests {
             kind: crate::ast::expr::LiteralKind::Int(2),
             span: Span::new(1, 14, 1),
         }));
-        let mut values_vec = bumpalo::vec![in &arena; expr1, expr2];
+        let values_vec = bumpalo::vec![in &arena; expr1, expr2];
         let values: &[&Expr] = values_vec.into_bump_slice();
         let case = SwitchCase {
             values,

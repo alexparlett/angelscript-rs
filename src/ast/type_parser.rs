@@ -453,7 +453,6 @@ mod tests {
     #[test]
     fn parse_primitive_type() {
         let arena = bumpalo::Bump::new();
-        let arena = bumpalo::Bump::new();
         let mut parser = Parser::new("int", &arena);
         let ty = parser.parse_type().unwrap();
         assert!(!ty.is_const);
@@ -464,7 +463,6 @@ mod tests {
     #[test]
     fn parse_const_primitive() {
         let arena = bumpalo::Bump::new();
-        let arena = bumpalo::Bump::new();
         let mut parser = Parser::new("const int", &arena);
         let ty = parser.parse_type().unwrap();
         assert!(ty.is_const);
@@ -473,7 +471,6 @@ mod tests {
 
     #[test]
     fn parse_named_type() {
-        let arena = bumpalo::Bump::new();
         let arena = bumpalo::Bump::new();
         let mut parser = Parser::new("MyClass", &arena);
         let ty = parser.parse_type().unwrap();

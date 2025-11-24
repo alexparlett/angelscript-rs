@@ -398,10 +398,12 @@ mod tests {
         
         assert!(or_l < add_l);
         assert!(add_l < mul_l);
-        
+
         // Left-associative: right_bp > left_bp
+        assert!(or_r > or_l);   // || is left-associative
         assert!(add_r > add_l);
-        
+        assert!(mul_r > mul_l); // * is left-associative
+
         // Right-associative: right_bp < left_bp
         let (pow_l, pow_r) = BinaryOp::Pow.binding_power();
         assert!(pow_r < pow_l);

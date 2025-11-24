@@ -11,7 +11,7 @@ use std::path::PathBuf;
 /// Test result that includes parsed AST and any errors
 #[derive(Debug)]
 pub struct TestResult {
-    pub script: ParsedScript,
+    pub script: Script,
     pub errors: Vec<ParseError>,
     pub source: String,
 }
@@ -60,16 +60,10 @@ impl TestResult {
         }
     }
 
-    /// Get the number of top-level items in the script
-    pub fn item_count(&self) -> usize {
-        self.script.script().items.len()
-    }
-
     /// Get items of a specific type
-    pub fn get_functions(&self) -> Vec<&FunctionDecl> {
+    pub fn get_functions(&self) -> Vec<&FunctionDecl<'_, '_>> {
         self.script
-            .script()
-            .items
+            .items()
             .iter()
             .filter_map(|item| {
                 if let Item::Function(f) = item {
@@ -81,10 +75,9 @@ impl TestResult {
             .collect()
     }
 
-    pub fn get_classes(&self) -> Vec<&ClassDecl> {
+    pub fn get_classes(&self) -> Vec<&ClassDecl<'_, '_>> {
         self.script
-            .script()
-            .items
+            .items()
             .iter()
             .filter_map(|item| {
                 if let Item::Class(c) = item {
@@ -96,10 +89,9 @@ impl TestResult {
             .collect()
     }
 
-    pub fn get_interfaces(&self) -> Vec<&InterfaceDecl> {
+    pub fn get_interfaces(&self) -> Vec<&InterfaceDecl<'_, '_>> {
         self.script
-            .script()
-            .items
+            .items()
             .iter()
             .filter_map(|item| {
                 if let Item::Interface(i) = item {
@@ -111,10 +103,9 @@ impl TestResult {
             .collect()
     }
 
-    pub fn get_enums(&self) -> Vec<&EnumDecl> {
+    pub fn get_enums(&self) -> Vec<&EnumDecl<'_, '_>> {
         self.script
-            .script()
-            .items
+            .items()
             .iter()
             .filter_map(|item| {
                 if let Item::Enum(e) = item {
@@ -126,10 +117,9 @@ impl TestResult {
             .collect()
     }
 
-    pub fn get_global_vars(&self) -> Vec<&GlobalVarDecl> {
+    pub fn get_global_vars(&self) -> Vec<&GlobalVarDecl<'_, '_>> {
         self.script
-            .script()
-            .items
+            .items()
             .iter()
             .filter_map(|item| {
                 if let Item::GlobalVar(v) = item {
@@ -172,8 +162,8 @@ impl AstCounter {
     }
 
     /// Count nodes in a script
-    pub fn count_script(mut self, script: &ParsedScript) -> Self {
-        for item in script.script().items {
+    pub fn count_script(mut self, script: &Script) -> Self {
+        for item in script.items() {
             self.count_item(item);
         }
         self

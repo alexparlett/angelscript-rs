@@ -83,50 +83,6 @@ impl fmt::Display for Span {
     }
 }
 
-/// A position in source code with line and column information.
-///
-/// Line and column are 1-indexed. Column counts bytes, not characters.
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Default)]
-pub struct Position {
-    /// Byte offset from start of source.
-    pub offset: u32,
-    /// Line number (1-indexed).
-    pub line: u32,
-    /// Column number (1-indexed, byte-based).
-    pub column: u32,
-}
-
-impl Position {
-    /// Create a new position.
-    #[inline]
-    pub fn new(offset: u32, line: u32, column: u32) -> Self {
-        Self {
-            offset,
-            line,
-            column,
-        }
-    }
-
-    /// The starting position (offset 0, line 1, column 1).
-    pub const START: Position = Position {
-        offset: 0,
-        line: 1,
-        column: 1,
-    };
-}
-
-impl fmt::Debug for Position {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}:{}(@{})", self.line, self.column, self.offset)
-    }
-}
-
-impl fmt::Display for Position {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}:{}", self.line, self.column)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -145,12 +101,6 @@ mod tests {
     fn span_display() {
         let span = Span::new(3, 15, 5);
         assert_eq!(format!("{}", span), "3:15");
-    }
-
-    #[test]
-    fn position_display() {
-        let pos = Position::new(42, 3, 15);
-        assert_eq!(format!("{}", pos), "3:15");
     }
 
     #[test]
@@ -211,20 +161,5 @@ mod tests {
         assert_eq!(merged.line, 1); // Uses first span's line
         assert_eq!(merged.col, 5); // Uses first span's column
         assert_eq!(merged.len, 15); // Sum of lengths (approximation)
-    }
-
-    #[test]
-    fn position_start_constant() {
-        assert_eq!(Position::START.offset, 0);
-        assert_eq!(Position::START.line, 1);
-        assert_eq!(Position::START.column, 1);
-    }
-
-    #[test]
-    fn position_new() {
-        let pos = Position::new(100, 5, 20);
-        assert_eq!(pos.offset, 100);
-        assert_eq!(pos.line, 5);
-        assert_eq!(pos.column, 20);
     }
 }
