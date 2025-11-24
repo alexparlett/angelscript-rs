@@ -1,0 +1,1650 @@
+//! Expression parsing using Pratt parsing (precedence climbing).
+//!
+//! This module implements expression parsing with proper operator precedence
+//! and associativity using the Pratt parsing algorithm.
+
+use crate::ast::{AssignOp, BinaryOp, Ident, ParseError, ParseErrorKind, PostfixOp, Scope, UnaryOp, stmt};
+use crate::ast::expr::*;
+use crate::ast::types::ParamType;
+use crate::lexer::{Span, TokenKind};
+use super::parser::Parser;
+
+impl<'src> Parser<'src> {
+    /// Parse an expression with a minimum binding power.
+    ///
+    /// This is the core of the Pratt parser. It handles operator precedence
+    /// by only consuming operators with sufficient binding power.
+    pub fn parse_expr(&mut self, min_bp: u8) -> Result<Expr, ParseError> {
+        // Parse the prefix expression (literals, identifiers, unary ops, etc.)
+        let mut lhs = self.parse_prefix()?;
+        
+        // Now parse infix and postfix operators
+        loop {
+            // Check for postfix operators (highest precedence)
+            if let Some(postfix_op) = PostfixOp::from_token(self.peek().kind) {
+                let op_bp = PostfixOp::binding_power();
+                if op_bp < min_bp {
+                    break;
+                }
+
+                let op_token = self.advance();
+                let span = lhs.span().merge(op_token.span);
+                lhs = Expr::Postfix(Box::new(PostfixExpr {
+                    operand: lhs,
+                    op: postfix_op,
+                    span,
+                    }));
+                continue;
+            }
+
+            // Check for member access (.)
+            if self.check(TokenKind::Dot) {
+                let op_bp = 27; // Same as postfix
+                if op_bp < min_bp {
+                    break;
+                }
+                lhs = self.parse_member_access(lhs)?;
+                continue;
+            }
+
+            // Check for function call
+            if self.check(TokenKind::LeftParen) {
+                let op_bp = 27; // Same as postfix
+                if op_bp < min_bp {
+                    break;
+                }
+                lhs = self.parse_call(lhs)?;
+                continue;
+            }
+
+            // Check for array indexing
+            if self.check(TokenKind::LeftBracket) {
+                let op_bp = 27; // Same as postfix
+                if op_bp < min_bp {
+                    break;
+                }
+                lhs = self.parse_index(lhs)?;
+                continue;
+            }
+
+            // Check for ternary operator (?:)
+            if self.check(TokenKind::Question) {
+                let (l_bp, r_bp) = (2, 1); // Ternary precedence
+                if l_bp < min_bp {
+                    break;
+                }
+                lhs = self.parse_ternary(lhs)?;
+                continue;
+            }
+
+            // Check for assignment operators
+            if let Some(assign_op) = AssignOp::from_token(self.peek().kind) {
+                let (l_bp, r_bp) = AssignOp::binding_power();
+                if l_bp < min_bp {
+                    break;
+                }
+
+                self.advance();
+                let rhs = self.parse_expr(r_bp)?;
+                let span = lhs.span().merge(rhs.span());
+                lhs = Expr::Assign(Box::new(AssignExpr {
+                    target: lhs,
+                    op: assign_op,
+                    value: rhs,
+                    span,
+                }));
+                continue;
+            }
+
+            // Check for binary operators
+            if let Some(bin_op) = BinaryOp::from_token(self.peek().kind) {
+                let (l_bp, r_bp) = bin_op.binding_power();
+                if l_bp < min_bp {
+                    break;
+                }
+
+                self.advance();
+                let rhs = self.parse_expr(r_bp)?;
+                let span = lhs.span().merge(rhs.span());
+                lhs = Expr::Binary(Box::new(BinaryExpr {
+                    left: lhs,
+                    op: bin_op,
+                    right: rhs,
+                    span,
+                }));
+                continue;
+            }
+
+            // No more operators
+            break;
+        }
+
+        Ok(lhs)
+    }
+
+    /// Parse a prefix expression (the start of an expression).
+    fn parse_prefix(&mut self) -> Result<Expr, ParseError> {
+        let token = self.peek().clone();
+
+        match token.kind {
+            // Literals
+            TokenKind::IntLiteral => {
+                self.advance();
+                let value = token.lexeme.parse::<i64>().unwrap_or(0);
+                Ok(Expr::Literal(LiteralExpr {
+                    kind: LiteralKind::Int(value),
+                    span: token.span,
+                }))
+            }
+
+            TokenKind::BitsLiteral => {
+                self.advance();
+                // Parse different bases: 0xFF (hex), 0b1010 (binary), 0o77 (octal), 0d99 (decimal)
+                let value = if token.lexeme.starts_with("0x") || token.lexeme.starts_with("0X") {
+                    // Hexadecimal
+                    i64::from_str_radix(&token.lexeme[2..], 16).unwrap_or(0)
+                } else if token.lexeme.starts_with("0b") || token.lexeme.starts_with("0B") {
+                    // Binary
+                    i64::from_str_radix(&token.lexeme[2..], 2).unwrap_or(0)
+                } else if token.lexeme.starts_with("0o") || token.lexeme.starts_with("0O") {
+                    // Octal
+                    i64::from_str_radix(&token.lexeme[2..], 8).unwrap_or(0)
+                } else if token.lexeme.starts_with("0d") || token.lexeme.starts_with("0D") {
+                    // Decimal (explicit)
+                    token.lexeme[2..].parse::<i64>().unwrap_or(0)
+                } else {
+                    // Fallback: try to parse as regular integer
+                    token.lexeme.parse::<i64>().unwrap_or(0)
+                };
+                Ok(Expr::Literal(LiteralExpr {
+                    kind: LiteralKind::Int(value),
+                    span: token.span,
+                }))
+            }
+
+            TokenKind::FloatLiteral => {
+                self.advance();
+                let value = token.lexeme.trim_end_matches('f')
+                    .trim_end_matches('F')
+                    .parse::<f32>()
+                    .unwrap_or(0.0);
+                Ok(Expr::Literal(LiteralExpr {
+                    kind: LiteralKind::Float(value),
+                    span: token.span,
+                }))
+            }
+
+            TokenKind::DoubleLiteral => {
+                self.advance();
+                let value = token.lexeme.parse::<f64>().unwrap_or(0.0);
+                Ok(Expr::Literal(LiteralExpr {
+                    kind: LiteralKind::Double(value),
+                    span: token.span,
+                }))
+            }
+
+            TokenKind::StringLiteral | TokenKind::HeredocLiteral => {
+                self.advance();
+                // Remove quotes
+                let content = if token.lexeme.starts_with("\"\"\"") {
+                    // Heredoc
+                    token.lexeme.trim_start_matches("\"\"\"")
+                        .trim_end_matches("\"\"\"")
+                        .to_string()
+                } else {
+                    // Regular string
+                    token.lexeme.trim_matches('"').to_string()
+                };
+                Ok(Expr::Literal(LiteralExpr {
+                    kind: LiteralKind::String(content),
+                    span: token.span,
+                }))
+            }
+
+            TokenKind::True => {
+                self.advance();
+                Ok(Expr::Literal(LiteralExpr {
+                    kind: LiteralKind::Bool(true),
+                    span: token.span,
+                }))
+            }
+
+            TokenKind::False => {
+                self.advance();
+                Ok(Expr::Literal(LiteralExpr {
+                    kind: LiteralKind::Bool(false),
+                    span: token.span,
+                }))
+            }
+
+            TokenKind::Null => {
+                self.advance();
+                Ok(Expr::Literal(LiteralExpr {
+                    kind: LiteralKind::Null,
+                    span: token.span,
+                }))
+            }
+
+            // Unary prefix operators
+            _ if UnaryOp::from_token(token.kind).is_some() => {
+                let op = UnaryOp::from_token(token.kind).unwrap();
+                self.advance();
+                let bp = UnaryOp::binding_power();
+                let operand = self.parse_expr(bp)?;
+                let span = token.span.merge(operand.span());
+                Ok(Expr::Unary(Box::new(UnaryExpr {
+                    op,
+                    operand,
+                    span,
+                })))
+            }
+
+            // Parenthesized expression
+            TokenKind::LeftParen => {
+                let start_span = self.advance().span;
+                let expr = self.parse_expr(0)?;
+                let end_span = self.expect(TokenKind::RightParen)?.span;
+                Ok(Expr::Paren(Box::new(ParenExpr {
+                    expr,
+                    span: start_span.merge(end_span),
+                })))
+            }
+
+            // Cast expression
+            TokenKind::Cast => {
+                self.parse_cast()
+            }
+
+            // Lambda expression
+            _ if self.check_contextual("function") => {
+                self.parse_lambda()
+            }
+
+            // Initializer list
+            TokenKind::LeftBrace => {
+                self.parse_init_list()
+            }
+
+            // Identifier or constructor call
+            TokenKind::Identifier | TokenKind::ColonColon => {
+                self.parse_ident_or_constructor()
+            }
+
+            // Type keywords (for constructor calls)
+            TokenKind::Void | TokenKind::Bool | TokenKind::Int | TokenKind::Int8 
+            | TokenKind::Int16 | TokenKind::Int64 | TokenKind::UInt | TokenKind::UInt8 
+            | TokenKind::UInt16 | TokenKind::UInt64 | TokenKind::Float | TokenKind::Double 
+            | TokenKind::Auto => {
+                self.parse_ident_or_constructor()
+            }
+
+            _ => {
+                Err(ParseError::new(
+                ParseErrorKind::ExpectedExpression,
+                token.span,
+                format!("expected expression, found {}", token.kind),
+                
+            ))
+            }
+        }
+    }
+
+    /// Parse member access (dot operator).
+    fn parse_member_access(&mut self, object: Expr) -> Result<Expr, ParseError> {
+        let dot_span = self.expect(TokenKind::Dot)?.span;
+
+        // The member must be an identifier
+        let member_token = self.expect(TokenKind::Identifier)?;
+        let member_ident = Ident::new(member_token.lexeme, member_token.span);
+
+        // Check if this is a method call (followed by '(')
+        if self.check(TokenKind::LeftParen) {
+            let args = self.parse_arguments()?;
+            let span = object.span().merge(
+                self.buffer.get(self.position.saturating_sub(1))
+                    .map(|t| t.span)
+                    .unwrap_or(dot_span)
+            );
+
+            Ok(Expr::Member(Box::new(MemberExpr {
+                object,
+                member: MemberAccess::Method {
+                    name: member_ident,
+                    args,
+                },
+                span,
+            })))
+        } else {
+            // Field access
+            let span = object.span().merge(member_ident.span);
+            Ok(Expr::Member(Box::new(MemberExpr {
+                object,
+                member: MemberAccess::Field(member_ident),
+                span,
+            })))
+        }
+    }
+
+    /// Parse function call.
+    fn parse_call(&mut self, callee: Expr) -> Result<Expr, ParseError> {
+        let args = self.parse_arguments()?;
+        let span = callee.span().merge(
+            self.buffer.get(self.position.saturating_sub(1))
+                .map(|t| t.span)
+                .unwrap_or(callee.span())
+        );
+
+        Ok(Expr::Call(Box::new(CallExpr {
+            callee,
+            args,
+            span,
+        })))
+    }
+
+    /// Parse array indexing.
+    fn parse_index(&mut self, object: Expr) -> Result<Expr, ParseError> {
+        self.expect(TokenKind::LeftBracket)?;
+
+        let mut indices = Vec::new();
+
+        // Parse first index
+        if !self.check(TokenKind::RightBracket) {
+            indices.push(self.parse_index_item()?);
+
+            // Parse remaining indices
+            while self.eat(TokenKind::Comma).is_some() {
+                indices.push(self.parse_index_item()?);
+            }
+        }
+
+        let end_span = self.expect(TokenKind::RightBracket)?.span;
+        let span = object.span().merge(end_span);
+
+        Ok(Expr::Index(Box::new(IndexExpr {
+            object,
+            indices,
+            span,
+        })))
+    }
+
+    /// Parse a single index item (can be named).
+    fn parse_index_item(&mut self) -> Result<IndexItem, ParseError> {
+        let start_span = self.peek().span;
+
+        // Check for named index: identifier :
+        let name = if self.check(TokenKind::Identifier) && self.peek_nth(1).kind == TokenKind::Colon {
+            let ident_token = self.advance();
+            self.expect(TokenKind::Colon)?; // Validate colon is present
+            Some(Ident::new(ident_token.lexeme, ident_token.span))
+        } else {
+            None
+        };
+
+        let index = self.parse_expr(0)?;
+        let span = start_span.merge(index.span());
+
+        Ok(IndexItem { name, index, span })
+    }
+
+    /// Parse ternary conditional (condition ? then : else).
+    fn parse_ternary(&mut self, condition: Expr) -> Result<Expr, ParseError> {
+        self.expect(TokenKind::Question)?;
+        let then_expr = self.parse_expr(0)?;
+        self.expect(TokenKind::Colon)?;
+        let else_expr = self.parse_expr(1)?; // Right-associative
+        let span = condition.span().merge(else_expr.span());
+
+        Ok(Expr::Ternary(Box::new(TernaryExpr {
+            condition,
+            then_expr,
+            else_expr,
+            span,
+        })))
+    }
+
+    /// Parse cast expression: cast<Type>(expr)
+    fn parse_cast(&mut self) -> Result<Expr, ParseError> {
+        let start_span = self.expect(TokenKind::Cast)?.span;
+        self.expect(TokenKind::Less)?;
+        let target_type = self.parse_type()?;
+        self.expect(TokenKind::Greater)?;
+        self.expect(TokenKind::LeftParen)?;
+        let expr = self.parse_expr(0)?;
+        let end_span = self.expect(TokenKind::RightParen)?.span;
+
+        Ok(Expr::Cast(Box::new(CastExpr {
+            target_type,
+            expr,
+            span: start_span.merge(end_span),
+        })))
+    }
+
+    /// Parse lambda expression: function(params) { body }
+    fn parse_lambda(&mut self) -> Result<Expr, ParseError> {
+        let start_span = self.eat_contextual("function")
+            .ok_or_else(|| {
+                let span = self.peek().span;
+                ParseError::new(
+                    ParseErrorKind::ExpectedExpression,
+                    span,
+                    "expected 'function'",
+                )
+            })?
+            .span;
+
+        self.expect(TokenKind::LeftParen)?;
+
+        let mut params = Vec::new();
+
+        // Parse parameters
+        if !self.check(TokenKind::RightParen) {
+            params.push(self.parse_lambda_param()?);
+
+            while self.eat(TokenKind::Comma).is_some() {
+                params.push(self.parse_lambda_param()?);
+            }
+        }
+
+        self.expect(TokenKind::RightParen)?;
+
+        // Parse body
+        let body = self.parse_block()?;
+
+        let end_span = body.span.clone();
+
+        Ok(Expr::Lambda(Box::new(LambdaExpr {
+            params,
+            return_type: None,
+            body: Box::new(body),
+            span: start_span.merge(end_span),
+        })))
+    }
+
+    /// Parse a lambda parameter.
+    fn parse_lambda_param(&mut self) -> Result<LambdaParam, ParseError> {
+        let start_span = self.peek().span;
+
+        // Try to parse type
+        let ty = if self.is_type_start() {
+            Some(self.parse_param_type()?)
+        } else {
+            None
+        };
+
+        // Parse optional name
+        let name = if self.check(TokenKind::Identifier) {
+            let token = self.advance();
+            Some(Ident::new(token.lexeme, token.span))
+        } else {
+            None
+        };
+
+        let span = if let Some(ref n) = name {
+            start_span.merge(n.span)
+        } else if let Some(ref t) = ty {
+            t.span
+        } else {
+            start_span
+        };
+
+        // Validate that we have at least type OR name
+        // AngelScript allows:
+        // - function(x) { } - name only, type inferred from context
+        // - function(int x) { } - explicit type and name
+        // - function(int) { } - type only (for some contexts)
+        // But NOT:
+        // - function(, ...) - completely empty parameter
+        if ty.is_none() && name.is_none() {
+            return Err(ParseError::new(
+                crate::ast::ParseErrorKind::InvalidSyntax,
+                span,
+                "lambda parameter must have either a type or a name"
+            ));
+        }
+
+        Ok(LambdaParam { ty, name, span })
+    }
+
+    /// Parse initializer list: { elements }
+    fn parse_init_list(&mut self) -> Result<Expr, ParseError> {
+        let start_span = self.expect(TokenKind::LeftBrace)?.span;
+
+        let mut elements = Vec::new();
+
+        // Parse elements
+        if !self.check(TokenKind::RightBrace) {
+            elements.push(self.parse_init_element()?);
+
+            while self.eat(TokenKind::Comma).is_some() {
+                if self.check(TokenKind::RightBrace) {
+                    break; // Trailing comma
+                }
+                elements.push(self.parse_init_element()?);
+            }
+        }
+
+        let end_span = self.expect(TokenKind::RightBrace)?.span;
+
+        Ok(Expr::InitList(InitListExpr {
+            ty: None,
+            elements,
+            span: start_span.merge(end_span),
+        }))
+    }
+
+    /// Parse an initializer list element.
+    fn parse_init_element(&mut self) -> Result<InitElement, ParseError> {
+        if self.check(TokenKind::LeftBrace) {
+            // Nested initializer list
+            if let Expr::InitList(init_list) = self.parse_init_list()? {
+                Ok(InitElement::InitList(init_list))
+            } else {
+                unreachable!()
+            }
+        } else {
+            // Expression element
+            let expr = self.parse_expr(0)?;
+            Ok(InitElement::Expr(expr))
+        }
+    }
+
+    /// Parse identifier, scoped identifier, or constructor call.
+    ///
+    /// This handles disambiguation between:
+    /// - Simple identifier: `foo`
+    /// - Scoped identifier: `Namespace::foo`
+    /// - Type call (constructor or cast): `MyClass(args)`
+    /// - Scoped type call: `Namespace::MyClass(args)`
+    fn parse_ident_or_constructor(&mut self) -> Result<Expr, ParseError> {
+        let start_span = self.peek().span;
+
+        // First check if this looks like a type call using lookahead
+        // Type call pattern: [::] identifier [::identifier]* [<template>] (
+        let is_type_call = self.is_constructor_call();
+
+        if is_type_call {
+            // Parse as type call: Type(args)
+            let ty = self.parse_type()?;
+
+            // Should be followed by '('
+            if self.check(TokenKind::LeftParen) {
+                let args = self.parse_arguments()?;
+                let span = start_span.merge(
+                    self.buffer.get(self.position.saturating_sub(1))
+                        .map(|t| t.span)
+                        .unwrap_or(ty.span)
+                );
+
+                // Primitive types: Type(expr) is always a cast (primitives have no constructors)
+                // User types: Type(args) is constructor call or opConv (semantic analyzer decides)
+                if matches!(ty.base, crate::ast::types::TypeBase::Primitive(_)) {
+                    // Primitive cast: float(value), int(value), etc.
+                    // Must have exactly one argument for cast
+                    if args.len() != 1 {
+                        return Err(ParseError::new(
+
+                            ParseErrorKind::InvalidExpression,
+
+                            span,
+
+                            format!("primitive cast requires exactly one argument, found {}", args.len()),
+
+                        ));
+                    }
+                    
+                    Ok(Expr::Cast(Box::new(CastExpr {
+                        target_type: ty,
+                        expr: args[0].value.clone(),
+                        span,
+                    })))
+                } else {
+                    // User-defined type: convert to Call expression
+                    // The VM/interpreter will determine if this is a constructor or function call
+                    let (scope, ident) = match ty.base {
+                        crate::ast::types::TypeBase::Named(name) => (ty.scope, name),
+                        _ => {
+                            return Err(ParseError::new(
+
+                                ParseErrorKind::ExpectedIdentifier,
+
+                                ty.span,
+
+                                "expected identifier",
+
+                            ));
+                        }
+                    };
+
+                    let callee = Expr::Ident(IdentExpr {
+                        scope,
+                        ident,
+                        span: ty.span,
+                    });
+
+                    Ok(Expr::Call(Box::new(CallExpr {
+                        callee,
+                        args,
+                        span,
+                    })))
+                }
+            } else {
+                // Lookahead said it was constructor call, but '(' is missing
+                let token = self.peek().clone();
+                return Err(ParseError::new(
+
+                    ParseErrorKind::ExpectedToken,
+
+                    token.span,
+
+                    format!("expected '(' after type name for constructor call, found {}", token.kind),
+
+                ));
+            }
+        } else {
+            // Parse as simple identifier (possibly scoped)
+            // This avoids trying to parse < as template arguments
+            let scope = if self.eat(TokenKind::ColonColon).is_some() {
+                // Global scope: ::identifier
+                Some(Scope {
+                    is_absolute: true,
+                    segments: Vec::new(),
+                    span: start_span,
+                })
+            } else {
+                None
+            };
+
+            // Parse scoped path: A::B::identifier
+            let mut scope = scope;
+            let mut ident_token = self.expect(TokenKind::Identifier)?;
+            let mut ident = Ident::new(ident_token.lexeme, ident_token.span);
+
+            while self.check(TokenKind::ColonColon) && self.peek_nth(1).kind == TokenKind::Identifier {
+                // Build scope path
+                self.advance(); // consume ::
+                
+                if scope.is_none() {
+                    scope = Some(Scope {
+                        is_absolute: false,
+                        segments: Vec::new(),
+                        span: start_span,
+                    });
+                }
+                
+                scope.as_mut().unwrap().segments.push(ident.clone());
+                
+                ident_token = self.advance();
+                ident = Ident::new(ident_token.lexeme, ident_token.span);
+            }
+
+            // Update scope span to include all segments
+            if let Some(ref mut s) = scope {
+                s.span = start_span.merge(ident.span);
+            }
+
+            let span = ident.span.clone();
+
+            Ok(Expr::Ident(IdentExpr {
+                scope,
+                ident,
+                span: start_span.merge(span),
+            }))
+        }
+    }
+
+    /// Check if current position looks like a constructor call.
+    /// Constructor pattern: [::] (identifier|primitive) [::identifier]* [<template>] (
+    fn is_constructor_call(&mut self) -> bool {
+        let saved_pos = self.position;
+
+        // Skip optional ::
+        self.eat(TokenKind::ColonColon);
+
+        // Need at least one identifier OR primitive type keyword
+        let is_type_start = self.check(TokenKind::Identifier) || self.is_primitive_type();
+        if !is_type_start {
+            self.position = saved_pos;
+            return false;
+        }
+        self.advance();
+
+        // Skip scope path (only for identifiers, not primitives)
+        while self.check(TokenKind::ColonColon) && self.peek_nth(1).kind == TokenKind::Identifier {
+            self.advance(); // ::
+            self.advance(); // identifier
+        }
+
+        // Check for template arguments
+        if self.check(TokenKind::Less) {
+            // Try to skip template args
+            if !self.try_skip_template_args_simple() {
+                self.position = saved_pos;
+                return false;
+            }
+        }
+
+        // Must be followed by '(' to be constructor
+        let result = self.check(TokenKind::LeftParen);
+        
+        self.position = saved_pos;
+        result
+    }
+
+    /// Simple template arg skipping for lookahead (doesn't report errors)
+    fn try_skip_template_args_simple(&mut self) -> bool {
+        if !self.check(TokenKind::Less) {
+            return false;
+        }
+        self.advance();
+
+        let mut depth = 1;
+        let mut iterations = 0;
+        const MAX_ITERATIONS: usize = 1000; // Prevent infinite loops
+
+        while depth > 0 && !self.is_eof() && iterations < MAX_ITERATIONS {
+            iterations += 1;
+            
+            match self.peek().kind {
+                TokenKind::Less => {
+                    depth += 1;
+                    self.advance();
+                }
+                TokenKind::Greater => {
+                    depth -= 1;
+                    self.advance();
+                }
+                TokenKind::GreaterGreater => {
+                    depth -= 2;
+                    self.advance();
+                }
+                TokenKind::LeftParen | TokenKind::LeftBrace | TokenKind::Semicolon => {
+                    // These tokens indicate we're not in template args
+                    return false;
+                }
+                _ => {
+                    self.advance();
+                }
+            }
+        }
+
+        depth == 0
+    }
+
+    /// Parse function arguments: (arg1, arg2, ...)
+    fn parse_arguments(&mut self) -> Result<Vec<Argument>, ParseError> {
+        self.expect(TokenKind::LeftParen)?;
+
+        let mut args = Vec::new();
+
+        if !self.check(TokenKind::RightParen) {
+            args.push(self.parse_argument()?);
+
+            while self.eat(TokenKind::Comma).is_some() {
+                args.push(self.parse_argument()?);
+            }
+        }
+
+        self.expect(TokenKind::RightParen)?;
+        Ok(args)
+    }
+
+    /// Parse a single argument (can be named).
+    fn parse_argument(&mut self) -> Result<Argument, ParseError> {
+        let start_span = self.peek().span;
+
+        // Check for named argument: identifier :
+        let name = if self.check(TokenKind::Identifier) && self.peek_nth(1).kind == TokenKind::Colon {
+            let ident_token = self.advance();
+            self.expect(TokenKind::Colon)?; // Validate colon is present
+            Some(Ident::new(ident_token.lexeme, ident_token.span))
+        } else {
+            None
+        };
+
+        let value = self.parse_expr(0)?;
+        let span = start_span.merge(value.span());
+
+        Ok(Argument { name, value, span })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_int_literal() {
+        let mut parser = Parser::new("42");
+        let expr = parser.parse_expr(0).unwrap();
+        match expr {
+            Expr::Literal(lit) => {
+                assert!(matches!(lit.kind, LiteralKind::Int(42)));
+            }
+            _ => panic!("Expected literal"),
+        }
+    }
+
+    #[test]
+    fn parse_binary_expr() {
+        let mut parser = Parser::new("1 + 2");
+        let expr = parser.parse_expr(0).unwrap();
+        match expr {
+            Expr::Binary(bin) => {
+                assert!(matches!(bin.op, BinaryOp::Add));
+            }
+            _ => panic!("Expected binary expression"),
+        }
+    }
+
+    #[test]
+    fn parse_precedence() {
+        // 1 + 2 * 3 should parse as 1 + (2 * 3)
+        let mut parser = Parser::new("1 + 2 * 3");
+        let expr = parser.parse_expr(0).unwrap();
+        match expr {
+            Expr::Binary(bin) => {
+                assert!(matches!(bin.op, BinaryOp::Add));
+                match bin.right {
+                    Expr::Binary(inner) => {
+                        assert!(matches!(inner.op, BinaryOp::Mul));
+                    }
+                    _ => panic!("Expected multiplication on right"),
+                }
+            }
+            _ => panic!("Expected binary expression"),
+        }
+    }
+
+    #[test]
+    fn parse_unary() {
+        let mut parser = Parser::new("-42");
+        let expr = parser.parse_expr(0).unwrap();
+        match expr {
+            Expr::Unary(un) => {
+                assert!(matches!(un.op, UnaryOp::Neg));
+            }
+            _ => panic!("Expected unary expression"),
+        }
+    }
+
+    #[test]
+    fn parse_parenthesized() {
+        let mut parser = Parser::new("(42)");
+        let expr = parser.parse_expr(0).unwrap();
+        match expr {
+            Expr::Paren(_) => {}
+            _ => panic!("Expected parenthesized expression"),
+        }
+    }
+
+    #[test]
+    fn parse_call() {
+        let mut parser = Parser::new("foo()");
+        let expr = parser.parse_expr(0).unwrap();
+        match expr {
+            Expr::Call(_) => {}
+            _ => panic!("Expected call expression"),
+        }
+    }
+
+    #[test]
+    fn parse_member_access() {
+        let mut parser = Parser::new("obj.field");
+        let expr = parser.parse_expr(0).unwrap();
+        match expr {
+            Expr::Member(mem) => {
+                assert!(matches!(mem.member, MemberAccess::Field(_)));
+            }
+            _ => panic!("Expected member expression"),
+        }
+    }
+
+    #[test]
+    fn parse_index() {
+        let mut parser = Parser::new("arr[0]");
+        let expr = parser.parse_expr(0).unwrap();
+        match expr {
+            Expr::Index(_) => {}
+            _ => panic!("Expected index expression"),
+        }
+    }
+
+    #[test]
+    fn parse_ternary() {
+        let mut parser = Parser::new("a ? b : c");
+        let expr = parser.parse_expr(0).unwrap();
+        match expr {
+            Expr::Ternary(_) => {}
+            _ => panic!("Expected ternary expression"),
+        }
+    }
+
+    #[test]
+    fn parse_assignment() {
+        let mut parser = Parser::new("x = 42");
+        let expr = parser.parse_expr(0).unwrap();
+        match expr {
+            Expr::Assign(assign) => {
+                assert!(matches!(assign.op, AssignOp::Assign));
+            }
+            _ => panic!("Expected assignment"),
+        }
+    }
+
+    // ========================================================================
+    // Literal Tests
+    // ========================================================================
+
+    #[test]
+    fn parse_float_literal() {
+        let mut parser = Parser::new("3.14f");
+        let expr = parser.parse_expr(0).unwrap();
+        match expr {
+            Expr::Literal(lit) => {
+                if let LiteralKind::Float(val) = lit.kind {
+                    assert!((val - 3.14).abs() < 0.001);
+                } else {
+                    panic!("Expected float literal");
+                }
+            }
+            _ => panic!("Expected literal"),
+        }
+    }
+
+    #[test]
+    fn parse_double_literal() {
+        let mut parser = Parser::new("2.71828");
+        let expr = parser.parse_expr(0).unwrap();
+        match expr {
+            Expr::Literal(lit) => {
+                assert!(matches!(lit.kind, LiteralKind::Double(_)));
+            }
+            _ => panic!("Expected literal"),
+        }
+    }
+
+    #[test]
+    fn parse_bits_literal_hex() {
+        let mut parser = Parser::new("0xFF");
+        let expr = parser.parse_expr(0).unwrap();
+        match expr {
+            Expr::Literal(lit) => {
+                assert!(matches!(lit.kind, LiteralKind::Int(255)));
+            }
+            _ => panic!("Expected literal"),
+        }
+    }
+
+    #[test]
+    fn parse_bits_literal_binary() {
+        let mut parser = Parser::new("0b1010");
+        let expr = parser.parse_expr(0).unwrap();
+        match expr {
+            Expr::Literal(lit) => {
+                assert!(matches!(lit.kind, LiteralKind::Int(10)));
+            }
+            _ => panic!("Expected literal"),
+        }
+    }
+
+    #[test]
+    fn parse_bits_literal_octal() {
+        let mut parser = Parser::new("0o77");
+        let expr = parser.parse_expr(0).unwrap();
+        match expr {
+            Expr::Literal(lit) => {
+                assert!(matches!(lit.kind, LiteralKind::Int(63)));
+            }
+            _ => panic!("Expected literal"),
+        }
+    }
+
+    #[test]
+    fn parse_string_literal() {
+        let mut parser = Parser::new(r#""hello world""#);
+        let expr = parser.parse_expr(0).unwrap();
+        match expr {
+            Expr::Literal(lit) => {
+                if let LiteralKind::String(s) = lit.kind {
+                    assert_eq!(s, "hello world");
+                } else {
+                    panic!("Expected string literal");
+                }
+            }
+            _ => panic!("Expected literal"),
+        }
+    }
+
+    #[test]
+    fn parse_true_literal() {
+        let mut parser = Parser::new("true");
+        let expr = parser.parse_expr(0).unwrap();
+        match expr {
+            Expr::Literal(lit) => {
+                assert!(matches!(lit.kind, LiteralKind::Bool(true)));
+            }
+            _ => panic!("Expected literal"),
+        }
+    }
+
+    #[test]
+    fn parse_false_literal() {
+        let mut parser = Parser::new("false");
+        let expr = parser.parse_expr(0).unwrap();
+        match expr {
+            Expr::Literal(lit) => {
+                assert!(matches!(lit.kind, LiteralKind::Bool(false)));
+            }
+            _ => panic!("Expected literal"),
+        }
+    }
+
+    #[test]
+    fn parse_null_literal() {
+        let mut parser = Parser::new("null");
+        let expr = parser.parse_expr(0).unwrap();
+        match expr {
+            Expr::Literal(lit) => {
+                assert!(matches!(lit.kind, LiteralKind::Null));
+            }
+            _ => panic!("Expected literal"),
+        }
+    }
+
+    // ========================================================================
+    // Binary Operator Tests
+    // ========================================================================
+
+    #[test]
+    fn parse_all_binary_operators() {
+        let operators = vec![
+            ("+", BinaryOp::Add),
+            ("-", BinaryOp::Sub),
+            ("*", BinaryOp::Mul),
+            ("/", BinaryOp::Div),
+            ("%", BinaryOp::Mod),
+            ("&", BinaryOp::BitwiseAnd),
+            ("|", BinaryOp::BitwiseOr),
+            ("^", BinaryOp::BitwiseXor),
+            ("<<", BinaryOp::ShiftLeft),
+            (">>", BinaryOp::ShiftRight),
+            (">>>", BinaryOp::ShiftRightUnsigned),
+            ("&&", BinaryOp::LogicalAnd),
+            ("||", BinaryOp::LogicalOr),
+            ("^^", BinaryOp::LogicalXor),
+            ("==", BinaryOp::Equal),
+            ("!=", BinaryOp::NotEqual),
+            ("<", BinaryOp::Less),
+            ("<=", BinaryOp::LessEqual),
+            (">", BinaryOp::Greater),
+            (">=", BinaryOp::GreaterEqual),
+            ("is", BinaryOp::Is),
+            ("!is", BinaryOp::NotIs),
+        ];
+
+        for (op_str, expected_op) in operators {
+            let source = format!("a {} b", op_str);
+            let mut parser = Parser::new(&source);
+            let expr = parser.parse_expr(0).unwrap();
+            match expr {
+                Expr::Binary(bin) => {
+                    assert!(
+                        std::mem::discriminant(&bin.op) == std::mem::discriminant(&expected_op),
+                        "Failed for operator: {}",
+                        op_str
+                    );
+                }
+                _ => panic!("Expected binary expression for: {}", op_str),
+            }
+        }
+    }
+
+    // ========================================================================
+    // Unary Operator Tests
+    // ========================================================================
+
+    #[test]
+    fn parse_all_unary_operators() {
+        let operators = vec![
+            ("-", UnaryOp::Neg),
+            ("!", UnaryOp::LogicalNot),
+            ("~", UnaryOp::BitwiseNot),
+            ("++", UnaryOp::PreInc),
+            ("--", UnaryOp::PreDec),
+            ("@", UnaryOp::HandleOf),
+        ];
+
+        for (op_str, expected_op) in operators {
+            let source = format!("{}x", op_str);
+            let mut parser = Parser::new(&source);
+            let expr = parser.parse_expr(0).unwrap();
+            match expr {
+                Expr::Unary(un) => {
+                    assert!(
+                        std::mem::discriminant(&un.op) == std::mem::discriminant(&expected_op),
+                        "Failed for operator: {}",
+                        op_str
+                    );
+                }
+                _ => panic!("Expected unary expression for: {}", op_str),
+            }
+        }
+    }
+
+    // ========================================================================
+    // Postfix Operator Tests
+    // ========================================================================
+
+    #[test]
+    fn parse_postfix_increment() {
+        let mut parser = Parser::new("x++");
+        let expr = parser.parse_expr(0).unwrap();
+        match expr {
+            Expr::Postfix(post) => {
+                assert!(matches!(post.op, PostfixOp::PostInc));
+            }
+            _ => panic!("Expected postfix expression"),
+        }
+    }
+
+    #[test]
+    fn parse_postfix_decrement() {
+        let mut parser = Parser::new("x--");
+        let expr = parser.parse_expr(0).unwrap();
+        match expr {
+            Expr::Postfix(post) => {
+                assert!(matches!(post.op, PostfixOp::PostDec));
+            }
+            _ => panic!("Expected postfix expression"),
+        }
+    }
+
+    // ========================================================================
+    // Assignment Operator Tests
+    // ========================================================================
+
+    #[test]
+    fn parse_all_assignment_operators() {
+        let operators = vec![
+            ("=", AssignOp::Assign),
+            ("+=", AssignOp::AddAssign),
+            ("-=", AssignOp::SubAssign),
+            ("*=", AssignOp::MulAssign),
+            ("/=", AssignOp::DivAssign),
+            ("%=", AssignOp::ModAssign),
+            ("&=", AssignOp::AndAssign),
+            ("|=", AssignOp::OrAssign),
+            ("^=", AssignOp::XorAssign),
+            ("<<=", AssignOp::ShlAssign),
+            (">>=", AssignOp::ShrAssign),
+            (">>>=", AssignOp::UshrAssign),
+        ];
+
+        for (op_str, expected_op) in operators {
+            let source = format!("x {} 42", op_str);
+            let mut parser = Parser::new(&source);
+            let expr = parser.parse_expr(0).unwrap();
+            match expr {
+                Expr::Assign(assign) => {
+                    assert!(
+                        std::mem::discriminant(&assign.op) == std::mem::discriminant(&expected_op),
+                        "Failed for operator: {}",
+                        op_str
+                    );
+                }
+                _ => panic!("Expected assignment for: {}", op_str),
+            }
+        }
+    }
+
+    // ========================================================================
+    // Call and Member Tests
+    // ========================================================================
+
+    #[test]
+    fn parse_call_with_args() {
+        let mut parser = Parser::new("obj.foo(1, 2, 3)");
+        let expr = parser.parse_expr(0).unwrap();
+        match expr {
+            Expr::Member(mem) => {
+                match mem.member {
+                    MemberAccess::Method { ref args, .. } => {
+                        assert_eq!(args.len(), 3);
+                    }
+                    _ => panic!("Expected method call"),
+                }
+            }
+            _ => panic!("Expected member expression with method call"),
+        }
+    }
+
+    #[test]
+    fn parse_call_empty_args() {
+        let mut parser = Parser::new("obj.bar()");
+        let expr = parser.parse_expr(0).unwrap();
+        match expr {
+            Expr::Member(mem) => {
+                match mem.member {
+                    MemberAccess::Method { ref args, .. } => {
+                        assert_eq!(args.len(), 0);
+                    }
+                    _ => panic!("Expected method call"),
+                }
+            }
+            _ => panic!("Expected member expression with method call"),
+        }
+    }
+
+    #[test]
+    fn parse_named_argument() {
+        let mut parser = Parser::new("obj.foo(x: 42)");
+        let expr = parser.parse_expr(0).unwrap();
+        match expr {
+            Expr::Member(mem) => {
+                match mem.member {
+                    MemberAccess::Method { ref args, .. } => {
+                        assert_eq!(args.len(), 1);
+                        assert!(args[0].name.is_some());
+                    }
+                    _ => panic!("Expected method call"),
+                }
+            }
+            _ => panic!("Expected member expression with method call"),
+        }
+    }
+
+    #[test]
+    fn parse_method_call() {
+        let mut parser = Parser::new("obj.method()");
+        let expr = parser.parse_expr(0).unwrap();
+        match expr {
+            Expr::Member(mem) => {
+                assert!(matches!(mem.member, MemberAccess::Method { .. }));
+            }
+            _ => panic!("Expected member expression"),
+        }
+    }
+
+    #[test]
+    fn parse_chained_member_access() {
+        let mut parser = Parser::new("a.b.c");
+        let expr = parser.parse_expr(0).unwrap();
+        // Should parse as ((a.b).c)
+        match expr {
+            Expr::Member(outer) => {
+                match &outer.object {
+                    Expr::Member(_) => {} // Good, inner member access
+                    _ => panic!("Expected nested member access"),
+                }
+            }
+            _ => panic!("Expected member expression"),
+        }
+    }
+
+    // ========================================================================
+    // Index Tests
+    // ========================================================================
+
+    #[test]
+    fn parse_index_single() {
+        let mut parser = Parser::new("arr[0]");
+        let expr = parser.parse_expr(0).unwrap();
+        match expr {
+            Expr::Index(idx) => {
+                assert_eq!(idx.indices.len(), 1);
+            }
+            _ => panic!("Expected index expression"),
+        }
+    }
+
+    #[test]
+    fn parse_index_multiple() {
+        let mut parser = Parser::new("matrix[i, j]");
+        let expr = parser.parse_expr(0).unwrap();
+        match expr {
+            Expr::Index(idx) => {
+                assert_eq!(idx.indices.len(), 2);
+            }
+            _ => panic!("Expected index expression"),
+        }
+    }
+
+    #[test]
+    fn parse_named_index() {
+        let mut parser = Parser::new("dict[key: x]");
+        let expr = parser.parse_expr(0).unwrap();
+        match expr {
+            Expr::Index(idx) => {
+                assert_eq!(idx.indices.len(), 1);
+                assert!(idx.indices[0].name.is_some());
+            }
+            _ => panic!("Expected index expression"),
+        }
+    }
+
+    #[test]
+    fn parse_empty_index() {
+        let mut parser = Parser::new("arr[]");
+        let expr = parser.parse_expr(0).unwrap();
+        match expr {
+            Expr::Index(idx) => {
+                assert_eq!(idx.indices.len(), 0);
+            }
+            _ => panic!("Expected index expression"),
+        }
+    }
+
+    // ========================================================================
+    // Cast Tests
+    // ========================================================================
+
+    #[test]
+    fn parse_cast_expression() {
+        let mut parser = Parser::new("cast<int>(3.14)");
+        let expr = parser.parse_expr(0).unwrap();
+        match expr {
+            Expr::Cast(_) => {}
+            _ => panic!("Expected cast expression"),
+        }
+    }
+
+    #[test]
+    fn parse_primitive_cast_via_constructor() {
+        let mut parser = Parser::new("int(3.14)");
+        let expr = parser.parse_expr(0).unwrap();
+        match expr {
+            Expr::Cast(_) => {}
+            _ => panic!("Expected cast expression for primitive constructor"),
+        }
+    }
+
+    #[test]
+    fn parse_constructor_expression() {
+        let mut parser = Parser::new("MyClass(1, 2)");
+        let expr = parser.parse_expr(0).unwrap();
+        match expr {
+            Expr::Call(call) => {
+                assert_eq!(call.args.len(), 2);
+                // Verify the callee is an identifier
+                match &call.callee {
+                    Expr::Ident(ident) => {
+                        assert_eq!(ident.ident.name, "MyClass");
+                    }
+                    _ => panic!("Expected identifier as callee"),
+                }
+            }
+            _ => panic!("Expected call expression"),
+        }
+    }
+
+    // ========================================================================
+    // Lambda Tests
+    // ========================================================================
+
+    #[test]
+    fn parse_lambda_no_params() {
+        let mut parser = Parser::new("function() { return 42; }");
+        let expr = parser.parse_expr(0).unwrap();
+        match expr {
+            Expr::Lambda(lambda) => {
+                assert_eq!(lambda.params.len(), 0);
+                assert!(lambda.body.stmts.len() > 0);
+            }
+            _ => panic!("Expected lambda expression"),
+        }
+    }
+
+    #[test]
+    fn parse_lambda_with_params() {
+        let mut parser = Parser::new("function(int x, int y) { return x + y; }");
+        let expr = parser.parse_expr(0).unwrap();
+        match expr {
+            Expr::Lambda(lambda) => {
+                assert_eq!(lambda.params.len(), 2);
+            }
+            _ => panic!("Expected lambda expression"),
+        }
+    }
+
+    #[test]
+    fn parse_lambda_with_return_type() {
+        let mut parser = Parser::new("function() { return 42; }");
+        let expr = parser.parse_expr(0).unwrap();
+        match expr {
+            Expr::Lambda(lambda) => {
+                // Lambdas don't have explicit return types - they're inferred
+                assert!(lambda.return_type.is_none());
+            }
+            _ => panic!("Expected lambda expression"),
+        }
+    }
+
+    // ========================================================================
+    // Init List Tests
+    // ========================================================================
+
+    #[test]
+    fn parse_init_list_simple() {
+        let mut parser = Parser::new("{ 1, 2, 3 }");
+        let expr = parser.parse_expr(0).unwrap();
+        match expr {
+            Expr::InitList(init) => {
+                assert_eq!(init.elements.len(), 3);
+            }
+            _ => panic!("Expected init list"),
+        }
+    }
+
+    #[test]
+    fn parse_init_list_empty() {
+        let mut parser = Parser::new("{ }");
+        let expr = parser.parse_expr(0).unwrap();
+        match expr {
+            Expr::InitList(init) => {
+                assert_eq!(init.elements.len(), 0);
+            }
+            _ => panic!("Expected init list"),
+        }
+    }
+
+    #[test]
+    fn parse_init_list_nested() {
+        let mut parser = Parser::new("{ {1, 2}, {3, 4} }");
+        let expr = parser.parse_expr(0).unwrap();
+        match expr {
+            Expr::InitList(init) => {
+                assert_eq!(init.elements.len(), 2);
+                match &init.elements[0] {
+                    InitElement::InitList(_) => {}
+                    _ => panic!("Expected nested init list"),
+                }
+            }
+            _ => panic!("Expected init list"),
+        }
+    }
+
+    #[test]
+    fn parse_init_list_trailing_comma() {
+        let mut parser = Parser::new("{ 1, 2, }");
+        let expr = parser.parse_expr(0).unwrap();
+        match expr {
+            Expr::InitList(init) => {
+                assert_eq!(init.elements.len(), 2);
+            }
+            _ => panic!("Expected init list"),
+        }
+    }
+
+    // ========================================================================
+    // Identifier and Scope Tests
+    // ========================================================================
+
+    #[test]
+    fn parse_simple_identifier() {
+        let mut parser = Parser::new("myVar");
+        let expr = parser.parse_expr(0).unwrap();
+        match expr {
+            Expr::Ident(ident) => {
+                assert_eq!(ident.ident.name, "myVar");
+                assert!(ident.scope.is_none());
+            }
+            _ => panic!("Expected identifier"),
+        }
+    }
+
+    #[test]
+    fn parse_scoped_identifier() {
+        let mut parser = Parser::new("Namespace::myVar");
+        let expr = parser.parse_expr(0).unwrap();
+        match expr {
+            Expr::Ident(ident) => {
+                assert!(ident.scope.is_some());
+                let scope = ident.scope.unwrap();
+                assert!(!scope.is_absolute);
+                assert_eq!(scope.segments.len(), 1);
+            }
+            _ => panic!("Expected scoped identifier"),
+        }
+    }
+
+    #[test]
+    fn parse_global_scoped_identifier() {
+        let mut parser = Parser::new("::globalVar");
+        let expr = parser.parse_expr(0).unwrap();
+        match expr {
+            Expr::Ident(ident) => {
+                assert!(ident.scope.is_some());
+                let scope = ident.scope.unwrap();
+                assert!(scope.is_absolute);
+            }
+            _ => panic!("Expected global scoped identifier"),
+        }
+    }
+
+    #[test]
+    fn parse_deeply_nested_scope() {
+        let mut parser = Parser::new("A::B::C::var");
+        let expr = parser.parse_expr(0).unwrap();
+        match expr {
+            Expr::Ident(ident) => {
+                assert!(ident.scope.is_some());
+                let scope = ident.scope.unwrap();
+                assert_eq!(scope.segments.len(), 3);
+            }
+            _ => panic!("Expected deeply scoped identifier"),
+        }
+    }
+
+    // ========================================================================
+    // Precedence Tests
+    // ========================================================================
+
+    #[test]
+    fn parse_precedence_mul_over_add() {
+        // 1 + 2 * 3 should parse as 1 + (2 * 3)
+        let mut parser = Parser::new("1 + 2 * 3");
+        let expr = parser.parse_expr(0).unwrap();
+        match expr {
+            Expr::Binary(bin) => {
+                assert!(matches!(bin.op, BinaryOp::Add));
+                // Right side should be multiplication
+                match bin.right {
+                    Expr::Binary(inner) => {
+                        assert!(matches!(inner.op, BinaryOp::Mul));
+                    }
+                    _ => panic!("Expected multiplication on right"),
+                }
+            }
+            _ => panic!("Expected binary expression"),
+        }
+    }
+
+    #[test]
+    fn parse_precedence_parentheses() {
+        // (1 + 2) * 3 should parse as (1 + 2) * 3
+        let mut parser = Parser::new("(1 + 2) * 3");
+        let expr = parser.parse_expr(0).unwrap();
+        match expr {
+            Expr::Binary(bin) => {
+                assert!(matches!(bin.op, BinaryOp::Mul));
+                // Left side should be parenthesized addition
+                match &bin.left {
+                    Expr::Paren(_) => {}
+                    _ => panic!("Expected paren on left"),
+                }
+            }
+            _ => panic!("Expected binary expression"),
+        }
+    }
+
+    #[test]
+    fn parse_right_associative_ternary() {
+        // a ? b : c ? d : e should parse as a ? b : (c ? d : e)
+        let mut parser = Parser::new("a ? b : c ? d : e");
+        let expr = parser.parse_expr(0).unwrap();
+        match expr {
+            Expr::Ternary(tern) => {
+                // else_expr should be another ternary
+                match &tern.else_expr {
+                    Expr::Ternary(_) => {}
+                    _ => panic!("Expected nested ternary in else branch"),
+                }
+            }
+            _ => panic!("Expected ternary expression"),
+        }
+    }
+
+    // ========================================================================
+    // Complex Expression Tests
+    // ========================================================================
+
+    #[test]
+    fn parse_complex_chained_expression() {
+        let mut parser = Parser::new("obj.method(1, 2)[0].field++");
+        let expr = parser.parse_expr(0).unwrap();
+        // Should parse as (((obj.method(1,2))[0]).field)++
+        match expr {
+            Expr::Postfix(_) => {} // Outermost is postfix
+            _ => panic!("Expected postfix at top level"),
+        }
+    }
+
+    #[test]
+    fn parse_mixed_operators() {
+        let mut parser = Parser::new("a + b * c - d / e");
+        let expr = parser.parse_expr(0).unwrap();
+        // Should respect precedence: (a + (b * c)) - (d / e)
+        match expr {
+            Expr::Binary(_) => {}
+            _ => panic!("Expected binary expression"),
+        }
+    }
+
+    // ========================================================================
+    // Error Cases
+    // ========================================================================
+
+    #[test]
+    fn parse_expr_invalid_start() {
+        let mut parser = Parser::new(";");
+        let result = parser.parse_expr(0);
+        assert!(result.is_err());
+        // Record the error so we can check it
+        if let Err(err) = result {
+            parser.errors.push(err);
+        }
+        assert!(parser.has_errors());
+    }
+
+    #[test]
+    fn parse_primitive_cast_wrong_arg_count() {
+        let mut parser = Parser::new("int(1, 2)");
+        let result = parser.parse_expr(0);
+        assert!(result.is_err());
+        // Record the error so we can check it
+        if let Err(err) = result {
+            parser.errors.push(err);
+        }
+        assert!(parser.has_errors());
+    }
+}

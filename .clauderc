@@ -1,0 +1,141 @@
+{
+  "project_name": "AngelScript Parser",
+  "language": "rust",
+  "project_type": "library",
+  
+  "description": "A complete Rust implementation of an AngelScript parser with lexer, AST, and visitor pattern support",
+  
+  "key_files": [
+    "CLAUDE.md",
+    "README.md",
+    "Cargo.toml",
+    "src/lib.rs",
+    "src/ast/mod.rs",
+    "src/ast/parser.rs",
+    "src/ast/visitor.rs",
+    "src/lexer/mod.rs"
+  ],
+  
+  "documentation": [
+    "CLAUDE.md",
+    "docs_architecture.md",
+    "docs_parser.md",
+    "docs_execution_model.md",
+    "PHASE_7_QUICKREF.md",
+    "PROGRESS.md"
+  ],
+  
+  "test_command": "cargo test",
+  "build_command": "cargo build",
+  "run_command": null,
+  
+  "code_style": {
+    "max_line_length": 100,
+    "indent_size": 4,
+    "use_tabs": false,
+    "trailing_newline": true
+  },
+  
+  "conventions": {
+    "naming": {
+      "types": "PascalCase",
+      "functions": "snake_case",
+      "constants": "SCREAMING_SNAKE_CASE",
+      "modules": "snake_case"
+    },
+    "patterns": [
+      "Builder pattern for complex construction",
+      "Visitor pattern for AST traversal",
+      "Result<T, E> for error handling",
+      "Option<T> for optional values",
+      "Minimal unsafe code"
+    ]
+  },
+  
+  "ai_instructions": {
+    "primary_doc": "CLAUDE.md",
+    "workflow": [
+      "Read CLAUDE.md and relevant phase documents",
+      "Understand the task in context of current phase",
+      "Check existing patterns in similar code",
+      "Propose changes before implementing",
+      "Implement with tests",
+      "Update progress tracking"
+    ],
+    "rules": [
+      "Always confirm before making changes",
+      "Follow Rust idioms and conventions",
+      "Maintain zero-copy parsing where possible",
+      "Keep error recovery robust",
+      "Add tests for new functionality",
+      "Update documentation when needed"
+    ]
+  },
+  
+  "project_structure": {
+    "src_prefix": true,
+    "note": "Files use 'src_' prefix to avoid conflicts. Run setup.sh to organize.",
+    "directories": {
+      "src/lexer": "Tokenization and lexical analysis",
+      "src/ast": "Abstract Syntax Tree and parsing",
+      "tests": "Integration tests",
+      "test_scripts": "AngelScript test files"
+    }
+  },
+  
+  "current_status": {
+    "phase": 7,
+    "total_phases": 8,
+    "completion": "87.5%",
+    "next_task": "Phase 8: Testing & Polish"
+  },
+  
+  "dependencies": {
+    "thiserror": "2.0",
+    "bitflags": "2.10",
+    "num_enum": "0.7"
+  },
+  
+  "dev_dependencies": {
+    "criterion": "0.7"
+  },
+  
+  "features": {
+    "completed": [
+      "Full lexer with error recovery",
+      "Complete type system parsing",
+      "Expression parsing (all operators)",
+      "Statement parsing (all constructs)",
+      "Declaration parsing (functions, classes, etc)",
+      "Parser coordination and integration",
+      "Visitor pattern for AST traversal"
+    ],
+    "in_progress": [],
+    "planned": [
+      "Integration tests",
+      "Performance benchmarks",
+      "Error message improvements",
+      "Production polish"
+    ]
+  },
+  
+  "testing": {
+    "unit_tests": "In each module file",
+    "integration_tests": "tests/integration_tests.rs",
+    "test_scripts": "test_scripts/*.as files",
+    "coverage_goal": "100%"
+  },
+  
+  "performance_targets": {
+    "parse_speed": "10k lines in <100ms",
+    "memory": "Minimal allocations",
+    "optimization": "Zero-cost abstractions"
+  },
+  
+  "quality_standards": {
+    "code_quality": "High - idiomatic Rust",
+    "documentation": "Comprehensive",
+    "test_coverage": "100%+",
+    "error_handling": "Robust with recovery"
+  }
+}

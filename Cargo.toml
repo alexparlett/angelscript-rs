@@ -5,8 +5,9 @@ edition = "2024"
 
 [dependencies]
 thiserror = "2.0"
-bitflags = "2.9"
+bitflags = "2.10"
 num_enum = "0.7"
+
 [dev-dependencies]
 criterion = "0.7"
 
@@ -15,3 +16,11 @@ criterion = "0.7"
 [package.metadata.docs.rs]
 all-features = true
 no-deps = true
+
+[[test]]
+name = "integration"
+path = "tests/integration_tests.rs"
+
+[[bench]]
+name = "parser_benchmarks"
+harness = false
