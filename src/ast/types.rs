@@ -1,0 +1,729 @@
+//! Type expression AST nodes for AngelScript.
+//!
+//! Provides nodes for representing all type expressions including:
+//! - Primitive types (int, float, void, etc.)
+//! - User-defined types (MyClass, array<T>)
+//! - Scoped types (Namespace::Type)
+//! - Template types (array<int>, dict<string, int>)
+//! - Type modifiers (const, references, handles)
+//! - Array and handle suffixes ([], @, @ const)
+//!
+//! # Example Type Expressions
+//!
+//! ```text
+//! int                              // Primitive
+//! const int                        // Const primitive
+//! MyClass                          // User type
+//! Namespace::MyClass               // Scoped type
+//! array<int>                       // Template type
+//! const array<int>[]               // Const template array
+//! MyClass@                         // Handle
+//! const MyClass@                   // Handle to const object
+//! MyClass@ const                   // Const handle
+//! const MyClass@ const             // Const handle to const object
+//! Namespace::Type<T>[]@            // Complex: scoped template array handle
+//! ```
+
+use crate::ast::{Ident, Scope};
+use crate::lexer::Span;
+use std::fmt;
+
+/// A complete type expression.
+///
+/// Examples:
+/// - `int` - simple type
+/// - `const array<int>[]` - const template with array suffix
+/// - `MyClass@ const` - const handle
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct TypeExpr<'src, 'ast> {
+    /// Leading const (makes the object const, not the handle)
+    pub is_const: bool,
+    /// Optional namespace scope
+    pub scope: Option<Scope<'src, 'ast>>,
+    /// The base type
+    pub base: TypeBase<'src>,
+    /// Template arguments if this is a template type
+    pub template_args: &'ast [TypeExpr<'src, 'ast>],
+    /// Type suffixes (arrays, handles)
+    pub suffixes: &'ast [TypeSuffix],
+    /// Source location
+    pub span: Span,
+}
+
+impl<'src, 'ast> TypeExpr<'src, 'ast> {
+    /// Create a new type expression.
+    pub fn new(
+        is_const: bool,
+        scope: Option<Scope<'src, 'ast>>,
+        base: TypeBase<'src>,
+        template_args: &'ast [TypeExpr<'src, 'ast>],
+        suffixes: &'ast [TypeSuffix],
+        span: Span,
+    ) -> Self {
+        Self {
+            is_const,
+            scope,
+            base,
+            template_args,
+            suffixes,
+            span,
+        }
+    }
+
+    /// Create a simple primitive type.
+    pub fn primitive(prim: PrimitiveType, span: Span) -> Self {
+        Self {
+            is_const: false,
+            scope: None,
+            base: TypeBase::Primitive(prim),
+            template_args: &[],
+            suffixes: &[],
+            span,
+        }
+    }
+
+    /// Create a simple named type.
+    pub fn named(name: Ident<'src>) -> Self {
+        let span = name.span;
+        Self {
+            is_const: false,
+            scope: None,
+            base: TypeBase::Named(name),
+            template_args: &[],
+            suffixes: &[],
+            span,
+        }
+    }
+
+    /// Check if this type has any handles (@).
+    pub fn has_handle(&self) -> bool {
+        self.suffixes.iter().any(|s| matches!(s, TypeSuffix::Handle { .. }))
+    }
+
+    /// Check if this type has any arrays ([]).
+    pub fn has_array(&self) -> bool {
+        self.suffixes.iter().any(|s| matches!(s, TypeSuffix::Array))
+    }
+
+    /// Check if this type is a reference type (has @ handle).
+    pub fn is_reference_type(&self) -> bool {
+        self.has_handle()
+    }
+
+    /// Check if this is a void type.
+    pub fn is_void(&self) -> bool {
+        matches!(self.base, TypeBase::Primitive(PrimitiveType::Void))
+    }
+}
+
+impl<'src, 'ast> fmt::Display for TypeExpr<'src, 'ast> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.is_const {
+            write!(f, "const ")?;
+        }
+        if let Some(scope) = &self.scope {
+            write!(f, "{}::", scope)?;
+        }
+        write!(f, "{}", self.base)?;
+        if !self.template_args.is_empty() {
+            write!(f, "<")?;
+            for (i, arg) in self.template_args.iter().enumerate() {
+                if i > 0 {
+                    write!(f, ", ")?;
+                }
+                write!(f, "{}", arg)?;
+            }
+            write!(f, ">")?;
+        }
+        for suffix in self.suffixes {
+            write!(f, "{}", suffix)?;
+        }
+        Ok(())
+    }
+}
+
+/// The base type without modifiers or suffixes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TypeBase<'src> {
+    /// Primitive type (int, float, void, etc.)
+    Primitive(PrimitiveType),
+    /// Named user-defined type or identifier
+    Named(Ident<'src>),
+    /// Auto type (compiler infers)
+    Auto,
+    /// Unknown/placeholder type (?)
+    Unknown,
+}
+
+impl<'src> fmt::Display for TypeBase<'src> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Primitive(p) => write!(f, "{}", p),
+            Self::Named(name) => write!(f, "{}", name),
+            Self::Auto => write!(f, "auto"),
+            Self::Unknown => write!(f, "?"),
+        }
+    }
+}
+
+/// Primitive types in AngelScript.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum PrimitiveType {
+    /// void
+    Void,
+    /// bool
+    Bool,
+    /// int (int32)
+    Int,
+    /// int8
+    Int8,
+    /// int16
+    Int16,
+    /// int64
+    Int64,
+    /// uint (uint32)
+    UInt,
+    /// uint8
+    UInt8,
+    /// uint16
+    UInt16,
+    /// uint64
+    UInt64,
+    /// float
+    Float,
+    /// double
+    Double,
+}
+
+impl PrimitiveType {
+    /// Get the size of this primitive type in bytes.
+    pub fn size_bytes(&self) -> usize {
+        match self {
+            Self::Void => 0,
+            Self::Bool | Self::Int8 | Self::UInt8 => 1,
+            Self::Int16 | Self::UInt16 => 2,
+            Self::Int | Self::UInt | Self::Float => 4,
+            Self::Int64 | Self::UInt64 | Self::Double => 8,
+        }
+    }
+
+    /// Check if this is an integer type.
+    pub fn is_integer(&self) -> bool {
+        matches!(
+            self,
+            Self::Int | Self::Int8 | Self::Int16 | Self::Int64 |
+            Self::UInt | Self::UInt8 | Self::UInt16 | Self::UInt64
+        )
+    }
+
+    /// Check if this is a floating-point type.
+    pub fn is_float(&self) -> bool {
+        matches!(self, Self::Float | Self::Double)
+    }
+
+    /// Check if this is a signed integer type.
+    pub fn is_signed(&self) -> bool {
+        matches!(
+            self,
+            Self::Int | Self::Int8 | Self::Int16 | Self::Int64
+        )
+    }
+
+    /// Check if this is an unsigned integer type.
+    pub fn is_unsigned(&self) -> bool {
+        matches!(
+            self,
+            Self::UInt | Self::UInt8 | Self::UInt16 | Self::UInt64
+        )
+    }
+}
+
+impl fmt::Display for PrimitiveType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let s = match self {
+            Self::Void => "void",
+            Self::Bool => "bool",
+            Self::Int => "int",
+            Self::Int8 => "int8",
+            Self::Int16 => "int16",
+            Self::Int64 => "int64",
+            Self::UInt => "uint",
+            Self::UInt8 => "uint8",
+            Self::UInt16 => "uint16",
+            Self::UInt64 => "uint64",
+            Self::Float => "float",
+            Self::Double => "double",
+        };
+        write!(f, "{}", s)
+    }
+}
+
+/// Type suffixes that modify the base type.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TypeSuffix {
+    /// Array suffix: `[]`
+    Array,
+    /// Handle suffix: `@` with optional trailing const
+    /// 
+    /// Examples:
+    /// - `MyClass@` - handle (is_const = false)
+    /// - `MyClass@ const` - const handle (is_const = true)
+    Handle {
+        /// Whether the handle itself is const (trailing const)
+        is_const: bool,
+    },
+}
+
+impl fmt::Display for TypeSuffix {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Array => write!(f, "[]"),
+            Self::Handle { is_const: false } => write!(f, "@"),
+            Self::Handle { is_const: true } => write!(f, "@ const"),
+        }
+    }
+}
+
+/// A return type for functions, which can include reference modifiers.
+///
+/// Examples:
+/// - `void` - simple return
+/// - `int&` - return by reference
+/// - `const string&` - return const reference
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ReturnType<'src, 'ast> {
+    /// The base type
+    pub ty: TypeExpr<'src, 'ast>,
+    /// Whether this is returned by reference (&)
+    pub is_ref: bool,
+    /// Source location
+    pub span: Span,
+}
+
+impl<'src, 'ast> ReturnType<'src, 'ast> {
+    /// Create a new return type.
+    pub fn new(ty: TypeExpr<'src, 'ast>, is_ref: bool, span: Span) -> Self {
+        Self { ty, is_ref, span }
+    }
+}
+
+impl<'src, 'ast> fmt::Display for ReturnType<'src, 'ast> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.ty)?;
+        if self.is_ref {
+            write!(f, "&")?;
+        }
+        Ok(())
+    }
+}
+
+/// Parameter type with modifiers.
+///
+/// Examples:
+/// - `int` - by value
+/// - `int&` - by reference (mutable)
+/// - `const int&` - by const reference
+/// - `int& in` - input reference
+/// - `int& out` - output reference
+/// - `int& inout` - input/output reference
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ParamType<'src, 'ast> {
+    /// The base type
+    pub ty: TypeExpr<'src, 'ast>,
+    /// Reference kind (None, Ref, RefIn, RefOut, RefInOut)
+    pub ref_kind: crate::ast::RefKind,
+    /// Source location
+    pub span: Span,
+}
+
+impl<'src, 'ast> ParamType<'src, 'ast> {
+    /// Create a new parameter type.
+    pub fn new(ty: TypeExpr<'src, 'ast>, ref_kind: crate::ast::RefKind, span: Span) -> Self {
+        Self { ty, ref_kind, span }
+    }
+
+    /// Check if this parameter is by reference.
+    pub fn is_ref(&self) -> bool {
+        self.ref_kind.is_ref()
+    }
+}
+
+impl<'src, 'ast> fmt::Display for ParamType<'src, 'ast> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.ty)?;
+        if self.ref_kind.is_ref() {
+            write!(f, " {}", self.ref_kind)?;
+        }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn primitive_type_sizes() {
+        assert_eq!(PrimitiveType::Void.size_bytes(), 0);
+        assert_eq!(PrimitiveType::Bool.size_bytes(), 1);
+        assert_eq!(PrimitiveType::Int8.size_bytes(), 1);
+        assert_eq!(PrimitiveType::Int16.size_bytes(), 2);
+        assert_eq!(PrimitiveType::Int.size_bytes(), 4);
+        assert_eq!(PrimitiveType::Int64.size_bytes(), 8);
+        assert_eq!(PrimitiveType::Float.size_bytes(), 4);
+        assert_eq!(PrimitiveType::Double.size_bytes(), 8);
+    }
+
+    #[test]
+    fn primitive_type_checks() {
+        assert!(PrimitiveType::Int.is_integer());
+        assert!(PrimitiveType::Int.is_signed());
+        assert!(!PrimitiveType::Int.is_unsigned());
+        
+        assert!(PrimitiveType::UInt.is_integer());
+        assert!(PrimitiveType::UInt.is_unsigned());
+        assert!(!PrimitiveType::UInt.is_signed());
+        
+        assert!(PrimitiveType::Float.is_float());
+        assert!(!PrimitiveType::Float.is_integer());
+    }
+
+    #[test]
+    fn simple_type_display() {
+        let ty = TypeExpr::primitive(PrimitiveType::Int, Span::new(1, 0 + 1, 3 - 0));
+        assert_eq!(format!("{}", ty), "int");
+    }
+
+    #[test]
+    fn const_type_display() {
+        let mut ty = TypeExpr::primitive(PrimitiveType::Int, Span::new(1, 0 + 1, 9 - 0));
+        ty.is_const = true;
+        assert_eq!(format!("{}", ty), "const int");
+    }
+
+    #[test]
+    fn handle_type_display() {
+        use bumpalo::Bump;
+        let arena = Bump::new();
+        let suffixes = arena.alloc_slice_copy(&[TypeSuffix::Handle { is_const: false }]);
+        let ty = TypeExpr::new(
+            false,
+            None,
+            TypeBase::Named(Ident::new("MyClass", Span::new(1, 0 + 1, 7 - 0))),
+            &[],
+            suffixes,
+            Span::new(1, 0 + 1, 8 - 0),
+        );
+        assert_eq!(format!("{}", ty), "MyClass@");
+    }
+
+    #[test]
+    fn const_handle_display() {
+        use bumpalo::Bump;
+        let arena = Bump::new();
+        let suffixes = arena.alloc_slice_copy(&[TypeSuffix::Handle { is_const: true }]);
+        let ty = TypeExpr::new(
+            false,
+            None,
+            TypeBase::Named(Ident::new("MyClass", Span::new(1, 0 + 1, 7 - 0))),
+            &[],
+            suffixes,
+            Span::new(1, 0 + 1, 15 - 0),
+        );
+        assert_eq!(format!("{}", ty), "MyClass@ const");
+    }
+
+    #[test]
+    fn array_type_display() {
+        use bumpalo::Bump;
+        let arena = Bump::new();
+        let suffixes = arena.alloc_slice_copy(&[TypeSuffix::Array]);
+        let ty = TypeExpr::new(
+            false,
+            None,
+            TypeBase::Primitive(PrimitiveType::Int),
+            &[],
+            suffixes,
+            Span::new(1, 0 + 1, 5 - 0),
+        );
+        assert_eq!(format!("{}", ty), "int[]");
+    }
+
+    #[test]
+    fn template_type_display() {
+        use bumpalo::Bump;
+        let arena = Bump::new();
+        let template_args = arena.alloc_slice_copy(&[
+            TypeExpr::primitive(PrimitiveType::Int, Span::new(1, 6 + 1, 9 - 6))
+        ]);
+        let ty = TypeExpr::new(
+            false,
+            None,
+            TypeBase::Named(Ident::new("array", Span::new(1, 0 + 1, 5 - 0))),
+            template_args,
+            &[],
+            Span::new(1, 0 + 1, 10 - 0),
+        );
+        assert_eq!(format!("{}", ty), "array<int>");
+    }
+
+    #[test]
+    fn complex_type_display() {
+        use bumpalo::Bump;
+        let arena = Bump::new();
+        let template_args = arena.alloc_slice_copy(&[
+            TypeExpr::primitive(PrimitiveType::Int, Span::new(1, 12 + 1, 15 - 12))
+        ]);
+        let suffixes = arena.alloc_slice_copy(&[
+            TypeSuffix::Array,
+            TypeSuffix::Handle { is_const: true }
+        ]);
+        let ty = TypeExpr::new(
+            true,
+            None,
+            TypeBase::Named(Ident::new("array", Span::new(1, 6 + 1, 11 - 6))),
+            template_args,
+            suffixes,
+            Span::new(1, 6 + 1, 26 - 6),
+        );
+        assert_eq!(format!("{}", ty), "const array<int>[]@ const");
+    }
+
+    #[test]
+    fn type_checks() {
+        use bumpalo::Bump;
+        let arena = Bump::new();
+
+        // First test: just handle
+        let suffixes = arena.alloc_slice_copy(&[TypeSuffix::Handle { is_const: false }]);
+        let ty = TypeExpr::new(
+            false,
+            None,
+            TypeBase::Named(Ident::new("MyClass", Span::new(1, 0 + 1, 7 - 0))),
+            &[],
+            suffixes,
+            Span::new(1, 0 + 1, 8 - 0),
+        );
+
+        assert!(ty.has_handle());
+        assert!(ty.is_reference_type());
+        assert!(!ty.has_array());
+
+        // Second test: handle and array
+        let suffixes2 = arena.alloc_slice_copy(&[
+            TypeSuffix::Handle { is_const: false },
+            TypeSuffix::Array
+        ]);
+        let ty2 = TypeExpr::new(
+            false,
+            None,
+            TypeBase::Named(Ident::new("MyClass", Span::new(1, 0 + 1, 7 - 0))),
+            &[],
+            suffixes2,
+            Span::new(1, 0 + 1, 10 - 0),
+        );
+        assert!(ty2.has_array());
+    }
+
+    #[test]
+    fn void_type_check() {
+        let ty = TypeExpr::primitive(PrimitiveType::Void, Span::new(1, 0 + 1, 4 - 0));
+        assert!(ty.is_void());
+    }
+
+    #[test]
+    fn all_primitive_type_sizes() {
+        assert_eq!(PrimitiveType::Void.size_bytes(), 0);
+        assert_eq!(PrimitiveType::Bool.size_bytes(), 1);
+        assert_eq!(PrimitiveType::Int8.size_bytes(), 1);
+        assert_eq!(PrimitiveType::UInt8.size_bytes(), 1);
+        assert_eq!(PrimitiveType::Int16.size_bytes(), 2);
+        assert_eq!(PrimitiveType::UInt16.size_bytes(), 2);
+        assert_eq!(PrimitiveType::Int.size_bytes(), 4);
+        assert_eq!(PrimitiveType::UInt.size_bytes(), 4);
+        assert_eq!(PrimitiveType::Float.size_bytes(), 4);
+        assert_eq!(PrimitiveType::Int64.size_bytes(), 8);
+        assert_eq!(PrimitiveType::UInt64.size_bytes(), 8);
+        assert_eq!(PrimitiveType::Double.size_bytes(), 8);
+    }
+
+    #[test]
+    fn all_primitive_type_checks() {
+        // Integer checks
+        assert!(PrimitiveType::Int.is_integer());
+        assert!(PrimitiveType::Int8.is_integer());
+        assert!(PrimitiveType::Int16.is_integer());
+        assert!(PrimitiveType::Int64.is_integer());
+        assert!(PrimitiveType::UInt.is_integer());
+        assert!(PrimitiveType::UInt8.is_integer());
+        assert!(PrimitiveType::UInt16.is_integer());
+        assert!(PrimitiveType::UInt64.is_integer());
+        assert!(!PrimitiveType::Float.is_integer());
+        assert!(!PrimitiveType::Double.is_integer());
+        assert!(!PrimitiveType::Bool.is_integer());
+        assert!(!PrimitiveType::Void.is_integer());
+
+        // Float checks
+        assert!(PrimitiveType::Float.is_float());
+        assert!(PrimitiveType::Double.is_float());
+        assert!(!PrimitiveType::Int.is_float());
+        assert!(!PrimitiveType::Bool.is_float());
+
+        // Signed checks
+        assert!(PrimitiveType::Int.is_signed());
+        assert!(PrimitiveType::Int8.is_signed());
+        assert!(PrimitiveType::Int16.is_signed());
+        assert!(PrimitiveType::Int64.is_signed());
+        assert!(!PrimitiveType::UInt.is_signed());
+        assert!(!PrimitiveType::Float.is_signed());
+
+        // Unsigned checks
+        assert!(PrimitiveType::UInt.is_unsigned());
+        assert!(PrimitiveType::UInt8.is_unsigned());
+        assert!(PrimitiveType::UInt16.is_unsigned());
+        assert!(PrimitiveType::UInt64.is_unsigned());
+        assert!(!PrimitiveType::Int.is_unsigned());
+        assert!(!PrimitiveType::Float.is_unsigned());
+    }
+
+    #[test]
+    fn all_primitive_type_display() {
+        assert_eq!(format!("{}", PrimitiveType::Void), "void");
+        assert_eq!(format!("{}", PrimitiveType::Bool), "bool");
+        assert_eq!(format!("{}", PrimitiveType::Int), "int");
+        assert_eq!(format!("{}", PrimitiveType::Int8), "int8");
+        assert_eq!(format!("{}", PrimitiveType::Int16), "int16");
+        assert_eq!(format!("{}", PrimitiveType::Int64), "int64");
+        assert_eq!(format!("{}", PrimitiveType::UInt), "uint");
+        assert_eq!(format!("{}", PrimitiveType::UInt8), "uint8");
+        assert_eq!(format!("{}", PrimitiveType::UInt16), "uint16");
+        assert_eq!(format!("{}", PrimitiveType::UInt64), "uint64");
+        assert_eq!(format!("{}", PrimitiveType::Float), "float");
+        assert_eq!(format!("{}", PrimitiveType::Double), "double");
+    }
+
+    #[test]
+    fn type_base_display() {
+        assert_eq!(format!("{}", TypeBase::Primitive(PrimitiveType::Int)), "int");
+        assert_eq!(format!("{}", TypeBase::Named(Ident::new("Foo", Span::new(1, 1, 3)))), "Foo");
+        assert_eq!(format!("{}", TypeBase::Auto), "auto");
+        assert_eq!(format!("{}", TypeBase::Unknown), "?");
+    }
+
+    #[test]
+    fn type_suffix_display() {
+        assert_eq!(format!("{}", TypeSuffix::Array), "[]");
+        assert_eq!(format!("{}", TypeSuffix::Handle { is_const: false }), "@");
+        assert_eq!(format!("{}", TypeSuffix::Handle { is_const: true }), "@ const");
+    }
+
+    #[test]
+    fn return_type_display() {
+        let rt = ReturnType::new(
+            TypeExpr::primitive(PrimitiveType::Int, Span::new(1, 1, 3)),
+            false,
+            Span::new(1, 1, 3),
+        );
+        assert_eq!(format!("{}", rt), "int");
+
+        let rt_ref = ReturnType::new(
+            TypeExpr::primitive(PrimitiveType::Int, Span::new(1, 1, 3)),
+            true,
+            Span::new(1, 1, 4),
+        );
+        assert_eq!(format!("{}", rt_ref), "int&");
+    }
+
+    #[test]
+    fn param_type_display() {
+        let pt = ParamType::new(
+            TypeExpr::primitive(PrimitiveType::Int, Span::new(1, 1, 3)),
+            crate::ast::RefKind::None,
+            Span::new(1, 1, 3),
+        );
+        assert_eq!(format!("{}", pt), "int");
+
+        let pt_ref = ParamType::new(
+            TypeExpr::primitive(PrimitiveType::Int, Span::new(1, 1, 3)),
+            crate::ast::RefKind::RefIn,
+            Span::new(1, 1, 7),
+        );
+        assert!(format!("{}", pt_ref).contains("int"));
+        assert!(format!("{}", pt_ref).contains("&"));
+    }
+
+    #[test]
+    fn param_type_is_ref() {
+        let pt = ParamType::new(
+            TypeExpr::primitive(PrimitiveType::Int, Span::new(1, 1, 3)),
+            crate::ast::RefKind::None,
+            Span::new(1, 1, 3),
+        );
+        assert!(!pt.is_ref());
+
+        let pt_ref = ParamType::new(
+            TypeExpr::primitive(PrimitiveType::Int, Span::new(1, 1, 3)),
+            crate::ast::RefKind::Ref,
+            Span::new(1, 1, 4),
+        );
+        assert!(pt_ref.is_ref());
+    }
+
+    #[test]
+    fn type_expr_with_scope() {
+        use bumpalo::Bump;
+        let arena = Bump::new();
+
+        let segments = arena.alloc_slice_copy(&[Ident::new("Namespace", Span::new(1, 1, 9))]);
+        let scope = Scope::new(
+            false,
+            segments,
+            Span::new(1, 1, 9),
+        );
+        let ty = TypeExpr::new(
+            false,
+            Some(scope),
+            TypeBase::Named(Ident::new("Type", Span::new(1, 12, 4))),
+            &[],
+            &[],
+            Span::new(1, 1, 16),
+        );
+
+        // Verify structure
+        assert!(ty.scope.is_some());
+        assert_eq!(ty.scope.as_ref().unwrap().segments.len(), 1);
+        assert_eq!(ty.scope.as_ref().unwrap().segments[0].name, "Namespace");
+        assert!(matches!(ty.base, TypeBase::Named(_)));
+
+        // Also verify Display formatting
+        assert_eq!(format!("{}", ty), "Namespace::Type");
+    }
+
+    #[test]
+    fn type_expr_is_reference_type() {
+        use bumpalo::Bump;
+        let arena = Bump::new();
+
+        // Test without handle
+        let ty = TypeExpr::named(Ident::new("MyClass", Span::new(1, 1, 7)));
+        assert!(!ty.is_reference_type());
+
+        // Test with handle
+        let suffixes = arena.alloc_slice_copy(&[TypeSuffix::Handle { is_const: false }]);
+        let ty_with_handle = TypeExpr::new(
+            false,
+            None,
+            TypeBase::Named(Ident::new("MyClass", Span::new(1, 1, 7))),
+            &[],
+            suffixes,
+            Span::new(1, 1, 8),
+        );
+        assert!(ty_with_handle.is_reference_type());
+    }
+
+    #[test]
+    fn type_expr_non_void() {
+        let ty = TypeExpr::primitive(PrimitiveType::Int, Span::new(1, 1, 3));
+        assert!(!ty.is_void());
+    }
+}
