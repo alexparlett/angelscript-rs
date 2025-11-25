@@ -18,23 +18,30 @@
 //!
 //! ```
 //! use angelscript::{parse_lenient, Script};
+//! use bumpalo::Bump;
 //!
+//! let arena = Bump::new();
 //! let source = r#"
 //!     int add(int a, int b) {
 //!         return a + b;
 //!     }
 //! "#;
 //!
-//! let (script, errors) = parse_lenient(source);
+//! let (script, errors) = parse_lenient(source, &arena);
 //! if errors.is_empty() {
 //!     println!("Successfully parsed {} items", script.items().len());
 //! }
 //! ```
 
 mod ast;
+mod compiler;
 mod lexer;
+mod semantic;
 
 pub use ast::{parse, parse_expression, parse_lenient, parse_statement, parse_type_expr};
+
+// Re-export compilation context for multi-file compilation
+pub use compiler::CompilationContext;
 
 // Re-export visitor for AST traversal
 pub use ast::visitor;
@@ -101,3 +108,6 @@ pub use ast::{
     // Errors
     ParseError, ParseErrorKind, ParseErrors,
 };
+
+// Re-export semantic types
+pub use semantic::{SemanticError, SemanticErrorKind, SemanticErrors};

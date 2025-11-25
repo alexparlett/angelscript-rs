@@ -1,14 +1,14 @@
 # Semantic Analysis Implementation Plan
 
 **Status:** Ready for Implementation
-**Created:** 2025-11-24
+**Created:** 2025-11-24 (Updated: 2025-11-25)
 **Phase:** Post-Parser, Pre-Codegen
 
 ---
 
 ## Overview & Philosophy
 
-### Compilation Pipeline
+### Compilation Pipeline (2-Pass Registry-Only Model)
 
 ```
 Source Code
@@ -26,67 +26,120 @@ Source Code
 └─────────────────────────────────────────────────────────────┘
     ↓
 ┌─────────────────────────────────────────────────────────────┐
-│ Phase 3: SEMANTIC ANALYSIS (Next - 3 passes)                │
+│ Phase 3: SEMANTIC ANALYSIS (2 passes)                       │
 │ ┌─────────────────────────────────────────────────────────┐ │
-│ │ Pass 1: Resolution & Symbol Collection                  │ │
-│ │ • Collect all declarations                              │ │
-│ │ • Build symbol tables with scope hierarchy              │ │
-│ │ • Resolve names to declarations                         │ │
-│ │ • Check for duplicates/undefined names                  │ │
+│ │ Pass 1: Registration (⏳ To Be Implemented)             │ │
+│ │ • Register all global names in Registry                │ │
+│ │ • Types: Classes, interfaces, enums, funcdefs          │ │
+│ │ • Functions: Global and methods (names only)           │ │
+│ │ • Global variables (names only)                        │ │
+│ │ • Track namespace/class context dynamically            │ │
+│ │ • NO local variable tracking                           │ │
+│ │ • NO type resolution yet                               │ │
+│ │ Output: Registry (empty shells with qualified names)   │ │
 │ └─────────────────────────────────────────────────────────┘ │
 │ ┌─────────────────────────────────────────────────────────┐ │
-│ │ Pass 2: Type Resolution                                 │ │
-│ │ • Resolve TypeExpr → TypeId                             │ │
-│ │ • Build type registry and hierarchy                     │ │
-│ │ • Instantiate templates                                 │ │
-│ │ • Validate types exist                                  │ │
-│ └─────────────────────────────────────────────────────────┘ │
-│ ┌─────────────────────────────────────────────────────────┐ │
-│ │ Pass 3: Type Checking & Validation                      │ │
-│ │ • Type check all expressions                            │ │
+│ │ Pass 2: Compilation & Codegen (⏳ To Be Implemented)   │ │
+│ │                                                          │ │
+│ │ Sub-phase 2a: Type Compilation                          │ │
+│ │ • Fill in type details (fields, methods, inheritance)   │ │
+│ │ • Resolve TypeExpr → DataType                           │ │
+│ │ • Instantiate templates with caching                    │ │
+│ │ • Register complete function signatures                 │ │
+│ │ • Build type hierarchy                                  │ │
+│ │ Output: Registry (complete type information)            │ │
+│ │                                                          │ │
+│ │ Sub-phase 2b: Function Compilation (per-function)       │ │
+│ │ • Type check expressions                                │ │
+│ │ • Track local variables dynamically (LocalScope)        │ │
 │ │ • Validate operations and control flow                  │ │
-│ │ • Check class/interface contracts                       │ │
-│ │ • Annotate AST with semantic info                       │ │
+│ │ • Generate bytecode                                     │ │
+│ │ Output: Module { bytecode, metadata }                   │ │
 │ └─────────────────────────────────────────────────────────┘ │
-│ Output: Validated, annotated AST ready for codegen          │
-└─────────────────────────────────────────────────────────────┘
-    ↓
-┌─────────────────────────────────────────────────────────────┐
-│ Phase 4: CODE GENERATION (Future)                           │
-│ Input:  Validated AST + semantic data                       │
-│ Output: Bytecode or executable code                         │
 └─────────────────────────────────────────────────────────────┘
 ```
 
-### Guiding Principles (from Crafting Interpreters)
+---
 
-1. **Separate semantic analysis from parsing** - Parser builds structure, semantic analysis validates meaning
-2. **Use multiple focused passes** - Each pass has single responsibility (O(n) traversal)
-3. **Stack-based scope tracking** - Push/pop scopes during traversal (matches execution model)
-4. **Side tables for results** - Store semantic data separately, don't modify AST
-5. **Declare/define two-phase** - Prevents self-reference bugs in variable initialization
-6. **Fail fast on errors** - Report errors during analysis, not execution
-7. **Resolve at compile-time** - Any work done now is work not done at runtime
+## Architecture Decision: 2-Pass Registry-Only Model
 
-### Why Multiple Passes?
+**Following AngelScript C++ Architecture:**
 
-**Forward References:**
+```cpp
+// AngelScript C++ (simplified)
+ParseScripts();              // Parse → AST
+CompileClasses();            // Pass 1: Register + fill type details
+CompileFunctions();          // Pass 2: Compile + codegen
+```
+
+**Our Rust Implementation:**
+
+```
+Pass 1: Registration
+  - Walk AST tracking namespace/class context
+  - Register all global names in Registry (types, functions, globals)
+  - Output: Registry with qualified names (empty shells)
+
+Pass 2: Compilation & Codegen
+  Sub-phase 2a: Type Compilation
+    - Fill type details from AST
+    - Resolve all TypeExpr → DataType
+    - Instantiate templates (with caching)
+
+  Sub-phase 2b: Function Compilation (per-function)
+    - Type check function bodies
+    - Track local variables dynamically (no global SymbolTable)
+    - Emit bytecode
+```
+
+### Key Architectural Principles
+
+1. **Registry is the single source of truth for globals**
+   - All types (classes, interfaces, enums, primitives)
+   - All functions (global and methods) with qualified names
+   - All global variables
+   - Template instantiation cache
+
+2. **No SymbolTable for globals**
+   - Registry replaces SymbolTable for global names
+   - Simpler, clearer separation of concerns
+   - Matches AngelScript C++ architecture
+
+3. **Local variables tracked dynamically**
+   - Not stored in global tables
+   - Tracked per-function during compilation (Pass 2b)
+   - Uses LocalScope structure (stack-based, temporary)
+
+4. **Qualified names for scoped items**
+   - `Namespace::Class` for types
+   - `Namespace::function` for functions
+   - Built dynamically as we walk AST in Pass 1
+
+5. **Two sub-phases in Pass 2**
+   - First: Fill all type details (classes need complete info before function compilation)
+   - Second: Compile function bodies (can now look up complete types)
+
+---
+
+## Why Multiple Passes?
+
+### Forward References
 ```angelscript
 void foo() {
     bar();  // bar used before defined
 }
-void bar() { }  // Must collect symbols first, then resolve
+void bar() { }  // Must register names first
 ```
 
-**Type Dependencies:**
+### Type Dependencies
 ```angelscript
 class Base { }
-class Derived : Base { }  // Base must be registered before checking inheritance
+class Derived : Base { }  // Base must be registered first
 
-array<Player@> players;  // Need to resolve Player, then instantiate array<Player@>
+array<Player@> players;  // Need Player registered, then instantiate array<Player@>
 ```
 
-**Complex Type System:**
+### Complex Type System
 - Templates with nested parameters: `dict<string, array<int>>`
 - Scoped types: `Namespace::Type<T>`
 - Class inheritance and interfaces
@@ -94,729 +147,159 @@ array<Player@> players;  // Need to resolve Player, then instantiate array<Playe
 
 ---
 
-## Pass 1: Resolution & Symbol Collection
+## Pass 1: Registration
 
 ### Goals
 
-- Collect all declarations (functions, classes, variables, parameters)
-- Build symbol table hierarchy (global → namespace → class → function → block)
-- Resolve variable references to their declarations
-- Check for duplicate declarations and undefined names
-- Handle forward references correctly
+- Register ALL global names in Registry
+- Types: Classes, interfaces, enums, funcdefs
+- Functions: Global and methods (name + location, no signature yet)
+- Global variables: Name + location (no type yet)
+- Track namespace/class context as we walk AST
+- Build qualified names (e.g., `Namespace::Class`, `Namespace::func`)
+- NO local variable tracking (that's Pass 2b)
+- NO type resolution (that's Pass 2a)
 
 ### Input/Output
 
-**Input:** `Script<'src, 'ast>` (raw AST from parser)
+**Input:** `Script<'src, 'ast>` (AST from parser)
 
 **Output:**
 ```rust
-pub struct ResolutionData {
-    /// All symbols organized by scope
-    pub symbol_tables: HashMap<ScopeId, SymbolTable>,
+pub struct RegistrationData {
+    /// Registry with all global names (empty shells)
+    pub registry: Registry,
 
-    /// Maps AST nodes to their symbol definitions
-    pub resolutions: HashMap<NodeId, SymbolId>,
-
-    /// Scope hierarchy (parent relationships)
-    pub scope_tree: ScopeTree,
-
-    /// Errors found during resolution
+    /// Errors found during registration
     pub errors: Vec<SemanticError>,
 }
 ```
 
 ### Data Structures
 
-#### Symbol Representation
+#### Registry (Global Names Only)
 
 ```rust
-/// A declared identifier
-pub struct Symbol {
-    pub name: String,
-    pub kind: SymbolKind,
-    pub declared_type: Option<TypeExpr>,  // Unresolved yet
-    pub span: Span,
-    pub is_defined: bool,  // Declare vs define separation
-}
+/// Central storage for all global names (types, functions, variables)
+pub struct Registry {
+    // Types
+    types: Vec<TypeDef>,
+    type_by_name: FxHashMap<String, TypeId>,  // "Namespace::Class" → TypeId
 
-pub enum SymbolKind {
-    Variable,
-    Parameter,
-    Function,
-    Class,
-    Interface,
-    Enum,
-    Namespace,
-    Field,
+    // Functions (with overloading support)
+    functions: Vec<FunctionDef>,
+    func_by_name: FxHashMap<String, Vec<FunctionId>>,  // "Namespace::foo" → [FunctionId, ...]
+
+    // Template instantiation cache
+    template_cache: FxHashMap<(TypeId, Vec<DataType>), TypeId>,
+
+    // Fixed TypeIds for primitives
+    pub void_type: TypeId,
+    pub bool_type: TypeId,
+    pub int8_type: TypeId,
+    pub int16_type: TypeId,
+    pub int32_type: TypeId,
+    pub int64_type: TypeId,
+    pub uint8_type: TypeId,
+    pub uint16_type: TypeId,
+    pub uint32_type: TypeId,
+    pub uint64_type: TypeId,
+    pub float_type: TypeId,
+    pub double_type: TypeId,
+    // Built-in types
+    pub string_type: TypeId,
+    pub array_template: TypeId,
+    pub dict_template: TypeId,
 }
 ```
 
-#### Symbol Table (per-scope storage)
+#### TypeDef (Type Definition - Initially Empty)
 
 ```rust
-/// Storage for symbols in a single scope
-pub struct SymbolTable {
-    pub scope_id: ScopeId,
-    pub scope_kind: ScopeKind,
-    pub symbols: HashMap<String, SymbolId>,
-    pub parent: Option<ScopeId>,
-}
-
-pub enum ScopeKind {
-    Global,
-    Namespace(String),
-    Class(String),
-    Function(String),
-    Block,
-}
-```
-
-#### Resolver (traversal state)
-
-```rust
-/// Performs name resolution pass
-pub struct Resolver<'src, 'ast> {
-    /// Stack of active scopes (push/pop during traversal)
-    scope_stack: Vec<ScopeId>,
-
-    /// All symbol tables indexed by scope
-    symbol_tables: HashMap<ScopeId, SymbolTable>,
-
-    /// Resolution results
-    resolutions: HashMap<NodeId, SymbolId>,
-
-    /// Context tracking
-    current_function: Option<FunctionKind>,
-    current_class: Option<ClassKind>,
-
-    /// Error accumulation
-    errors: Vec<SemanticError>,
-}
-
-enum FunctionKind {
-    Function,
-    Method,
-    Constructor,
-}
-
-enum ClassKind {
-    Class,
-    Interface,
-}
-```
-
-### Algorithm (Single O(n) Traversal)
-
-```rust
-impl<'src, 'ast> Resolver<'src, 'ast> {
-    pub fn resolve(ast: &Script<'src, 'ast>) -> ResolutionData {
-        let mut resolver = Self::new();
-        resolver.visit_script(ast);
-        resolver.into_result()
-    }
-
-    fn visit_script(&mut self, script: &Script) {
-        // Global scope
-        self.begin_scope(ScopeKind::Global);
-
-        for decl in script.declarations {
-            self.visit_declaration(decl);
-        }
-
-        self.end_scope();
-    }
-
-    fn visit_declaration(&mut self, decl: &Declaration) {
-        match decl {
-            Declaration::Function(func) => {
-                // Declare function in current scope
-                self.declare(func.name, SymbolKind::Function, func.span);
-                self.define(func.name);  // Functions immediately usable
-
-                // New scope for function body
-                self.begin_scope(ScopeKind::Function(func.name));
-                self.current_function = Some(FunctionKind::Function);
-
-                // Parameters
-                for param in func.params {
-                    self.declare_and_define(param.name, SymbolKind::Parameter);
-                }
-
-                // Body
-                self.visit_statement(func.body);
-
-                self.end_scope();
-                self.current_function = None;
-            }
-
-            Declaration::Class(class) => {
-                // Declare class in current scope
-                self.declare_and_define(class.name, SymbolKind::Class);
-
-                // New scope for class body
-                self.begin_scope(ScopeKind::Class(class.name));
-                self.current_class = Some(ClassKind::Class);
-
-                // Fields and methods
-                for member in class.members {
-                    match member {
-                        ClassMember::Field(field) => {
-                            self.declare_and_define(field.name, SymbolKind::Field);
-                        }
-                        ClassMember::Method(method) => {
-                            self.visit_declaration(&Declaration::Function(method));
-                        }
-                    }
-                }
-
-                self.end_scope();
-                self.current_class = None;
-            }
-
-            Declaration::Variable(var) => {
-                // Two-phase: declare first, define after initializer
-                self.declare(var.name, SymbolKind::Variable, var.span);
-
-                if let Some(init) = var.initializer {
-                    self.visit_expression(init);  // Resolve in initializer
-                }
-
-                self.define(var.name);  // Now usable
-            }
-
-            // ... other declarations
-        }
-    }
-
-    fn visit_expression(&mut self, expr: &Expression) {
-        match expr {
-            Expression::Identifier(ident) => {
-                // Resolve identifier to declaration
-                if let Some(symbol_id) = self.lookup(ident.name) {
-                    self.resolutions.insert(expr.node_id(), symbol_id);
-                } else {
-                    self.error(SemanticErrorKind::UndefinedVariable, ident.span);
-                }
-            }
-
-            Expression::Binary(binary) => {
-                self.visit_expression(binary.left);
-                self.visit_expression(binary.right);
-            }
-
-            // ... other expressions
-        }
-    }
-
-    // Scope management (stack-based)
-    fn begin_scope(&mut self, kind: ScopeKind) {
-        let scope_id = self.new_scope_id();
-        let parent = self.scope_stack.last().copied();
-
-        let table = SymbolTable {
-            scope_id,
-            scope_kind: kind,
-            symbols: HashMap::new(),
-            parent,
-        };
-
-        self.symbol_tables.insert(scope_id, table);
-        self.scope_stack.push(scope_id);
-    }
-
-    fn end_scope(&mut self) {
-        self.scope_stack.pop();
-    }
-
-    // Symbol management (declare/define pattern)
-    fn declare(&mut self, name: &str, kind: SymbolKind, span: Span) {
-        let scope = self.current_scope_mut();
-
-        // Check for duplicate in current scope
-        if scope.symbols.contains_key(name) {
-            self.error(SemanticErrorKind::DuplicateDeclaration, span);
-            return;
-        }
-
-        let symbol = Symbol {
-            name: name.to_string(),
-            kind,
-            declared_type: None,
-            span,
-            is_defined: false,  // Not yet defined
-        };
-
-        let symbol_id = self.new_symbol_id(symbol);
-        scope.symbols.insert(name.to_string(), symbol_id);
-    }
-
-    fn define(&mut self, name: &str) {
-        if let Some(symbol_id) = self.current_scope().symbols.get(name) {
-            self.symbols[*symbol_id].is_defined = true;
-        }
-    }
-
-    fn declare_and_define(&mut self, name: &str, kind: SymbolKind) {
-        // Convenience for symbols that are immediately usable
-        self.declare(name, kind, Span::default());
-        self.define(name);
-    }
-
-    // Lookup (searches scope chain)
-    fn lookup(&self, name: &str) -> Option<SymbolId> {
-        // Walk up scope stack
-        for scope_id in self.scope_stack.iter().rev() {
-            if let Some(symbol_id) = self.symbol_tables[scope_id].symbols.get(name) {
-                // Check if defined (prevent self-reference in initializer)
-                if self.symbols[*symbol_id].is_defined {
-                    return Some(*symbol_id);
-                } else {
-                    self.error(SemanticErrorKind::UseBeforeDefinition, span);
-                    return None;
-                }
-            }
-        }
-        None  // Not found in any scope
-    }
-}
-```
-
-### Semantic Checks Performed
-
-1. **Duplicate declaration**: Same name declared twice in same scope
-2. **Undefined variable**: Variable used but never declared
-3. **Use before definition**: Variable referenced in its own initializer
-4. **Return outside function**: `return` statement not in function body
-5. **Break/continue outside loop**: Control flow statements in wrong context
-
-### Implementation Tasks
-
-1. Define `Symbol`, `SymbolKind`, `SymbolTable` types
-2. Implement `Resolver` with scope stack
-3. Implement visitor pattern for AST traversal
-4. Add declare/define logic
-5. Implement lookup with scope chain walking
-6. Add error reporting
-7. Handle all declaration types (function, class, variable, etc.)
-8. Handle all expression types that reference names
-9. Track context (current function, current class)
-10. Write comprehensive tests
-
-### Test Coverage
-
-- Basic variable declaration and reference
-- Forward function references
-- Variable shadowing in nested scopes
-- Duplicate declaration errors
-- Undefined variable errors
-- Use before definition (self-reference in initializer)
-- Return outside function
-- Break/continue outside loop
-- Class member access
-- Namespace resolution
-
-**Estimated:** 30-40 tests
-
-### Files to Create
-
-- `src/semantic/resolver.rs` (~400-500 lines)
-- `src/semantic/scope.rs` (~150-200 lines)
-- `src/semantic/symbol_table.rs` (~200-250 lines)
-- `src/semantic/error.rs` (~150-200 lines)
-
-**Total:** ~900-1150 lines
-
----
-
-## Pass 2: Type Resolution
-
-### Goals
-
-- Resolve all `TypeExpr` AST nodes to concrete `TypeId`
-- Register built-in primitive types
-- Collect user-defined types (classes, enums, interfaces)
-- Build type hierarchy (inheritance, interface implementation)
-- Instantiate template types
-- Validate all types exist and are accessible
-
-### Input/Output
-
-**Input:**
-- `Script<'src, 'ast>` (AST)
-- `ResolutionData` (from Pass 1)
-
-**Output:**
-```rust
-pub struct TypeResolutionData {
-    /// Registry of all types
-    pub type_registry: TypeRegistry,
-
-    /// Maps AST TypeExpr nodes to resolved TypeId
-    pub type_map: HashMap<NodeId, TypeId>,
-
-    /// Class inheritance relationships
-    pub inheritance: HashMap<TypeId, TypeId>,  // Derived → Base
-
-    /// Interface implementations
-    pub implements: HashMap<TypeId, Vec<TypeId>>,  // Class → Interfaces
-
-    /// Errors found during resolution
-    pub errors: Vec<SemanticError>,
-}
-```
-
-### Data Structures
-
-#### Type System Core
-
-```rust
-/// Unique identifier for a type
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct TypeId(u32);
+pub struct TypeId(pub u32);
 
-/// Complete type definition
+// Fixed TypeIds for primitives
+pub const VOID_TYPE: TypeId = TypeId(0);
+pub const BOOL_TYPE: TypeId = TypeId(1);
+pub const INT8_TYPE: TypeId = TypeId(2);
+pub const INT16_TYPE: TypeId = TypeId(3);
+pub const INT32_TYPE: TypeId = TypeId(4);  // "int" alias
+pub const INT64_TYPE: TypeId = TypeId(5);
+pub const UINT8_TYPE: TypeId = TypeId(6);
+pub const UINT16_TYPE: TypeId = TypeId(7);
+pub const UINT32_TYPE: TypeId = TypeId(8);  // "uint" alias
+pub const UINT64_TYPE: TypeId = TypeId(9);
+pub const FLOAT_TYPE: TypeId = TypeId(10);
+pub const DOUBLE_TYPE: TypeId = TypeId(11);
+
+// Built-in types
+pub const STRING_TYPE: TypeId = TypeId(16);
+pub const ARRAY_TEMPLATE: TypeId = TypeId(17);
+pub const DICT_TEMPLATE: TypeId = TypeId(18);
+
+const FIRST_USER_TYPE_ID: u32 = 32;
+
 pub enum TypeDef {
     Primitive {
-        kind: PrimitiveType,  // void, bool, int, float, etc.
-        size: usize,
+        kind: PrimitiveType,
     },
 
     Class {
         name: String,
-        fields: Vec<FieldDef>,
-        methods: Vec<MethodDef>,
+        qualified_name: String,  // "Namespace::Class"
+        fields: Vec<FieldDef>,   // Empty in Pass 1, filled in Pass 2a
+        methods: Vec<FunctionId>,
         base_class: Option<TypeId>,
         interfaces: Vec<TypeId>,
     },
 
     Interface {
         name: String,
+        qualified_name: String,
         methods: Vec<MethodSignature>,
     },
 
     Enum {
         name: String,
+        qualified_name: String,
         values: Vec<(String, i64)>,
     },
 
     Funcdef {
         name: String,
-        params: Vec<TypeId>,
-        return_type: TypeId,
-    },
-
-    Array {
-        element_type: TypeId,
-        dimensions: u32,
+        qualified_name: String,
+        params: Vec<DataType>,      // Empty in Pass 1
+        return_type: DataType,      // Empty in Pass 1
     },
 
     Template {
         name: String,
-        params: Vec<String>,  // Template parameter names
+        param_count: usize,
     },
 
     TemplateInstance {
         template: TypeId,
-        args: Vec<TypeId>,
+        sub_types: Vec<DataType>,
     },
 }
-
-pub struct FieldDef {
-    pub name: String,
-    pub type_id: TypeId,
-    pub access: AccessLevel,
-}
-
-pub struct MethodDef {
-    pub name: String,
-    pub params: Vec<TypeId>,
-    pub return_type: TypeId,
-    pub access: AccessLevel,
-    pub is_virtual: bool,
-}
-
-pub enum AccessLevel {
-    Private,
-    Protected,
-    Public,
-}
 ```
 
-#### Type Registry
+#### Registrar (Pass 1 Traversal State)
 
 ```rust
-/// Central storage for all types
-pub struct TypeRegistry {
-    types: Vec<TypeDef>,  // TypeId is index into this
-    by_name: HashMap<String, TypeId>,
+/// Performs Pass 1: Registration of global names
+pub struct Registrar<'src, 'ast> {
+    /// The registry we're building
+    registry: Registry,
 
-    // Built-in type IDs (for convenience)
-    pub void_type: TypeId,
-    pub bool_type: TypeId,
-    pub int_type: TypeId,
-    pub float_type: TypeId,
-    pub double_type: TypeId,
-    // ... other primitives
-}
+    /// Current namespace path (e.g., ["NamespaceA", "NamespaceB"])
+    namespace_path: Vec<String>,
 
-impl TypeRegistry {
-    pub fn new() -> Self {
-        let mut registry = Self {
-            types: Vec::new(),
-            by_name: HashMap::new(),
-            void_type: TypeId(0),
-            bool_type: TypeId(0),
-            // ...
-        };
+    /// Current class (if inside a class)
+    current_class: Option<TypeId>,
 
-        // Pre-populate with built-in types
-        registry.register_primitives();
-        registry
-    }
-
-    fn register_primitives(&mut self) {
-        self.void_type = self.register(TypeDef::Primitive {
-            kind: PrimitiveType::Void,
-            size: 0,
-        });
-        self.by_name.insert("void".to_string(), self.void_type);
-
-        // ... register all primitive types
-    }
-
-    pub fn register(&mut self, def: TypeDef) -> TypeId {
-        let id = TypeId(self.types.len() as u32);
-        self.types.push(def);
-        id
-    }
-
-    pub fn lookup(&self, name: &str) -> Option<TypeId> {
-        self.by_name.get(name).copied()
-    }
-
-    pub fn get(&self, id: TypeId) -> &TypeDef {
-        &self.types[id.0 as usize]
-    }
-}
-```
-
-#### Type Resolver
-
-```rust
-/// Resolves TypeExpr AST nodes to TypeId
-pub struct TypeResolver<'ast> {
-    registry: TypeRegistry,
-    type_map: HashMap<NodeId, TypeId>,
-    resolution_data: &'ast ResolutionData,  // From Pass 1
-    errors: Vec<SemanticError>,
-}
-
-impl<'ast> TypeResolver<'ast> {
-    pub fn resolve(
-        ast: &Script,
-        resolution: &ResolutionData,
-    ) -> TypeResolutionData {
-        let mut resolver = Self::new(resolution);
-
-        // Two-phase: collect types, then resolve references
-        resolver.collect_types(ast);
-        resolver.resolve_type_references(ast);
-
-        resolver.into_result()
-    }
-
-    fn collect_types(&mut self, ast: &Script) {
-        // Register all user-defined types
-        for decl in ast.declarations {
-            match decl {
-                Declaration::Class(class) => {
-                    let type_id = self.registry.register(TypeDef::Class {
-                        name: class.name.to_string(),
-                        fields: Vec::new(),  // Fill in later
-                        methods: Vec::new(),
-                        base_class: None,
-                        interfaces: Vec::new(),
-                    });
-                    self.registry.by_name.insert(class.name.to_string(), type_id);
-                }
-
-                Declaration::Enum(enum_decl) => {
-                    // Register enum
-                }
-
-                // ... other type declarations
-            }
-        }
-    }
-
-    fn resolve_type_references(&mut self, ast: &Script) {
-        // Now resolve all TypeExpr references
-        for decl in ast.declarations {
-            self.visit_declaration(decl);
-        }
-    }
-
-    fn resolve_type_expr(&mut self, type_expr: &TypeExpr) -> Result<TypeId, SemanticError> {
-        // Resolve base type name
-        let base_name = type_expr.base.name();
-
-        let mut type_id = if let Some(id) = self.registry.lookup(base_name) {
-            id
-        } else {
-            return Err(SemanticError::undefined_type(base_name, type_expr.span));
-        };
-
-        // Handle template arguments
-        if !type_expr.template_args.is_empty() {
-            let arg_types: Vec<TypeId> = type_expr.template_args
-                .iter()
-                .map(|arg| self.resolve_type_expr(arg))
-                .collect::<Result<_, _>>()?;
-
-            // Instantiate template
-            type_id = self.instantiate_template(type_id, arg_types)?;
-        }
-
-        // Handle suffixes (arrays, handles)
-        for suffix in type_expr.suffixes {
-            match suffix {
-                TypeSuffix::Array => {
-                    type_id = self.make_array_type(type_id);
-                }
-                TypeSuffix::Handle { .. } => {
-                    // Handles don't create new types, just modify semantics
-                }
-            }
-        }
-
-        Ok(type_id)
-    }
-
-    fn instantiate_template(&mut self, template_id: TypeId, args: Vec<TypeId>) -> Result<TypeId, SemanticError> {
-        // Check if this instantiation already exists
-        let cache_key = (template_id, args.clone());
-        if let Some(existing) = self.template_cache.get(&cache_key) {
-            return Ok(*existing);
-        }
-
-        // Create new template instance
-        let instance = TypeDef::TemplateInstance {
-            template: template_id,
-            args: args.clone(),
-        };
-
-        let instance_id = self.registry.register(instance);
-        self.template_cache.insert(cache_key, instance_id);
-
-        Ok(instance_id)
-    }
-}
-```
-
-### Algorithm (Single O(n) Traversal + Pre-processing)
-
-1. **Pre-populate**: Register built-in primitive types
-2. **First sub-pass**: Collect all user-defined type names (classes, enums, interfaces)
-3. **Second sub-pass**: Resolve all TypeExpr references in declarations
-4. **Handle templates**: Instantiate as needed, cache instances
-5. **Build hierarchy**: Record inheritance and interface relationships
-
-### Implementation Tasks
-
-1. Define `TypeId`, `TypeDef`, `TypeRegistry` types
-2. Implement primitive type registration
-3. Implement type collection sub-pass
-4. Implement type resolution for simple types
-5. Add scoped type resolution (Namespace::Type)
-6. Implement template instantiation with caching
-7. Add array type creation
-8. Build inheritance hierarchy
-9. Track interface implementations
-10. Write comprehensive tests
-
-### Test Coverage
-
-- Primitive type resolution
-- User-defined class/enum types
-- Scoped types (Namespace::Type)
-- Template instantiation (array<int>, dict<string, T>)
-- Nested templates (array<dict<string, int>>)
-- Inheritance relationships
-- Interface implementation
-- Undefined type errors
-- Invalid template arguments
-
-**Estimated:** 40-50 tests
-
-### Files to Create
-
-- `src/semantic/type_def.rs` (~300-400 lines)
-- `src/semantic/type_registry.rs` (~200-300 lines)
-- `src/semantic/type_resolver.rs` (~400-500 lines)
-
-**Total:** ~900-1200 lines
-
----
-
-## Pass 3: Type Checking & Validation
-
-### Goals
-
-- Type check every expression in the AST
-- Validate operators are applied to compatible types
-- Verify function calls match signatures
-- Check assignments are type-compatible
-- Validate control flow (break/continue/return)
-- Check class contracts (inheritance, interfaces, overrides)
-- Verify access modifiers
-- Annotate AST with resolved type information
-
-### Input/Output
-
-**Input:**
-- `Script<'src, 'ast>` (AST)
-- `ResolutionData` (from Pass 1)
-- `TypeResolutionData` (from Pass 2)
-
-**Output:**
-```rust
-pub struct TypeCheckData {
-    /// Type of each expression node
-    pub expr_types: HashMap<NodeId, TypeId>,
-
-    /// Validation results
-    pub validated: bool,
-
-    /// All errors found
-    pub errors: Vec<SemanticError>,
-}
-
-/// Final combined result
-pub struct AnalyzedScript<'src, 'ast> {
-    pub ast: Script<'src, 'ast>,
-    pub resolution: ResolutionData,
-    pub type_resolution: TypeResolutionData,
-    pub type_check: TypeCheckData,
-}
-```
-
-### Data Structures
-
-```rust
-/// Type checking traversal state
-pub struct TypeChecker<'ast> {
-    type_registry: &'ast TypeRegistry,
-    resolution: &'ast ResolutionData,
-    type_resolution: &'ast TypeResolutionData,
-
-    /// Results: expression types
-    expr_types: HashMap<NodeId, TypeId>,
-
-    /// Context tracking
-    current_function_return: Option<TypeId>,
-    in_loop: bool,
-
-    /// Errors
+    /// Errors found
     errors: Vec<SemanticError>,
 }
 ```
@@ -824,402 +307,634 @@ pub struct TypeChecker<'ast> {
 ### Algorithm (Single O(n) Traversal)
 
 ```rust
-impl<'ast> TypeChecker<'ast> {
-    pub fn check(
-        ast: &Script,
-        resolution: &ResolutionData,
-        type_resolution: &TypeResolutionData,
-    ) -> TypeCheckData {
-        let mut checker = Self::new(resolution, type_resolution);
-        checker.visit_script(ast);
-        checker.into_result()
-    }
+impl<'src, 'ast> Registrar<'src, 'ast> {
+    pub fn register(script: &Script<'src, 'ast>) -> RegistrationData {
+        let mut registrar = Self::new();
+        registrar.visit_script(script);
 
-    /// Type check an expression, return its type
-    fn check_expr(&mut self, expr: &Expression) -> TypeId {
-        let type_id = match expr {
-            Expression::Literal(lit) => self.check_literal(lit),
-            Expression::Identifier(ident) => self.check_identifier(ident),
-            Expression::Binary(binary) => self.check_binary(binary),
-            Expression::Unary(unary) => self.check_unary(unary),
-            Expression::Call(call) => self.check_call(call),
-            Expression::MemberAccess(access) => self.check_member_access(access),
-            Expression::Index(index) => self.check_index(index),
-            Expression::Cast(cast) => self.check_cast(cast),
-            // ... other expressions
-        };
-
-        // Record type for this expression
-        self.expr_types.insert(expr.node_id(), type_id);
-        type_id
-    }
-
-    fn check_literal(&self, lit: &Literal) -> TypeId {
-        match lit {
-            Literal::Int(_) => self.type_registry.int_type,
-            Literal::Float(_) => self.type_registry.float_type,
-            Literal::Bool(_) => self.type_registry.bool_type,
-            Literal::String(_) => self.type_registry.string_type,
-            Literal::Null => self.type_registry.null_type,
+        RegistrationData {
+            registry: registrar.registry,
+            errors: registrar.errors,
         }
     }
 
-    fn check_identifier(&self, ident: &Identifier) -> TypeId {
-        // Look up resolved symbol from Pass 1
-        let symbol_id = self.resolution.resolutions[&ident.node_id()];
-        let symbol = &self.resolution.symbols[symbol_id];
+    fn visit_script(&mut self, script: &Script) {
+        for item in script.items() {
+            self.visit_item(item);
+        }
+    }
 
-        // Get type from Pass 2
-        if let Some(type_expr) = &symbol.declared_type {
-            self.type_resolution.type_map[&type_expr.node_id()]
+    fn visit_item(&mut self, item: &Item) {
+        match item {
+            Item::Namespace(ns) => {
+                // Track namespace context
+                self.namespace_path.push(ns.name.to_string());
+
+                for item in ns.items {
+                    self.visit_item(item);
+                }
+
+                self.namespace_path.pop();
+            }
+
+            Item::Class(class) => {
+                // Build qualified name
+                let qualified_name = self.build_qualified_name(class.name);
+
+                // Register type (empty shell)
+                let type_id = self.registry.register_type(TypeDef::Class {
+                    name: class.name.to_string(),
+                    qualified_name,
+                    fields: Vec::new(),  // Filled in Pass 2a
+                    methods: Vec::new(),
+                    base_class: None,
+                    interfaces: Vec::new(),
+                });
+
+                // Enter class context
+                self.current_class = Some(type_id);
+
+                // Register methods (names only)
+                for member in class.members {
+                    if let ClassMember::Method(method) = member {
+                        let qualified_method_name = self.build_qualified_name(method.name);
+                        self.registry.register_function_name(qualified_method_name, type_id);
+                    }
+                }
+
+                self.current_class = None;
+            }
+
+            Item::Function(func) => {
+                let qualified_name = self.build_qualified_name(func.name);
+                self.registry.register_function_name(qualified_name, None);
+            }
+
+            Item::GlobalVar(var) => {
+                let qualified_name = self.build_qualified_name(var.name);
+                self.registry.register_global_var_name(qualified_name);
+            }
+
+            Item::Interface(iface) => {
+                let qualified_name = self.build_qualified_name(iface.name);
+                self.registry.register_type(TypeDef::Interface {
+                    name: iface.name.to_string(),
+                    qualified_name,
+                    methods: Vec::new(),  // Filled in Pass 2a
+                });
+            }
+
+            Item::Enum(enum_decl) => {
+                let qualified_name = self.build_qualified_name(enum_decl.name);
+                let values = enum_decl.values.iter()
+                    .map(|v| (v.name.to_string(), v.value))
+                    .collect();
+
+                self.registry.register_type(TypeDef::Enum {
+                    name: enum_decl.name.to_string(),
+                    qualified_name,
+                    values,
+                });
+            }
+        }
+    }
+
+    fn build_qualified_name(&self, name: &str) -> String {
+        if self.namespace_path.is_empty() {
+            name.to_string()
         } else {
-            self.error(SemanticErrorKind::MissingType);
-            self.type_registry.error_type
+            format!("{}::{}", self.namespace_path.join("::"), name)
+        }
+    }
+}
+```
+
+### What Pass 1 Does NOT Do
+
+- ❌ Does NOT track local variables (that's Pass 2b)
+- ❌ Does NOT resolve type expressions (that's Pass 2a)
+- ❌ Does NOT validate inheritance (that's Pass 2a)
+- ❌ Does NOT register function signatures (that's Pass 2a)
+- ❌ Does NOT type check anything (that's Pass 2b)
+
+### Implementation Tasks for Pass 1
+
+1. Create `Registry` structure with fixed primitive TypeIds
+2. Implement `TypeDef` enum
+3. Implement `Registrar` visitor
+4. Add namespace path tracking
+5. Register all global types (classes, interfaces, enums)
+6. Register all global function names
+7. Register all global variable names
+8. Handle error cases (duplicate names)
+9. Write tests (20-30 tests)
+
+---
+
+## Pass 2: Compilation & Codegen
+
+Pass 2 has two distinct sub-phases that must run in order:
+
+### Sub-phase 2a: Type Compilation
+
+**Goals:**
+- Fill in all type details (fields, methods, inheritance)
+- Resolve all `TypeExpr` AST nodes → `DataType`
+- Instantiate template types (with caching)
+- Register complete function signatures
+- Build type hierarchy (inheritance, interfaces)
+
+**Input:**
+- `Script<'src, 'ast>` (AST)
+- `Registry` (from Pass 1, with names only)
+
+**Output:**
+```rust
+pub struct TypeCompilationData {
+    /// Registry with complete type information
+    pub registry: Registry,
+
+    /// Maps AST TypeExpr spans to resolved DataType
+    pub type_map: FxHashMap<Span, DataType>,
+
+    /// Inheritance relationships (Derived → Base)
+    pub inheritance: FxHashMap<TypeId, TypeId>,
+
+    /// Interface implementations (Class → [Interfaces])
+    pub implements: FxHashMap<TypeId, Vec<TypeId>>,
+
+    /// Errors found
+    pub errors: Vec<SemanticError>,
+}
+```
+
+### Data Structures for Pass 2a
+
+#### DataType (Complete Type with Modifiers)
+
+```rust
+/// A complete type including modifiers (const, handle, etc.)
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct DataType {
+    pub type_id: TypeId,
+    pub is_const: bool,
+    pub is_handle: bool,
+    pub is_handle_to_const: bool,
+}
+
+impl DataType {
+    pub fn simple(type_id: TypeId) -> Self {
+        Self {
+            type_id,
+            is_const: false,
+            is_handle: false,
+            is_handle_to_const: false,
         }
     }
 
-    fn check_binary(&mut self, binary: &BinaryExpr) -> TypeId {
-        let left_type = self.check_expr(binary.left);
-        let right_type = self.check_expr(binary.right);
-
-        // Get result type from operator rules
-        match self.check_binary_op(binary.op, left_type, right_type) {
-            Ok(result_type) => result_type,
-            Err(e) => {
-                self.errors.push(e);
-                self.type_registry.error_type
-            }
+    pub fn with_const(type_id: TypeId) -> Self {
+        Self {
+            type_id,
+            is_const: true,
+            is_handle: false,
+            is_handle_to_const: false,
         }
     }
 
-    fn check_binary_op(&self, op: BinaryOp, left: TypeId, right: TypeId) -> Result<TypeId, SemanticError> {
-        match op {
-            BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div => {
-                // Numeric operators
-                if self.is_numeric(left) && self.is_numeric(right) {
-                    // Promotion rules: if either is float/double, result is float/double
-                    if left == self.type_registry.double_type || right == self.type_registry.double_type {
-                        Ok(self.type_registry.double_type)
-                    } else if left == self.type_registry.float_type || right == self.type_registry.float_type {
-                        Ok(self.type_registry.float_type)
-                    } else {
-                        Ok(self.type_registry.int_type)
+    pub fn with_handle(type_id: TypeId, is_const: bool) -> Self {
+        Self {
+            type_id,
+            is_const: false,
+            is_handle: true,
+            is_handle_to_const: is_const,
+        }
+    }
+}
+```
+
+#### TypeCompiler (Pass 2a State)
+
+```rust
+/// Performs Pass 2a: Type Compilation
+pub struct TypeCompiler<'src, 'ast> {
+    /// Registry (mutable, filling in details)
+    registry: Registry,
+
+    /// Maps AST spans to resolved types
+    type_map: FxHashMap<Span, DataType>,
+
+    /// Current namespace path
+    namespace_path: Vec<String>,
+
+    /// Inheritance tracking
+    inheritance: FxHashMap<TypeId, TypeId>,
+    implements: FxHashMap<TypeId, Vec<TypeId>>,
+
+    /// Errors
+    errors: Vec<SemanticError>,
+}
+```
+
+### Algorithm for Pass 2a (Single O(n) Traversal)
+
+```rust
+impl<'src, 'ast> TypeCompiler<'src, 'ast> {
+    pub fn compile(
+        script: &Script<'src, 'ast>,
+        registry: Registry,
+    ) -> TypeCompilationData {
+        let mut compiler = Self::new(registry);
+
+        // Walk AST and fill in type details
+        compiler.visit_script(script);
+
+        TypeCompilationData {
+            registry: compiler.registry,
+            type_map: compiler.type_map,
+            inheritance: compiler.inheritance,
+            implements: compiler.implements,
+            errors: compiler.errors,
+        }
+    }
+
+    fn visit_item(&mut self, item: &Item) {
+        match item {
+            Item::Class(class) => {
+                let qualified_name = self.build_qualified_name(class.name);
+                let type_id = self.registry.lookup_type(&qualified_name).unwrap();
+
+                // Resolve base class
+                let base_class = if let Some(base) = &class.base_class {
+                    Some(self.resolve_type_expr(base)?.type_id)
+                } else {
+                    None
+                };
+
+                // Resolve interfaces
+                let interfaces = class.interfaces.iter()
+                    .map(|i| self.resolve_type_expr(i))
+                    .collect::<Result<Vec<_>, _>>()?
+                    .into_iter()
+                    .map(|dt| dt.type_id)
+                    .collect();
+
+                // Fill in fields
+                let fields = class.members.iter()
+                    .filter_map(|m| match m {
+                        ClassMember::Field(f) => Some(FieldDef {
+                            name: f.name.to_string(),
+                            data_type: self.resolve_type_expr(&f.type_expr)?,
+                            visibility: f.visibility,
+                        }),
+                        _ => None,
+                    })
+                    .collect();
+
+                // Update type definition
+                self.registry.fill_class_details(type_id, fields, base_class, interfaces);
+
+                // Register method signatures
+                for member in class.members {
+                    if let ClassMember::Method(method) = member {
+                        self.register_function_signature(method, Some(type_id));
                     }
-                } else {
-                    Err(SemanticError::type_mismatch("numeric types", left, right))
                 }
             }
 
-            BinaryOp::Less | BinaryOp::Greater | BinaryOp::LessEq | BinaryOp::GreaterEq => {
-                // Comparison operators
-                if self.is_numeric(left) && self.is_numeric(right) {
-                    Ok(self.type_registry.bool_type)
-                } else {
-                    Err(SemanticError::type_mismatch("comparable types", left, right))
-                }
+            Item::Function(func) => {
+                self.register_function_signature(func, None);
             }
 
-            BinaryOp::Equal | BinaryOp::NotEqual => {
-                // Equality works on any type
-                Ok(self.type_registry.bool_type)
-            }
-
-            BinaryOp::And | BinaryOp::Or => {
-                // Logical operators require bool
-                if left == self.type_registry.bool_type && right == self.type_registry.bool_type {
-                    Ok(self.type_registry.bool_type)
-                } else {
-                    Err(SemanticError::type_mismatch("bool", left, right))
-                }
-            }
-
-            // ... other operators
+            // ... other items
         }
     }
 
-    fn check_call(&mut self, call: &CallExpr) -> TypeId {
-        // Check callee
-        let callee_type = self.check_expr(call.callee);
+    fn resolve_type_expr(&mut self, expr: &TypeExpr) -> Result<DataType, SemanticError> {
+        // Resolve base type name
+        let qualified_name = self.build_qualified_name(expr.base.name());
+        let type_id = self.registry.lookup_type(&qualified_name)
+            .ok_or_else(|| SemanticError::undefined_type(expr.base.name(), expr.span))?;
 
-        // Get function signature
-        let func_def = match self.type_registry.get(callee_type) {
-            TypeDef::Funcdef { params, return_type, .. } => (params, return_type),
-            _ => {
-                self.error(SemanticErrorKind::NotCallable);
-                return self.type_registry.error_type;
-            }
+        // Handle template arguments
+        let type_id = if !expr.template_args.is_empty() {
+            let arg_types = expr.template_args.iter()
+                .map(|arg| self.resolve_type_expr(arg))
+                .collect::<Result<Vec<_>, _>>()?;
+
+            self.registry.instantiate_template(type_id, arg_types)?
+        } else {
+            type_id
         };
 
-        // Check argument count
-        if call.arguments.len() != func_def.0.len() {
-            self.error(SemanticErrorKind::ArgumentCountMismatch);
-            return func_def.1;
-        }
+        // Build DataType with modifiers
+        let mut data_type = DataType::simple(type_id);
 
-        // Check argument types
-        for (arg, param_type) in call.arguments.iter().zip(func_def.0) {
-            let arg_type = self.check_expr(arg);
-            if !self.is_assignable(arg_type, *param_type) {
-                self.error(SemanticErrorKind::ArgumentTypeMismatch);
+        // Apply modifiers from suffixes
+        for suffix in &expr.suffixes {
+            match suffix {
+                TypeSuffix::Handle { is_const } => {
+                    data_type.is_handle = true;
+                    data_type.is_handle_to_const = *is_const;
+                }
             }
         }
 
-        func_def.1
+        // Apply const modifier
+        if expr.is_const {
+            data_type.is_const = true;
+        }
+
+        // Store in type map
+        self.type_map.insert(expr.span, data_type.clone());
+
+        Ok(data_type)
     }
 
-    fn check_statement(&mut self, stmt: &Statement) {
-        match stmt {
-            Statement::Variable(var) => {
-                // Check initializer type matches declared type
-                if let Some(init) = var.initializer {
-                    let init_type = self.check_expr(init);
-                    let declared_type = self.type_resolution.type_map[&var.type_expr.node_id()];
+    fn register_function_signature(
+        &mut self,
+        func: &FunctionDecl,
+        object_type: Option<TypeId>,
+    ) {
+        let qualified_name = self.build_qualified_name(func.name);
 
-                    if !self.is_assignable(init_type, declared_type) {
-                        self.error(SemanticErrorKind::TypeMismatch);
+        let params = func.params.iter()
+            .map(|p| self.resolve_type_expr(&p.type_expr))
+            .collect::<Result<Vec<_>, _>>()?;
+
+        let return_type = self.resolve_type_expr(&func.return_type)?;
+
+        self.registry.register_function_signature(
+            qualified_name,
+            params,
+            return_type,
+            object_type,
+        );
+    }
+}
+```
+
+### Implementation Tasks for Pass 2a
+
+1. Create `DataType` structure
+2. Implement `TypeCompiler` visitor
+3. Implement `resolve_type_expr` (TypeExpr → DataType)
+4. Fill in class details (fields, methods, inheritance)
+5. Register complete function signatures
+6. Implement template instantiation with caching
+7. Build type hierarchy
+8. Handle errors (undefined types, circular inheritance)
+9. Write tests (40-50 tests)
+
+---
+
+### Sub-phase 2b: Function Compilation
+
+**Goals:**
+- Type check all function bodies
+- Track local variables dynamically (per-function)
+- Validate all expressions and statements
+- Generate bytecode
+
+**Input:**
+- `Script<'src, 'ast>` (AST)
+- `Registry` (from Pass 2a, complete)
+
+**Output:**
+```rust
+pub struct Module {
+    /// Compiled bytecode for all functions
+    pub bytecode: Vec<u8>,
+
+    /// Metadata (function locations, debug info, etc.)
+    pub metadata: ModuleMetadata,
+
+    /// Errors found
+    pub errors: Vec<SemanticError>,
+}
+```
+
+### Data Structures for Pass 2b
+
+#### LocalScope (Per-Function Local Variable Tracking)
+
+```rust
+/// Tracks local variables for a single function compilation
+pub struct LocalScope {
+    /// Variables in current function (name → info)
+    variables: FxHashMap<String, LocalVar>,
+
+    /// Current scope depth (for nested blocks)
+    scope_depth: u32,
+}
+
+pub struct LocalVar {
+    pub name: String,
+    pub data_type: DataType,
+    pub scope_depth: u32,
+    pub stack_offset: u32,
+    pub is_mutable: bool,
+}
+
+impl LocalScope {
+    pub fn new() -> Self {
+        Self {
+            variables: FxHashMap::default(),
+            scope_depth: 0,
+        }
+    }
+
+    pub fn enter_scope(&mut self) {
+        self.scope_depth += 1;
+    }
+
+    pub fn exit_scope(&mut self) {
+        // Remove variables from this scope
+        self.variables.retain(|_, v| v.scope_depth < self.scope_depth);
+        self.scope_depth -= 1;
+    }
+
+    pub fn declare_variable(&mut self, name: String, data_type: DataType, offset: u32) {
+        self.variables.insert(name.clone(), LocalVar {
+            name,
+            data_type,
+            scope_depth: self.scope_depth,
+            stack_offset: offset,
+            is_mutable: true,
+        });
+    }
+
+    pub fn lookup(&self, name: &str) -> Option<&LocalVar> {
+        self.variables.get(name)
+    }
+}
+```
+
+#### FunctionCompiler (Per-Function Compilation State)
+
+```rust
+/// Compiles a single function (type checking + codegen)
+pub struct FunctionCompiler<'src, 'ast> {
+    /// Global registry (read-only)
+    registry: &'ast Registry,
+
+    /// Local variables for THIS function only
+    local_scope: LocalScope,
+
+    /// Bytecode emitter
+    bytecode: BytecodeEmitter,
+
+    /// Current function's return type
+    return_type: DataType,
+
+    /// Loop depth (for break/continue validation)
+    loop_depth: u32,
+
+    /// Errors
+    errors: Vec<SemanticError>,
+}
+
+impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
+    pub fn compile_function(
+        func: &FunctionDecl<'src, 'ast>,
+        registry: &Registry,
+    ) -> CompiledFunction {
+        let mut compiler = Self::new(registry, func.return_type);
+
+        // Declare parameters as local variables
+        for (i, param) in func.params.iter().enumerate() {
+            compiler.local_scope.declare_variable(
+                param.name.to_string(),
+                param.data_type.clone(),
+                i as u32,
+            );
+        }
+
+        // Compile function body
+        compiler.visit_block(func.body);
+
+        CompiledFunction {
+            bytecode: compiler.bytecode.finish(),
+            errors: compiler.errors,
+        }
+    }
+
+    fn visit_block(&mut self, block: &Block) {
+        self.local_scope.enter_scope();
+
+        for stmt in block.statements {
+            self.visit_statement(stmt);
+        }
+
+        self.local_scope.exit_scope();
+    }
+
+    fn visit_statement(&mut self, stmt: &Statement) {
+        match stmt {
+            Statement::VarDecl(var) => {
+                // Resolve type
+                let data_type = self.resolve_type_expr(&var.type_expr)?;
+
+                // Check initializer
+                if let Some(init) = &var.initializer {
+                    let init_type = self.check_expr(init)?;
+                    if !self.is_assignable(init_type, data_type) {
+                        self.error(SemanticErrorKind::TypeMismatch, var.span);
                     }
                 }
+
+                // Declare local variable
+                let offset = self.bytecode.next_stack_offset();
+                self.local_scope.declare_variable(
+                    var.name.to_string(),
+                    data_type,
+                    offset,
+                );
             }
 
             Statement::Expression(expr) => {
-                self.check_expr(expr);
+                self.check_expr(expr)?;
             }
 
             Statement::If(if_stmt) => {
-                // Condition must be bool
-                let cond_type = self.check_expr(if_stmt.condition);
-                if cond_type != self.type_registry.bool_type {
-                    self.error(SemanticErrorKind::ConditionNotBool);
+                let cond_type = self.check_expr(&if_stmt.condition)?;
+                if cond_type.type_id != self.registry.bool_type {
+                    self.error(SemanticErrorKind::TypeMismatch, if_stmt.condition.span());
                 }
 
-                self.check_statement(if_stmt.then_branch);
-                if let Some(else_branch) = if_stmt.else_branch {
-                    self.check_statement(else_branch);
+                self.visit_block(&if_stmt.then_branch);
+                if let Some(else_branch) = &if_stmt.else_branch {
+                    self.visit_block(else_branch);
                 }
             }
 
             Statement::While(while_stmt) => {
-                let cond_type = self.check_expr(while_stmt.condition);
-                if cond_type != self.type_registry.bool_type {
-                    self.error(SemanticErrorKind::ConditionNotBool);
-                }
-
-                let prev_in_loop = self.in_loop;
-                self.in_loop = true;
-                self.check_statement(while_stmt.body);
-                self.in_loop = prev_in_loop;
+                self.loop_depth += 1;
+                self.visit_block(&while_stmt.body);
+                self.loop_depth -= 1;
             }
 
             Statement::Return(ret) => {
-                // Check return type matches function
-                let return_type = if let Some(expr) = ret.value {
-                    self.check_expr(expr)
+                let return_type = if let Some(expr) = &ret.value {
+                    self.check_expr(expr)?
                 } else {
-                    self.type_registry.void_type
+                    DataType::simple(self.registry.void_type)
                 };
 
-                if let Some(expected) = self.current_function_return {
-                    if !self.is_assignable(return_type, expected) {
-                        self.error(SemanticErrorKind::ReturnTypeMismatch);
-                    }
-                } else {
-                    self.error(SemanticErrorKind::ReturnOutsideFunction);
+                if !self.is_assignable(return_type, self.return_type) {
+                    self.error(SemanticErrorKind::TypeMismatch, ret.span);
                 }
             }
 
             Statement::Break | Statement::Continue => {
-                if !self.in_loop {
-                    self.error(SemanticErrorKind::BreakContinueOutsideLoop);
+                if self.loop_depth == 0 {
+                    self.error(SemanticErrorKind::BreakOutsideLoop, stmt.span());
                 }
             }
-
-            // ... other statements
         }
     }
 
-    /// Check if `from` can be assigned to `to`
-    fn is_assignable(&self, from: TypeId, to: TypeId) -> bool {
-        // Exact match
-        if from == to {
-            return true;
-        }
+    fn check_expr(&mut self, expr: &Expression) -> Result<DataType, SemanticError> {
+        match expr {
+            Expression::Identifier(ident) => {
+                // Look up in local scope first
+                if let Some(local_var) = self.local_scope.lookup(ident.name) {
+                    return Ok(local_var.data_type.clone());
+                }
 
-        // Implicit conversions
-        // int → float, int → double
-        if to == self.type_registry.float_type || to == self.type_registry.double_type {
-            if self.is_integer(from) {
-                return true;
+                // Then look up in global scope (Registry)
+                if let Some(global_var) = self.registry.lookup_global_var(ident.name) {
+                    return Ok(global_var.data_type.clone());
+                }
+
+                Err(SemanticError::undefined_variable(ident.name, ident.span))
             }
+
+            Expression::Binary(binary) => {
+                let left_type = self.check_expr(&binary.left)?;
+                let right_type = self.check_expr(&binary.right)?;
+                self.check_binary_op(binary.op, left_type, right_type, binary.span)
+            }
+
+            Expression::Call(call) => {
+                // ... function call type checking
+            }
+
+            // ... other expressions
         }
-
-        // Derived class → base class
-        if self.is_derived_from(from, to) {
-            return true;
-        }
-
-        false
     }
 }
 ```
 
-### Semantic Validations
+### Implementation Tasks for Pass 2b
 
-1. **Type compatibility** - Assignments, operators, function calls
-2. **Control flow** - Break/continue in loops, return in functions
-3. **Class inheritance** - No circular inheritance, proper overrides
-4. **Interface implementation** - All methods implemented with correct signatures
-5. **Access modifiers** - Private/protected/public respected
-6. **Const correctness** - Const objects not modified
-7. **Null safety** - Handles checked before dereference
-
-### Implementation Tasks
-
-1. Implement `TypeChecker` with context tracking
-2. Add expression type checking (all expression types)
-3. Define operator type rules
-4. Implement function call validation
-5. Add statement checking (assignments, control flow)
-6. Implement class validation (inheritance, interfaces)
-7. Add access control checking
-8. Implement method override validation
-9. Handle implicit conversions
-10. Write comprehensive tests
-
-### Test Coverage
-
-- Literal type inference
-- Binary operator type checking (all combinations)
-- Unary operator type checking
-- Function call argument matching
-- Type mismatch errors
-- Implicit conversions (int → float)
-- Class inheritance type compatibility
-- Interface implementation validation
-- Method override signature matching
-- Access control violations
-- Control flow validation (break/continue/return)
-- Const correctness
-
-**Estimated:** 80-100 tests
-
-### Files to Create
-
-- `src/semantic/type_checker.rs` (~600-800 lines)
-- `src/semantic/validation.rs` (~300-400 lines)
-- `src/semantic/type_compat.rs` (~200-300 lines)
-
-**Total:** ~1100-1500 lines
-
----
-
-## Integration & Public API
-
-### Coordinator Module
-
-```rust
-// src/semantic/mod.rs
-
-pub use self::error::{SemanticError, SemanticErrorKind};
-pub use self::resolver::ResolutionData;
-pub use self::type_registry::{TypeRegistry, TypeId, TypeDef};
-pub use self::type_checker::TypeCheckData;
-
-mod resolver;
-mod scope;
-mod symbol_table;
-mod type_def;
-mod type_registry;
-mod type_resolver;
-mod type_checker;
-mod validation;
-mod type_compat;
-mod error;
-
-/// Analyzed script ready for code generation
-pub struct AnalyzedScript<'src, 'ast> {
-    pub ast: Script<'src, 'ast>,
-    pub resolution: ResolutionData,
-    pub type_resolution: TypeResolutionData,
-    pub type_check: TypeCheckData,
-}
-
-impl<'src, 'ast> AnalyzedScript<'src, 'ast> {
-    /// Check if analysis succeeded (no errors)
-    pub fn is_valid(&self) -> bool {
-        self.resolution.errors.is_empty()
-            && self.type_resolution.errors.is_empty()
-            && self.type_check.errors.is_empty()
-    }
-
-    /// Get all errors from all passes
-    pub fn all_errors(&self) -> Vec<&SemanticError> {
-        self.resolution.errors.iter()
-            .chain(&self.type_resolution.errors)
-            .chain(&self.type_check.errors)
-            .collect()
-    }
-}
-
-/// Perform full semantic analysis
-pub fn analyze<'src, 'ast>(
-    ast: Script<'src, 'ast>
-) -> AnalyzedScript<'src, 'ast> {
-    // Pass 1: Resolution & Symbol Collection
-    let resolution = resolver::resolve(&ast);
-
-    // Pass 2: Type Resolution
-    let type_resolution = type_resolver::resolve(&ast, &resolution);
-
-    // Pass 3: Type Checking & Validation
-    let type_check = type_checker::check(&ast, &resolution, &type_resolution);
-
-    AnalyzedScript {
-        ast,
-        resolution,
-        type_resolution,
-        type_check,
-    }
-}
-```
-
-### Public API (src/lib.rs)
-
-```rust
-// Update public API
-pub use semantic::{
-    analyze,
-    AnalyzedScript,
-    SemanticError,
-    SemanticErrorKind,
-    TypeId,
-    TypeDef,
-    TypeRegistry,
-};
-
-/// Convenience: parse and analyze in one call
-pub fn parse_and_analyze(source: &str) -> Result<AnalyzedScript, Vec<Error>> {
-    // Parse
-    let (ast, parse_errors) = parse_lenient(source);
-    if !parse_errors.is_empty() {
-        return Err(parse_errors.into_iter().map(Error::Parse).collect());
-    }
-
-    // Analyze
-    let analyzed = analyze(ast);
-    if !analyzed.is_valid() {
-        return Err(analyzed.all_errors().into_iter()
-            .map(|e| Error::Semantic(e.clone()))
-            .collect());
-    }
-
-    Ok(analyzed)
-}
-
-pub enum Error {
-    Parse(ParseError),
-    Semantic(SemanticError),
-}
-```
+1. Create `LocalScope` structure
+2. Implement `FunctionCompiler`
+3. Implement expression type checking (all expression types)
+4. Implement statement validation
+5. Add bytecode emission
+6. Handle control flow validation (break/continue/return)
+7. Implement operator type rules
+8. Write tests (60-80 tests)
 
 ---
 
@@ -1227,178 +942,203 @@ pub enum Error {
 
 ```
 src/semantic/
-├── mod.rs                    # Public API, coordinator (~150-200 lines)
+├── mod.rs                    # Public API, exports
 │
-├── error.rs                  # Error types (~150-200 lines)
+├── error.rs                  # Error types (✅ Exists)
 │
-├── resolver.rs               # Pass 1: Resolution (~400-500 lines)
-├── scope.rs                  # Scope management (~150-200 lines)
-├── symbol_table.rs           # Symbol storage (~200-250 lines)
+├── registry.rs               # NEW: Registry (global types/functions)
+├── data_type.rs              # NEW: DataType with modifiers
+├── type_def.rs               # NEW: TypeDef enum, TypeId constants
 │
-├── type_def.rs               # Type definitions (~300-400 lines)
-├── type_registry.rs          # Type storage (~200-300 lines)
-├── type_resolver.rs          # Pass 2: Type resolution (~400-500 lines)
+├── registrar.rs              # NEW: Pass 1 implementation
+├── type_compiler.rs          # NEW: Pass 2a implementation
+├── function_compiler.rs      # NEW: Pass 2b implementation
+├── local_scope.rs            # NEW: LocalScope for function compilation
 │
-├── type_checker.rs           # Pass 3: Type checking (~600-800 lines)
-├── validation.rs             # Semantic validation (~300-400 lines)
-└── type_compat.rs            # Type compatibility (~200-300 lines)
+├── bytecode.rs               # NEW: Bytecode emitter
+│
+├── resolver.rs               # EXISTING: To be simplified/removed later
+├── scope.rs                  # EXISTING: May repurpose for LocalScope
+└── symbol_table.rs           # EXISTING: To be removed later
 
 docs/
-└── semantic_analysis.md      # Documentation (~100-150 lines)
+└── semantic_analysis.md      # Documentation
 
 tests/
-└── semantic_tests.rs         # Integration tests (~1000-1500 lines)
+├── registration_tests.rs     # Pass 1 tests
+├── type_compilation_tests.rs # Pass 2a tests
+└── codegen_tests.rs          # Pass 2b tests
 ```
 
 **Total Estimates:**
-- Code: ~3,050-4,150 lines
-- Tests: ~1,150-1,640 individual tests (150-190 test functions)
-- Documentation: ~100-150 lines
+- Pass 1 (Registration): ~300-400 lines
+- Pass 2a (Type Compilation): ~700-900 lines
+- Pass 2b (Function Compilation): ~800-1000 lines
+- Support structures: ~500-700 lines
+- **Total new code: ~2300-3000 lines**
+- **Tests: ~100-150 test functions**
 
 ---
 
 ## Testing Strategy
 
-### Unit Tests (per module)
-
-Each module has focused tests:
-
-```rust
-// resolver.rs tests
-#[cfg(test)]
-mod tests {
-    #[test] fn resolve_local_variable() { }
-    #[test] fn resolve_forward_reference() { }
-    #[test] fn error_duplicate_declaration() { }
-    #[test] fn error_undefined_variable() { }
-    #[test] fn scope_shadowing() { }
-    // ... ~30-40 tests
-}
-
-// type_resolver.rs tests
-#[cfg(test)]
-mod tests {
-    #[test] fn resolve_primitive_type() { }
-    #[test] fn resolve_class_type() { }
-    #[test] fn resolve_scoped_type() { }
-    #[test] fn instantiate_template() { }
-    #[test] fn error_undefined_type() { }
-    // ... ~40-50 tests
-}
-
-// type_checker.rs tests
-#[cfg(test)]
-mod tests {
-    #[test] fn check_binary_add_int() { }
-    #[test] fn check_function_call() { }
-    #[test] fn error_type_mismatch() { }
-    #[test] fn implicit_int_to_float() { }
-    // ... ~80-100 tests
-}
-```
-
-### Integration Tests (tests/semantic_tests.rs)
-
-Full pipeline tests:
+### Pass 1 Tests (20-30 tests)
 
 ```rust
 #[test]
-fn test_full_analysis_valid_script() {
+fn register_simple_class() {
+    let source = "class Player { }";
+    let data = Registrar::register(parse(source));
+    assert!(data.registry.lookup_type("Player").is_some());
+}
+
+#[test]
+fn register_namespaced_class() {
+    let source = "namespace Game { class Player { } }";
+    let data = Registrar::register(parse(source));
+    assert!(data.registry.lookup_type("Game::Player").is_some());
+}
+
+#[test]
+fn register_function_names() {
+    let source = "void foo() { }";
+    let data = Registrar::register(parse(source));
+    assert!(data.registry.lookup_function("foo").is_some());
+}
+```
+
+### Pass 2a Tests (40-50 tests)
+
+```rust
+#[test]
+fn resolve_primitive_types() {
+    let source = "class Player { int health; }";
+    let data = TypeCompiler::compile(parse(source), registry);
+    let player_type = data.registry.lookup_type("Player").unwrap();
+    // Check that health field has type int
+}
+
+#[test]
+fn instantiate_template() {
+    let source = "array<int> numbers;";
+    let data = TypeCompiler::compile(parse(source), registry);
+    // Check that array<int> was instantiated
+}
+
+#[test]
+fn error_undefined_type() {
+    let source = "Undefined x;";
+    let data = TypeCompiler::compile(parse(source), registry);
+    assert!(!data.errors.is_empty());
+}
+```
+
+### Pass 2b Tests (60-80 tests)
+
+```rust
+#[test]
+fn compile_simple_function() {
+    let source = "void foo() { int x = 5; }";
+    let module = compile(source);
+    assert!(module.errors.is_empty());
+}
+
+#[test]
+fn error_type_mismatch() {
+    let source = "void foo() { int x = \"hello\"; }";
+    let module = compile(source);
+    assert!(!module.errors.is_empty());
+}
+
+#[test]
+fn local_variable_shadowing() {
     let source = r#"
-        class Player {
-            int health;
-            void takeDamage(int amount) {
-                health -= amount;
+        void foo() {
+            int x = 5;
+            {
+                int x = 10;  // Shadows outer x
             }
         }
-
-        void main() {
-            Player p;
-            p.takeDamage(10);
-        }
     "#;
-
-    let analyzed = parse_and_analyze(source).unwrap();
-    assert!(analyzed.is_valid());
+    let module = compile(source);
+    assert!(module.errors.is_empty());
 }
-
-#[test]
-fn test_type_error_detected() {
-    let source = r#"
-        void main() {
-            int x = "hello";  // Type error
-        }
-    "#;
-
-    let result = parse_and_analyze(source);
-    assert!(result.is_err());
-
-    let errors = result.unwrap_err();
-    assert!(errors.iter().any(|e| matches!(e, Error::Semantic(_))));
-}
-
-// ... ~40-50 integration tests
 ```
 
-### Error Message Quality Tests
+---
+
+## Performance Constraints
+
+### Target Performance
+
+**Pass 1 (Registration):** < 0.5 ms for 5000 lines
+**Pass 2a (Type Compilation):** < 0.7 ms for 5000 lines
+**Pass 2b (Function Compilation):** < 0.8 ms for 5000 lines
+**Total:** < 2.0 ms for full compilation (5000 lines)
+
+### Performance Strategies
+
+1. **Use FxHashMap** from `rustc_hash` (faster than std HashMap)
+2. **Pre-allocate:** `Vec::with_capacity` based on AST size
+3. **Cache template instantiations:** Same args → Same TypeId
+4. **Use TypeId (u32) for comparisons:** Not String
+5. **Inline hot functions:** `#[inline]` on lookup methods
+
+### Benchmarks
+
+Add to `benches/semantic_benchmarks.rs`:
 
 ```rust
-#[test]
-fn test_error_message_undefined_variable() {
-    let source = "void main() { x = 5; }";
-    let errors = parse_and_analyze(source).unwrap_err();
+group.bench_function("pass1_registration_5000_lines", |b| {
+    let arena = Bump::new();
+    let (script, _) = parse_lenient(stress_test, &arena);
+    b.iter(|| Registrar::register(&script));
+});
 
-    let msg = errors[0].to_string();
-    assert!(msg.contains("undefined"));
-    assert!(msg.contains("'x'"));
-}
+group.bench_function("pass2a_type_compilation_5000_lines", |b| {
+    let arena = Bump::new();
+    let (script, _) = parse_lenient(stress_test, &arena);
+    let registration = Registrar::register(&script);
+    b.iter(|| TypeCompiler::compile(&script, registration.registry.clone()));
+});
 ```
 
 ---
 
 ## Implementation Timeline
 
-### Phase 1: Foundation (Week 1) - 5-7 days
-- [ ] Create `src/semantic/` module structure
-- [ ] Implement error types
-- [ ] Implement scope management
-- [ ] Implement symbol table
-- [ ] Write foundation tests
-- **Deliverable:** Basic infrastructure ready
+### Phase 1: Foundation (~3-4 days) ✅ COMPLETE
+- [x] Create `Registry`, `TypeDef`, `DataType` structures
+- [x] Implement fixed TypeIds for primitives
+- [x] Write foundation tests
 
-### Phase 2: Pass 1 - Resolution (Week 2) - 5-7 days
-- [ ] Implement resolver visitor
-- [ ] Add declare/define logic
-- [ ] Handle all declaration types
-- [ ] Implement name lookup
-- [ ] Write resolution tests
-- **Deliverable:** Symbol collection working
+### Phase 2: Pass 1 - Registration (~3-4 days) ✅ COMPLETE
+- [x] Implement `Registrar` visitor
+- [x] Add namespace/class context tracking
+- [x] Register all global names
+- [x] Write registration tests (24 tests, all passing)
 
-### Phase 3: Pass 2 - Type Resolution (Week 3) - 5-7 days
-- [ ] Implement type registry
-- [ ] Add primitive type registration
-- [ ] Implement type resolver
-- [ ] Handle templates and scoped types
-- [ ] Write type resolution tests
-- **Deliverable:** Type system working
+### Phase 3: Pass 2a - Type Compilation (~5-6 days)
+- [ ] Implement `TypeCompiler` visitor
+- [ ] Implement `resolve_type_expr`
+- [ ] Fill in type details
+- [ ] Implement template instantiation
+- [ ] Write type compilation tests
 
-### Phase 4: Pass 3 - Type Checking (Week 4-5) - 8-10 days
-- [ ] Implement expression type checker
-- [ ] Add operator type rules
-- [ ] Implement statement validation
-- [ ] Add class/interface validation
-- [ ] Write type checking tests
-- **Deliverable:** Full type checking working
+### Phase 4: Pass 2b - Function Compilation (~7-9 days)
+- [ ] Implement `LocalScope`
+- [ ] Implement `FunctionCompiler`
+- [ ] Add expression type checking
+- [ ] Add bytecode emission
+- [ ] Write codegen tests
 
-### Phase 5: Integration & Polish (Week 5-6) - 4-5 days
-- [ ] Implement coordinator
-- [ ] Update public API
-- [ ] Write integration tests
-- [ ] Write documentation
-- [ ] Performance testing
-- **Deliverable:** Production-ready semantic analysis
+### Phase 5: Integration & Polish (~3-4 days)
+- [ ] Integration tests
+- [ ] Performance benchmarks
+- [ ] Documentation
+- [ ] Simplify/remove old Pass 1 code
 
-**Total Estimated Time:** 27-36 days (5.5-7 weeks)
+**Total Estimated Time:** 21-27 days (~4-5 weeks)
 
 ---
 
@@ -1406,317 +1146,69 @@ fn test_error_message_undefined_variable() {
 
 ### Feature Completeness
 
-- [x] ✅ Lexer (complete)
-- [x] ✅ Parser (complete)
-- [ ] Symbol collection for all declaration types
-- [ ] Name resolution with forward references
-- [ ] Type resolution with templates
-- [ ] Type checking for all expressions
-- [ ] Semantic validation (control flow, classes, etc.)
+- [x] Registry implemented with fixed primitive TypeIds ✅
+- [x] Pass 1 registers all global names ✅
+- [ ] Pass 2a fills in all type details
+- [ ] Pass 2a resolves all TypeExpr → DataType
+- [ ] Pass 2a instantiates templates with caching
+- [ ] Pass 2b compiles all function bodies
+- [ ] Pass 2b tracks local variables dynamically
+- [ ] Pass 2b emits bytecode
 - [ ] Error messages with source location
-- [ ] Public API for analysis
 
 ### Test Coverage
 
-- [ ] 30-40 resolution tests
-- [ ] 40-50 type resolution tests
-- [ ] 80-100 type checking tests
-- [ ] 40-50 integration tests
+- [x] 24 registration tests ✅
+- [x] 30 data_type tests ✅
+- [x] 27 type_def tests ✅
+- [x] 53 registry tests ✅
+- [x] **Total: 134 tests passing** ✅
+- [ ] 40-50 type compilation tests
+- [ ] 60-80 function compilation tests
 - [ ] All tests passing
-- [ ] ~150-190 total test functions
+- [ ] ~120-160 total test functions
 
 ### Documentation
 
 - [ ] Module documentation (rustdoc)
-- [ ] `docs/semantic_analysis.md` written
 - [ ] Public API documented with examples
-- [ ] Design decisions logged
+- [ ] Architecture decisions logged
 
 ### Quality Metrics
 
 - [ ] No compiler warnings
 - [ ] All clippy lints passing
 - [ ] Clear error messages with spans
-- [ ] O(n) performance per pass
-- [ ] Memory efficient (side tables, not AST modification)
+- [ ] **Performance: < 2ms total for 5000 lines**
+- [ ] Memory efficient (pre-allocation, caching)
 
 ---
 
-## Performance Constraints & Benchmarks
-
-### Current Parser Performance Baseline
-
-From existing benchmarks (`benches/parser_benchmarks.rs`):
-
-| File Size | Lines | Time | Throughput |
-|-----------|-------|------|------------|
-| Tiny | 5 lines | ~10-20 µs | - |
-| Small | 60 lines | ~100-150 µs | - |
-| Medium | 130 lines | ~200-300 µs | - |
-| Large | 266 lines | ~400-600 µs | - |
-| XLarge | 500 lines | ~600-900 µs | - |
-| XXLarge | 1000 lines | ~1.0-1.3 ms | - |
-| **Stress** | **5000 lines** | **~1.0 ms** | **~5M lines/sec** |
-
-**Key insight:** Parser achieves **sub-1ms for 5000 lines** - this is our performance target to match.
-
-### Semantic Analysis Performance Targets
-
-Since we have 3 passes, each should aim for similar or better performance than parsing:
-
-#### **Target: 3-pass analysis completes in < 3ms for 5000 lines**
-
-**Per-pass budget:**
-- Pass 1 (Resolution): < 1.0 ms for 5000 lines
-- Pass 2 (Type Resolution): < 1.0 ms for 5000 lines
-- Pass 3 (Type Checking): < 1.0 ms for 5000 lines
-- **Total: < 3.0 ms for full analysis**
-
-#### **Stretch Goal: < 2ms total (match or beat parser)**
-
-**Reasoning:**
-- Parser does complex work: lexing + precedence climbing + error recovery
-- Semantic analysis is mostly table lookups and tree traversal
-- With proper data structures, should be faster than parsing
-- Each pass is O(n) - linear in AST size
-
-### Performance Design Principles
-
-#### 1. **Use Efficient Data Structures**
-
-```rust
-// ✅ Good: Direct indexing
-symbols: Vec<Symbol>,           // TypeId/SymbolId are indices
-type_registry: Vec<TypeDef>,    // O(1) lookup
-
-// ✅ Good: FxHashMap for small keys
-use rustc_hash::FxHashMap;
-by_name: FxHashMap<String, TypeId>,  // Faster than std HashMap
-
-// ❌ Avoid: Linear searches
-symbols: Vec<Symbol>,
-symbols.iter().find(|s| s.name == name)  // O(n) - too slow
-```
-
-#### 2. **Minimize Allocations**
-
-```rust
-// ✅ Good: Pre-allocate based on AST size
-let estimated_symbols = ast.declarations.len() * 4;  // Heuristic
-let mut symbols = Vec::with_capacity(estimated_symbols);
-
-// ✅ Good: Reuse allocated capacity
-scope_stack.clear();  // Don't reallocate
-
-// ❌ Avoid: Repeated small allocations
-for item in items {
-    let mut temp = Vec::new();  // Allocates every iteration
-    // ...
-}
-```
-
-#### 3. **Cache Lookups**
-
-```rust
-// ✅ Good: Cache resolved types
-type_map: HashMap<NodeId, TypeId>,  // Store once, reuse
-
-// ✅ Good: Cache template instantiations
-template_cache: HashMap<(TypeId, Vec<TypeId>), TypeId>,
-
-// ❌ Avoid: Re-resolving same type multiple times
-fn check_expr(&mut self, expr: &Expr) -> TypeId {
-    self.resolve_type(expr.type_expr)  // If called repeatedly, cache it
-}
-```
-
-#### 4. **Optimize Hot Paths**
-
-```rust
-// ✅ Add inline hints for frequently called functions
-#[inline]
-fn lookup_symbol(&self, name: &str) -> Option<SymbolId> { }
-
-#[inline]
-fn is_assignable(&self, from: TypeId, to: TypeId) -> bool { }
-
-// ✅ Use early returns to avoid unnecessary work
-fn check_binary_op(&self, op: BinaryOp, left: TypeId, right: TypeId) -> Result<TypeId> {
-    // Fast path: same types
-    if left == right {
-        return Ok(left);
-    }
-
-    // Slow path: compatibility checks
-    // ...
-}
-```
-
-#### 5. **Avoid String Operations in Hot Paths**
-
-```rust
-// ✅ Good: Use string references
-symbols: HashMap<&'src str, SymbolId>,  // No allocations
-
-// ✅ Good: Intern strings if needed
-string_interner: StringInterner,
-
-// ❌ Avoid: String cloning in lookups
-symbols: HashMap<String, SymbolId>,
-if symbols.contains_key(&name.to_string()) { }  // Allocates!
-```
-
-### Benchmark Suite for Semantic Analysis
-
-Add new benchmarks to `benches/semantic_benchmarks.rs`:
-
-```rust
-use criterion::{criterion_group, criterion_main, Criterion, Throughput};
-use angelscript::{parse_lenient, analyze};
-
-fn semantic_analysis_benchmarks(c: &mut Criterion) {
-    let mut group = c.benchmark_group("semantic_analysis");
-
-    // Tiny: 5 lines - baseline overhead
-    let hello_world = include_str!("../test_scripts/hello_world.as");
-    group.bench_function("tiny_5_lines", |b| {
-        let (ast, _) = parse_lenient(hello_world);
-        b.iter(|| analyze(&ast));
-    });
-
-    // Small: 60 lines
-    let functions = include_str!("../test_scripts/functions.as");
-    group.bench_function("small_60_lines", |b| {
-        let (ast, _) = parse_lenient(functions);
-        b.iter(|| analyze(&ast));
-    });
-
-    // Stress: 5000 lines - MUST BE < 3ms
-    let stress = include_str!("../test_scripts/performance/xxlarge_5000.as");
-    group.bench_function("stress_5000_lines", |b| {
-        let (ast, _) = parse_lenient(stress);
-        b.iter(|| analyze(&ast));
-    });
-
-    group.finish();
-}
-
-// Per-pass benchmarks
-fn pass_breakdown_benchmarks(c: &mut Criterion) {
-    let mut group = c.benchmark_group("pass_breakdown");
-
-    let stress = include_str!("../test_scripts/performance/xxlarge_5000.as");
-    let (ast, _) = parse_lenient(stress);
-
-    group.bench_function("pass1_resolution", |b| {
-        b.iter(|| resolver::resolve(&ast));
-    });
-
-    group.bench_function("pass2_type_resolution", |b| {
-        let resolution = resolver::resolve(&ast);
-        b.iter(|| type_resolver::resolve(&ast, &resolution));
-    });
-
-    group.bench_function("pass3_type_checking", |b| {
-        let resolution = resolver::resolve(&ast);
-        let type_resolution = type_resolver::resolve(&ast, &resolution);
-        b.iter(|| type_checker::check(&ast, &resolution, &type_resolution));
-    });
-
-    group.finish();
-}
-
-criterion_group!(benches, semantic_analysis_benchmarks, pass_breakdown_benchmarks);
-criterion_main!(benches);
-```
-
-### Performance Testing Strategy
-
-1. **Benchmark after each module**
-   - Add benchmarks as you implement each pass
-   - Catch performance regressions early
-
-2. **Profile hot spots**
-   ```bash
-   # Build with debug info for profiling
-   RUSTFLAGS='-C force-frame-pointers=yes' cargo bench --bench semantic_benchmarks
-
-   # Profile with samply or instruments
-   cargo bench --bench semantic_benchmarks -- --profile-time=10
-   ```
-
-3. **Memory profiling**
-   ```bash
-   # Check for excessive allocations
-   cargo bench --bench semantic_benchmarks -- --profile-time=10 --print-allocations
-   ```
-
-4. **Regression testing**
-   - Run benchmarks before/after changes
-   - Ensure no pass exceeds 1ms budget
-   - Track total analysis time stays < 3ms
-
-### Optimization Checklist
-
-Before declaring a pass "complete", verify:
-
-- [ ] Uses `FxHashMap` for small-key maps (not `std::HashMap`)
-- [ ] Pre-allocates collections based on AST size estimates
-- [ ] Uses string slices (`&str`) not owned strings where possible
-- [ ] Hot functions marked with `#[inline]`
-- [ ] No unnecessary allocations in inner loops
-- [ ] Lookups are O(1) with proper indexing
-- [ ] Template instantiation is cached
-- [ ] Scope stack reuses allocated capacity
-- [ ] Benchmarks show < 1ms per pass for 5000 lines
-
-### Expected Performance Profile
-
-**Well-optimized semantic analysis should be FASTER than parsing:**
-
-| Phase | 5000 lines | Reasoning |
-|-------|-----------|-----------|
-| Lexer + Parser | ~1.0 ms | Character scanning, token creation, tree building |
-| Pass 1: Resolution | ~0.5 ms | Simple tree walk, hash table inserts |
-| Pass 2: Type Resolution | ~0.4 ms | Type lookups, template instantiation (cached) |
-| Pass 3: Type Checking | ~0.6 ms | Tree walk, type compatibility checks |
-| **Total Analysis** | **~1.5 ms** | Should beat parser with good implementation |
-
-**Why semantic analysis should be faster:**
-1. No character-level processing (parser already did that)
-2. Mostly hash table lookups and integer comparisons
-3. Tree already built - just traversing
-4. Type IDs are u32 indices - very fast comparisons
-5. Modern CPUs love simple loops over contiguous data
-
-### Failure Criteria
-
-If any pass exceeds these thresholds, investigate and optimize:
-
-- ⚠️ Warning: Pass takes > 1.0 ms for 5000 lines
-- 🚨 Critical: Pass takes > 2.0 ms for 5000 lines
-- 🚨 Critical: Total analysis > 5.0 ms for 5000 lines
-
-### Performance Success Criteria
-
-- ✅ Pass 1 completes in < 1.0 ms for 5000 lines
-- ✅ Pass 2 completes in < 1.0 ms for 5000 lines
-- ✅ Pass 3 completes in < 1.0 ms for 5000 lines
-- ✅ **Total analysis completes in < 3.0 ms for 5000 lines**
-- 🎯 **Stretch: Total analysis < 2.0 ms (faster than parser)**
-
----
-
-## Next Steps After Semantic Analysis
-
-Once semantic analysis is complete, you'll have a validated AST ready for:
-
-1. **Bytecode Generation** - Compile to VM instructions
-2. **Tree-Walk Interpreter** - Direct execution of validated AST
-3. **Optimization Passes** - Dead code elimination, constant folding
-4. **JIT Compilation** - Convert to native code
-
-The semantic analysis phase is the foundation for all execution strategies.
+## Migration from Current Implementation
+
+The current codebase has a Pass 1 implementation using `Resolver` and `SymbolTable`. Here's how we'll transition:
+
+### Current State
+- ✅ `resolver.rs` - Implements Pass 1 with SymbolTable
+- ✅ `symbol_table.rs` - Stores all symbols (global and local)
+- ✅ `scope.rs` - Scope stack management
+- ✅ `error.rs` - Error types
+
+### Migration Strategy
+
+**Phase 1: Implement New System**
+1. Implement Registry, Registrar, TypeCompiler, FunctionCompiler
+2. Keep old system running (don't break existing code)
+3. Write tests for new system
+
+**Phase 2: Switch Over**
+1. Update main compilation pipeline to use new system
+2. Mark old system as deprecated
+
+**Phase 3: Cleanup**
+1. Remove `symbol_table.rs` (replaced by Registry + LocalScope)
+2. Simplify or remove `resolver.rs` (replaced by Registrar)
+3. Repurpose `scope.rs` for LocalScope if useful
 
 ---
 
@@ -1725,7 +1217,8 @@ The semantic analysis phase is the foundation for all execution strategies.
 - [Crafting Interpreters - Resolving and Binding](https://craftinginterpreters.com/resolving-and-binding.html)
 - [Crafting Interpreters - A Map of the Territory](https://craftinginterpreters.com/a-map-of-the-territory.html)
 - [AngelScript Documentation](https://www.angelcode.com/angelscript/sdk/docs/manual/)
-- Project docs: `docs/architecture.md`, `docs/parser.md`
+- AngelScript C++ source: `as_builder.cpp`, `as_compiler.cpp`
+- Project docs: `docs/architecture.md`
 
 ---
 
