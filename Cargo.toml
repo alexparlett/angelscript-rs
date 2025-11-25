@@ -20,8 +20,8 @@ all-features = true
 no-deps = true
 
 [[test]]
-name = "integration"
-path = "tests/integration_tests.rs"
+name = "parser"
+path = "tests/parser_tests.rs"
 
 [[bench]]
 name = "parser_benchmarks"

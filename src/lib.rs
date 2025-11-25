@@ -36,7 +36,7 @@
 mod ast;
 mod compiler;
 mod lexer;
-mod semantic;
+pub mod semantic;
 
 pub use ast::{parse, parse_expression, parse_lenient, parse_statement, parse_type_expr};
 

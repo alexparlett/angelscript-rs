@@ -7,17 +7,19 @@
 //!
 //! ```
 //! use angelscript::{parse_lenient, visitor::Visitor, FunctionDecl, Item, Script};
+//! use bumpalo::Bump;
 //!
 //! struct FunctionCounter {
 //!     count: usize,
 //! }
 //!
-//! impl Visitor for FunctionCounter {
+//! impl<'src, 'ast> Visitor<'src, 'ast> for FunctionCounter {
 //!     // Override the function visit method
 //! }
 //!
+//! let arena = Bump::new();
 //! let source = "void foo() {} void bar() {}";
-//! let (script, _) = parse_lenient(source);
+//! let (script, _) = parse_lenient(source, &arena);
 //!
 //! // Or just count directly
 //! let func_count = script.items().iter()

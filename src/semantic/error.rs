@@ -111,9 +111,15 @@ pub enum SemanticErrorKind {
     /// Continue statement outside of a loop.
     ContinueOutsideLoop,
 
-    // Type errors (placeholder for future passes)
+    // Type errors
     /// Type mismatch between expected and actual types.
     TypeMismatch,
+    /// Invalid operation for the given types.
+    InvalidOperation,
+    /// Cannot assign to a non-mutable variable.
+    AssignToImmutable,
+    /// Cannot cast between incompatible types.
+    InvalidCast,
 
     // Template errors
     /// Used template syntax on non-template type.
@@ -124,6 +130,18 @@ pub enum SemanticErrorKind {
     // Inheritance errors
     /// Class inherits from itself (directly or indirectly).
     CircularInheritance,
+
+    // Field/member errors
+    /// Reference to an undefined field.
+    UndefinedField,
+    /// Reference to an undefined method.
+    UndefinedMethod,
+
+    // Function call errors
+    /// Wrong number of arguments in function call.
+    WrongArgumentCount,
+    /// Cannot call a non-function value.
+    NotCallable,
 
     // Other
     /// An internal semantic analyzer error (bug in analyzer).
@@ -143,9 +161,16 @@ impl fmt::Display for SemanticErrorKind {
             BreakOutsideLoop => "break outside loop or switch",
             ContinueOutsideLoop => "continue outside loop",
             TypeMismatch => "type mismatch",
+            InvalidOperation => "invalid operation",
+            AssignToImmutable => "assignment to immutable variable",
+            InvalidCast => "invalid cast",
             NotATemplate => "not a template",
             WrongTemplateArgCount => "wrong number of template arguments",
             CircularInheritance => "circular inheritance",
+            UndefinedField => "undefined field",
+            UndefinedMethod => "undefined method",
+            WrongArgumentCount => "wrong number of arguments",
+            NotCallable => "not callable",
             InternalError => "internal semantic analyzer error",
         };
         write!(f, "{}", msg)

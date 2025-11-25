@@ -63,6 +63,28 @@ impl FunctionDef {
     }
 }
 
+/// A global variable definition
+#[derive(Debug, Clone, PartialEq)]
+pub struct GlobalVarDef {
+    /// Variable name (unqualified)
+    pub name: String,
+    /// Namespace path
+    pub namespace: Vec<String>,
+    /// Variable type
+    pub data_type: DataType,
+}
+
+impl GlobalVarDef {
+    /// Get the qualified name of this variable
+    pub fn qualified_name(&self) -> String {
+        if self.namespace.is_empty() {
+            self.name.clone()
+        } else {
+            format!("{}::{}", self.namespace.join("::"), self.name)
+        }
+    }
+}
+
 /// Global registry for all types, functions, and variables
 #[derive(Debug, Clone)]
 pub struct Registry {
@@ -73,6 +95,9 @@ pub struct Registry {
     // Function storage
     functions: Vec<FunctionDef>,
     func_by_name: FxHashMap<String, Vec<FunctionId>>,
+
+    // Global variable storage
+    global_vars: FxHashMap<String, GlobalVarDef>,
 
     // Template instantiation cache (Template TypeId + args → Instance TypeId)
     template_cache: FxHashMap<(TypeId, Vec<DataType>), TypeId>,
@@ -103,6 +128,7 @@ impl Registry {
             type_by_name: FxHashMap::default(),
             functions: Vec::new(),
             func_by_name: FxHashMap::default(),
+            global_vars: FxHashMap::default(),
             template_cache: FxHashMap::default(),
             void_type: VOID_TYPE,
             bool_type: BOOL_TYPE,
@@ -287,7 +313,7 @@ impl Registry {
         // Add to overload map
         self.func_by_name
             .entry(qualified_name)
-            .or_insert_with(Vec::new)
+            .or_default()
             .push(func_id);
 
         func_id
@@ -313,6 +339,119 @@ impl Registry {
             .filter(|f| f.object_type == Some(type_id))
             .map(|f| f.id)
             .collect()
+    }
+
+    /// Get the total number of functions registered
+    pub fn function_count(&self) -> usize {
+        self.functions.len()
+    }
+
+    /// Register a global variable
+    pub fn register_global_var(&mut self, name: String, namespace: Vec<String>, data_type: DataType) {
+        let qualified_name = if namespace.is_empty() {
+            name.clone()
+        } else {
+            format!("{}::{}", namespace.join("::"), name)
+        };
+
+        self.global_vars.insert(
+            qualified_name,
+            GlobalVarDef {
+                name,
+                namespace,
+                data_type,
+            },
+        );
+    }
+
+    /// Look up a global variable by qualified name
+    pub fn lookup_global_var(&self, name: &str) -> Option<&GlobalVarDef> {
+        self.global_vars.get(name)
+    }
+
+    /// Update a class with complete details (fields, methods, inheritance)
+    pub fn update_class_details(
+        &mut self,
+        type_id: TypeId,
+        fields: Vec<super::type_def::FieldDef>,
+        methods: Vec<FunctionId>,
+        base_class: Option<TypeId>,
+        interfaces: Vec<TypeId>,
+    ) {
+        let typedef = self.get_type_mut(type_id);
+        if let TypeDef::Class {
+            fields: class_fields,
+            methods: class_methods,
+            base_class: class_base,
+            interfaces: class_interfaces,
+            ..
+        } = typedef
+        {
+            *class_fields = fields;
+            *class_methods = methods;
+            *class_base = base_class;
+            *class_interfaces = interfaces;
+        }
+    }
+
+    /// Update an interface with complete method signatures
+    pub fn update_interface_details(
+        &mut self,
+        type_id: TypeId,
+        methods: Vec<super::type_def::MethodSignature>,
+    ) {
+        let typedef = self.get_type_mut(type_id);
+        if let TypeDef::Interface {
+            methods: interface_methods,
+            ..
+        } = typedef
+        {
+            *interface_methods = methods;
+        }
+    }
+
+    /// Update a funcdef with complete signature
+    pub fn update_funcdef_signature(
+        &mut self,
+        type_id: TypeId,
+        params: Vec<DataType>,
+        return_type: DataType,
+    ) {
+        let typedef = self.get_type_mut(type_id);
+        if let TypeDef::Funcdef {
+            params: funcdef_params,
+            return_type: funcdef_return,
+            ..
+        } = typedef
+        {
+            *funcdef_params = params;
+            *funcdef_return = return_type;
+        }
+    }
+
+    /// Update a function's signature
+    pub fn update_function_signature(
+        &mut self,
+        qualified_name: &str,
+        params: Vec<DataType>,
+        return_type: DataType,
+        object_type: Option<TypeId>,
+    ) {
+        // Find the function(s) with this name
+        if let Some(func_ids) = self.func_by_name.get(qualified_name) {
+            // For now, update all functions with this name
+            // TODO: In a real implementation, we'd match by signature for overload resolution
+            for &func_id in func_ids {
+                let index = func_id.as_u32() as usize;
+                if index < self.functions.len() {
+                    self.functions[index].params = params.clone();
+                    self.functions[index].return_type = return_type.clone();
+                    if object_type.is_some() {
+                        self.functions[index].object_type = object_type;
+                    }
+                }
+            }
+        }
     }
 }
 

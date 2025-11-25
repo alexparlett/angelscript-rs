@@ -10,7 +10,9 @@
 //!
 //! ```
 //! use angelscript::parse;
+//! use bumpalo::Bump;
 //!
+//! let arena = Bump::new();
 //! let source = r#"
 //!     class Player {
 //!         int health = 100;
@@ -21,7 +23,7 @@
 //!     }
 //! "#;
 //!
-//! match parse(source) {
+//! match parse(source, &arena) {
 //!     Ok(script) => println!("Parsed successfully: {} items", script.items().len()),
 //!     Err(errors) => eprintln!("Parse errors: {}", errors),
 //! }

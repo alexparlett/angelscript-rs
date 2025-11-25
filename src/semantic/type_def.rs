@@ -122,17 +122,14 @@ impl fmt::Display for PrimitiveType {
 
 /// Visibility modifier for class members
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Default)]
 pub enum Visibility {
+    #[default]
     Public,
     Protected,
     Private,
 }
 
-impl Default for Visibility {
-    fn default() -> Self {
-        Visibility::Public
-    }
-}
 
 impl fmt::Display for Visibility {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
