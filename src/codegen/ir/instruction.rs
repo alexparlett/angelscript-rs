@@ -279,4 +279,18 @@ pub enum Instruction {
     // Special
     /// No operation
     Nop,
+
+    // Lambda/Funcdef support
+    /// Push a function pointer onto the stack
+    /// Used for lambda expressions and function references
+    /// The function pointer is a handle (reference-counted) to the function
+    /// Stack: [...] → [... funcdef_handle]
+    FuncPtr(u32), // FunctionId - creates a handle to this function
+
+    /// Call through a function pointer (funcdef)
+    /// The funcdef handle is already on the stack (loaded from a variable)
+    /// Pops: funcdef handle (extracts FunctionId from it), then N arguments
+    /// Pushes: return value
+    /// Stack: [funcdef_handle arg1 arg2 ...] → [return_value]
+    CallPtr,
 }

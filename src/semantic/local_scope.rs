@@ -79,6 +79,22 @@ pub struct LocalVar {
     pub is_mutable: bool,
 }
 
+/// Information about a captured variable (for lambda closures).
+///
+/// When a lambda is created, it captures all variables in scope at the point
+/// of declaration. This struct holds information about each captured variable.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CapturedVar {
+    /// Variable name
+    pub name: String,
+
+    /// Variable type
+    pub data_type: DataType,
+
+    /// Stack offset in the parent function's stack frame
+    pub stack_offset: u32,
+}
+
 impl LocalScope {
     /// Creates a new empty local scope at depth 0.
     ///
@@ -315,6 +331,40 @@ impl LocalScope {
     /// Returns the number of variables currently in scope.
     pub fn variable_count(&self) -> usize {
         self.variables.len()
+    }
+
+    /// Captures all currently in-scope variables for a lambda closure.
+    ///
+    /// This creates a snapshot of all variables accessible at the current point,
+    /// which will be captured by a lambda expression. In AngelScript, lambdas
+    /// capture all in-scope variables implicitly (no explicit capture list).
+    ///
+    /// # Returns
+    ///
+    /// A vector of [`CapturedVar`] containing information about each variable
+    /// that should be captured.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let mut scope = LocalScope::new();
+    /// scope.enter_scope();
+    /// scope.declare_variable_auto("x".to_string(), int_type(), true);
+    /// scope.declare_variable_auto("y".to_string(), float_type(), true);
+    ///
+    /// // Lambda captures both x and y
+    /// let captured = scope.capture_all_variables();
+    /// assert_eq!(captured.len(), 2);
+    /// ```
+    pub fn capture_all_variables(&self) -> Vec<CapturedVar> {
+        self.variables
+            .values()
+            .map(|var| CapturedVar {
+                name: var.name.clone(),
+                data_type: var.data_type.clone(),
+                stack_offset: var.stack_offset,
+            })
+            .collect()
     }
 }
 

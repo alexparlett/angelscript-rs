@@ -17,7 +17,7 @@ use crate::{ast::{
 use crate::codegen::{BytecodeEmitter, CompiledBytecode, CompiledModule, Instruction};
 use crate::lexer::Span;
 use crate::semantic::{
-    DataType, LocalScope, OperatorBehavior, PrimitiveType, Registry, SemanticError, SemanticErrorKind, TypeDef, TypeId,
+    CapturedVar, DataType, LocalScope, OperatorBehavior, PrimitiveType, Registry, SemanticError, SemanticErrorKind, TypeDef, TypeId,
     BOOL_TYPE, DOUBLE_TYPE, FLOAT_TYPE, INT32_TYPE, INT64_TYPE, NULL_TYPE, UINT8_TYPE, VOID_TYPE,
 };
 use crate::semantic::types::type_def::FunctionId;
@@ -81,6 +81,29 @@ pub struct CompiledFunction {
     pub errors: Vec<SemanticError>,
 }
 
+/// Metadata for a lambda expression that needs deferred compilation.
+///
+/// When a lambda is encountered, we register it immediately but compile its body
+/// later (after the parent function is compiled). This struct holds all the
+/// information needed to compile the lambda body.
+#[derive(Debug, Clone)]
+pub struct LambdaMetadata<'src, 'ast> {
+    /// The AST body of the lambda
+    pub ast_body: &'ast Block<'src, 'ast>,
+
+    /// Variables captured from the parent scope
+    pub captured_vars: Vec<CapturedVar>,
+
+    /// Name of the parent function (for error messages)
+    pub parent_function: String,
+
+    /// The funcdef type this lambda conforms to
+    pub funcdef_type_id: TypeId,
+
+    /// Source location
+    pub span: Span,
+}
+
 /// Compiles function bodies (type checking + bytecode generation).
 ///
 /// This compiler can operate in two modes:
@@ -108,6 +131,18 @@ pub struct FunctionCompiler<'src, 'ast> {
 
     /// Current class context (when compiling methods)
     current_class: Option<TypeId>,
+
+    /// Lambda counter for current function (generates unique names)
+    lambda_counter: u32,
+
+    /// Name of the current function being compiled
+    current_function: Option<String>,
+
+    /// Pending lambdas for deferred compilation
+    pending_lambdas: Vec<(FunctionId, LambdaMetadata<'src, 'ast>)>,
+
+    /// Expected funcdef type for lambda type inference
+    expected_funcdef_type: Option<TypeId>,
 
     /// Errors encountered during compilation
     errors: Vec<SemanticError>,
@@ -143,6 +178,10 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
             compiled_functions: FxHashMap::default(),
             namespace_path: Vec::new(),
             current_class: None,
+            lambda_counter: 0,
+            current_function: None,
+            pending_lambdas: Vec::new(),
+            expected_funcdef_type: None,
             errors: Vec::new(),
             _phantom: std::marker::PhantomData,
         }
@@ -163,6 +202,10 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
             compiled_functions: FxHashMap::default(),
             namespace_path: Vec::new(),
             current_class: None,
+            lambda_counter: 0,
+            current_function: None,
+            pending_lambdas: Vec::new(),
+            expected_funcdef_type: None,
             errors: Vec::new(),
             _phantom: std::marker::PhantomData,
         }

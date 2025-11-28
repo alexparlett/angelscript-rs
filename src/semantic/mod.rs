@@ -43,7 +43,7 @@ pub use crate::codegen::CompiledModule;
 
 // Re-export core types from types module
 pub use error::{SemanticError, SemanticErrorKind, SemanticErrors};
-pub use local_scope::{LocalScope, LocalVar};
+pub use local_scope::{CapturedVar, LocalScope, LocalVar};
 pub use types::{
     Conversion, ConversionKind, DataType, FieldDef, FunctionDef, FunctionId, FunctionTraits,
     GlobalVarDef, MethodSignature, OperatorBehavior, PrimitiveType, PropertyAccessors, RefModifier,
