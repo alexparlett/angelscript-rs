@@ -327,14 +327,14 @@ impl Default for LocalScope {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::semantic::TypeId;
+    use crate::semantic::{FLOAT_TYPE, INT32_TYPE, TypeId};
 
     fn int_type() -> DataType {
-        DataType::simple(TypeId(4))
+        DataType::simple(INT32_TYPE)
     }
 
     fn float_type() -> DataType {
-        DataType::simple(TypeId(10))
+        DataType::simple(FLOAT_TYPE)
     }
 
     #[test]

@@ -1,12 +1,505 @@
 # Semantic Analysis Implementation Plan
 
-**Status:** Ready for Implementation
-**Created:** 2025-11-24 (Updated: 2025-11-25)
+**Status:** Phase 1 Type Conversions IN PROGRESS (53% Complete)
+**Created:** 2025-11-24 (Updated: 2025-11-26)
 **Phase:** Post-Parser, Pre-Codegen
 
 ---
 
-## Overview & Philosophy
+## Current Status: Phase 1 Type Conversions (53% Complete)
+
+**Date Started:** 2025-11-25
+**Tests Passing:** 657/657 ✅
+**Implementation Progress:** Tasks 1-9 of 17 complete
+
+### Completed Tasks (1-9):
+
+✅ **Task 1**: Add 88 primitive conversion bytecode instructions (ConvertI32F32, etc.)
+✅ **Task 2**: Create `Conversion` struct with cost model for overload resolution
+✅ **Task 3**: Add `OperatorBehavior` enum to TypeDef for conversion operators
+✅ **Task 4**: Update all 629 tests for new `operator_methods` field
+✅ **Task 5**: Implement handle conversions (T@ → const T@, derived → base, interface casts)
+✅ **Task 6**: Implement user-defined conversions (opConv, opImplConv, constructors)
+✅ **Task 7**: Implement constructor system (lookup, default/copy generation)
+✅ **Task 8**: Implement constructor call detection (Type(args) pattern, CallConstructor bytecode)
+  - Implementation: function_processor.rs:1394-1506
+  - Detects Type(args) vs function calls by checking registry.lookup_type()
+  - Uses find_best_function_overload() for constructor matching
+  - Emits Instruction::CallConstructor with type_id and func_id
+✅ **Task 9**: Implement initializer list support ({1,2,3}, nested lists, type promotion)
+  - Implementation: function_processor.rs:1782-1938
+  - Added CreateArray bytecode instruction
+  - Type checks all elements, infers common type via promotion
+  - Handles nested initializer lists (e.g., {{1,2}, {3,4}})
+  - Returns array<T>@ handle type
+  - 4 new tests: empty (error), simple int, nested, type promotion
+  - Note: Requires pre-instantiated array<T> types in registry
+
+### Remaining Tasks (10-17):
+
+**Task 10**: Extend DataType with reference modifiers
+- Support value types with list constructors (asOBJ_LIST_PATTERN)
+- Infer `array<T>` from element types
+- ~200 lines in function_compiler.rs
+
+**Task 10**: Integrate conversions throughout FunctionCompiler
+- Apply conversions in assignments
+- Apply conversions in function call arguments
+- Apply conversions in return statements
+- Apply conversions in binary operations
+- ~100 lines updating existing code
+
+**Task 11**: Update overload resolution to use conversion costs
+- Rank candidates by total conversion cost
+- Prefer exact matches (cost 0)
+- Break ties with defined rules
+- ~80 lines in function_compiler.rs
+
+**Task 12**: Implement reference parameter checking (&in, &out, &inout)
+- Extend DataType with reference modifiers
+- Validate reference parameter constraints
+- &in: accepts any (creates temps), &out/&inout: require mutable lvalues
+- ~100 lines in data_type.rs + function_compiler.rs
+
+**Task 13**: Add comprehensive conversion tests
+- Test all 88+ primitive conversions
+- Test handle conversions (const, derived, interface)
+- Test user-defined conversions
+- Test constructor conversions
+- ~90 new tests
+
+**Task 14**: Implement operator overloading (member methods only)
+- Look up operator methods (opAdd, opMul, opEquals, etc.)
+- Integrate with binary/unary operation checking
+- ONLY member methods (no global operators)
+- ~250 lines extending check_binary_op/check_unary_op
+
+**Task 15**: Implement property accessor detection
+- Detect `get_/set_` method patterns
+- Virtual property syntax: `int prop { get set }`
+- Transform field access to method calls
+- ~150 lines in function_compiler.rs
+
+**Task 16**: Implement default argument support
+- Store default args as source strings in FunctionDef
+- Recompile at call sites (AngelScript behavior)
+- Fill in missing arguments during calls
+- ~100 lines in registry.rs + function_compiler.rs
+
+**Task 17**: Implement lambda expressions
+- Parse `function` keyword syntax
+- Capture variables with ref-counting
+- Generate unique lambda names
+- Type check lambda body
+- ~300 lines in function_compiler.rs
+
+---
+
+## Complete Validated Task List (56 Tasks)
+
+This section contains the full validated task list for completing semantic analysis and compilation. All behaviors have been verified against the AngelScript C++ reference implementation.
+
+### Documentation Tasks (Tasks 1-2) ✅ COMPLETE
+
+**Task 1**: Update `claude/semantic_analysis_plan.md` ✅
+- Document current state: 653 tests, 70% complete
+- Mark Pass 1 & 2a complete (100%), Pass 2b basic implementation complete
+- Include complete validated 56-task list
+- Document validation findings (4 tasks corrected)
+
+**Task 2**: Update `claude/prompt.md` ✅
+- Summarize: Parser complete, semantic 70% complete
+- Current focus: Type conversions (Phase 1)
+- Include complete validated task list
+- Document validation results
+
+### Type Conversion System (Tasks 3-9)
+
+**Task 3**: Extend DataType with conversion methods ✅ COMPLETE
+- `can_convert_to()` - Check if conversion exists
+- `can_implicitly_convert_to()` - Check if implicit allowed
+- Return `Conversion` struct with cost and bytecode instruction
+- ~200 lines in data_type.rs
+
+**Task 4**: Implement primitive conversion logic ✅ COMPLETE
+- All 88+ primitive conversions (int→float, widening, narrowing, etc.)
+- Implicit vs explicit classification
+- Return appropriate ConvertXXX instruction
+- ~150 lines in data_type.rs
+
+**Task 5**: Implement handle conversions ✅ COMPLETE
+- T@ → const T@ (cost 2, implicit)
+- Derived@ → Base@ (cost 3, implicit, via inheritance map)
+- Class@ → Interface@ (cost 5, implicit, via implements map)
+- Custom via opCast/opImplCast methods
+- ~150 lines in data_type.rs
+
+**Task 6**: Implement user-defined conversions ✅ COMPLETE
+- Single-arg constructor conversions (unless `explicit` modifier)
+- opImplConv method lookup (cost 10, implicit)
+- opConv method lookup (cost 100, explicit only)
+- ~200 lines in data_type.rs
+
+**Task 7**: Implement constructor system ✅ COMPLETE
+- Registry methods: `find_constructors()`, `find_best_constructor()`
+- Auto-generate default constructor if not defined
+- Auto-generate copy constructor if not defined
+- Track `explicit` modifier to prevent implicit conversions
+- ~150 lines in registry.rs + type_def.rs
+
+**Task 8**: Implement constructor call detection ✅ COMPLETE
+- Detect `Type(args)` pattern in FunctionCompiler
+- Distinguish from function calls (if Type is registered type, not function)
+- Match constructor signatures using `find_best_constructor()`
+- Emit `CallConstructor` bytecode
+- Implementation: function_processor.rs:1394-1506
+- Already complete and working (653 tests passing)
+
+**Task 9**: Implement initializer list support (TODO)
+- Type check `{1, 2, 3}` for array initialization
+- Support value types with list constructors (check asOBJ_LIST_PATTERN flag)
+- Infer `array<T>` type from element types
+- Emit `InitList` bytecode
+- ~200 lines in function_compiler.rs
+
+### Reference Parameters & Handles (Tasks 10-13)
+
+**Task 10**: Extend DataType with reference modifiers (TODO)
+- Add fields: `is_ref_in`, `is_ref_out`, `is_ref_inout`
+- Update Display, PartialEq, Hash implementations
+- ~50 lines in data_type.rs
+
+**Task 11**: Implement reference parameter validation (TODO)
+- **&in**: Accepts any value (creates temps for rvalues), read-only
+- **&out**: Requires mutable lvalue, write-only (uninitialized on entry)
+- **&inout**: Requires mutable lvalue + ref-counted type, read-write
+- Validate at call sites in FunctionCompiler
+- ~100 lines in function_compiler.rs
+
+**Task 12**: Implement handle semantics (TODO)
+- Handle null checking for @ types
+- Reference counting tracking (AddRef/Release metadata)
+- Handle assignment validation
+- ~80 lines in function_compiler.rs
+
+**Task 13**: Document auto handle (@+) as VM responsibility (TODO)
+- Add documentation note: @+ is FFI boundary feature
+- Compiler ONLY validates @+ syntax in signatures
+- VM responsibility: Automatic AddRef/Release at application boundary
+- ~20 lines in docs/type_system.md
+
+### Constructor & Initialization (Tasks 14-16)
+
+**Task 14**: Implement super() call handling (TODO)
+- Parse SUPER_TOKEN keyword
+- Auto-insert default base constructor if super() missing
+- Prevent double-calling base constructor (m_isConstructorCalled flag)
+- Emit CallConstructor for base class
+- **Validated:** C++ uses `SUPER_TOKEN`, auto-inserts if missing, tracks with flag
+- ~120 lines in function_compiler.rs
+
+**Task 15**: Implement member initialization order (TODO)
+- Fields initialized before constructor body
+- Base class constructor called first
+- Emit initialization bytecode in correct order
+- ~80 lines in function_compiler.rs
+
+**Task 16**: Implement copy constructor detection (TODO)
+- Detect `Type(const Type&in)` signature
+- Use for value copies (pass-by-value, return-by-value)
+- Generate default if not user-defined
+- ~60 lines in registry.rs
+
+### Operator Overloading (Tasks 17-20)
+
+**Task 17**: Extend TypeDef with operator method tracking (TODO)
+- Add `operator_methods: FxHashMap<OperatorBehavior, Vec<FunctionId>>`
+- OperatorBehavior enum: OpAdd, OpSub, OpMul, OpEquals, OpCmp, etc.
+- **IMPORTANT**: Operators are MEMBER METHODS ONLY (not global functions)
+- Fill during type compilation (Pass 2a)
+- **Validated:** C++ searches `objectType->methods` only, no global operators
+- ~100 lines in type_def.rs
+
+**Task 18**: Implement operator overload lookup (TODO)
+- Look up opAdd, opSub, opMul, etc. in TypeDef::Class
+- Check BOTH operands for operator methods (left.opAdd, right.opAdd_r)
+- Match parameter types
+- **IMPORTANT**: Search class methods ONLY, never global scope
+- **Validated:** CompileOverloadedDualOperator searches object methods only
+- ~150 lines in function_compiler.rs
+
+**Task 19**: Integrate operator overloading with binary ops (TODO)
+- Try operator overload first in check_binary_op
+- Fall back to primitive operation if no overload
+- Emit CallMethod for operator methods
+- ~80 lines in function_compiler.rs
+
+**Task 20**: Implement comparison operators (TODO)
+- opEquals for == and !=
+- opCmp for <, <=, >, >=
+- Special handling (opCmp returns int: <0, 0, >0)
+- ~60 lines in function_compiler.rs
+
+### Property Accessors & Default Arguments (Tasks 21-25)
+
+**Task 21**: Implement property accessor detection (TODO)
+- **TWO SYNTAXES**:
+  1. Virtual property syntax: `int prop { get set }`
+  2. Explicit methods: `int get_prop()` and `void set_prop(int)`
+- Parse virtual property declarations in type compilation
+- Detect `get_/set_` method naming pattern
+- **Validated:** C++ has ProcessPropertyGetAccessor, FindPropertyAccessor
+- ~100 lines in type_compiler.rs
+
+**Task 22**: Transform property access to method calls (TODO)
+- Convert field access to get_field() call
+- Convert field assignment to set_field(value) call
+- Only if property accessor exists
+- Emit CallMethod bytecode
+- **Validated:** C++ transforms access via ProcessPropertyGetAccessor
+- ~80 lines in function_compiler.rs
+
+**Task 23**: Implement default argument storage (TODO)
+- Store default arguments as source strings in FunctionDef
+- Parse default value expressions from AST
+- **CRITICAL**: AngelScript stores as strings, recompiles at call sites
+- **Validated:** C++ has `defaultArgs` array, compiled via CompileDefaultAndNamedArgs
+- ~60 lines in registry.rs
+
+**Task 24**: Implement default argument compilation (TODO)
+- At call sites: Recompile default arg source strings
+- Fill in missing arguments during function calls
+- Emit bytecode for default value expressions
+- **Validated:** C++ recompiles default args at each call site
+- ~100 lines in function_compiler.rs
+
+**Task 25**: Support named arguments (TODO)
+- Parse `func(arg1: value1, arg2: value2)` syntax
+- Match argument names to parameters
+- Allow out-of-order arguments
+- ~80 lines in function_compiler.rs
+
+### Lambda Expressions (Tasks 26-29)
+
+**Task 26**: Implement lambda parsing and compilation (TODO)
+- Parse `function` keyword syntax (not arrow syntax)
+- Detect lambda expressions in FunctionCompiler
+- **Validated:** C++ uses `IsLambda()`, `ParseLambda()`, `function` keyword
+- ~150 lines in function_compiler.rs
+
+**Task 27**: Implement capture environment (TODO)
+- Capture variables by reference (with ref-counting)
+- Create closure data structure
+- Track captured variables
+- **Validated:** C++ uses ref-counting for captures
+- ~100 lines in function_compiler.rs
+
+**Task 28**: Generate anonymous function (TODO)
+- Create unique lambda name (e.g., `$lambda_0`, `$lambda_1`)
+- Register lambda as function in Registry
+- **Validated:** C++ uses `numLambdas` counter for unique names
+- ~80 lines in function_compiler.rs
+
+**Task 29**: Emit lambda creation bytecode (TODO)
+- Emit CreateClosure instruction
+- Bind captured variables
+- Return funcdef type
+- ~60 lines in function_compiler.rs + bytecode.rs
+
+### TODOs & Edge Cases (Tasks 30-49)
+
+**Task 30**: Resolve TODO at function_processor.rs:233
+**Task 31**: Resolve TODO at function_processor.rs:876
+**Task 32**: Resolve TODO at function_processor.rs:1804
+**Task 33**: Resolve TODO at type_compilation.rs:415
+**Task 34**: Resolve TODO at registration.rs:313
+
+**Task 35**: Implement namespace resolution in expressions (TODO)
+- Resolve `Namespace::Class` in type expressions ✅ (Done in Pass 2a)
+- Resolve `Namespace::function()` in call expressions
+- ~60 lines in function_compiler.rs
+
+**Task 36**: Implement enum value resolution (TODO)
+- Resolve `EnumName::VALUE` expressions
+- Type check as enum type
+- Emit LoadEnumValue bytecode
+- ~40 lines in function_compiler.rs
+
+**Task 37**: Implement funcdef type checking (TODO)
+- Validate function pointer assignments
+- Check signature compatibility
+- ~60 lines in function_compiler.rs
+
+**Task 38**: Implement interface method validation (TODO)
+- Check classes implement all interface methods
+- Validate method signatures match
+- ~80 lines in type_compiler.rs
+
+**Task 39**: REMOVED (Auto handle @+ is VM responsibility, not compiler)
+
+**Task 40**: Implement template constraint validation (TODO)
+- Check template arguments satisfy constraints
+- Validate type requirements
+- ~60 lines in type_compiler.rs
+
+**Task 41**: Implement mixin support (TODO)
+- Parse mixin keyword
+- Copy mixin members to target class
+- ~100 lines in type_compiler.rs
+
+**Task 42**: Implement scope keyword (TODO)
+- Parse scope(exit), scope(success), scope(failure)
+- Emit cleanup bytecode
+- ~80 lines in function_compiler.rs
+
+**Task 43**: Implement null coalescing operator (??) (TODO)
+- Type check operands
+- Emit conditional bytecode
+- ~40 lines in function_compiler.rs
+
+**Task 44**: Implement elvis operator (?:) for handles (TODO)
+- Short-circuit evaluation for handles
+- Null checking
+- ~40 lines in function_compiler.rs
+
+**Task 45**: Implement bitwise assignment operators (TODO)
+- Implement &=, |=, ^=, <<=, >>=, >>>= (compound assignments)
+- Already implemented in Pass 2b ✅
+- 0 lines (complete)
+
+**Task 46**: Implement void expressions (TODO)
+- Allow void function calls as statements
+- Disallow void in non-statement contexts
+- ~30 lines in function_compiler.rs
+
+**Task 47**: Implement constant expression evaluation (TODO)
+- Evaluate compile-time constant expressions
+- Use for array sizes, case values, etc.
+- ~150 lines in new const_eval.rs
+
+**Task 48**: Implement circular dependency detection (TODO)
+- Detect circular class inheritance
+- Detect circular type dependencies
+- ~60 lines in type_compiler.rs
+
+**Task 49**: Implement visibility enforcement (TODO)
+- Enforce private/protected/public access rules
+- Check at member access sites
+- ~80 lines in function_compiler.rs
+
+### Integration & Testing (Tasks 50-52)
+
+**Task 50**: Add integration tests (TODO)
+- Test realistic AngelScript code samples
+- Test game logic patterns
+- Test all language features together
+- ~500 lines in tests/integration_tests.rs
+
+**Task 51**: Add performance benchmarks (TODO)
+- Benchmark Pass 1 (Registration)
+- Benchmark Pass 2a (Type Compilation)
+- Benchmark Pass 2b (Function Compilation)
+- Target: <2ms total for 5000 lines
+- ~200 lines in benches/semantic_benchmarks.rs
+
+**Task 52**: Add stress tests (TODO)
+- Large classes (100+ fields, 100+ methods)
+- Deep inheritance (10+ levels)
+- Complex templates (nested 5+ levels)
+- ~300 lines in tests/stress_tests.rs
+
+### Documentation & Cleanup (Tasks 53-56)
+
+**Task 53**: Update architecture documentation (TODO)
+- Document final 2-pass architecture
+- Document type system design
+- Document conversion rules
+- ~500 lines in docs/
+
+**Task 54**: Update semantic_analysis_plan.md ✅ COMPLETE
+- Document completed features
+- Update task list status
+- Document design decisions
+
+**Task 55**: Add API documentation (TODO)
+- Rustdoc for all public APIs
+- Usage examples
+- ~200 lines of doc comments
+
+**Task 56**: Update prompt.md ✅ COMPLETE
+- Summarize current state
+- Document next steps
+- Update context for future work
+
+---
+
+## Validation Summary
+
+All 56 tasks have been validated against the AngelScript C++ reference implementation. Key corrections made:
+
+1. **Constructor Calls (Task 8)**: Parser creates distinct `snConstructCall` AST nodes
+2. **Initializer Lists (Task 9)**: Support arrays AND value types with `asOBJ_LIST_PATTERN`
+3. **Reference Parameters (Tasks 10-11)**:
+   - &in accepts any (creates temps)
+   - &out/&inout require mutable lvalues
+   - &inout also requires ref-counted types
+4. **Operator Overloading (Tasks 17-18)**: Member methods ONLY, no global operators
+5. **Property Accessors (Task 21)**: TWO syntaxes (virtual declarations + explicit methods)
+6. **Default Arguments (Tasks 23-24)**: Stored as source strings, recompiled at call sites
+7. **Lambda (Tasks 26-28)**: Uses `function` keyword, unique names via counter
+8. **super() (Task 14)**: SUPER_TOKEN keyword, auto-inserted if missing
+9. **Auto Handle (Task 39)**: REMOVED - VM responsibility, not compiler
+
+---
+
+## Implementation Progress
+
+### ✅ Phase 1: Foundation (100% Complete)
+- Registry, TypeDef, DataType structures
+- Fixed TypeIds for primitives
+- Foundation tests (134 tests passing)
+
+### ✅ Phase 2: Pass 1 - Registration (100% Complete)
+- Registrar visitor
+- Namespace/class context tracking
+- Global name registration
+- Registration tests (24 tests, all passing)
+
+### ✅ Phase 3: Pass 2a - Type Compilation (100% Complete)
+- TypeCompiler visitor
+- resolve_type_expr implementation
+- Type details filling
+- Template instantiation
+- Type compilation tests (7 tests, all passing)
+
+### ✅ Phase 4: Pass 2b - Function Compilation (Basic - 100% Complete)
+- LocalScope implementation
+- FunctionCompiler implementation
+- Expression type checking (11/14 expressions)
+- Bytecode emission
+- Function compilation tests (basic coverage)
+
+### 🚧 Phase 5: Type Conversion System (40% Complete)
+**Current Phase - IN PROGRESS**
+- [x] Tasks 1-7 complete (bytecode instructions, conversion system, constructors)
+- [ ] Tasks 8-17 remaining (constructor calls, initializer lists, integration, testing)
+- 653 tests passing
+- Target: 750+ tests
+
+### ⏳ Phase 6: Integration & Polish (Not Started)
+- Integration tests with real AngelScript samples
+- Performance benchmarks
+- Documentation updates
+- Cleanup of old code
+
+**Total Estimated Remaining Time:**
+- Phase 5 (Type Conversions): 2-3 weeks
+- Phase 6 (Integration): 2-3 weeks
+- **Total Remaining: 4-6 weeks**
+
+---
+
+## Architecture Overview
 
 ### Compilation Pipeline (2-Pass Registry-Only Model)
 
@@ -28,7 +521,7 @@ Source Code
 ┌─────────────────────────────────────────────────────────────┐
 │ Phase 3: SEMANTIC ANALYSIS (2 passes)                       │
 │ ┌─────────────────────────────────────────────────────────┐ │
-│ │ Pass 1: Registration (⏳ To Be Implemented)             │ │
+│ │ Pass 1: Registration (✅ Complete)                      │ │
 │ │ • Register all global names in Registry                │ │
 │ │ • Types: Classes, interfaces, enums, funcdefs          │ │
 │ │ • Functions: Global and methods (names only)           │ │
@@ -39,9 +532,9 @@ Source Code
 │ │ Output: Registry (empty shells with qualified names)   │ │
 │ └─────────────────────────────────────────────────────────┘ │
 │ ┌─────────────────────────────────────────────────────────┐ │
-│ │ Pass 2: Compilation & Codegen (⏳ To Be Implemented)   │ │
+│ │ Pass 2: Compilation & Codegen                          │ │
 │ │                                                          │ │
-│ │ Sub-phase 2a: Type Compilation                          │ │
+│ │ Sub-phase 2a: Type Compilation (✅ Complete)            │ │
 │ │ • Fill in type details (fields, methods, inheritance)   │ │
 │ │ • Resolve TypeExpr → DataType                           │ │
 │ │ • Instantiate templates with caching                    │ │
@@ -49,7 +542,7 @@ Source Code
 │ │ • Build type hierarchy                                  │ │
 │ │ Output: Registry (complete type information)            │ │
 │ │                                                          │ │
-│ │ Sub-phase 2b: Function Compilation (per-function)       │ │
+│ │ Sub-phase 2b: Function Compilation (🚧 In Progress)    │ │
 │ │ • Type check expressions                                │ │
 │ │ • Track local variables dynamically (LocalScope)        │ │
 │ │ • Validate operations and control flow                  │ │
@@ -61,1121 +554,29 @@ Source Code
 
 ---
 
-## Architecture Decision: 2-Pass Registry-Only Model
+## Test Status
 
-**Following AngelScript C++ Architecture:**
-
-```cpp
-// AngelScript C++ (simplified)
-ParseScripts();              // Parse → AST
-CompileClasses();            // Pass 1: Register + fill type details
-CompileFunctions();          // Pass 2: Compile + codegen
+**Current Test Results:**
+```
+✅ 653/653 tests passing (100%)
+✅ 0 compiler warnings
+✅ All clippy lints passing
 ```
 
-**Our Rust Implementation:**
-
-```
-Pass 1: Registration
-  - Walk AST tracking namespace/class context
-  - Register all global names in Registry (types, functions, globals)
-  - Output: Registry with qualified names (empty shells)
-
-Pass 2: Compilation & Codegen
-  Sub-phase 2a: Type Compilation
-    - Fill type details from AST
-    - Resolve all TypeExpr → DataType
-    - Instantiate templates (with caching)
-
-  Sub-phase 2b: Function Compilation (per-function)
-    - Type check function bodies
-    - Track local variables dynamically (no global SymbolTable)
-    - Emit bytecode
-```
-
-### Key Architectural Principles
-
-1. **Registry is the single source of truth for globals**
-   - All types (classes, interfaces, enums, primitives)
-   - All functions (global and methods) with qualified names
-   - All global variables
-   - Template instantiation cache
-
-2. **No SymbolTable for globals**
-   - Registry replaces SymbolTable for global names
-   - Simpler, clearer separation of concerns
-   - Matches AngelScript C++ architecture
-
-3. **Local variables tracked dynamically**
-   - Not stored in global tables
-   - Tracked per-function during compilation (Pass 2b)
-   - Uses LocalScope structure (stack-based, temporary)
-
-4. **Qualified names for scoped items**
-   - `Namespace::Class` for types
-   - `Namespace::function` for functions
-   - Built dynamically as we walk AST in Pass 1
-
-5. **Two sub-phases in Pass 2**
-   - First: Fill all type details (classes need complete info before function compilation)
-   - Second: Compile function bodies (can now look up complete types)
-
----
-
-## Why Multiple Passes?
-
-### Forward References
-```angelscript
-void foo() {
-    bar();  // bar used before defined
-}
-void bar() { }  // Must register names first
-```
-
-### Type Dependencies
-```angelscript
-class Base { }
-class Derived : Base { }  // Base must be registered first
-
-array<Player@> players;  // Need Player registered, then instantiate array<Player@>
-```
-
-### Complex Type System
-- Templates with nested parameters: `dict<string, array<int>>`
-- Scoped types: `Namespace::Type<T>`
-- Class inheritance and interfaces
-- Method overloading and overriding
-
----
-
-## Pass 1: Registration
-
-### Goals
-
-- Register ALL global names in Registry
-- Types: Classes, interfaces, enums, funcdefs
-- Functions: Global and methods (name + location, no signature yet)
-- Global variables: Name + location (no type yet)
-- Track namespace/class context as we walk AST
-- Build qualified names (e.g., `Namespace::Class`, `Namespace::func`)
-- NO local variable tracking (that's Pass 2b)
-- NO type resolution (that's Pass 2a)
-
-### Input/Output
-
-**Input:** `Script<'src, 'ast>` (AST from parser)
-
-**Output:**
-```rust
-pub struct RegistrationData {
-    /// Registry with all global names (empty shells)
-    pub registry: Registry,
-
-    /// Errors found during registration
-    pub errors: Vec<SemanticError>,
-}
-```
-
-### Data Structures
-
-#### Registry (Global Names Only)
-
-```rust
-/// Central storage for all global names (types, functions, variables)
-pub struct Registry {
-    // Types
-    types: Vec<TypeDef>,
-    type_by_name: FxHashMap<String, TypeId>,  // "Namespace::Class" → TypeId
-
-    // Functions (with overloading support)
-    functions: Vec<FunctionDef>,
-    func_by_name: FxHashMap<String, Vec<FunctionId>>,  // "Namespace::foo" → [FunctionId, ...]
-
-    // Template instantiation cache
-    template_cache: FxHashMap<(TypeId, Vec<DataType>), TypeId>,
-
-    // Fixed TypeIds for primitives
-    pub void_type: TypeId,
-    pub bool_type: TypeId,
-    pub int8_type: TypeId,
-    pub int16_type: TypeId,
-    pub int32_type: TypeId,
-    pub int64_type: TypeId,
-    pub uint8_type: TypeId,
-    pub uint16_type: TypeId,
-    pub uint32_type: TypeId,
-    pub uint64_type: TypeId,
-    pub float_type: TypeId,
-    pub double_type: TypeId,
-    // Built-in types
-    pub string_type: TypeId,
-    pub array_template: TypeId,
-    pub dict_template: TypeId,
-}
-```
-
-#### TypeDef (Type Definition - Initially Empty)
-
-```rust
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct TypeId(pub u32);
-
-// Fixed TypeIds for primitives
-pub const VOID_TYPE: TypeId = TypeId(0);
-pub const BOOL_TYPE: TypeId = TypeId(1);
-pub const INT8_TYPE: TypeId = TypeId(2);
-pub const INT16_TYPE: TypeId = TypeId(3);
-pub const INT32_TYPE: TypeId = TypeId(4);  // "int" alias
-pub const INT64_TYPE: TypeId = TypeId(5);
-pub const UINT8_TYPE: TypeId = TypeId(6);
-pub const UINT16_TYPE: TypeId = TypeId(7);
-pub const UINT32_TYPE: TypeId = TypeId(8);  // "uint" alias
-pub const UINT64_TYPE: TypeId = TypeId(9);
-pub const FLOAT_TYPE: TypeId = TypeId(10);
-pub const DOUBLE_TYPE: TypeId = TypeId(11);
-
-// Built-in types
-pub const STRING_TYPE: TypeId = TypeId(16);
-pub const ARRAY_TEMPLATE: TypeId = TypeId(17);
-pub const DICT_TEMPLATE: TypeId = TypeId(18);
-
-const FIRST_USER_TYPE_ID: u32 = 32;
-
-pub enum TypeDef {
-    Primitive {
-        kind: PrimitiveType,
-    },
-
-    Class {
-        name: String,
-        qualified_name: String,  // "Namespace::Class"
-        fields: Vec<FieldDef>,   // Empty in Pass 1, filled in Pass 2a
-        methods: Vec<FunctionId>,
-        base_class: Option<TypeId>,
-        interfaces: Vec<TypeId>,
-    },
-
-    Interface {
-        name: String,
-        qualified_name: String,
-        methods: Vec<MethodSignature>,
-    },
-
-    Enum {
-        name: String,
-        qualified_name: String,
-        values: Vec<(String, i64)>,
-    },
-
-    Funcdef {
-        name: String,
-        qualified_name: String,
-        params: Vec<DataType>,      // Empty in Pass 1
-        return_type: DataType,      // Empty in Pass 1
-    },
-
-    Template {
-        name: String,
-        param_count: usize,
-    },
-
-    TemplateInstance {
-        template: TypeId,
-        sub_types: Vec<DataType>,
-    },
-}
-```
-
-#### Registrar (Pass 1 Traversal State)
-
-```rust
-/// Performs Pass 1: Registration of global names
-pub struct Registrar<'src, 'ast> {
-    /// The registry we're building
-    registry: Registry,
-
-    /// Current namespace path (e.g., ["NamespaceA", "NamespaceB"])
-    namespace_path: Vec<String>,
-
-    /// Current class (if inside a class)
-    current_class: Option<TypeId>,
-
-    /// Errors found
-    errors: Vec<SemanticError>,
-}
-```
-
-### Algorithm (Single O(n) Traversal)
-
-```rust
-impl<'src, 'ast> Registrar<'src, 'ast> {
-    pub fn register(script: &Script<'src, 'ast>) -> RegistrationData {
-        let mut registrar = Self::new();
-        registrar.visit_script(script);
-
-        RegistrationData {
-            registry: registrar.registry,
-            errors: registrar.errors,
-        }
-    }
-
-    fn visit_script(&mut self, script: &Script) {
-        for item in script.items() {
-            self.visit_item(item);
-        }
-    }
-
-    fn visit_item(&mut self, item: &Item) {
-        match item {
-            Item::Namespace(ns) => {
-                // Track namespace context
-                self.namespace_path.push(ns.name.to_string());
-
-                for item in ns.items {
-                    self.visit_item(item);
-                }
-
-                self.namespace_path.pop();
-            }
-
-            Item::Class(class) => {
-                // Build qualified name
-                let qualified_name = self.build_qualified_name(class.name);
-
-                // Register type (empty shell)
-                let type_id = self.registry.register_type(TypeDef::Class {
-                    name: class.name.to_string(),
-                    qualified_name,
-                    fields: Vec::new(),  // Filled in Pass 2a
-                    methods: Vec::new(),
-                    base_class: None,
-                    interfaces: Vec::new(),
-                });
-
-                // Enter class context
-                self.current_class = Some(type_id);
-
-                // Register methods (names only)
-                for member in class.members {
-                    if let ClassMember::Method(method) = member {
-                        let qualified_method_name = self.build_qualified_name(method.name);
-                        self.registry.register_function_name(qualified_method_name, type_id);
-                    }
-                }
-
-                self.current_class = None;
-            }
-
-            Item::Function(func) => {
-                let qualified_name = self.build_qualified_name(func.name);
-                self.registry.register_function_name(qualified_name, None);
-            }
-
-            Item::GlobalVar(var) => {
-                let qualified_name = self.build_qualified_name(var.name);
-                self.registry.register_global_var_name(qualified_name);
-            }
-
-            Item::Interface(iface) => {
-                let qualified_name = self.build_qualified_name(iface.name);
-                self.registry.register_type(TypeDef::Interface {
-                    name: iface.name.to_string(),
-                    qualified_name,
-                    methods: Vec::new(),  // Filled in Pass 2a
-                });
-            }
-
-            Item::Enum(enum_decl) => {
-                let qualified_name = self.build_qualified_name(enum_decl.name);
-                let values = enum_decl.values.iter()
-                    .map(|v| (v.name.to_string(), v.value))
-                    .collect();
-
-                self.registry.register_type(TypeDef::Enum {
-                    name: enum_decl.name.to_string(),
-                    qualified_name,
-                    values,
-                });
-            }
-        }
-    }
-
-    fn build_qualified_name(&self, name: &str) -> String {
-        if self.namespace_path.is_empty() {
-            name.to_string()
-        } else {
-            format!("{}::{}", self.namespace_path.join("::"), name)
-        }
-    }
-}
-```
-
-### What Pass 1 Does NOT Do
-
-- ❌ Does NOT track local variables (that's Pass 2b)
-- ❌ Does NOT resolve type expressions (that's Pass 2a)
-- ❌ Does NOT validate inheritance (that's Pass 2a)
-- ❌ Does NOT register function signatures (that's Pass 2a)
-- ❌ Does NOT type check anything (that's Pass 2b)
-
-### Implementation Tasks for Pass 1
-
-1. Create `Registry` structure with fixed primitive TypeIds
-2. Implement `TypeDef` enum
-3. Implement `Registrar` visitor
-4. Add namespace path tracking
-5. Register all global types (classes, interfaces, enums)
-6. Register all global function names
-7. Register all global variable names
-8. Handle error cases (duplicate names)
-9. Write tests (20-30 tests)
-
----
-
-## Pass 2: Compilation & Codegen
-
-Pass 2 has two distinct sub-phases that must run in order:
-
-### Sub-phase 2a: Type Compilation
-
-**Goals:**
-- Fill in all type details (fields, methods, inheritance)
-- Resolve all `TypeExpr` AST nodes → `DataType`
-- Instantiate template types (with caching)
-- Register complete function signatures
-- Build type hierarchy (inheritance, interfaces)
-
-**Input:**
-- `Script<'src, 'ast>` (AST)
-- `Registry` (from Pass 1, with names only)
-
-**Output:**
-```rust
-pub struct TypeCompilationData {
-    /// Registry with complete type information
-    pub registry: Registry,
-
-    /// Maps AST TypeExpr spans to resolved DataType
-    pub type_map: FxHashMap<Span, DataType>,
-
-    /// Inheritance relationships (Derived → Base)
-    pub inheritance: FxHashMap<TypeId, TypeId>,
-
-    /// Interface implementations (Class → [Interfaces])
-    pub implements: FxHashMap<TypeId, Vec<TypeId>>,
-
-    /// Errors found
-    pub errors: Vec<SemanticError>,
-}
-```
-
-### Data Structures for Pass 2a
-
-#### DataType (Complete Type with Modifiers)
-
-```rust
-/// A complete type including modifiers (const, handle, etc.)
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct DataType {
-    pub type_id: TypeId,
-    pub is_const: bool,
-    pub is_handle: bool,
-    pub is_handle_to_const: bool,
-}
-
-impl DataType {
-    pub fn simple(type_id: TypeId) -> Self {
-        Self {
-            type_id,
-            is_const: false,
-            is_handle: false,
-            is_handle_to_const: false,
-        }
-    }
-
-    pub fn with_const(type_id: TypeId) -> Self {
-        Self {
-            type_id,
-            is_const: true,
-            is_handle: false,
-            is_handle_to_const: false,
-        }
-    }
-
-    pub fn with_handle(type_id: TypeId, is_const: bool) -> Self {
-        Self {
-            type_id,
-            is_const: false,
-            is_handle: true,
-            is_handle_to_const: is_const,
-        }
-    }
-}
-```
-
-#### TypeCompiler (Pass 2a State)
-
-```rust
-/// Performs Pass 2a: Type Compilation
-pub struct TypeCompiler<'src, 'ast> {
-    /// Registry (mutable, filling in details)
-    registry: Registry,
-
-    /// Maps AST spans to resolved types
-    type_map: FxHashMap<Span, DataType>,
-
-    /// Current namespace path
-    namespace_path: Vec<String>,
-
-    /// Inheritance tracking
-    inheritance: FxHashMap<TypeId, TypeId>,
-    implements: FxHashMap<TypeId, Vec<TypeId>>,
-
-    /// Errors
-    errors: Vec<SemanticError>,
-}
-```
-
-### Algorithm for Pass 2a (Single O(n) Traversal)
-
-```rust
-impl<'src, 'ast> TypeCompiler<'src, 'ast> {
-    pub fn compile(
-        script: &Script<'src, 'ast>,
-        registry: Registry,
-    ) -> TypeCompilationData {
-        let mut compiler = Self::new(registry);
-
-        // Walk AST and fill in type details
-        compiler.visit_script(script);
-
-        TypeCompilationData {
-            registry: compiler.registry,
-            type_map: compiler.type_map,
-            inheritance: compiler.inheritance,
-            implements: compiler.implements,
-            errors: compiler.errors,
-        }
-    }
-
-    fn visit_item(&mut self, item: &Item) {
-        match item {
-            Item::Class(class) => {
-                let qualified_name = self.build_qualified_name(class.name);
-                let type_id = self.registry.lookup_type(&qualified_name).unwrap();
-
-                // Resolve base class
-                let base_class = if let Some(base) = &class.base_class {
-                    Some(self.resolve_type_expr(base)?.type_id)
-                } else {
-                    None
-                };
-
-                // Resolve interfaces
-                let interfaces = class.interfaces.iter()
-                    .map(|i| self.resolve_type_expr(i))
-                    .collect::<Result<Vec<_>, _>>()?
-                    .into_iter()
-                    .map(|dt| dt.type_id)
-                    .collect();
-
-                // Fill in fields
-                let fields = class.members.iter()
-                    .filter_map(|m| match m {
-                        ClassMember::Field(f) => Some(FieldDef {
-                            name: f.name.to_string(),
-                            data_type: self.resolve_type_expr(&f.type_expr)?,
-                            visibility: f.visibility,
-                        }),
-                        _ => None,
-                    })
-                    .collect();
-
-                // Update type definition
-                self.registry.fill_class_details(type_id, fields, base_class, interfaces);
-
-                // Register method signatures
-                for member in class.members {
-                    if let ClassMember::Method(method) = member {
-                        self.register_function_signature(method, Some(type_id));
-                    }
-                }
-            }
-
-            Item::Function(func) => {
-                self.register_function_signature(func, None);
-            }
-
-            // ... other items
-        }
-    }
-
-    fn resolve_type_expr(&mut self, expr: &TypeExpr) -> Result<DataType, SemanticError> {
-        // Resolve base type name
-        let qualified_name = self.build_qualified_name(expr.base.name());
-        let type_id = self.registry.lookup_type(&qualified_name)
-            .ok_or_else(|| SemanticError::undefined_type(expr.base.name(), expr.span))?;
-
-        // Handle template arguments
-        let type_id = if !expr.template_args.is_empty() {
-            let arg_types = expr.template_args.iter()
-                .map(|arg| self.resolve_type_expr(arg))
-                .collect::<Result<Vec<_>, _>>()?;
-
-            self.registry.instantiate_template(type_id, arg_types)?
-        } else {
-            type_id
-        };
-
-        // Build DataType with modifiers
-        let mut data_type = DataType::simple(type_id);
-
-        // Apply modifiers from suffixes
-        for suffix in &expr.suffixes {
-            match suffix {
-                TypeSuffix::Handle { is_const } => {
-                    data_type.is_handle = true;
-                    data_type.is_handle_to_const = *is_const;
-                }
-            }
-        }
-
-        // Apply const modifier
-        if expr.is_const {
-            data_type.is_const = true;
-        }
-
-        // Store in type map
-        self.type_map.insert(expr.span, data_type.clone());
-
-        Ok(data_type)
-    }
-
-    fn register_function_signature(
-        &mut self,
-        func: &FunctionDecl,
-        object_type: Option<TypeId>,
-    ) {
-        let qualified_name = self.build_qualified_name(func.name);
-
-        let params = func.params.iter()
-            .map(|p| self.resolve_type_expr(&p.type_expr))
-            .collect::<Result<Vec<_>, _>>()?;
-
-        let return_type = self.resolve_type_expr(&func.return_type)?;
-
-        self.registry.register_function_signature(
-            qualified_name,
-            params,
-            return_type,
-            object_type,
-        );
-    }
-}
-```
-
-### Implementation Tasks for Pass 2a
-
-1. Create `DataType` structure
-2. Implement `TypeCompiler` visitor
-3. Implement `resolve_type_expr` (TypeExpr → DataType)
-4. Fill in class details (fields, methods, inheritance)
-5. Register complete function signatures
-6. Implement template instantiation with caching
-7. Build type hierarchy
-8. Handle errors (undefined types, circular inheritance)
-9. Write tests (40-50 tests)
-
----
-
-### Sub-phase 2b: Function Compilation
-
-**Goals:**
-- Type check all function bodies
-- Track local variables dynamically (per-function)
-- Validate all expressions and statements
-- Generate bytecode
-
-**Input:**
-- `Script<'src, 'ast>` (AST)
-- `Registry` (from Pass 2a, complete)
-
-**Output:**
-```rust
-pub struct Module {
-    /// Compiled bytecode for all functions
-    pub bytecode: Vec<u8>,
-
-    /// Metadata (function locations, debug info, etc.)
-    pub metadata: ModuleMetadata,
-
-    /// Errors found
-    pub errors: Vec<SemanticError>,
-}
-```
-
-### Data Structures for Pass 2b
-
-#### LocalScope (Per-Function Local Variable Tracking)
-
-```rust
-/// Tracks local variables for a single function compilation
-pub struct LocalScope {
-    /// Variables in current function (name → info)
-    variables: FxHashMap<String, LocalVar>,
-
-    /// Current scope depth (for nested blocks)
-    scope_depth: u32,
-}
-
-pub struct LocalVar {
-    pub name: String,
-    pub data_type: DataType,
-    pub scope_depth: u32,
-    pub stack_offset: u32,
-    pub is_mutable: bool,
-}
-
-impl LocalScope {
-    pub fn new() -> Self {
-        Self {
-            variables: FxHashMap::default(),
-            scope_depth: 0,
-        }
-    }
-
-    pub fn enter_scope(&mut self) {
-        self.scope_depth += 1;
-    }
-
-    pub fn exit_scope(&mut self) {
-        // Remove variables from this scope
-        self.variables.retain(|_, v| v.scope_depth < self.scope_depth);
-        self.scope_depth -= 1;
-    }
-
-    pub fn declare_variable(&mut self, name: String, data_type: DataType, offset: u32) {
-        self.variables.insert(name.clone(), LocalVar {
-            name,
-            data_type,
-            scope_depth: self.scope_depth,
-            stack_offset: offset,
-            is_mutable: true,
-        });
-    }
-
-    pub fn lookup(&self, name: &str) -> Option<&LocalVar> {
-        self.variables.get(name)
-    }
-}
-```
-
-#### FunctionCompiler (Per-Function Compilation State)
-
-```rust
-/// Compiles a single function (type checking + codegen)
-pub struct FunctionCompiler<'src, 'ast> {
-    /// Global registry (read-only)
-    registry: &'ast Registry,
-
-    /// Local variables for THIS function only
-    local_scope: LocalScope,
-
-    /// Bytecode emitter
-    bytecode: BytecodeEmitter,
-
-    /// Current function's return type
-    return_type: DataType,
-
-    /// Loop depth (for break/continue validation)
-    loop_depth: u32,
-
-    /// Errors
-    errors: Vec<SemanticError>,
-}
-
-impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
-    pub fn compile_function(
-        func: &FunctionDecl<'src, 'ast>,
-        registry: &Registry,
-    ) -> CompiledFunction {
-        let mut compiler = Self::new(registry, func.return_type);
-
-        // Declare parameters as local variables
-        for (i, param) in func.params.iter().enumerate() {
-            compiler.local_scope.declare_variable(
-                param.name.to_string(),
-                param.data_type.clone(),
-                i as u32,
-            );
-        }
-
-        // Compile function body
-        compiler.visit_block(func.body);
-
-        CompiledFunction {
-            bytecode: compiler.bytecode.finish(),
-            errors: compiler.errors,
-        }
-    }
-
-    fn visit_block(&mut self, block: &Block) {
-        self.local_scope.enter_scope();
-
-        for stmt in block.statements {
-            self.visit_statement(stmt);
-        }
-
-        self.local_scope.exit_scope();
-    }
-
-    fn visit_statement(&mut self, stmt: &Statement) {
-        match stmt {
-            Statement::VarDecl(var) => {
-                // Resolve type
-                let data_type = self.resolve_type_expr(&var.type_expr)?;
-
-                // Check initializer
-                if let Some(init) = &var.initializer {
-                    let init_type = self.check_expr(init)?;
-                    if !self.is_assignable(init_type, data_type) {
-                        self.error(SemanticErrorKind::TypeMismatch, var.span);
-                    }
-                }
-
-                // Declare local variable
-                let offset = self.bytecode.next_stack_offset();
-                self.local_scope.declare_variable(
-                    var.name.to_string(),
-                    data_type,
-                    offset,
-                );
-            }
-
-            Statement::Expression(expr) => {
-                self.check_expr(expr)?;
-            }
-
-            Statement::If(if_stmt) => {
-                let cond_type = self.check_expr(&if_stmt.condition)?;
-                if cond_type.type_id != self.registry.bool_type {
-                    self.error(SemanticErrorKind::TypeMismatch, if_stmt.condition.span());
-                }
-
-                self.visit_block(&if_stmt.then_branch);
-                if let Some(else_branch) = &if_stmt.else_branch {
-                    self.visit_block(else_branch);
-                }
-            }
-
-            Statement::While(while_stmt) => {
-                self.loop_depth += 1;
-                self.visit_block(&while_stmt.body);
-                self.loop_depth -= 1;
-            }
-
-            Statement::Return(ret) => {
-                let return_type = if let Some(expr) = &ret.value {
-                    self.check_expr(expr)?
-                } else {
-                    DataType::simple(self.registry.void_type)
-                };
-
-                if !self.is_assignable(return_type, self.return_type) {
-                    self.error(SemanticErrorKind::TypeMismatch, ret.span);
-                }
-            }
-
-            Statement::Break | Statement::Continue => {
-                if self.loop_depth == 0 {
-                    self.error(SemanticErrorKind::BreakOutsideLoop, stmt.span());
-                }
-            }
-        }
-    }
-
-    fn check_expr(&mut self, expr: &Expression) -> Result<DataType, SemanticError> {
-        match expr {
-            Expression::Identifier(ident) => {
-                // Look up in local scope first
-                if let Some(local_var) = self.local_scope.lookup(ident.name) {
-                    return Ok(local_var.data_type.clone());
-                }
-
-                // Then look up in global scope (Registry)
-                if let Some(global_var) = self.registry.lookup_global_var(ident.name) {
-                    return Ok(global_var.data_type.clone());
-                }
-
-                Err(SemanticError::undefined_variable(ident.name, ident.span))
-            }
-
-            Expression::Binary(binary) => {
-                let left_type = self.check_expr(&binary.left)?;
-                let right_type = self.check_expr(&binary.right)?;
-                self.check_binary_op(binary.op, left_type, right_type, binary.span)
-            }
-
-            Expression::Call(call) => {
-                // ... function call type checking
-            }
-
-            // ... other expressions
-        }
-    }
-}
-```
-
-### Implementation Tasks for Pass 2b
-
-1. Create `LocalScope` structure
-2. Implement `FunctionCompiler`
-3. Implement expression type checking (all expression types)
-4. Implement statement validation
-5. Add bytecode emission
-6. Handle control flow validation (break/continue/return)
-7. Implement operator type rules
-8. Write tests (60-80 tests)
-
----
-
-## File Structure
-
-```
-src/semantic/
-├── mod.rs                    # Public API, exports
-│
-├── error.rs                  # Error types (✅ Exists)
-│
-├── registry.rs               # NEW: Registry (global types/functions)
-├── data_type.rs              # NEW: DataType with modifiers
-├── type_def.rs               # NEW: TypeDef enum, TypeId constants
-│
-├── registrar.rs              # NEW: Pass 1 implementation
-├── type_compiler.rs          # NEW: Pass 2a implementation
-├── function_compiler.rs      # NEW: Pass 2b implementation
-├── local_scope.rs            # NEW: LocalScope for function compilation
-│
-├── bytecode.rs               # NEW: Bytecode emitter
-│
-├── resolver.rs               # EXISTING: To be simplified/removed later
-├── scope.rs                  # EXISTING: May repurpose for LocalScope
-└── symbol_table.rs           # EXISTING: To be removed later
-
-docs/
-└── semantic_analysis.md      # Documentation
-
-tests/
-├── registration_tests.rs     # Pass 1 tests
-├── type_compilation_tests.rs # Pass 2a tests
-└── codegen_tests.rs          # Pass 2b tests
-```
-
-**Total Estimates:**
-- Pass 1 (Registration): ~300-400 lines
-- Pass 2a (Type Compilation): ~700-900 lines
-- Pass 2b (Function Compilation): ~800-1000 lines
-- Support structures: ~500-700 lines
-- **Total new code: ~2300-3000 lines**
-- **Tests: ~100-150 test functions**
-
----
-
-## Testing Strategy
-
-### Pass 1 Tests (20-30 tests)
-
-```rust
-#[test]
-fn register_simple_class() {
-    let source = "class Player { }";
-    let data = Registrar::register(parse(source));
-    assert!(data.registry.lookup_type("Player").is_some());
-}
-
-#[test]
-fn register_namespaced_class() {
-    let source = "namespace Game { class Player { } }";
-    let data = Registrar::register(parse(source));
-    assert!(data.registry.lookup_type("Game::Player").is_some());
-}
-
-#[test]
-fn register_function_names() {
-    let source = "void foo() { }";
-    let data = Registrar::register(parse(source));
-    assert!(data.registry.lookup_function("foo").is_some());
-}
-```
-
-### Pass 2a Tests (40-50 tests)
-
-```rust
-#[test]
-fn resolve_primitive_types() {
-    let source = "class Player { int health; }";
-    let data = TypeCompiler::compile(parse(source), registry);
-    let player_type = data.registry.lookup_type("Player").unwrap();
-    // Check that health field has type int
-}
-
-#[test]
-fn instantiate_template() {
-    let source = "array<int> numbers;";
-    let data = TypeCompiler::compile(parse(source), registry);
-    // Check that array<int> was instantiated
-}
-
-#[test]
-fn error_undefined_type() {
-    let source = "Undefined x;";
-    let data = TypeCompiler::compile(parse(source), registry);
-    assert!(!data.errors.is_empty());
-}
-```
-
-### Pass 2b Tests (60-80 tests)
-
-```rust
-#[test]
-fn compile_simple_function() {
-    let source = "void foo() { int x = 5; }";
-    let module = compile(source);
-    assert!(module.errors.is_empty());
-}
-
-#[test]
-fn error_type_mismatch() {
-    let source = "void foo() { int x = \"hello\"; }";
-    let module = compile(source);
-    assert!(!module.errors.is_empty());
-}
-
-#[test]
-fn local_variable_shadowing() {
-    let source = r#"
-        void foo() {
-            int x = 5;
-            {
-                int x = 10;  // Shadows outer x
-            }
-        }
-    "#;
-    let module = compile(source);
-    assert!(module.errors.is_empty());
-}
-```
-
----
-
-## Performance Constraints
-
-### Target Performance
-
-**Pass 1 (Registration):** < 0.5 ms for 5000 lines
-**Pass 2a (Type Compilation):** < 0.7 ms for 5000 lines
-**Pass 2b (Function Compilation):** < 0.8 ms for 5000 lines
-**Total:** < 2.0 ms for full compilation (5000 lines)
-
-### Performance Strategies
-
-1. **Use FxHashMap** from `rustc_hash` (faster than std HashMap)
-2. **Pre-allocate:** `Vec::with_capacity` based on AST size
-3. **Cache template instantiations:** Same args → Same TypeId
-4. **Use TypeId (u32) for comparisons:** Not String
-5. **Inline hot functions:** `#[inline]` on lookup methods
-
-### Benchmarks
-
-Add to `benches/semantic_benchmarks.rs`:
-
-```rust
-group.bench_function("pass1_registration_5000_lines", |b| {
-    let arena = Bump::new();
-    let (script, _) = parse_lenient(stress_test, &arena);
-    b.iter(|| Registrar::register(&script));
-});
-
-group.bench_function("pass2a_type_compilation_5000_lines", |b| {
-    let arena = Bump::new();
-    let (script, _) = parse_lenient(stress_test, &arena);
-    let registration = Registrar::register(&script);
-    b.iter(|| TypeCompiler::compile(&script, registration.registry.clone()));
-});
-```
-
----
-
-## Implementation Timeline
-
-### Phase 1: Foundation (~3-4 days) ✅ COMPLETE
-- [x] Create `Registry`, `TypeDef`, `DataType` structures
-- [x] Implement fixed TypeIds for primitives
-- [x] Write foundation tests
-
-### Phase 2: Pass 1 - Registration (~3-4 days) ✅ COMPLETE
-- [x] Implement `Registrar` visitor
-- [x] Add namespace/class context tracking
-- [x] Register all global names
-- [x] Write registration tests (24 tests, all passing)
-
-### Phase 3: Pass 2a - Type Compilation (~5-6 days) ✅ COMPLETE
-- [x] Implement `TypeCompiler` visitor
-- [x] Implement `resolve_type_expr`
-- [x] Fill in type details
-- [x] Implement template instantiation (uses Registry cache)
-- [x] Write type compilation tests (7 tests, all passing)
-
-### Phase 4: Pass 2b - Function Compilation (~7-9 days) ✅ BASIC IMPLEMENTATION COMPLETE
-- [x] Implement `LocalScope` ✅
-- [x] Implement `FunctionCompiler` ✅
-- [x] Add expression type checking (11/14 expressions) ✅
-- [x] Add bytecode emission ✅
-- [x] Write codegen tests (basic coverage) ✅
-- [ ] **CRITICAL MISSING FEATURES** (see below)
-
-### Phase 5: Critical Type System Features (~6-8 weeks)
-**Current Status:** Basic implementation covers ~30-40% of production AngelScript code. The following features are CRITICAL for realistic code compilation:
-
-#### Week 1-2: Type Conversions & Object Construction (CRITICAL)
-- [ ] Implement implicit type conversions (int → float, derived → base)
-- [ ] Implement handle conversions (T@ → const T@)
-- [ ] Add constructor call detection and compilation
-- [ ] Implement initializer list support ({1, 2, 3})
-- [ ] Update all type checking sites to attempt conversions
-- [ ] Add comprehensive conversion tests
-
-#### Week 3-4: Reference Semantics & Handles (CRITICAL)
-- [ ] Extend DataType with reference modifiers (&in, &out, &inout)
-- [ ] Implement reference parameter validation
-- [ ] Implement handle (@) reference counting semantics
-- [ ] Add handle null checking
-- [ ] Implement auto-handle (@+) support
-- [ ] Add reference/handle tests
-
-#### Week 5-6: Operator Overloading (HIGH PRIORITY)
-- [ ] Implement operator overload method lookup (opAdd, opMul, etc.)
-- [ ] Integrate with binary/unary operation checking
-- [ ] Support both member and global operator overloads
-- [ ] Implement comparison operators (opEquals, opCmp)
-- [ ] Add operator overloading tests
-
-#### Week 7-8: Advanced Features (MEDIUM PRIORITY)
-- [ ] Implement property accessor detection (get_/set_ methods)
-- [ ] Add default argument support
-- [ ] Implement lambda expressions with capture
-- [ ] Add comprehensive integration tests
-
-### Phase 6: Integration & Polish (~2-3 weeks)
-- [ ] Integration tests with real AngelScript samples
-- [ ] Performance benchmarks
-- [ ] Documentation
-- [ ] Simplify/remove old Pass 1 code
-
-**Total Estimated Time:**
-- Phase 4 (Basic): ✅ Complete (21-27 days)
-- Phase 5 (Critical Features): 6-8 weeks remaining
-- Phase 6 (Polish): 2-3 weeks
-- **Total Remaining: 8-11 weeks**
+**Test Breakdown:**
+- data_type.rs: 30 tests
+- type_def.rs: 27 tests
+- registry.rs: 53 tests
+- registrar.rs: 24 tests
+- type_compiler.rs: 7 tests
+- local_scope.rs: 18 tests
+- bytecode.rs: 19 tests
+- conversion.rs: 475 tests (NEW - Phase 1)
+
+**Test Coverage Goals:**
+- Phase 5 (Type Conversions): 750+ tests
+- Phase 6 (Integration): 850+ tests
+- Final: 1,000+ tests
 
 ---
 
@@ -1194,82 +595,47 @@ group.bench_function("pass2a_type_compilation_5000_lines", |b| {
 - [x] Pass 2b tracks local variables dynamically ✅
 - [x] Pass 2b basic bytecode emission ✅
 - [x] Error messages with source location ✅
+- [x] Constructor system (registry methods, default/copy generation) ✅
 
-**Critical Missing Features (Blocks Realistic Code):**
-- [ ] Type conversions (implicit casts, handle conversions)
-- [ ] Constructor/destructor calls
-- [ ] Reference parameter semantics (&in, &out, &inout)
-- [ ] Handle type (@) semantics and reference counting
-- [ ] Operator overloading resolution
-- [ ] Property accessors (get/set)
-- [ ] Default arguments
-- [ ] Lambda expressions with capture
-- [ ] Complete initializer list support
+**In Progress (Phase 5 - Type Conversions):**
+- [x] Primitive type conversions (all 88+) ✅
+- [x] Handle conversions (T@ → const T@, derived → base) ✅
+- [x] User-defined conversions (constructors, opConv, opImplConv) ✅
+- [ ] Constructor call detection and compilation (Task 8)
+- [ ] Initializer list support (Task 9)
+- [ ] Conversion integration throughout compiler (Task 10)
+- [ ] Overload resolution with costs (Task 11)
+- [ ] Reference parameters (&in, &out, &inout) (Task 12)
+- [ ] Comprehensive conversion tests (Task 13)
 
-### Test Coverage
-
-- [x] 24 registration tests ✅
-- [x] 30 data_type tests ✅
-- [x] 27 type_def tests ✅
-- [x] 53 registry tests ✅
-- [x] 7 type_compiler tests ✅
-- [x] **Total: 141 tests passing** ✅
-- [ ] 60-80 function compilation tests
-- [ ] All tests passing
-- [ ] ~120-160 total test functions
-
-### Documentation
-
-- [ ] Module documentation (rustdoc)
-- [ ] Public API documented with examples
-- [ ] Architecture decisions logged
+**Not Started (Remaining Tasks):**
+- [ ] Operator overloading resolution (Tasks 14-20)
+- [ ] Property accessors (Tasks 21-22)
+- [ ] Default arguments (Tasks 23-25)
+- [ ] Lambda expressions (Tasks 26-29)
+- [ ] TODOs and edge cases (Tasks 30-49)
+- [ ] Integration tests (Tasks 50-52)
+- [ ] Documentation (Tasks 53-56)
 
 ### Quality Metrics
 
 - [ ] No compiler warnings
 - [ ] All clippy lints passing
 - [ ] Clear error messages with spans
-- [ ] **Performance: < 2ms total for 5000 lines**
+- [ ] Performance: < 2ms total for 5000 lines
 - [ ] Memory efficient (pre-allocation, caching)
-
----
-
-## Migration from Current Implementation
-
-The current codebase has a Pass 1 implementation using `Resolver` and `SymbolTable`. Here's how we'll transition:
-
-### Current State
-- ✅ `resolver.rs` - Implements Pass 1 with SymbolTable
-- ✅ `symbol_table.rs` - Stores all symbols (global and local)
-- ✅ `scope.rs` - Scope stack management
-- ✅ `error.rs` - Error types
-
-### Migration Strategy
-
-**Phase 1: Implement New System**
-1. Implement Registry, Registrar, TypeCompiler, FunctionCompiler
-2. Keep old system running (don't break existing code)
-3. Write tests for new system
-
-**Phase 2: Switch Over**
-1. Update main compilation pipeline to use new system
-2. Mark old system as deprecated
-
-**Phase 3: Cleanup**
-1. Remove `symbol_table.rs` (replaced by Registry + LocalScope)
-2. Simplify or remove `resolver.rs` (replaced by Registrar)
-3. Repurpose `scope.rs` for LocalScope if useful
 
 ---
 
 ## References
 
 - [Crafting Interpreters - Resolving and Binding](https://craftinginterpreters.com/resolving-and-binding.html)
-- [Crafting Interpreters - A Map of the Territory](https://craftinginterpreters.com/a-map-of-the-territory.html)
 - [AngelScript Documentation](https://www.angelcode.com/angelscript/sdk/docs/manual/)
 - AngelScript C++ source: `as_builder.cpp`, `as_compiler.cpp`
 - Project docs: `docs/architecture.md`
+- Validation source: `reference/angelscript/source/`
 
 ---
 
-**Ready to begin implementation!**
+**Plan Status:** Living document - Updated as implementation progresses
+**Last Updated:** 2025-11-26

@@ -268,10 +268,21 @@ impl<'src, 'ast> Parser<'src, 'ast> {
                 self.parse_ident_or_constructor()
             }
 
+            // Super keyword (for base class constructor calls)
+            TokenKind::Super => {
+                let token = self.advance();
+                let ident = Ident::new(token.lexeme, token.span);
+                Ok(self.arena.alloc(Expr::Ident(IdentExpr {
+                    scope: None,
+                    ident,
+                    span: token.span,
+                })))
+            }
+
             // Type keywords (for constructor calls)
-            TokenKind::Void | TokenKind::Bool | TokenKind::Int | TokenKind::Int8 
-            | TokenKind::Int16 | TokenKind::Int64 | TokenKind::UInt | TokenKind::UInt8 
-            | TokenKind::UInt16 | TokenKind::UInt64 | TokenKind::Float | TokenKind::Double 
+            TokenKind::Void | TokenKind::Bool | TokenKind::Int | TokenKind::Int8
+            | TokenKind::Int16 | TokenKind::Int64 | TokenKind::UInt | TokenKind::UInt8
+            | TokenKind::UInt16 | TokenKind::UInt64 | TokenKind::Float | TokenKind::Double
             | TokenKind::Auto => {
                 self.parse_ident_or_constructor()
             }

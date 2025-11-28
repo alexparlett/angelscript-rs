@@ -178,6 +178,8 @@ pub enum TokenKind {
     InOut,
     /// `cast`
     Cast,
+    /// `super` (for calling base class constructor)
+    Super,
 
     // =========================================
     // Operators - Arithmetic
@@ -534,6 +536,7 @@ impl TokenKind {
             Out => "'out'",
             InOut => "'inout'",
             Cast => "'cast'",
+            Super => "'super'",
             Plus => "'+'",
             Minus => "'-'",
             Star => "'*'",
@@ -662,6 +665,7 @@ pub fn lookup_keyword(ident: &str) -> Option<TokenKind> {
         "out" => Out,
         "inout" => InOut,
         "cast" => Cast,
+        "super" => Super,
 
         _ => return None,
     })
