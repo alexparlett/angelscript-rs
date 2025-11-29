@@ -1460,6 +1460,13 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
     }
 
     /// Visits a switch statement.
+    ///
+    /// Bytecode generation strategy:
+    /// 1. Evaluate switch expression and store in temp variable
+    /// 2. Emit dispatch table: for each case value, compare and jump if match
+    /// 3. Jump to default case (or end if no default)
+    /// 4. Emit case bodies with fallthrough semantics
+    /// 5. Break statements jump to switch end
     fn visit_switch(&mut self, switch: &'ast SwitchStmt<'src, 'ast>) {
         // Type check the switch expression
         let switch_ctx = match self.check_expr(switch.expr) {
@@ -1468,41 +1475,77 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
         };
 
         // Switch expressions must be integer or enum types
-        if !self.is_integer(&switch_ctx.data_type) {
+        if !self.is_switch_compatible(&switch_ctx.data_type) {
             self.error(
                 SemanticErrorKind::TypeMismatch,
                 switch.expr.span(),
                 format!(
-                    "switch expression must be integer type, found '{}'",
+                    "switch expression must be integer or enum type, found '{}'",
                     self.type_name(&switch_ctx.data_type)
                 ),
             );
             return;
         }
 
+        // Enter a new scope for the switch temp variable
+        self.local_scope.enter_scope();
+
+        // Store switch expression value in a temporary variable
+        // The expression value is already on the stack from check_expr
+        let switch_offset = self.local_scope.declare_variable_auto(
+            format!("$switch_{}_{}", switch.span.line, switch.span.col),
+            switch_ctx.data_type.clone(),
+            false,
+        );
+        self.bytecode.emit(Instruction::StoreLocal(switch_offset));
+
         // Track case values to detect duplicates
         let mut case_values: std::collections::HashSet<i64> = std::collections::HashSet::new();
-        let mut has_default = false;
-        let mut case_jump_positions = Vec::new();
+        let mut default_case_index: Option<usize> = None;
 
-        // Enter switch context to allow break statements
-        self.bytecode.enter_switch();
-
-        // Emit jump table setup (simplified - real implementation would be more complex)
-        for case in switch.cases {
+        // First pass: find default case and check for duplicate case values
+        // (Type checking happens in the dispatch phase when we emit bytecode)
+        for (case_idx, case) in switch.cases.iter().enumerate() {
             if case.is_default() {
-                if has_default {
+                if default_case_index.is_some() {
                     self.error(
                         SemanticErrorKind::DuplicateDeclaration,
                         case.span,
                         "switch statement can only have one default case".to_string(),
                     );
                 }
-                has_default = true;
+                default_case_index = Some(case_idx);
             } else {
-                // Check case values
+                // Check for duplicate case values (if we can evaluate as constant)
                 for value_expr in case.values {
-                    // Type check the case value
+                    if let Some(const_value) = eval_const_int(value_expr) {
+                        if !case_values.insert(const_value) {
+                            self.error(
+                                SemanticErrorKind::DuplicateDeclaration,
+                                value_expr.span(),
+                                format!("duplicate case value: {}", const_value),
+                            );
+                        }
+                    }
+                }
+            }
+        }
+
+        // Enter switch context to allow break statements
+        self.bytecode.enter_switch();
+
+        // Collect jump positions for each case (one per case, not per case value)
+        // Each entry is (case_index, jump_position) for patching later
+        let mut case_jumps: Vec<(usize, usize)> = Vec::new();
+
+        // Emit dispatch table: compare switch value against each case value
+        for (case_idx, case) in switch.cases.iter().enumerate() {
+            if !case.is_default() {
+                // For each case value (handles case 1: case 2: ... syntax)
+                for value_expr in case.values {
+                    // Load switch value
+                    self.bytecode.emit(Instruction::LoadLocal(switch_offset));
+                    // Emit case value expression and type check
                     if let Some(value_ctx) = self.check_expr(value_expr) {
                         // Case value must match switch type
                         if value_ctx.data_type.type_id != switch_ctx.data_type.type_id {
@@ -1516,34 +1559,58 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
                                 ),
                             );
                         }
-
-                        // Check for duplicate case values (if we can evaluate as constant)
-                        if let Some(const_value) = eval_const_int(value_expr) {
-                            if !case_values.insert(const_value) {
-                                self.error(
-                                    SemanticErrorKind::DuplicateDeclaration,
-                                    value_expr.span(),
-                                    format!("duplicate case value: {}", const_value),
-                                );
-                            }
-                        }
                     }
+                    // Compare
+                    self.bytecode.emit(Instruction::Equal);
+                    // Jump if equal (placeholder offset, will be patched)
+                    let jump_pos = self.bytecode.emit(Instruction::JumpIfTrue(0));
+                    case_jumps.push((case_idx, jump_pos));
                 }
             }
+        }
 
-            // Emit case label (placeholder)
-            let case_pos = self.bytecode.current_position();
-            case_jump_positions.push(case_pos);
+        // Jump to default case if exists, otherwise jump to end
+        let default_jump_pos = self.bytecode.emit(Instruction::Jump(0));
+
+        // Track case body positions for patching jumps
+        let mut case_body_positions: Vec<usize> = Vec::with_capacity(switch.cases.len());
+
+        // Emit case bodies (in order, with fallthrough)
+        for case in switch.cases {
+            // Record position of this case body
+            let body_pos = self.bytecode.current_position();
+            case_body_positions.push(body_pos);
 
             // Compile case statements
             for stmt in case.stmts {
                 self.visit_stmt(stmt);
             }
+            // Fallthrough: no jump at end of case (unless break was used)
         }
 
-        // Exit switch context and patch all break statements
+        // Switch end position
         let switch_end = self.bytecode.current_position();
+
+        // Patch all case value jumps to their case body positions
+        for (case_idx, jump_pos) in case_jumps {
+            let target = case_body_positions[case_idx];
+            self.bytecode.patch_jump(jump_pos, target);
+        }
+
+        // Patch default jump
+        if let Some(default_idx) = default_case_index {
+            let target = case_body_positions[default_idx];
+            self.bytecode.patch_jump(default_jump_pos, target);
+        } else {
+            // No default case, jump to switch end
+            self.bytecode.patch_jump(default_jump_pos, switch_end);
+        }
+
+        // Exit switch context and patch all break statements to switch end
         self.bytecode.exit_switch(switch_end);
+
+        // Exit the switch scope
+        self.local_scope.exit_scope();
     }
 
     /// Visits a try-catch statement.
@@ -1746,17 +1813,6 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
 
         match class_def {
             TypeDef::Class { fields, properties, .. } => {
-                // Check fields first
-                for (field_idx, field) in fields.iter().enumerate() {
-                    if field.name == name {
-                        // Emit LoadThis followed by LoadField
-                        self.bytecode.emit(Instruction::LoadThis);
-                        self.bytecode.emit(Instruction::LoadField(field_idx as u32));
-                        let is_mutable = !field.data_type.is_const;
-                        return Some(ExprContext::lvalue(field.data_type.clone(), is_mutable));
-                    }
-                }
-
                 // Check properties (getter access)
                 if let Some(accessors) = properties.get(name) {
                     if let Some(getter_id) = accessors.getter {
@@ -1771,6 +1827,17 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
                         // If there's a setter, we could make it an lvalue, but for simplicity
                         // we return rvalue here - assignment will use check_member for the setter
                         return Some(ExprContext::rvalue(return_type));
+                    }
+                }
+
+                // Check fields first
+                for (field_idx, field) in fields.iter().enumerate() {
+                    if field.name == name {
+                        // Emit LoadThis followed by LoadField
+                        self.bytecode.emit(Instruction::LoadThis);
+                        self.bytecode.emit(Instruction::LoadField(field_idx as u32));
+                        let is_mutable = !field.data_type.is_const;
+                        return Some(ExprContext::lvalue(field.data_type.clone(), is_mutable));
                     }
                 }
 
@@ -4345,6 +4412,16 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
     /// Checks if a type is an integer type.
     fn is_integer(&self, ty: &DataType) -> bool {
         matches!(ty.type_id, INT32_TYPE | INT64_TYPE)
+    }
+
+    /// Checks if a type is compatible with switch statements (integer or enum).
+    fn is_switch_compatible(&self, ty: &DataType) -> bool {
+        if self.is_integer(ty) {
+            return true;
+        }
+        // Check if it's an enum type
+        let typedef = self.registry.get_type(ty.type_id);
+        typedef.is_enum()
     }
 
     /// Promotes two numeric types to their common type.

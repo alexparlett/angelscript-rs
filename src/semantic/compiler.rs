@@ -594,4 +594,279 @@ mod tests {
         let result = Compiler::compile(&script);
         assert!(result.is_success(), "Expected success, got errors: {:?}", result.errors);
     }
+
+    // ==================== Switch Statement Tests ====================
+
+    #[test]
+    fn switch_basic_cases_and_default() {
+        let arena = Bump::new();
+        let source = r#"
+            void test() {
+                int x = 1;
+                int result = 0;
+                switch (x) {
+                    case 1:
+                        result = 10;
+                        break;
+                    case 2:
+                        result = 20;
+                        break;
+                    default:
+                        result = -1;
+                        break;
+                }
+            }
+        "#;
+        let (script, _) = parse_lenient(source, &arena);
+
+        let result = Compiler::compile(&script);
+        assert!(result.is_success(), "Expected success, got errors: {:?}", result.errors);
+    }
+
+    #[test]
+    fn switch_fallthrough_behavior() {
+        let arena = Bump::new();
+        let source = r#"
+            void test() {
+                int x = 1;
+                int result = 0;
+                switch (x) {
+                    case 1:
+                        result = 10;
+                        // No break - falls through to case 2
+                    case 2:
+                        result = result + 20;
+                        break;
+                    default:
+                        result = -1;
+                        break;
+                }
+            }
+        "#;
+        let (script, _) = parse_lenient(source, &arena);
+
+        let result = Compiler::compile(&script);
+        assert!(result.is_success(), "Expected success, got errors: {:?}", result.errors);
+    }
+
+    #[test]
+    fn switch_multiple_case_labels() {
+        let arena = Bump::new();
+        let source = r#"
+            void test() {
+                int x = 2;
+                int result = 0;
+                switch (x) {
+                    case 1:
+                    case 2:
+                    case 3:
+                        result = 100;
+                        break;
+                    default:
+                        result = -1;
+                        break;
+                }
+            }
+        "#;
+        let (script, _) = parse_lenient(source, &arena);
+
+        let result = Compiler::compile(&script);
+        assert!(result.is_success(), "Expected success, got errors: {:?}", result.errors);
+    }
+
+    #[test]
+    fn switch_no_default() {
+        let arena = Bump::new();
+        let source = r#"
+            void test() {
+                int x = 5;
+                int result = 0;
+                switch (x) {
+                    case 1:
+                        result = 10;
+                        break;
+                    case 2:
+                        result = 20;
+                        break;
+                }
+            }
+        "#;
+        let (script, _) = parse_lenient(source, &arena);
+
+        let result = Compiler::compile(&script);
+        assert!(result.is_success(), "Expected success, got errors: {:?}", result.errors);
+    }
+
+    #[test]
+    fn switch_nested() {
+        let arena = Bump::new();
+        let source = r#"
+            void test() {
+                int x = 1;
+                int y = 2;
+                int result = 0;
+                switch (x) {
+                    case 1:
+                        switch (y) {
+                            case 1:
+                                result = 11;
+                                break;
+                            case 2:
+                                result = 12;
+                                break;
+                        }
+                        break;
+                    case 2:
+                        result = 20;
+                        break;
+                }
+            }
+        "#;
+        let (script, _) = parse_lenient(source, &arena);
+
+        let result = Compiler::compile(&script);
+        assert!(result.is_success(), "Expected success, got errors: {:?}", result.errors);
+    }
+
+    #[test]
+    fn switch_with_enum_values() {
+        let arena = Bump::new();
+        let source = r#"
+            enum Color { RED, GREEN, BLUE }
+
+            void test() {
+                int c = Color::GREEN;
+                int result = 0;
+                switch (c) {
+                    case Color::RED:
+                        result = 1;
+                        break;
+                    case Color::GREEN:
+                        result = 2;
+                        break;
+                    case Color::BLUE:
+                        result = 3;
+                        break;
+                }
+            }
+        "#;
+        let (script, _) = parse_lenient(source, &arena);
+
+        let result = Compiler::compile(&script);
+        assert!(result.is_success(), "Expected success, got errors: {:?}", result.errors);
+    }
+
+    #[test]
+    fn switch_duplicate_case_rejected() {
+        let arena = Bump::new();
+        let source = r#"
+            void test() {
+                int x = 1;
+                switch (x) {
+                    case 1:
+                        break;
+                    case 1:
+                        break;
+                }
+            }
+        "#;
+        let (script, _) = parse_lenient(source, &arena);
+
+        let result = Compiler::compile(&script);
+        assert!(!result.is_success(), "Expected error for duplicate case values");
+        assert!(result.errors.iter().any(|e|
+            format!("{:?}", e).contains("duplicate case value")),
+            "Expected duplicate case value error, got: {:?}", result.errors);
+    }
+
+    #[test]
+    fn switch_duplicate_default_rejected() {
+        let arena = Bump::new();
+        let source = r#"
+            void test() {
+                int x = 1;
+                switch (x) {
+                    case 1:
+                        break;
+                    default:
+                        break;
+                    default:
+                        break;
+                }
+            }
+        "#;
+        let (script, _) = parse_lenient(source, &arena);
+
+        let result = Compiler::compile(&script);
+        assert!(!result.is_success(), "Expected error for duplicate default");
+        assert!(result.errors.iter().any(|e|
+            format!("{:?}", e).contains("one default case")),
+            "Expected duplicate default error, got: {:?}", result.errors);
+    }
+
+    #[test]
+    fn switch_non_integer_rejected() {
+        let arena = Bump::new();
+        let source = r#"
+            void test() {
+                float x = 1.5;
+                switch (x) {
+                    case 1:
+                        break;
+                }
+            }
+        "#;
+        let (script, _) = parse_lenient(source, &arena);
+
+        let result = Compiler::compile(&script);
+        assert!(!result.is_success(), "Expected error for non-integer switch expression");
+        assert!(result.errors.iter().any(|e|
+            format!("{:?}", e).contains("must be integer or enum type")),
+            "Expected integer/enum type error, got: {:?}", result.errors);
+    }
+
+    #[test]
+    fn switch_case_type_mismatch_rejected() {
+        let arena = Bump::new();
+        let source = r#"
+            void test() {
+                int x = 1;
+                switch (x) {
+                    case 1.5:
+                        break;
+                }
+            }
+        "#;
+        let (script, _) = parse_lenient(source, &arena);
+
+        let result = Compiler::compile(&script);
+        assert!(!result.is_success(), "Expected error for type mismatch");
+        assert!(result.errors.iter().any(|e|
+            format!("{:?}", e).contains("does not match switch type")),
+            "Expected type mismatch error, got: {:?}", result.errors);
+    }
+
+    #[test]
+    fn switch_break_exits_switch() {
+        let arena = Bump::new();
+        let source = r#"
+            void test() {
+                int x = 1;
+                int result = 0;
+                switch (x) {
+                    case 1:
+                        result = 10;
+                        break;
+                    case 2:
+                        result = 20;
+                        break;
+                }
+                // After switch, result should be 10 (not 30 from fallthrough)
+            }
+        "#;
+        let (script, _) = parse_lenient(source, &arena);
+
+        let result = Compiler::compile(&script);
+        assert!(result.is_success(), "Expected success, got errors: {:?}", result.errors);
+    }
 }
