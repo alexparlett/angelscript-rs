@@ -1177,4 +1177,104 @@ mod tests {
             panic!("Expected Class typedef");
         }
     }
+
+    #[test]
+    fn field_visibility_public() {
+        let arena = Bump::new();
+        let data = compile("class Player { int health; }", &arena);
+        assert!(data.errors.is_empty(), "Errors: {:?}", data.errors);
+
+        let player_id = data.registry.lookup_type("Player").unwrap();
+        let typedef = data.registry.get_type(player_id);
+
+        if let TypeDef::Class { fields, .. } = typedef {
+            assert_eq!(fields.len(), 1);
+            assert_eq!(fields[0].visibility, Visibility::Public);
+        } else {
+            panic!("Expected Class typedef");
+        }
+    }
+
+    #[test]
+    fn field_visibility_private() {
+        let arena = Bump::new();
+        let data = compile("class Player { private int secret; }", &arena);
+        assert!(data.errors.is_empty(), "Errors: {:?}", data.errors);
+
+        let player_id = data.registry.lookup_type("Player").unwrap();
+        let typedef = data.registry.get_type(player_id);
+
+        if let TypeDef::Class { fields, .. } = typedef {
+            assert_eq!(fields.len(), 1);
+            assert_eq!(fields[0].visibility, Visibility::Private);
+        } else {
+            panic!("Expected Class typedef");
+        }
+    }
+
+    #[test]
+    fn field_visibility_protected() {
+        let arena = Bump::new();
+        let data = compile("class Player { protected int inherited; }", &arena);
+        assert!(data.errors.is_empty(), "Errors: {:?}", data.errors);
+
+        let player_id = data.registry.lookup_type("Player").unwrap();
+        let typedef = data.registry.get_type(player_id);
+
+        if let TypeDef::Class { fields, .. } = typedef {
+            assert_eq!(fields.len(), 1);
+            assert_eq!(fields[0].visibility, Visibility::Protected);
+        } else {
+            panic!("Expected Class typedef");
+        }
+    }
+
+    #[test]
+    fn typedef_creates_alias() {
+        let arena = Bump::new();
+        let data = compile("typedef float real;", &arena);
+        assert!(data.errors.is_empty(), "Errors: {:?}", data.errors);
+
+        // 'real' should resolve to the same type as 'float'
+        let real_id = data.registry.lookup_type("real");
+        let float_id = data.registry.lookup_type("float");
+
+        assert!(real_id.is_some(), "typedef 'real' should be registered");
+        assert_eq!(real_id, float_id, "typedef should point to same type as float");
+    }
+
+    #[test]
+    fn typedef_in_namespace() {
+        let arena = Bump::new();
+        let data = compile("namespace Math { typedef double number; }", &arena);
+        assert!(data.errors.is_empty(), "Errors: {:?}", data.errors);
+
+        let number_id = data.registry.lookup_type("Math::number");
+        let double_id = data.registry.lookup_type("double");
+
+        assert!(number_id.is_some(), "typedef 'Math::number' should be registered");
+        assert_eq!(number_id, double_id, "typedef should point to same type as double");
+    }
+
+    #[test]
+    fn array_suffix_instantiates_template() {
+        let arena = Bump::new();
+        let data = compile("class Container { int[] numbers; }", &arena);
+        assert!(data.errors.is_empty(), "Errors: {:?}", data.errors);
+
+        let container_id = data.registry.lookup_type("Container").unwrap();
+        let typedef = data.registry.get_type(container_id);
+
+        if let TypeDef::Class { fields, .. } = typedef {
+            assert_eq!(fields.len(), 1);
+            // The field type should be array<int>@ (handle)
+            assert!(fields[0].data_type.is_handle);
+
+            // Check that it's an array template instance
+            let field_type = data.registry.get_type(fields[0].data_type.type_id);
+            assert!(field_type.is_template_instance(), "Field type should be array<int>");
+        } else {
+            panic!("Expected Class typedef");
+        }
+    }
 }

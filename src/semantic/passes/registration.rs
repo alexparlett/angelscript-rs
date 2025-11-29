@@ -1234,4 +1234,63 @@ mod tests {
         // Therefore: 1 constructor (auto-generated default)
         assert_eq!(constructors.len(), 1, "Should have auto-generated default constructor (deleted copy doesn't prevent it)");
     }
+
+    #[test]
+    fn enum_values_auto_increment() {
+        let arena = Bump::new();
+        let data = register("enum Color { Red, Green, Blue }", &arena);
+        assert!(data.errors.is_empty());
+
+        let type_id = data.registry.lookup_type("Color").unwrap();
+        let typedef = data.registry.get_type(type_id);
+
+        if let TypeDef::Enum { values, .. } = typedef {
+            assert_eq!(values.len(), 3);
+            assert_eq!(values[0], ("Red".to_string(), 0));
+            assert_eq!(values[1], ("Green".to_string(), 1));
+            assert_eq!(values[2], ("Blue".to_string(), 2));
+        } else {
+            panic!("Expected Enum typedef");
+        }
+    }
+
+    #[test]
+    fn enum_values_explicit() {
+        let arena = Bump::new();
+        let data = register("enum Priority { Low = 1, Medium = 5, High = 10 }", &arena);
+        assert!(data.errors.is_empty());
+
+        let type_id = data.registry.lookup_type("Priority").unwrap();
+        let typedef = data.registry.get_type(type_id);
+
+        if let TypeDef::Enum { values, .. } = typedef {
+            assert_eq!(values.len(), 3);
+            assert_eq!(values[0], ("Low".to_string(), 1));
+            assert_eq!(values[1], ("Medium".to_string(), 5));
+            assert_eq!(values[2], ("High".to_string(), 10));
+        } else {
+            panic!("Expected Enum typedef");
+        }
+    }
+
+    #[test]
+    fn enum_values_mixed() {
+        let arena = Bump::new();
+        let data = register("enum Mixed { A, B = 10, C, D = -5, E }", &arena);
+        assert!(data.errors.is_empty());
+
+        let type_id = data.registry.lookup_type("Mixed").unwrap();
+        let typedef = data.registry.get_type(type_id);
+
+        if let TypeDef::Enum { values, .. } = typedef {
+            assert_eq!(values.len(), 5);
+            assert_eq!(values[0], ("A".to_string(), 0));
+            assert_eq!(values[1], ("B".to_string(), 10));
+            assert_eq!(values[2], ("C".to_string(), 11)); // Auto-increment from 10
+            assert_eq!(values[3], ("D".to_string(), -5));
+            assert_eq!(values[4], ("E".to_string(), -4)); // Auto-increment from -5
+        } else {
+            panic!("Expected Enum typedef");
+        }
+    }
 }

@@ -1437,6 +1437,9 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
         let mut has_default = false;
         let mut case_jump_positions = Vec::new();
 
+        // Enter switch context to allow break statements
+        self.bytecode.enter_switch();
+
         // Emit jump table setup (simplified - real implementation would be more complex)
         for case in switch.cases {
             if case.is_default() {
@@ -1490,8 +1493,9 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
             }
         }
 
-        // Emit switch end
-        // In a real implementation, this would patch all jump positions
+        // Exit switch context and patch all break statements
+        let switch_end = self.bytecode.current_position();
+        self.bytecode.exit_switch(switch_end);
     }
 
     /// Visits a try-catch statement.
@@ -3374,12 +3378,8 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
                 // Verify the object is a class type
                 match typedef {
                     TypeDef::Class { .. } => {
-                        // Look up methods with this name
-                        // Methods are stored with qualified names like "ClassName::methodName"
-                        let class_name = typedef.name();
-                        let method_name = format!("{}::{}", class_name, name.name);
-
-                        let candidates = self.registry.lookup_functions(&method_name);
+                        // Look up methods with this name on the class type
+                        let candidates = self.registry.find_methods_by_name(object_ctx.data_type.type_id, name.name);
 
                         if candidates.is_empty() {
                             self.error(
@@ -3399,7 +3399,7 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
 
                         let const_filtered: Vec<_> = if is_const_object {
                             // Const objects can only call const methods
-                            candidates.iter().copied()
+                            candidates.into_iter()
                                 .filter(|&func_id| {
                                     let func_def = self.registry.get_function(func_id);
                                     func_def.traits.is_const
@@ -3407,7 +3407,7 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
                                 .collect()
                         } else {
                             // Non-const objects can call both const and non-const methods
-                            candidates.to_vec()
+                            candidates
                         };
 
                         if const_filtered.is_empty() {
@@ -4167,11 +4167,16 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
         arg_types: &[DataType],
         span: Span,
     ) -> Option<(FunctionId, Vec<Option<crate::semantic::Conversion>>)> {
-        // Filter candidates by argument count first
+        // Filter candidates by argument count first (considering default parameters)
         let count_matched: Vec<_> = candidates.iter().copied()
             .filter(|&func_id| {
                 let func_def = self.registry.get_function(func_id);
-                func_def.params.len() == arg_types.len()
+                // Calculate minimum required params (total - defaults with values)
+                let default_count = func_def.default_args.iter().filter(|a| a.is_some()).count();
+                let min_params = func_def.params.len() - default_count;
+                let max_params = func_def.params.len();
+                // Accept if arg count is within valid range
+                arg_types.len() >= min_params && arg_types.len() <= max_params
             })
             .collect();
 
@@ -4748,5 +4753,237 @@ mod tests {
             "Lambda should have non-empty bytecode");
     }
 
-    // More tests will be added as we implement the compiler
+    #[test]
+    fn try_eval_const_int_literal() {
+        use crate::ast::{Parser, Expr};
+        use bumpalo::Bump;
+
+        let arena = Bump::new();
+
+        // Integer literal
+        let mut parser = Parser::new("42", &arena);
+        let expr = parser.parse_expr(0).unwrap();
+        assert_eq!(FunctionCompiler::<'_, '_>::try_eval_const_int(&expr), Some(42));
+
+        // Negative literal
+        let mut parser = Parser::new("-10", &arena);
+        let expr = parser.parse_expr(0).unwrap();
+        assert_eq!(FunctionCompiler::<'_, '_>::try_eval_const_int(&expr), Some(-10));
+
+        // Boolean true
+        let mut parser = Parser::new("true", &arena);
+        let expr = parser.parse_expr(0).unwrap();
+        assert_eq!(FunctionCompiler::<'_, '_>::try_eval_const_int(&expr), Some(1));
+
+        // Boolean false
+        let mut parser = Parser::new("false", &arena);
+        let expr = parser.parse_expr(0).unwrap();
+        assert_eq!(FunctionCompiler::<'_, '_>::try_eval_const_int(&expr), Some(0));
+
+        // Parenthesized
+        let mut parser = Parser::new("(42)", &arena);
+        let expr = parser.parse_expr(0).unwrap();
+        assert_eq!(FunctionCompiler::<'_, '_>::try_eval_const_int(&expr), Some(42));
+
+        // Non-constant (variable)
+        let mut parser = Parser::new("x", &arena);
+        let expr = parser.parse_expr(0).unwrap();
+        assert_eq!(FunctionCompiler::<'_, '_>::try_eval_const_int(&expr), None);
+    }
+
+    #[test]
+    fn duplicate_switch_case_error() {
+        use crate::parse_lenient;
+        use crate::semantic::Compiler;
+        use bumpalo::Bump;
+
+        let arena = Bump::new();
+        let source = r#"
+            void test() {
+                int x = 1;
+                switch (x) {
+                    case 1:
+                        break;
+                    case 1:  // Duplicate!
+                        break;
+                }
+            }
+        "#;
+
+        let (script, _) = parse_lenient(source, &arena);
+        let result = Compiler::compile(&script);
+
+        // Should have an error about duplicate case value
+        assert!(!result.errors.is_empty(), "Should detect duplicate case value");
+        assert!(result.errors.iter().any(|e| e.message.contains("duplicate")),
+            "Error should mention 'duplicate': {:?}", result.errors);
+    }
+
+    #[test]
+    fn switch_no_duplicate_different_values() {
+        use crate::parse_lenient;
+        use crate::semantic::Compiler;
+        use bumpalo::Bump;
+
+        let arena = Bump::new();
+        let source = r#"
+            void test() {
+                int x = 1;
+                switch (x) {
+                    case 1:
+                        break;
+                    case 2:
+                        break;
+                    case 3:
+                        break;
+                }
+            }
+        "#;
+
+        let (script, _) = parse_lenient(source, &arena);
+        let result = Compiler::compile(&script);
+
+        // Should compile without errors
+        assert!(result.is_success(), "Different case values should not produce error: {:?}", result.errors);
+    }
+
+    #[test]
+    fn load_this_instruction_exists() {
+        // Test that LoadThis instruction is available
+        let instr = Instruction::LoadThis;
+        assert!(matches!(instr, Instruction::LoadThis));
+    }
+
+    #[test]
+    fn method_signature_matching_basic() {
+        use crate::parse_lenient;
+        use crate::semantic::Compiler;
+        use bumpalo::Bump;
+
+        let arena = Bump::new();
+        let source = r#"
+            class Test {
+                void foo(int x) {}
+                void foo(float x) {}
+                void foo(int x, int y) {}
+            }
+            void test() {
+                Test t;
+                t.foo(1);       // Should match foo(int)
+                t.foo(1.0f);    // Should match foo(float)
+                t.foo(1, 2);    // Should match foo(int, int)
+            }
+        "#;
+
+        let (script, _) = parse_lenient(source, &arena);
+        let result = Compiler::compile(&script);
+
+        // Should compile without errors - correct overload selected
+        assert!(result.is_success(), "Method overloading should work: {:?}", result.errors);
+    }
+
+    #[test]
+    fn method_signature_matching_with_defaults() {
+        use crate::parse_lenient;
+        use crate::semantic::Compiler;
+        use bumpalo::Bump;
+
+        let arena = Bump::new();
+        let source = r#"
+            class Test {
+                void bar(int x, int y = 10) {}
+            }
+            void test() {
+                Test t;
+                t.bar(1);       // Should work - y uses default
+                t.bar(1, 2);    // Should work - explicit y
+            }
+        "#;
+
+        let (script, _) = parse_lenient(source, &arena);
+        let result = Compiler::compile(&script);
+
+        // Should compile without errors - default params handled
+        assert!(result.is_success(), "Default parameters should work: {:?}", result.errors);
+    }
+
+    #[test]
+    fn field_initializer_compilation() {
+        use crate::parse_lenient;
+        use crate::semantic::Compiler;
+        use bumpalo::Bump;
+
+        let arena = Bump::new();
+        let source = r#"
+            class Test {
+                int x = 42;
+                float y = 3.14f;
+            }
+        "#;
+
+        let (script, _) = parse_lenient(source, &arena);
+        let result = Compiler::compile(&script);
+
+        // Field initializers should compile without errors
+        assert!(result.is_success(), "Field initializers should compile: {:?}", result.errors);
+    }
+
+    #[test]
+    fn switch_with_break_statements() {
+        use crate::parse_lenient;
+        use crate::semantic::Compiler;
+        use bumpalo::Bump;
+
+        let arena = Bump::new();
+        let source = r#"
+            void test() {
+                int x = 1;
+                switch (x) {
+                    case 1:
+                        int a = 1;
+                        break;
+                    case 2:
+                        int b = 2;
+                        break;
+                    default:
+                        break;
+                }
+            }
+        "#;
+
+        let (script, _) = parse_lenient(source, &arena);
+        let result = Compiler::compile(&script);
+
+        // Break statements in switch should be allowed
+        assert!(result.is_success(), "Break in switch should work: {:?}", result.errors);
+    }
+
+    #[test]
+    fn switch_inside_loop_with_continue() {
+        use crate::parse_lenient;
+        use crate::semantic::Compiler;
+        use bumpalo::Bump;
+
+        let arena = Bump::new();
+        let source = r#"
+            void test() {
+                for (int i = 0; i < 10; i++) {
+                    switch (i) {
+                        case 0:
+                            continue;  // Should continue the outer loop
+                        case 1:
+                            break;     // Should break from switch only
+                        default:
+                            break;
+                    }
+                }
+            }
+        "#;
+
+        let (script, _) = parse_lenient(source, &arena);
+        let result = Compiler::compile(&script);
+
+        // Continue in switch inside loop should target the loop
+        assert!(result.is_success(), "Continue in switch inside loop should work: {:?}", result.errors);
+    }
 }

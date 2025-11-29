@@ -461,6 +461,10 @@ impl<'src, 'ast> Registry<'src, 'ast> {
     }
 
     /// Update a function's signature
+    ///
+    /// Only updates the first function with this name that still has empty params.
+    /// This handles overloaded functions correctly - each call from type_compilation
+    /// fills in the next overload.
     pub fn update_function_signature(
         &mut self,
         qualified_name: &str,
@@ -471,19 +475,20 @@ impl<'src, 'ast> Registry<'src, 'ast> {
         default_args: Vec<Option<&'ast Expr<'src, 'ast>>>,
     ) {
         // Find the function(s) with this name
-        if let Some(func_ids) = self.func_by_name.get(qualified_name) {
-            // For now, update all functions with this name
-            // TODO: In a real implementation, we'd match by signature for overload resolution
-            for &func_id in func_ids {
+        if let Some(func_ids) = self.func_by_name.get(qualified_name).cloned() {
+            // Find the first function that hasn't been filled in yet (has empty params)
+            // This handles overloading correctly - each AST method fills the next empty slot
+            for func_id in func_ids {
                 let index = func_id.as_u32() as usize;
-                if index < self.functions.len() {
-                    self.functions[index].params = params.clone();
-                    self.functions[index].return_type = return_type.clone();
+                if index < self.functions.len() && self.functions[index].params.is_empty() {
+                    self.functions[index].params = params;
+                    self.functions[index].return_type = return_type;
                     if object_type.is_some() {
                         self.functions[index].object_type = object_type;
                     }
-                    self.functions[index].traits = traits.clone();
-                    self.functions[index].default_args = default_args.clone();
+                    self.functions[index].traits = traits;
+                    self.functions[index].default_args = default_args;
+                    return; // Only update one function
                 }
             }
         }
@@ -695,6 +700,35 @@ impl<'src, 'ast> Registry<'src, 'ast> {
         }
 
         None
+    }
+
+    /// Find all methods with the given name in a class and its base classes.
+    ///
+    /// This is used for overload resolution - returns all method overloads
+    /// so the caller can select the best match based on argument types.
+    ///
+    /// Returns methods in order: derived class methods first, then base class methods.
+    pub fn find_methods_by_name(&self, type_id: TypeId, name: &str) -> Vec<FunctionId> {
+        let typedef = self.get_type(type_id);
+
+        match typedef {
+            TypeDef::Class { methods, base_class, .. } => {
+                // Get all methods with matching name from this class
+                let mut matching_methods: Vec<FunctionId> = methods.iter()
+                    .copied()
+                    .filter(|&id| self.get_function(id).name == name)
+                    .collect();
+
+                // Recursively add matching methods from base class
+                if let Some(base_id) = base_class {
+                    let base_methods = self.find_methods_by_name(*base_id, name);
+                    matching_methods.extend(base_methods);
+                }
+
+                matching_methods
+            }
+            _ => Vec::new(),
+        }
     }
 
     /// Get all methods for a class, including inherited methods from base class

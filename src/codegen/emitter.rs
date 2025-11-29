@@ -20,16 +20,16 @@ pub struct BytecodeEmitter {
     /// Next available stack offset
     next_stack_offset: u32,
 
-    /// Stack of loop start/end positions for break/continue
-    loop_stack: Vec<LoopContext>,
+    /// Stack of breakable contexts (loops and switches) for break/continue
+    breakable_stack: Vec<BreakableContext>,
 }
 
-/// Context for tracking loop positions for break/continue.
+/// Context for tracking loop/switch positions for break/continue.
 #[derive(Debug, Clone)]
-struct LoopContext {
-    /// Position to jump to for continue (loop start)
-    continue_target: usize,
-    /// Positions that need to be patched with break target (loop end)
+struct BreakableContext {
+    /// Position to jump to for continue (loop start). None for switches.
+    continue_target: Option<usize>,
+    /// Positions that need to be patched with break target (loop/switch end)
     break_positions: Vec<usize>,
 }
 
@@ -40,7 +40,7 @@ impl BytecodeEmitter {
             instructions: Vec::new(),
             string_constants: Vec::new(),
             next_stack_offset: 0,
-            loop_stack: Vec::new(),
+            breakable_stack: Vec::new(),
         }
     }
 
@@ -108,8 +108,8 @@ impl BytecodeEmitter {
     /// Should be called when starting to compile a loop.
     /// The continue_target is the position to jump to for continue statements.
     pub fn enter_loop(&mut self, continue_target: usize) {
-        self.loop_stack.push(LoopContext {
-            continue_target,
+        self.breakable_stack.push(BreakableContext {
+            continue_target: Some(continue_target),
             break_positions: Vec::new(),
         });
     }
@@ -119,9 +119,33 @@ impl BytecodeEmitter {
     /// Should be called after compiling a loop.
     /// The break_target is the position to jump to for break statements.
     pub fn exit_loop(&mut self, break_target: usize) {
-        if let Some(loop_ctx) = self.loop_stack.pop() {
+        if let Some(ctx) = self.breakable_stack.pop() {
             // Patch all break statements to jump to the break target
-            for pos in loop_ctx.break_positions {
+            for pos in ctx.break_positions {
+                self.patch_jump(pos, break_target);
+            }
+        }
+    }
+
+    /// Enters a switch context.
+    ///
+    /// Should be called when starting to compile a switch statement.
+    /// Switch statements support break but not continue.
+    pub fn enter_switch(&mut self) {
+        self.breakable_stack.push(BreakableContext {
+            continue_target: None, // Switch doesn't support continue
+            break_positions: Vec::new(),
+        });
+    }
+
+    /// Exits a switch context and patches all break statements.
+    ///
+    /// Should be called after compiling a switch statement.
+    /// The break_target is the position to jump to for break statements.
+    pub fn exit_switch(&mut self, break_target: usize) {
+        if let Some(ctx) = self.breakable_stack.pop() {
+            // Patch all break statements to jump to the break target
+            for pos in ctx.break_positions {
                 self.patch_jump(pos, break_target);
             }
         }
@@ -133,35 +157,43 @@ impl BytecodeEmitter {
     ///
     /// # Returns
     ///
-    /// `Some(position)` if we're in a loop, `None` otherwise.
+    /// `Some(position)` if we're in a loop (not a switch), `None` otherwise.
     pub fn emit_continue(&mut self) -> Option<usize> {
-        if let Some(loop_ctx) = self.loop_stack.last() {
-            let current_pos = self.current_position();
-            let offset = (loop_ctx.continue_target as i32) - (current_pos as i32) - 1;
-            Some(self.emit(Instruction::Jump(offset)))
-        } else {
-            None
+        // Find the innermost context that supports continue (has a continue_target)
+        for ctx in self.breakable_stack.iter().rev() {
+            if let Some(continue_target) = ctx.continue_target {
+                let current_pos = self.current_position();
+                let offset = (continue_target as i32) - (current_pos as i32) - 1;
+                return Some(self.emit(Instruction::Jump(offset)));
+            }
         }
+        None
     }
 
     /// Emits a break instruction (placeholder that will be patched later).
     ///
     /// # Returns
     ///
-    /// `Some(position)` if we're in a loop, `None` otherwise.
+    /// `Some(position)` if we're in a loop or switch, `None` otherwise.
     pub fn emit_break(&mut self) -> Option<usize> {
-        if self.loop_stack.is_empty() {
+        if self.breakable_stack.is_empty() {
             return None;
         }
 
         let pos = self.emit(Instruction::Jump(0)); // Placeholder offset
-        self.loop_stack.last_mut().unwrap().break_positions.push(pos);
+        self.breakable_stack.last_mut().unwrap().break_positions.push(pos);
         Some(pos)
     }
 
     /// Checks if we're currently inside a loop.
     pub fn in_loop(&self) -> bool {
-        !self.loop_stack.is_empty()
+        // Check if any context supports continue (i.e., is a loop)
+        self.breakable_stack.iter().any(|ctx| ctx.continue_target.is_some())
+    }
+
+    /// Checks if we're currently inside a breakable context (loop or switch).
+    pub fn in_breakable(&self) -> bool {
+        !self.breakable_stack.is_empty()
     }
 
     /// Finishes bytecode generation and returns the completed bytecode.
@@ -416,5 +448,69 @@ mod tests {
         assert_eq!(bytecode.instructions.len(), 2);
         assert_eq!(bytecode.string_constants.len(), 1);
         assert_eq!(bytecode.string_constants[0], "test");
+    }
+
+    #[test]
+    fn switch_context_allows_break() {
+        let mut emitter = BytecodeEmitter::new();
+        assert!(!emitter.in_breakable());
+
+        emitter.enter_switch();
+        assert!(emitter.in_breakable());
+        assert!(!emitter.in_loop()); // Switch is not a loop
+
+        let break_pos = emitter.emit_break();
+        assert!(break_pos.is_some());
+
+        emitter.emit(Instruction::Nop);
+        let switch_end = emitter.current_position();
+        emitter.exit_switch(switch_end);
+
+        // Break should jump to position 2
+        // From position 0 to position 2: offset = 2 - 0 - 1 = 1
+        assert_eq!(emitter.instructions()[0], Instruction::Jump(1));
+        assert!(!emitter.in_breakable());
+    }
+
+    #[test]
+    fn switch_context_disallows_continue() {
+        let mut emitter = BytecodeEmitter::new();
+        emitter.enter_switch();
+
+        // Continue should fail inside a switch (no loop)
+        let result = emitter.emit_continue();
+        assert!(result.is_none());
+
+        emitter.exit_switch(10);
+    }
+
+    #[test]
+    fn switch_inside_loop_allows_continue() {
+        let mut emitter = BytecodeEmitter::new();
+        let loop_start = emitter.current_position();
+        emitter.enter_loop(loop_start);
+
+        emitter.emit(Instruction::Nop); // pos 0
+
+        emitter.enter_switch();
+
+        // Break should target the switch
+        let break_pos = emitter.emit_break().unwrap(); // pos 1
+
+        // Continue should target the outer loop
+        let continue_result = emitter.emit_continue();
+        assert!(continue_result.is_some()); // pos 2
+
+        emitter.emit(Instruction::Nop); // pos 3
+        let switch_end = emitter.current_position();
+        emitter.exit_switch(switch_end);
+
+        let loop_end = emitter.current_position();
+        emitter.exit_loop(loop_end);
+
+        // Break at pos 1 should jump to switch_end (pos 4): offset = 4 - 1 - 1 = 2
+        assert_eq!(emitter.instructions()[break_pos], Instruction::Jump(2));
+        // Continue at pos 2 should jump to loop_start (pos 0): offset = 0 - 2 - 1 = -3
+        assert_eq!(emitter.instructions()[2], Instruction::Jump(-3));
     }
 }
