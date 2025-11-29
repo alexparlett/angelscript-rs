@@ -1760,6 +1760,115 @@ mod tests {
         assert!(data.errors.is_empty(), "Not overriding final method is OK. Errors: {:?}", data.errors);
     }
 
+    #[test]
+    fn abstract_chain_with_final_method_and_intermediate_abstract() {
+        // Abstract class chain: BaseWidget (final draw) -> MiddleWidget -> Button
+        // Button should NOT be able to override draw() even with an intermediate abstract class
+        let arena = Bump::new();
+        let data = compile(r#"
+            interface IWidget {
+                void draw();
+                void update();
+            }
+
+            abstract class BaseWidget : IWidget {
+                void draw() final { }  // Abstract class implements draw() as final
+                // update() left for subclasses
+            }
+
+            abstract class MiddleWidget : BaseWidget {
+                // MiddleWidget is abstract, doesn't implement update()
+                // Cannot override draw() here either since it's final
+            }
+
+            class Button : MiddleWidget {
+                void update() { }   // OK: implement update()
+                void draw() { }     // ERROR: Cannot override final from BaseWidget (through MiddleWidget)
+            }
+        "#, &arena);
+        assert!(!data.errors.is_empty(), "Expected error for overriding final method from grandparent abstract class");
+        assert!(data.errors[0].kind == SemanticErrorKind::CannotOverrideFinal);
+        assert!(data.errors[0].message.contains("draw"));
+    }
+
+    #[test]
+    fn abstract_chain_with_final_method_not_overridden_ok() {
+        // Same chain but concrete class doesn't try to override the final method - OK
+        let arena = Bump::new();
+        let data = compile(r#"
+            interface IWidget {
+                void draw();
+                void update();
+            }
+
+            abstract class BaseWidget : IWidget {
+                void draw() final { }  // Abstract class implements draw() as final
+            }
+
+            abstract class MiddleWidget : BaseWidget {
+                // Doesn't override draw() (it's final)
+                // Doesn't implement update() (still abstract)
+            }
+
+            class Button : MiddleWidget {
+                void update() { }   // Only implement update()
+                // draw() is final from BaseWidget - we don't try to override
+            }
+        "#, &arena);
+        assert!(data.errors.is_empty(), "Not overriding final method through intermediate is OK. Errors: {:?}", data.errors);
+    }
+
+    #[test]
+    fn abstract_chain_with_interface_and_multiple_intermediate_abstracts() {
+        // Deep chain: IWidget -> BaseWidget -> MiddleWidget -> ConcreteButton
+        // where interface method is NOT implemented until concrete class
+        let arena = Bump::new();
+        let data = compile(r#"
+            interface IWidget {
+                void draw();
+            }
+
+            abstract class BaseWidget : IWidget {
+                // Doesn't implement draw() - defers to subclass
+            }
+
+            abstract class MiddleWidget : BaseWidget {
+                // Still doesn't implement draw() - defers to subclass
+            }
+
+            class ConcreteButton : MiddleWidget {
+                void draw() { }   // Finally implements draw() here
+            }
+        "#, &arena);
+        assert!(data.errors.is_empty(), "Concrete class implements interface method through deep chain. Errors: {:?}", data.errors);
+    }
+
+    #[test]
+    fn abstract_chain_with_interface_missing_implementation() {
+        // Deep chain where no class implements the interface method - ERROR on concrete
+        let arena = Bump::new();
+        let data = compile(r#"
+            interface IWidget {
+                void draw();
+            }
+
+            abstract class BaseWidget : IWidget {
+                // Doesn't implement draw()
+            }
+
+            abstract class MiddleWidget : BaseWidget {
+                // Doesn't implement draw()
+            }
+
+            class ConcreteButton : MiddleWidget {
+                // MISSING: draw() - ERROR!
+            }
+        "#, &arena);
+        assert!(!data.errors.is_empty(), "Expected error for missing interface method");
+        assert!(data.errors[0].kind == SemanticErrorKind::MissingInterfaceMethod);
+        assert!(data.errors[0].message.contains("draw"));
+    }
+
     // ========================================================================
     // Override Keyword Validation Tests
     // ========================================================================
