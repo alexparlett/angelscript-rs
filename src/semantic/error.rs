@@ -130,6 +130,8 @@ pub enum SemanticErrorKind {
     // Inheritance errors
     /// Class inherits from itself (directly or indirectly).
     CircularInheritance,
+    /// Class inherits from a final class.
+    CannotInheritFromFinal,
     /// Class does not implement a required interface method.
     MissingInterfaceMethod,
     /// Method marked with 'override' but no matching base method exists.
@@ -173,6 +175,7 @@ impl fmt::Display for SemanticErrorKind {
             NotATemplate => "not a template",
             WrongTemplateArgCount => "wrong number of template arguments",
             CircularInheritance => "circular inheritance",
+            CannotInheritFromFinal => "cannot inherit from final class",
             MissingInterfaceMethod => "missing interface method",
             OverrideWithoutBase => "override without base method",
             CannotOverrideFinal => "cannot override final method",

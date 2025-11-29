@@ -232,6 +232,14 @@ impl<'src, 'ast> TypeCompiler<'src, 'ast> {
 
                 // First item can be a base class (if it's a class type)
                 if i == 0 && inherited_typedef.is_class() {
+                    // Check that base class is not final
+                    if self.registry.is_class_final(inherited_id) {
+                        self.errors.push(SemanticError::new(
+                            SemanticErrorKind::CannotInheritFromFinal,
+                            inherited_ident.span,
+                            format!("cannot inherit from final class '{}'", inherited_name),
+                        ));
+                    }
                     base_class = Some(inherited_id);
                 } else if inherited_typedef.is_interface() {
                     interfaces.push(inherited_id);
@@ -1532,6 +1540,69 @@ mod tests {
         assert!(data.errors[0].message.contains("onClick"));
     }
 
+    #[test]
+    fn abstract_class_defers_interface_to_concrete_subclass() {
+        // Abstract class implements interface but defers implementation to concrete subclass
+        let arena = Bump::new();
+        let data = compile(r#"
+            interface IDrawable {
+                void draw();
+            }
+
+            abstract class Widget : IDrawable {
+                // Abstract class doesn't implement draw() - OK, defers to subclass
+            }
+
+            class Button : Widget {
+                void draw() { }  // Concrete class provides implementation
+            }
+        "#, &arena);
+        assert!(data.errors.is_empty(), "Abstract class can defer interface to concrete subclass. Errors: {:?}", data.errors);
+    }
+
+    #[test]
+    fn concrete_class_missing_inherited_interface_method() {
+        // Concrete class inherits from abstract class that implements interface,
+        // but doesn't provide the implementation
+        let arena = Bump::new();
+        let data = compile(r#"
+            interface IDrawable {
+                void draw();
+            }
+
+            abstract class Widget : IDrawable {
+                // Abstract class doesn't implement draw()
+            }
+
+            class Button : Widget {
+                // Concrete class ALSO doesn't implement draw() - ERROR!
+            }
+        "#, &arena);
+        assert!(!data.errors.is_empty(), "Expected error for missing interface method");
+        assert!(data.errors[0].kind == SemanticErrorKind::MissingInterfaceMethod);
+        assert!(data.errors[0].message.contains("draw"));
+    }
+
+    #[test]
+    fn abstract_class_chain_with_interface() {
+        // Chain of abstract classes, only the final concrete one needs to implement
+        let arena = Bump::new();
+        let data = compile(r#"
+            interface IDrawable {
+                void draw();
+            }
+
+            abstract class Widget : IDrawable { }
+
+            abstract class ClickableWidget : Widget { }
+
+            class Button : ClickableWidget {
+                void draw() { }  // Finally implemented here
+            }
+        "#, &arena);
+        assert!(data.errors.is_empty(), "Chain of abstract classes, implementation at end. Errors: {:?}", data.errors);
+    }
+
     // ========================================================================
     // Override Keyword Validation Tests
     // ========================================================================
@@ -1663,5 +1734,59 @@ mod tests {
         "#, &arena);
         assert!(!data.errors.is_empty(), "Expected error for overriding grandparent's final method");
         assert!(data.errors[0].kind == SemanticErrorKind::CannotOverrideFinal);
+    }
+
+    // ========================================================================
+    // Final Class Validation Tests
+    // ========================================================================
+
+    #[test]
+    fn inherit_from_non_final_class_ok() {
+        let arena = Bump::new();
+        let data = compile(r#"
+            class Base { }
+
+            class Derived : Base { }
+        "#, &arena);
+        assert!(data.errors.is_empty(), "Inheriting from non-final class should be OK. Errors: {:?}", data.errors);
+    }
+
+    #[test]
+    fn inherit_from_final_class_error() {
+        let arena = Bump::new();
+        let data = compile(r#"
+            final class Sealed { }
+
+            class Derived : Sealed { }
+        "#, &arena);
+        assert!(!data.errors.is_empty(), "Expected error for inheriting from final class");
+        assert!(data.errors[0].kind == SemanticErrorKind::CannotInheritFromFinal);
+        assert!(data.errors[0].message.contains("Sealed"));
+    }
+
+    #[test]
+    fn abstract_class_can_be_inherited() {
+        let arena = Bump::new();
+        let data = compile(r#"
+            abstract class AbstractBase { }
+
+            class Concrete : AbstractBase { }
+        "#, &arena);
+        assert!(data.errors.is_empty(), "Inheriting from abstract class should be OK. Errors: {:?}", data.errors);
+    }
+
+    #[test]
+    fn final_class_can_implement_interface() {
+        let arena = Bump::new();
+        let data = compile(r#"
+            interface IWidget {
+                void draw();
+            }
+
+            final class Button : IWidget {
+                void draw() { }
+            }
+        "#, &arena);
+        assert!(data.errors.is_empty(), "Final class implementing interface should be OK. Errors: {:?}", data.errors);
     }
 }

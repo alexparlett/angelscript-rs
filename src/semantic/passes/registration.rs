@@ -194,6 +194,8 @@ impl<'src, 'ast> Registrar<'src, 'ast> {
             interfaces: Vec::new(),
             operator_methods: rustc_hash::FxHashMap::default(),  // Will be filled in Pass 2a
             properties: rustc_hash::FxHashMap::default(),  // Will be filled in Pass 2a
+            is_final: class.modifiers.final_,
+            is_abstract: class.modifiers.abstract_,
         };
 
         let type_id = self.registry.register_type(typedef, Some(&qualified_name));

@@ -214,6 +214,8 @@ impl<'src, 'ast> Registry<'src, 'ast> {
             interfaces: Vec::new(),
             operator_methods: FxHashMap::default(),
             properties: FxHashMap::default(),
+            is_final: false,
+            is_abstract: false,
         };
         self.type_by_name.insert("string".to_string(), type_id);
     }
@@ -761,6 +763,16 @@ impl<'src, 'ast> Registry<'src, 'ast> {
         }
     }
 
+    /// Check if a class is marked as 'final' (cannot be inherited from)
+    pub fn is_class_final(&self, type_id: TypeId) -> bool {
+        let typedef = self.get_type(type_id);
+        if let TypeDef::Class { is_final, .. } = typedef {
+            *is_final
+        } else {
+            false
+        }
+    }
+
     /// Find a method directly on this class (not in base classes)
     fn find_direct_method(&self, type_id: TypeId, name: &str) -> Option<FunctionId> {
         let typedef = self.get_type(type_id);
@@ -1190,6 +1202,8 @@ mod tests {
             interfaces: Vec::new(),
             operator_methods: rustc_hash::FxHashMap::default(),
             properties: rustc_hash::FxHashMap::default(),
+            is_final: false,
+            is_abstract: false,
         };
 
         let type_id = registry.register_type(typedef, Some("Player"));
@@ -1210,6 +1224,8 @@ mod tests {
             interfaces: Vec::new(),
             operator_methods: rustc_hash::FxHashMap::default(),
             properties: rustc_hash::FxHashMap::default(),
+            is_final: false,
+            is_abstract: false,
         };
 
         let type_id = registry.register_type(typedef, Some("Game::Player"));
@@ -1279,6 +1295,8 @@ mod tests {
             interfaces: Vec::new(),
             operator_methods: rustc_hash::FxHashMap::default(),
             properties: rustc_hash::FxHashMap::default(),
+            is_final: false,
+            is_abstract: false,
         };
 
         let type_id = registry.register_type(typedef, Some("Player"));
@@ -1614,6 +1632,8 @@ mod tests {
             interfaces: Vec::new(),
             operator_methods: rustc_hash::FxHashMap::default(),
             properties: rustc_hash::FxHashMap::default(),
+            is_final: false,
+            is_abstract: false,
         };
 
         let type_id = registry.register_type(typedef, Some("Player"));
@@ -1640,6 +1660,8 @@ mod tests {
             interfaces: Vec::new(),
             operator_methods: rustc_hash::FxHashMap::default(),
             properties: rustc_hash::FxHashMap::default(),
+            is_final: false,
+            is_abstract: false,
         };
         let type_id = registry.register_type(typedef, Some("Vector3"));
 
@@ -1695,6 +1717,8 @@ mod tests {
             interfaces: Vec::new(),
             operator_methods: rustc_hash::FxHashMap::default(),
             properties: rustc_hash::FxHashMap::default(),
+            is_final: false,
+            is_abstract: false,
         };
         let type_id = registry.register_type(typedef, Some("Vector3"));
 
@@ -1747,6 +1771,8 @@ mod tests {
             interfaces: Vec::new(),
             operator_methods: rustc_hash::FxHashMap::default(),
             properties: rustc_hash::FxHashMap::default(),
+            is_final: false,
+            is_abstract: false,
         };
         let type_id = registry.register_type(typedef, Some("Vector3"));
 
@@ -1793,6 +1819,8 @@ mod tests {
             interfaces: Vec::new(),
             operator_methods: rustc_hash::FxHashMap::default(),
             properties: rustc_hash::FxHashMap::default(),
+            is_final: false,
+            is_abstract: false,
         };
         let type_id = registry.register_type(typedef, Some("Vector3"));
 
@@ -1871,6 +1899,8 @@ mod tests {
             methods: Vec::new(),
             operator_methods: rustc_hash::FxHashMap::default(),
             properties: rustc_hash::FxHashMap::default(),
+            is_final: false,
+            is_abstract: false,
         };
         let type_id = registry.register_type(typedef, Some("Player"));
 
@@ -1919,6 +1949,8 @@ mod tests {
             methods: Vec::new(),
             operator_methods: rustc_hash::FxHashMap::default(),
             properties: rustc_hash::FxHashMap::default(),
+            is_final: false,
+            is_abstract: false,
         };
         let type_id = registry.register_type(typedef, Some("Player"));
 
@@ -1967,6 +1999,8 @@ mod tests {
             methods: Vec::new(),
             operator_methods: rustc_hash::FxHashMap::default(),
             properties: rustc_hash::FxHashMap::default(),
+            is_final: false,
+            is_abstract: false,
         };
         let type_id = registry.register_type(typedef, Some("Player"));
 
@@ -2016,6 +2050,8 @@ mod tests {
             methods: Vec::new(),
             operator_methods: rustc_hash::FxHashMap::default(),
             properties: rustc_hash::FxHashMap::default(),
+            is_final: false,
+            is_abstract: false,
         };
         let type_id = registry.register_type(typedef, Some("Player"));
 
@@ -2064,6 +2100,8 @@ mod tests {
             methods: Vec::new(),
             operator_methods: rustc_hash::FxHashMap::default(),
             properties: rustc_hash::FxHashMap::default(),
+            is_final: false,
+            is_abstract: false,
         };
         let type_id = registry.register_type(typedef, Some("Player"));
 
@@ -2112,6 +2150,8 @@ mod tests {
             methods: Vec::new(),
             operator_methods: rustc_hash::FxHashMap::default(),
             properties: rustc_hash::FxHashMap::default(),
+            is_final: false,
+            is_abstract: false,
         };
         let type_id = registry.register_type(typedef, Some("Player"));
 
@@ -2134,6 +2174,8 @@ mod tests {
             methods: vec![FunctionId::new(100)], // base method
             operator_methods: rustc_hash::FxHashMap::default(),
             properties: rustc_hash::FxHashMap::default(),
+            is_final: false,
+            is_abstract: false,
         };
         let base_id = registry.register_type(base_typedef, Some("Base"));
 
@@ -2147,6 +2189,8 @@ mod tests {
             methods: vec![FunctionId::new(200)], // derived method
             operator_methods: rustc_hash::FxHashMap::default(),
             properties: rustc_hash::FxHashMap::default(),
+            is_final: false,
+            is_abstract: false,
         };
         let derived_id = registry.register_type(derived_typedef, Some("Derived"));
 
@@ -2179,6 +2223,8 @@ mod tests {
             methods: Vec::new(),
             operator_methods: rustc_hash::FxHashMap::default(),
             properties: base_props,
+            is_final: false,
+            is_abstract: false,
         };
         let base_id = registry.register_type(base_typedef, Some("Base"));
 
@@ -2198,6 +2244,8 @@ mod tests {
             methods: Vec::new(),
             operator_methods: rustc_hash::FxHashMap::default(),
             properties: derived_props,
+            is_final: false,
+            is_abstract: false,
         };
         let derived_id = registry.register_type(derived_typedef, Some("Derived"));
 
@@ -2238,6 +2286,8 @@ mod tests {
             methods: vec![base_method_id],
             operator_methods: rustc_hash::FxHashMap::default(),
             properties: rustc_hash::FxHashMap::default(),
+            is_final: false,
+            is_abstract: false,
         };
         let base_id = registry.register_type(base_typedef, Some("Base"));
 
@@ -2251,6 +2301,8 @@ mod tests {
             methods: Vec::new(),  // No methods in derived
             operator_methods: rustc_hash::FxHashMap::default(),
             properties: rustc_hash::FxHashMap::default(),
+            is_final: false,
+            is_abstract: false,
         };
         let derived_id = registry.register_type(derived_typedef, Some("Derived"));
 
@@ -2287,6 +2339,8 @@ mod tests {
             methods: vec![base_method_id],
             operator_methods: rustc_hash::FxHashMap::default(),
             properties: rustc_hash::FxHashMap::default(),
+            is_final: false,
+            is_abstract: false,
         };
         let base_id = registry.register_type(base_typedef, Some("Base"));
 
@@ -2314,6 +2368,8 @@ mod tests {
             methods: vec![derived_method_id],  // Override
             operator_methods: rustc_hash::FxHashMap::default(),
             properties: rustc_hash::FxHashMap::default(),
+            is_final: false,
+            is_abstract: false,
         };
         let derived_id = registry.register_type(derived_typedef, Some("Derived"));
 
@@ -2354,6 +2410,8 @@ mod tests {
             methods: vec![base_method_id],
             operator_methods: rustc_hash::FxHashMap::default(),
             properties: rustc_hash::FxHashMap::default(),
+            is_final: false,
+            is_abstract: false,
         };
         let base_id = registry.register_type(base_typedef, Some("Base"));
 
@@ -2367,6 +2425,8 @@ mod tests {
             methods: Vec::new(),
             operator_methods: rustc_hash::FxHashMap::default(),
             properties: rustc_hash::FxHashMap::default(),
+            is_final: false,
+            is_abstract: false,
         };
         let middle_id = registry.register_type(middle_typedef, Some("Middle"));
 
@@ -2380,6 +2440,8 @@ mod tests {
             methods: Vec::new(),
             operator_methods: rustc_hash::FxHashMap::default(),
             properties: rustc_hash::FxHashMap::default(),
+            is_final: false,
+            is_abstract: false,
         };
         let most_derived_id = registry.register_type(most_derived_typedef, Some("MostDerived"));
 
@@ -2401,6 +2463,8 @@ mod tests {
             methods: Vec::new(),
             operator_methods: rustc_hash::FxHashMap::default(),
             properties: rustc_hash::FxHashMap::default(),
+            is_final: false,
+            is_abstract: false,
         };
         let type_id = registry.register_type(typedef, Some("MyClass"));
 
@@ -2429,6 +2493,8 @@ mod tests {
             methods: Vec::new(),
             operator_methods: rustc_hash::FxHashMap::default(),
             properties: base_props,
+            is_final: false,
+            is_abstract: false,
         };
         let base_id = registry.register_type(base_typedef, Some("Base"));
 
@@ -2442,6 +2508,8 @@ mod tests {
             methods: Vec::new(),
             operator_methods: rustc_hash::FxHashMap::default(),
             properties: rustc_hash::FxHashMap::default(),
+            is_final: false,
+            is_abstract: false,
         };
         let derived_id = registry.register_type(derived_typedef, Some("Derived"));
 

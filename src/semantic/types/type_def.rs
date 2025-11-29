@@ -638,6 +638,10 @@ pub enum TypeDef {
         /// Both virtual properties (int prop { get { } set { } }) and explicit methods
         /// (int get_prop() property { }) are stored here for uniform access
         properties: FxHashMap<String, PropertyAccessors>,
+        /// Class is marked 'final' (cannot be inherited from)
+        is_final: bool,
+        /// Class is marked 'abstract' (cannot be instantiated, can defer interface implementation)
+        is_abstract: bool,
     },
 
     /// Interface definition
@@ -943,6 +947,8 @@ mod tests {
             interfaces: vec![],
             operator_methods: rustc_hash::FxHashMap::default(),
             properties: rustc_hash::FxHashMap::default(),
+            is_final: false,
+            is_abstract: false,
         };
         assert_eq!(typedef.name(), "Player");
         assert_eq!(typedef.qualified_name(), "Game::Player");
@@ -967,6 +973,8 @@ mod tests {
             interfaces: vec![TypeId::new(60)],
             operator_methods: rustc_hash::FxHashMap::default(),
             properties: rustc_hash::FxHashMap::default(),
+            is_final: false,
+            is_abstract: false,
         };
 
         if let TypeDef::Class { fields, methods, base_class, interfaces, .. } = typedef {
