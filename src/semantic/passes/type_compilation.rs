@@ -145,6 +145,7 @@ impl<'src, 'ast> TypeCompiler<'src, 'ast> {
         let qualified_name = self.build_qualified_name(func.name.name);
 
         // Resolve parameter types
+        // Note: void parameters can't occur from parsing (syntax doesn't allow `void param_name`)
         let params: Vec<DataType> = func
             .params
             .iter()
@@ -312,6 +313,15 @@ impl<'src, 'ast> TypeCompiler<'src, 'ast> {
         for member in class.members {
             if let ClassMember::Field(field) = member
                 && let Some(field_type) = self.resolve_type_expr(&field.ty) {
+                    // Void type cannot be used for class fields
+                    if field_type.type_id == crate::semantic::VOID_TYPE {
+                        self.errors.push(SemanticError::new(
+                            SemanticErrorKind::VoidExpression,
+                            field.ty.span,
+                            format!("cannot declare field '{}' of type 'void'", field.name.name),
+                        ));
+                        continue;
+                    }
                     // Convert AST visibility to semantic visibility
                     let visibility = match field.visibility {
                         crate::ast::Visibility::Public => Visibility::Public,
@@ -2455,4 +2465,27 @@ mod tests {
         // But it should be registered as a mixin
         assert!(data.registry.is_mixin("MyMixin"), "MyMixin should be registered as a mixin");
     }
+
+    // ==================== Void Expression Validation Tests ====================
+
+    #[test]
+    fn void_class_field_error() {
+        let arena = Bump::new();
+        let data = compile(r#"
+            class MyClass {
+                void badField;
+            }
+        "#, &arena);
+
+        assert!(!data.errors.is_empty(), "Should fail for void class field");
+        assert!(data.errors.iter().any(|e| {
+            e.kind == SemanticErrorKind::VoidExpression
+                && e.message.contains("cannot declare field")
+                && e.message.contains("of type 'void'")
+        }), "Should have VoidExpression error: {:?}", data.errors);
+    }
+
+    // Note: void_function_parameter_error and void_method_parameter_error tests are not included
+    // because AngelScript's syntax doesn't allow `void param_name` - the parser rejects this.
+    // The semantic validation is still in place as defensive programming for programmatic AST creation.
 }

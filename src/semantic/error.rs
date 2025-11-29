@@ -143,6 +143,10 @@ pub enum SemanticErrorKind {
     /// Mixin has an invalid modifier (final, shared, abstract, external).
     InvalidMixinModifier,
 
+    // Void type errors
+    /// Void type used in an invalid context (variable, parameter, operand, etc.).
+    VoidExpression,
+
     // Field/member errors
     /// Reference to an undefined field.
     UndefinedField,
@@ -184,6 +188,7 @@ impl fmt::Display for SemanticErrorKind {
             OverrideWithoutBase => "override without base method",
             CannotOverrideFinal => "cannot override final method",
             InvalidMixinModifier => "invalid mixin modifier",
+            VoidExpression => "void type in invalid context",
             UndefinedField => "undefined field",
             UndefinedMethod => "undefined method",
             WrongArgumentCount => "wrong number of arguments",

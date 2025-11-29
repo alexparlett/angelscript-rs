@@ -844,6 +844,16 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
             None => return, // Error already recorded
         };
 
+        // Void type cannot be used for variables
+        if var_type.type_id == VOID_TYPE {
+            self.error(
+                SemanticErrorKind::VoidExpression,
+                var_decl.ty.span,
+                "cannot declare variable of type 'void'",
+            );
+            return;
+        }
+
         // Check if variable type is a funcdef (for function handle inference)
         let is_funcdef = matches!(
             self.registry.get_type(var_type.type_id),
@@ -920,6 +930,16 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
                 Some(ctx) => ctx,
                 None => return, // Error already recorded
             };
+
+            // Cannot return a void expression
+            if value_ctx.data_type.type_id == VOID_TYPE {
+                self.error(
+                    SemanticErrorKind::VoidExpression,
+                    ret.span,
+                    "cannot return a void expression",
+                );
+                return;
+            }
 
             // Check if value can be converted to return type and emit conversion if needed
             if let Some(conversion) = value_ctx.data_type.can_convert_to(&self.return_type, self.registry) {
@@ -1932,6 +1952,24 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
         right: &DataType,
         span: Span,
     ) -> Option<DataType> {
+        // Void type cannot be used in binary operations
+        if left.type_id == VOID_TYPE {
+            self.error(
+                SemanticErrorKind::VoidExpression,
+                span,
+                "cannot use void expression as left operand",
+            );
+            return None;
+        }
+        if right.type_id == VOID_TYPE {
+            self.error(
+                SemanticErrorKind::VoidExpression,
+                span,
+                "cannot use void expression as right operand",
+            );
+            return None;
+        }
+
         // For simplicity, we'll use basic type rules
         // In a complete implementation, this would be more sophisticated
 
@@ -2085,6 +2123,16 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
         }
 
         let operand_ctx = self.check_expr(unary.operand)?;
+
+        // Void type cannot be used in unary operations
+        if operand_ctx.data_type.type_id == VOID_TYPE {
+            self.error(
+                SemanticErrorKind::VoidExpression,
+                unary.span,
+                "cannot use void expression as operand",
+            );
+            return None;
+        }
 
         match unary.op {
             UnaryOp::Neg => {
@@ -2286,6 +2334,16 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
                 // Clear expected funcdef type
                 self.expected_funcdef_type = None;
 
+                // Cannot assign a void expression
+                if value_ctx.data_type.type_id == VOID_TYPE {
+                    self.error(
+                        SemanticErrorKind::VoidExpression,
+                        assign.value.span(),
+                        "cannot use void expression as assignment value",
+                    );
+                    return None;
+                }
+
                 // Check that target is a mutable lvalue
                 if !target_ctx.is_lvalue {
                     self.error(
@@ -2374,6 +2432,16 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
 
                 // Check value (RHS)
                 let value_ctx = self.check_expr(assign.value)?;
+
+                // Cannot use void expression in compound assignment
+                if value_ctx.data_type.type_id == VOID_TYPE {
+                    self.error(
+                        SemanticErrorKind::VoidExpression,
+                        assign.value.span(),
+                        "cannot use void expression as assignment value",
+                    );
+                    return None;
+                }
 
                 // Try compound assignment operator overload first
                 let compound_op = match assign.op {
@@ -2484,6 +2552,24 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
         // Check both branches
         let then_ctx = self.check_expr(ternary.then_expr)?;
         let else_ctx = self.check_expr(ternary.else_expr)?;
+
+        // Void type cannot be used in ternary branches
+        if then_ctx.data_type.type_id == VOID_TYPE {
+            self.error(
+                SemanticErrorKind::VoidExpression,
+                ternary.then_expr.span(),
+                "cannot use void expression in ternary branch",
+            );
+            return None;
+        }
+        if else_ctx.data_type.type_id == VOID_TYPE {
+            self.error(
+                SemanticErrorKind::VoidExpression,
+                ternary.else_expr.span(),
+                "cannot use void expression in ternary branch",
+            );
+            return None;
+        }
 
         // Both branches should have compatible types
         // For simplicity, we'll require exact match
@@ -4268,7 +4354,7 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
         func_def: &crate::semantic::types::registry::FunctionDef,
         arg_contexts: &[ExprContext],
         call_args: &[crate::ast::expr::Argument<'src, 'ast>],
-        span: Span,
+        _span: Span,
     ) -> Option<()> {
         use crate::semantic::types::RefModifier;
 
@@ -4280,6 +4366,16 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
             }
 
             let arg_ctx = &arg_contexts[i];
+
+            // Void expressions cannot be passed as arguments
+            if arg_ctx.data_type.type_id == VOID_TYPE {
+                self.error(
+                    SemanticErrorKind::VoidExpression,
+                    call_args[i].span,
+                    format!("cannot pass void expression as argument {}", i + 1),
+                );
+                return None;
+            }
 
             match param_type.ref_modifier {
                 RefModifier::None => {
@@ -5811,5 +5907,201 @@ mod tests {
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Bitwise assignment operators should work: {:?}", result.errors);
+    }
+
+    // ==================== Void Expression Validation Tests ====================
+
+    #[test]
+    fn void_variable_declaration_error() {
+        use crate::parse_lenient;
+        use crate::semantic::Compiler;
+        use bumpalo::Bump;
+
+        let arena = Bump::new();
+        let source = r#"
+            void main() {
+                void x;
+            }
+        "#;
+
+        let (script, _) = parse_lenient(source, &arena);
+        let result = Compiler::compile(&script);
+
+        assert!(!result.is_success(), "Should fail for void variable declaration");
+        assert!(result.errors.iter().any(|e| {
+            e.kind == SemanticErrorKind::VoidExpression
+                && e.message.contains("cannot declare variable of type 'void'")
+        }), "Should have VoidExpression error: {:?}", result.errors);
+    }
+
+    #[test]
+    fn void_return_in_non_void_function_error() {
+        use crate::parse_lenient;
+        use crate::semantic::Compiler;
+        use bumpalo::Bump;
+
+        let arena = Bump::new();
+        let source = r#"
+            void helper() {}
+
+            int getValue() {
+                return helper();
+            }
+        "#;
+
+        let (script, _) = parse_lenient(source, &arena);
+        let result = Compiler::compile(&script);
+
+        assert!(!result.is_success(), "Should fail for returning void expression");
+        assert!(result.errors.iter().any(|e| {
+            e.kind == SemanticErrorKind::VoidExpression
+                && e.message.contains("cannot return a void expression")
+        }), "Should have VoidExpression error: {:?}", result.errors);
+    }
+
+    #[test]
+    fn void_assignment_error() {
+        use crate::parse_lenient;
+        use crate::semantic::Compiler;
+        use bumpalo::Bump;
+
+        let arena = Bump::new();
+        let source = r#"
+            void helper() {}
+
+            void main() {
+                int x;
+                x = helper();
+            }
+        "#;
+
+        let (script, _) = parse_lenient(source, &arena);
+        let result = Compiler::compile(&script);
+
+        assert!(!result.is_success(), "Should fail for assigning void expression");
+        assert!(result.errors.iter().any(|e| {
+            e.kind == SemanticErrorKind::VoidExpression
+                && e.message.contains("cannot use void expression as assignment value")
+        }), "Should have VoidExpression error: {:?}", result.errors);
+    }
+
+    #[test]
+    fn void_binary_operand_error() {
+        use crate::parse_lenient;
+        use crate::semantic::Compiler;
+        use bumpalo::Bump;
+
+        let arena = Bump::new();
+        let source = r#"
+            void helper() {}
+
+            void main() {
+                int x = helper() + 1;
+            }
+        "#;
+
+        let (script, _) = parse_lenient(source, &arena);
+        let result = Compiler::compile(&script);
+
+        assert!(!result.is_success(), "Should fail for void in binary operation");
+        assert!(result.errors.iter().any(|e| {
+            e.kind == SemanticErrorKind::VoidExpression
+                && e.message.contains("cannot use void expression as left operand")
+        }), "Should have VoidExpression error: {:?}", result.errors);
+    }
+
+    #[test]
+    fn void_unary_operand_error() {
+        use crate::parse_lenient;
+        use crate::semantic::Compiler;
+        use bumpalo::Bump;
+
+        let arena = Bump::new();
+        let source = r#"
+            void helper() {}
+
+            void main() {
+                int x = -helper();
+            }
+        "#;
+
+        let (script, _) = parse_lenient(source, &arena);
+        let result = Compiler::compile(&script);
+
+        assert!(!result.is_success(), "Should fail for void in unary operation");
+        assert!(result.errors.iter().any(|e| {
+            e.kind == SemanticErrorKind::VoidExpression
+                && e.message.contains("cannot use void expression as operand")
+        }), "Should have VoidExpression error: {:?}", result.errors);
+    }
+
+    #[test]
+    fn void_ternary_branch_error() {
+        use crate::parse_lenient;
+        use crate::semantic::Compiler;
+        use bumpalo::Bump;
+
+        let arena = Bump::new();
+        let source = r#"
+            void helper() {}
+
+            void main() {
+                bool cond = true;
+                int x = cond ? helper() : 1;
+            }
+        "#;
+
+        let (script, _) = parse_lenient(source, &arena);
+        let result = Compiler::compile(&script);
+
+        assert!(!result.is_success(), "Should fail for void in ternary branch");
+        assert!(result.errors.iter().any(|e| {
+            e.kind == SemanticErrorKind::VoidExpression
+                && e.message.contains("cannot use void expression in ternary branch")
+        }), "Should have VoidExpression error: {:?}", result.errors);
+    }
+
+    #[test]
+    fn void_return_type_allowed() {
+        use crate::parse_lenient;
+        use crate::semantic::Compiler;
+        use bumpalo::Bump;
+
+        let arena = Bump::new();
+        let source = r#"
+            void doNothing() {
+                return;
+            }
+
+            void main() {
+                doNothing();
+            }
+        "#;
+
+        let (script, _) = parse_lenient(source, &arena);
+        let result = Compiler::compile(&script);
+
+        assert!(result.is_success(), "Void return type should be allowed: {:?}", result.errors);
+    }
+
+    #[test]
+    fn void_function_call_as_statement() {
+        use crate::parse_lenient;
+        use crate::semantic::Compiler;
+        use bumpalo::Bump;
+
+        let arena = Bump::new();
+        let source = r#"
+            void helper() {}
+
+            void main() {
+                helper();  // This is valid - discarding void result
+            }
+        "#;
+
+        let (script, _) = parse_lenient(source, &arena);
+        let result = Compiler::compile(&script);
+
+        assert!(result.is_success(), "Void function call as statement should be allowed: {:?}", result.errors);
     }
 }
