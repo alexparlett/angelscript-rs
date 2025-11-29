@@ -256,10 +256,16 @@ impl<'src, 'ast> TypeCompiler<'src, 'ast> {
         for member in class.members {
             if let ClassMember::Field(field) = member
                 && let Some(field_type) = self.resolve_type_expr(&field.ty) {
+                    // Convert AST visibility to semantic visibility
+                    let visibility = match field.visibility {
+                        crate::ast::Visibility::Public => Visibility::Public,
+                        crate::ast::Visibility::Private => Visibility::Private,
+                        crate::ast::Visibility::Protected => Visibility::Protected,
+                    };
                     fields.push(FieldDef {
                         name: field.name.name.to_string(),
                         data_type: field_type,
-                        visibility: Visibility::Private, // TODO: Extract from field modifiers
+                        visibility,
                     });
                 }
         }
@@ -545,8 +551,28 @@ impl<'src, 'ast> TypeCompiler<'src, 'ast> {
     }
 
     /// Visit a typedef declaration
-    fn visit_typedef(&mut self, _typedef: &TypedefDecl<'src, 'ast>) {
-        // TODO: Implement typedef handling
+    ///
+    /// Typedefs create type aliases for primitive types.
+    /// Example: `typedef float real;` creates `real` as an alias for `float`.
+    fn visit_typedef(&mut self, typedef: &TypedefDecl<'src, 'ast>) {
+        // Resolve the base type
+        let base_type = match self.resolve_type_expr(&typedef.base_type) {
+            Some(dt) => dt,
+            None => {
+                self.errors.push(SemanticError::new(
+                    SemanticErrorKind::UndefinedType,
+                    typedef.span,
+                    format!("cannot resolve base type for typedef '{}'", typedef.name.name),
+                ));
+                return;
+            }
+        };
+
+        // Build the qualified name for the alias
+        let alias_name = self.build_qualified_name(typedef.name.name);
+
+        // Register the alias
+        self.registry.register_type_alias(&alias_name, base_type.type_id);
     }
 
     /// Visit a funcdef declaration and fill in its signature
@@ -648,8 +674,21 @@ impl<'src, 'ast> TypeCompiler<'src, 'ast> {
                     break; // Only first @ matters
                 }
                 TypeSuffix::Array => {
-                    // TODO: Handle array types - might need to create array<T> template instance
-                    // For now, we'll skip array suffix handling
+                    // Array suffix T[] creates array<T>
+                    // Instantiate the array template with the current type as element type
+                    match self.registry.instantiate_template(
+                        crate::semantic::ARRAY_TEMPLATE,
+                        vec![data_type.clone()],
+                    ) {
+                        Ok(array_type_id) => {
+                            // Arrays are reference types, so they're handles
+                            data_type = DataType::with_handle(array_type_id, false);
+                        }
+                        Err(err) => {
+                            self.errors.push(err);
+                            return None;
+                        }
+                    }
                 }
             }
         }

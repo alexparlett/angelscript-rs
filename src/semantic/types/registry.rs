@@ -245,6 +245,14 @@ impl<'src, 'ast> Registry<'src, 'ast> {
         type_id
     }
 
+    /// Register a type alias (typedef)
+    ///
+    /// This creates an alias name that points to an existing type.
+    /// For example, `typedef float real;` would call `register_type_alias("real", FLOAT_TYPE)`.
+    pub fn register_type_alias(&mut self, alias_name: &str, target_type: TypeId) {
+        self.type_by_name.insert(alias_name.to_string(), target_type);
+    }
+
     /// Look up a type by name (returns None if not found)
     pub fn lookup_type(&self, name: &str) -> Option<TypeId> {
         self.type_by_name.get(name).copied()
