@@ -66,7 +66,7 @@ impl<'src, 'ast> Parser<'src, 'ast> {
             TokenKind::Namespace => self.parse_namespace(),
             TokenKind::Typedef => self.parse_typedef(),
             TokenKind::Import => self.parse_import(),
-            TokenKind::Mixin => self.parse_mixin(),
+            TokenKind::Mixin => self.parse_mixin(modifiers),
             
             // Function or global variable
             _ => {
@@ -1984,7 +1984,7 @@ impl<'src, 'ast> Parser<'src, 'ast> {
     }
 
     /// Parse a mixin declaration.
-    pub fn parse_mixin(&mut self) -> Result<Item<'src, 'ast>, ParseError> {
+    pub fn parse_mixin(&mut self, modifiers: DeclModifiers) -> Result<Item<'src, 'ast>, ParseError> {
         let start_span = self.eat(TokenKind::Mixin)
             .ok_or_else(|| {
                 let span = self.peek().span;
@@ -1996,7 +1996,8 @@ impl<'src, 'ast> Parser<'src, 'ast> {
             })?
             .span;
 
-        let class_item = self.parse_class(DeclModifiers::new(), Visibility::Public)?;
+        // Pass the modifiers to parse_class so they are captured in the ClassDecl
+        let class_item = self.parse_class(modifiers, Visibility::Public)?;
 
         if let Item::Class(class) = class_item {
             let span = start_span.merge(class.span);

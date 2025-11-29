@@ -1520,6 +1520,82 @@ Defer Task 40 until the FFI/host API is designed. Template constraint callbacks 
 
 ---
 
+## 2025-11-29: Task 41 - Mixin Implementation Strategy
+
+### Context
+
+Task 41 required implementing mixin class support. Mixin classes in AngelScript are partial class structures that can be "mixed into" regular classes, providing reusable methods and fields.
+
+### Analysis
+
+Key characteristics of AngelScript mixins:
+1. Mixins are NOT real types - they cannot be instantiated
+2. When a class includes a mixin, the mixin's members are copied into the class
+3. Class-defined methods/fields take precedence over mixin members
+4. Mixin methods are compiled in the context of the including class
+5. Mixins can require interfaces (propagated to including classes)
+6. Mixins cannot be `final`, `shared`, `abstract`, or `external`
+
+### Options Considered
+
+**Option 1: Store reference to ClassDecl in MixinDef**
+- Store `&'ast ClassDecl` in `MixinDef`
+- Simple, direct access to AST
+- Cons: Requires lifetime changes that break test helpers
+
+**Option 2: Store members slice in MixinDef** ✅ CHOSEN
+- Store `&'ast [ClassMember]` in `MixinDef`
+- Members slice is arena-allocated, has correct lifetime
+- Avoids requiring `&'ast Script` everywhere
+
+**Option 3: Clone mixin data during registration**
+- Deep copy all mixin members into owned data
+- Cons: Memory duplication, complex cloning logic
+
+### Decision
+
+Store the arena-allocated members slice directly in `MixinDef`. This works because `ClassDecl.members` is already `&'ast [ClassMember]` - the slice itself is arena-allocated.
+
+### Implementation Details
+
+**Pass 1 (Registration):**
+- New `visit_mixin()` function registers `MixinDef` with:
+  - Name and qualified name
+  - Required interfaces
+  - Members slice reference
+- Validates mixin modifiers (no final/shared/abstract/external)
+- Mixins stored in `Registry.mixins`, NOT in type registry
+
+**Pass 2a (Type Compilation):**
+- `visit_class()` checks each inheritance item:
+  - If it's a mixin name → process mixin
+  - If it's a type → process as base class or interface
+- For each mixin:
+  - Add required interfaces to class
+  - Copy fields (unless already in class or inherited)
+  - Register methods as class methods (unless already in class)
+- New `register_mixin_method()` helper creates FunctionDef for mixin methods
+
+### Rationale
+
+1. **Correct Lifetimes**: Using `&'ast [ClassMember]` avoids complex lifetime propagation
+2. **No Type Pollution**: Mixins stored separately, can't be used as types
+3. **Precedence Correct**: Class members checked before mixin members
+4. **Interface Propagation**: Interfaces from mixin added to class automatically
+
+### Tests Added
+
+15 new tests covering:
+- Basic mixin registration and usage
+- Modifier validation (final/shared/abstract/external errors)
+- Method and field inheritance
+- Class precedence over mixin
+- Multiple mixins
+- Interface propagation
+- Mixin with base class
+
+---
+
 ## Future Decisions
 
 (To be added as we make them)

@@ -139,6 +139,10 @@ pub enum SemanticErrorKind {
     /// Attempting to override a method marked as 'final'.
     CannotOverrideFinal,
 
+    // Mixin errors
+    /// Mixin has an invalid modifier (final, shared, abstract, external).
+    InvalidMixinModifier,
+
     // Field/member errors
     /// Reference to an undefined field.
     UndefinedField,
@@ -179,6 +183,7 @@ impl fmt::Display for SemanticErrorKind {
             MissingInterfaceMethod => "missing interface method",
             OverrideWithoutBase => "override without base method",
             CannotOverrideFinal => "cannot override final method",
+            InvalidMixinModifier => "invalid mixin modifier",
             UndefinedField => "undefined field",
             UndefinedMethod => "undefined method",
             WrongArgumentCount => "wrong number of arguments",

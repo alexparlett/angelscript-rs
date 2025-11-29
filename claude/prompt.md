@@ -1,6 +1,6 @@
-# Current Task: Task 40 Deferred - Template Constraints
+# Current Task: Task 41 Complete - Mixin Support
 
-**Status:** ✅ Task 40 Deferred to FFI Implementation
+**Status:** ✅ Task 41 Complete
 **Date:** 2025-11-29
 **Phase:** Semantic Analysis - Remaining Features
 
@@ -21,33 +21,66 @@
 - ✅ Tasks 26-29 (Lambda Expressions): Complete
 - ✅ Tasks 30-34 (TODO Cleanup): Complete
 - ✅ Tasks 35-38: Namespace, Enum, Funcdef & Interface Validation Complete
-- ⏳ Remaining: Tasks 41-56
+- ✅ Task 41: Mixin Support Complete
+- ⏳ Remaining: Tasks 42-56
 
-**Test Status:** ✅ 766 tests passing (100%)
+**Test Status:** ✅ 781 tests passing (100%)
 
 ---
 
-## Latest Work: Task 40 - Template Constraint Validation - DEFERRED
+## Latest Work: Task 41 - Mixin Support - COMPLETE
 
-**Status:** ❌ Deferred to FFI Implementation
+**Status:** ✅ Complete
 **Date:** 2025-11-29
 
-### Analysis
+### Implementation Summary
 
-Template constraints in AngelScript are implemented via `asBEHAVE_TEMPLATE_CALLBACK` - a host-level behavior callback registered by the embedding application. This is fundamentally different from our current `OperatorBehavior` enum which handles operator overloading (opAdd, opEquals, etc.).
+Implemented full mixin class support according to AngelScript documentation:
 
-**Key findings:**
-- Template callbacks are registered via `engine->RegisterObjectBehaviour("array<T>", asBEHAVE_TEMPLATE_CALLBACK, ...)`
-- The callback function is C++ code provided by the host application
-- It validates whether a specific template instantiation is valid (e.g., `array<void>` is invalid)
-- This is an FFI/host-level feature, not script-level syntax
+**Files Modified:**
+- `src/semantic/types/registry.rs` - Added `MixinDef` struct and mixin storage
+- `src/semantic/passes/registration.rs` - Added `visit_mixin()` for Pass 1 registration
+- `src/semantic/passes/type_compilation.rs` - Added mixin expansion in `visit_class()`
+- `src/semantic/error.rs` - Added `InvalidMixinModifier` error kind
+- `src/ast/decl_parser.rs` - Fixed parser to pass modifiers to `parse_mixin()`
 
-**Current template implementation is sufficient:**
-- ✅ Template argument count validation
-- ✅ Template instantiation caching
-- ✅ Template instance creation
+**Features Implemented:**
+1. **Mixin Registration (Pass 1):**
+   - Mixins registered separately from types (not instantiable)
+   - Mixin modifier validation (cannot be final/shared/abstract/external)
+   - Required interfaces captured from inheritance list
 
-**Recommendation:** Defer Task 40 until the FFI/host API is designed. Template constraint callbacks should be part of the broader behavior system alongside `asBEHAVE_CONSTRUCT`, `asBEHAVE_ADDREF`, `asBEHAVE_RELEASE`, etc.
+2. **Mixin Expansion (Pass 2a):**
+   - Methods copied from mixin to including class
+   - Fields copied from mixin to including class
+   - Interfaces from mixin added to class
+   - Class methods/fields take precedence over mixin members
+   - Mixin members NOT added if already inherited from base class
+
+3. **New Helper Methods:**
+   - `Registry::register_mixin()` - Register a mixin definition
+   - `Registry::lookup_mixin()` - Look up a mixin by name
+   - `Registry::is_mixin()` - Check if a name is a mixin
+   - `Registry::get_class_fields()` - Get fields of a class
+   - `Registry::next_function_id()` - Get next available function ID
+   - `TypeCompiler::register_mixin_method()` - Register mixin methods for including class
+
+**Tests Added (15 new tests):**
+- `mixin_registered` - Basic mixin registration
+- `mixin_final_error` - Final modifier validation
+- `mixin_shared_error` - Shared modifier validation
+- `mixin_abstract_error` - Abstract modifier validation
+- `mixin_external_error` - External modifier validation
+- `mixin_with_interfaces` - Interface requirements
+- `mixin_duplicate_error` - Duplicate mixin error
+- `mixin_basic_method` - Method inheritance
+- `mixin_basic_field` - Field inheritance
+- `mixin_class_method_overrides_mixin` - Class method precedence
+- `mixin_field_not_duplicated` - Field precedence
+- `mixin_with_interface` - Interface propagation
+- `multiple_mixins` - Multiple mixin inheritance
+- `mixin_with_base_class` - Mixin with base class
+- `mixin_is_not_a_type` - Verify mixin is not a type
 
 ---
 
@@ -119,7 +152,7 @@ Template constraints in AngelScript are implemented via `asBEHAVE_TEMPLATE_CALLB
 38. ✅ Implement interface method validation
 39. ❌ REMOVED (Auto handle @+ is VM responsibility)
 40. ❌ DEFERRED (Template constraints are FFI-level - defer to host API design)
-41. ⏳ Implement mixin support
+41. ✅ Implement mixin support
 42. ⏳ Implement scope keyword
 43. ⏳ Implement null coalescing operator (??)
 44. ⏳ Implement elvis operator for handles
@@ -146,8 +179,7 @@ Template constraints in AngelScript are implemented via `asBEHAVE_TEMPLATE_CALLB
 
 ## What's Next
 
-**Recommended:** Tasks 41-49 (Remaining Features)
-- Task 41: Mixin support
+**Recommended:** Tasks 42-49 (Remaining Features)
 - Task 42: Scope keyword
 - Task 43: Null coalescing operator (??)
 - Task 44: Elvis operator for handles
@@ -164,12 +196,13 @@ Template constraints in AngelScript are implemented via `asBEHAVE_TEMPLATE_CALLB
 ## Test Status
 
 ```
-✅ 766/766 tests passing (100%)
+✅ 781/781 tests passing (100%)
 ✅ All semantic analysis tests passing
 ✅ All interface validation tests passing
 ✅ All override/final validation tests passing
 ✅ All namespace function call tests passing
 ✅ All enum value resolution tests passing
+✅ All mixin tests passing (15 new tests)
 ```
 
 ---
@@ -182,5 +215,5 @@ Template constraints in AngelScript are implemented via `asBEHAVE_TEMPLATE_CALLB
 
 ---
 
-**Current Work:** Task 40 ❌ DEFERRED (Template constraints are FFI-level)
-**Next Work:** Task 41 (Mixin Support) or other remaining tasks
+**Current Work:** Task 41 ✅ COMPLETE (Mixin Support)
+**Next Work:** Task 42 (Scope Keyword) or other remaining tasks

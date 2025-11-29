@@ -90,6 +90,33 @@ impl GlobalVarDef {
     }
 }
 
+/// A mixin class definition
+///
+/// Mixin classes are partial class structures that can be included into regular classes.
+/// They are not real types and cannot be instantiated. When a class includes a mixin,
+/// the mixin's methods and properties are copied into the class.
+#[derive(Debug, Clone)]
+pub struct MixinDef<'src, 'ast> {
+    /// Mixin name (unqualified)
+    pub name: String,
+    /// Qualified name with namespace
+    pub qualified_name: String,
+    /// Namespace path
+    pub namespace: Vec<String>,
+    /// Interfaces that the mixin requires (classes including this mixin must implement these)
+    pub required_interfaces: Vec<String>,
+    /// Members of the mixin class (methods and fields)
+    /// This is a slice into arena-allocated memory
+    pub members: &'ast [crate::ast::decl::ClassMember<'src, 'ast>],
+}
+
+impl<'src, 'ast> MixinDef<'src, 'ast> {
+    /// Get the qualified name of this mixin
+    pub fn qualified_name(&self) -> &str {
+        &self.qualified_name
+    }
+}
+
 /// Global registry for all types, functions, and variables
 #[derive(Debug, Clone)]
 pub struct Registry<'src, 'ast> {
@@ -103,6 +130,9 @@ pub struct Registry<'src, 'ast> {
 
     // Global variable storage
     global_vars: FxHashMap<String, GlobalVarDef>,
+
+    // Mixin storage (mixins are not types, stored separately)
+    mixins: FxHashMap<String, MixinDef<'src, 'ast>>,
 
     // Template instantiation cache (Template TypeId + args → Instance TypeId)
     template_cache: FxHashMap<(TypeId, Vec<DataType>), TypeId>,
@@ -134,6 +164,7 @@ impl<'src, 'ast> Registry<'src, 'ast> {
             functions: Vec::new(),
             func_by_name: FxHashMap::default(),
             global_vars: FxHashMap::default(),
+            mixins: FxHashMap::default(),
             template_cache: FxHashMap::default(),
             void_type: VOID_TYPE,
             bool_type: BOOL_TYPE,
@@ -372,6 +403,11 @@ impl<'src, 'ast> Registry<'src, 'ast> {
         self.functions.len()
     }
 
+    /// Get the next available function ID
+    pub fn next_function_id(&self) -> FunctionId {
+        FunctionId::new(self.functions.len() as u32)
+    }
+
     /// Get the count of registered types
     pub fn type_count(&self) -> usize {
         self.types.len()
@@ -407,6 +443,22 @@ impl<'src, 'ast> Registry<'src, 'ast> {
     /// Look up a global variable by qualified name
     pub fn lookup_global_var(&self, name: &str) -> Option<&GlobalVarDef> {
         self.global_vars.get(name)
+    }
+
+    /// Register a mixin class
+    pub fn register_mixin(&mut self, mixin: MixinDef<'src, 'ast>) {
+        let qualified_name = mixin.qualified_name.clone();
+        self.mixins.insert(qualified_name, mixin);
+    }
+
+    /// Look up a mixin by qualified name
+    pub fn lookup_mixin(&self, name: &str) -> Option<&MixinDef<'src, 'ast>> {
+        self.mixins.get(name)
+    }
+
+    /// Check if a name refers to a mixin (not a type)
+    pub fn is_mixin(&self, name: &str) -> bool {
+        self.mixins.contains_key(name)
     }
 
     /// Update a class with complete details (fields, methods, inheritance)
@@ -770,6 +822,16 @@ impl<'src, 'ast> Registry<'src, 'ast> {
             *is_final
         } else {
             false
+        }
+    }
+
+    /// Get the fields of a class (does not include inherited fields)
+    pub fn get_class_fields(&self, type_id: TypeId) -> &[super::type_def::FieldDef] {
+        let typedef = self.get_type(type_id);
+        if let TypeDef::Class { fields, .. } = typedef {
+            fields
+        } else {
+            &[]
         }
     }
 

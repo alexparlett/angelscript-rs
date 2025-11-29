@@ -218,15 +218,23 @@ impl<'src, 'ast> TypeCompiler<'src, 'ast> {
             }
         };
 
-        // Resolve base class and interfaces from inheritance list
+        // Resolve base class, interfaces, and mixins from inheritance list
         // In AngelScript, the first item in inheritance is the base class (if it's a class),
-        // remaining items are interfaces
+        // remaining items are interfaces or mixins
         let mut base_class = None;
         let mut interfaces = Vec::new();
+        let mut mixins = Vec::new();
 
         for (i, inherited_ident) in class.inheritance.iter().enumerate() {
-            // Look up the type
+            // Look up the type or mixin
             let inherited_name = self.build_qualified_name(inherited_ident.name);
+
+            // First check if it's a mixin
+            if self.registry.is_mixin(&inherited_name) {
+                mixins.push(inherited_name);
+                continue;
+            }
+
             if let Some(inherited_id) = self.registry.lookup_type(&inherited_name) {
                 let inherited_typedef = self.registry.get_type(inherited_id);
 
@@ -260,7 +268,46 @@ impl<'src, 'ast> TypeCompiler<'src, 'ast> {
             }
         }
 
-        // Resolve field types
+        // Process mixins: add their interfaces, methods, and fields
+        // Mixins must be processed before we collect class methods/fields
+        for mixin_name in &mixins {
+            if let Some(mixin) = self.registry.lookup_mixin(mixin_name) {
+                // Add interfaces required by the mixin
+                for iface_name in &mixin.required_interfaces {
+                    if let Some(iface_id) = self.registry.lookup_type(iface_name) {
+                        if !interfaces.contains(&iface_id) {
+                            interfaces.push(iface_id);
+                        }
+                    }
+                }
+            }
+        }
+
+        // Collect the names of methods and fields defined in this class
+        // These take precedence over mixin members
+        let class_method_names: std::collections::HashSet<&str> = class.members
+            .iter()
+            .filter_map(|m| {
+                if let ClassMember::Method(method) = m {
+                    Some(method.name.name)
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        let class_field_names: std::collections::HashSet<&str> = class.members
+            .iter()
+            .filter_map(|m| {
+                if let ClassMember::Field(field) = m {
+                    Some(field.name.name)
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        // Resolve field types from class definition
         let mut fields = Vec::new();
         for member in class.members {
             if let ClassMember::Field(field) = member
@@ -279,11 +326,72 @@ impl<'src, 'ast> TypeCompiler<'src, 'ast> {
                 }
         }
 
+        // Add fields from mixins that don't conflict with class fields or inherited fields
+        // Mixin fields are NOT added if already inherited from base class
+        let inherited_field_names: std::collections::HashSet<String> = if let Some(base_id) = base_class {
+            self.registry.get_class_fields(base_id)
+                .iter()
+                .map(|f| f.name.clone())
+                .collect()
+        } else {
+            std::collections::HashSet::new()
+        };
+
+        for mixin_name in &mixins {
+            if let Some(mixin) = self.registry.lookup_mixin(mixin_name) {
+                for member in mixin.members {
+                    if let ClassMember::Field(field) = member {
+                        let field_name = field.name.name;
+                        // Skip if already defined in class or inherited from base
+                        if class_field_names.contains(field_name) || inherited_field_names.contains(field_name) {
+                            continue;
+                        }
+                        if let Some(field_type) = self.resolve_type_expr(&field.ty) {
+                            let visibility = match field.visibility {
+                                crate::ast::Visibility::Public => Visibility::Public,
+                                crate::ast::Visibility::Private => Visibility::Private,
+                                crate::ast::Visibility::Protected => Visibility::Protected,
+                            };
+                            fields.push(FieldDef {
+                                name: field_name.to_string(),
+                                data_type: field_type,
+                                visibility,
+                            });
+                        }
+                    }
+                }
+            }
+        }
+
         // Collect method IDs and operator methods
         let mut method_ids = Vec::new();
         let mut operator_methods: FxHashMap<OperatorBehavior, FunctionId> = FxHashMap::default();
         let mut explicit_properties: FxHashMap<String, crate::semantic::types::PropertyAccessors> = FxHashMap::default();
 
+        // First, process methods from mixins (they take precedence over inherited methods,
+        // but NOT over methods explicitly defined in this class)
+        for mixin_name in &mixins {
+            if let Some(mixin) = self.registry.lookup_mixin(mixin_name) {
+                for member in mixin.members {
+                    if let ClassMember::Method(method) = member {
+                        // Skip if class already defines a method with this name
+                        if class_method_names.contains(method.name.name) {
+                            continue;
+                        }
+                        // Skip deleted methods
+                        if method.attrs.delete {
+                            continue;
+                        }
+
+                        // Register the mixin method as a method of this class
+                        // This needs to be done here because mixin methods weren't registered in Pass 1
+                        self.register_mixin_method(method, type_id, &mut method_ids, &mut operator_methods, &mut explicit_properties);
+                    }
+                }
+            }
+        }
+
+        // Then process methods defined directly in the class
         for member in class.members {
             if let ClassMember::Method(method) = member {
                 // Skip deleted methods - they were not registered in Pass 1
@@ -857,6 +965,107 @@ impl<'src, 'ast> TypeCompiler<'src, 'ast> {
             Some((prop_name.to_string(), false))
         } else {
             None
+        }
+    }
+
+    /// Register a method from a mixin as a method of the including class
+    ///
+    /// This registers a new function in the registry with the including class as the object type.
+    /// The method is compiled in the context of the including class.
+    fn register_mixin_method(
+        &mut self,
+        method: &FunctionDecl<'src, 'ast>,
+        type_id: TypeId,
+        method_ids: &mut Vec<FunctionId>,
+        operator_methods: &mut FxHashMap<OperatorBehavior, FunctionId>,
+        explicit_properties: &mut FxHashMap<String, crate::semantic::types::PropertyAccessors>,
+    ) {
+        // Resolve parameter types
+        let params: Vec<DataType> = method
+            .params
+            .iter()
+            .filter_map(|p| self.resolve_type_expr(&p.ty.ty))
+            .collect();
+
+        // Check if we got all params
+        if params.len() != method.params.len() {
+            return; // Some params failed to resolve
+        }
+
+        // Resolve return type
+        let return_type = if let Some(ret_ty) = method.return_type {
+            match self.resolve_type_expr(&ret_ty.ty) {
+                Some(dt) => dt,
+                None => return,
+            }
+        } else {
+            DataType::simple(self.registry.void_type)
+        };
+
+        // Build function traits
+        let is_constructor = method.is_constructor();
+        let is_destructor = method.is_destructor;
+        let is_const = method.is_const;
+        let is_explicit = method.attrs.explicit;
+        let is_final = method.attrs.final_;
+        let is_virtual = !is_final && !is_constructor && !is_destructor;
+        let is_abstract = method.body.is_none() && is_virtual;
+
+        let traits = FunctionTraits {
+            is_constructor,
+            is_destructor,
+            is_final,
+            is_virtual,
+            is_abstract,
+            is_const,
+            is_explicit,
+            auto_generated: None,
+        };
+
+        // Capture default arguments
+        let default_args: Vec<Option<&'ast Expr<'src, 'ast>>> = method
+            .params
+            .iter()
+            .map(|p| p.default)
+            .collect();
+
+        // Get a new function ID
+        let func_id = self.registry.next_function_id();
+
+        // Create and register the function
+        let func_def = crate::semantic::types::registry::FunctionDef {
+            id: func_id,
+            name: method.name.name.to_string(),
+            namespace: self.namespace_path.clone(),
+            params,
+            return_type: return_type.clone(),
+            object_type: Some(type_id),
+            traits,
+            is_native: false,
+            default_args,
+        };
+
+        self.registry.register_function(func_def);
+        self.registry.add_method_to_class(type_id, func_id);
+        method_ids.push(func_id);
+
+        // Check if this is an operator method
+        if let Some(op_behavior) = self.parse_operator_method(method.name.name, &return_type) {
+            operator_methods.insert(op_behavior, func_id);
+        }
+
+        // Check if this is an explicit property accessor method
+        if method.attrs.property {
+            if let Some((prop_name, is_getter)) = self.parse_property_method(method.name.name) {
+                let accessor = explicit_properties.entry(prop_name)
+                    .or_insert_with(crate::semantic::types::PropertyAccessors::default);
+
+                if is_getter {
+                    accessor.getter = Some(func_id);
+                } else {
+                    accessor.setter = Some(func_id);
+                }
+            }
         }
     }
 
@@ -2054,5 +2263,196 @@ mod tests {
             }
         "#, &arena);
         assert!(data.errors.is_empty(), "Final class implementing interface should be OK. Errors: {:?}", data.errors);
+    }
+
+    // ========================================================================
+    // Mixin Tests
+    // ========================================================================
+
+    #[test]
+    fn mixin_basic_method() {
+        let arena = Bump::new();
+        let data = compile(r#"
+            mixin class MyMixin {
+                void mixinMethod() { }
+            }
+
+            class MyClass : MyMixin {
+            }
+        "#, &arena);
+        assert!(data.errors.is_empty(), "Basic mixin should compile. Errors: {:?}", data.errors);
+
+        // Verify the class got the mixin method
+        let class_id = data.registry.lookup_type("MyClass").expect("MyClass not found");
+        let methods = data.registry.get_methods(class_id);
+        let method_names: Vec<&str> = methods.iter()
+            .map(|&id| data.registry.get_function(id).name.as_str())
+            .collect();
+        assert!(method_names.contains(&"mixinMethod"), "Class should have mixinMethod from mixin. Methods: {:?}", method_names);
+    }
+
+    #[test]
+    fn mixin_basic_field() {
+        let arena = Bump::new();
+        let data = compile(r#"
+            mixin class MyMixin {
+                int mixinField;
+            }
+
+            class MyClass : MyMixin {
+            }
+        "#, &arena);
+        assert!(data.errors.is_empty(), "Mixin with field should compile. Errors: {:?}", data.errors);
+
+        // Verify the class got the mixin field
+        let class_id = data.registry.lookup_type("MyClass").expect("MyClass not found");
+        let fields = data.registry.get_class_fields(class_id);
+        let field_names: Vec<&str> = fields.iter()
+            .map(|f| f.name.as_str())
+            .collect();
+        assert!(field_names.contains(&"mixinField"), "Class should have mixinField from mixin. Fields: {:?}", field_names);
+    }
+
+    #[test]
+    fn mixin_class_method_overrides_mixin() {
+        let arena = Bump::new();
+        let data = compile(r#"
+            mixin class MyMixin {
+                void update() { }
+            }
+
+            class MyClass : MyMixin {
+                void update() { }  // Class-defined method should override mixin
+            }
+        "#, &arena);
+        assert!(data.errors.is_empty(), "Class method should override mixin method. Errors: {:?}", data.errors);
+
+        // Verify we only have one update method, not two
+        let class_id = data.registry.lookup_type("MyClass").expect("MyClass not found");
+        let methods = data.registry.get_methods(class_id);
+        let update_count = methods.iter()
+            .filter(|&&id| data.registry.get_function(id).name == "update")
+            .count();
+        assert_eq!(update_count, 1, "Should have exactly one update method (class overrides mixin)");
+    }
+
+    #[test]
+    fn mixin_field_not_duplicated() {
+        let arena = Bump::new();
+        let data = compile(r#"
+            mixin class MyMixin {
+                int health;
+            }
+
+            class MyClass : MyMixin {
+                int health;  // Class field should override mixin field
+            }
+        "#, &arena);
+        assert!(data.errors.is_empty(), "Class field should override mixin field. Errors: {:?}", data.errors);
+
+        // Verify we only have one health field
+        let class_id = data.registry.lookup_type("MyClass").expect("MyClass not found");
+        let fields = data.registry.get_class_fields(class_id);
+        let health_count = fields.iter()
+            .filter(|f| f.name == "health")
+            .count();
+        assert_eq!(health_count, 1, "Should have exactly one health field");
+    }
+
+    #[test]
+    fn mixin_with_interface() {
+        let arena = Bump::new();
+        let data = compile(r#"
+            interface IDrawable {
+                void draw();
+            }
+
+            mixin class DrawableMixin : IDrawable {
+                void draw() { }
+            }
+
+            class Widget : DrawableMixin {
+            }
+        "#, &arena);
+        assert!(data.errors.is_empty(), "Mixin with interface should compile. Errors: {:?}", data.errors);
+
+        // Verify the class implements the interface
+        let class_id = data.registry.lookup_type("Widget").expect("Widget not found");
+        let typedef = data.registry.get_type(class_id);
+        if let crate::semantic::TypeDef::Class { interfaces, .. } = typedef {
+            let iface_id = data.registry.lookup_type("IDrawable").expect("IDrawable not found");
+            assert!(interfaces.contains(&iface_id), "Widget should implement IDrawable from mixin");
+        } else {
+            panic!("Widget should be a class");
+        }
+    }
+
+    #[test]
+    fn multiple_mixins() {
+        let arena = Bump::new();
+        let data = compile(r#"
+            mixin class MixinA {
+                void methodA() { }
+            }
+
+            mixin class MixinB {
+                void methodB() { }
+            }
+
+            class MyClass : MixinA, MixinB {
+            }
+        "#, &arena);
+        assert!(data.errors.is_empty(), "Multiple mixins should compile. Errors: {:?}", data.errors);
+
+        // Verify the class got both methods
+        let class_id = data.registry.lookup_type("MyClass").expect("MyClass not found");
+        let methods = data.registry.get_methods(class_id);
+        let method_names: Vec<&str> = methods.iter()
+            .map(|&id| data.registry.get_function(id).name.as_str())
+            .collect();
+        assert!(method_names.contains(&"methodA"), "Should have methodA. Methods: {:?}", method_names);
+        assert!(method_names.contains(&"methodB"), "Should have methodB. Methods: {:?}", method_names);
+    }
+
+    #[test]
+    fn mixin_with_base_class() {
+        let arena = Bump::new();
+        let data = compile(r#"
+            class Base {
+                void baseMethod() { }
+            }
+
+            mixin class MyMixin {
+                void mixinMethod() { }
+            }
+
+            class Derived : Base, MyMixin {
+            }
+        "#, &arena);
+        assert!(data.errors.is_empty(), "Class with base and mixin should compile. Errors: {:?}", data.errors);
+
+        // Verify the class has the mixin method
+        let class_id = data.registry.lookup_type("Derived").expect("Derived not found");
+        let methods = data.registry.get_methods(class_id);
+        let method_names: Vec<&str> = methods.iter()
+            .map(|&id| data.registry.get_function(id).name.as_str())
+            .collect();
+        assert!(method_names.contains(&"mixinMethod"), "Should have mixinMethod. Methods: {:?}", method_names);
+    }
+
+    #[test]
+    fn mixin_is_not_a_type() {
+        let arena = Bump::new();
+        let data = compile(r#"
+            mixin class MyMixin {
+                void method() { }
+            }
+        "#, &arena);
+        assert!(data.errors.is_empty(), "Mixin declaration should compile. Errors: {:?}", data.errors);
+
+        // Verify the mixin is not registered as a type
+        assert!(data.registry.lookup_type("MyMixin").is_none(), "Mixin should not be registered as a type");
+        // But it should be registered as a mixin
+        assert!(data.registry.is_mixin("MyMixin"), "MyMixin should be registered as a mixin");
     }
 }
