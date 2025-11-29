@@ -1476,6 +1476,50 @@ We considered flattening methods too, but rejected it because:
 
 ---
 
+## 2025-11-29: Task 40 Deferred - Template Constraints are FFI-Level
+
+### Context
+
+Task 40 was to implement template constraint validation. After researching the AngelScript C++ implementation, we discovered that template constraints are implemented via `asBEHAVE_TEMPLATE_CALLBACK` - a host-level behavior callback.
+
+### Analysis
+
+In AngelScript, template constraints are registered by the host application:
+```cpp
+engine->RegisterObjectBehaviour("array<T>", asBEHAVE_TEMPLATE_CALLBACK,
+    "bool f(int&in, bool&out)", asFUNCTION(ScriptArrayTemplateCallback), asCALL_CDECL);
+```
+
+The callback function (`ScriptArrayTemplateCallback`) is C++ code provided by the host that validates whether a template instantiation is valid (e.g., `array<void>` is invalid).
+
+This is fundamentally different from our `OperatorBehavior` enum, which handles operator overloading in script code. Template callbacks are part of the broader behavior system alongside:
+- `asBEHAVE_CONSTRUCT`
+- `asBEHAVE_DESTRUCT`
+- `asBEHAVE_ADDREF`
+- `asBEHAVE_RELEASE`
+- `asBEHAVE_TEMPLATE_CALLBACK`
+- etc.
+
+### Decision
+
+Defer Task 40 until the FFI/host API is designed. Template constraint callbacks should be implemented as part of the complete behavior registration system, not as a standalone feature.
+
+### Rationale
+
+1. **Architecture Consistency**: Behaviors should be designed together as a cohesive system
+2. **Current Implementation Sufficient**: Template argument count validation and caching already work
+3. **Avoid Partial Solutions**: Implementing just template callbacks without the full behavior system would create inconsistency
+4. **Host API Needed**: Need to design how Rust host applications register types and behaviors first
+
+### Current Template Support
+
+- ✅ Template argument count validation
+- ✅ Template instantiation caching
+- ✅ Template instance creation
+- ❌ Host-registered constraint callbacks (deferred)
+
+---
+
 ## Future Decisions
 
 (To be added as we make them)

@@ -1,6 +1,6 @@
-# Current Task: Interface & Override Validation - COMPLETE ✅
+# Current Task: Task 40 Deferred - Template Constraints
 
-**Status:** ✅ Task 38 Complete
+**Status:** ✅ Task 40 Deferred to FFI Implementation
 **Date:** 2025-11-29
 **Phase:** Semantic Analysis - Remaining Features
 
@@ -21,104 +21,33 @@
 - ✅ Tasks 26-29 (Lambda Expressions): Complete
 - ✅ Tasks 30-34 (TODO Cleanup): Complete
 - ✅ Tasks 35-38: Namespace, Enum, Funcdef & Interface Validation Complete
-- ⏳ Remaining: Tasks 39-56
+- ⏳ Remaining: Tasks 41-56
 
 **Test Status:** ✅ 766 tests passing (100%)
 
 ---
 
-## Latest Work: Task 38 - Interface Method & Override Validation ✅ COMPLETE
+## Latest Work: Task 40 - Template Constraint Validation - DEFERRED
 
-**Status:** ✅ Complete
+**Status:** ❌ Deferred to FFI Implementation
 **Date:** 2025-11-29
 
-### What Was Implemented
+### Analysis
 
-1. **Error kinds** (`src/semantic/error.rs`)
-   - `MissingInterfaceMethod` - Class doesn't implement required interface method
-   - `OverrideWithoutBase` - Method marked 'override' but no matching base method
-   - `CannotOverrideFinal` - Attempting to override a 'final' method
-   - `CannotInheritFromFinal` - Attempting to inherit from a 'final' class
+Template constraints in AngelScript are implemented via `asBEHAVE_TEMPLATE_CALLBACK` - a host-level behavior callback registered by the embedding application. This is fundamentally different from our current `OperatorBehavior` enum which handles operator overloading (opAdd, opEquals, etc.).
 
-2. **Registry helper methods** (`src/semantic/types/registry.rs`)
-   - `get_interface_methods()` - Get method signatures for an interface
-   - `get_all_interfaces()` - Get all interfaces including inherited ones
-   - `find_base_method()` - Find method in base class chain
-   - `find_base_method_with_signature()` - Find base method with matching signature
-   - `has_method_matching_interface()` - Check if class has method matching interface
-   - `is_base_method_final()` - Check if base method is marked final
-   - `is_class_final()` - Check if class is marked final
+**Key findings:**
+- Template callbacks are registered via `engine->RegisterObjectBehaviour("array<T>", asBEHAVE_TEMPLATE_CALLBACK, ...)`
+- The callback function is C++ code provided by the host application
+- It validates whether a specific template instantiation is valid (e.g., `array<void>` is invalid)
+- This is an FFI/host-level feature, not script-level syntax
 
-3. **Validation functions** (`src/semantic/passes/type_compilation.rs`)
-   - `validate_interface_implementation()` - Check non-abstract classes implement all interface methods
-   - `validate_method_overrides()` - Check 'override' keyword and 'final' methods
+**Current template implementation is sufficient:**
+- ✅ Template argument count validation
+- ✅ Template instantiation caching
+- ✅ Template instance creation
 
-4. **Bug fixes**
-   - Fixed `update_function_signature()` to match by `object_type` for methods
-   - Fixed method_ids collection to filter by `object_type` (was including wrong class's methods)
-   - Fixed method-level `final` to use `func.attrs.final_` not `func.modifiers.final_`
-
-### Validation Rules
-
-- **Non-abstract classes** must implement ALL interface methods with matching signatures
-- **Abstract classes** can defer interface implementation to subclasses
-- **`override` keyword** requires a matching method in base class (same name + signature)
-- **Cannot override `final` methods** from base class (with or without override keyword)
-- **Cannot inherit from `final` classes** - prevents inheritance from sealed classes
-- **Interface methods inherited through abstract chains** - concrete class at end must implement all interfaces from entire chain
-
-### Files Modified
-
-- `src/semantic/error.rs`:
-  - Added 3 new error kinds
-
-- `src/semantic/types/registry.rs`:
-  - Added 6 new methods for interface/method lookup
-  - Fixed `update_function_signature()` to match by object_type
-
-- `src/semantic/passes/type_compilation.rs`:
-  - Added `validate_interface_implementation()` method
-  - Added `validate_method_overrides()` method
-  - Fixed method_ids to filter by object_type
-  - Fixed `is_final` to read from attrs, not modifiers
-  - Added 28 new tests
-
-- `src/semantic/types/type_def.rs`:
-  - Added `is_final` and `is_abstract` fields to TypeDef::Class
-
-### Tests Added
-
-- `interface_implementation_complete` - Class implements all interface methods
-- `interface_method_missing_error` - Class missing an interface method
-- `interface_method_wrong_signature_error` - Wrong return type
-- `abstract_class_partial_interface_ok` - Abstract class can defer implementation
-- `interface_method_inherited_from_base` - Base class provides interface method
-- `multiple_interfaces_all_implemented` - Multiple interfaces fully implemented
-- `multiple_interfaces_one_missing` - One interface method missing
-- `override_keyword_valid` - Valid override of base method
-- `override_keyword_no_base_error` - Override with no matching base method
-- `override_wrong_signature_error` - Override with wrong parameters
-- `final_method_not_overridden` - Not overriding final is OK
-- `override_final_method_error` - Cannot override final method
-- `override_final_method_with_override_keyword_error` - Cannot override final with override keyword
-- `grandparent_final_method_error` - Cannot override final from grandparent
-- `inherit_from_non_final_class_ok` - Inheriting from non-final class is OK
-- `inherit_from_final_class_error` - Cannot inherit from final class
-- `abstract_class_can_be_inherited` - Abstract class can be inherited
-- `final_class_can_implement_interface` - Final class can implement interface
-- `abstract_class_defers_interface_to_concrete_subclass` - Abstract class defers interface
-- `concrete_class_missing_inherited_interface_method` - Error when concrete misses inherited interface
-- `abstract_class_chain_with_interface` - Chain of abstract classes with interface
-- `abstract_class_chain_multiple_interfaces_all_implemented` - Multiple interfaces at different levels
-- `abstract_class_chain_multiple_interfaces_one_missing` - One interface method missing in chain
-- `abstract_class_partial_implementation` - Abstract class partial interface implementation
-- `abstract_class_final_method_cannot_be_overridden` - Final method in abstract class
-- `abstract_class_chain_final_method_in_middle` - Final method in middle of chain
-- `abstract_class_chain_final_method_not_overridden_ok` - Not overriding final is OK
-- `abstract_chain_with_final_method_and_intermediate_abstract` - Deep chain with final
-- `abstract_chain_with_final_method_not_overridden_ok` - Deep chain not overriding final
-- `abstract_chain_with_interface_and_multiple_intermediate_abstracts` - Deep interface chain
-- `abstract_chain_with_interface_missing_implementation` - Missing interface in deep chain
+**Recommendation:** Defer Task 40 until the FFI/host API is designed. Template constraint callbacks should be part of the broader behavior system alongside `asBEHAVE_CONSTRUCT`, `asBEHAVE_ADDREF`, `asBEHAVE_RELEASE`, etc.
 
 ---
 
@@ -189,7 +118,7 @@
 37. ✅ Implement funcdef type checking
 38. ✅ Implement interface method validation
 39. ❌ REMOVED (Auto handle @+ is VM responsibility)
-40. ⏳ Implement template constraint validation
+40. ❌ DEFERRED (Template constraints are FFI-level - defer to host API design)
 41. ⏳ Implement mixin support
 42. ⏳ Implement scope keyword
 43. ⏳ Implement null coalescing operator (??)
@@ -217,11 +146,14 @@
 
 ## What's Next
 
-**Recommended:** Tasks 40-49 (Remaining Features)
-- Template constraint validation
-- Mixin support
-- Scope keyword
-- Null coalescing operator
+**Recommended:** Tasks 41-49 (Remaining Features)
+- Task 41: Mixin support
+- Task 42: Scope keyword
+- Task 43: Null coalescing operator (??)
+- Task 44: Elvis operator for handles
+- Task 46: Void expression validation
+- Task 48: Circular dependency detection
+- Task 49: Visibility enforcement
 
 **Or:** Tasks 50-52 (Integration & Testing)
 - Add more comprehensive integration tests
@@ -232,7 +164,7 @@
 ## Test Status
 
 ```
-✅ 749/749 tests passing (100%)
+✅ 766/766 tests passing (100%)
 ✅ All semantic analysis tests passing
 ✅ All interface validation tests passing
 ✅ All override/final validation tests passing
@@ -250,5 +182,5 @@
 
 ---
 
-**Current Work:** Task 38 ✅ COMPLETE (Interface Method & Override Validation)
-**Next Work:** Task 40 (Template Constraint Validation) or Tasks 50-52 (Integration & Testing)
+**Current Work:** Task 40 ❌ DEFERRED (Template constraints are FFI-level)
+**Next Work:** Task 41 (Mixin Support) or other remaining tasks
