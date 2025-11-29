@@ -352,15 +352,9 @@ This section contains the full validated task list for completing semantic analy
 - Emit cleanup bytecode
 - ~80 lines in function_compiler.rs
 
-**Task 43**: Implement null coalescing operator (??) (TODO)
-- Type check operands
-- Emit conditional bytecode
-- ~40 lines in function_compiler.rs
+**Task 43**: ❌ REMOVED (Null coalescing operator ?? is not part of AngelScript)
 
-**Task 44**: Implement elvis operator (?:) for handles (TODO)
-- Short-circuit evaluation for handles
-- Null checking
-- ~40 lines in function_compiler.rs
+**Task 44**: ❌ REMOVED (Elvis operator ?: is not part of AngelScript - standard ternary ? : already implemented)
 
 **Task 45**: Implement bitwise assignment operators (TODO)
 - Implement &=, |=, ^=, <<=, >>=, >>>= (compound assignments)

@@ -153,9 +153,9 @@ Implemented full mixin class support according to AngelScript documentation:
 39. ❌ REMOVED (Auto handle @+ is VM responsibility)
 40. ❌ DEFERRED (Template constraints are FFI-level - defer to host API design)
 41. ✅ Implement mixin support
-42. ⏳ Implement scope keyword
-43. ⏳ Implement null coalescing operator (??)
-44. ⏳ Implement elvis operator for handles
+42. ❌ DEFERRED (Scoped types are FFI-level - defer to host API design)
+43. ❌ REMOVED (Null coalescing ?? is not part of AngelScript)
+44. ❌ REMOVED (Elvis ?: is not part of AngelScript - ternary already implemented)
 45. ✅ Bitwise assignment operators (already implemented)
 46. ⏳ Implement void expression validation
 47. ✅ Constant expression evaluation (implemented for switch/enum)
@@ -179,10 +179,7 @@ Implemented full mixin class support according to AngelScript documentation:
 
 ## What's Next
 
-**Recommended:** Tasks 42-49 (Remaining Features)
-- Task 42: Scope keyword
-- Task 43: Null coalescing operator (??)
-- Task 44: Elvis operator for handles
+**Recommended:** Tasks 46-49 (Remaining Features)
 - Task 46: Void expression validation
 - Task 48: Circular dependency detection
 - Task 49: Visibility enforcement
