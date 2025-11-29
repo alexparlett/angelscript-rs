@@ -358,12 +358,59 @@ impl<'src, 'ast> Registry<'src, 'ast> {
         let instance = TypeDef::TemplateInstance {
             template: template_id,
             sub_types: args.clone(),
+            methods: Vec::new(),
+            operator_methods: FxHashMap::default(),
+            properties: FxHashMap::default(),
         };
 
         let instance_id = self.register_type(instance, None);
         self.template_cache.insert(cache_key, instance_id);
 
+        // For array templates, register a placeholder initializer constructor
+        // This will be implemented via FFI - the compiler just needs a FunctionId to emit
+        if template_id == self.array_template {
+            self.register_array_init_constructor(instance_id, args);
+        }
+
         Ok(instance_id)
+    }
+
+    /// Register a placeholder initializer constructor for an array<T> type
+    /// The actual implementation will be provided via FFI
+    fn register_array_init_constructor(&mut self, array_type_id: TypeId, _sub_types: Vec<DataType>) {
+        let func_id = FunctionId::new(self.functions.len() as u32);
+
+        // Create placeholder constructor: array<T>(int count)
+        // The count parameter tells the VM how many elements to pop from the stack
+        let func_def = FunctionDef {
+            id: func_id,
+            name: "$array_init".to_string(),
+            namespace: Vec::new(),
+            params: vec![DataType::simple(self.int32_type)], // count parameter
+            return_type: DataType::simple(self.void_type),
+            object_type: Some(array_type_id),
+            traits: FunctionTraits {
+                is_constructor: true,
+                is_destructor: false,
+                is_final: false,
+                is_virtual: false,
+                is_abstract: false,
+                is_const: false,
+                is_explicit: false,
+                auto_generated: None,
+            },
+            is_native: true, // FFI-provided
+            default_args: Vec::new(),
+            visibility: Visibility::Public,
+        };
+
+        self.functions.push(func_def);
+
+        // Add to the template instance's methods
+        let typedef = self.get_type_mut(array_type_id);
+        if let TypeDef::TemplateInstance { methods, .. } = typedef {
+            methods.push(func_id);
+        }
     }
 
     /// Register a function and return its FunctionId
@@ -713,9 +760,10 @@ impl<'src, 'ast> Registry<'src, 'ast> {
         // Get the type definition
         let typedef = self.get_type(type_id);
 
-        // Only classes have constructors - get the methods list
+        // Classes and template instances have constructors - get the methods list
         let method_ids = match typedef {
             TypeDef::Class { methods, .. } => methods,
+            TypeDef::TemplateInstance { methods, .. } => methods,
             _ => return Vec::new(),
         };
 
@@ -768,12 +816,14 @@ impl<'src, 'ast> Registry<'src, 'ast> {
         None
     }
 
-    /// Add a method to a class's methods list
+    /// Add a method to a class or template instance's methods list
     /// This is used when auto-generating constructors in Pass 1
     pub fn add_method_to_class(&mut self, type_id: TypeId, func_id: FunctionId) {
         let typedef = self.get_type_mut(type_id);
-        if let TypeDef::Class { methods, .. } = typedef {
-            methods.push(func_id);
+        match typedef {
+            TypeDef::Class { methods, .. } => methods.push(func_id),
+            TypeDef::TemplateInstance { methods, .. } => methods.push(func_id),
+            _ => {}
         }
     }
 

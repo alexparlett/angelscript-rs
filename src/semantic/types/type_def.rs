@@ -723,6 +723,13 @@ pub enum TypeDef {
     TemplateInstance {
         template: TypeId,
         sub_types: Vec<DataType>,
+        /// Methods for this template instance (constructors, opIndex, etc.)
+        /// These are typically FFI-registered behaviors
+        methods: Vec<FunctionId>,
+        /// Operator methods mapped by behavior
+        operator_methods: FxHashMap<OperatorBehavior, FunctionId>,
+        /// Property accessors mapped by property name
+        properties: FxHashMap<String, PropertyAccessors>,
     },
 }
 
@@ -1101,11 +1108,14 @@ mod tests {
         let typedef = TypeDef::TemplateInstance {
             template: ARRAY_TEMPLATE,
             sub_types: vec![DataType::simple(INT32_TYPE)],
+            methods: Vec::new(),
+            operator_methods: FxHashMap::default(),
+            properties: FxHashMap::default(),
         };
         assert!(typedef.is_template_instance());
         assert!(!typedef.is_template());
 
-        if let TypeDef::TemplateInstance { template, sub_types } = typedef {
+        if let TypeDef::TemplateInstance { template, sub_types, .. } = typedef {
             assert_eq!(template, ARRAY_TEMPLATE);
             assert_eq!(sub_types.len(), 1);
         }

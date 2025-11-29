@@ -4245,27 +4245,13 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
             }
         }
 
-        // Emit CreateArray instruction
-        // The VM will create array<common_type> at runtime
-        self.bytecode.emit(Instruction::CreateArray {
-            element_type_id: common_type.type_id.as_u32(),
-            count: element_types.len() as u32,
-        });
-
-        // Return the array type as a handle (arrays are reference types)
-        // We construct a DataType representing array<common_type>@
-        // Note: Ideally we'd instantiate the template, but FunctionCompiler doesn't have
-        // mutable access to Registry. The VM will create the actual array<T> type.
-        // For now, we return a placeholder that indicates "array of common_type"
-        // This is sufficient for type checking in most cases.
-
         // Look up if array<common_type> already exists in the registry
         // Search through all types to find a matching TemplateInstance
         let mut array_type_id = None;
         for i in 0..self.registry.type_count() {
             let type_id = TypeId(i as u32);
             let typedef = self.registry.get_type(type_id);
-            if let TypeDef::TemplateInstance { template, sub_types } = typedef {
+            if let TypeDef::TemplateInstance { template, sub_types, .. } = typedef {
                 if *template == self.registry.array_template
                     && sub_types.len() == 1
                     && sub_types[0] == common_type {
@@ -4276,8 +4262,35 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
         }
 
         if let Some(array_id) = array_type_id {
-            // Found existing array<T> type, return as rvalue
-            Some(ExprContext::rvalue(DataType::with_handle(array_id, false)))
+            // Find the array initializer constructor
+            let constructors = self.registry.find_constructors(array_id);
+            let init_ctor = constructors.iter().find(|&&ctor_id| {
+                let func = self.registry.get_function(ctor_id);
+                func.name == "$array_init"
+            });
+
+            if let Some(&ctor_id) = init_ctor {
+                // Emit: push count, then CallConstructor
+                // Elements are already on the stack from check_expr calls above
+                self.bytecode.emit(Instruction::PushInt(element_types.len() as i64));
+                self.bytecode.emit(Instruction::CallConstructor {
+                    type_id: array_id.as_u32(),
+                    func_id: ctor_id.as_u32(),
+                });
+
+                // Return the array type as a handle (arrays are reference types)
+                Some(ExprContext::rvalue(DataType::with_handle(array_id, false)))
+            } else {
+                self.error(
+                    SemanticErrorKind::InternalError,
+                    init_list.span,
+                    format!(
+                        "array<{}> initializer constructor not found",
+                        self.type_name(&common_type)
+                    ),
+                );
+                None
+            }
         } else {
             // Array type doesn't exist yet
             // This happens when:
@@ -5013,8 +5026,9 @@ mod tests {
 
             // Check emitted bytecode
             let bytecode = compiler.bytecode.instructions();
-            // Should have: PushInt(1), PushInt(2), PushInt(3), CreateArray
-            assert!(bytecode.iter().any(|instr| matches!(instr, Instruction::CreateArray { element_type_id: _, count: 3 })));
+            // Should have: PushInt(1), PushInt(2), PushInt(3), PushInt(3), CallConstructor
+            assert!(bytecode.iter().any(|instr| matches!(instr, Instruction::PushInt(3))));
+            assert!(bytecode.iter().any(|instr| matches!(instr, Instruction::CallConstructor { .. })));
         } else {
             panic!("Expected InitList expression");
         }

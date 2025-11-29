@@ -247,14 +247,6 @@ pub enum Instruction {
     /// - func_id: FunctionId of the constructor to call
     CallConstructor { type_id: u32, func_id: u32 },
 
-    /// Create an array from N elements on the stack
-    /// Pops N elements (in reverse order), creates array<T>, pushes handle
-    ///
-    /// Fields: (element_type_id, count)
-    /// - element_type_id: TypeId of the element type
-    /// - count: Number of elements to pop from stack
-    CreateArray { element_type_id: u32, count: u32 },
-
     // Stack management
     /// Pop the top value from the stack
     Pop,
