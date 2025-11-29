@@ -1,6 +1,6 @@
-# Current Task: Funcdef Type Checking - COMPLETE ✅
+# Current Task: Interface & Override Validation - COMPLETE ✅
 
-**Status:** ✅ Tasks 35-37 Complete
+**Status:** ✅ Task 38 Complete
 **Date:** 2025-11-29
 **Phase:** Semantic Analysis - Remaining Features
 
@@ -20,65 +20,105 @@
 - ✅ Phase 1 (Type Conversions): Tasks 1-25 Complete
 - ✅ Tasks 26-29 (Lambda Expressions): Complete
 - ✅ Tasks 30-34 (TODO Cleanup): Complete
-- ✅ Tasks 35-37: Namespace, Enum & Funcdef Complete
-- ⏳ Remaining: Tasks 38-56
+- ✅ Tasks 35-38: Namespace, Enum, Funcdef & Interface Validation Complete
+- ⏳ Remaining: Tasks 39-56
 
-**Test Status:** ✅ 735 tests passing (100%)
+**Test Status:** ✅ 766 tests passing (100%)
 
 ---
 
-## Latest Work: TODO Cleanup & Bug Fixes ✅ COMPLETE
+## Latest Work: Task 38 - Interface Method & Override Validation ✅ COMPLETE
 
-**Status:** ✅ All TODOs in semantic passes resolved
+**Status:** ✅ Complete
 **Date:** 2025-11-29
 
-### Bugs Fixed
+### What Was Implemented
 
-**1. Switch/Break Bug**
-- Break statements inside switch cases were incorrectly flagged as "BreakOutsideLoop"
-- Added `enter_switch()`/`exit_switch()` methods to `BytecodeEmitter`
-- Refactored `LoopContext` to `BreakableContext` supporting both loops and switches
-- Continue inside switch correctly targets outer loop
+1. **Error kinds** (`src/semantic/error.rs`)
+   - `MissingInterfaceMethod` - Class doesn't implement required interface method
+   - `OverrideWithoutBase` - Method marked 'override' but no matching base method
+   - `CannotOverrideFinal` - Attempting to override a 'final' method
+   - `CannotInheritFromFinal` - Attempting to inherit from a 'final' class
 
-**2. Method Overload Resolution Bug**
-- Methods were looked up using wrong qualified name pattern
-- Changed from `lookup_functions("ClassName::methodName")` to `find_methods_by_name(type_id, "methodName")`
-- Added new `find_methods_by_name()` method to `Registry`
+2. **Registry helper methods** (`src/semantic/types/registry.rs`)
+   - `get_interface_methods()` - Get method signatures for an interface
+   - `get_all_interfaces()` - Get all interfaces including inherited ones
+   - `find_base_method()` - Find method in base class chain
+   - `find_base_method_with_signature()` - Find base method with matching signature
+   - `has_method_matching_interface()` - Check if class has method matching interface
+   - `is_base_method_final()` - Check if base method is marked final
+   - `is_class_final()` - Check if class is marked final
 
-**3. Overloaded Function Parameter Bug**
-- All overloaded functions were being assigned the same parameters
-- Fixed `update_function_signature()` to only update the first function with empty params
+3. **Validation functions** (`src/semantic/passes/type_compilation.rs`)
+   - `validate_interface_implementation()` - Check non-abstract classes implement all interface methods
+   - `validate_method_overrides()` - Check 'override' keyword and 'final' methods
 
-**4. Default Parameter Bug in Overload Resolution**
-- Functions with default parameters weren't matched correctly
-- Updated `find_best_function_overload()` to consider default parameter count
+4. **Bug fixes**
+   - Fixed `update_function_signature()` to match by `object_type` for methods
+   - Fixed method_ids collection to filter by `object_type` (was including wrong class's methods)
+   - Fixed method-level `final` to use `func.attrs.final_` not `func.modifiers.final_`
+
+### Validation Rules
+
+- **Non-abstract classes** must implement ALL interface methods with matching signatures
+- **Abstract classes** can defer interface implementation to subclasses
+- **`override` keyword** requires a matching method in base class (same name + signature)
+- **Cannot override `final` methods** from base class (with or without override keyword)
+- **Cannot inherit from `final` classes** - prevents inheritance from sealed classes
+- **Interface methods inherited through abstract chains** - concrete class at end must implement all interfaces from entire chain
 
 ### Files Modified
 
-- `src/codegen/emitter.rs` - Switch context support (BreakableContext)
-- `src/codegen/ir/instruction.rs` - Removed stale TODO comment
-- `src/ast/type_parser.rs` - Removed TODO comment
-- `src/semantic/passes/function_processor.rs` - Bug fixes and tests
-- `src/semantic/passes/registration.rs` - Enum value evaluation
-- `src/semantic/passes/type_compilation.rs` - Field visibility, typedef, array suffix
-- `src/semantic/types/registry.rs` - find_methods_by_name, overload fixes
+- `src/semantic/error.rs`:
+  - Added 3 new error kinds
+
+- `src/semantic/types/registry.rs`:
+  - Added 6 new methods for interface/method lookup
+  - Fixed `update_function_signature()` to match by object_type
+
+- `src/semantic/passes/type_compilation.rs`:
+  - Added `validate_interface_implementation()` method
+  - Added `validate_method_overrides()` method
+  - Fixed method_ids to filter by object_type
+  - Fixed `is_final` to read from attrs, not modifiers
+  - Added 28 new tests
+
+- `src/semantic/types/type_def.rs`:
+  - Added `is_final` and `is_abstract` fields to TypeDef::Class
 
 ### Tests Added
 
-- `switch_context_allows_break` - Verifies break works in switch
-- `switch_context_disallows_continue` - Verifies continue fails in switch-only context
-- `switch_inside_loop_allows_continue` - Verifies continue in switch inside loop targets the loop
-- `method_signature_matching_basic` - Tests method overloading resolution
-- `method_signature_matching_with_defaults` - Tests default parameters in method calls
-- `field_initializer_compilation` - Tests field initializers
-- `switch_with_break_statements` - Tests break in switch cases
-- `switch_inside_loop_with_continue` - Tests continue in switch inside loop
-
-### Commits
-
-1. `00781a6` - Resolve remaining TODOs in semantic passes
-2. `b76881f` - Fix switch/break bug and method overload resolution
-3. `9e793d8` - Remove remaining TODO comments
+- `interface_implementation_complete` - Class implements all interface methods
+- `interface_method_missing_error` - Class missing an interface method
+- `interface_method_wrong_signature_error` - Wrong return type
+- `abstract_class_partial_interface_ok` - Abstract class can defer implementation
+- `interface_method_inherited_from_base` - Base class provides interface method
+- `multiple_interfaces_all_implemented` - Multiple interfaces fully implemented
+- `multiple_interfaces_one_missing` - One interface method missing
+- `override_keyword_valid` - Valid override of base method
+- `override_keyword_no_base_error` - Override with no matching base method
+- `override_wrong_signature_error` - Override with wrong parameters
+- `final_method_not_overridden` - Not overriding final is OK
+- `override_final_method_error` - Cannot override final method
+- `override_final_method_with_override_keyword_error` - Cannot override final with override keyword
+- `grandparent_final_method_error` - Cannot override final from grandparent
+- `inherit_from_non_final_class_ok` - Inheriting from non-final class is OK
+- `inherit_from_final_class_error` - Cannot inherit from final class
+- `abstract_class_can_be_inherited` - Abstract class can be inherited
+- `final_class_can_implement_interface` - Final class can implement interface
+- `abstract_class_defers_interface_to_concrete_subclass` - Abstract class defers interface
+- `concrete_class_missing_inherited_interface_method` - Error when concrete misses inherited interface
+- `abstract_class_chain_with_interface` - Chain of abstract classes with interface
+- `abstract_class_chain_multiple_interfaces_all_implemented` - Multiple interfaces at different levels
+- `abstract_class_chain_multiple_interfaces_one_missing` - One interface method missing in chain
+- `abstract_class_partial_implementation` - Abstract class partial interface implementation
+- `abstract_class_final_method_cannot_be_overridden` - Final method in abstract class
+- `abstract_class_chain_final_method_in_middle` - Final method in middle of chain
+- `abstract_class_chain_final_method_not_overridden_ok` - Not overriding final is OK
+- `abstract_chain_with_final_method_and_intermediate_abstract` - Deep chain with final
+- `abstract_chain_with_final_method_not_overridden_ok` - Deep chain not overriding final
+- `abstract_chain_with_interface_and_multiple_intermediate_abstracts` - Deep interface chain
+- `abstract_chain_with_interface_missing_implementation` - Missing interface in deep chain
 
 ---
 
@@ -147,7 +187,7 @@
 35. ✅ Implement namespace resolution in call expressions
 36. ✅ Implement enum value resolution (EnumName::VALUE)
 37. ✅ Implement funcdef type checking
-38. ⏳ Implement interface method validation
+38. ✅ Implement interface method validation
 39. ❌ REMOVED (Auto handle @+ is VM responsibility)
 40. ⏳ Implement template constraint validation
 41. ⏳ Implement mixin support
@@ -177,11 +217,11 @@
 
 ## What's Next
 
-**Recommended:** Tasks 37-49 (Remaining Features)
-- Funcdef type checking
-- Interface method validation
-- Template constraints
+**Recommended:** Tasks 40-49 (Remaining Features)
+- Template constraint validation
 - Mixin support
+- Scope keyword
+- Null coalescing operator
 
 **Or:** Tasks 50-52 (Integration & Testing)
 - Add more comprehensive integration tests
@@ -192,158 +232,13 @@
 ## Test Status
 
 ```
-✅ 725/725 tests passing (100%)
+✅ 749/749 tests passing (100%)
 ✅ All semantic analysis tests passing
-✅ All switch/break tests passing
-✅ All method overloading tests passing
+✅ All interface validation tests passing
+✅ All override/final validation tests passing
 ✅ All namespace function call tests passing
 ✅ All enum value resolution tests passing
 ```
-
----
-
-## Latest Work: Task 37 - Funcdef Type Checking ✅ COMPLETE
-
-**Status:** ✅ Complete
-**Date:** 2025-11-29
-
-### What Was Implemented
-
-1. **Registry helper methods** (`src/semantic/types/registry.rs`)
-   - `get_funcdef_signature()` - Get params and return type from funcdef type
-   - `is_function_compatible_with_funcdef()` - Check if function matches funcdef signature
-   - `find_compatible_function()` - Find function by name that matches funcdef
-
-2. **Function handle creation** (`@functionName` syntax)
-   - Modified `check_unary` to handle `HandleOf` operator specially for function references
-   - When operand is an identifier that names a function, creates function handle
-   - Validates function signature matches expected funcdef type
-   - Emits `FuncPtr` instruction with function ID
-
-3. **Type inference context**
-   - Set `expected_funcdef_type` in `visit_var_decl` for funcdef variable declarations
-   - Set `expected_funcdef_type` in `check_assign` for funcdef assignments
-   - Enables type inference for lambda expressions and function references
-
-4. **Type checking**
-   - Parameter types must match exactly
-   - Return type must match exactly
-   - Reference modifiers must match
-   - Handle modifiers must match
-   - Clear error messages for incompatible signatures
-
-### Files Modified
-
-- `src/semantic/types/registry.rs`:
-  - Added 3 new methods for funcdef operations
-
-- `src/semantic/passes/function_processor.rs`:
-  - Modified `check_unary` for HandleOf to handle function references
-  - Modified `visit_var_decl` to set expected funcdef type
-  - Modified `check_assign` to set expected funcdef type
-  - Added 10 new tests
-
-### Tests Added
-
-- `funcdef_variable_declaration_with_function_reference`
-- `funcdef_assignment_with_function_reference`
-- `funcdef_incompatible_signature_error`
-- `funcdef_with_return_type`
-- `funcdef_call_through_variable`
-- `funcdef_without_context_error`
-- `funcdef_as_function_parameter`
-- `funcdef_with_lambda`
-- `funcdef_wrong_param_count_error`
-- `funcdef_wrong_return_type_error`
-
----
-
-## Previous Work: Task 36 - Enum Value Resolution ✅ COMPLETE
-
-**Status:** ✅ Complete
-**Date:** 2025-11-29
-
-### What Was Implemented
-
-1. **Enum value resolution** (e.g., `Color::Red`)
-   - Modified `check_ident` in `function_processor.rs` to detect scoped identifiers
-   - When scope refers to an enum type, looks up the value name in the enum
-   - Returns the numeric value as an integer literal (rvalue)
-
-2. **Namespaced enum support** (e.g., `Game::Status::Active`)
-   - Scope segments are joined to build qualified type name
-   - Works with any depth of namespace nesting
-
-3. **Error handling**
-   - Clear error when enum value doesn't exist: "enum 'Color' has no value named 'Yellow'"
-   - Clear error for undefined scoped identifiers
-
-### Files Modified
-
-- `src/semantic/types/registry.rs`:
-  - Added `lookup_enum_value(type_id, value_name) -> Option<i64>` method
-
-- `src/semantic/passes/function_processor.rs`:
-  - Modified `check_ident` to handle scoped enum value resolution
-  - Added 7 new tests for enum value resolution
-
-### Tests Added
-
-- `enum_value_resolution_basic` - Basic Color::Red/Green/Blue
-- `enum_value_resolution_with_explicit_values` - Priority::Low = 1
-- `enum_value_in_expression` - Color::Red + Color::Blue
-- `namespaced_enum_value_resolution` - Game::Status::Active
-- `enum_value_undefined_error` - Error for Color::Yellow
-- `enum_value_as_function_argument` - processColor(Color::Red)
-- `enum_value_in_switch` - switch with enum cases
-
----
-
-## Previous Work: Task 35 - Namespace Resolution ✅ COMPLETE
-
-**Status:** ✅ Complete
-**Date:** 2025-11-29
-
-### What Was Implemented
-
-1. **Namespace-qualified function calls** (e.g., `Game::getValue()`)
-   - Parser already correctly captures scopes in `IdentExpr`
-   - Registry stores functions with qualified names
-   - `check_call` builds qualified names from scope segments
-
-2. **Nested namespace calls** (e.g., `Game::Utils::helper()`)
-   - Multiple scope segments joined with `::`
-   - Works with any depth of nesting
-
-3. **Unqualified calls from within namespaces**
-   - When calling `helper()` inside `Game::test()`, resolver tries `Game::helper` first
-   - Falls back to global lookup if not found in namespace
-   - Fixed namespace path propagation to `compile_block_with_context`
-
-4. **Absolute scope calls** (e.g., `::globalHelper()`)
-   - Skip namespace lookup for absolute scope
-   - Directly looks up the unqualified name globally
-
-5. **Cross-namespace calls** (e.g., `Utils::helper()` from `Game` namespace)
-   - Uses explicit qualified name from scope
-
-### Files Modified
-
-- `src/semantic/passes/function_processor.rs`:
-  - Fixed `visit_namespace` to push individual path segments (not joined string)
-  - Added `compile_block_with_context` with namespace parameter
-  - Updated `check_call` to handle absolute scope and namespace lookup
-  - Added 7 new tests for namespace function calls
-
-### Tests Added
-
-- `namespace_qualified_function_call` - Basic namespace::function() call
-- `nested_namespace_function_call` - Game::Utils::helper() call
-- `namespace_function_with_arguments` - Arguments passed correctly
-- `namespace_function_overloading` - Overloads resolved within namespace
-- `call_from_within_namespace` - Unqualified calls find namespace functions
-- `absolute_scope_function_call` - ::globalFunction() bypasses namespace
-- `cross_namespace_function_call` - Utils::helper() from Game namespace
 
 ---
 
@@ -355,5 +250,5 @@
 
 ---
 
-**Current Work:** Task 35 ✅ COMPLETE (Namespace Resolution in Call Expressions)
-**Next Work:** Task 36 (Enum Value Resolution) or Tasks 50-52 (Integration & Testing)
+**Current Work:** Task 38 ✅ COMPLETE (Interface Method & Override Validation)
+**Next Work:** Task 40 (Template Constraint Validation) or Tasks 50-52 (Integration & Testing)
