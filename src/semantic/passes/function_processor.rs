@@ -2521,42 +2521,120 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
                     return None;
                 }
 
-                // Try to infer expected funcdef types for lambda arguments
-                // For simplicity: if there's only one candidate, use its parameter types
-                // Note: With multiple overloads, lambda type inference is disabled.
-                // A more sophisticated approach would:
-                // 1. First pass: type-check non-lambda arguments
-                // 2. Narrow overload candidates based on those types
-                // 3. Infer funcdef types for lambdas from remaining candidates
-                let expected_param_types = if candidates.len() == 1 {
-                    let func_def = self.registry.get_function(candidates[0]);
-                    Some(&func_def.params)
-                } else {
-                    None
-                };
+                // Two-pass approach for lambda type inference with overloaded functions:
+                // Pass 1: Identify which arguments are lambdas and type-check non-lambda args
+                // Pass 2: Use narrowed candidates to infer funcdef types for lambda args
 
-                // Type-check arguments with funcdef context inference
+                // Identify lambda argument positions
+                let lambda_positions: Vec<usize> = call.args.iter().enumerate()
+                    .filter(|(_, arg)| matches!(arg.value, Expr::Lambda(_)))
+                    .map(|(i, _)| i)
+                    .collect();
+
+                // If there are lambdas and multiple candidates, use two-pass approach
                 let mut arg_contexts = Vec::with_capacity(call.args.len());
-                for (i, arg) in call.args.iter().enumerate() {
-                    // Set expected_funcdef_type if this parameter expects a funcdef
-                    if let Some(params) = expected_param_types {
-                        if i < params.len() {
-                            let param_type = &params[i];
-                            if param_type.is_handle {
-                                // Check if this is a funcdef type
-                                let type_def = self.registry.get_type(param_type.type_id);
-                                if matches!(type_def, TypeDef::Funcdef { .. }) {
-                                    self.expected_funcdef_type = Some(param_type.type_id);
-                                }
-                            }
+
+                if !lambda_positions.is_empty() && candidates.len() > 1 {
+                    // Pass 1: Type-check non-lambda arguments first
+                    let mut non_lambda_types: Vec<Option<DataType>> = vec![None; call.args.len()];
+                    for (i, arg) in call.args.iter().enumerate() {
+                        if !lambda_positions.contains(&i) {
+                            let arg_ctx = self.check_expr(arg.value)?;
+                            non_lambda_types[i] = Some(arg_ctx.data_type.clone());
+                            arg_contexts.push(arg_ctx);
                         }
                     }
 
-                    let arg_ctx = self.check_expr(arg.value)?;
-                    arg_contexts.push(arg_ctx);
+                    // Narrow candidates based on non-lambda argument types
+                    let narrowed_candidates: Vec<_> = candidates.iter().copied()
+                        .filter(|&func_id| {
+                            let func_def = self.registry.get_function(func_id);
+                            // Check argument count (considering defaults)
+                            let min_params = func_def.params.len() - func_def.default_args.iter().filter(|a| a.is_some()).count();
+                            if call.args.len() < min_params || call.args.len() > func_def.params.len() {
+                                return false;
+                            }
+                            // Check non-lambda argument types match
+                            for (i, opt_type) in non_lambda_types.iter().enumerate() {
+                                if let Some(arg_type) = opt_type {
+                                    if i < func_def.params.len() {
+                                        let param = &func_def.params[i];
+                                        // Check if types are compatible (exact match or implicit conversion)
+                                        if arg_type.type_id != param.type_id {
+                                            if arg_type.can_convert_to(param, self.registry).map_or(true, |c| !c.is_implicit) {
+                                                return false;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            true
+                        })
+                        .collect();
 
-                    // Clear expected_funcdef_type after checking each argument
-                    self.expected_funcdef_type = None;
+                    // Pass 2: Type-check lambda arguments with inferred funcdef types
+                    let expected_param_types = if narrowed_candidates.len() == 1 {
+                        let func_def = self.registry.get_function(narrowed_candidates[0]);
+                        Some(func_def.params.clone())
+                    } else {
+                        None
+                    };
+
+                    // Now type-check lambda arguments with context
+                    let mut full_arg_contexts = Vec::with_capacity(call.args.len());
+                    let mut non_lambda_idx = 0;
+                    for (i, arg) in call.args.iter().enumerate() {
+                        if lambda_positions.contains(&i) {
+                            // Set expected_funcdef_type for lambda inference
+                            if let Some(ref params) = expected_param_types {
+                                if i < params.len() {
+                                    let param_type = &params[i];
+                                    if param_type.is_handle {
+                                        let type_def = self.registry.get_type(param_type.type_id);
+                                        if matches!(type_def, TypeDef::Funcdef { .. }) {
+                                            self.expected_funcdef_type = Some(param_type.type_id);
+                                        }
+                                    }
+                                }
+                            }
+                            let arg_ctx = self.check_expr(arg.value)?;
+                            full_arg_contexts.push(arg_ctx);
+                            self.expected_funcdef_type = None;
+                        } else {
+                            // Use already computed non-lambda context
+                            full_arg_contexts.push(arg_contexts[non_lambda_idx].clone());
+                            non_lambda_idx += 1;
+                        }
+                    }
+                    arg_contexts = full_arg_contexts;
+                } else {
+                    // Simple case: single candidate or no lambdas
+                    let expected_param_types = if candidates.len() == 1 {
+                        let func_def = self.registry.get_function(candidates[0]);
+                        Some(&func_def.params)
+                    } else {
+                        None
+                    };
+
+                    for (i, arg) in call.args.iter().enumerate() {
+                        // Set expected_funcdef_type if this parameter expects a funcdef
+                        if let Some(params) = expected_param_types {
+                            if i < params.len() {
+                                let param_type = &params[i];
+                                if param_type.is_handle {
+                                    let type_def = self.registry.get_type(param_type.type_id);
+                                    if matches!(type_def, TypeDef::Funcdef { .. }) {
+                                        self.expected_funcdef_type = Some(param_type.type_id);
+                                    }
+                                }
+                            }
+                        }
+
+                        let arg_ctx = self.check_expr(arg.value)?;
+                        arg_contexts.push(arg_ctx);
+
+                        self.expected_funcdef_type = None;
+                    }
                 }
 
                 // Extract types for overload resolution
