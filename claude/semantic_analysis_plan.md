@@ -381,46 +381,80 @@ This section contains the full validated task list for completing semantic analy
 - Check at member access sites
 - ~80 lines in function_compiler.rs
 
-### Integration & Testing (Tasks 50-52)
+**Task 50**: Implement `this` keyword and implicit member access ✅ COMPLETE
+- Parse `this` keyword as primary expression
+- Resolve explicit `this.field` and `this.method()` access
+- Resolve implicit member access (bare `field` in method resolves to `this.field`)
+- Emit `LoadThis` instruction for both explicit and implicit access
 
-**Task 50**: Add integration tests (TODO)
+**Task 51**: Fix Switch Statement Bytecode Emission (BUG)
+- Current code in `visit_switch()` validates types but doesn't emit dispatch logic
+- Must emit bytecode to:
+  1. Store switch expression value in temp variable
+  2. For each case: compare against case value, jump if match
+  3. Handle default case (jump if no matches)
+  4. Patch jump targets for fallthrough behavior
+- Implementation approach: Use if-else chain with `Equal` + `JumpIfTrue`
+- Optional optimization: Add `JumpSwitch` instruction for dense case values
+- Location: function_processor.rs:1463-1547
+
+**Task 52**: Remove CreateArray Instruction
+- Current: `CreateArray { element_type_id, count }` is a special instruction
+- Change: Array literals should use `CallConstructor` for `array<T>` type
+- Requires: `array<T>` template to be instantiated with appropriate constructor
+- Remove `CreateArray` from instruction.rs
+- Update initializer list handling in function_processor.rs to emit `CallConstructor`
+
+**Task 53**: Add Null Safety Warnings
+- Track handle initialization state during semantic analysis
+- Warn when accessing handle that may not be initialized
+- Cases to detect:
+  1. Handle declared but never assigned before use
+  2. Handle only assigned in one branch of if/else
+  3. Handle assigned to null then dereferenced
+- This is compile-time analysis only; VM still needs runtime `CheckNull`
+- ~150 lines in function_processor.rs (flow analysis)
+
+### Integration & Testing (Tasks 54-56)
+
+**Task 54**: Add integration tests (TODO)
 - Test realistic AngelScript code samples
 - Test game logic patterns
 - Test all language features together
 - ~500 lines in tests/integration_tests.rs
 
-**Task 51**: Add performance benchmarks (TODO)
+**Task 55**: Add performance benchmarks (TODO)
 - Benchmark Pass 1 (Registration)
 - Benchmark Pass 2a (Type Compilation)
 - Benchmark Pass 2b (Function Compilation)
 - Target: <2ms total for 5000 lines
 - ~200 lines in benches/semantic_benchmarks.rs
 
-**Task 52**: Add stress tests (TODO)
+**Task 56**: Add stress tests (TODO)
 - Large classes (100+ fields, 100+ methods)
 - Deep inheritance (10+ levels)
 - Complex templates (nested 5+ levels)
 - ~300 lines in tests/stress_tests.rs
 
-### Documentation & Cleanup (Tasks 53-56)
+### Documentation & Cleanup (Tasks 57-60)
 
-**Task 53**: Update architecture documentation (TODO)
+**Task 57**: Update architecture documentation (TODO)
 - Document final 2-pass architecture
 - Document type system design
 - Document conversion rules
 - ~500 lines in docs/
 
-**Task 54**: Update semantic_analysis_plan.md ✅ COMPLETE
+**Task 58**: Update semantic_analysis_plan.md ✅ COMPLETE
 - Document completed features
 - Update task list status
 - Document design decisions
 
-**Task 55**: Add API documentation (TODO)
+**Task 59**: Add API documentation (TODO)
 - Rustdoc for all public APIs
 - Usage examples
 - ~200 lines of doc comments
 
-**Task 56**: Update prompt.md ✅ COMPLETE
+**Task 60**: Update prompt.md ✅ COMPLETE
 - Summarize current state
 - Document next steps
 - Update context for future work

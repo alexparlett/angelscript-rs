@@ -169,7 +169,7 @@ Implemented visibility enforcement (public/private/protected) for class members.
 33. ✅ Fix switch/break bug
 34. ✅ Fix method overload resolution bugs
 
-### Remaining Features (Tasks 35-50) ✅ COMPLETE
+### Remaining Features (Tasks 35-53)
 
 35. ✅ Implement namespace resolution in call expressions
 36. ✅ Implement enum value resolution (EnumName::VALUE)
@@ -187,19 +187,22 @@ Implemented visibility enforcement (public/private/protected) for class members.
 48. ✅ Implement circular dependency detection
 49. ✅ Implement visibility enforcement
 50. ✅ Implement `this` keyword and implicit member access
+51. ✅ Complete switch statement bytecode generation (BUG: dispatch logic missing)
+52. ⏳ Remove CreateArray instruction - use CallConstructor for array<T> instead
+53. ⏳ Add null safety warnings (warn on handle access before assignment)
 
-### Integration & Testing (Tasks 51-53)
+### Integration & Testing (Tasks 54-56)
 
-51. ⏳ Add integration tests
-52. ⏳ Add performance benchmarks
-53. ⏳ Add stress tests
+54. ⏳ Add integration tests
+55. ⏳ Add performance benchmarks
+56. ⏳ Add stress tests
 
-### Documentation (Tasks 54-57)
+### Documentation (Tasks 57-60)
 
-54. ⏳ Update architecture documentation
-55. ✅ Update semantic_analysis_plan.md
-56. ⏳ Add API documentation
-57. ✅ Update prompt.md
+57. ⏳ Update architecture documentation
+58. ✅ Update semantic_analysis_plan.md
+59. ⏳ Add API documentation
+60. ✅ Update prompt.md
 
 ---
 

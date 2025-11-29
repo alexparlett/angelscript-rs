@@ -132,10 +132,6 @@ pub enum Instruction {
     LoadField(u32), // Field index
     /// Store a value into an object field (pops value and object)
     StoreField(u32), // Field index
-    /// Index an array (pops index and array, pushes element)
-    Index,
-    /// Store into an array (pops value, index, and array)
-    StoreIndex,
 
     // Type operations
     /// Cast to a type (pops 1, pushes 1)
