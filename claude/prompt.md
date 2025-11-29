@@ -1,7 +1,7 @@
-# Current Task: Lambda Expressions - Phase 1 Infrastructure Complete
+# Current Task: Lambda Expressions - COMPLETE ✅
 
-**Status:** ⏸️ Tasks 26-29 - Phase 1 complete, architectural refactor needed for Phases 2-6
-**Date:** 2025-11-28
+**Status:** ✅ Tasks 26-29 Complete - Lambda expressions fully implemented
+**Date:** 2025-11-29
 **Phase:** Semantic Analysis - Lambda Expressions
 
 ---
@@ -10,252 +10,103 @@
 
 **Parser:** ✅ 100% Complete
 - All AngelScript syntax supported
-- 19 comprehensive test files
-- Rock-solid test coverage
+- 20 comprehensive test files (added lambdas.as)
+- Lambda parameter disambiguation with lookahead
 
-**Semantic Analysis:** 🚧 96% Complete
+**Semantic Analysis:** 🚧 97% Complete
 - ✅ Pass 1 (Registration): 100% Complete
 - ✅ Pass 2a (Type Compilation): 100% Complete
-- ✅ Pass 2b (Function Compilation - Basic): 100% Complete
-- ✅ Phase 1 (Type Conversions): Tasks 1-25 Complete (All Operators + Properties + Default Args + Index Accessors)
-- 🚧 Next: Tasks 26-29 (Lambda Expressions)
-- ⏳ Remaining: Tasks 26-56
+- ✅ Pass 2b (Function Compilation): 100% Complete
+- ✅ Phase 1 (Type Conversions): Tasks 1-25 Complete
+- ✅ Tasks 26-29 (Lambda Expressions): Complete
+- ⏳ Remaining: Tasks 30-56
 
-**Test Status:** Main code compiles ✅ (test suite needs lifetime fixes project-wide)
-
----
-
-## Latest Work: Lambda Expressions - Phase 1 Infrastructure ✅
-
-**Status:** ⏸️ Phase 1 complete, requires architectural refactor before continuing
-**Date:** 2025-11-28
-
-### What Was Accomplished (Tasks 26-29, Phase 1 only)
-
-**Infrastructure Added:**
-1. **Bytecode Instructions** ([src/codegen/ir/instruction.rs](src/codegen/ir/instruction.rs)):
-   - `FuncPtr(u32)`: Push function pointer onto stack (creates handle to function)
-   - `CallPtr`: Call through function pointer (dynamic dispatch for funcdefs)
-
-2. **Variable Capture Support** ([src/semantic/local_scope.rs](src/semantic/local_scope.rs)):
-   - `CapturedVar` struct: Stores name, type, and stack offset
-   - `capture_all_variables()` method: Captures all in-scope variables for lambda closures
-
-3. **Lambda Metadata** ([src/semantic/passes/function_processor.rs](src/semantic/passes/function_processor.rs)):
-   - `LambdaMetadata<'src, 'ast>` struct: Stores AST body, captured vars, parent function, funcdef type
-   - Fields in `FunctionCompiler`: `lambda_counter`, `current_function`, `pending_lambdas`, `expected_funcdef_type`
-
-### Architectural Challenge Discovered
-
-**Problem:** Lambda registration and compilation requires mutating the Registry during function compilation, but Rust's borrow checker prevents this with the current architecture:
-
-```rust
-// Current flow in Compiler::compile()
-let type_compilation = TypeCompiler::compile(script, registry);  // Owns registry
-let function_compilation = FunctionCompiler::compile(script, &type_compilation.registry);  // Borrows registry
-
-// ❌ Cannot do this:
-FunctionCompiler {
-    registry: &'ast mut Registry  // Would need mutable borrow
-}
-// Then try to return type_compilation.registry  // ❌ Can't move out - it's borrowed!
-```
-
-**Options for Resolution:**
-1. **Refactor compilation pipeline** to allow Registry mutation during function compilation
-2. **Two-pass lambda compilation**: Collect metadata in Pass 2b, register+compile in new Pass 2c
-3. **Change Registry ownership**: Make FunctionCompiler own Registry temporarily
-4. **Deferred lambda queue**: Return pending lambdas from FunctionCompiler, let caller register them
-
-**Recommendation:** Option 2 (Two-pass) is cleanest and matches C++ reference implementation pattern.
-
-### Files Modified
-
-- `src/codegen/ir/instruction.rs` - Added FuncPtr and CallPtr instructions
-- `src/semantic/local_scope.rs` - Added CapturedVar and capture method
-- `src/semantic/mod.rs` - Exported CapturedVar
-- `src/semantic/passes/function_processor.rs` - Added LambdaMetadata and compiler fields
-
-### What's Next
-
-**Before continuing with lambda implementation:**
-1. Decide on architectural approach (recommend two-pass)
-2. Refactor compilation pipeline if needed
-3. Then implement Phases 2-6 of lambda support
-
-**Or skip lambdas for now and continue with:**
-- Tasks 30-49 (TODOs & Edge Cases)
-- Tasks 50-52 (Integration & Testing)
+**Test Status:** ✅ 690 tests passing (100%)
 
 ---
 
-## Previous Work: opIndex Accessors ✅ COMPLETE!
+## Latest Work: Lambda Expressions ✅ COMPLETE
 
-**Status:** ✅ Task 25 complete - Index property accessors fully implemented
-**Date:** 2025-11-28
+**Status:** ✅ All lambda functionality implemented and tested
+**Date:** 2025-11-29
 
-### What Was Accomplished
+### What Was Accomplished (Tasks 26-29)
 
-**Task 25: opIndex Property Accessors**
-- Added support for `get_opIndex` and `set_opIndex` as property accessors for index operations
-- Modified `check_index()` to try `get_opIndex` after `opIndex` for read context
-- Added `check_index_assignment()` to handle write context with `set_opIndex`
-- Modified `check_assign()` to detect index expressions early and route to assignment handler
-- Ensures `opIndex` always takes priority over property accessors when both exist
+**1. Parser Fix - Lambda Parameter Type Inference**
+- Fixed `parse_lambda_param()` to properly disambiguate:
+  - `function(int a, int b)` - explicit types with names
+  - `function(a, b)` - names only, types inferred from context
+  - `function(MyType param)` - custom type + name
+- Added lookahead disambiguation using `peek_nth(1)`
+- Primitive type keywords always treated as types
+- Identifier followed by identifier = type + name pattern
+- Identifier followed by comma/paren = name-only pattern
 
-### Key Design Decisions
+**2. Immediate Lambda Compilation Architecture**
+- Lambdas compile immediately when encountered in `check_lambda()`
+- No deferred compilation needed
+- No lifetimes in `CompiledModule`
+- Lambda bytecode stored in `compiled_functions` map with unique FunctionId
 
-**Context-Sensitive Dispatch:**
-- **Read context** (`x = obj[idx]`):
-  1. Try `opIndex` (returns lvalue reference)
-  2. Fallback to `get_opIndex` (returns rvalue)
-- **Write context** (`obj[idx] = value`):
-  1. Try `opIndex` (assign through reference)
-  2. Fallback to `set_opIndex(idx, value)` (direct call)
+**3. Bytecode Instructions** ([src/codegen/ir/instruction.rs](src/codegen/ir/instruction.rs)):
+- `FuncPtr(u32)`: Push function pointer onto stack (creates handle to function)
+- `CallPtr`: Call through function pointer (dynamic dispatch for funcdefs)
 
-**Multi-dimensional Indexing:**
-- `arr[0][1] = value`: All but last index use read context, last uses write context
-- Each dimension chains through the result of the previous
+**4. Variable Capture Support** ([src/semantic/local_scope.rs](src/semantic/local_scope.rs)):
+- `CapturedVar` struct: Stores name, type, and stack offset
+- `capture_all_variables()` method: Captures all in-scope variables for lambda closures
 
-**Type Correctness:**
-- `opIndex` returns lvalue (both read and write possible)
-- `get_opIndex` returns rvalue (read-only)
-- `set_opIndex` takes two parameters: index and value
+**5. Lambda Type Inference**
+- `expected_funcdef_type` field tracks expected funcdef for lambda context
+- Set in `check_call()` before type-checking funcdef arguments
+- `check_lambda()` infers parameter types from funcdef signature
 
-### Example Behavior
+**6. Funcdef Invocation Support**
+- `check_call()` handles calling lambdas through funcdef handles
+- Emits `CallPtr` instruction for dynamic dispatch
+- Validates argument types against funcdef signature
 
-```angelscript
-class Container {
-    int get_opIndex(int idx) const { return data[idx]; }
-    void set_opIndex(int idx, int val) { data[idx] = val; }
-}
+### Comprehensive Test Coverage
 
-Container c;
-int x = c[5];    // ✓ Calls get_opIndex(5)
-c[5] = 42;       // ✓ Calls set_opIndex(5, 42)
-```
+**Parser Integration Test:** [tests/parser_tests.rs](tests/parser_tests.rs#L196-L234)
+- `test_lambdas()` validates parsing of all lambda syntax patterns
 
-**With opIndex present:**
-```angelscript
-class Container {
-    int& opIndex(int idx) { return data[idx]; }
-    int get_opIndex(int idx) const { return data[idx]; }  // Ignored
-    void set_opIndex(int idx, int val) { }                // Ignored
-}
+**Test Script:** [test_scripts/lambdas.as](test_scripts/lambdas.as)
+- 18+ lambda expressions covering:
+  - Explicit vs inferred parameter types
+  - Inline lambdas as function arguments
+  - Variable capture (single and multiple)
+  - Lambda invocation through funcdef handles
+  - Multiple lambdas in same function
+  - Nested lambdas
+  - Complex lambda bodies with conditionals
 
-Container c;
-int x = c[5];    // Uses opIndex (not get_opIndex)
-c[5] = 42;       // Uses opIndex (not set_opIndex)
-```
-
-**Error case:**
-```angelscript
-class ReadOnly {
-    int get_opIndex(int idx) const { return idx; }
-    // No set_opIndex
-}
-
-ReadOnly ro;
-int x = ro[5];   // ✓ Works
-ro[5] = 10;      // ✗ Error: "type 'ReadOnly' does not support index assignment"
-```
+**Unit Tests:** [src/semantic/passes/function_processor.rs](src/semantic/passes/function_processor.rs)
+- `lambda_compilation_basic` - Basic lambda creation and invocation
+- `lambda_type_inference` - Implicit parameter type inference
+- `lambda_variable_capture` - Variable capture semantics
 
 ### Files Modified
 
-- `src/semantic/passes/function_processor.rs`:
-  - Modified `check_assign()` to detect and route index expressions (+9 lines)
-  - Modified `check_index()` to try `get_opIndex` fallback (+58 lines)
-  - Added `check_index_assignment()` for write context handling (+312 lines)
-- `claude/decisions.md`: Documented design decisions (+117 lines)
+- `src/ast/expr_parser.rs` - Lambda parameter disambiguation with lookahead
+- `src/codegen/ir/instruction.rs` - FuncPtr and CallPtr instructions
+- `src/codegen/module.rs` - Removed lifetimes from CompiledModule
+- `src/semantic/local_scope.rs` - CapturedVar and capture_all_variables()
+- `src/semantic/passes/function_processor.rs` - Full check_lambda() implementation
+- `src/semantic/compiler.rs` - Updated CompilationResult
+- `src/module.rs` - Removed lifetimes from ScriptModule
+- `tests/parser_tests.rs` - Added test_lambdas() integration test
+- `tests/test_harness.rs` - Added lambda_expr_count to AstCounter
+- `test_scripts/lambdas.as` - Comprehensive lambda test script
 
-### Test Status
+### Commits
 
-Main library compiles without errors. Integration tests blocked by pre-existing Registry lifetime issues affecting entire test suite. Implementation manually verified through code review:
-- ✓ Correct operator priority (opIndex > accessors)
-- ✓ Context detection (read vs write)
-- ✓ Multi-dimensional support
-- ✓ Proper error messages
-
-### What's Next
-
-Tasks 26-29: Lambda Expressions
+1. `9e6bab3` - Fix lambda parameter type inference with lookahead disambiguation
+2. `f150612` - Add comprehensive lambda expression tests
 
 ---
 
-## Previous Work: Default Arguments ✅ COMPLETE!
-
-**Status:** ✅ Tasks 23-24 complete - Default argument support fully implemented
-**Date:** 2025-11-28
-
-### What Was Accomplished
-
-**Task 23: Default Argument Storage**
-- Added `default_args: Vec<Option<&'ast Expr>>` field to `FunctionDef<'src, 'ast>`
-- Threaded lifetimes through entire compilation pipeline:
-  - `Registry<'src, 'ast>`
-  - `FunctionDef<'src, 'ast>`
-  - `RegistrationData<'src, 'ast>`
-  - `TypeCompilationData<'src, 'ast>`
-  - `CompilationResult<'src, 'ast>`
-  - `FunctionCompiler<'src, 'ast>`
-- Captured default argument AST expressions in `TypeCompiler::visit_function()`
-- Updated `Registry::update_function_signature()` to accept default args
-
-**Task 24: Default Argument Compilation**
-- Implemented inline compilation of default arguments at call sites
-- In `FunctionCompiler::check_call()`:
-  - After finding matching function overload
-  - If `provided_args < required_params`: compile each missing default
-  - Call `check_expr(default_expr)` to emit bytecode inline into caller's stream
-  - Apply implicit conversions if default type differs from parameter type
-  - Error if a required parameter has no default
-
-### Key Design Decisions
-
-**Why Store AST Instead of Strings?**
-- Parser already provides parsed AST expressions
-- No need to re-parse source strings (AngelScript C++ approach)
-- Lifetime system ensures AST lives as long as Registry
-- Cleaner implementation, no parsing overhead
-
-**Why Compile Inline at Call Sites?**
-- Ensures correct namespace resolution (defaults evaluated in caller's context)
-- Simple: just call `check_expr()` on stored expression
-- Bytecode flows naturally into caller's instruction stream
-- Trade-off: Re-compiles at each call (acceptable - no parsing overhead)
-
-**Example:**
-```angelscript
-void foo(int x = 42, string s = "default") { }
-
-foo(10);  // Calls foo with x=10, s="default"
-foo();    // Calls foo with x=42, s="default"
-```
-
-**Generated Bytecode for `foo(10)`:**
-```
-PushInt 10           // Explicit argument
-PushString "default" // Default argument compiled inline
-Call foo             // Function expects 2 args on stack
-```
-
-### Files Modified
-
-- `src/semantic/types/registry.rs` - Added default_args field, lifetimes, get_function_mut
-- `src/semantic/passes/registration.rs` - Updated all FunctionDef creations with default_args
-- `src/semantic/passes/type_compilation.rs` - Capture defaults from AST
-- `src/semantic/passes/function_processor.rs` - Compile defaults inline at call sites
-- `src/semantic/compiler.rs` - Threaded lifetimes through result types
-- `src/module.rs` - Commented out Registry field (separate lifetime issue)
-- `claude/decisions.md` - Documented architectural decision
-
-### What's Next
-
-Tasks 21-22 (Property Accessors) were already complete from previous session. Task 25 (opIndex accessors) is next.
-
-## Complete Task List (56 Tasks - All Validated)
-
-All tasks validated against AngelScript C++ reference implementation.
+## Complete Task List (56 Tasks)
 
 ### Documentation (Tasks 1-2) ✅ COMPLETE
 
@@ -264,48 +115,48 @@ All tasks validated against AngelScript C++ reference implementation.
 
 ### Type Conversions (Tasks 3-9) ✅ COMPLETE
 
-3. ✅ Extend DataType with conversion methods (can_convert_to, etc.)
+3. ✅ Extend DataType with conversion methods
 4. ✅ Implement primitive conversion logic (88+ conversions)
-5. ✅ Implement handle conversions (T@→const T@, derived→base, interface)
-6. ✅ Implement user-defined conversions (constructors, opConv, opImplConv)
-7. ✅ Implement constructor system (lookup, default/copy generation)
-8. ✅ Implement constructor call detection (Type(args) vs function calls)
-9. ✅ Implement initializer list support ({1,2,3} for arrays, value types)
+5. ✅ Implement handle conversions
+6. ✅ Implement user-defined conversions
+7. ✅ Implement constructor system
+8. ✅ Implement constructor call detection
+9. ✅ Implement initializer list support
 
 ### Reference Parameters & Handles (Tasks 10-13) ✅ COMPLETE
 
-10. ✅ Extend DataType with reference modifiers (&in, &out, &inout)
-11. ✅ Implement reference parameter validation (lvalue checks, temps)
-12. ✅ Implement handle semantics (null checking, ref counting)
-13. ✅ Document @+ as VM responsibility (not compiler)
+10. ✅ Extend DataType with reference modifiers
+11. ✅ Implement reference parameter validation
+12. ✅ Implement handle semantics
+13. ✅ Document @+ as VM responsibility
 
 ### Constructors & super() (Tasks 14-16) ✅ COMPLETE
 
-14. ✅ Implement member initialization order (fields without init → base → fields with init)
-15. ✅ Call base class constructor automatically (no super() keyword)
-16. ✅ Implement copy constructor detection (Type(const Type&in))
+14. ✅ Implement member initialization order
+15. ✅ Call base class constructor automatically
+16. ✅ Implement copy constructor detection
 
 ### Operator Overloading (Tasks 17-20) ✅ COMPLETE
 
-17. ✅ Extend TypeDef with operator_methods map (MEMBER METHODS ONLY)
-18. ✅ Implement operator overload lookup (search class methods only)
+17. ✅ Extend TypeDef with operator_methods map
+18. ✅ Implement operator overload lookup
 19. ✅ Integrate operator overloading with binary, unary, postfix ops
-20. ✅ Implement comparison operators (opEquals, opCmp)
+20. ✅ Implement comparison operators
 
 ### Properties & Default Arguments (Tasks 21-25) ✅ COMPLETE
 
-21. ✅ Implement property accessor detection (TWO syntaxes: virtual + explicit)
+21. ✅ Implement property accessor detection
 22. ✅ Transform property access to method calls
-23. ✅ Implement default argument storage (as source ast)
-24. ✅ Implement default argument compilation (recompile at call sites)
-25. ✅ Support accessors on opIndex (get_opIndex/set_opIndex)
+23. ✅ Implement default argument storage
+24. ✅ Implement default argument compilation
+25. ✅ Support accessors on opIndex
 
-### Lambda Expressions (Tasks 26-29)
+### Lambda Expressions (Tasks 26-29) ✅ COMPLETE
 
-26. ⏳ Implement lambda parsing (function keyword, not arrow)
-27. ⏳ Implement capture environment (by reference, ref-counted)
-28. ⏳ Generate anonymous function (unique names: $lambda_0, $lambda_1)
-29. ⏳ Emit lambda creation bytecode (Call)
+26. ✅ Implement lambda parsing (function keyword)
+27. ✅ Implement capture environment (by reference)
+28. ✅ Generate anonymous function (unique FunctionIds)
+29. ✅ Emit lambda creation bytecode (FuncPtr, CallPtr)
 
 ### TODOs & Edge Cases (Tasks 30-49)
 
@@ -321,134 +172,60 @@ All tasks validated against AngelScript C++ reference implementation.
 39. ❌ REMOVED (Auto handle @+ is VM responsibility)
 40. ⏳ Implement template constraint validation
 41. ⏳ Implement mixin support
-42. ⏳ Implement scope keyword (scope(exit), scope(success), scope(failure))
+42. ⏳ Implement scope keyword
 43. ⏳ Implement null coalescing operator (??)
 44. ⏳ Implement elvis operator for handles
-45. ✅ Bitwise assignment operators (already implemented in Pass 2b)
+45. ✅ Bitwise assignment operators (already implemented)
 46. ⏳ Implement void expression validation
 47. ⏳ Implement constant expression evaluation
 48. ⏳ Implement circular dependency detection
-49. ⏳ Implement visibility enforcement (private/protected/public)
+49. ⏳ Implement visibility enforcement
 
 ### Integration & Testing (Tasks 50-52)
 
-50. ⏳ Add integration tests (realistic AngelScript samples)
-51. ⏳ Add performance benchmarks (<2ms for 5000 lines)
-52. ⏳ Add stress tests (large classes, deep inheritance, complex templates)
+50. ⏳ Add integration tests
+51. ⏳ Add performance benchmarks
+52. ⏳ Add stress tests
 
 ### Documentation (Tasks 53-56)
 
 53. ⏳ Update architecture documentation
 54. ✅ Update semantic_analysis_plan.md
-55. ⏳ Add API documentation (rustdoc)
+55. ⏳ Add API documentation
 56. ✅ Update prompt.md
 
 ---
 
-## Key Validation Findings
+## What's Next
 
-All tasks validated against AngelScript C++ reference implementation:
+**Recommended:** Tasks 30-49 (TODOs & Edge Cases)
+- Review and resolve remaining TODOs in codebase
+- Implement remaining edge cases
 
-1. **Constructor Calls**: Parser creates distinct snConstructCall nodes
-2. **Initializer Lists**: Support arrays AND value types with asOBJ_LIST_PATTERN
-3. **Reference Parameters**: &in accepts any, &out/&inout require mutable lvalues, &inout needs ref-counted types
-4. **Operator Overloading**: MEMBER METHODS ONLY (no global operators)
-5. **Property Accessors**: TWO syntaxes (virtual declarations + explicit get_/set_)
-6. **Default Arguments**: Stored as SOURCE STRINGS, recompiled at call sites
-7. **Lambda**: Uses `function` keyword, unique names via counter
-8. **super()**: SUPER_TOKEN keyword, auto-inserted if missing
-9. **Auto Handle (@+)**: VM responsibility for FFI, NOT a compiler feature
-
----
-
-## Files Status
-
-**✅ Completed:**
-- `src/semantic/types/data_type.rs` (with conversion methods)
-- `src/semantic/types/type_def.rs` (with 66+ operators + foreach + property accessors)
-- `src/semantic/types/registry.rs` (with constructor lookup + is_native field)
-- `src/semantic/types/conversion.rs` (Phase 1)
-- `src/semantic/passes/registration.rs` (with is_native field)
-- `src/semantic/passes/type_compilation.rs`
-- `src/semantic/passes/function_processor.rs` (with foreach operators + multi-dimensional indexing)
-- `src/semantic/local_scope.rs`
-- `src/codegen/ir/instruction.rs` (with conversion instructions + Swap)
-- `src/semantic/error.rs`
-- `src/semantic/mod.rs`
-
-**🚧 Next to Modify:**
-- `src/semantic/passes/function_processor.rs` - Properties & Default Arguments (Tasks 21-25)
+**Or:** Tasks 50-52 (Integration & Testing)
+- Add more comprehensive integration tests
+- Performance benchmarks
 
 ---
 
 ## Test Status
 
 ```
-✅ 673/673 tests passing (100%)
-✅ 0 compiler warnings
-✅ All clippy lints passing
+✅ 690/690 tests passing (100%)
+✅ All lambda tests passing (8 total)
+✅ Parser integration test passing
 ```
-
-**Test Breakdown:**
-- types/data_type.rs: 30 tests
-- types/type_def.rs: 27 tests
-- types/registry.rs: 53 tests
-- types/conversion.rs: 475 tests
-- passes/registration.rs: 24 tests
-- passes/type_compilation.rs: 7 tests
-- passes/function_processor.rs: 39 tests
-- local_scope.rs: 18 tests
-
----
-
-## Architecture Context
-
-**Compilation Pipeline:**
-
-```
-Source → Lexer → Parser → Semantic Analysis → Bytecode → VM
-                           │
-                           ├─ Pass 1: Registration (✅ Complete)
-                           ├─ Pass 2a: Type Compilation (✅ Complete)
-                           ├─ Pass 2b: Function Compilation (✅ Complete)
-                           └─ Phase 1: Type Conversions (🚧 40% Complete)
-```
-
-**Registry (Single Source of Truth):**
-- All types (classes, interfaces, enums, primitives)
-- All functions with qualified names
-- All global variables
-- Template instantiation cache
-- Constructor lookup methods ✨ **NEW**
-
-**LocalScope (Per-Function):**
-- Tracks local variables dynamically
-- Nested scope support with shadowing
-
----
-
-## Performance Targets
-
-- **Pass 1:** < 0.5ms for 5000 lines
-- **Pass 2a:** < 0.7ms for 5000 lines
-- **Pass 2b:** < 0.8ms for 5000 lines
-- **Total:** < 2.0ms for full compilation
 
 ---
 
 ## References
 
-- **Full Details:** `/claude/semantic_analysis_plan.md` (complete implementation details)
+- **Full Details:** `/claude/semantic_analysis_plan.md`
 - **Decisions Log:** `/claude/decisions.md`
-- **AST Types:** `src/ast/expr.rs`, `src/ast/stmt.rs`
-- **Type System:** `src/semantic/data_type.rs`, `src/semantic/type_def.rs`
-- **Conversion System:** `src/semantic/conversion.rs`
+- **Lambda Plan:** `/Users/alexparlett/.claude/plans/lambda-type-inference-fix.md`
 - **C++ Reference:** `reference/angelscript/source/as_builder.cpp`, `as_compiler.cpp`
 
 ---
 
-**Current Work:** Tasks 17-20 ✅ COMPLETE + Operator Extensions (Foreach + Property Accessors)
-**Next Work:** Tasks 21-25 (Properties & Default Arguments)
-**VM:** Will begin after semantic analysis complete
-
----
+**Current Work:** Tasks 26-29 ✅ COMPLETE (Lambda Expressions)
+**Next Work:** Tasks 30-49 (TODOs & Edge Cases) or Tasks 50-52 (Integration & Testing)
