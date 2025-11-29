@@ -5785,4 +5785,31 @@ mod tests {
 
         assert!(!result.is_success(), "Wrong return type should error");
     }
+
+    // ========== Bitwise Assignment Operators Tests ==========
+
+    #[test]
+    fn bitwise_assignment_operators() {
+        use crate::parse_lenient;
+        use crate::semantic::Compiler;
+        use bumpalo::Bump;
+
+        let arena = Bump::new();
+        let source = r#"
+            void test() {
+                int x = 0xFF;
+                x &= 0x0F;   // bitwise AND assign
+                x |= 0x80;   // bitwise OR assign
+                x ^= 0x0F;   // bitwise XOR assign
+                x <<= 2;     // left shift assign
+                x >>= 1;     // right shift assign
+                x >>>= 1;    // unsigned right shift assign
+            }
+        "#;
+
+        let (script, _) = parse_lenient(source, &arena);
+        let result = Compiler::compile(&script);
+
+        assert!(result.is_success(), "Bitwise assignment operators should work: {:?}", result.errors);
+    }
 }
