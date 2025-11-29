@@ -242,7 +242,7 @@ pub enum Instruction {
     /// VM responsibilities:
     /// 1. Allocate object of the specified type
     /// 2. Initialize all fields to defaults (in declaration order)
-    /// 3. Call base class constructor if needed (TODO: Task 11)
+    /// 3. Call base class constructor if needed
     /// 4. Execute constructor body bytecode (func_id)
     /// 5. Push object handle onto stack
     ///
