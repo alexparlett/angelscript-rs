@@ -24,6 +24,7 @@
 //! ```
 
 pub mod compiler;
+pub mod const_eval;
 pub mod error;
 pub mod local_scope;
 pub mod passes;
@@ -42,6 +43,7 @@ pub use passes::{
 pub use crate::codegen::CompiledModule;
 
 // Re-export core types from types module
+pub use const_eval::{eval_const_int, ConstEvaluator, ConstValue};
 pub use error::{SemanticError, SemanticErrorKind, SemanticErrors};
 pub use local_scope::{CapturedVar, LocalScope, LocalVar};
 pub use types::{

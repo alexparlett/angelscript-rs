@@ -18,8 +18,9 @@ use crate::semantic::types::registry::FunctionDef;
 use crate::codegen::{BytecodeEmitter, CompiledBytecode, CompiledModule, Instruction};
 use crate::lexer::Span;
 use crate::semantic::{
-    CapturedVar, DataType, LocalScope, OperatorBehavior, PrimitiveType, Registry, SemanticError, SemanticErrorKind, TypeDef, TypeId,
-    BOOL_TYPE, DOUBLE_TYPE, FLOAT_TYPE, INT32_TYPE, INT64_TYPE, NULL_TYPE, UINT8_TYPE, VOID_TYPE,
+    eval_const_int, CapturedVar, DataType, LocalScope, OperatorBehavior, PrimitiveType, Registry,
+    SemanticError, SemanticErrorKind, TypeDef, TypeId, BOOL_TYPE, DOUBLE_TYPE, FLOAT_TYPE,
+    INT32_TYPE, INT64_TYPE, NULL_TYPE, UINT8_TYPE, VOID_TYPE,
 };
 use crate::semantic::types::type_def::FunctionId;
 use rustc_hash::FxHashMap;
@@ -1517,7 +1518,7 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
                         }
 
                         // Check for duplicate case values (if we can evaluate as constant)
-                        if let Some(const_value) = Self::try_eval_const_int(value_expr) {
+                        if let Some(const_value) = eval_const_int(value_expr) {
                             if !case_values.insert(const_value) {
                                 self.error(
                                     SemanticErrorKind::DuplicateDeclaration,
@@ -4258,42 +4259,6 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
         type_def.name().to_string()
     }
 
-    /// Tries to evaluate an expression as a compile-time constant integer.
-    ///
-    /// This is used for checking duplicate case values in switch statements.
-    /// Currently supports:
-    /// - Integer literals
-    /// - Unary negation of integer literals
-    /// - Boolean literals (as 0 or 1)
-    ///
-    /// Returns None if the expression cannot be evaluated as a constant.
-    fn try_eval_const_int(expr: &Expr<'src, 'ast>) -> Option<i64> {
-        match expr {
-            Expr::Literal(lit) => match &lit.kind {
-                LiteralKind::Int(v) => Some(*v),
-                LiteralKind::Bool(b) => Some(if *b { 1 } else { 0 }),
-                _ => None,
-            },
-            Expr::Unary(unary) => {
-                // Handle negation of integer literals
-                if unary.op == UnaryOp::Neg {
-                    if let Some(inner) = Self::try_eval_const_int(unary.operand) {
-                        return Some(-inner);
-                    }
-                }
-                // Handle bitwise NOT
-                if unary.op == UnaryOp::BitwiseNot {
-                    if let Some(inner) = Self::try_eval_const_int(unary.operand) {
-                        return Some(!inner);
-                    }
-                }
-                None
-            }
-            Expr::Paren(paren) => Self::try_eval_const_int(paren.expr),
-            _ => None,
-        }
-    }
-
     /// Tries to find and call an operator overload for a binary operation.
     ///
     /// Returns Some(result_type) if operator overload was found and emitted,
@@ -5012,44 +4977,6 @@ mod tests {
         // (exact bytecode depends on implementation details)
         assert!(lambda_bytecode.instructions.len() > 0,
             "Lambda should have non-empty bytecode");
-    }
-
-    #[test]
-    fn try_eval_const_int_literal() {
-        use crate::ast::{Parser, Expr};
-        use bumpalo::Bump;
-
-        let arena = Bump::new();
-
-        // Integer literal
-        let mut parser = Parser::new("42", &arena);
-        let expr = parser.parse_expr(0).unwrap();
-        assert_eq!(FunctionCompiler::<'_, '_>::try_eval_const_int(&expr), Some(42));
-
-        // Negative literal
-        let mut parser = Parser::new("-10", &arena);
-        let expr = parser.parse_expr(0).unwrap();
-        assert_eq!(FunctionCompiler::<'_, '_>::try_eval_const_int(&expr), Some(-10));
-
-        // Boolean true
-        let mut parser = Parser::new("true", &arena);
-        let expr = parser.parse_expr(0).unwrap();
-        assert_eq!(FunctionCompiler::<'_, '_>::try_eval_const_int(&expr), Some(1));
-
-        // Boolean false
-        let mut parser = Parser::new("false", &arena);
-        let expr = parser.parse_expr(0).unwrap();
-        assert_eq!(FunctionCompiler::<'_, '_>::try_eval_const_int(&expr), Some(0));
-
-        // Parenthesized
-        let mut parser = Parser::new("(42)", &arena);
-        let expr = parser.parse_expr(0).unwrap();
-        assert_eq!(FunctionCompiler::<'_, '_>::try_eval_const_int(&expr), Some(42));
-
-        // Non-constant (variable)
-        let mut parser = Parser::new("x", &arena);
-        let expr = parser.parse_expr(0).unwrap();
-        assert_eq!(FunctionCompiler::<'_, '_>::try_eval_const_int(&expr), None);
     }
 
     #[test]

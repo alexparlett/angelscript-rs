@@ -32,6 +32,7 @@
 //! assert!(data.registry.lookup_type("Player").is_some());
 //! ```
 
+use crate::semantic::const_eval::eval_const_int;
 use crate::semantic::error::{SemanticError, SemanticErrorKind};
 use crate::semantic::types::{
     registry::{FunctionDef, MixinDef, Registry},
@@ -42,8 +43,7 @@ use crate::ast::decl::{
     ClassDecl, ClassMember, EnumDecl, FuncdefDecl, FunctionDecl, GlobalVarDecl, InterfaceDecl,
     Item, MixinDecl, NamespaceDecl, TypedefDecl,
 };
-use crate::ast::expr::{Expr, LiteralKind};
-use crate::ast::{Script, UnaryOp};
+use crate::ast::Script;
 use crate::lexer::Span;
 use rustc_hash::FxHashMap;
 
@@ -339,7 +339,7 @@ impl<'src, 'ast> Registrar<'src, 'ast> {
             .map(|v| {
                 let value = if let Some(expr) = v.value {
                     // Try to evaluate the expression as a constant
-                    match Self::try_eval_const_int(expr) {
+                    match eval_const_int(expr) {
                         Some(val) => {
                             next_value = val + 1;
                             val
@@ -686,41 +686,6 @@ impl<'src, 'ast> Registrar<'src, 'ast> {
         }
     }
 
-    /// Tries to evaluate an expression as a compile-time constant integer.
-    ///
-    /// This is used for evaluating enum value expressions.
-    /// Currently supports:
-    /// - Integer literals
-    /// - Unary negation of integer literals
-    /// - Boolean literals (as 0 or 1)
-    ///
-    /// Returns None if the expression cannot be evaluated as a constant.
-    fn try_eval_const_int(expr: &Expr<'src, 'ast>) -> Option<i64> {
-        match expr {
-            Expr::Literal(lit) => match &lit.kind {
-                LiteralKind::Int(v) => Some(*v),
-                LiteralKind::Bool(b) => Some(if *b { 1 } else { 0 }),
-                _ => None,
-            },
-            Expr::Unary(unary) => {
-                // Handle negation of integer literals
-                if unary.op == UnaryOp::Neg {
-                    if let Some(inner) = Self::try_eval_const_int(unary.operand) {
-                        return Some(-inner);
-                    }
-                }
-                // Handle bitwise NOT
-                if unary.op == UnaryOp::BitwiseNot {
-                    if let Some(inner) = Self::try_eval_const_int(unary.operand) {
-                        return Some(!inner);
-                    }
-                }
-                None
-            }
-            Expr::Paren(paren) => Self::try_eval_const_int(paren.expr),
-            _ => None,
-        }
-    }
 }
 
 #[cfg(test)]
