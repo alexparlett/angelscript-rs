@@ -417,24 +417,21 @@ This section contains the full validated task list for completing semantic analy
 
 ### Integration & Testing (Tasks 54-56)
 
-**Task 54**: Add integration tests (TODO)
+**Task 54**: Add stress tests (TODO)
+- Ensure unit testing 100% coverage
+
+**Task 55**: Add integration tests (TODO)
 - Test realistic AngelScript code samples
 - Test game logic patterns
 - Test all language features together
 - ~500 lines in tests/integration_tests.rs
 
-**Task 55**: Add performance benchmarks (TODO)
+**Task 56**: Add performance benchmarks (TODO)
 - Benchmark Pass 1 (Registration)
 - Benchmark Pass 2a (Type Compilation)
 - Benchmark Pass 2b (Function Compilation)
 - Target: <2ms total for 5000 lines
 - ~200 lines in benches/semantic_benchmarks.rs
-
-**Task 56**: Add stress tests (TODO)
-- Large classes (100+ fields, 100+ methods)
-- Deep inheritance (10+ levels)
-- Complex templates (nested 5+ levels)
-- ~300 lines in tests/stress_tests.rs
 
 ### Documentation & Cleanup (Tasks 57-60)
 
