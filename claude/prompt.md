@@ -1,6 +1,6 @@
-# Current Task: Task 41 Complete - Mixin Support
+# Current Task: Task 46 Complete - Void Expression Validation
 
-**Status:** ✅ Task 41 Complete
+**Status:** ✅ Task 46 Complete
 **Date:** 2025-11-29
 **Phase:** Semantic Analysis - Remaining Features
 
@@ -22,65 +22,47 @@
 - ✅ Tasks 30-34 (TODO Cleanup): Complete
 - ✅ Tasks 35-38: Namespace, Enum, Funcdef & Interface Validation Complete
 - ✅ Task 41: Mixin Support Complete
-- ⏳ Remaining: Tasks 42-56
+- ✅ Task 46: Void Expression Validation Complete
+- ⏳ Remaining: Tasks 48-56
 
-**Test Status:** ✅ 782 tests passing (100%)
+**Test Status:** ✅ 791 tests passing (100%)
 
 ---
 
-## Latest Work: Task 41 - Mixin Support - COMPLETE
+## Latest Work: Task 46 - Void Expression Validation - COMPLETE
 
 **Status:** ✅ Complete
 **Date:** 2025-11-29
 
 ### Implementation Summary
 
-Implemented full mixin class support according to AngelScript documentation:
+Added semantic validation to prevent void types from being used in invalid contexts. Void is only valid as a function return type.
 
 **Files Modified:**
-- `src/semantic/types/registry.rs` - Added `MixinDef` struct and mixin storage
-- `src/semantic/passes/registration.rs` - Added `visit_mixin()` for Pass 1 registration
-- `src/semantic/passes/type_compilation.rs` - Added mixin expansion in `visit_class()`
-- `src/semantic/error.rs` - Added `InvalidMixinModifier` error kind
-- `src/ast/decl_parser.rs` - Fixed parser to pass modifiers to `parse_mixin()`
+- `src/semantic/error.rs` - Added `VoidExpression` error kind
+- `src/semantic/passes/function_processor.rs` - Added void checks in expressions
+- `src/semantic/passes/type_compilation.rs` - Added void check for class fields
 
-**Features Implemented:**
-1. **Mixin Registration (Pass 1):**
-   - Mixins registered separately from types (not instantiable)
-   - Mixin modifier validation (cannot be final/shared/abstract/external)
-   - Required interfaces captured from inheritance list
+**Validation Added:**
+1. **Variable declarations:** `void x;` → error
+2. **Return statements:** `return void_func();` in non-void function → error
+3. **Assignments:** `x = void_func();` → error
+4. **Binary operations:** `void_func() + 1` → error
+5. **Unary operations:** `-void_func()` → error
+6. **Ternary branches:** `cond ? void_func() : 1` → error
+7. **Function arguments:** `foo(void_func())` → error
+8. **Class fields:** `class C { void x; }` → error
 
-2. **Mixin Expansion (Pass 2a):**
-   - Methods copied from mixin to including class
-   - Fields copied from mixin to including class
-   - Interfaces from mixin added to class
-   - Class methods/fields take precedence over mixin members
-   - Mixin members NOT added if already inherited from base class
-
-3. **New Helper Methods:**
-   - `Registry::register_mixin()` - Register a mixin definition
-   - `Registry::lookup_mixin()` - Look up a mixin by name
-   - `Registry::is_mixin()` - Check if a name is a mixin
-   - `Registry::get_class_fields()` - Get fields of a class
-   - `Registry::next_function_id()` - Get next available function ID
-   - `TypeCompiler::register_mixin_method()` - Register mixin methods for including class
-
-**Tests Added (15 new tests):**
-- `mixin_registered` - Basic mixin registration
-- `mixin_final_error` - Final modifier validation
-- `mixin_shared_error` - Shared modifier validation
-- `mixin_abstract_error` - Abstract modifier validation
-- `mixin_external_error` - External modifier validation
-- `mixin_with_interfaces` - Interface requirements
-- `mixin_duplicate_error` - Duplicate mixin error
-- `mixin_basic_method` - Method inheritance
-- `mixin_basic_field` - Field inheritance
-- `mixin_class_method_overrides_mixin` - Class method precedence
-- `mixin_field_not_duplicated` - Field precedence
-- `mixin_with_interface` - Interface propagation
-- `multiple_mixins` - Multiple mixin inheritance
-- `mixin_with_base_class` - Mixin with base class
-- `mixin_is_not_a_type` - Verify mixin is not a type
+**Tests Added (9 new tests):**
+- `void_variable_declaration_error`
+- `void_return_in_non_void_function_error`
+- `void_assignment_error`
+- `void_binary_operand_error`
+- `void_unary_operand_error`
+- `void_ternary_branch_error`
+- `void_return_type_allowed` (positive test)
+- `void_function_call_as_statement` (positive test)
+- `void_class_field_error`
 
 ---
 
@@ -157,7 +139,7 @@ Implemented full mixin class support according to AngelScript documentation:
 43. ❌ REMOVED (Null coalescing ?? is not part of AngelScript)
 44. ❌ REMOVED (Elvis ?: is not part of AngelScript - ternary already implemented)
 45. ✅ Bitwise assignment operators (already implemented)
-46. ⏳ Implement void expression validation
+46. ✅ Implement void expression validation
 47. ✅ Constant expression evaluation (implemented for switch/enum)
 48. ⏳ Implement circular dependency detection
 49. ⏳ Implement visibility enforcement
@@ -179,8 +161,7 @@ Implemented full mixin class support according to AngelScript documentation:
 
 ## What's Next
 
-**Recommended:** Tasks 46-49 (Remaining Features)
-- Task 46: Void expression validation
+**Recommended:** Tasks 48-49 (Remaining Features)
 - Task 48: Circular dependency detection
 - Task 49: Visibility enforcement
 
@@ -193,14 +174,14 @@ Implemented full mixin class support according to AngelScript documentation:
 ## Test Status
 
 ```
-✅ 782/782 tests passing (100%)
+✅ 791/791 tests passing (100%)
 ✅ All semantic analysis tests passing
 ✅ All interface validation tests passing
 ✅ All override/final validation tests passing
 ✅ All namespace function call tests passing
 ✅ All enum value resolution tests passing
-✅ All mixin tests passing (15 new tests)
-✅ Bitwise assignment operators test passing (1 new test)
+✅ All mixin tests passing (15 tests)
+✅ All void expression validation tests passing (9 new tests)
 ```
 
 ---
@@ -213,5 +194,5 @@ Implemented full mixin class support according to AngelScript documentation:
 
 ---
 
-**Current Work:** Task 45 ✅ VERIFIED (Bitwise Assignment Operators)
-**Next Work:** Task 46 (Void Expression Validation) or other remaining tasks
+**Current Work:** Task 46 ✅ COMPLETE (Void Expression Validation)
+**Next Work:** Task 48 (Circular Dependency Detection) or Task 49 (Visibility Enforcement)
