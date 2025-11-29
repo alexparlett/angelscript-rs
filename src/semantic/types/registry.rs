@@ -268,6 +268,19 @@ impl<'src, 'ast> Registry<'src, 'ast> {
         &mut self.types[type_id.as_u32() as usize]
     }
 
+    /// Look up an enum value by enum type ID and value name
+    /// Returns the numeric value if found, None otherwise
+    pub fn lookup_enum_value(&self, type_id: TypeId, value_name: &str) -> Option<i64> {
+        let typedef = self.get_type(type_id);
+        if let TypeDef::Enum { values, .. } = typedef {
+            values.iter()
+                .find(|(name, _)| name == value_name)
+                .map(|(_, val)| *val)
+        } else {
+            None
+        }
+    }
+
     /// Instantiate a template with the given arguments
     pub fn instantiate_template(
         &mut self,

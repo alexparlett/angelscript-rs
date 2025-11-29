@@ -1,8 +1,8 @@
-# Current Task: TODO Cleanup - COMPLETE ✅
+# Current Task: Enum Value Resolution - COMPLETE ✅
 
-**Status:** ✅ Tasks 30-34 Complete - All TODOs resolved
+**Status:** ✅ Tasks 35-36 Complete
 **Date:** 2025-11-29
-**Phase:** Semantic Analysis - Bug Fixes & Cleanup
+**Phase:** Semantic Analysis - Remaining Features
 
 ---
 
@@ -20,9 +20,10 @@
 - ✅ Phase 1 (Type Conversions): Tasks 1-25 Complete
 - ✅ Tasks 26-29 (Lambda Expressions): Complete
 - ✅ Tasks 30-34 (TODO Cleanup): Complete
-- ⏳ Remaining: Tasks 35-56
+- ✅ Tasks 35-36: Namespace & Enum Resolution Complete
+- ⏳ Remaining: Tasks 37-56
 
-**Test Status:** ✅ 711 tests passing (100%)
+**Test Status:** ✅ 725 tests passing (100%)
 
 ---
 
@@ -144,7 +145,7 @@
 ### Remaining Features (Tasks 35-49)
 
 35. ✅ Implement namespace resolution in call expressions
-36. ⏳ Implement enum value resolution (EnumName::VALUE)
+36. ✅ Implement enum value resolution (EnumName::VALUE)
 37. ⏳ Implement funcdef type checking
 38. ⏳ Implement interface method validation
 39. ❌ REMOVED (Auto handle @+ is VM responsibility)
@@ -176,8 +177,8 @@
 
 ## What's Next
 
-**Recommended:** Tasks 36-49 (Remaining Features)
-- Enum value resolution (EnumName::VALUE)
+**Recommended:** Tasks 37-49 (Remaining Features)
+- Funcdef type checking
 - Interface method validation
 - Template constraints
 - Mixin support
@@ -191,16 +192,58 @@
 ## Test Status
 
 ```
-✅ 718/718 tests passing (100%)
+✅ 725/725 tests passing (100%)
 ✅ All semantic analysis tests passing
 ✅ All switch/break tests passing
 ✅ All method overloading tests passing
 ✅ All namespace function call tests passing
+✅ All enum value resolution tests passing
 ```
 
 ---
 
-## Latest Work: Task 35 - Namespace Resolution ✅ COMPLETE
+## Latest Work: Task 36 - Enum Value Resolution ✅ COMPLETE
+
+**Status:** ✅ Complete
+**Date:** 2025-11-29
+
+### What Was Implemented
+
+1. **Enum value resolution** (e.g., `Color::Red`)
+   - Modified `check_ident` in `function_processor.rs` to detect scoped identifiers
+   - When scope refers to an enum type, looks up the value name in the enum
+   - Returns the numeric value as an integer literal (rvalue)
+
+2. **Namespaced enum support** (e.g., `Game::Status::Active`)
+   - Scope segments are joined to build qualified type name
+   - Works with any depth of namespace nesting
+
+3. **Error handling**
+   - Clear error when enum value doesn't exist: "enum 'Color' has no value named 'Yellow'"
+   - Clear error for undefined scoped identifiers
+
+### Files Modified
+
+- `src/semantic/types/registry.rs`:
+  - Added `lookup_enum_value(type_id, value_name) -> Option<i64>` method
+
+- `src/semantic/passes/function_processor.rs`:
+  - Modified `check_ident` to handle scoped enum value resolution
+  - Added 7 new tests for enum value resolution
+
+### Tests Added
+
+- `enum_value_resolution_basic` - Basic Color::Red/Green/Blue
+- `enum_value_resolution_with_explicit_values` - Priority::Low = 1
+- `enum_value_in_expression` - Color::Red + Color::Blue
+- `namespaced_enum_value_resolution` - Game::Status::Active
+- `enum_value_undefined_error` - Error for Color::Yellow
+- `enum_value_as_function_argument` - processColor(Color::Red)
+- `enum_value_in_switch` - switch with enum cases
+
+---
+
+## Previous Work: Task 35 - Namespace Resolution ✅ COMPLETE
 
 **Status:** ✅ Complete
 **Date:** 2025-11-29

@@ -1596,8 +1596,47 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
 
     /// Type checks an identifier expression.
     /// Variables are lvalues (mutable unless marked const).
+    /// Enum values (EnumName::VALUE) are rvalues (integer constants).
     fn check_ident(&mut self, ident: &IdentExpr<'src, 'ast>) -> Option<ExprContext> {
         let name = ident.ident.name;
+
+        // Check if this is a scoped identifier (e.g., EnumName::VALUE or Namespace::EnumName::VALUE)
+        if let Some(scope) = ident.scope {
+            // Build the qualified type name from scope segments
+            let scope_parts: Vec<&str> = scope.segments.iter().map(|id| id.name).collect();
+            let type_name = scope_parts.join("::");
+
+            // Try to look up as an enum type
+            if let Some(type_id) = self.registry.lookup_type(&type_name) {
+                let typedef = self.registry.get_type(type_id);
+                if typedef.is_enum() {
+                    // Look up the enum value
+                    if let Some(value) = self.registry.lookup_enum_value(type_id, name) {
+                        // Emit instruction to push the enum value as an integer constant
+                        self.bytecode.emit(Instruction::PushInt(value));
+                        // Enum values are rvalues of type int32
+                        return Some(ExprContext::rvalue(DataType::simple(INT32_TYPE)));
+                    } else {
+                        // Enum exists but value doesn't
+                        self.error(
+                            SemanticErrorKind::UndefinedVariable,
+                            ident.span,
+                            format!("enum '{}' has no value named '{}'", type_name, name),
+                        );
+                        return None;
+                    }
+                }
+            }
+
+            // Not an enum - could be a namespace-qualified variable
+            // For now, fall through to report undefined (namespaced variables handled elsewhere)
+            self.error(
+                SemanticErrorKind::UndefinedVariable,
+                ident.span,
+                format!("undefined identifier '{}::{}'", type_name, name),
+            );
+            return None;
+        }
 
         // Check local variables first
         if let Some(local_var) = self.local_scope.lookup(name) {
@@ -5198,5 +5237,203 @@ mod tests {
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Cross-namespace function call should work: {:?}", result.errors);
+    }
+
+    #[test]
+    fn enum_value_resolution_basic() {
+        use crate::parse_lenient;
+        use crate::semantic::Compiler;
+        use bumpalo::Bump;
+
+        let arena = Bump::new();
+        let source = r#"
+            enum Color {
+                Red,
+                Green,
+                Blue
+            }
+
+            void test() {
+                int x = Color::Red;    // Should resolve to 0
+                int y = Color::Green;  // Should resolve to 1
+                int z = Color::Blue;   // Should resolve to 2
+            }
+        "#;
+
+        let (script, _) = parse_lenient(source, &arena);
+        let result = Compiler::compile(&script);
+
+        assert!(result.is_success(), "Basic enum value resolution should work: {:?}", result.errors);
+    }
+
+    #[test]
+    fn enum_value_resolution_with_explicit_values() {
+        use crate::parse_lenient;
+        use crate::semantic::Compiler;
+        use bumpalo::Bump;
+
+        let arena = Bump::new();
+        let source = r#"
+            enum Priority {
+                Low = 1,
+                Medium = 5,
+                High = 10
+            }
+
+            void test() {
+                int x = Priority::Low;     // Should resolve to 1
+                int y = Priority::Medium;  // Should resolve to 5
+                int z = Priority::High;    // Should resolve to 10
+            }
+        "#;
+
+        let (script, _) = parse_lenient(source, &arena);
+        let result = Compiler::compile(&script);
+
+        assert!(result.is_success(), "Enum value resolution with explicit values should work: {:?}", result.errors);
+    }
+
+    #[test]
+    fn enum_value_in_expression() {
+        use crate::parse_lenient;
+        use crate::semantic::Compiler;
+        use bumpalo::Bump;
+
+        let arena = Bump::new();
+        let source = r#"
+            enum Color {
+                Red,
+                Green,
+                Blue
+            }
+
+            void test() {
+                int sum = Color::Red + Color::Blue;  // 0 + 2 = 2
+                bool cmp = Color::Green > Color::Red;  // 1 > 0 = true
+            }
+        "#;
+
+        let (script, _) = parse_lenient(source, &arena);
+        let result = Compiler::compile(&script);
+
+        assert!(result.is_success(), "Enum values in expressions should work: {:?}", result.errors);
+    }
+
+    #[test]
+    fn namespaced_enum_value_resolution() {
+        use crate::parse_lenient;
+        use crate::semantic::Compiler;
+        use bumpalo::Bump;
+
+        let arena = Bump::new();
+        let source = r#"
+            namespace Game {
+                enum Status {
+                    Active,
+                    Paused,
+                    Stopped
+                }
+            }
+
+            void test() {
+                int x = Game::Status::Active;   // Namespaced enum value
+                int y = Game::Status::Stopped;
+            }
+        "#;
+
+        let (script, _) = parse_lenient(source, &arena);
+        let result = Compiler::compile(&script);
+
+        assert!(result.is_success(), "Namespaced enum value resolution should work: {:?}", result.errors);
+    }
+
+    #[test]
+    fn enum_value_undefined_error() {
+        use crate::parse_lenient;
+        use crate::semantic::Compiler;
+        use bumpalo::Bump;
+
+        let arena = Bump::new();
+        let source = r#"
+            enum Color {
+                Red,
+                Green,
+                Blue
+            }
+
+            void test() {
+                int x = Color::Yellow;  // Error: Yellow doesn't exist
+            }
+        "#;
+
+        let (script, _) = parse_lenient(source, &arena);
+        let result = Compiler::compile(&script);
+
+        assert!(!result.is_success(), "Should fail for undefined enum value");
+        assert!(result.errors.iter().any(|e| e.message.contains("has no value named 'Yellow'")),
+            "Error should mention undefined enum value: {:?}", result.errors);
+    }
+
+    #[test]
+    fn enum_value_as_function_argument() {
+        use crate::parse_lenient;
+        use crate::semantic::Compiler;
+        use bumpalo::Bump;
+
+        let arena = Bump::new();
+        let source = r#"
+            enum Color {
+                Red,
+                Green,
+                Blue
+            }
+
+            void processColor(int c) {
+                // do something with color
+            }
+
+            void test() {
+                processColor(Color::Red);
+                processColor(Color::Green);
+            }
+        "#;
+
+        let (script, _) = parse_lenient(source, &arena);
+        let result = Compiler::compile(&script);
+
+        assert!(result.is_success(), "Enum values as function arguments should work: {:?}", result.errors);
+    }
+
+    #[test]
+    fn enum_value_in_switch() {
+        use crate::parse_lenient;
+        use crate::semantic::Compiler;
+        use bumpalo::Bump;
+
+        let arena = Bump::new();
+        let source = r#"
+            enum Color {
+                Red,
+                Green,
+                Blue
+            }
+
+            void test() {
+                int color = Color::Red;
+                switch (color) {
+                    case Color::Red:
+                        break;
+                    case Color::Green:
+                        break;
+                    case Color::Blue:
+                        break;
+                }
+            }
+        "#;
+
+        let (script, _) = parse_lenient(source, &arena);
+        let result = Compiler::compile(&script);
+
+        assert!(result.is_success(), "Enum values in switch cases should work: {:?}", result.errors);
     }
 }
