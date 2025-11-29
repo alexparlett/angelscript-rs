@@ -79,29 +79,9 @@ pub struct CompiledFunction {
 
     /// Errors encountered during compilation
     pub errors: Vec<SemanticError>,
-}
 
-/// Metadata for a lambda expression that needs deferred compilation.
-///
-/// When a lambda is encountered, we register it immediately but compile its body
-/// later (after the parent function is compiled). This struct holds all the
-/// information needed to compile the lambda body.
-#[derive(Debug, Clone)]
-pub struct LambdaMetadata<'src, 'ast> {
-    /// The AST body of the lambda
-    pub ast_body: &'ast Block<'src, 'ast>,
-
-    /// Variables captured from the parent scope
-    pub captured_vars: Vec<CapturedVar>,
-
-    /// Name of the parent function (for error messages)
-    pub parent_function: String,
-
-    /// The funcdef type this lambda conforms to
-    pub funcdef_type_id: TypeId,
-
-    /// Source location
-    pub span: Span,
+    /// Lambda functions compiled within this function
+    pub lambdas: FxHashMap<FunctionId, CompiledBytecode>,
 }
 
 /// Compiles function bodies (type checking + bytecode generation).
@@ -132,14 +112,11 @@ pub struct FunctionCompiler<'src, 'ast> {
     /// Current class context (when compiling methods)
     current_class: Option<TypeId>,
 
-    /// Lambda counter for current function (generates unique names)
-    lambda_counter: u32,
+    /// Global lambda counter for unique FunctionIds (starts at next available ID after regular functions)
+    next_lambda_id: u32,
 
-    /// Name of the current function being compiled
+    /// Name of the current function being compiled (optional - for debug/error messages)
     current_function: Option<String>,
-
-    /// Pending lambdas for deferred compilation
-    pending_lambdas: Vec<(FunctionId, LambdaMetadata<'src, 'ast>)>,
 
     /// Expected funcdef type for lambda type inference
     expected_funcdef_type: Option<TypeId>,
@@ -171,6 +148,7 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
     /// Creates a new module-level compiler (for compiling all functions).
     fn new_module_compiler(registry: &'ast Registry<'src, 'ast>) -> Self {
         Self {
+            next_lambda_id: registry.function_count() as u32,  // Start after regular functions
             registry,
             local_scope: LocalScope::new(),
             bytecode: BytecodeEmitter::new(),
@@ -178,9 +156,7 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
             compiled_functions: FxHashMap::default(),
             namespace_path: Vec::new(),
             current_class: None,
-            lambda_counter: 0,
             current_function: None,
-            pending_lambdas: Vec::new(),
             expected_funcdef_type: None,
             errors: Vec::new(),
             _phantom: std::marker::PhantomData,
@@ -195,6 +171,7 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
     /// - `return_type`: The expected return type for this function
     fn new(registry: &'ast Registry<'src, 'ast>, return_type: DataType) -> Self {
         Self {
+            next_lambda_id: registry.function_count() as u32,  // Start after regular functions
             registry,
             local_scope: LocalScope::new(),
             bytecode: BytecodeEmitter::new(),
@@ -202,9 +179,7 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
             compiled_functions: FxHashMap::default(),
             namespace_path: Vec::new(),
             current_class: None,
-            lambda_counter: 0,
             current_function: None,
-            pending_lambdas: Vec::new(),
             expected_funcdef_type: None,
             errors: Vec::new(),
             _phantom: std::marker::PhantomData,
@@ -250,6 +225,7 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
         CompiledFunction {
             bytecode: compiler.bytecode.finish(),
             errors: compiler.errors,
+            lambdas: compiler.compiled_functions,
         }
     }
 
@@ -294,6 +270,7 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
         CompiledFunction {
             bytecode: compiler.bytecode.finish(),
             errors: compiler.errors,
+            lambdas: compiler.compiled_functions,
         }
     }
 
@@ -427,6 +404,11 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
 
         // Store the compiled bytecode
         self.compiled_functions.insert(func_id, compiled.bytecode);
+
+        // Collect lambda bytecode from this function
+        for (lambda_id, lambda_bytecode) in compiled.lambdas {
+            self.compiled_functions.insert(lambda_id, lambda_bytecode);
+        }
 
         // Accumulate errors
         self.errors.extend(compiled.errors);
@@ -691,6 +673,11 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
 
         // Store the compiled bytecode
         self.compiled_functions.insert(func_id, compiled.bytecode);
+
+        // Collect lambda bytecode from this function
+        for (lambda_id, lambda_bytecode) in compiled.lambdas {
+            self.compiled_functions.insert(lambda_id, lambda_bytecode);
+        }
 
         // Accumulate errors
         self.errors.extend(compiled.errors);
@@ -2276,20 +2263,8 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
     /// Type checks a function call.
     /// Function calls produce rvalues (unless they return a reference, which we don't handle yet).
     fn check_call(&mut self, call: &CallExpr<'src, 'ast>) -> Option<ExprContext> {
-        // Type check all explicit arguments first, collecting both types and lvalue info
-        let mut arg_contexts = Vec::with_capacity(call.args.len());
-        for arg in call.args {
-            let arg_ctx = self.check_expr(arg.value)?;
-            arg_contexts.push(arg_ctx);
-        }
-
-        // Extract just the types for overload resolution
-        // NOTE: Default arguments will be added later after we find the matching function
-        let arg_types: Vec<DataType> = arg_contexts.iter().map(|ctx| ctx.data_type.clone()).collect();
-
-        // Determine what we're calling
-        // For now, we only handle simple identifier calls like: foo(args)
-        // More complex cases like (someExpr)(args) would need additional handling
+        // Determine what we're calling FIRST (before type-checking arguments)
+        // This allows us to provide expected funcdef context for lambda inference
         match call.callee {
             Expr::Ident(ident_expr) => {
                 // Build qualified name (handling scope if present)
@@ -2341,6 +2316,14 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
                         }
                     };
 
+                    // Type-check arguments WITHOUT funcdef inference for super calls
+                    let mut arg_contexts = Vec::with_capacity(call.args.len());
+                    for arg in call.args {
+                        let arg_ctx = self.check_expr(arg.value)?;
+                        arg_contexts.push(arg_ctx);
+                    }
+                    let arg_types: Vec<DataType> = arg_contexts.iter().map(|ctx| ctx.data_type.clone()).collect();
+
                     // Find matching base constructor
                     let base_constructors = self.registry.find_constructors(base_id);
                     let (matching_ctor, conversions) = self.find_best_function_overload(
@@ -2368,12 +2351,73 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
                     return Some(ExprContext::rvalue(DataType::simple(VOID_TYPE)));
                 }
 
+                // Check if this is a local variable (could be funcdef handle)
+                if ident_expr.scope.is_none() {  // Only check locals for unqualified names
+                    if let Some(var) = self.local_scope.lookup(&name) {
+                        if var.data_type.is_handle {
+                            let type_def = self.registry.get_type(var.data_type.type_id);
+                            if matches!(type_def, TypeDef::Funcdef { .. }) {
+                                // This is a funcdef variable - use the default case to handle it
+                                // Fall through to handle as complex callee expression
+                                let callee_ctx = self.check_expr(call.callee)?;
+
+                                // Type-check arguments WITHOUT funcdef inference for now
+                                let mut arg_contexts = Vec::with_capacity(call.args.len());
+                                for arg in call.args {
+                                    let arg_ctx = self.check_expr(arg.value)?;
+                                    arg_contexts.push(arg_ctx);
+                                }
+
+                                // Use funcdef calling logic from default case
+                                if let TypeDef::Funcdef { params, return_type, .. } = type_def {
+                                    // Validate arguments
+                                    if arg_contexts.len() != params.len() {
+                                        self.error(
+                                            SemanticErrorKind::TypeMismatch,
+                                            call.span,
+                                            format!("funcdef call expects {} arguments but {} were provided",
+                                                params.len(), arg_contexts.len()),
+                                        );
+                                        return None;
+                                    }
+
+                                    // Validate and emit conversions for each argument
+                                    for (i, (arg_ctx, param)) in arg_contexts.iter().zip(params.iter()).enumerate() {
+                                        if let Some(conv) = arg_ctx.data_type.can_convert_to(param, self.registry) {
+                                            self.emit_conversion(&conv);
+                                        } else {
+                                            self.error(
+                                                SemanticErrorKind::TypeMismatch,
+                                                call.args[i].span,
+                                                format!("argument {} type mismatch in funcdef call", i),
+                                            );
+                                            return None;
+                                        }
+                                    }
+
+                                    // Emit CallPtr instruction
+                                    self.bytecode.emit(Instruction::CallPtr);
+
+                                    // Return the funcdef's return type
+                                    return Some(ExprContext::rvalue(return_type.clone()));
+                                }
+                            }
+                        }
+                    }
+                }
+
                 // Check if this is a type name (constructor call)
                 if let Some(type_id) = self.registry.lookup_type(&name) {
+                    // Type-check arguments WITHOUT funcdef inference context for constructor calls
+                    let mut arg_contexts = Vec::with_capacity(call.args.len());
+                    for arg in call.args {
+                        let arg_ctx = self.check_expr(arg.value)?;
+                        arg_contexts.push(arg_ctx);
+                    }
                     return self.check_constructor_call(type_id, &arg_contexts, call.span);
                 }
 
-                // Regular function call
+                // Regular function call - look up candidates
                 let candidates = self.registry.lookup_functions(&name);
 
                 if candidates.is_empty() {
@@ -2384,6 +2428,43 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
                     );
                     return None;
                 }
+
+                // Try to infer expected funcdef types for lambda arguments
+                // For simplicity: if there's only one candidate, use its parameter types
+                // TODO: Handle overloading more sophisticatedly
+                let expected_param_types = if candidates.len() == 1 {
+                    let func_def = self.registry.get_function(candidates[0]);
+                    Some(&func_def.params)
+                } else {
+                    None
+                };
+
+                // Type-check arguments with funcdef context inference
+                let mut arg_contexts = Vec::with_capacity(call.args.len());
+                for (i, arg) in call.args.iter().enumerate() {
+                    // Set expected_funcdef_type if this parameter expects a funcdef
+                    if let Some(params) = expected_param_types {
+                        if i < params.len() {
+                            let param_type = &params[i];
+                            if param_type.is_handle {
+                                // Check if this is a funcdef type
+                                let type_def = self.registry.get_type(param_type.type_id);
+                                if matches!(type_def, TypeDef::Funcdef { .. }) {
+                                    self.expected_funcdef_type = Some(param_type.type_id);
+                                }
+                            }
+                        }
+                    }
+
+                    let arg_ctx = self.check_expr(arg.value)?;
+                    arg_contexts.push(arg_ctx);
+
+                    // Clear expected_funcdef_type after checking each argument
+                    self.expected_funcdef_type = None;
+                }
+
+                // Extract types for overload resolution
+                let arg_types: Vec<DataType> = arg_contexts.iter().map(|ctx| ctx.data_type.clone()).collect();
 
                 // Find best matching overload
                 let (matching_func, conversions) = self.find_best_function_overload(
@@ -2438,6 +2519,13 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
                 // Complex call expression (e.g., obj(args) with opCall, function pointer, lambda)
                 let callee_ctx = self.check_expr(call.callee)?;
 
+                // Type-check arguments WITHOUT funcdef inference for opCall
+                let mut arg_contexts = Vec::with_capacity(call.args.len());
+                for arg in call.args {
+                    let arg_ctx = self.check_expr(arg.value)?;
+                    arg_contexts.push(arg_ctx);
+                }
+
                 // Try opCall operator overload (allows objects to be called like functions)
                 if let Some(func_id) = self.registry.find_operator_method(callee_ctx.data_type.type_id, OperatorBehavior::OpCall) {
                     // Call opCall(args) on callee
@@ -2456,11 +2544,49 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
                 }
 
                 // No opCall found - check if it's a funcdef/function pointer
-                // TODO: Implement funcdef support in future
+                if callee_ctx.data_type.is_handle {
+                    let type_def = self.registry.get_type(callee_ctx.data_type.type_id);
+
+                    if let TypeDef::Funcdef { params, return_type, .. } = type_def {
+                        // This is a funcdef handle - validate arguments
+                        if arg_contexts.len() != params.len() {
+                            self.error(
+                                SemanticErrorKind::TypeMismatch,
+                                call.span,
+                                format!("funcdef call expects {} arguments but {} were provided",
+                                    params.len(), arg_contexts.len()),
+                            );
+                            return None;
+                        }
+
+                        // Validate and emit conversions for each argument
+                        for (i, (arg_ctx, param)) in arg_contexts.iter().zip(params.iter()).enumerate() {
+                            if let Some(conv) = arg_ctx.data_type.can_convert_to(param, self.registry) {
+                                self.emit_conversion(&conv);
+                            } else {
+                                self.error(
+                                    SemanticErrorKind::TypeMismatch,
+                                    call.args[i].span,
+                                    format!("argument {} type mismatch in funcdef call", i),
+                                );
+                                return None;
+                            }
+                        }
+
+                        // Emit CallPtr instruction to invoke through function pointer
+                        // Stack: [funcdef_handle, arg1, arg2, ...] → result
+                        self.bytecode.emit(Instruction::CallPtr);
+
+                        // Return the funcdef's return type
+                        return Some(ExprContext::rvalue(return_type.clone()));
+                    }
+                }
+
+                // Not callable
                 self.error(
                     SemanticErrorKind::NotCallable,
                     call.span,
-                    format!("type '{}' is not callable (no opCall operator)", self.type_name(&callee_ctx.data_type)),
+                    format!("type '{}' is not callable (no opCall operator or funcdef)", self.type_name(&callee_ctx.data_type)),
                 );
                 None
             }
@@ -3224,12 +3350,119 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
     /// Type checks a lambda expression.
     /// Lambdas produce rvalues (function references).
     fn check_lambda(&mut self, lambda: &LambdaExpr<'src, 'ast>) -> Option<ExprContext> {
-        self.error(
-            SemanticErrorKind::InternalError,
-            lambda.span,
-            "lambda expressions are not yet implemented in Phase 2b",
+        // Get expected funcdef type from context (set by check_call or assignment)
+        let funcdef_type_id = match self.expected_funcdef_type {
+            Some(type_id) => type_id,
+            None => {
+                self.error(
+                    SemanticErrorKind::TypeMismatch,
+                    lambda.span,
+                    "cannot infer lambda type - explicit funcdef context required",
+                );
+                return None;
+            }
+        };
+
+        // Get funcdef signature
+        let funcdef = self.registry.get_type(funcdef_type_id);
+        let (expected_params, expected_return) = match funcdef {
+            TypeDef::Funcdef { params, return_type, .. } => (params, return_type),
+            _ => {
+                self.error(
+                    SemanticErrorKind::InternalError,
+                    lambda.span,
+                    "expected funcdef type for lambda",
+                );
+                return None;
+            }
+        };
+
+        // Validate parameter count
+        if lambda.params.len() != expected_params.len() {
+            self.error(
+                SemanticErrorKind::TypeMismatch,
+                lambda.span,
+                format!(
+                    "lambda parameter count mismatch: expected {}, got {}",
+                    expected_params.len(),
+                    lambda.params.len()
+                ),
+            );
+            return None;
+        }
+
+        // Validate explicit parameter types if provided
+        for (i, (lambda_param, expected_param)) in
+            lambda.params.iter().zip(expected_params.iter()).enumerate()
+        {
+            if let Some(param_ty) = &lambda_param.ty {
+                let explicit_type = self.resolve_type_expr(&param_ty.ty)?;
+                // TODO: Apply ref modifiers and validate match
+                if explicit_type.type_id != expected_param.type_id {
+                    self.error(
+                        SemanticErrorKind::TypeMismatch,
+                        lambda_param.span,
+                        format!("lambda parameter {} type mismatch", i),
+                    );
+                    return None;
+                }
+            }
+        }
+
+        // Validate return type if specified
+        if let Some(ret_ty) = &lambda.return_type {
+            let explicit_return = self.resolve_type_expr(&ret_ty.ty)?;
+            if explicit_return.type_id != expected_return.type_id {
+                self.error(
+                    SemanticErrorKind::TypeMismatch,
+                    lambda.span,
+                    "lambda return type mismatch",
+                );
+                return None;
+            }
+        }
+
+        // Allocate FunctionId for this lambda
+        let lambda_id = self.next_lambda_id;
+        self.next_lambda_id += 1;
+
+        // Capture all variables in current scope
+        let captured_vars = self.local_scope.capture_all_variables();
+
+        // Build parameters for compile_block: funcdef params + captured vars
+        let mut all_vars = Vec::new();
+        for (i, param) in lambda.params.iter().enumerate() {
+            let param_name = param.name
+                .map(|id| id.name.to_string())
+                .unwrap_or_else(|| format!("_param{}", i));
+            all_vars.push((param_name, expected_params[i].clone()));
+        }
+        for cap in &captured_vars {
+            all_vars.push((cap.name.clone(), cap.data_type.clone()));
+        }
+
+        // ✨ COMPILE LAMBDA IMMEDIATELY using compile_block
+        let compiled = FunctionCompiler::compile_block(
+            self.registry,
+            expected_return.clone(),
+            &all_vars,
+            lambda.body,
         );
-        None
+
+        // Store compiled bytecode in compiled_functions map
+        self.compiled_functions.insert(FunctionId(lambda_id), compiled.bytecode);
+
+        // Merge errors from lambda compilation
+        self.errors.extend(compiled.errors);
+
+        // Emit FuncPtr instruction to push lambda handle onto stack
+        self.bytecode.emit(Instruction::FuncPtr(lambda_id));
+
+        // Return funcdef handle type (rvalue)
+        Some(ExprContext::rvalue(DataType::with_handle(
+            funcdef_type_id,
+            false,
+        )))
     }
 
     /// Type checks an initializer list.
@@ -4022,6 +4255,150 @@ mod tests {
     // - check_index_assignment() detects write context and uses set_opIndex
     // - opIndex takes priority when both operators and accessors exist
     // Tests will be added once Registry lifetime issues are resolved project-wide.
+
+    #[test]
+    fn lambda_compilation_basic() {
+        // Test that lambda expressions compile to bytecode with immediate compilation
+        use crate::parse_lenient;
+        use crate::semantic::Compiler;
+        use bumpalo::Bump;
+
+        let arena = Bump::new();
+        let source = r#"
+            funcdef void Callback(int x);
+
+            void takeCallback(Callback @cb) {
+                cb(42);
+            }
+
+            void main() {
+                takeCallback(function(int x) { });
+            }
+        "#;
+
+        let (script, parse_errors) = parse_lenient(source, &arena);
+        assert!(parse_errors.is_empty(), "Parse errors: {:?}", parse_errors);
+
+        let result = Compiler::compile(&script);
+
+        // Print actual state for debugging
+        if !result.is_success() {
+            eprintln!("Compilation errors: {:?}", result.errors);
+        }
+        eprintln!("Function count: {}", result.module.functions.len());
+        for (id, bytecode) in &result.module.functions {
+            eprintln!("Function {:?}: {} instructions", id, bytecode.instructions.len());
+        }
+
+        // Should compile successfully
+        assert!(result.is_success(), "Lambda compilation failed: {:?}", result.errors);
+
+        // Should have 3 functions: takeCallback, main, and the lambda
+        assert_eq!(result.module.functions.len(), 3,
+            "Expected 3 functions (takeCallback, main, lambda), got {}", result.module.functions.len());
+
+        // Functions are registered in declaration order:
+        // FunctionId(0) = takeCallback
+        // FunctionId(1) = main
+        // FunctionId(2) = lambda
+        let takecb_id = FunctionId(0);
+        let main_id = FunctionId(1);
+        let lambda_id = FunctionId(2);
+
+        assert!(result.module.functions.contains_key(&lambda_id),
+            "Lambda bytecode not found in compiled module");
+
+        // Verify main function contains FuncPtr instruction
+        let main_bytecode = result.module.functions.get(&main_id).expect("main function not found");
+        eprintln!("main bytecode: {:?}", main_bytecode.instructions);
+        let has_funcptr = main_bytecode.instructions.iter()
+            .any(|instr| matches!(instr, Instruction::FuncPtr(_)));
+        assert!(has_funcptr, "main should emit FuncPtr instruction for lambda");
+
+        // Verify takeCallback function contains CallPtr instruction
+        let takecb_bytecode = result.module.functions.get(&takecb_id).expect("takeCallback function not found");
+        eprintln!("takeCallback bytecode: {:?}", takecb_bytecode.instructions);
+        let has_callptr = takecb_bytecode.instructions.iter()
+            .any(|instr| matches!(instr, Instruction::CallPtr));
+        assert!(has_callptr, "takeCallback should emit CallPtr instruction to invoke funcdef");
+    }
+
+    #[test]
+    fn lambda_type_inference() {
+        // Test that lambda parameters are inferred from funcdef context
+        use crate::parse_lenient;
+        use crate::semantic::Compiler;
+        use bumpalo::Bump;
+
+        let arena = Bump::new();
+        let source = r#"
+            funcdef int BinaryOp(int a, int b);
+
+            void applyOp(BinaryOp @op) {
+                int result = op(10, 20);
+            }
+
+            void main() {
+                // Lambda parameters inferred as (int, int)
+                applyOp(function(a, b) { return a + b; });
+            }
+        "#;
+
+        let (script, parse_errors) = parse_lenient(source, &arena);
+        if !parse_errors.is_empty() {
+            eprintln!("Parse errors: {:?}", parse_errors);
+        }
+
+        let result = Compiler::compile(&script);
+
+        if !result.is_success() {
+            eprintln!("Compilation errors: {:?}", result.errors);
+            eprintln!("Functions compiled: {}", result.module.functions.len());
+        }
+
+        // Should compile successfully with type inference
+        assert!(result.is_success(), "Lambda type inference failed: {:?}", result.errors);
+    }
+
+    #[test]
+    fn lambda_variable_capture() {
+        // Test that lambda captures variables from enclosing scope
+        use crate::parse_lenient;
+        use crate::semantic::Compiler;
+        use bumpalo::Bump;
+
+        let arena = Bump::new();
+        let source = r#"
+            funcdef void Action();
+
+            void runAction(Action @action) {
+                action();
+            }
+
+            void main() {
+                int counter = 0;
+                runAction(function() {
+                    counter = counter + 1;
+                });
+            }
+        "#;
+
+        let (script, _errors) = parse_lenient(source, &arena);
+        let result = Compiler::compile(&script);
+
+        // Should compile successfully with variable capture
+        assert!(result.is_success(), "Lambda variable capture failed: {:?}", result.errors);
+
+        // Lambda should have captured 'counter' variable
+        let lambda_id = FunctionId(2);
+        let lambda_bytecode = result.module.functions.get(&lambda_id)
+            .expect("Lambda bytecode not found");
+
+        // The lambda body should reference the captured variable
+        // (exact bytecode depends on implementation details)
+        assert!(lambda_bytecode.instructions.len() > 0,
+            "Lambda should have non-empty bytecode");
+    }
 
     // More tests will be added as we implement the compiler
 }

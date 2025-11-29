@@ -12,7 +12,7 @@ use rustc_hash::FxHashMap;
 /// This is the executable module that the VM will use to run the script.
 #[derive(Debug)]
 pub struct CompiledModule {
-    /// Map of FunctionId to compiled bytecode
+    /// Map of FunctionId to compiled bytecode (includes both regular functions and lambdas)
     pub functions: FxHashMap<FunctionId, CompiledBytecode>,
 
     /// All errors encountered during compilation

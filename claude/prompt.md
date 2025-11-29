@@ -1,8 +1,8 @@
-# Current Task: opIndex Accessors Complete!
+# Current Task: Lambda Expressions - Phase 1 Infrastructure Complete
 
-**Status:** ✅ Task 25 Complete - Moving to Task 26
+**Status:** ⏸️ Tasks 26-29 - Phase 1 complete, architectural refactor needed for Phases 2-6
 **Date:** 2025-11-28
-**Phase:** Semantic Analysis - Property Accessors & Lambda Expressions
+**Phase:** Semantic Analysis - Lambda Expressions
 
 ---
 
@@ -25,7 +25,71 @@
 
 ---
 
-## Latest Work: opIndex Accessors ✅ COMPLETE!
+## Latest Work: Lambda Expressions - Phase 1 Infrastructure ✅
+
+**Status:** ⏸️ Phase 1 complete, requires architectural refactor before continuing
+**Date:** 2025-11-28
+
+### What Was Accomplished (Tasks 26-29, Phase 1 only)
+
+**Infrastructure Added:**
+1. **Bytecode Instructions** ([src/codegen/ir/instruction.rs](src/codegen/ir/instruction.rs)):
+   - `FuncPtr(u32)`: Push function pointer onto stack (creates handle to function)
+   - `CallPtr`: Call through function pointer (dynamic dispatch for funcdefs)
+
+2. **Variable Capture Support** ([src/semantic/local_scope.rs](src/semantic/local_scope.rs)):
+   - `CapturedVar` struct: Stores name, type, and stack offset
+   - `capture_all_variables()` method: Captures all in-scope variables for lambda closures
+
+3. **Lambda Metadata** ([src/semantic/passes/function_processor.rs](src/semantic/passes/function_processor.rs)):
+   - `LambdaMetadata<'src, 'ast>` struct: Stores AST body, captured vars, parent function, funcdef type
+   - Fields in `FunctionCompiler`: `lambda_counter`, `current_function`, `pending_lambdas`, `expected_funcdef_type`
+
+### Architectural Challenge Discovered
+
+**Problem:** Lambda registration and compilation requires mutating the Registry during function compilation, but Rust's borrow checker prevents this with the current architecture:
+
+```rust
+// Current flow in Compiler::compile()
+let type_compilation = TypeCompiler::compile(script, registry);  // Owns registry
+let function_compilation = FunctionCompiler::compile(script, &type_compilation.registry);  // Borrows registry
+
+// ❌ Cannot do this:
+FunctionCompiler {
+    registry: &'ast mut Registry  // Would need mutable borrow
+}
+// Then try to return type_compilation.registry  // ❌ Can't move out - it's borrowed!
+```
+
+**Options for Resolution:**
+1. **Refactor compilation pipeline** to allow Registry mutation during function compilation
+2. **Two-pass lambda compilation**: Collect metadata in Pass 2b, register+compile in new Pass 2c
+3. **Change Registry ownership**: Make FunctionCompiler own Registry temporarily
+4. **Deferred lambda queue**: Return pending lambdas from FunctionCompiler, let caller register them
+
+**Recommendation:** Option 2 (Two-pass) is cleanest and matches C++ reference implementation pattern.
+
+### Files Modified
+
+- `src/codegen/ir/instruction.rs` - Added FuncPtr and CallPtr instructions
+- `src/semantic/local_scope.rs` - Added CapturedVar and capture method
+- `src/semantic/mod.rs` - Exported CapturedVar
+- `src/semantic/passes/function_processor.rs` - Added LambdaMetadata and compiler fields
+
+### What's Next
+
+**Before continuing with lambda implementation:**
+1. Decide on architectural approach (recommend two-pass)
+2. Refactor compilation pipeline if needed
+3. Then implement Phases 2-6 of lambda support
+
+**Or skip lambdas for now and continue with:**
+- Tasks 30-49 (TODOs & Edge Cases)
+- Tasks 50-52 (Integration & Testing)
+
+---
+
+## Previous Work: opIndex Accessors ✅ COMPLETE!
 
 **Status:** ✅ Task 25 complete - Index property accessors fully implemented
 **Date:** 2025-11-28

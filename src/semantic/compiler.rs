@@ -43,7 +43,7 @@ use rustc_hash::FxHashMap;
 /// This contains all the artifacts from the three compilation passes.
 #[derive(Debug)]
 pub struct CompilationResult<'src, 'ast> {
-    /// The compiled module with all function bytecode
+    /// The compiled module with all function bytecode (including lambdas)
     pub module: CompiledModule,
 
     /// The complete type registry with all type information

@@ -473,19 +473,50 @@ impl<'src, 'ast> Parser<'src, 'ast> {
     fn parse_lambda_param(&mut self) -> Result<LambdaParam<'src, 'ast>, ParseError> {
         let start_span = self.peek().span;
 
-        // Try to parse type
-        let ty = if self.is_type_start() {
-            Some(self.parse_param_type()?)
-        } else {
-            None
-        };
+        // Disambiguate between:
+        // - function(a, b) - names only, infer types from context
+        // - function(int a, int b) - explicit types with names
+        // - function(int, int) - types only (for some contexts)
+        //
+        // Strategy:
+        // - Primitive type keyword → definitely a type
+        // - identifier identifier → type name pattern
+        // - identifier , or identifier ) → name-only pattern
 
-        // Parse optional name
-        let name = if self.check(TokenKind::Identifier) {
-            let token = self.advance();
-            Some(Ident::new(token.lexeme, token.span))
+        let (ty, name) = if self.is_primitive_type() {
+            // Primitive type (int, float, etc.) - always a type
+            let param_ty = self.parse_param_type()?;
+            let param_name = if self.check(TokenKind::Identifier) {
+                let token = self.advance();
+                Some(Ident::new(token.lexeme, token.span))
+            } else {
+                None  // Type without name (e.g., function(int, int))
+            };
+            (Some(param_ty), param_name)
+        } else if self.check(TokenKind::Identifier) {
+            // Could be either "CustomType name" or just "name"
+            // Lookahead to next token to disambiguate
+            let next_token = self.peek_nth(1);
+
+            if next_token.kind == TokenKind::Identifier {
+                // Pattern: identifier identifier → type name
+                let param_ty = self.parse_param_type()?;
+                let token = self.advance();
+                let param_name = Some(Ident::new(token.lexeme, token.span));
+                (Some(param_ty), param_name)
+            } else {
+                // Pattern: identifier , or identifier ) → name only
+                let token = self.advance();
+                let param_name = Some(Ident::new(token.lexeme, token.span));
+                (None, param_name)
+            }
         } else {
-            None
+            // No identifier - error
+            return Err(ParseError::new(
+                crate::ast::ParseErrorKind::UnexpectedToken,
+                self.peek().span,
+                "expected parameter type or name".to_string(),
+            ));
         };
 
         let span = if let Some(ref n) = name {
@@ -495,21 +526,6 @@ impl<'src, 'ast> Parser<'src, 'ast> {
         } else {
             start_span
         };
-
-        // Validate that we have at least type OR name
-        // AngelScript allows:
-        // - function(x) { } - name only, type inferred from context
-        // - function(int x) { } - explicit type and name
-        // - function(int) { } - type only (for some contexts)
-        // But NOT:
-        // - function(, ...) - completely empty parameter
-        if ty.is_none() && name.is_none() {
-            return Err(ParseError::new(
-                crate::ast::ParseErrorKind::InvalidSyntax,
-                span,
-                "lambda parameter must have either a type or a name"
-            ));
-        }
 
         Ok(LambdaParam { ty, name, span })
     }
