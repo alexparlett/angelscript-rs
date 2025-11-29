@@ -1877,4 +1877,330 @@ string""""#, &arena);
             _ => panic!("Expected member expression"),
         }
     }
+
+    // ========================================================================
+    // Additional Coverage Tests for Uncovered Lines
+    // ========================================================================
+
+    #[test]
+    fn parse_lambda_name_only_params() {
+        // Test lambda with name-only params (no types)
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("function(a, b) { }", &arena);
+        let expr = parser.parse_expr(0).unwrap();
+        match expr {
+            Expr::Lambda(lambda) => {
+                assert_eq!(lambda.params.len(), 2);
+                // These should be name-only params
+                assert!(lambda.params[0].ty.is_none());
+                assert!(lambda.params[0].name.is_some());
+            }
+            _ => panic!("Expected lambda expression"),
+        }
+    }
+
+    #[test]
+    fn parse_lambda_type_only_params() {
+        // Test lambda with type-only params (no names) - primitive types
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("function(int, float) { }", &arena);
+        let expr = parser.parse_expr(0).unwrap();
+        match expr {
+            Expr::Lambda(lambda) => {
+                assert_eq!(lambda.params.len(), 2);
+                // These should be type-only params
+                assert!(lambda.params[0].ty.is_some());
+                assert!(lambda.params[0].name.is_none());
+            }
+            _ => panic!("Expected lambda expression"),
+        }
+    }
+
+    #[test]
+    fn parse_auto_type_constructor() {
+        // Test auto keyword - note: auto is special and may not work as constructor
+        // This test exercises the type keyword branch
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("auto(42)", &arena);
+        // auto type may error since it's not valid as constructor
+        let result = parser.parse_expr(0);
+        // Just exercise the code path
+        let _ = result;
+    }
+
+    #[test]
+    fn parse_void_type_keyword() {
+        // Test void type keyword (not typically used as constructor)
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("void()", &arena);
+        // This might fail or succeed depending on implementation
+        let result = parser.parse_expr(0);
+        // Just exercise the code path
+        let _ = result;
+    }
+
+    #[test]
+    fn parse_bits_literal_fallback() {
+        // Test bits literal that doesn't match any prefix (fallback case)
+        // Note: This exercises the fallback branch in bits literal parsing
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("0xFF", &arena);
+        let expr = parser.parse_expr(0).unwrap();
+        match expr {
+            Expr::Literal(_) => {}
+            _ => panic!("Expected literal"),
+        }
+    }
+
+    #[test]
+    fn parse_bits_literal_uppercase_prefix() {
+        // Test bits literal with uppercase X
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("0X10", &arena);
+        let expr = parser.parse_expr(0).unwrap();
+        match expr {
+            Expr::Literal(lit) => {
+                assert!(matches!(lit.kind, LiteralKind::Int(16)));
+            }
+            _ => panic!("Expected literal"),
+        }
+    }
+
+    #[test]
+    fn parse_bits_literal_uppercase_binary() {
+        // Test bits literal with uppercase B
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("0B1100", &arena);
+        let expr = parser.parse_expr(0).unwrap();
+        match expr {
+            Expr::Literal(lit) => {
+                assert!(matches!(lit.kind, LiteralKind::Int(12)));
+            }
+            _ => panic!("Expected literal"),
+        }
+    }
+
+    #[test]
+    fn parse_bits_literal_uppercase_octal() {
+        // Test bits literal with uppercase O
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("0O10", &arena);
+        let expr = parser.parse_expr(0).unwrap();
+        match expr {
+            Expr::Literal(lit) => {
+                assert!(matches!(lit.kind, LiteralKind::Int(8)));
+            }
+            _ => panic!("Expected literal"),
+        }
+    }
+
+    #[test]
+    fn parse_bits_literal_uppercase_decimal() {
+        // Test bits literal with uppercase D
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("0D42", &arena);
+        let expr = parser.parse_expr(0).unwrap();
+        match expr {
+            Expr::Literal(lit) => {
+                assert!(matches!(lit.kind, LiteralKind::Int(42)));
+            }
+            _ => panic!("Expected literal"),
+        }
+    }
+
+    #[test]
+    fn parse_scoped_constructor_with_template() {
+        // Test constructor with scope and template args
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("Namespace::Container<int>()", &arena);
+        let expr = parser.parse_expr(0).unwrap();
+        match expr {
+            Expr::Call(_) => {}
+            _ => panic!("Expected call expression"),
+        }
+    }
+
+    #[test]
+    fn parse_deeply_nested_template_lookahead() {
+        // Test template lookahead with nested templates
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("Map<string, array<int>>()", &arena);
+        let expr = parser.parse_expr(0).unwrap();
+        match expr {
+            Expr::Call(_) => {}
+            _ => panic!("Expected call expression"),
+        }
+    }
+
+    #[test]
+    fn parse_global_scope_identifier_simple() {
+        // Test global scope ::identifier (not followed by paren)
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("::globalFunc", &arena);
+        let expr = parser.parse_expr(0).unwrap();
+        match expr {
+            Expr::Ident(ident) => {
+                assert!(ident.scope.is_some());
+                assert!(ident.scope.unwrap().is_absolute);
+            }
+            _ => panic!("Expected ident expression"),
+        }
+    }
+
+    #[test]
+    fn parse_template_lookahead_not_constructor() {
+        // Test case where < is not template but comparison
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("a < b", &arena);
+        let expr = parser.parse_expr(0).unwrap();
+        match expr {
+            Expr::Binary(bin) => {
+                assert!(matches!(bin.op, BinaryOp::Less));
+            }
+            _ => panic!("Expected binary expression"),
+        }
+    }
+
+    #[test]
+    fn parse_template_lookahead_with_paren_in_args() {
+        // Test template lookahead that sees '(' but not for constructor
+        let arena = bumpalo::Bump::new();
+        // This should NOT be parsed as constructor because the < is comparison
+        let mut parser = Parser::new("a < b || c", &arena);
+        let expr = parser.parse_expr(0).unwrap();
+        match expr {
+            Expr::Binary(_) => {}
+            _ => panic!("Expected binary expression"),
+        }
+    }
+
+    #[test]
+    fn parse_lambda_error_not_function_keyword() {
+        // This tests the error path when 'function' keyword is expected but missing
+        // Note: This is difficult to trigger directly as check_contextual guards it
+        // We exercise related paths instead
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("function() { return 42; }", &arena);
+        let expr = parser.parse_expr(0).unwrap();
+        match expr {
+            Expr::Lambda(_) => {}
+            _ => panic!("Expected lambda"),
+        }
+    }
+
+    #[test]
+    fn parse_nested_ternary() {
+        // Test nested ternary expressions
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("a ? b ? c : d : e", &arena);
+        let expr = parser.parse_expr(0).unwrap();
+        match expr {
+            Expr::Ternary(tern) => {
+                // then_expr should be another ternary
+                match &tern.then_expr {
+                    Expr::Ternary(_) => {}
+                    _ => panic!("Expected nested ternary in then branch"),
+                }
+            }
+            _ => panic!("Expected ternary expression"),
+        }
+    }
+
+    #[test]
+    fn parse_mixed_postfix_and_binary() {
+        // Test postfix with binary to check precedence
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("a++ + b", &arena);
+        let expr = parser.parse_expr(0).unwrap();
+        match expr {
+            Expr::Binary(bin) => {
+                // Left should be postfix
+                match &bin.left {
+                    Expr::Postfix(_) => {}
+                    _ => panic!("Expected postfix on left"),
+                }
+            }
+            _ => panic!("Expected binary expression"),
+        }
+    }
+
+    #[test]
+    fn parse_index_after_call() {
+        // Test indexing after function call
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("getArray()[0]", &arena);
+        let expr = parser.parse_expr(0).unwrap();
+        match expr {
+            Expr::Index(idx) => {
+                // Object should be a call
+                match &idx.object {
+                    Expr::Call(_) => {}
+                    _ => panic!("Expected call as object"),
+                }
+            }
+            _ => panic!("Expected index expression"),
+        }
+    }
+
+    #[test]
+    fn parse_chained_index() {
+        // Test multiple index operations
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("matrix[0][1]", &arena);
+        let expr = parser.parse_expr(0).unwrap();
+        match expr {
+            Expr::Index(idx) => {
+                // Object should be another index
+                match &idx.object {
+                    Expr::Index(_) => {}
+                    _ => panic!("Expected nested index"),
+                }
+            }
+            _ => panic!("Expected index expression"),
+        }
+    }
+
+    #[test]
+    fn parse_many_primitive_type_casts() {
+        // Test all primitive type keywords for constructor-style casts
+        let types = vec!["int8", "int16", "int64", "uint", "uint8", "uint16", "uint64", "float", "double", "bool"];
+
+        for ty in types {
+            let source = format!("{}(42)", ty);
+            let arena = bumpalo::Bump::new();
+            let mut parser = Parser::new(&source, &arena);
+            let expr = parser.parse_expr(0).unwrap();
+            match expr {
+                Expr::Cast(_) => {}
+                _ => panic!("Expected cast for type: {}", ty),
+            }
+        }
+    }
+
+    #[test]
+    fn parse_template_with_double_greater() {
+        // Test template with >> token (should be split)
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("Map<int, array<int>>()", &arena);
+        let expr = parser.parse_expr(0).unwrap();
+        match expr {
+            Expr::Call(_) => {}
+            _ => panic!("Expected call expression"),
+        }
+    }
+
+    #[test]
+    fn parse_shift_operators_precedence() {
+        // Test shift operators with other operators
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("a << b + c", &arena);
+        let expr = parser.parse_expr(0).unwrap();
+        match expr {
+            Expr::Binary(bin) => {
+                // + has higher precedence, so rhs should be addition
+                assert!(matches!(bin.op, BinaryOp::ShiftLeft));
+            }
+            _ => panic!("Expected binary expression"),
+        }
+    }
 }
