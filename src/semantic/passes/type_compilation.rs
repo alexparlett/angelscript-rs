@@ -249,6 +249,18 @@ impl<'src, 'ast> TypeCompiler<'src, 'ast> {
                             format!("cannot inherit from final class '{}'", inherited_name),
                         ));
                     }
+
+                    // Check for circular inheritance
+                    if self.registry.would_create_circular_inheritance(type_id, inherited_id) {
+                        self.errors.push(SemanticError::new(
+                            SemanticErrorKind::CircularInheritance,
+                            inherited_ident.span,
+                            format!("circular inheritance detected: '{}' cannot inherit from '{}'", qualified_name, inherited_name),
+                        ));
+                        // Don't set base_class to prevent further issues
+                        continue;
+                    }
+
                     base_class = Some(inherited_id);
                 } else if inherited_typedef.is_interface() {
                     interfaces.push(inherited_id);
@@ -2488,4 +2500,89 @@ mod tests {
     // Note: void_function_parameter_error and void_method_parameter_error tests are not included
     // because AngelScript's syntax doesn't allow `void param_name` - the parser rejects this.
     // The semantic validation is still in place as defensive programming for programmatic AST creation.
+
+    // ==================== Circular Inheritance Detection Tests ====================
+
+    #[test]
+    fn circular_inheritance_direct_self() {
+        // class A : A {} - direct self-inheritance
+        let arena = Bump::new();
+        let data = compile(r#"
+            class A : A {
+            }
+        "#, &arena);
+
+        assert!(!data.errors.is_empty(), "Should fail for self-inheritance");
+        assert!(data.errors.iter().any(|e| {
+            e.kind == SemanticErrorKind::CircularInheritance
+        }), "Should have CircularInheritance error: {:?}", data.errors);
+    }
+
+    #[test]
+    fn circular_inheritance_two_classes() {
+        // class A : B {}, class B : A {} - indirect cycle
+        let arena = Bump::new();
+        let data = compile(r#"
+            class A : B {
+            }
+            class B : A {
+            }
+        "#, &arena);
+
+        assert!(!data.errors.is_empty(), "Should fail for circular inheritance");
+        assert!(data.errors.iter().any(|e| {
+            e.kind == SemanticErrorKind::CircularInheritance
+        }), "Should have CircularInheritance error: {:?}", data.errors);
+    }
+
+    #[test]
+    fn circular_inheritance_three_classes() {
+        // class A : B {}, class B : C {}, class C : A {} - longer cycle
+        let arena = Bump::new();
+        let data = compile(r#"
+            class A : B {
+            }
+            class B : C {
+            }
+            class C : A {
+            }
+        "#, &arena);
+
+        assert!(!data.errors.is_empty(), "Should fail for circular inheritance");
+        assert!(data.errors.iter().any(|e| {
+            e.kind == SemanticErrorKind::CircularInheritance
+        }), "Should have CircularInheritance error: {:?}", data.errors);
+    }
+
+    #[test]
+    fn valid_linear_inheritance() {
+        // Valid: class A {}, class B : A {}, class C : B {}
+        let arena = Bump::new();
+        let data = compile(r#"
+            class A {
+            }
+            class B : A {
+            }
+            class C : B {
+            }
+        "#, &arena);
+
+        assert!(data.errors.is_empty(), "Valid linear inheritance should not produce errors: {:?}", data.errors);
+    }
+
+    #[test]
+    fn circular_inheritance_error_message() {
+        let arena = Bump::new();
+        let data = compile(r#"
+            class Foo : Foo {
+            }
+        "#, &arena);
+
+        let error = data.errors.iter().find(|e| e.kind == SemanticErrorKind::CircularInheritance);
+        assert!(error.is_some(), "Should have CircularInheritance error");
+
+        let error = error.unwrap();
+        assert!(error.message.contains("circular inheritance detected"), "Error message should mention circular inheritance: {}", error.message);
+        assert!(error.message.contains("Foo"), "Error message should mention the class name: {}", error.message);
+    }
 }

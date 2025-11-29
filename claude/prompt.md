@@ -1,6 +1,6 @@
-# Current Task: Task 46 Complete - Void Expression Validation
+# Current Task: Task 48 Complete - Circular Dependency Detection
 
-**Status:** ✅ Task 46 Complete
+**Status:** ✅ Task 48 Complete
 **Date:** 2025-11-29
 **Phase:** Semantic Analysis - Remaining Features
 
@@ -23,46 +23,58 @@
 - ✅ Tasks 35-38: Namespace, Enum, Funcdef & Interface Validation Complete
 - ✅ Task 41: Mixin Support Complete
 - ✅ Task 46: Void Expression Validation Complete
-- ⏳ Remaining: Tasks 48-56
+- ✅ Task 47: Constant Expression Evaluation Complete
+- ✅ Task 48: Circular Dependency Detection Complete
+- ⏳ Remaining: Tasks 49-56
 
-**Test Status:** ✅ 791 tests passing (100%)
+**Test Status:** ✅ 831 tests passing (100%)
 
 ---
 
-## Latest Work: Task 46 - Void Expression Validation - COMPLETE
+## Latest Work: Task 48 - Circular Dependency Detection - COMPLETE
 
 **Status:** ✅ Complete
 **Date:** 2025-11-29
 
 ### Implementation Summary
 
-Added semantic validation to prevent void types from being used in invalid contexts. Void is only valid as a function return type.
+Implemented circular inheritance detection to prevent stack overflows from cyclic class hierarchies.
 
 **Files Modified:**
-- `src/semantic/error.rs` - Added `VoidExpression` error kind
-- `src/semantic/passes/function_processor.rs` - Added void checks in expressions
-- `src/semantic/passes/type_compilation.rs` - Added void check for class fields
+- `src/semantic/types/registry.rs` - Added cycle detection methods and protected recursive methods
+- `src/semantic/passes/type_compilation.rs` - Added validation during base class resolution
 
-**Validation Added:**
-1. **Variable declarations:** `void x;` → error
-2. **Return statements:** `return void_func();` in non-void function → error
-3. **Assignments:** `x = void_func();` → error
-4. **Binary operations:** `void_func() + 1` → error
-5. **Unary operations:** `-void_func()` → error
-6. **Ternary branches:** `cond ? void_func() : 1` → error
-7. **Function arguments:** `foo(void_func())` → error
-8. **Class fields:** `class C { void x; }` → error
+**Features Implemented:**
 
-**Tests Added (9 new tests):**
-- `void_variable_declaration_error`
-- `void_return_in_non_void_function_error`
-- `void_assignment_error`
-- `void_binary_operand_error`
-- `void_unary_operand_error`
-- `void_ternary_branch_error`
-- `void_return_type_allowed` (positive test)
-- `void_function_call_as_statement` (positive test)
-- `void_class_field_error`
+1. **Cycle Detection Method (`would_create_circular_inheritance`)**:
+   - Detects direct self-inheritance (`class A : A {}`)
+   - Detects indirect cycles (`class A : B {}`, `class B : A {}`)
+   - Uses visited set to walk inheritance chain
+
+2. **Validation in Type Compilation**:
+   - Checks before setting base class
+   - Generates `CircularInheritance` error with descriptive message
+   - Prevents base class assignment when cycle detected
+
+3. **Protected Recursive Methods** (defensive programming):
+   - `find_method()` - now uses visited set
+   - `find_methods_by_name()` - protected against cycles
+   - `get_all_methods()` - protected against cycles
+   - `get_all_properties()` - protected against cycles
+   - `get_all_interfaces()` - protected against cycles
+
+**Tests Added (5 new tests):**
+- `circular_inheritance_direct_self` - `class A : A {}`
+- `circular_inheritance_two_classes` - `class A : B {}`, `class B : A {}`
+- `circular_inheritance_three_classes` - longer cycle chain
+- `valid_linear_inheritance` - ensures valid hierarchies still work
+- `circular_inheritance_error_message` - validates error message content
+
+---
+
+## Previous Work: Task 47 - Full Constant Expression Evaluation - COMPLETE
+
+Created a full constant expression evaluator in `src/semantic/const_eval.rs` supporting compile-time evaluation.
 
 ---
 
@@ -140,8 +152,8 @@ Added semantic validation to prevent void types from being used in invalid conte
 44. ❌ REMOVED (Elvis ?: is not part of AngelScript - ternary already implemented)
 45. ✅ Bitwise assignment operators (already implemented)
 46. ✅ Implement void expression validation
-47. ✅ Constant expression evaluation (implemented for switch/enum)
-48. ⏳ Implement circular dependency detection
+47. ✅ Constant expression evaluation (full implementation)
+48. ✅ Implement circular dependency detection
 49. ⏳ Implement visibility enforcement
 
 ### Integration & Testing (Tasks 50-52)
@@ -161,8 +173,7 @@ Added semantic validation to prevent void types from being used in invalid conte
 
 ## What's Next
 
-**Recommended:** Tasks 48-49 (Remaining Features)
-- Task 48: Circular dependency detection
+**Recommended:** Task 49 (Remaining Features)
 - Task 49: Visibility enforcement
 
 **Or:** Tasks 50-52 (Integration & Testing)
@@ -174,14 +185,16 @@ Added semantic validation to prevent void types from being used in invalid conte
 ## Test Status
 
 ```
-✅ 791/791 tests passing (100%)
+✅ 826/826 tests passing (100%)
 ✅ All semantic analysis tests passing
 ✅ All interface validation tests passing
 ✅ All override/final validation tests passing
 ✅ All namespace function call tests passing
 ✅ All enum value resolution tests passing
 ✅ All mixin tests passing (15 tests)
-✅ All void expression validation tests passing (9 new tests)
+✅ All void expression validation tests passing (9 tests)
+✅ All constant expression evaluation tests passing (35 new tests)
+✅ All circular inheritance detection tests passing (5 new tests)
 ```
 
 ---
@@ -194,5 +207,5 @@ Added semantic validation to prevent void types from being used in invalid conte
 
 ---
 
-**Current Work:** Task 46 ✅ COMPLETE (Void Expression Validation)
-**Next Work:** Task 48 (Circular Dependency Detection) or Task 49 (Visibility Enforcement)
+**Current Work:** Task 48 ✅ COMPLETE (Circular Dependency Detection)
+**Next Work:** Task 49 (Visibility Enforcement)

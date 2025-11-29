@@ -864,6 +864,16 @@ impl<'src, 'ast> Registry<'src, 'ast> {
     /// registry.find_method(derived_id, "foo")  // Returns Derived::foo
     /// ```
     pub fn find_method(&self, type_id: TypeId, name: &str) -> Option<FunctionId> {
+        let mut visited = rustc_hash::FxHashSet::default();
+        self.find_method_impl(type_id, name, &mut visited)
+    }
+
+    fn find_method_impl(&self, type_id: TypeId, name: &str, visited: &mut rustc_hash::FxHashSet<TypeId>) -> Option<FunctionId> {
+        // Cycle protection
+        if self.has_visited_in_chain(type_id, visited) {
+            return None;
+        }
+
         // Check this class first (most derived)
         if let Some(method) = self.find_direct_method(type_id, name) {
             return Some(method);
@@ -871,7 +881,7 @@ impl<'src, 'ast> Registry<'src, 'ast> {
 
         // Walk base class chain
         if let Some(base_id) = self.get_base_class(type_id) {
-            return self.find_method(base_id, name);  // Recursive
+            return self.find_method_impl(base_id, name, visited);
         }
 
         None
@@ -884,6 +894,16 @@ impl<'src, 'ast> Registry<'src, 'ast> {
     ///
     /// Returns methods in order: derived class methods first, then base class methods.
     pub fn find_methods_by_name(&self, type_id: TypeId, name: &str) -> Vec<FunctionId> {
+        let mut visited = rustc_hash::FxHashSet::default();
+        self.find_methods_by_name_impl(type_id, name, &mut visited)
+    }
+
+    fn find_methods_by_name_impl(&self, type_id: TypeId, name: &str, visited: &mut rustc_hash::FxHashSet<TypeId>) -> Vec<FunctionId> {
+        // Cycle protection
+        if self.has_visited_in_chain(type_id, visited) {
+            return Vec::new();
+        }
+
         let typedef = self.get_type(type_id);
 
         match typedef {
@@ -896,7 +916,7 @@ impl<'src, 'ast> Registry<'src, 'ast> {
 
                 // Recursively add matching methods from base class
                 if let Some(base_id) = base_class {
-                    let base_methods = self.find_methods_by_name(*base_id, name);
+                    let base_methods = self.find_methods_by_name_impl(*base_id, name, visited);
                     matching_methods.extend(base_methods);
                 }
 
@@ -914,6 +934,16 @@ impl<'src, 'ast> Registry<'src, 'ast> {
     /// For actual method dispatch, use `find_method()` which implements proper
     /// virtual dispatch semantics.
     pub fn get_all_methods(&self, type_id: TypeId) -> Vec<FunctionId> {
+        let mut visited = rustc_hash::FxHashSet::default();
+        self.get_all_methods_impl(type_id, &mut visited)
+    }
+
+    fn get_all_methods_impl(&self, type_id: TypeId, visited: &mut rustc_hash::FxHashSet<TypeId>) -> Vec<FunctionId> {
+        // Cycle protection
+        if self.has_visited_in_chain(type_id, visited) {
+            return Vec::new();
+        }
+
         let typedef = self.get_type(type_id);
 
         match typedef {
@@ -922,7 +952,7 @@ impl<'src, 'ast> Registry<'src, 'ast> {
 
                 // Recursively add base class methods
                 if let Some(base_id) = base_class {
-                    let base_methods = self.get_all_methods(*base_id);
+                    let base_methods = self.get_all_methods_impl(*base_id, visited);
                     all_methods.extend(base_methods);
                 }
 
@@ -937,7 +967,17 @@ impl<'src, 'ast> Registry<'src, 'ast> {
     /// Returns a map of all accessible properties. Derived class properties shadow base class
     /// properties with the same name.
     pub fn get_all_properties(&self, type_id: TypeId) -> std::collections::HashMap<String, PropertyAccessors> {
+        let mut visited = rustc_hash::FxHashSet::default();
+        self.get_all_properties_impl(type_id, &mut visited)
+    }
+
+    fn get_all_properties_impl(&self, type_id: TypeId, visited: &mut rustc_hash::FxHashSet<TypeId>) -> std::collections::HashMap<String, PropertyAccessors> {
         use std::collections::HashMap;
+
+        // Cycle protection
+        if self.has_visited_in_chain(type_id, visited) {
+            return HashMap::new();
+        }
 
         let typedef = self.get_type(type_id);
 
@@ -948,7 +988,7 @@ impl<'src, 'ast> Registry<'src, 'ast> {
                 // First, add base class properties (if any)
                 // Base properties are added first so derived properties can override them
                 if let Some(base_id) = base_class {
-                    let base_properties = self.get_all_properties(*base_id);
+                    let base_properties = self.get_all_properties_impl(*base_id, visited);
                     all_properties.extend(base_properties);
                 }
 
@@ -996,6 +1036,16 @@ impl<'src, 'ast> Registry<'src, 'ast> {
     ///
     /// Returns a list of interface TypeIds. Interfaces inherited from base classes are included.
     pub fn get_all_interfaces(&self, type_id: TypeId) -> Vec<TypeId> {
+        let mut visited = rustc_hash::FxHashSet::default();
+        self.get_all_interfaces_impl(type_id, &mut visited)
+    }
+
+    fn get_all_interfaces_impl(&self, type_id: TypeId, visited: &mut rustc_hash::FxHashSet<TypeId>) -> Vec<TypeId> {
+        // Cycle protection
+        if self.has_visited_in_chain(type_id, visited) {
+            return Vec::new();
+        }
+
         let typedef = self.get_type(type_id);
 
         match typedef {
@@ -1004,7 +1054,7 @@ impl<'src, 'ast> Registry<'src, 'ast> {
 
                 // Add interfaces from base class
                 if let Some(base_id) = base_class {
-                    let base_interfaces = self.get_all_interfaces(*base_id);
+                    let base_interfaces = self.get_all_interfaces_impl(*base_id, visited);
                     // Add only interfaces not already in the list
                     for iface_id in base_interfaces {
                         if !all_interfaces.contains(&iface_id) {
@@ -1132,6 +1182,61 @@ impl<'src, 'ast> Registry<'src, 'ast> {
         } else {
             None
         }
+    }
+
+    /// Detect if setting `base_id` as the base class of `type_id` would create a circular inheritance chain.
+    ///
+    /// Returns true if a cycle would be created. This checks if `type_id` appears anywhere
+    /// in the inheritance chain of `base_id`.
+    ///
+    /// # Example
+    /// ```ignore
+    /// // Direct cycle: class A : A
+    /// registry.would_create_circular_inheritance(type_a, type_a) // true
+    ///
+    /// // Indirect cycle: class A : B, class B : A
+    /// // When processing class A and B already exists with base class A:
+    /// registry.would_create_circular_inheritance(type_a, type_b) // true
+    /// ```
+    pub fn would_create_circular_inheritance(&self, type_id: TypeId, proposed_base_id: TypeId) -> bool {
+        // Direct self-inheritance
+        if type_id == proposed_base_id {
+            return true;
+        }
+
+        // Check if type_id appears anywhere in the inheritance chain of proposed_base_id
+        let mut visited = rustc_hash::FxHashSet::default();
+        let mut current = Some(proposed_base_id);
+
+        while let Some(curr_id) = current {
+            if visited.contains(&curr_id) {
+                // We hit a cycle in the existing chain (shouldn't happen, but be safe)
+                return true;
+            }
+            visited.insert(curr_id);
+
+            // Check if we reached the type we're trying to set as derived
+            if curr_id == type_id {
+                return true;
+            }
+
+            // Move to next base class
+            current = self.get_base_class(curr_id);
+        }
+
+        false
+    }
+
+    /// Check if a type has circular inheritance (for defensive checks).
+    ///
+    /// This is used by recursive methods to protect against infinite loops
+    /// if circular inheritance somehow exists in the registry.
+    fn has_visited_in_chain(&self, type_id: TypeId, visited: &mut rustc_hash::FxHashSet<TypeId>) -> bool {
+        if visited.contains(&type_id) {
+            return true;
+        }
+        visited.insert(type_id);
+        false
     }
 }
 
