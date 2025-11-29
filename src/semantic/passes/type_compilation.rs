@@ -173,7 +173,8 @@ impl<'src, 'ast> TypeCompiler<'src, 'ast> {
         let is_destructor = func.is_destructor;
         let is_const = func.is_const;
         let is_explicit = func.attrs.explicit;
-        let is_final = func.modifiers.final_;
+        // Method-level 'final' is in attrs, not modifiers (modifiers.final_ is for class-level)
+        let is_final = func.attrs.final_;
         let is_virtual = object_type.is_some() && !is_final && !is_constructor && !is_destructor;
         // A function is abstract if it has no body (pure virtual)
         let is_abstract = func.body.is_none() && is_virtual;
@@ -287,8 +288,13 @@ impl<'src, 'ast> TypeCompiler<'src, 'ast> {
 
                 // Find the function ID for this method
                 // Methods are registered with their unqualified name in the current namespace
+                // We filter by object_type to only get methods belonging to THIS class
                 let method_qualified_name = self.build_qualified_name(method.name.name);
-                let func_ids: Vec<FunctionId> = self.registry.lookup_functions(&method_qualified_name).to_vec();
+                let func_ids: Vec<FunctionId> = self.registry.lookup_functions(&method_qualified_name)
+                    .iter()
+                    .copied()
+                    .filter(|&id| self.registry.get_function(id).object_type == Some(type_id))
+                    .collect();
                 method_ids.extend(func_ids.iter().copied());
 
                 // Check if this is an operator method
@@ -459,6 +465,12 @@ impl<'src, 'ast> TypeCompiler<'src, 'ast> {
 
         // Update the class definition in the registry
         self.registry.update_class_details(type_id, fields, method_ids, base_class, interfaces, operator_methods, properties);
+
+        // Validate interface implementation (for non-abstract classes)
+        self.validate_interface_implementation(class, type_id);
+
+        // Validate method overrides ('override' keyword and 'final' checking)
+        self.validate_method_overrides(class, type_id);
     }
 
     /// Visit an interface declaration and fill in its details
@@ -837,6 +849,113 @@ impl<'src, 'ast> TypeCompiler<'src, 'ast> {
             Some((prop_name.to_string(), false))
         } else {
             None
+        }
+    }
+
+    /// Validate that a non-abstract class implements all interface methods
+    ///
+    /// For each interface the class implements (directly or via inheritance),
+    /// checks that the class provides a method with matching signature.
+    fn validate_interface_implementation(
+        &mut self,
+        class: &ClassDecl<'src, 'ast>,
+        type_id: TypeId,
+    ) {
+        // Skip validation for abstract classes - they can defer implementation
+        if class.modifiers.abstract_ {
+            return;
+        }
+
+        // Get all interfaces this class must implement
+        let interfaces = self.registry.get_all_interfaces(type_id);
+
+        for interface_id in interfaces {
+            // Get interface method signatures
+            let interface_methods = match self.registry.get_interface_methods(interface_id) {
+                Some(methods) => methods.to_vec(), // Clone to avoid borrow issues
+                None => continue,
+            };
+
+            let interface_name = self.registry.get_type(interface_id).qualified_name().to_string();
+
+            // Check each interface method is implemented
+            for method_sig in &interface_methods {
+                if !self.registry.has_method_matching_interface(type_id, method_sig) {
+                    self.errors.push(SemanticError::new(
+                        SemanticErrorKind::MissingInterfaceMethod,
+                        class.span,
+                        format!(
+                            "class '{}' does not implement interface method '{}' from '{}'",
+                            class.name.name,
+                            method_sig.name,
+                            interface_name,
+                        ),
+                    ));
+                }
+            }
+        }
+    }
+
+    /// Validate methods with 'override' keyword have a matching base method
+    ///
+    /// Also validates that methods are not overriding a final method.
+    fn validate_method_overrides(
+        &mut self,
+        class: &ClassDecl<'src, 'ast>,
+        type_id: TypeId,
+    ) {
+        for member in class.members {
+            if let ClassMember::Method(method) = member {
+                let method_name = method.name.name;
+
+                // Check if method has 'override' attribute
+                if method.attrs.override_ {
+                    // Get method signature for matching
+                    let params: Vec<DataType> = method
+                        .params
+                        .iter()
+                        .filter_map(|p| self.resolve_type_expr(&p.ty.ty))
+                        .collect();
+
+                    let return_type = method
+                        .return_type
+                        .and_then(|rt| self.resolve_type_expr(&rt.ty))
+                        .unwrap_or_else(|| DataType::simple(crate::semantic::types::VOID_TYPE));
+
+                    // Check there's a base method to override
+                    let base_method = self.registry.find_base_method_with_signature(
+                        type_id,
+                        method_name,
+                        &params,
+                        &return_type,
+                    );
+
+                    if base_method.is_none() {
+                        self.errors.push(SemanticError::new(
+                            SemanticErrorKind::OverrideWithoutBase,
+                            method.span,
+                            format!(
+                                "method '{}' is marked 'override' but no matching base method exists",
+                                method_name,
+                            ),
+                        ));
+                    }
+                }
+
+                // Check if method is trying to override a final method
+                // This applies whether or not 'override' keyword is used
+                if let Some(final_method_id) = self.registry.is_base_method_final(type_id, method_name) {
+                    let base_func = self.registry.get_function(final_method_id);
+                    self.errors.push(SemanticError::new(
+                        SemanticErrorKind::CannotOverrideFinal,
+                        method.span,
+                        format!(
+                            "cannot override method '{}' which is marked 'final' in base class",
+                            base_func.name,
+                        ),
+                    ));
+                }
+            }
         }
     }
 }
@@ -1276,5 +1395,273 @@ mod tests {
         } else {
             panic!("Expected Class typedef");
         }
+    }
+
+    // ========================================================================
+    // Interface Implementation Validation Tests
+    // ========================================================================
+
+    #[test]
+    fn interface_implementation_complete() {
+        let arena = Bump::new();
+        let data = compile(r#"
+            interface IDrawable {
+                void draw();
+                int getWidth();
+            }
+
+            class Widget : IDrawable {
+                void draw() { }
+                int getWidth() { return 0; }
+            }
+        "#, &arena);
+        assert!(data.errors.is_empty(), "Errors: {:?}", data.errors);
+    }
+
+    #[test]
+    fn interface_method_missing_error() {
+        let arena = Bump::new();
+        let data = compile(r#"
+            interface IDrawable {
+                void draw();
+                int getWidth();
+            }
+
+            class Widget : IDrawable {
+                void draw() { }
+                // Missing: int getWidth()
+            }
+        "#, &arena);
+        assert!(!data.errors.is_empty(), "Expected error for missing interface method");
+        assert!(data.errors[0].kind == SemanticErrorKind::MissingInterfaceMethod);
+        assert!(data.errors[0].message.contains("getWidth"));
+    }
+
+    #[test]
+    fn interface_method_wrong_signature_error() {
+        let arena = Bump::new();
+        let data = compile(r#"
+            interface IDrawable {
+                int getWidth();
+            }
+
+            class Widget : IDrawable {
+                // Wrong return type (void instead of int)
+                void getWidth() { }
+            }
+        "#, &arena);
+        assert!(!data.errors.is_empty(), "Expected error for wrong signature");
+        assert!(data.errors[0].kind == SemanticErrorKind::MissingInterfaceMethod);
+    }
+
+    #[test]
+    fn abstract_class_partial_interface_ok() {
+        let arena = Bump::new();
+        let data = compile(r#"
+            interface IDrawable {
+                void draw();
+                int getWidth();
+            }
+
+            abstract class AbstractWidget : IDrawable {
+                // Only implements one method - OK because abstract
+                void draw() { }
+            }
+        "#, &arena);
+        assert!(data.errors.is_empty(), "Abstract class should not need to implement all interface methods. Errors: {:?}", data.errors);
+    }
+
+    #[test]
+    fn interface_method_inherited_from_base() {
+        let arena = Bump::new();
+        let data = compile(r#"
+            interface IDrawable {
+                void draw();
+            }
+
+            class BaseWidget : IDrawable {
+                void draw() { }
+            }
+
+            class DerivedWidget : BaseWidget {
+                // Inherits draw() from BaseWidget, so interface is satisfied
+            }
+        "#, &arena);
+        assert!(data.errors.is_empty(), "Interface method inherited from base should satisfy requirement. Errors: {:?}", data.errors);
+    }
+
+    #[test]
+    fn multiple_interfaces_all_implemented() {
+        let arena = Bump::new();
+        let data = compile(r#"
+            interface IDrawable {
+                void draw();
+            }
+
+            interface IClickable {
+                void onClick();
+            }
+
+            class Button : IDrawable, IClickable {
+                void draw() { }
+                void onClick() { }
+            }
+        "#, &arena);
+        assert!(data.errors.is_empty(), "All interface methods implemented. Errors: {:?}", data.errors);
+    }
+
+    #[test]
+    fn multiple_interfaces_one_missing() {
+        let arena = Bump::new();
+        let data = compile(r#"
+            interface IDrawable {
+                void draw();
+            }
+
+            interface IClickable {
+                void onClick();
+            }
+
+            class Button : IDrawable, IClickable {
+                void draw() { }
+                // Missing: onClick()
+            }
+        "#, &arena);
+        assert!(!data.errors.is_empty(), "Expected error for missing onClick");
+        assert!(data.errors[0].kind == SemanticErrorKind::MissingInterfaceMethod);
+        assert!(data.errors[0].message.contains("onClick"));
+    }
+
+    // ========================================================================
+    // Override Keyword Validation Tests
+    // ========================================================================
+
+    #[test]
+    fn override_keyword_valid() {
+        let arena = Bump::new();
+        let data = compile(r#"
+            class Base {
+                void update() { }
+            }
+
+            class Derived : Base {
+                void update() override { }
+            }
+        "#, &arena);
+        assert!(data.errors.is_empty(), "Valid override should not produce errors. Errors: {:?}", data.errors);
+    }
+
+    #[test]
+    fn override_keyword_no_base_error() {
+        let arena = Bump::new();
+        let data = compile(r#"
+            class Base {
+                void update() { }
+            }
+
+            class Derived : Base {
+                // 'override' but no matching base method (wrong name)
+                void render() override { }
+            }
+        "#, &arena);
+        assert!(!data.errors.is_empty(), "Expected error for override without base method");
+        assert!(data.errors[0].kind == SemanticErrorKind::OverrideWithoutBase);
+        assert!(data.errors[0].message.contains("render"));
+    }
+
+    #[test]
+    fn override_wrong_signature_error() {
+        let arena = Bump::new();
+        let data = compile(r#"
+            class Base {
+                void update() { }
+            }
+
+            class Derived : Base {
+                // 'override' but wrong parameter signature
+                void update(int x) override { }
+            }
+        "#, &arena);
+        assert!(!data.errors.is_empty(), "Expected error for override with wrong signature");
+        assert!(data.errors[0].kind == SemanticErrorKind::OverrideWithoutBase);
+    }
+
+    // ========================================================================
+    // Final Method Validation Tests
+    // ========================================================================
+
+    #[test]
+    fn final_method_not_overridden() {
+        let arena = Bump::new();
+        let data = compile(r#"
+            class Base {
+                void update() final { }
+            }
+
+            class Derived : Base {
+                // No override of final method - OK
+                void render() { }
+            }
+        "#, &arena);
+        assert!(data.errors.is_empty(), "Not overriding final method should be OK. Errors: {:?}", data.errors);
+    }
+
+    #[test]
+    fn override_final_method_error() {
+        let arena = Bump::new();
+        let data = compile(r#"
+            class Base {
+                void update() final { }
+            }
+
+            class Derived : Base {
+                // Trying to override a final method
+                void update() { }
+            }
+        "#, &arena);
+        assert!(!data.errors.is_empty(), "Expected error for overriding final method");
+        assert!(data.errors[0].kind == SemanticErrorKind::CannotOverrideFinal);
+        assert!(data.errors[0].message.contains("update"));
+    }
+
+    #[test]
+    fn override_final_method_with_override_keyword_error() {
+        let arena = Bump::new();
+        let data = compile(r#"
+            class Base {
+                void update() final { }
+            }
+
+            class Derived : Base {
+                // Trying to override a final method with override keyword
+                void update() override { }
+            }
+        "#, &arena);
+        assert!(!data.errors.is_empty(), "Expected error for overriding final method");
+        // Should have CannotOverrideFinal error
+        let has_final_error = data.errors.iter()
+            .any(|e| e.kind == SemanticErrorKind::CannotOverrideFinal);
+        assert!(has_final_error, "Should have CannotOverrideFinal error. Errors: {:?}", data.errors);
+    }
+
+    #[test]
+    fn grandparent_final_method_error() {
+        let arena = Bump::new();
+        let data = compile(r#"
+            class GrandParent {
+                void update() final { }
+            }
+
+            class Parent : GrandParent {
+                // No override here
+            }
+
+            class Child : Parent {
+                // Trying to override grandparent's final method
+                void update() { }
+            }
+        "#, &arena);
+        assert!(!data.errors.is_empty(), "Expected error for overriding grandparent's final method");
+        assert!(data.errors[0].kind == SemanticErrorKind::CannotOverrideFinal);
     }
 }

@@ -563,19 +563,33 @@ impl<'src, 'ast> Registry<'src, 'ast> {
     ) {
         // Find the function(s) with this name
         if let Some(func_ids) = self.func_by_name.get(qualified_name).cloned() {
-            // Find the first function that hasn't been filled in yet (has empty params)
-            // This handles overloading correctly - each AST method fills the next empty slot
+            // Find the first function that hasn't been filled in yet
+            // Match by object_type to ensure we update the right method
             for func_id in func_ids {
                 let index = func_id.as_u32() as usize;
-                if index < self.functions.len() && self.functions[index].params.is_empty() {
-                    self.functions[index].params = params;
-                    self.functions[index].return_type = return_type;
-                    if object_type.is_some() {
-                        self.functions[index].object_type = object_type;
+                if index < self.functions.len() {
+                    let func = &self.functions[index];
+                    // Match on object_type to ensure we update the right method
+                    // For methods, object_type must match; for free functions, both should be None
+                    let object_type_matches = func.object_type == object_type;
+                    // Use signature_not_yet_filled: a function hasn't been filled if its traits
+                    // are still default (no virtual, no final, no const, etc.) for non-constructor/destructor
+                    // OR if it's a method and we're looking for the same object_type that hasn't been filled
+                    // Simple approach: check if return_type is still void (for non-ctor/dtor) as proxy
+                    // Actually, the cleanest approach is to check if the traits haven't been updated yet
+                    // Since traits are set with just is_constructor/is_destructor in registration,
+                    // we can check if is_virtual or is_final are still false AND is_const is false
+                    // But that's fragile. Let's use: match by object_type AND check if this specific
+                    // function hasn't been updated by checking a simple heuristic.
+                    //
+                    // Best fix: match by object_type for methods
+                    if object_type_matches && !func.traits.is_virtual && !func.traits.is_final && !func.traits.is_const && !func.traits.is_abstract {
+                        self.functions[index].params = params;
+                        self.functions[index].return_type = return_type;
+                        self.functions[index].traits = traits;
+                        self.functions[index].default_args = default_args;
+                        return; // Only update one function
                     }
-                    self.functions[index].traits = traits;
-                    self.functions[index].default_args = default_args;
-                    return; // Only update one function
                 }
             }
         }
@@ -889,6 +903,161 @@ impl<'src, 'ast> Registry<'src, 'ast> {
     /// This is an alias for `find_method()` for backwards compatibility.
     pub fn find_method_by_name(&self, type_id: TypeId, method_name: &str) -> Option<FunctionId> {
         self.find_method(type_id, method_name)
+    }
+
+    /// Get all method signatures for an interface type
+    ///
+    /// Returns the list of MethodSignature for an interface, or None if not an interface.
+    /// Used for validating that classes implement all interface methods.
+    pub fn get_interface_methods(&self, type_id: TypeId) -> Option<&[super::type_def::MethodSignature]> {
+        let typedef = self.get_type(type_id);
+        if let TypeDef::Interface { methods, .. } = typedef {
+            Some(methods.as_slice())
+        } else {
+            None
+        }
+    }
+
+    /// Get all interfaces implemented by a class (including inherited interfaces)
+    ///
+    /// Returns a list of interface TypeIds. Interfaces inherited from base classes are included.
+    pub fn get_all_interfaces(&self, type_id: TypeId) -> Vec<TypeId> {
+        let typedef = self.get_type(type_id);
+
+        match typedef {
+            TypeDef::Class { interfaces, base_class, .. } => {
+                let mut all_interfaces = interfaces.clone();
+
+                // Add interfaces from base class
+                if let Some(base_id) = base_class {
+                    let base_interfaces = self.get_all_interfaces(*base_id);
+                    // Add only interfaces not already in the list
+                    for iface_id in base_interfaces {
+                        if !all_interfaces.contains(&iface_id) {
+                            all_interfaces.push(iface_id);
+                        }
+                    }
+                }
+
+                all_interfaces
+            }
+            _ => Vec::new(),
+        }
+    }
+
+    /// Find a method in the base class chain (not in the derived class itself)
+    ///
+    /// This is used to validate the `override` keyword - checks if there's a method
+    /// in the base class hierarchy that the derived method is overriding.
+    ///
+    /// Returns the FunctionId of the base method if found, None otherwise.
+    pub fn find_base_method(&self, type_id: TypeId, method_name: &str) -> Option<FunctionId> {
+        // Get base class
+        let base_id = self.get_base_class(type_id)?;
+
+        // Search in base class and its ancestors
+        self.find_method(base_id, method_name)
+    }
+
+    /// Find a method in the base class chain with matching signature
+    ///
+    /// This is used to validate the `override` keyword with signature matching.
+    /// Checks parameter types and return type for compatibility.
+    pub fn find_base_method_with_signature(
+        &self,
+        type_id: TypeId,
+        method_name: &str,
+        params: &[DataType],
+        return_type: &DataType,
+    ) -> Option<FunctionId> {
+        // Get base class
+        let base_id = self.get_base_class(type_id)?;
+
+        // Get all methods with this name in base class chain
+        let base_methods = self.find_methods_by_name(base_id, method_name);
+
+        // Find one with matching signature
+        for &method_id in &base_methods {
+            let func = self.get_function(method_id);
+
+            // Check return type
+            if func.return_type.type_id != return_type.type_id {
+                continue;
+            }
+
+            // Check parameter count
+            if func.params.len() != params.len() {
+                continue;
+            }
+
+            // Check parameter types
+            let params_match = func.params.iter()
+                .zip(params.iter())
+                .all(|(a, b)| a.type_id == b.type_id && a.ref_modifier == b.ref_modifier);
+
+            if params_match {
+                return Some(method_id);
+            }
+        }
+
+        None
+    }
+
+    /// Check if a class has a method matching an interface method signature
+    ///
+    /// Searches the class and its base classes for a method with matching
+    /// name, parameter types, and return type.
+    pub fn has_method_matching_interface(
+        &self,
+        class_type_id: TypeId,
+        interface_method: &super::type_def::MethodSignature,
+    ) -> bool {
+        // Get all methods with this name in the class hierarchy
+        let methods = self.find_methods_by_name(class_type_id, &interface_method.name);
+
+        for &method_id in &methods {
+            let func = self.get_function(method_id);
+
+            // Check return type matches
+            if func.return_type.type_id != interface_method.return_type.type_id {
+                continue;
+            }
+
+            // Check parameter count matches
+            if func.params.len() != interface_method.params.len() {
+                continue;
+            }
+
+            // Check parameter types match
+            let params_match = func.params.iter()
+                .zip(interface_method.params.iter())
+                .all(|(func_param, iface_param)| {
+                    func_param.type_id == iface_param.type_id
+                        && func_param.ref_modifier == iface_param.ref_modifier
+                        && func_param.is_handle == iface_param.is_handle
+                });
+
+            if params_match {
+                return true;
+            }
+        }
+
+        false
+    }
+
+    /// Check if a base class method is marked as final
+    ///
+    /// Used to validate that derived classes don't override final methods.
+    pub fn is_base_method_final(&self, type_id: TypeId, method_name: &str) -> Option<FunctionId> {
+        // Find the method in base class chain
+        let base_method_id = self.find_base_method(type_id, method_name)?;
+        let base_func = self.get_function(base_method_id);
+
+        if base_func.traits.is_final {
+            Some(base_method_id)
+        } else {
+            None
+        }
     }
 }
 
