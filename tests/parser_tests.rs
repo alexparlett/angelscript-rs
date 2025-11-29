@@ -193,6 +193,46 @@ fn test_templates() {
     );
 }
 
+/// Test lambda expressions
+#[test]
+fn test_lambdas() {
+    let harness = TestHarness::new();
+    let result = harness.load_and_parse("lambdas.as");
+
+    result.assert_success();
+
+    let counter = AstCounter::new().count_script(&result.script);
+
+    // Should have multiple lambda expressions
+    assert!(
+        counter.lambda_expr_count >= 10,
+        "Should have at least 10 lambda expressions, found {}",
+        counter.lambda_expr_count
+    );
+
+    // Should have funcdef declarations
+    assert!(
+        result.source_contains("funcdef"),
+        "Should have funcdef declarations"
+    );
+
+    // Should parse both explicit and inferred parameter types
+    assert!(
+        result.source_contains("function(int x, int y)"),
+        "Should have lambdas with explicit types"
+    );
+    assert!(
+        result.source_contains("function(a, b)"),
+        "Should have lambdas with inferred types"
+    );
+
+    // Should have variable capture
+    assert!(
+        result.source_contains("multiplier"),
+        "Should have variable capture examples"
+    );
+}
+
 /// Test real-world-like programs
 #[test]
 fn test_game_logic() {

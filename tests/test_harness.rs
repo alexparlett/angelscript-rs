@@ -158,6 +158,7 @@ pub struct AstCounter {
     pub for_count: usize,
     pub binary_expr_count: usize,
     pub call_count: usize,
+    pub lambda_expr_count: usize,
 }
 
 impl AstCounter {
@@ -170,6 +171,7 @@ impl AstCounter {
             for_count: 0,
             binary_expr_count: 0,
             call_count: 0,
+            lambda_expr_count: 0,
         }
     }
 
@@ -304,6 +306,13 @@ impl AstCounter {
             Expr::Postfix(p) => self.count_expr(&p.operand),
             Expr::Cast(c) => self.count_expr(&c.expr),
             Expr::Paren(p) => self.count_expr(&p.expr),
+            Expr::Lambda(l) => {
+                self.lambda_expr_count += 1;
+                // Count expressions in lambda body
+                for stmt in l.body.stmts {
+                    self.count_stmt(stmt);
+                }
+            }
             _ => {}
         }
     }
