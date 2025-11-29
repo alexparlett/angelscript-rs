@@ -1,8 +1,8 @@
-# Current Task: Lambda Expressions - COMPLETE ✅
+# Current Task: TODO Cleanup - COMPLETE ✅
 
-**Status:** ✅ Tasks 26-29 Complete - Lambda expressions fully implemented
+**Status:** ✅ Tasks 30-34 Complete - All TODOs resolved
 **Date:** 2025-11-29
-**Phase:** Semantic Analysis - Lambda Expressions
+**Phase:** Semantic Analysis - Bug Fixes & Cleanup
 
 ---
 
@@ -10,99 +10,74 @@
 
 **Parser:** ✅ 100% Complete
 - All AngelScript syntax supported
-- 20 comprehensive test files (added lambdas.as)
+- 20 comprehensive test files
 - Lambda parameter disambiguation with lookahead
 
-**Semantic Analysis:** 🚧 97% Complete
+**Semantic Analysis:** ✅ 99% Complete
 - ✅ Pass 1 (Registration): 100% Complete
 - ✅ Pass 2a (Type Compilation): 100% Complete
 - ✅ Pass 2b (Function Compilation): 100% Complete
 - ✅ Phase 1 (Type Conversions): Tasks 1-25 Complete
 - ✅ Tasks 26-29 (Lambda Expressions): Complete
-- ⏳ Remaining: Tasks 30-56
+- ✅ Tasks 30-34 (TODO Cleanup): Complete
+- ⏳ Remaining: Tasks 35-56
 
-**Test Status:** ✅ 690 tests passing (100%)
+**Test Status:** ✅ 711 tests passing (100%)
 
 ---
 
-## Latest Work: Lambda Expressions ✅ COMPLETE
+## Latest Work: TODO Cleanup & Bug Fixes ✅ COMPLETE
 
-**Status:** ✅ All lambda functionality implemented and tested
+**Status:** ✅ All TODOs in semantic passes resolved
 **Date:** 2025-11-29
 
-### What Was Accomplished (Tasks 26-29)
+### Bugs Fixed
 
-**1. Parser Fix - Lambda Parameter Type Inference**
-- Fixed `parse_lambda_param()` to properly disambiguate:
-  - `function(int a, int b)` - explicit types with names
-  - `function(a, b)` - names only, types inferred from context
-  - `function(MyType param)` - custom type + name
-- Added lookahead disambiguation using `peek_nth(1)`
-- Primitive type keywords always treated as types
-- Identifier followed by identifier = type + name pattern
-- Identifier followed by comma/paren = name-only pattern
+**1. Switch/Break Bug**
+- Break statements inside switch cases were incorrectly flagged as "BreakOutsideLoop"
+- Added `enter_switch()`/`exit_switch()` methods to `BytecodeEmitter`
+- Refactored `LoopContext` to `BreakableContext` supporting both loops and switches
+- Continue inside switch correctly targets outer loop
 
-**2. Immediate Lambda Compilation Architecture**
-- Lambdas compile immediately when encountered in `check_lambda()`
-- No deferred compilation needed
-- No lifetimes in `CompiledModule`
-- Lambda bytecode stored in `compiled_functions` map with unique FunctionId
+**2. Method Overload Resolution Bug**
+- Methods were looked up using wrong qualified name pattern
+- Changed from `lookup_functions("ClassName::methodName")` to `find_methods_by_name(type_id, "methodName")`
+- Added new `find_methods_by_name()` method to `Registry`
 
-**3. Bytecode Instructions** ([src/codegen/ir/instruction.rs](src/codegen/ir/instruction.rs)):
-- `FuncPtr(u32)`: Push function pointer onto stack (creates handle to function)
-- `CallPtr`: Call through function pointer (dynamic dispatch for funcdefs)
+**3. Overloaded Function Parameter Bug**
+- All overloaded functions were being assigned the same parameters
+- Fixed `update_function_signature()` to only update the first function with empty params
 
-**4. Variable Capture Support** ([src/semantic/local_scope.rs](src/semantic/local_scope.rs)):
-- `CapturedVar` struct: Stores name, type, and stack offset
-- `capture_all_variables()` method: Captures all in-scope variables for lambda closures
-
-**5. Lambda Type Inference**
-- `expected_funcdef_type` field tracks expected funcdef for lambda context
-- Set in `check_call()` before type-checking funcdef arguments
-- `check_lambda()` infers parameter types from funcdef signature
-
-**6. Funcdef Invocation Support**
-- `check_call()` handles calling lambdas through funcdef handles
-- Emits `CallPtr` instruction for dynamic dispatch
-- Validates argument types against funcdef signature
-
-### Comprehensive Test Coverage
-
-**Parser Integration Test:** [tests/parser_tests.rs](tests/parser_tests.rs#L196-L234)
-- `test_lambdas()` validates parsing of all lambda syntax patterns
-
-**Test Script:** [test_scripts/lambdas.as](test_scripts/lambdas.as)
-- 18+ lambda expressions covering:
-  - Explicit vs inferred parameter types
-  - Inline lambdas as function arguments
-  - Variable capture (single and multiple)
-  - Lambda invocation through funcdef handles
-  - Multiple lambdas in same function
-  - Nested lambdas
-  - Complex lambda bodies with conditionals
-
-**Unit Tests:** [src/semantic/passes/function_processor.rs](src/semantic/passes/function_processor.rs)
-- `lambda_compilation_basic` - Basic lambda creation and invocation
-- `lambda_type_inference` - Implicit parameter type inference
-- `lambda_variable_capture` - Variable capture semantics
+**4. Default Parameter Bug in Overload Resolution**
+- Functions with default parameters weren't matched correctly
+- Updated `find_best_function_overload()` to consider default parameter count
 
 ### Files Modified
 
-- `src/ast/expr_parser.rs` - Lambda parameter disambiguation with lookahead
-- `src/codegen/ir/instruction.rs` - FuncPtr and CallPtr instructions
-- `src/codegen/module.rs` - Removed lifetimes from CompiledModule
-- `src/semantic/local_scope.rs` - CapturedVar and capture_all_variables()
-- `src/semantic/passes/function_processor.rs` - Full check_lambda() implementation
-- `src/semantic/compiler.rs` - Updated CompilationResult
-- `src/module.rs` - Removed lifetimes from ScriptModule
-- `tests/parser_tests.rs` - Added test_lambdas() integration test
-- `tests/test_harness.rs` - Added lambda_expr_count to AstCounter
-- `test_scripts/lambdas.as` - Comprehensive lambda test script
+- `src/codegen/emitter.rs` - Switch context support (BreakableContext)
+- `src/codegen/ir/instruction.rs` - Removed stale TODO comment
+- `src/ast/type_parser.rs` - Removed TODO comment
+- `src/semantic/passes/function_processor.rs` - Bug fixes and tests
+- `src/semantic/passes/registration.rs` - Enum value evaluation
+- `src/semantic/passes/type_compilation.rs` - Field visibility, typedef, array suffix
+- `src/semantic/types/registry.rs` - find_methods_by_name, overload fixes
+
+### Tests Added
+
+- `switch_context_allows_break` - Verifies break works in switch
+- `switch_context_disallows_continue` - Verifies continue fails in switch-only context
+- `switch_inside_loop_allows_continue` - Verifies continue in switch inside loop targets the loop
+- `method_signature_matching_basic` - Tests method overloading resolution
+- `method_signature_matching_with_defaults` - Tests default parameters in method calls
+- `field_initializer_compilation` - Tests field initializers
+- `switch_with_break_statements` - Tests break in switch cases
+- `switch_inside_loop_with_continue` - Tests continue in switch inside loop
 
 ### Commits
 
-1. `9e6bab3` - Fix lambda parameter type inference with lookahead disambiguation
-2. `f150612` - Add comprehensive lambda expression tests
+1. `00781a6` - Resolve remaining TODOs in semantic passes
+2. `b76881f` - Fix switch/break bug and method overload resolution
+3. `9e793d8` - Remove remaining TODO comments
 
 ---
 
@@ -158,13 +133,16 @@
 28. ✅ Generate anonymous function (unique FunctionIds)
 29. ✅ Emit lambda creation bytecode (FuncPtr, CallPtr)
 
-### TODOs & Edge Cases (Tasks 30-49)
+### TODOs & Bug Fixes (Tasks 30-34) ✅ COMPLETE
 
-30. ⏳ Resolve TODO at function_processor.rs:233
-31. ⏳ Resolve TODO at function_processor.rs:876
-32. ⏳ Resolve TODO at function_processor.rs:1804
-33. ⏳ Resolve TODO at type_compilation.rs:415
-34. ⏳ Resolve TODO at registration.rs:313
+30. ✅ Resolve all TODOs in function_processor.rs
+31. ✅ Resolve all TODOs in type_compilation.rs
+32. ✅ Resolve all TODOs in registration.rs
+33. ✅ Fix switch/break bug
+34. ✅ Fix method overload resolution bugs
+
+### Remaining Features (Tasks 35-49)
+
 35. ⏳ Implement namespace resolution in call expressions
 36. ⏳ Implement enum value resolution (EnumName::VALUE)
 37. ⏳ Implement funcdef type checking
@@ -177,7 +155,7 @@
 44. ⏳ Implement elvis operator for handles
 45. ✅ Bitwise assignment operators (already implemented)
 46. ⏳ Implement void expression validation
-47. ⏳ Implement constant expression evaluation
+47. ✅ Constant expression evaluation (implemented for switch/enum)
 48. ⏳ Implement circular dependency detection
 49. ⏳ Implement visibility enforcement
 
@@ -198,9 +176,11 @@
 
 ## What's Next
 
-**Recommended:** Tasks 30-49 (TODOs & Edge Cases)
-- Review and resolve remaining TODOs in codebase
-- Implement remaining edge cases
+**Recommended:** Tasks 35-49 (Remaining Features)
+- Namespace resolution in call expressions
+- Enum value resolution
+- Interface method validation
+- Template constraints
 
 **Or:** Tasks 50-52 (Integration & Testing)
 - Add more comprehensive integration tests
@@ -211,9 +191,10 @@
 ## Test Status
 
 ```
-✅ 690/690 tests passing (100%)
-✅ All lambda tests passing (8 total)
-✅ Parser integration test passing
+✅ 711/711 tests passing (100%)
+✅ All semantic analysis tests passing
+✅ All switch/break tests passing
+✅ All method overloading tests passing
 ```
 
 ---
@@ -222,10 +203,9 @@
 
 - **Full Details:** `/claude/semantic_analysis_plan.md`
 - **Decisions Log:** `/claude/decisions.md`
-- **Lambda Plan:** `/Users/alexparlett/.claude/plans/lambda-type-inference-fix.md`
 - **C++ Reference:** `reference/angelscript/source/as_builder.cpp`, `as_compiler.cpp`
 
 ---
 
-**Current Work:** Tasks 26-29 ✅ COMPLETE (Lambda Expressions)
-**Next Work:** Tasks 30-49 (TODOs & Edge Cases) or Tasks 50-52 (Integration & Testing)
+**Current Work:** Tasks 30-34 ✅ COMPLETE (TODO Cleanup & Bug Fixes)
+**Next Work:** Tasks 35-49 (Remaining Features) or Tasks 50-52 (Integration & Testing)
