@@ -284,4 +284,47 @@ pub enum Instruction {
     /// Pushes: return value
     /// Stack: [funcdef_handle arg1 arg2 ...] → [return_value]
     CallPtr,
+
+    // Initialization list operations
+    // These support complex initializers like: array<int> a = {1, 2, 3};
+    // and dictionary: dictionary d = {{"key1", val1}, {"key2", val2}};
+    //
+    // The approach: Build a buffer containing the init data, then pass it to
+    // a list constructor/factory. This supports heterogeneous and nested lists.
+
+    /// Allocate a buffer for initialization list data
+    /// - buffer_var: Local variable slot to store buffer pointer
+    /// - size: Size in bytes to allocate
+    /// Stack: [...] → [...]
+    /// Side effect: Stores buffer pointer in local variable
+    AllocListBuffer { buffer_var: u32, size: u32 },
+
+    /// Set the element count in the list buffer
+    /// - buffer_var: Local variable containing buffer pointer
+    /// - offset: Byte offset in buffer where count goes
+    /// - count: Number of elements
+    /// Stack: [...] → [...]
+    SetListSize { buffer_var: u32, offset: u32, count: u32 },
+
+    /// Push pointer to a specific position in the list buffer onto stack
+    /// Used to write element values into the buffer
+    /// - buffer_var: Local variable containing buffer pointer
+    /// - offset: Byte offset to element position
+    /// Stack: [...] → [... buffer_ptr+offset]
+    PushListElement { buffer_var: u32, offset: u32 },
+
+    /// Set the type ID at a position in the list buffer
+    /// Used for dictionary's `?` pattern (heterogeneous values)
+    /// - buffer_var: Local variable containing buffer pointer
+    /// - offset: Byte offset where type ID goes
+    /// - type_id: TypeId of the element
+    /// Stack: [...] → [...]
+    SetListType { buffer_var: u32, offset: u32, type_id: u32 },
+
+    /// Free/release an initialization list buffer
+    /// Called after the list constructor has consumed the buffer
+    /// - buffer_var: Local variable containing buffer pointer
+    /// - pattern_type_id: TypeId of the list pattern type (for proper cleanup)
+    /// Stack: [...] → [...]
+    FreeListBuffer { buffer_var: u32, pattern_type_id: u32 },
 }

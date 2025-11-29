@@ -1,6 +1,6 @@
-# Current Task: Task 51 Complete - Switch Statement Bytecode Generation
+# Current Task: Task 52 Extended - Initialization List Instructions
 
-**Status:** ✅ Task 51 Complete
+**Status:** ✅ Task 52 Extended Complete
 **Date:** 2025-11-29
 **Phase:** Semantic Analysis - Remaining Features
 
@@ -28,100 +28,81 @@
 - ✅ Task 49: Visibility Enforcement Complete
 - ✅ Task 50: `this` Keyword and Implicit Member Access Complete
 - ✅ Task 51: Switch Statement Bytecode Generation Complete
-- ⏳ Remaining: Tasks 52-53
+- ✅ Task 52: Remove CreateArray + Add Initialization List Instructions Complete
+- ⏳ Remaining: Task 53
 
 **Test Status:** ✅ 859 tests passing (100%)
 
 ---
 
-## Latest Work: Task 51 - Switch Statement Bytecode Generation - COMPLETE
+## Latest Work: Task 52 Extended - Initialization List Instructions
 
 **Status:** ✅ Complete
 **Date:** 2025-11-29
 
 ### Problem
 
-The previous `visit_switch()` implementation validated types and detected duplicate case values, but **did not emit any dispatch bytecode**. Cases were compiled but there was no way to jump to the correct case based on the switch expression value.
+1. The `CreateArray` bytecode instruction was a special-case instruction - inconsistent with using `CallConstructor` uniformly
+2. Simple stack-based approach doesn't support heterogeneous init lists like dictionaries: `{{"key1", 1}, {"key2", 2}}`
 
 ### Solution
 
-Implemented an if-else chain dispatch approach using existing `Equal` and `JumpIfTrue` instructions.
+1. Replaced `CreateArray` with `CallConstructor` (stack-based for simple arrays)
+2. Added buffer-based initialization list instructions for complex cases (dictionaries)
 
-**Files Modified:**
-- `src/semantic/passes/function_processor.rs` - Rewrote `visit_switch()` with proper bytecode emission
-- `src/semantic/compiler.rs` - Added 11 new tests for switch statements
+### Files Modified
 
-### Implementation Details
+- `src/codegen/ir/instruction.rs`:
+  - Removed `CreateArray` instruction
+  - Added: `AllocListBuffer`, `SetListSize`, `PushListElement`, `SetListType`, `FreeListBuffer`
+- `src/semantic/types/type_def.rs` - Extended `TemplateInstance` with methods, operator_methods, properties
+- `src/semantic/types/registry.rs` - Added `register_array_init_constructor()`, updated methods for `TemplateInstance`
+- `src/semantic/passes/function_processor.rs` - Updated `check_init_list()` with documentation
+- `claude/vm_plan.md` - Added detailed documentation on initialization list approaches
 
-**Bytecode Generation Strategy:**
+### Two Initialization Strategies
+
+#### 1. Stack-Based (Current - for homogeneous arrays)
 ```
-// Phase 1: Setup
-1. Evaluate switch expression (from check_expr)
-2. Store in temp variable ($switch_line_col)
-
-// Phase 2: Dispatch Table
-3. For each non-default case value:
-   - LoadLocal(switch_offset)    // Push switch value
-   - <emit case value expr>      // Push case value
-   - Equal                       // Compare
-   - JumpIfTrue(case_body_pos)   // Jump if match
-
-// Phase 3: Default/End Jump
-4. Jump(default_case OR switch_end)
-
-// Phase 4: Case Bodies
-5. Emit case bodies in order (fallthrough semantics)
-   - No jump at end unless break statement
-
-// Phase 5: Patch Jumps
-6. Patch all JumpIfTrue to case body positions
-7. Patch default jump
-8. exit_switch() patches all break statements
+// array<int> a = {1, 2, 3};
+PushInt(1)
+PushInt(2)
+PushInt(3)
+PushInt(3)  // count
+CallConstructor { type_id, func_id }  // pops count+elements
 ```
 
-**Key Implementation Changes:**
+#### 2. Buffer-Based (For dictionaries, nested lists)
+```
+// dictionary d = {{"key1", 1}, {"key2", 2}};
+AllocListBuffer { buffer_var, size }
+SetListSize { buffer_var, offset: 0, count: 2 }
+// For each element: PushListElement, evaluate, store
+// For '?' pattern: SetListType with type_id
+LoadLocal(buffer_var)  // push buffer as constructor arg
+CallConstructor { type_id, func_id }
+FreeListBuffer { buffer_var, pattern_type_id }
+```
 
-1. **Temp Variable for Switch Expression**:
-   - Creates `$switch_line_col` temp variable in new scope
-   - Stores switch expression result for repeated comparison
-   - Scope cleanup at end of switch
+### How C++ AngelScript Does It
 
-2. **Two-Pass Case Processing**:
-   - First pass: Find default case, check for duplicate values
-   - Second pass: Emit dispatch bytecode with type checking
+- Uses `asBEHAVE_LIST_FACTORY` / `asBEHAVE_LIST_CONSTRUCT` behaviors
+- Pattern strings describe buffer layout: `{repeat T}`, `{repeat {string, ?}}`
+- Constructor receives buffer pointer containing: `[count][elements...]`
+- `?` pattern stores `[type_id][value]` pairs for heterogeneous values
 
-3. **Dispatch Table**:
-   - For each case value (handles `case 1: case 2:` syntax)
-   - Emits: LoadLocal + case_value + Equal + JumpIfTrue
+### Current Status
 
-4. **Enum Support**:
-   - Added `is_switch_compatible()` helper function
-   - Allows both integer types and enum types in switch
-
-5. **Jump Patching**:
-   - Collects (case_index, jump_position) pairs during dispatch
-   - Patches all jumps after case body positions are known
-   - Default jump goes to default case or switch end
-
-### Tests Added (11 new tests):
-
-- `switch_basic_cases_and_default` - Basic switch with cases and default ✅
-- `switch_fallthrough_behavior` - Cases without break fall through ✅
-- `switch_multiple_case_labels` - `case 1: case 2: case 3:` syntax ✅
-- `switch_no_default` - Switch without default case ✅
-- `switch_nested` - Nested switch statements ✅
-- `switch_with_enum_values` - Enum values in case labels ✅
-- `switch_duplicate_case_rejected` - Error for duplicate case values ✅
-- `switch_duplicate_default_rejected` - Error for multiple default cases ✅
-- `switch_non_integer_rejected` - Error for non-integer/enum switch expr ✅
-- `switch_case_type_mismatch_rejected` - Error for type mismatch ✅
-- `switch_break_exits_switch` - Break exits switch correctly ✅
+- ✅ Stack-based working for simple arrays
+- ✅ Buffer-based instructions defined
+- ⏳ TODO: Use buffer-based codegen for dictionary init lists (when dictionary type is implemented)
+- ⏳ TODO: Register `asBEHAVE_LIST_FACTORY` in FFI system
 
 ---
 
-## Previous Work: Task 50 - `this` Keyword and Implicit Member Access - COMPLETE
+## Previous Work: Task 51 - Switch Statement Bytecode Generation - COMPLETE
 
-Implemented the `this` keyword and implicit member access for class methods.
+Implemented proper switch statement dispatch bytecode using if-else chain approach.
 
 ---
 
@@ -204,7 +185,7 @@ Implemented the `this` keyword and implicit member access for class methods.
 49. ✅ Implement visibility enforcement
 50. ✅ Implement `this` keyword and implicit member access
 51. ✅ Complete switch statement bytecode generation
-52. ⏳ Remove CreateArray instruction - use CallConstructor for array<T> instead
+52. ✅ Remove CreateArray instruction - use CallConstructor for array<T> instead
 53. ⏳ Add null safety warnings (warn on handle access before assignment)
 
 ### Integration & Testing (Tasks 54-56)
@@ -224,9 +205,8 @@ Implemented the `this` keyword and implicit member access for class methods.
 
 ## What's Next
 
-**Recommended:** Tasks 52-53 (Remaining Semantic Features)
-- Remove CreateArray instruction
-- Add null safety warnings
+**Recommended:** Task 53 (Null Safety Warnings)
+- Warn on handle access before assignment
 
 **Or:** Tasks 54-56 (Integration & Testing)
 - Add integration tests
@@ -240,9 +220,7 @@ Implemented the `this` keyword and implicit member access for class methods.
 ```
 ✅ 859/859 tests passing (100%), 0 ignored
 ✅ All semantic analysis tests passing
-✅ All switch statement tests passing (11 new tests)
-✅ All `this` keyword tests passing
-✅ All visibility enforcement tests passing
+✅ All array initializer list tests passing (using CallConstructor)
 ```
 
 ---
@@ -255,5 +233,5 @@ Implemented the `this` keyword and implicit member access for class methods.
 
 ---
 
-**Current Work:** Task 51 ✅ COMPLETE (Switch statement bytecode generation)
-**Next Work:** Tasks 52-53 (Remaining Features) or Tasks 54-56 (Testing)
+**Current Work:** Task 52 ✅ COMPLETE (Remove CreateArray instruction)
+**Next Work:** Task 53 (Null Safety Warnings) or Tasks 54-56 (Testing)

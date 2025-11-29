@@ -4270,8 +4270,18 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
             });
 
             if let Some(&ctor_id) = init_ctor {
-                // Emit: push count, then CallConstructor
-                // Elements are already on the stack from check_expr calls above
+                // Current approach: Stack-based for simple homogeneous arrays
+                // Elements are already on the stack from check_expr calls above.
+                // We push the count and call the constructor.
+                //
+                // Stack before: [elem0] [elem1] ... [elemN-1]
+                // Stack after:  [elem0] [elem1] ... [elemN-1] [count]
+                // Constructor pops count + elements and pushes array handle.
+                //
+                // NOTE: For heterogeneous init lists (dictionaries), we'll need to use
+                // the buffer-based instructions: AllocListBuffer, SetListSize,
+                // PushListElement, SetListType, FreeListBuffer.
+                // See vm_plan.md for details on the buffer approach.
                 self.bytecode.emit(Instruction::PushInt(element_types.len() as i64));
                 self.bytecode.emit(Instruction::CallConstructor {
                     type_id: array_id.as_u32(),
