@@ -1,6 +1,6 @@
-# Current Task: Task 50 Complete - `this` Keyword and Implicit Member Access
+# Current Task: Task 51 Complete - Switch Statement Bytecode Generation
 
-**Status:** ✅ Task 50 Complete
+**Status:** ✅ Task 51 Complete
 **Date:** 2025-11-29
 **Phase:** Semantic Analysis - Remaining Features
 
@@ -27,89 +27,105 @@
 - ✅ Task 48: Circular Dependency Detection Complete
 - ✅ Task 49: Visibility Enforcement Complete
 - ✅ Task 50: `this` Keyword and Implicit Member Access Complete
-- ⏳ Remaining: Tasks 51-57
+- ✅ Task 51: Switch Statement Bytecode Generation Complete
+- ⏳ Remaining: Tasks 52-53
 
-**Test Status:** ✅ 848 tests passing (100%)
+**Test Status:** ✅ 859 tests passing (100%)
 
 ---
 
-## Latest Work: Task 50 - `this` Keyword and Implicit Member Access - COMPLETE
+## Latest Work: Task 51 - Switch Statement Bytecode Generation - COMPLETE
 
 **Status:** ✅ Complete
 **Date:** 2025-11-29
 
-### Implementation Summary
+### Problem
+
+The previous `visit_switch()` implementation validated types and detected duplicate case values, but **did not emit any dispatch bytecode**. Cases were compiled but there was no way to jump to the correct case based on the switch expression value.
+
+### Solution
+
+Implemented an if-else chain dispatch approach using existing `Equal` and `JumpIfTrue` instructions.
+
+**Files Modified:**
+- `src/semantic/passes/function_processor.rs` - Rewrote `visit_switch()` with proper bytecode emission
+- `src/semantic/compiler.rs` - Added 11 new tests for switch statements
+
+### Implementation Details
+
+**Bytecode Generation Strategy:**
+```
+// Phase 1: Setup
+1. Evaluate switch expression (from check_expr)
+2. Store in temp variable ($switch_line_col)
+
+// Phase 2: Dispatch Table
+3. For each non-default case value:
+   - LoadLocal(switch_offset)    // Push switch value
+   - <emit case value expr>      // Push case value
+   - Equal                       // Compare
+   - JumpIfTrue(case_body_pos)   // Jump if match
+
+// Phase 3: Default/End Jump
+4. Jump(default_case OR switch_end)
+
+// Phase 4: Case Bodies
+5. Emit case bodies in order (fallthrough semantics)
+   - No jump at end unless break statement
+
+// Phase 5: Patch Jumps
+6. Patch all JumpIfTrue to case body positions
+7. Patch default jump
+8. exit_switch() patches all break statements
+```
+
+**Key Implementation Changes:**
+
+1. **Temp Variable for Switch Expression**:
+   - Creates `$switch_line_col` temp variable in new scope
+   - Stores switch expression result for repeated comparison
+   - Scope cleanup at end of switch
+
+2. **Two-Pass Case Processing**:
+   - First pass: Find default case, check for duplicate values
+   - Second pass: Emit dispatch bytecode with type checking
+
+3. **Dispatch Table**:
+   - For each case value (handles `case 1: case 2:` syntax)
+   - Emits: LoadLocal + case_value + Equal + JumpIfTrue
+
+4. **Enum Support**:
+   - Added `is_switch_compatible()` helper function
+   - Allows both integer types and enum types in switch
+
+5. **Jump Patching**:
+   - Collects (case_index, jump_position) pairs during dispatch
+   - Patches all jumps after case body positions are known
+   - Default jump goes to default case or switch end
+
+### Tests Added (11 new tests):
+
+- `switch_basic_cases_and_default` - Basic switch with cases and default ✅
+- `switch_fallthrough_behavior` - Cases without break fall through ✅
+- `switch_multiple_case_labels` - `case 1: case 2: case 3:` syntax ✅
+- `switch_no_default` - Switch without default case ✅
+- `switch_nested` - Nested switch statements ✅
+- `switch_with_enum_values` - Enum values in case labels ✅
+- `switch_duplicate_case_rejected` - Error for duplicate case values ✅
+- `switch_duplicate_default_rejected` - Error for multiple default cases ✅
+- `switch_non_integer_rejected` - Error for non-integer/enum switch expr ✅
+- `switch_case_type_mismatch_rejected` - Error for type mismatch ✅
+- `switch_break_exits_switch` - Break exits switch correctly ✅
+
+---
+
+## Previous Work: Task 50 - `this` Keyword and Implicit Member Access - COMPLETE
 
 Implemented the `this` keyword and implicit member access for class methods.
 
-**Files Modified:**
-- `src/lexer/token.rs` - Added `This` token variant and keyword lookup
-- `src/ast/expr_parser.rs` - Added parsing for `this` keyword as primary expression
-- `src/semantic/passes/function_processor.rs` - Implemented `this` resolution and implicit member access
-- `src/semantic/compiler.rs` - Added 8 new tests, un-ignored 4 visibility tests
-
-**Features Implemented:**
-
-1. **Lexer Support (`This` Token)**:
-   - Added `TokenKind::This` variant
-   - Added "this" keyword lookup in `lookup_keyword()`
-   - Added token description for error messages
-
-2. **Parser Support**:
-   - `this` keyword parses as `Expr::Ident` (like `super`)
-   - Allows `this.field`, `this.method()` member access syntax
-
-3. **Explicit `this` Resolution**:
-   - In `check_ident()`, recognizes "this" identifier
-   - Emits `LoadThis` instruction (already existed for constructor prologue)
-   - Returns lvalue context with current class type
-   - Reports error if used outside class method context
-
-4. **Implicit Member Access**:
-   - When identifier not found in local scope, checks current class
-   - Searches fields in class and base classes (inheritance hierarchy)
-   - Searches properties (getters) in class
-   - Emits `LoadThis` + `LoadField(index)` or `CallMethod(getter_id)`
-   - Respects shadowing: locals > class members > globals
-
-5. **Inherited Field Access Fix**:
-   - Added `find_field_in_hierarchy()` helper for `check_member()`
-   - Field access via `this.fieldName` now searches base classes
-   - Previously only searched immediate class fields
-
-**Resolution Order in `check_ident()`:**
-1. Scoped identifiers (e.g., `EnumName::VALUE`)
-2. Explicit `this` keyword → `LoadThis`
-3. Local variables (shadow class members)
-4. Implicit class member (field/property) → `LoadThis` + access
-5. Global variables
-6. Error: undefined variable
-
-**Tests Added (8 new tests):**
-- `this_keyword_explicit_field_access` - `this.field` syntax works ✅
-- `this_keyword_implicit_field_access` - bare `field` in method resolves ✅
-- `this_keyword_explicit_method_call` - `this.method()` works ✅
-- `this_keyword_outside_class_rejected` - error outside class ✅
-- `this_keyword_local_shadows_field` - local vars shadow fields ✅
-- `implicit_member_access_inherited_field` - inherited fields resolve ✅
-- `this_keyword_in_constructor` - works in constructors ✅
-- `this_keyword_used_in_member_access` - multiple `this.` accesses ✅
-
-**Tests Un-ignored (4 visibility tests now pass):**
-- `private_field_access_within_class_allowed` ✅
-- `private_method_access_within_class_allowed` ✅
-- `protected_field_access_from_derived_class_allowed` ✅
-- `protected_method_access_from_derived_class_allowed` ✅
-
 ---
 
-## Previous Work: Task 49 - Visibility Enforcement - COMPLETE
-
-Implemented visibility enforcement (public/private/protected) for class members.
-
----
-
-## Complete Task List (56 Tasks)
+## Complete Task List (60 Tasks)
 
 ### Documentation (Tasks 1-2) ✅ COMPLETE
 
@@ -187,7 +203,7 @@ Implemented visibility enforcement (public/private/protected) for class members.
 48. ✅ Implement circular dependency detection
 49. ✅ Implement visibility enforcement
 50. ✅ Implement `this` keyword and implicit member access
-51. ✅ Complete switch statement bytecode generation (BUG: dispatch logic missing)
+51. ✅ Complete switch statement bytecode generation
 52. ⏳ Remove CreateArray instruction - use CallConstructor for array<T> instead
 53. ⏳ Add null safety warnings (warn on handle access before assignment)
 
@@ -208,25 +224,25 @@ Implemented visibility enforcement (public/private/protected) for class members.
 
 ## What's Next
 
-**Recommended:** Tasks 51-53 (Integration & Testing)
-- Add more comprehensive integration tests
+**Recommended:** Tasks 52-53 (Remaining Semantic Features)
+- Remove CreateArray instruction
+- Add null safety warnings
+
+**Or:** Tasks 54-56 (Integration & Testing)
+- Add integration tests
 - Performance benchmarks
 - Stress tests
-
-**Or:** Tasks 54, 56 (Documentation)
-- Update architecture documentation
-- Add API documentation
 
 ---
 
 ## Test Status
 
 ```
-✅ 848/848 tests passing (100%), 0 ignored
+✅ 859/859 tests passing (100%), 0 ignored
 ✅ All semantic analysis tests passing
-✅ All `this` keyword tests passing (8 new tests)
-✅ All visibility enforcement tests passing (4 un-ignored)
-✅ All inherited field access tests passing
+✅ All switch statement tests passing (11 new tests)
+✅ All `this` keyword tests passing
+✅ All visibility enforcement tests passing
 ```
 
 ---
@@ -239,5 +255,5 @@ Implemented visibility enforcement (public/private/protected) for class members.
 
 ---
 
-**Current Work:** Task 50 ✅ COMPLETE (`this` keyword and implicit member access)
-**Next Work:** Tasks 51-53 (Integration & Testing) or Tasks 54, 56 (Documentation)
+**Current Work:** Task 51 ✅ COMPLETE (Switch statement bytecode generation)
+**Next Work:** Tasks 52-53 (Remaining Features) or Tasks 54-56 (Testing)
