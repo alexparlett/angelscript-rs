@@ -473,6 +473,80 @@ impl<'src, 'ast> Registry<'src, 'ast> {
         }
     }
 
+    /// Get the signature of a funcdef type
+    /// Returns (params, return_type) or None if not a funcdef
+    pub fn get_funcdef_signature(&self, type_id: TypeId) -> Option<(&[DataType], &DataType)> {
+        let typedef = self.get_type(type_id);
+        if let TypeDef::Funcdef { params, return_type, .. } = typedef {
+            Some((params.as_slice(), return_type))
+        } else {
+            None
+        }
+    }
+
+    /// Check if a function is compatible with a funcdef type
+    ///
+    /// A function is compatible if:
+    /// - Return types match (or are implicitly convertible)
+    /// - Parameter count matches
+    /// - Parameter types match (or are implicitly convertible)
+    /// - Reference modifiers match exactly
+    pub fn is_function_compatible_with_funcdef(
+        &self,
+        func_id: FunctionId,
+        funcdef_type_id: TypeId,
+    ) -> bool {
+        let (funcdef_params, funcdef_return) = match self.get_funcdef_signature(funcdef_type_id) {
+            Some(sig) => sig,
+            None => return false,
+        };
+
+        let func = self.get_function(func_id);
+
+        // Check return type matches
+        if func.return_type.type_id != funcdef_return.type_id {
+            return false;
+        }
+
+        // Check parameter count matches
+        if func.params.len() != funcdef_params.len() {
+            return false;
+        }
+
+        // Check each parameter type matches
+        for (func_param, funcdef_param) in func.params.iter().zip(funcdef_params.iter()) {
+            // Base type must match
+            if func_param.type_id != funcdef_param.type_id {
+                return false;
+            }
+            // Reference modifier must match
+            if func_param.ref_modifier != funcdef_param.ref_modifier {
+                return false;
+            }
+            // Handle modifier must match
+            if func_param.is_handle != funcdef_param.is_handle {
+                return false;
+            }
+        }
+
+        true
+    }
+
+    /// Find a function by name that is compatible with a funcdef type
+    /// Returns the FunctionId if found and compatible, None otherwise
+    pub fn find_compatible_function(&self, name: &str, funcdef_type_id: TypeId) -> Option<FunctionId> {
+        let func_ids = self.func_by_name.get(name)?;
+
+        // Find the first function that matches the funcdef signature
+        for &func_id in func_ids {
+            if self.is_function_compatible_with_funcdef(func_id, funcdef_type_id) {
+                return Some(func_id);
+            }
+        }
+
+        None
+    }
+
     /// Update a function's signature
     ///
     /// Only updates the first function with this name that still has empty params.

@@ -844,13 +844,30 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
             None => return, // Error already recorded
         };
 
+        // Check if variable type is a funcdef (for function handle inference)
+        let is_funcdef = matches!(
+            self.registry.get_type(var_type.type_id),
+            TypeDef::Funcdef { .. }
+        );
+
         for var in var_decl.vars {
             // Check initializer if present
             if let Some(init) = var.init {
+                // Set expected funcdef type for function handle inference
+                if is_funcdef && var_type.is_handle {
+                    self.expected_funcdef_type = Some(var_type.type_id);
+                }
+
                 let init_ctx = match self.check_expr(init) {
                     Some(ctx) => ctx,
-                    None => continue, // Error already recorded
+                    None => {
+                        self.expected_funcdef_type = None;
+                        continue; // Error already recorded
+                    }
                 };
+
+                // Clear expected funcdef type
+                self.expected_funcdef_type = None;
 
                 // Check if initializer can be converted to variable type and emit conversion if needed
                 if let Some(conversion) = init_ctx.data_type.can_convert_to(&var_type, self.registry) {
@@ -2006,6 +2023,67 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
     /// Type checks a unary expression.
     /// Most unary operations produce rvalues, but ++x/--x preserve lvalue-ness.
     fn check_unary(&mut self, unary: &UnaryExpr<'src, 'ast>) -> Option<ExprContext> {
+        // Special case: @ operator on function name to create function handle
+        // This must be handled before check_expr because function names aren't variables
+        if unary.op == UnaryOp::HandleOf {
+            if let Expr::Ident(ident) = unary.operand {
+                // Check if this identifier is a function name (not a variable)
+                let name = ident.ident.name;
+
+                // Build qualified name if scoped
+                let qualified_name = if let Some(scope) = ident.scope {
+                    let scope_parts: Vec<&str> = scope.segments.iter().map(|id| id.name).collect();
+                    format!("{}::{}", scope_parts.join("::"), name)
+                } else if !self.namespace_path.is_empty() {
+                    // Try with current namespace first
+                    format!("{}::{}", self.namespace_path.join("::"), name)
+                } else {
+                    name.to_string()
+                };
+
+                // Check if there's an expected funcdef type for validation
+                if let Some(funcdef_type_id) = self.expected_funcdef_type {
+                    // Try to find a compatible function
+                    if let Some(func_id) = self.registry.find_compatible_function(&qualified_name, funcdef_type_id) {
+                        // Emit FuncPtr instruction
+                        self.bytecode.emit(Instruction::FuncPtr(func_id.as_u32()));
+                        // Return funcdef handle type
+                        return Some(ExprContext::rvalue(DataType::with_handle(funcdef_type_id, false)));
+                    }
+
+                    // Try without namespace if that failed
+                    if !self.namespace_path.is_empty() {
+                        if let Some(func_id) = self.registry.find_compatible_function(name, funcdef_type_id) {
+                            self.bytecode.emit(Instruction::FuncPtr(func_id.as_u32()));
+                            return Some(ExprContext::rvalue(DataType::with_handle(funcdef_type_id, false)));
+                        }
+                    }
+
+                    // Function not found or not compatible
+                    self.error(
+                        SemanticErrorKind::TypeMismatch,
+                        unary.span,
+                        format!("no function '{}' compatible with funcdef type", name),
+                    );
+                    return None;
+                }
+
+                // No expected funcdef type - check if it's a function and error appropriately
+                if !self.registry.lookup_functions(&qualified_name).is_empty()
+                    || !self.registry.lookup_functions(name).is_empty()
+                {
+                    self.error(
+                        SemanticErrorKind::TypeMismatch,
+                        unary.span,
+                        "cannot infer function handle type - explicit funcdef context required",
+                    );
+                    return None;
+                }
+
+                // Not a function, fall through to normal handling (will try as variable)
+            }
+        }
+
         let operand_ctx = self.check_expr(unary.operand)?;
 
         match unary.op {
@@ -2163,7 +2241,10 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
 
             UnaryOp::HandleOf => {
                 // @ operator - handle reference, produces rvalue
-                Some(ExprContext::rvalue(operand_ctx.data_type))
+                // This converts a value to a handle type
+                let mut handle_type = operand_ctx.data_type.clone();
+                handle_type.is_handle = true;
+                Some(ExprContext::rvalue(handle_type))
             }
         }
     }
@@ -2187,7 +2268,23 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
 
                 // Simple assignment: target = value
                 let target_ctx = self.check_expr(assign.target)?;
+
+                // Check if target is a funcdef handle (for function reference assignment)
+                let is_funcdef_target = target_ctx.data_type.is_handle
+                    && matches!(
+                        self.registry.get_type(target_ctx.data_type.type_id),
+                        TypeDef::Funcdef { .. }
+                    );
+
+                // Set expected funcdef type for RHS evaluation
+                if is_funcdef_target {
+                    self.expected_funcdef_type = Some(target_ctx.data_type.type_id);
+                }
+
                 let value_ctx = self.check_expr(assign.value)?;
+
+                // Clear expected funcdef type
+                self.expected_funcdef_type = None;
 
                 // Check that target is a mutable lvalue
                 if !target_ctx.is_lvalue {
@@ -5435,5 +5532,257 @@ mod tests {
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Enum values in switch cases should work: {:?}", result.errors);
+    }
+
+    // ========== Funcdef Type Checking Tests ==========
+
+    #[test]
+    fn funcdef_variable_declaration_with_function_reference() {
+        use crate::parse_lenient;
+        use crate::semantic::Compiler;
+        use bumpalo::Bump;
+
+        let arena = Bump::new();
+        let source = r#"
+            funcdef void Callback(int x);
+
+            void myHandler(int x) {
+            }
+
+            void test() {
+                Callback@ handler = @myHandler;
+            }
+        "#;
+
+        let (script, _) = parse_lenient(source, &arena);
+        let result = Compiler::compile(&script);
+
+        assert!(result.is_success(), "Funcdef variable with function reference should work: {:?}", result.errors);
+    }
+
+    #[test]
+    fn funcdef_assignment_with_function_reference() {
+        use crate::parse_lenient;
+        use crate::semantic::Compiler;
+        use bumpalo::Bump;
+
+        let arena = Bump::new();
+        let source = r#"
+            funcdef void Callback(int x);
+
+            void handler1(int x) {
+            }
+
+            void handler2(int x) {
+            }
+
+            void test() {
+                Callback@ handler = @handler1;
+                handler = @handler2;
+            }
+        "#;
+
+        let (script, _) = parse_lenient(source, &arena);
+        let result = Compiler::compile(&script);
+
+        assert!(result.is_success(), "Funcdef assignment should work: {:?}", result.errors);
+    }
+
+    #[test]
+    fn funcdef_incompatible_signature_error() {
+        use crate::parse_lenient;
+        use crate::semantic::Compiler;
+        use bumpalo::Bump;
+
+        let arena = Bump::new();
+        let source = r#"
+            funcdef void Callback(int x);
+
+            void wrongSignature(float x) {
+            }
+
+            void test() {
+                Callback@ handler = @wrongSignature;
+            }
+        "#;
+
+        let (script, _) = parse_lenient(source, &arena);
+        let result = Compiler::compile(&script);
+
+        assert!(!result.is_success(), "Incompatible function signature should error");
+        assert!(result.errors.iter().any(|e| format!("{:?}", e.kind).contains("TypeMismatch")));
+    }
+
+    #[test]
+    fn funcdef_with_return_type() {
+        use crate::parse_lenient;
+        use crate::semantic::Compiler;
+        use bumpalo::Bump;
+
+        let arena = Bump::new();
+        let source = r#"
+            funcdef int Calculator(int a, int b);
+
+            int add(int a, int b) {
+                return a + b;
+            }
+
+            void test() {
+                Calculator@ calc = @add;
+            }
+        "#;
+
+        let (script, _) = parse_lenient(source, &arena);
+        let result = Compiler::compile(&script);
+
+        assert!(result.is_success(), "Funcdef with return type should work: {:?}", result.errors);
+    }
+
+    #[test]
+    fn funcdef_call_through_variable() {
+        use crate::parse_lenient;
+        use crate::semantic::Compiler;
+        use bumpalo::Bump;
+
+        let arena = Bump::new();
+        let source = r#"
+            funcdef int Calculator(int a, int b);
+
+            int add(int a, int b) {
+                return a + b;
+            }
+
+            void test() {
+                Calculator@ calc = @add;
+                int result = calc(5, 3);
+            }
+        "#;
+
+        let (script, _) = parse_lenient(source, &arena);
+        let result = Compiler::compile(&script);
+
+        assert!(result.is_success(), "Calling through funcdef variable should work: {:?}", result.errors);
+    }
+
+    #[test]
+    fn funcdef_without_context_error() {
+        use crate::parse_lenient;
+        use crate::semantic::Compiler;
+        use bumpalo::Bump;
+
+        let arena = Bump::new();
+        let source = r#"
+            void myFunc() {
+            }
+
+            void test() {
+                // @myFunc without a target type should error
+                auto handler = @myFunc;
+            }
+        "#;
+
+        let (script, _) = parse_lenient(source, &arena);
+        let result = Compiler::compile(&script);
+
+        // This should error because there's no funcdef context for inference
+        assert!(!result.is_success(), "Function reference without funcdef context should error");
+    }
+
+    #[test]
+    fn funcdef_as_function_parameter() {
+        use crate::parse_lenient;
+        use crate::semantic::Compiler;
+        use bumpalo::Bump;
+
+        let arena = Bump::new();
+        let source = r#"
+            funcdef void Callback(int x);
+
+            void execute(Callback@ cb, int value) {
+                cb(value);
+            }
+
+            void myHandler(int x) {
+            }
+
+            void test() {
+                execute(@myHandler, 42);
+            }
+        "#;
+
+        let (script, _) = parse_lenient(source, &arena);
+        let result = Compiler::compile(&script);
+
+        assert!(result.is_success(), "Funcdef as function parameter should work: {:?}", result.errors);
+    }
+
+    #[test]
+    fn funcdef_with_lambda() {
+        use crate::parse_lenient;
+        use crate::semantic::Compiler;
+        use bumpalo::Bump;
+
+        let arena = Bump::new();
+        let source = r#"
+            funcdef int Transformer(int x);
+
+            void test() {
+                Transformer@ t = function(x) { return x * 2; };
+                int result = t(5);
+            }
+        "#;
+
+        let (script, _) = parse_lenient(source, &arena);
+        let result = Compiler::compile(&script);
+
+        assert!(result.is_success(), "Lambda assigned to funcdef should work: {:?}", result.errors);
+    }
+
+    #[test]
+    fn funcdef_wrong_param_count_error() {
+        use crate::parse_lenient;
+        use crate::semantic::Compiler;
+        use bumpalo::Bump;
+
+        let arena = Bump::new();
+        let source = r#"
+            funcdef void Callback(int x);
+
+            void wrongParamCount(int a, int b) {
+            }
+
+            void test() {
+                Callback@ handler = @wrongParamCount;
+            }
+        "#;
+
+        let (script, _) = parse_lenient(source, &arena);
+        let result = Compiler::compile(&script);
+
+        assert!(!result.is_success(), "Wrong parameter count should error");
+    }
+
+    #[test]
+    fn funcdef_wrong_return_type_error() {
+        use crate::parse_lenient;
+        use crate::semantic::Compiler;
+        use bumpalo::Bump;
+
+        let arena = Bump::new();
+        let source = r#"
+            funcdef int Calculator(int x);
+
+            void wrongReturnType(int x) {
+            }
+
+            void test() {
+                Calculator@ calc = @wrongReturnType;
+            }
+        "#;
+
+        let (script, _) = parse_lenient(source, &arena);
+        let result = Compiler::compile(&script);
+
+        assert!(!result.is_success(), "Wrong return type should error");
     }
 }
