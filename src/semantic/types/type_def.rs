@@ -1132,4 +1132,467 @@ mod tests {
         assert!(!primitive.is_template());
         assert!(!primitive.is_template_instance());
     }
+
+    // OperatorBehavior tests
+    #[test]
+    fn operator_behavior_from_method_name_conversion_ops() {
+        let target = TypeId::new(100);
+        assert_eq!(
+            OperatorBehavior::from_method_name("opConv", Some(target)),
+            Some(OperatorBehavior::OpConv(target))
+        );
+        assert_eq!(
+            OperatorBehavior::from_method_name("opImplConv", Some(target)),
+            Some(OperatorBehavior::OpImplConv(target))
+        );
+        assert_eq!(
+            OperatorBehavior::from_method_name("opCast", Some(target)),
+            Some(OperatorBehavior::OpCast(target))
+        );
+        assert_eq!(
+            OperatorBehavior::from_method_name("opImplCast", Some(target)),
+            Some(OperatorBehavior::OpImplCast(target))
+        );
+        // Without target type, should return None
+        assert_eq!(OperatorBehavior::from_method_name("opConv", None), None);
+        assert_eq!(OperatorBehavior::from_method_name("opImplConv", None), None);
+        assert_eq!(OperatorBehavior::from_method_name("opCast", None), None);
+        assert_eq!(OperatorBehavior::from_method_name("opImplCast", None), None);
+    }
+
+    #[test]
+    fn operator_behavior_from_method_name_unary_prefix() {
+        assert_eq!(
+            OperatorBehavior::from_method_name("opNeg", None),
+            Some(OperatorBehavior::OpNeg)
+        );
+        assert_eq!(
+            OperatorBehavior::from_method_name("opCom", None),
+            Some(OperatorBehavior::OpCom)
+        );
+        assert_eq!(
+            OperatorBehavior::from_method_name("opPreInc", None),
+            Some(OperatorBehavior::OpPreInc)
+        );
+        assert_eq!(
+            OperatorBehavior::from_method_name("opPreDec", None),
+            Some(OperatorBehavior::OpPreDec)
+        );
+    }
+
+    #[test]
+    fn operator_behavior_from_method_name_unary_postfix() {
+        assert_eq!(
+            OperatorBehavior::from_method_name("opPostInc", None),
+            Some(OperatorBehavior::OpPostInc)
+        );
+        assert_eq!(
+            OperatorBehavior::from_method_name("opPostDec", None),
+            Some(OperatorBehavior::OpPostDec)
+        );
+    }
+
+    #[test]
+    fn operator_behavior_from_method_name_binary_arithmetic() {
+        assert_eq!(
+            OperatorBehavior::from_method_name("opAdd", None),
+            Some(OperatorBehavior::OpAdd)
+        );
+        assert_eq!(
+            OperatorBehavior::from_method_name("opAdd_r", None),
+            Some(OperatorBehavior::OpAddR)
+        );
+        assert_eq!(
+            OperatorBehavior::from_method_name("opSub", None),
+            Some(OperatorBehavior::OpSub)
+        );
+        assert_eq!(
+            OperatorBehavior::from_method_name("opSub_r", None),
+            Some(OperatorBehavior::OpSubR)
+        );
+        assert_eq!(
+            OperatorBehavior::from_method_name("opMul", None),
+            Some(OperatorBehavior::OpMul)
+        );
+        assert_eq!(
+            OperatorBehavior::from_method_name("opMul_r", None),
+            Some(OperatorBehavior::OpMulR)
+        );
+        assert_eq!(
+            OperatorBehavior::from_method_name("opDiv", None),
+            Some(OperatorBehavior::OpDiv)
+        );
+        assert_eq!(
+            OperatorBehavior::from_method_name("opDiv_r", None),
+            Some(OperatorBehavior::OpDivR)
+        );
+        assert_eq!(
+            OperatorBehavior::from_method_name("opMod", None),
+            Some(OperatorBehavior::OpMod)
+        );
+        assert_eq!(
+            OperatorBehavior::from_method_name("opMod_r", None),
+            Some(OperatorBehavior::OpModR)
+        );
+        assert_eq!(
+            OperatorBehavior::from_method_name("opPow", None),
+            Some(OperatorBehavior::OpPow)
+        );
+        assert_eq!(
+            OperatorBehavior::from_method_name("opPow_r", None),
+            Some(OperatorBehavior::OpPowR)
+        );
+    }
+
+    #[test]
+    fn operator_behavior_from_method_name_binary_bitwise() {
+        assert_eq!(
+            OperatorBehavior::from_method_name("opAnd", None),
+            Some(OperatorBehavior::OpAnd)
+        );
+        assert_eq!(
+            OperatorBehavior::from_method_name("opAnd_r", None),
+            Some(OperatorBehavior::OpAndR)
+        );
+        assert_eq!(
+            OperatorBehavior::from_method_name("opOr", None),
+            Some(OperatorBehavior::OpOr)
+        );
+        assert_eq!(
+            OperatorBehavior::from_method_name("opOr_r", None),
+            Some(OperatorBehavior::OpOrR)
+        );
+        assert_eq!(
+            OperatorBehavior::from_method_name("opXor", None),
+            Some(OperatorBehavior::OpXor)
+        );
+        assert_eq!(
+            OperatorBehavior::from_method_name("opXor_r", None),
+            Some(OperatorBehavior::OpXorR)
+        );
+        assert_eq!(
+            OperatorBehavior::from_method_name("opShl", None),
+            Some(OperatorBehavior::OpShl)
+        );
+        assert_eq!(
+            OperatorBehavior::from_method_name("opShl_r", None),
+            Some(OperatorBehavior::OpShlR)
+        );
+        assert_eq!(
+            OperatorBehavior::from_method_name("opShr", None),
+            Some(OperatorBehavior::OpShr)
+        );
+        assert_eq!(
+            OperatorBehavior::from_method_name("opShr_r", None),
+            Some(OperatorBehavior::OpShrR)
+        );
+        assert_eq!(
+            OperatorBehavior::from_method_name("opUShr", None),
+            Some(OperatorBehavior::OpUShr)
+        );
+        assert_eq!(
+            OperatorBehavior::from_method_name("opUShr_r", None),
+            Some(OperatorBehavior::OpUShrR)
+        );
+    }
+
+    #[test]
+    fn operator_behavior_from_method_name_comparison() {
+        assert_eq!(
+            OperatorBehavior::from_method_name("opEquals", None),
+            Some(OperatorBehavior::OpEquals)
+        );
+        assert_eq!(
+            OperatorBehavior::from_method_name("opCmp", None),
+            Some(OperatorBehavior::OpCmp)
+        );
+    }
+
+    #[test]
+    fn operator_behavior_from_method_name_assignment() {
+        assert_eq!(
+            OperatorBehavior::from_method_name("opAssign", None),
+            Some(OperatorBehavior::OpAssign)
+        );
+        assert_eq!(
+            OperatorBehavior::from_method_name("opAddAssign", None),
+            Some(OperatorBehavior::OpAddAssign)
+        );
+        assert_eq!(
+            OperatorBehavior::from_method_name("opSubAssign", None),
+            Some(OperatorBehavior::OpSubAssign)
+        );
+        assert_eq!(
+            OperatorBehavior::from_method_name("opMulAssign", None),
+            Some(OperatorBehavior::OpMulAssign)
+        );
+        assert_eq!(
+            OperatorBehavior::from_method_name("opDivAssign", None),
+            Some(OperatorBehavior::OpDivAssign)
+        );
+        assert_eq!(
+            OperatorBehavior::from_method_name("opModAssign", None),
+            Some(OperatorBehavior::OpModAssign)
+        );
+        assert_eq!(
+            OperatorBehavior::from_method_name("opPowAssign", None),
+            Some(OperatorBehavior::OpPowAssign)
+        );
+        assert_eq!(
+            OperatorBehavior::from_method_name("opAndAssign", None),
+            Some(OperatorBehavior::OpAndAssign)
+        );
+        assert_eq!(
+            OperatorBehavior::from_method_name("opOrAssign", None),
+            Some(OperatorBehavior::OpOrAssign)
+        );
+        assert_eq!(
+            OperatorBehavior::from_method_name("opXorAssign", None),
+            Some(OperatorBehavior::OpXorAssign)
+        );
+        assert_eq!(
+            OperatorBehavior::from_method_name("opShlAssign", None),
+            Some(OperatorBehavior::OpShlAssign)
+        );
+        assert_eq!(
+            OperatorBehavior::from_method_name("opShrAssign", None),
+            Some(OperatorBehavior::OpShrAssign)
+        );
+        assert_eq!(
+            OperatorBehavior::from_method_name("opUShrAssign", None),
+            Some(OperatorBehavior::OpUShrAssign)
+        );
+    }
+
+    #[test]
+    fn operator_behavior_from_method_name_index_call() {
+        assert_eq!(
+            OperatorBehavior::from_method_name("opIndex", None),
+            Some(OperatorBehavior::OpIndex)
+        );
+        assert_eq!(
+            OperatorBehavior::from_method_name("get_opIndex", None),
+            Some(OperatorBehavior::OpIndexGet)
+        );
+        assert_eq!(
+            OperatorBehavior::from_method_name("set_opIndex", None),
+            Some(OperatorBehavior::OpIndexSet)
+        );
+        assert_eq!(
+            OperatorBehavior::from_method_name("opCall", None),
+            Some(OperatorBehavior::OpCall)
+        );
+    }
+
+    #[test]
+    fn operator_behavior_from_method_name_foreach() {
+        assert_eq!(
+            OperatorBehavior::from_method_name("opForBegin", None),
+            Some(OperatorBehavior::OpForBegin)
+        );
+        assert_eq!(
+            OperatorBehavior::from_method_name("opForEnd", None),
+            Some(OperatorBehavior::OpForEnd)
+        );
+        assert_eq!(
+            OperatorBehavior::from_method_name("opForNext", None),
+            Some(OperatorBehavior::OpForNext)
+        );
+        assert_eq!(
+            OperatorBehavior::from_method_name("opForValue", None),
+            Some(OperatorBehavior::OpForValue)
+        );
+        assert_eq!(
+            OperatorBehavior::from_method_name("opForValue0", None),
+            Some(OperatorBehavior::OpForValue0)
+        );
+        assert_eq!(
+            OperatorBehavior::from_method_name("opForValue1", None),
+            Some(OperatorBehavior::OpForValue1)
+        );
+        assert_eq!(
+            OperatorBehavior::from_method_name("opForValue2", None),
+            Some(OperatorBehavior::OpForValue2)
+        );
+        assert_eq!(
+            OperatorBehavior::from_method_name("opForValue3", None),
+            Some(OperatorBehavior::OpForValue3)
+        );
+    }
+
+    #[test]
+    fn operator_behavior_from_method_name_unknown() {
+        assert_eq!(OperatorBehavior::from_method_name("unknown", None), None);
+        assert_eq!(OperatorBehavior::from_method_name("", None), None);
+        assert_eq!(OperatorBehavior::from_method_name("op", None), None);
+    }
+
+    #[test]
+    fn operator_behavior_target_type() {
+        let target = TypeId::new(100);
+        assert_eq!(OperatorBehavior::OpConv(target).target_type(), target);
+        assert_eq!(OperatorBehavior::OpImplConv(target).target_type(), target);
+        assert_eq!(OperatorBehavior::OpCast(target).target_type(), target);
+        assert_eq!(OperatorBehavior::OpImplCast(target).target_type(), target);
+    }
+
+    #[test]
+    #[should_panic(expected = "target_type() called on non-conversion operator")]
+    fn operator_behavior_target_type_panic_on_non_conversion() {
+        OperatorBehavior::OpAdd.target_type();
+    }
+
+    #[test]
+    fn operator_behavior_is_conversion() {
+        let target = TypeId::new(100);
+        assert!(OperatorBehavior::OpConv(target).is_conversion());
+        assert!(OperatorBehavior::OpImplConv(target).is_conversion());
+        assert!(OperatorBehavior::OpCast(target).is_conversion());
+        assert!(OperatorBehavior::OpImplCast(target).is_conversion());
+        assert!(!OperatorBehavior::OpAdd.is_conversion());
+        assert!(!OperatorBehavior::OpAssign.is_conversion());
+    }
+
+    #[test]
+    fn operator_behavior_is_implicit() {
+        let target = TypeId::new(100);
+        assert!(OperatorBehavior::OpImplConv(target).is_implicit());
+        assert!(OperatorBehavior::OpImplCast(target).is_implicit());
+        assert!(!OperatorBehavior::OpConv(target).is_implicit());
+        assert!(!OperatorBehavior::OpCast(target).is_implicit());
+        assert!(!OperatorBehavior::OpAdd.is_implicit());
+    }
+
+    // PropertyAccessors tests
+    #[test]
+    fn property_accessors_read_only() {
+        let getter = FunctionId::new(1);
+        let prop = PropertyAccessors::read_only(getter);
+        assert_eq!(prop.getter, Some(getter));
+        assert_eq!(prop.setter, None);
+        assert_eq!(prop.visibility, Visibility::Public);
+        assert!(prop.is_read_only());
+        assert!(!prop.is_write_only());
+        assert!(!prop.is_read_write());
+    }
+
+    #[test]
+    fn property_accessors_read_only_with_visibility() {
+        let getter = FunctionId::new(1);
+        let prop = PropertyAccessors::read_only_with_visibility(getter, Visibility::Private);
+        assert_eq!(prop.getter, Some(getter));
+        assert_eq!(prop.setter, None);
+        assert_eq!(prop.visibility, Visibility::Private);
+    }
+
+    #[test]
+    fn property_accessors_write_only() {
+        let setter = FunctionId::new(2);
+        let prop = PropertyAccessors::write_only(setter);
+        assert_eq!(prop.getter, None);
+        assert_eq!(prop.setter, Some(setter));
+        assert_eq!(prop.visibility, Visibility::Public);
+        assert!(prop.is_write_only());
+        assert!(!prop.is_read_only());
+        assert!(!prop.is_read_write());
+    }
+
+    #[test]
+    fn property_accessors_write_only_with_visibility() {
+        let setter = FunctionId::new(2);
+        let prop = PropertyAccessors::write_only_with_visibility(setter, Visibility::Protected);
+        assert_eq!(prop.getter, None);
+        assert_eq!(prop.setter, Some(setter));
+        assert_eq!(prop.visibility, Visibility::Protected);
+    }
+
+    #[test]
+    fn property_accessors_read_write() {
+        let getter = FunctionId::new(1);
+        let setter = FunctionId::new(2);
+        let prop = PropertyAccessors::read_write(getter, setter);
+        assert_eq!(prop.getter, Some(getter));
+        assert_eq!(prop.setter, Some(setter));
+        assert_eq!(prop.visibility, Visibility::Public);
+        assert!(prop.is_read_write());
+        assert!(!prop.is_read_only());
+        assert!(!prop.is_write_only());
+    }
+
+    #[test]
+    fn property_accessors_read_write_with_visibility() {
+        let getter = FunctionId::new(1);
+        let setter = FunctionId::new(2);
+        let prop = PropertyAccessors::read_write_with_visibility(getter, setter, Visibility::Private);
+        assert_eq!(prop.getter, Some(getter));
+        assert_eq!(prop.setter, Some(setter));
+        assert_eq!(prop.visibility, Visibility::Private);
+    }
+
+    #[test]
+    fn property_accessors_default() {
+        let prop = PropertyAccessors::default();
+        assert_eq!(prop.getter, None);
+        assert_eq!(prop.setter, None);
+        assert_eq!(prop.visibility, Visibility::Public);
+        assert!(!prop.is_read_only());
+        assert!(!prop.is_write_only());
+        assert!(!prop.is_read_write());
+    }
+
+    // TypeDef name and qualified_name tests for template instance
+    #[test]
+    fn typedef_template_instance_name() {
+        let typedef = TypeDef::TemplateInstance {
+            template: ARRAY_TEMPLATE,
+            sub_types: vec![DataType::simple(INT32_TYPE)],
+            methods: Vec::new(),
+            operator_methods: FxHashMap::default(),
+            properties: FxHashMap::default(),
+        };
+        assert_eq!(typedef.name(), "<template instance>");
+        assert_eq!(typedef.qualified_name(), "<template instance>");
+    }
+
+    #[test]
+    fn typedef_template_qualified_name() {
+        let typedef = TypeDef::Template {
+            name: "array".to_string(),
+            param_count: 1,
+        };
+        assert_eq!(typedef.qualified_name(), "array");
+    }
+
+    // AutoGeneratedMethod tests
+    #[test]
+    fn auto_generated_method_variants() {
+        let default_ctor = AutoGeneratedMethod::DefaultConstructor;
+        let copy_ctor = AutoGeneratedMethod::CopyConstructor;
+        let op_assign = AutoGeneratedMethod::OpAssign;
+
+        assert_eq!(default_ctor, AutoGeneratedMethod::DefaultConstructor);
+        assert_eq!(copy_ctor, AutoGeneratedMethod::CopyConstructor);
+        assert_eq!(op_assign, AutoGeneratedMethod::OpAssign);
+        assert_ne!(default_ctor, copy_ctor);
+    }
+
+    #[test]
+    fn function_traits_with_auto_generated() {
+        let mut traits = FunctionTraits::new();
+        traits.auto_generated = Some(AutoGeneratedMethod::DefaultConstructor);
+        assert_eq!(traits.auto_generated, Some(AutoGeneratedMethod::DefaultConstructor));
+    }
+
+    #[test]
+    fn function_traits_explicit() {
+        let mut traits = FunctionTraits::new();
+        traits.is_explicit = true;
+        assert!(traits.is_explicit);
+    }
+
+    // NULL_TYPE constant test
+    #[test]
+    fn null_type_constant() {
+        assert_eq!(NULL_TYPE, TypeId(12));
+    }
 }

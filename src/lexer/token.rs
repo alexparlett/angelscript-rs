@@ -842,4 +842,229 @@ mod tests {
         assert!(!TokenKind::If.is_delimiter());
         assert!(!TokenKind::Identifier.is_delimiter());
     }
+
+    #[test]
+    fn token_kind_description_all_types() {
+        // Cover all type keywords
+        assert_eq!(TokenKind::Int8.description(), "'int8'");
+        assert_eq!(TokenKind::Int16.description(), "'int16'");
+        assert_eq!(TokenKind::Int64.description(), "'int64'");
+        assert_eq!(TokenKind::UInt8.description(), "'uint8'");
+        assert_eq!(TokenKind::UInt16.description(), "'uint16'");
+        assert_eq!(TokenKind::UInt64.description(), "'uint64'");
+        assert_eq!(TokenKind::Auto.description(), "'auto'");
+    }
+
+    #[test]
+    fn token_kind_description_values() {
+        assert_eq!(TokenKind::True.description(), "'true'");
+        assert_eq!(TokenKind::False.description(), "'false'");
+        assert_eq!(TokenKind::Null.description(), "'null'");
+    }
+
+    #[test]
+    fn token_kind_description_control_flow() {
+        assert_eq!(TokenKind::Do.description(), "'do'");
+        assert_eq!(TokenKind::Switch.description(), "'switch'");
+        assert_eq!(TokenKind::Case.description(), "'case'");
+        assert_eq!(TokenKind::Default.description(), "'default'");
+        assert_eq!(TokenKind::Break.description(), "'break'");
+        assert_eq!(TokenKind::Continue.description(), "'continue'");
+        assert_eq!(TokenKind::Try.description(), "'try'");
+        assert_eq!(TokenKind::Catch.description(), "'catch'");
+    }
+
+    #[test]
+    fn token_kind_description_declarations() {
+        assert_eq!(TokenKind::Interface.description(), "'interface'");
+        assert_eq!(TokenKind::Enum.description(), "'enum'");
+        assert_eq!(TokenKind::FuncDef.description(), "'funcdef'");
+        assert_eq!(TokenKind::Namespace.description(), "'namespace'");
+        assert_eq!(TokenKind::Mixin.description(), "'mixin'");
+        assert_eq!(TokenKind::Typedef.description(), "'typedef'");
+        assert_eq!(TokenKind::Import.description(), "'import'");
+        assert_eq!(TokenKind::Const.description(), "'const'");
+        assert_eq!(TokenKind::Private.description(), "'private'");
+        assert_eq!(TokenKind::Protected.description(), "'protected'");
+    }
+
+    #[test]
+    fn token_kind_description_word_operators() {
+        assert_eq!(TokenKind::And.description(), "'and'");
+        assert_eq!(TokenKind::Or.description(), "'or'");
+        assert_eq!(TokenKind::Xor.description(), "'xor'");
+        assert_eq!(TokenKind::Not.description(), "'not'");
+        assert_eq!(TokenKind::Is.description(), "'is'");
+        assert_eq!(TokenKind::NotIs.description(), "'!is'");
+        assert_eq!(TokenKind::In.description(), "'in'");
+        assert_eq!(TokenKind::Out.description(), "'out'");
+        assert_eq!(TokenKind::InOut.description(), "'inout'");
+        assert_eq!(TokenKind::Cast.description(), "'cast'");
+        assert_eq!(TokenKind::Super.description(), "'super'");
+        assert_eq!(TokenKind::This.description(), "'this'");
+    }
+
+    #[test]
+    fn token_kind_description_compound_assignment() {
+        assert_eq!(TokenKind::Equal.description(), "'='");
+        assert_eq!(TokenKind::PlusEqual.description(), "'+='");
+        assert_eq!(TokenKind::MinusEqual.description(), "'-='");
+        assert_eq!(TokenKind::StarEqual.description(), "'*='");
+        assert_eq!(TokenKind::SlashEqual.description(), "'/='");
+        assert_eq!(TokenKind::PercentEqual.description(), "'%='");
+        assert_eq!(TokenKind::StarStarEqual.description(), "'**='");
+    }
+
+    #[test]
+    fn token_kind_description_bitwise() {
+        assert_eq!(TokenKind::Amp.description(), "'&'");
+        assert_eq!(TokenKind::Pipe.description(), "'|'");
+        assert_eq!(TokenKind::Caret.description(), "'^'");
+        assert_eq!(TokenKind::Tilde.description(), "'~'");
+        assert_eq!(TokenKind::LessLess.description(), "'<<'");
+        assert_eq!(TokenKind::GreaterGreater.description(), "'>>'");
+        assert_eq!(TokenKind::GreaterGreaterGreater.description(), "'>>>'");
+    }
+
+    #[test]
+    fn token_kind_description_bitwise_assignment() {
+        assert_eq!(TokenKind::AmpEqual.description(), "'&='");
+        assert_eq!(TokenKind::PipeEqual.description(), "'|='");
+        assert_eq!(TokenKind::CaretEqual.description(), "'^='");
+        assert_eq!(TokenKind::LessLessEqual.description(), "'<<='");
+        assert_eq!(TokenKind::GreaterGreaterEqual.description(), "'>>='");
+        assert_eq!(TokenKind::GreaterGreaterGreaterEqual.description(), "'>>>='");
+    }
+
+    #[test]
+    fn token_kind_description_comparison() {
+        assert_eq!(TokenKind::LessEqual.description(), "'<='");
+        assert_eq!(TokenKind::GreaterEqual.description(), "'>='");
+    }
+
+    #[test]
+    fn token_kind_description_logical() {
+        assert_eq!(TokenKind::AmpAmp.description(), "'&&'");
+        assert_eq!(TokenKind::PipePipe.description(), "'||'");
+        assert_eq!(TokenKind::CaretCaret.description(), "'^^'");
+        assert_eq!(TokenKind::Bang.description(), "'!'");
+    }
+
+    #[test]
+    fn token_kind_description_increment_decrement() {
+        assert_eq!(TokenKind::PlusPlus.description(), "'++'");
+        assert_eq!(TokenKind::MinusMinus.description(), "'--'");
+    }
+
+    #[test]
+    fn token_kind_description_other_operators() {
+        assert_eq!(TokenKind::Percent.description(), "'%'");
+        assert_eq!(TokenKind::StarStar.description(), "'**'");
+        assert_eq!(TokenKind::Question.description(), "'?'");
+        assert_eq!(TokenKind::Colon.description(), "':'");
+        assert_eq!(TokenKind::ColonColon.description(), "'::'");
+        assert_eq!(TokenKind::Dot.description(), "'.'");
+        assert_eq!(TokenKind::At.description(), "'@'");
+    }
+
+    #[test]
+    fn token_kind_description_brackets() {
+        assert_eq!(TokenKind::LeftBracket.description(), "'['");
+        assert_eq!(TokenKind::RightBracket.description(), "']'");
+        assert_eq!(TokenKind::Comma.description(), "','");
+    }
+
+    #[test]
+    fn token_kind_description_error() {
+        assert_eq!(TokenKind::Error.description(), "error");
+    }
+
+    #[test]
+    fn token_kind_display_trait() {
+        // Test Display implementation which calls description()
+        assert_eq!(format!("{}", TokenKind::If), "'if'");
+        assert_eq!(format!("{}", TokenKind::Plus), "'+'");
+        assert_eq!(format!("{}", TokenKind::IntLiteral), "integer literal");
+    }
+
+    #[test]
+    fn keyword_lookup_all_types() {
+        // Type aliases
+        assert_eq!(lookup_keyword("int"), Some(TokenKind::Int));
+        assert_eq!(lookup_keyword("int8"), Some(TokenKind::Int8));
+        assert_eq!(lookup_keyword("int16"), Some(TokenKind::Int16));
+        assert_eq!(lookup_keyword("int64"), Some(TokenKind::Int64));
+        assert_eq!(lookup_keyword("uint"), Some(TokenKind::UInt));
+        assert_eq!(lookup_keyword("uint8"), Some(TokenKind::UInt8));
+        assert_eq!(lookup_keyword("uint16"), Some(TokenKind::UInt16));
+        assert_eq!(lookup_keyword("uint64"), Some(TokenKind::UInt64));
+        assert_eq!(lookup_keyword("void"), Some(TokenKind::Void));
+        assert_eq!(lookup_keyword("bool"), Some(TokenKind::Bool));
+        assert_eq!(lookup_keyword("float"), Some(TokenKind::Float));
+        assert_eq!(lookup_keyword("double"), Some(TokenKind::Double));
+        assert_eq!(lookup_keyword("auto"), Some(TokenKind::Auto));
+    }
+
+    #[test]
+    fn keyword_lookup_values() {
+        assert_eq!(lookup_keyword("true"), Some(TokenKind::True));
+        assert_eq!(lookup_keyword("false"), Some(TokenKind::False));
+        assert_eq!(lookup_keyword("null"), Some(TokenKind::Null));
+    }
+
+    #[test]
+    fn keyword_lookup_control_flow() {
+        assert_eq!(lookup_keyword("if"), Some(TokenKind::If));
+        assert_eq!(lookup_keyword("else"), Some(TokenKind::Else));
+        assert_eq!(lookup_keyword("for"), Some(TokenKind::For));
+        assert_eq!(lookup_keyword("while"), Some(TokenKind::While));
+        assert_eq!(lookup_keyword("do"), Some(TokenKind::Do));
+        assert_eq!(lookup_keyword("switch"), Some(TokenKind::Switch));
+        assert_eq!(lookup_keyword("case"), Some(TokenKind::Case));
+        assert_eq!(lookup_keyword("default"), Some(TokenKind::Default));
+        assert_eq!(lookup_keyword("break"), Some(TokenKind::Break));
+        assert_eq!(lookup_keyword("continue"), Some(TokenKind::Continue));
+        assert_eq!(lookup_keyword("return"), Some(TokenKind::Return));
+        assert_eq!(lookup_keyword("try"), Some(TokenKind::Try));
+        assert_eq!(lookup_keyword("catch"), Some(TokenKind::Catch));
+    }
+
+    #[test]
+    fn keyword_lookup_declarations() {
+        assert_eq!(lookup_keyword("class"), Some(TokenKind::Class));
+        assert_eq!(lookup_keyword("interface"), Some(TokenKind::Interface));
+        assert_eq!(lookup_keyword("enum"), Some(TokenKind::Enum));
+        assert_eq!(lookup_keyword("funcdef"), Some(TokenKind::FuncDef));
+        assert_eq!(lookup_keyword("namespace"), Some(TokenKind::Namespace));
+        assert_eq!(lookup_keyword("mixin"), Some(TokenKind::Mixin));
+        assert_eq!(lookup_keyword("typedef"), Some(TokenKind::Typedef));
+        assert_eq!(lookup_keyword("import"), Some(TokenKind::Import));
+        assert_eq!(lookup_keyword("const"), Some(TokenKind::Const));
+        assert_eq!(lookup_keyword("private"), Some(TokenKind::Private));
+        assert_eq!(lookup_keyword("protected"), Some(TokenKind::Protected));
+    }
+
+    #[test]
+    fn keyword_lookup_word_operators() {
+        assert_eq!(lookup_keyword("and"), Some(TokenKind::And));
+        assert_eq!(lookup_keyword("or"), Some(TokenKind::Or));
+        assert_eq!(lookup_keyword("xor"), Some(TokenKind::Xor));
+        assert_eq!(lookup_keyword("not"), Some(TokenKind::Not));
+        assert_eq!(lookup_keyword("is"), Some(TokenKind::Is));
+        assert_eq!(lookup_keyword("in"), Some(TokenKind::In));
+        assert_eq!(lookup_keyword("out"), Some(TokenKind::Out));
+        assert_eq!(lookup_keyword("inout"), Some(TokenKind::InOut));
+        assert_eq!(lookup_keyword("cast"), Some(TokenKind::Cast));
+        assert_eq!(lookup_keyword("super"), Some(TokenKind::Super));
+        assert_eq!(lookup_keyword("this"), Some(TokenKind::This));
+    }
+
+    #[test]
+    fn keyword_lookup_not_found() {
+        assert_eq!(lookup_keyword("foo"), None);
+        assert_eq!(lookup_keyword("bar"), None);
+        assert_eq!(lookup_keyword(""), None);
+        assert_eq!(lookup_keyword("Int"), None); // Case sensitive
+        assert_eq!(lookup_keyword("IF"), None);
+    }
 }

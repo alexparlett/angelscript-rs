@@ -628,6 +628,8 @@ mod tests {
     use super::*;
     use crate::semantic::types::type_def::{INT32_TYPE, STRING_TYPE, VOID_TYPE};
 
+    // ==================== Null Conversion Tests ====================
+
     #[test]
     fn null_literal_creation() {
         let null = DataType::null_literal();
@@ -682,5 +684,646 @@ mod tests {
         assert_eq!(conv.kind, ConversionKind::NullToHandle);
         assert_eq!(conv.cost, 1);
         assert!(conv.is_implicit);
+    }
+
+    // ==================== Identity Conversion Tests ====================
+
+    #[test]
+    fn identity_conversion_same_type() {
+        let registry = Registry::new();
+        let int_type = DataType::simple(INT32_TYPE);
+
+        let conv = int_type.can_convert_to(&int_type, &registry);
+        assert!(conv.is_some());
+        let conv = conv.unwrap();
+        assert_eq!(conv.kind, ConversionKind::Identity);
+        assert_eq!(conv.cost, 0);
+        assert!(conv.is_implicit);
+    }
+
+    #[test]
+    fn identity_conversion_helper() {
+        let conv = Conversion::identity();
+        assert_eq!(conv.kind, ConversionKind::Identity);
+        assert_eq!(conv.cost, 0);
+        assert!(conv.is_implicit);
+    }
+
+    // ==================== Primitive Conversion Tests ====================
+
+    #[test]
+    fn primitive_int_to_float_implicit() {
+        let registry = Registry::new();
+
+        // int8 -> float
+        let int8 = DataType::simple(INT8_TYPE);
+        let float = DataType::simple(FLOAT_TYPE);
+        let conv = int8.can_convert_to(&float, &registry);
+        assert!(conv.is_some());
+        let conv = conv.unwrap();
+        assert!(matches!(conv.kind, ConversionKind::Primitive { .. }));
+        assert_eq!(conv.cost, 1);
+        assert!(conv.is_implicit);
+
+        // int16 -> float
+        let int16 = DataType::simple(INT16_TYPE);
+        let conv = int16.can_convert_to(&float, &registry);
+        assert!(conv.is_some());
+        assert!(conv.unwrap().is_implicit);
+
+        // int32 -> float
+        let int32 = DataType::simple(INT32_TYPE);
+        let conv = int32.can_convert_to(&float, &registry);
+        assert!(conv.is_some());
+        assert!(conv.unwrap().is_implicit);
+
+        // int64 -> float (higher cost due to precision loss)
+        let int64 = DataType::simple(INT64_TYPE);
+        let conv = int64.can_convert_to(&float, &registry);
+        assert!(conv.is_some());
+        let conv = conv.unwrap();
+        assert_eq!(conv.cost, 2);
+        assert!(conv.is_implicit);
+    }
+
+    #[test]
+    fn primitive_int_to_double_implicit() {
+        let registry = Registry::new();
+        let double = DataType::simple(DOUBLE_TYPE);
+
+        // int8 -> double
+        let int8 = DataType::simple(INT8_TYPE);
+        let conv = int8.can_convert_to(&double, &registry);
+        assert!(conv.is_some());
+        assert_eq!(conv.unwrap().cost, 1);
+
+        // int16 -> double
+        let int16 = DataType::simple(INT16_TYPE);
+        let conv = int16.can_convert_to(&double, &registry);
+        assert!(conv.is_some());
+        assert_eq!(conv.unwrap().cost, 1);
+
+        // int32 -> double
+        let int32 = DataType::simple(INT32_TYPE);
+        let conv = int32.can_convert_to(&double, &registry);
+        assert!(conv.is_some());
+        assert_eq!(conv.unwrap().cost, 1);
+
+        // int64 -> double
+        let int64 = DataType::simple(INT64_TYPE);
+        let conv = int64.can_convert_to(&double, &registry);
+        assert!(conv.is_some());
+        assert_eq!(conv.unwrap().cost, 1);
+    }
+
+    #[test]
+    fn primitive_uint_to_float_implicit() {
+        let registry = Registry::new();
+        let float = DataType::simple(FLOAT_TYPE);
+
+        // uint8 -> float
+        let uint8 = DataType::simple(UINT8_TYPE);
+        let conv = uint8.can_convert_to(&float, &registry);
+        assert!(conv.is_some());
+        assert_eq!(conv.unwrap().cost, 1);
+
+        // uint16 -> float
+        let uint16 = DataType::simple(UINT16_TYPE);
+        let conv = uint16.can_convert_to(&float, &registry);
+        assert!(conv.is_some());
+        assert_eq!(conv.unwrap().cost, 1);
+
+        // uint32 -> float
+        let uint32 = DataType::simple(UINT32_TYPE);
+        let conv = uint32.can_convert_to(&float, &registry);
+        assert!(conv.is_some());
+        assert_eq!(conv.unwrap().cost, 1);
+
+        // uint64 -> float (higher cost)
+        let uint64 = DataType::simple(UINT64_TYPE);
+        let conv = uint64.can_convert_to(&float, &registry);
+        assert!(conv.is_some());
+        assert_eq!(conv.unwrap().cost, 2);
+    }
+
+    #[test]
+    fn primitive_uint_to_double_implicit() {
+        let registry = Registry::new();
+        let double = DataType::simple(DOUBLE_TYPE);
+
+        // uint8 -> double
+        let uint8 = DataType::simple(UINT8_TYPE);
+        let conv = uint8.can_convert_to(&double, &registry);
+        assert!(conv.is_some());
+        assert_eq!(conv.unwrap().cost, 1);
+
+        // uint64 -> double
+        let uint64 = DataType::simple(UINT64_TYPE);
+        let conv = uint64.can_convert_to(&double, &registry);
+        assert!(conv.is_some());
+        assert_eq!(conv.unwrap().cost, 1);
+    }
+
+    #[test]
+    fn primitive_float_to_int_implicit_truncation() {
+        let registry = Registry::new();
+        let float = DataType::simple(FLOAT_TYPE);
+
+        // float -> int8
+        let int8 = DataType::simple(INT8_TYPE);
+        let conv = float.can_convert_to(&int8, &registry);
+        assert!(conv.is_some());
+        let conv = conv.unwrap();
+        assert_eq!(conv.cost, 3); // Higher cost for truncation
+        assert!(conv.is_implicit);
+
+        // float -> int32
+        let int32 = DataType::simple(INT32_TYPE);
+        let conv = float.can_convert_to(&int32, &registry);
+        assert!(conv.is_some());
+        assert_eq!(conv.unwrap().cost, 3);
+
+        // float -> int64
+        let int64 = DataType::simple(INT64_TYPE);
+        let conv = float.can_convert_to(&int64, &registry);
+        assert!(conv.is_some());
+        assert_eq!(conv.unwrap().cost, 3);
+    }
+
+    #[test]
+    fn primitive_double_to_int_implicit_truncation() {
+        let registry = Registry::new();
+        let double = DataType::simple(DOUBLE_TYPE);
+
+        // double -> int32
+        let int32 = DataType::simple(INT32_TYPE);
+        let conv = double.can_convert_to(&int32, &registry);
+        assert!(conv.is_some());
+        assert_eq!(conv.unwrap().cost, 3);
+
+        // double -> uint64
+        let uint64 = DataType::simple(UINT64_TYPE);
+        let conv = double.can_convert_to(&uint64, &registry);
+        assert!(conv.is_some());
+        assert_eq!(conv.unwrap().cost, 3);
+    }
+
+    #[test]
+    fn primitive_float_double_conversion() {
+        let registry = Registry::new();
+        let float = DataType::simple(FLOAT_TYPE);
+        let double = DataType::simple(DOUBLE_TYPE);
+
+        // float -> double (widening, cost 1)
+        let conv = float.can_convert_to(&double, &registry);
+        assert!(conv.is_some());
+        let conv = conv.unwrap();
+        assert_eq!(conv.cost, 1);
+        assert!(conv.is_implicit);
+
+        // double -> float (narrowing, higher cost)
+        let conv = double.can_convert_to(&float, &registry);
+        assert!(conv.is_some());
+        let conv = conv.unwrap();
+        assert_eq!(conv.cost, 2);
+        assert!(conv.is_implicit);
+    }
+
+    #[test]
+    fn primitive_integer_widening() {
+        let registry = Registry::new();
+
+        // int8 -> int16 -> int32 -> int64
+        let int8 = DataType::simple(INT8_TYPE);
+        let int16 = DataType::simple(INT16_TYPE);
+        let int32 = DataType::simple(INT32_TYPE);
+        let int64 = DataType::simple(INT64_TYPE);
+
+        let conv = int8.can_convert_to(&int16, &registry);
+        assert!(conv.is_some());
+        assert_eq!(conv.unwrap().cost, 1);
+
+        let conv = int8.can_convert_to(&int32, &registry);
+        assert!(conv.is_some());
+        assert_eq!(conv.unwrap().cost, 1);
+
+        let conv = int8.can_convert_to(&int64, &registry);
+        assert!(conv.is_some());
+        assert_eq!(conv.unwrap().cost, 1);
+
+        let conv = int16.can_convert_to(&int32, &registry);
+        assert!(conv.is_some());
+        assert_eq!(conv.unwrap().cost, 1);
+
+        let conv = int32.can_convert_to(&int64, &registry);
+        assert!(conv.is_some());
+        assert_eq!(conv.unwrap().cost, 1);
+    }
+
+    #[test]
+    fn primitive_integer_narrowing() {
+        let registry = Registry::new();
+
+        // int64 -> int32 -> int16 -> int8
+        let int8 = DataType::simple(INT8_TYPE);
+        let int16 = DataType::simple(INT16_TYPE);
+        let int32 = DataType::simple(INT32_TYPE);
+        let int64 = DataType::simple(INT64_TYPE);
+
+        let conv = int64.can_convert_to(&int32, &registry);
+        assert!(conv.is_some());
+        assert_eq!(conv.unwrap().cost, 2); // Higher cost for narrowing
+
+        let conv = int64.can_convert_to(&int16, &registry);
+        assert!(conv.is_some());
+        assert_eq!(conv.unwrap().cost, 2);
+
+        let conv = int64.can_convert_to(&int8, &registry);
+        assert!(conv.is_some());
+        assert_eq!(conv.unwrap().cost, 2);
+
+        let conv = int32.can_convert_to(&int16, &registry);
+        assert!(conv.is_some());
+        assert_eq!(conv.unwrap().cost, 2);
+
+        let conv = int16.can_convert_to(&int8, &registry);
+        assert!(conv.is_some());
+        assert_eq!(conv.unwrap().cost, 2);
+    }
+
+    #[test]
+    fn primitive_unsigned_widening() {
+        let registry = Registry::new();
+
+        let uint8 = DataType::simple(UINT8_TYPE);
+        let uint16 = DataType::simple(UINT16_TYPE);
+        let uint32 = DataType::simple(UINT32_TYPE);
+        let uint64 = DataType::simple(UINT64_TYPE);
+
+        let conv = uint8.can_convert_to(&uint16, &registry);
+        assert!(conv.is_some());
+        assert_eq!(conv.unwrap().cost, 1);
+
+        let conv = uint8.can_convert_to(&uint32, &registry);
+        assert!(conv.is_some());
+        assert_eq!(conv.unwrap().cost, 1);
+
+        let conv = uint16.can_convert_to(&uint64, &registry);
+        assert!(conv.is_some());
+        assert_eq!(conv.unwrap().cost, 1);
+    }
+
+    #[test]
+    fn primitive_unsigned_narrowing() {
+        let registry = Registry::new();
+
+        let uint8 = DataType::simple(UINT8_TYPE);
+        let uint16 = DataType::simple(UINT16_TYPE);
+        let uint32 = DataType::simple(UINT32_TYPE);
+        let uint64 = DataType::simple(UINT64_TYPE);
+
+        let conv = uint64.can_convert_to(&uint32, &registry);
+        assert!(conv.is_some());
+        assert_eq!(conv.unwrap().cost, 2);
+
+        let conv = uint32.can_convert_to(&uint8, &registry);
+        assert!(conv.is_some());
+        assert_eq!(conv.unwrap().cost, 2);
+
+        let conv = uint16.can_convert_to(&uint8, &registry);
+        assert!(conv.is_some());
+        assert_eq!(conv.unwrap().cost, 2);
+    }
+
+    #[test]
+    fn primitive_signed_unsigned_reinterpret() {
+        let registry = Registry::new();
+
+        // Same size reinterpret
+        let int8 = DataType::simple(INT8_TYPE);
+        let uint8 = DataType::simple(UINT8_TYPE);
+        let conv = int8.can_convert_to(&uint8, &registry);
+        assert!(conv.is_some());
+        assert_eq!(conv.unwrap().cost, 2);
+
+        let conv = uint8.can_convert_to(&int8, &registry);
+        assert!(conv.is_some());
+        assert_eq!(conv.unwrap().cost, 2);
+
+        let int32 = DataType::simple(INT32_TYPE);
+        let uint32 = DataType::simple(UINT32_TYPE);
+        let conv = int32.can_convert_to(&uint32, &registry);
+        assert!(conv.is_some());
+        assert_eq!(conv.unwrap().cost, 2);
+
+        let int64 = DataType::simple(INT64_TYPE);
+        let uint64 = DataType::simple(UINT64_TYPE);
+        let conv = int64.can_convert_to(&uint64, &registry);
+        assert!(conv.is_some());
+        assert_eq!(conv.unwrap().cost, 2);
+    }
+
+    #[test]
+    fn primitive_no_conversion_void() {
+        let registry = Registry::new();
+        let int32 = DataType::simple(INT32_TYPE);
+        let void_type = DataType::simple(VOID_TYPE);
+
+        // Can't convert to/from void
+        assert!(int32.can_convert_to(&void_type, &registry).is_none());
+        assert!(void_type.can_convert_to(&int32, &registry).is_none());
+    }
+
+    #[test]
+    fn primitive_conversion_helper() {
+        let conv = Conversion::primitive(INT32_TYPE, FLOAT_TYPE, 1, true);
+        assert!(matches!(conv.kind, ConversionKind::Primitive { from_type, to_type }
+            if from_type == INT32_TYPE && to_type == FLOAT_TYPE));
+        assert_eq!(conv.cost, 1);
+        assert!(conv.is_implicit);
+    }
+
+    // ==================== Handle Conversion Tests ====================
+
+    #[test]
+    fn handle_to_const_handle_implicit() {
+        let registry = Registry::new();
+
+        // T@ -> const T@ (adding const is implicit)
+        let handle = DataType::with_handle(INT32_TYPE, false);
+        let const_handle = DataType::const_handle(INT32_TYPE, false);
+
+        let conv = handle.can_convert_to(&const_handle, &registry);
+        assert!(conv.is_some());
+        let conv = conv.unwrap();
+        assert_eq!(conv.kind, ConversionKind::HandleToConst);
+        assert_eq!(conv.cost, 2);
+        assert!(conv.is_implicit);
+    }
+
+    #[test]
+    fn const_handle_to_handle_explicit() {
+        let registry = Registry::new();
+
+        // const T@ -> T@ (removing const requires explicit cast)
+        let const_handle = DataType::const_handle(INT32_TYPE, false);
+        let handle = DataType::with_handle(INT32_TYPE, false);
+
+        let conv = const_handle.can_convert_to(&handle, &registry);
+        assert!(conv.is_some());
+        let conv = conv.unwrap();
+        assert_eq!(conv.kind, ConversionKind::HandleToConst);
+        assert_eq!(conv.cost, 100);
+        assert!(!conv.is_implicit);
+    }
+
+    #[test]
+    fn handle_to_const_conversion_helper() {
+        let conv = Conversion::handle_to_const();
+        assert_eq!(conv.kind, ConversionKind::HandleToConst);
+        assert_eq!(conv.cost, 2);
+        assert!(conv.is_implicit);
+    }
+
+    // ==================== Derived to Base Conversion Tests ====================
+
+    #[test]
+    fn derived_to_base_conversion_helper() {
+        let conv = Conversion::derived_to_base();
+        assert_eq!(conv.kind, ConversionKind::DerivedToBase);
+        assert_eq!(conv.cost, 3);
+        assert!(conv.is_implicit);
+    }
+
+    #[test]
+    fn derived_to_base_with_registry() {
+        let mut registry = Registry::new();
+
+        // Register base class
+        let base_id = registry.register_type(
+            TypeDef::Class {
+                name: "Base".to_string(),
+                qualified_name: "Base".to_string(),
+                base_class: None,
+                interfaces: vec![],
+                fields: vec![],
+                methods: vec![],
+                operator_methods: Default::default(),
+                properties: Default::default(),
+                is_abstract: false,
+                is_final: false,
+            },
+            Some("Base"),
+        );
+
+        // Register derived class
+        let derived_id = registry.register_type(
+            TypeDef::Class {
+                name: "Derived".to_string(),
+                qualified_name: "Derived".to_string(),
+                base_class: Some(base_id),
+                interfaces: vec![],
+                fields: vec![],
+                methods: vec![],
+                operator_methods: Default::default(),
+                properties: Default::default(),
+                is_abstract: false,
+                is_final: false,
+            },
+            Some("Derived"),
+        );
+
+        // Derived@ -> Base@ should work
+        let derived_handle = DataType::with_handle(derived_id, false);
+        let base_handle = DataType::with_handle(base_id, false);
+
+        let conv = derived_handle.can_convert_to(&base_handle, &registry);
+        assert!(conv.is_some());
+        let conv = conv.unwrap();
+        assert_eq!(conv.kind, ConversionKind::DerivedToBase);
+        assert!(conv.is_implicit);
+
+        // Base@ -> Derived@ should NOT work (no implicit downcast)
+        let conv = base_handle.can_convert_to(&derived_handle, &registry);
+        assert!(conv.is_none());
+    }
+
+    // ==================== Class to Interface Conversion Tests ====================
+
+    #[test]
+    fn class_to_interface_conversion_helper() {
+        let conv = Conversion::class_to_interface();
+        assert_eq!(conv.kind, ConversionKind::ClassToInterface);
+        assert_eq!(conv.cost, 5);
+        assert!(conv.is_implicit);
+    }
+
+    #[test]
+    fn class_to_interface_with_registry() {
+        let mut registry = Registry::new();
+
+        // Register interface
+        let interface_id = registry.register_type(
+            TypeDef::Interface {
+                name: "IDrawable".to_string(),
+                qualified_name: "IDrawable".to_string(),
+                methods: vec![],
+            },
+            Some("IDrawable"),
+        );
+
+        // Register class that implements interface
+        let class_id = registry.register_type(
+            TypeDef::Class {
+                name: "Circle".to_string(),
+                qualified_name: "Circle".to_string(),
+                base_class: None,
+                interfaces: vec![interface_id],
+                fields: vec![],
+                methods: vec![],
+                operator_methods: Default::default(),
+                properties: Default::default(),
+                is_abstract: false,
+                is_final: false,
+            },
+            Some("Circle"),
+        );
+
+        // Circle@ -> IDrawable@ should work
+        let class_handle = DataType::with_handle(class_id, false);
+        let interface_handle = DataType::with_handle(interface_id, false);
+
+        let conv = class_handle.can_convert_to(&interface_handle, &registry);
+        assert!(conv.is_some());
+        let conv = conv.unwrap();
+        assert_eq!(conv.kind, ConversionKind::ClassToInterface);
+        assert!(conv.is_implicit);
+
+        // IDrawable@ -> Circle@ should NOT work
+        let conv = interface_handle.can_convert_to(&class_handle, &registry);
+        assert!(conv.is_none());
+    }
+
+    // ==================== User-Defined Conversion Tests ====================
+
+    #[test]
+    fn constructor_conversion_helper() {
+        use crate::semantic::FunctionId;
+        let func_id = FunctionId(42);
+        let conv = Conversion::constructor(func_id);
+        assert!(matches!(conv.kind, ConversionKind::ConstructorConversion { constructor_id }
+            if constructor_id == func_id));
+        assert_eq!(conv.cost, 10);
+        assert!(conv.is_implicit);
+    }
+
+    #[test]
+    fn implicit_conv_method_helper() {
+        use crate::semantic::FunctionId;
+        let func_id = FunctionId(99);
+        let conv = Conversion::implicit_conv_method(func_id);
+        assert!(matches!(conv.kind, ConversionKind::ImplicitConversionMethod { method_id }
+            if method_id == func_id));
+        assert_eq!(conv.cost, 10);
+        assert!(conv.is_implicit);
+    }
+
+    #[test]
+    fn explicit_cast_method_helper() {
+        use crate::semantic::FunctionId;
+        let func_id = FunctionId(100);
+        let conv = Conversion::explicit_cast_method(func_id);
+        assert!(matches!(conv.kind, ConversionKind::ExplicitCastMethod { method_id }
+            if method_id == func_id));
+        assert_eq!(conv.cost, 100);
+        assert!(!conv.is_implicit);
+    }
+
+    #[test]
+    fn implicit_cast_method_helper() {
+        use crate::semantic::FunctionId;
+        let func_id = FunctionId(101);
+        let conv = Conversion::implicit_cast_method(func_id);
+        assert!(matches!(conv.kind, ConversionKind::ImplicitCastMethod { method_id }
+            if method_id == func_id));
+        assert_eq!(conv.cost, 100);
+        assert!(!conv.is_implicit);
+    }
+
+    // ==================== Edge Cases ====================
+
+    #[test]
+    fn no_conversion_between_unrelated_types() {
+        let registry = Registry::new();
+
+        // string -> int (no conversion)
+        let string_type = DataType::simple(STRING_TYPE);
+        let int_type = DataType::simple(INT32_TYPE);
+
+        assert!(string_type.can_convert_to(&int_type, &registry).is_none());
+        assert!(int_type.can_convert_to(&string_type, &registry).is_none());
+    }
+
+    #[test]
+    fn no_primitive_conversion_for_handles() {
+        let registry = Registry::new();
+
+        // int@ cannot use primitive conversion rules
+        let int_handle = DataType::with_handle(INT32_TYPE, false);
+        let float_handle = DataType::with_handle(FLOAT_TYPE, false);
+
+        // These are different handle types - no primitive conversion
+        let conv = int_handle.can_convert_to(&float_handle, &registry);
+        assert!(conv.is_none());
+    }
+
+    #[test]
+    fn no_primitive_conversion_for_const_values() {
+        use crate::semantic::RefModifier;
+        let registry = Registry::new();
+
+        // const int -> float should not use primitive conversion
+        // (const affects the value, not the conversion path)
+        let const_int = DataType {
+            type_id: INT32_TYPE,
+            is_handle: false,
+            is_const: true,
+            is_handle_to_const: false,
+            ref_modifier: RefModifier::None,
+        };
+        let float = DataType::simple(FLOAT_TYPE);
+
+        // Const values don't participate in primitive conversion
+        let conv = const_int.can_convert_to(&float, &registry);
+        assert!(conv.is_none());
+    }
+
+    #[test]
+    fn conversion_kind_debug() {
+        // Test that ConversionKind implements Debug correctly
+        let kind = ConversionKind::Identity;
+        let debug_str = format!("{:?}", kind);
+        assert!(debug_str.contains("Identity"));
+
+        let kind = ConversionKind::Primitive {
+            from_type: INT32_TYPE,
+            to_type: FLOAT_TYPE,
+        };
+        let debug_str = format!("{:?}", kind);
+        assert!(debug_str.contains("Primitive"));
+    }
+
+    #[test]
+    fn conversion_kind_clone() {
+        let kind = ConversionKind::NullToHandle;
+        let cloned = kind.clone();
+        assert_eq!(kind, cloned);
+    }
+
+    #[test]
+    fn conversion_struct_clone() {
+        let conv = Conversion::identity();
+        let cloned = conv.clone();
+        assert_eq!(conv, cloned);
     }
 }

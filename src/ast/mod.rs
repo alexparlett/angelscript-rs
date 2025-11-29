@@ -705,4 +705,120 @@ mod tests {
         let script = result.unwrap();
         assert_eq!(script.items().len(), 3);
     }
+
+    #[test]
+    fn parse_with_lexer_error() {
+        let arena = bumpalo::Bump::new();
+        // Invalid character should cause lexer error
+        let source = "int x = @@@;"; // @@@ will cause lexer issues but first @ may be valid (handle)
+        let result = parse(source, &arena);
+        // This may succeed or fail depending on how @@@ is tokenized
+        // We mainly want to exercise the code path
+        let _ = result;
+    }
+
+    #[test]
+    fn parse_lenient_with_lexer_error() {
+        let arena = bumpalo::Bump::new();
+        // Unterminated string causes lexer error
+        let source = r#"int x = "unterminated"#;
+        let (script, errors) = parse_lenient(source, &arena);
+        // Should have errors from lexer
+        let _ = (script, errors);
+    }
+
+    #[test]
+    fn parse_expression_with_lexer_error() {
+        let arena = bumpalo::Bump::new();
+        let source = r#""unterminated string"#;
+        let result = parse_expression(source, &arena);
+        // Should error due to unterminated string
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn parse_statement_with_error() {
+        let arena = bumpalo::Bump::new();
+        // Invalid statement syntax
+        let source = "return return;";
+        let result = parse_statement(source, &arena);
+        // Should error
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn parse_type_with_error() {
+        let arena = bumpalo::Bump::new();
+        // Invalid type syntax (starting with a number)
+        let source = "123InvalidType";
+        let result = parse_type_expr(source, &arena);
+        // Should error
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn script_span() {
+        let arena = bumpalo::Bump::new();
+        let source = "void foo() { }";
+        let result = parse(source, &arena).unwrap();
+        let span = result.span();
+        // Span should be valid
+        assert!(span.len > 0 || span.line > 0);
+    }
+
+    #[test]
+    fn parse_statement_with_parse_error() {
+        let arena = bumpalo::Bump::new();
+        // Missing semicolon causes error
+        let source = "int x = 42";
+        let result = parse_statement(source, &arena);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn parse_type_expr_valid() {
+        let arena = bumpalo::Bump::new();
+        let result = parse_type_expr("array<int>@", &arena);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn parse_lenient_complete_failure() {
+        let arena = bumpalo::Bump::new();
+        // Completely invalid syntax that may cause parse_script to return Err
+        let source = "@@@@@@@@@@";
+        let (script, _errors) = parse_lenient(source, &arena);
+        // Script may be empty but should still return
+        let _ = script.items();
+    }
+
+    #[test]
+    fn parse_expression_with_accumulated_errors() {
+        let arena = bumpalo::Bump::new();
+        // Expression that may accumulate errors during parsing
+        let source = "a.b.c.";  // Trailing dot
+        let result = parse_expression(source, &arena);
+        // Should fail
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn parse_statement_accumulated_errors() {
+        let arena = bumpalo::Bump::new();
+        // Statement that accumulates errors
+        let source = "if (";  // Incomplete if
+        let result = parse_statement(source, &arena);
+        // Should fail
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn parse_type_accumulated_errors() {
+        let arena = bumpalo::Bump::new();
+        // Type with incomplete template
+        let source = "array<";  // Incomplete template
+        let result = parse_type_expr(source, &arena);
+        // Should fail
+        assert!(result.is_err());
+    }
 }

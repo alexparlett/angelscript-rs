@@ -784,6 +784,125 @@ mod tests {
         }
     }
 
+    /// Generic counter visitor that tracks visits to different node types
+    struct NodeCounter {
+        functions: usize,
+        classes: usize,
+        interfaces: usize,
+        enums: usize,
+        namespaces: usize,
+        stmts: usize,
+        exprs: usize,
+        literals: usize,
+        if_stmts: usize,
+        while_stmts: usize,
+        for_stmts: usize,
+        switch_stmts: usize,
+        blocks: usize,
+        fields: usize,
+        methods: usize,
+    }
+
+    impl NodeCounter {
+        fn new() -> Self {
+            Self {
+                functions: 0,
+                classes: 0,
+                interfaces: 0,
+                enums: 0,
+                namespaces: 0,
+                stmts: 0,
+                exprs: 0,
+                literals: 0,
+                if_stmts: 0,
+                while_stmts: 0,
+                for_stmts: 0,
+                switch_stmts: 0,
+                blocks: 0,
+                fields: 0,
+                methods: 0,
+            }
+        }
+    }
+
+    impl<'src, 'ast> Visitor<'src, 'ast> for NodeCounter {
+        fn visit_function_decl(&mut self, func: &FunctionDecl<'src, 'ast>) {
+            self.functions += 1;
+            walk_function_decl(self, func);
+        }
+
+        fn visit_class_decl(&mut self, class: &ClassDecl<'src, 'ast>) {
+            self.classes += 1;
+            walk_class_decl(self, class);
+        }
+
+        fn visit_interface_decl(&mut self, interface: &InterfaceDecl<'src, 'ast>) {
+            self.interfaces += 1;
+            walk_interface_decl(self, interface);
+        }
+
+        fn visit_enum_decl(&mut self, enum_decl: &EnumDecl<'src, 'ast>) {
+            self.enums += 1;
+            walk_enum_decl(self, enum_decl);
+        }
+
+        fn visit_namespace_decl(&mut self, namespace: &NamespaceDecl<'src, 'ast>) {
+            self.namespaces += 1;
+            walk_namespace_decl(self, namespace);
+        }
+
+        fn visit_stmt(&mut self, stmt: &Stmt<'src, 'ast>) {
+            self.stmts += 1;
+            walk_stmt(self, stmt);
+        }
+
+        fn visit_expr(&mut self, expr: &Expr<'src, 'ast>) {
+            self.exprs += 1;
+            walk_expr(self, expr);
+        }
+
+        fn visit_literal_expr(&mut self, _expr: &LiteralExpr) {
+            self.literals += 1;
+        }
+
+        fn visit_if_stmt(&mut self, stmt: &IfStmt<'src, 'ast>) {
+            self.if_stmts += 1;
+            walk_if_stmt(self, stmt);
+        }
+
+        fn visit_while_stmt(&mut self, stmt: &WhileStmt<'src, 'ast>) {
+            self.while_stmts += 1;
+            walk_while_stmt(self, stmt);
+        }
+
+        fn visit_for_stmt(&mut self, stmt: &ForStmt<'src, 'ast>) {
+            self.for_stmts += 1;
+            walk_for_stmt(self, stmt);
+        }
+
+        fn visit_switch_stmt(&mut self, stmt: &SwitchStmt<'src, 'ast>) {
+            self.switch_stmts += 1;
+            walk_switch_stmt(self, stmt);
+        }
+
+        fn visit_block(&mut self, block: &Block<'src, 'ast>) {
+            self.blocks += 1;
+            walk_block(self, block);
+        }
+
+        fn visit_field_decl(&mut self, field: &FieldDecl<'src, 'ast>) {
+            self.fields += 1;
+            walk_field_decl(self, field);
+        }
+
+        fn visit_class_member(&mut self, member: &ClassMember<'src, 'ast>) {
+            if matches!(member, ClassMember::Method(_)) {
+                self.methods += 1;
+            }
+            walk_class_member(self, member);
+        }
+    }
+
     #[test]
     fn test_function_counter() {
         // Parse a simple script with two functions
@@ -862,5 +981,818 @@ mod tests {
         };
         walk_stmt(&mut visitor, &stmt);
         assert!(visitor.visited_return);
+    }
+
+    // ==================== Class and Interface Tests ====================
+
+    #[test]
+    fn test_class_traversal() {
+        let source = r#"
+            class Player {
+                int health;
+                float speed;
+                void move() {}
+                int getHealth() { return health; }
+            }
+        "#;
+        let arena = bumpalo::Bump::new();
+        let script = crate::ast::parse(source, &arena).expect("Failed to parse");
+
+        let mut counter = NodeCounter::new();
+        walk_script(&mut counter, &script);
+
+        assert_eq!(counter.classes, 1);
+        assert_eq!(counter.fields, 2);
+        assert_eq!(counter.methods, 2);
+    }
+
+    #[test]
+    fn test_interface_traversal() {
+        let source = r#"
+            interface IDrawable {
+                void draw();
+                int getWidth();
+            }
+        "#;
+        let arena = bumpalo::Bump::new();
+        let script = crate::ast::parse(source, &arena).expect("Failed to parse");
+
+        let mut counter = NodeCounter::new();
+        walk_script(&mut counter, &script);
+
+        assert_eq!(counter.interfaces, 1);
+    }
+
+    #[test]
+    fn test_enum_traversal() {
+        let source = r#"
+            enum Color {
+                Red,
+                Green,
+                Blue = 10
+            }
+        "#;
+        let arena = bumpalo::Bump::new();
+        let script = crate::ast::parse(source, &arena).expect("Failed to parse");
+
+        let mut counter = NodeCounter::new();
+        walk_script(&mut counter, &script);
+
+        assert_eq!(counter.enums, 1);
+        // Blue = 10 has an expression
+        assert!(counter.exprs >= 1);
+    }
+
+    #[test]
+    fn test_namespace_traversal() {
+        let source = r#"
+            namespace Game {
+                void init() {}
+                namespace Utils {
+                    int helper() { return 0; }
+                }
+            }
+        "#;
+        let arena = bumpalo::Bump::new();
+        let script = crate::ast::parse(source, &arena).expect("Failed to parse");
+
+        let mut counter = NodeCounter::new();
+        walk_script(&mut counter, &script);
+
+        assert_eq!(counter.namespaces, 2); // Game and Game::Utils
+        assert_eq!(counter.functions, 2);
+    }
+
+    // ==================== Statement Tests ====================
+
+    #[test]
+    fn test_if_stmt_traversal() {
+        let source = r#"
+            void test() {
+                if (true) {
+                    int x = 1;
+                } else {
+                    int y = 2;
+                }
+            }
+        "#;
+        let arena = bumpalo::Bump::new();
+        let script = crate::ast::parse(source, &arena).expect("Failed to parse");
+
+        let mut counter = NodeCounter::new();
+        walk_script(&mut counter, &script);
+
+        assert_eq!(counter.if_stmts, 1);
+        assert!(counter.blocks >= 2); // if block and else block
+    }
+
+    #[test]
+    fn test_while_stmt_traversal() {
+        let source = r#"
+            void test() {
+                while (true) {
+                    break;
+                }
+            }
+        "#;
+        let arena = bumpalo::Bump::new();
+        let script = crate::ast::parse(source, &arena).expect("Failed to parse");
+
+        let mut counter = NodeCounter::new();
+        walk_script(&mut counter, &script);
+
+        assert_eq!(counter.while_stmts, 1);
+    }
+
+    #[test]
+    fn test_for_stmt_traversal() {
+        let source = r#"
+            void test() {
+                for (int i = 0; i < 10; i++) {
+                    int x = i;
+                }
+            }
+        "#;
+        let arena = bumpalo::Bump::new();
+        let script = crate::ast::parse(source, &arena).expect("Failed to parse");
+
+        let mut counter = NodeCounter::new();
+        walk_script(&mut counter, &script);
+
+        assert_eq!(counter.for_stmts, 1);
+    }
+
+    #[test]
+    fn test_switch_stmt_traversal() {
+        let source = r#"
+            void test() {
+                int x = 1;
+                switch (x) {
+                    case 1:
+                        break;
+                    case 2:
+                        break;
+                    default:
+                        break;
+                }
+            }
+        "#;
+        let arena = bumpalo::Bump::new();
+        let script = crate::ast::parse(source, &arena).expect("Failed to parse");
+
+        let mut counter = NodeCounter::new();
+        walk_script(&mut counter, &script);
+
+        assert_eq!(counter.switch_stmts, 1);
+    }
+
+    #[test]
+    fn test_do_while_traversal() {
+        struct DoWhileCounter {
+            count: usize,
+        }
+        impl<'src, 'ast> Visitor<'src, 'ast> for DoWhileCounter {
+            fn visit_do_while_stmt(&mut self, stmt: &DoWhileStmt<'src, 'ast>) {
+                self.count += 1;
+                walk_do_while_stmt(self, stmt);
+            }
+        }
+
+        let source = r#"
+            void test() {
+                do {
+                    int x = 1;
+                } while (true);
+            }
+        "#;
+        let arena = bumpalo::Bump::new();
+        let script = crate::ast::parse(source, &arena).expect("Failed to parse");
+
+        let mut counter = DoWhileCounter { count: 0 };
+        walk_script(&mut counter, &script);
+
+        assert_eq!(counter.count, 1);
+    }
+
+    #[test]
+    fn test_try_catch_traversal() {
+        struct TryCatchCounter {
+            count: usize,
+        }
+        impl<'src, 'ast> Visitor<'src, 'ast> for TryCatchCounter {
+            fn visit_try_catch_stmt(&mut self, stmt: &TryCatchStmt<'src, 'ast>) {
+                self.count += 1;
+                walk_try_catch_stmt(self, stmt);
+            }
+        }
+
+        let source = r#"
+            void test() {
+                try {
+                    int x = 1;
+                } catch {
+                    int y = 2;
+                }
+            }
+        "#;
+        let arena = bumpalo::Bump::new();
+        let script = crate::ast::parse(source, &arena).expect("Failed to parse");
+
+        let mut counter = TryCatchCounter { count: 0 };
+        walk_script(&mut counter, &script);
+
+        assert_eq!(counter.count, 1);
+    }
+
+    // ==================== Expression Tests ====================
+
+    #[test]
+    fn test_unary_expr_traversal() {
+        struct UnaryCounter {
+            count: usize,
+        }
+        impl<'src, 'ast> Visitor<'src, 'ast> for UnaryCounter {
+            fn visit_unary_expr(&mut self, expr: &UnaryExpr<'src, 'ast>) {
+                self.count += 1;
+                walk_unary_expr(self, expr);
+            }
+        }
+
+        let source = "void test() { int x = -5; bool b = !true; }";
+        let arena = bumpalo::Bump::new();
+        let script = crate::ast::parse(source, &arena).expect("Failed to parse");
+
+        let mut counter = UnaryCounter { count: 0 };
+        walk_script(&mut counter, &script);
+
+        assert_eq!(counter.count, 2);
+    }
+
+    #[test]
+    fn test_ternary_expr_traversal() {
+        struct TernaryCounter {
+            count: usize,
+        }
+        impl<'src, 'ast> Visitor<'src, 'ast> for TernaryCounter {
+            fn visit_ternary_expr(&mut self, expr: &TernaryExpr<'src, 'ast>) {
+                self.count += 1;
+                walk_ternary_expr(self, expr);
+            }
+        }
+
+        let source = "void test() { int x = true ? 1 : 2; }";
+        let arena = bumpalo::Bump::new();
+        let script = crate::ast::parse(source, &arena).expect("Failed to parse");
+
+        let mut counter = TernaryCounter { count: 0 };
+        walk_script(&mut counter, &script);
+
+        assert_eq!(counter.count, 1);
+    }
+
+    #[test]
+    fn test_call_expr_traversal() {
+        struct CallCounter {
+            count: usize,
+        }
+        impl<'src, 'ast> Visitor<'src, 'ast> for CallCounter {
+            fn visit_call_expr(&mut self, expr: &CallExpr<'src, 'ast>) {
+                self.count += 1;
+                walk_call_expr(self, expr);
+            }
+        }
+
+        let source = "void test() { foo(); bar(1, 2); }";
+        let arena = bumpalo::Bump::new();
+        let script = crate::ast::parse(source, &arena).expect("Failed to parse");
+
+        let mut counter = CallCounter { count: 0 };
+        walk_script(&mut counter, &script);
+
+        assert_eq!(counter.count, 2);
+    }
+
+    #[test]
+    fn test_index_expr_traversal() {
+        struct IndexCounter {
+            count: usize,
+        }
+        impl<'src, 'ast> Visitor<'src, 'ast> for IndexCounter {
+            fn visit_index_expr(&mut self, expr: &IndexExpr<'src, 'ast>) {
+                self.count += 1;
+                walk_index_expr(self, expr);
+            }
+        }
+
+        let source = "void test() { int x = arr[0]; int y = matrix[1][2]; }";
+        let arena = bumpalo::Bump::new();
+        let script = crate::ast::parse(source, &arena).expect("Failed to parse");
+
+        let mut counter = IndexCounter { count: 0 };
+        walk_script(&mut counter, &script);
+
+        // arr[0] = 1, matrix[1][2] = 2 (nested indexing counts both)
+        assert_eq!(counter.count, 3);
+    }
+
+    #[test]
+    fn test_member_expr_traversal() {
+        struct MemberCounter {
+            count: usize,
+        }
+        impl<'src, 'ast> Visitor<'src, 'ast> for MemberCounter {
+            fn visit_member_expr(&mut self, expr: &MemberExpr<'src, 'ast>) {
+                self.count += 1;
+                walk_member_expr(self, expr);
+            }
+        }
+
+        let source = "void test() { int x = obj.field; obj.method(); }";
+        let arena = bumpalo::Bump::new();
+        let script = crate::ast::parse(source, &arena).expect("Failed to parse");
+
+        let mut counter = MemberCounter { count: 0 };
+        walk_script(&mut counter, &script);
+
+        assert_eq!(counter.count, 2);
+    }
+
+    #[test]
+    fn test_postfix_expr_traversal() {
+        struct PostfixCounter {
+            count: usize,
+        }
+        impl<'src, 'ast> Visitor<'src, 'ast> for PostfixCounter {
+            fn visit_postfix_expr(&mut self, expr: &PostfixExpr<'src, 'ast>) {
+                self.count += 1;
+                walk_postfix_expr(self, expr);
+            }
+        }
+
+        let source = "void test() { int x = 0; x++; x--; }";
+        let arena = bumpalo::Bump::new();
+        let script = crate::ast::parse(source, &arena).expect("Failed to parse");
+
+        let mut counter = PostfixCounter { count: 0 };
+        walk_script(&mut counter, &script);
+
+        assert_eq!(counter.count, 2);
+    }
+
+    #[test]
+    fn test_cast_expr_traversal() {
+        struct CastCounter {
+            count: usize,
+        }
+        impl<'src, 'ast> Visitor<'src, 'ast> for CastCounter {
+            fn visit_cast_expr(&mut self, expr: &CastExpr<'src, 'ast>) {
+                self.count += 1;
+                walk_cast_expr(self, expr);
+            }
+        }
+
+        let source = "void test() { float x = float(42); }";
+        let arena = bumpalo::Bump::new();
+        let script = crate::ast::parse(source, &arena).expect("Failed to parse");
+
+        let mut counter = CastCounter { count: 0 };
+        walk_script(&mut counter, &script);
+
+        assert_eq!(counter.count, 1);
+    }
+
+    #[test]
+    fn test_assign_expr_traversal() {
+        struct AssignCounter {
+            count: usize,
+        }
+        impl<'src, 'ast> Visitor<'src, 'ast> for AssignCounter {
+            fn visit_assign_expr(&mut self, expr: &AssignExpr<'src, 'ast>) {
+                self.count += 1;
+                walk_assign_expr(self, expr);
+            }
+        }
+
+        let source = "void test() { int x; x = 1; x += 2; }";
+        let arena = bumpalo::Bump::new();
+        let script = crate::ast::parse(source, &arena).expect("Failed to parse");
+
+        let mut counter = AssignCounter { count: 0 };
+        walk_script(&mut counter, &script);
+
+        assert_eq!(counter.count, 2);
+    }
+
+    #[test]
+    fn test_lambda_expr_traversal() {
+        struct LambdaCounter {
+            count: usize,
+        }
+        impl<'src, 'ast> Visitor<'src, 'ast> for LambdaCounter {
+            fn visit_lambda_expr(&mut self, expr: &LambdaExpr<'src, 'ast>) {
+                self.count += 1;
+                walk_lambda_expr(self, expr);
+            }
+        }
+
+        let source = r#"
+            funcdef void Callback();
+            void test() {
+                Callback @cb = function() { };
+            }
+        "#;
+        let arena = bumpalo::Bump::new();
+        let script = crate::ast::parse(source, &arena).expect("Failed to parse");
+
+        let mut counter = LambdaCounter { count: 0 };
+        walk_script(&mut counter, &script);
+
+        assert_eq!(counter.count, 1);
+    }
+
+    #[test]
+    fn test_init_list_expr_traversal() {
+        struct InitListCounter {
+            count: usize,
+        }
+        impl<'src, 'ast> Visitor<'src, 'ast> for InitListCounter {
+            fn visit_init_list_expr(&mut self, expr: &InitListExpr<'src, 'ast>) {
+                self.count += 1;
+                walk_init_list_expr(self, expr);
+            }
+        }
+
+        let source = "void test() { array<int> arr = {1, 2, 3}; }";
+        let arena = bumpalo::Bump::new();
+        let script = crate::ast::parse(source, &arena).expect("Failed to parse");
+
+        let mut counter = InitListCounter { count: 0 };
+        walk_script(&mut counter, &script);
+
+        assert_eq!(counter.count, 1);
+    }
+
+    #[test]
+    fn test_paren_expr_traversal() {
+        struct ParenCounter {
+            count: usize,
+        }
+        impl<'src, 'ast> Visitor<'src, 'ast> for ParenCounter {
+            fn visit_paren_expr(&mut self, expr: &ParenExpr<'src, 'ast>) {
+                self.count += 1;
+                walk_paren_expr(self, expr);
+            }
+        }
+
+        let source = "void test() { int x = (1 + 2) * (3 + 4); }";
+        let arena = bumpalo::Bump::new();
+        let script = crate::ast::parse(source, &arena).expect("Failed to parse");
+
+        let mut counter = ParenCounter { count: 0 };
+        walk_script(&mut counter, &script);
+
+        assert_eq!(counter.count, 2);
+    }
+
+    // ==================== Type Expression Tests ====================
+
+    #[test]
+    fn test_type_expr_traversal() {
+        struct TypeExprCounter {
+            count: usize,
+        }
+        impl<'src, 'ast> Visitor<'src, 'ast> for TypeExprCounter {
+            fn visit_type_expr(&mut self, ty: &TypeExpr<'src, 'ast>) {
+                self.count += 1;
+                walk_type_expr(self, ty);
+            }
+        }
+
+        let source = "void test() { int x; float y; array<int> arr; }";
+        let arena = bumpalo::Bump::new();
+        let script = crate::ast::parse(source, &arena).expect("Failed to parse");
+
+        let mut counter = TypeExprCounter { count: 0 };
+        walk_script(&mut counter, &script);
+
+        // Return type (void) + 3 variable types + template arg (int)
+        assert!(counter.count >= 4);
+    }
+
+    // ==================== Declaration Tests ====================
+
+    #[test]
+    fn test_typedef_traversal() {
+        struct TypedefCounter {
+            count: usize,
+        }
+        impl<'src, 'ast> Visitor<'src, 'ast> for TypedefCounter {
+            fn visit_typedef_decl(&mut self, typedef: &TypedefDecl<'src, 'ast>) {
+                self.count += 1;
+                walk_typedef_decl(self, typedef);
+            }
+        }
+
+        let source = "typedef int MyInt;";
+        let arena = bumpalo::Bump::new();
+        let script = crate::ast::parse(source, &arena).expect("Failed to parse");
+
+        let mut counter = TypedefCounter { count: 0 };
+        walk_script(&mut counter, &script);
+
+        assert_eq!(counter.count, 1);
+    }
+
+    #[test]
+    fn test_funcdef_traversal() {
+        struct FuncdefCounter {
+            count: usize,
+        }
+        impl<'src, 'ast> Visitor<'src, 'ast> for FuncdefCounter {
+            fn visit_funcdef_decl(&mut self, funcdef: &FuncdefDecl<'src, 'ast>) {
+                self.count += 1;
+                walk_funcdef_decl(self, funcdef);
+            }
+        }
+
+        let source = "funcdef void Callback(int x, int y);";
+        let arena = bumpalo::Bump::new();
+        let script = crate::ast::parse(source, &arena).expect("Failed to parse");
+
+        let mut counter = FuncdefCounter { count: 0 };
+        walk_script(&mut counter, &script);
+
+        assert_eq!(counter.count, 1);
+    }
+
+    #[test]
+    fn test_global_var_traversal() {
+        struct GlobalVarCounter {
+            count: usize,
+        }
+        impl<'src, 'ast> Visitor<'src, 'ast> for GlobalVarCounter {
+            fn visit_global_var_decl(&mut self, var: &GlobalVarDecl<'src, 'ast>) {
+                self.count += 1;
+                walk_global_var_decl(self, var);
+            }
+        }
+
+        let source = "int globalX = 10; float globalY;";
+        let arena = bumpalo::Bump::new();
+        let script = crate::ast::parse(source, &arena).expect("Failed to parse");
+
+        let mut counter = GlobalVarCounter { count: 0 };
+        walk_script(&mut counter, &script);
+
+        assert_eq!(counter.count, 2);
+    }
+
+    #[test]
+    fn test_mixin_traversal() {
+        struct MixinCounter {
+            count: usize,
+        }
+        impl<'src, 'ast> Visitor<'src, 'ast> for MixinCounter {
+            fn visit_mixin_decl(&mut self, mixin: &MixinDecl<'src, 'ast>) {
+                self.count += 1;
+                walk_mixin_decl(self, mixin);
+            }
+        }
+
+        let source = "mixin class Helper { int value; }";
+        let arena = bumpalo::Bump::new();
+        let script = crate::ast::parse(source, &arena).expect("Failed to parse");
+
+        let mut counter = MixinCounter { count: 0 };
+        walk_script(&mut counter, &script);
+
+        assert_eq!(counter.count, 1);
+    }
+
+    #[test]
+    fn test_import_traversal() {
+        struct ImportCounter {
+            count: usize,
+        }
+        impl<'src, 'ast> Visitor<'src, 'ast> for ImportCounter {
+            fn visit_import_decl(&mut self, import: &ImportDecl<'src, 'ast>) {
+                self.count += 1;
+                walk_import_decl(self, import);
+            }
+        }
+
+        let source = r#"import void external() from "module";"#;
+        let arena = bumpalo::Bump::new();
+        let script = crate::ast::parse(source, &arena).expect("Failed to parse");
+
+        let mut counter = ImportCounter { count: 0 };
+        walk_script(&mut counter, &script);
+
+        assert_eq!(counter.count, 1);
+    }
+
+    // ==================== Complex Traversal Tests ====================
+
+    #[test]
+    fn test_complex_script_traversal() {
+        let source = r#"
+            namespace Game {
+                interface IEntity {
+                    void update();
+                }
+
+                class Player : IEntity {
+                    int health = 100;
+                    float speed;
+
+                    void update() {
+                        if (health > 0) {
+                            for (int i = 0; i < 10; i++) {
+                                speed = speed + 0.1f;
+                            }
+                        }
+                    }
+
+                    int getHealth() {
+                        return health;
+                    }
+                }
+
+                void main() {
+                    Player p;
+                    p.update();
+                }
+            }
+        "#;
+        let arena = bumpalo::Bump::new();
+        let script = crate::ast::parse(source, &arena).expect("Failed to parse");
+
+        let mut counter = NodeCounter::new();
+        walk_script(&mut counter, &script);
+
+        assert_eq!(counter.namespaces, 1);
+        assert_eq!(counter.interfaces, 1);
+        assert_eq!(counter.classes, 1);
+        assert_eq!(counter.functions, 3); // update, getHealth, main
+        assert_eq!(counter.fields, 2);
+        assert!(counter.if_stmts >= 1);
+        assert!(counter.for_stmts >= 1);
+    }
+
+    #[test]
+    fn test_virtual_property_traversal() {
+        struct VirtualPropertyCounter {
+            count: usize,
+        }
+        impl<'src, 'ast> Visitor<'src, 'ast> for VirtualPropertyCounter {
+            fn visit_virtual_property_decl(&mut self, prop: &VirtualPropertyDecl<'src, 'ast>) {
+                self.count += 1;
+                walk_virtual_property_decl(self, prop);
+            }
+        }
+
+        let source = r#"
+            class Test {
+                int value { get { return 0; } set { } }
+            }
+        "#;
+        let arena = bumpalo::Bump::new();
+        let script = crate::ast::parse(source, &arena).expect("Failed to parse");
+
+        let mut counter = VirtualPropertyCounter { count: 0 };
+        walk_script(&mut counter, &script);
+
+        assert_eq!(counter.count, 1);
+    }
+
+    #[test]
+    fn test_foreach_traversal() {
+        struct ForeachCounter {
+            count: usize,
+        }
+        impl<'src, 'ast> Visitor<'src, 'ast> for ForeachCounter {
+            fn visit_foreach_stmt(&mut self, stmt: &ForeachStmt<'src, 'ast>) {
+                self.count += 1;
+                walk_foreach_stmt(self, stmt);
+            }
+        }
+
+        let source = r#"
+            void test() {
+                array<int> arr;
+                foreach (int x : arr) {
+                    int y = x;
+                }
+            }
+        "#;
+        let arena = bumpalo::Bump::new();
+        let script = crate::ast::parse(source, &arena).expect("Failed to parse");
+
+        let mut counter = ForeachCounter { count: 0 };
+        walk_script(&mut counter, &script);
+
+        assert_eq!(counter.count, 1);
+    }
+
+    #[test]
+    fn test_break_continue_traversal() {
+        struct BreakContinueCounter {
+            breaks: usize,
+            continues: usize,
+        }
+        impl<'src, 'ast> Visitor<'src, 'ast> for BreakContinueCounter {
+            fn visit_break_stmt(&mut self, stmt: &BreakStmt) {
+                self.breaks += 1;
+                // Note: break is a leaf node, no walk function needed
+                let _ = stmt;
+            }
+            fn visit_continue_stmt(&mut self, stmt: &ContinueStmt) {
+                self.continues += 1;
+                let _ = stmt;
+            }
+        }
+
+        let source = r#"
+            void test() {
+                for (int i = 0; i < 10; i++) {
+                    if (i == 5) continue;
+                    if (i == 8) break;
+                }
+            }
+        "#;
+        let arena = bumpalo::Bump::new();
+        let script = crate::ast::parse(source, &arena).expect("Failed to parse");
+
+        let mut counter = BreakContinueCounter { breaks: 0, continues: 0 };
+        walk_script(&mut counter, &script);
+
+        assert_eq!(counter.breaks, 1);
+        assert_eq!(counter.continues, 1);
+    }
+
+    #[test]
+    fn test_var_decl_stmt_traversal() {
+        struct VarDeclCounter {
+            count: usize,
+        }
+        impl<'src, 'ast> Visitor<'src, 'ast> for VarDeclCounter {
+            fn visit_var_decl_stmt(&mut self, stmt: &VarDeclStmt<'src, 'ast>) {
+                self.count += 1;
+                walk_var_decl_stmt(self, stmt);
+            }
+        }
+
+        let source = "void test() { int x = 1, y = 2; float z; }";
+        let arena = bumpalo::Bump::new();
+        let script = crate::ast::parse(source, &arena).expect("Failed to parse");
+
+        let mut counter = VarDeclCounter { count: 0 };
+        walk_script(&mut counter, &script);
+
+        assert_eq!(counter.count, 2); // int x, y and float z
+    }
+
+    #[test]
+    fn test_return_type_traversal() {
+        struct ReturnTypeCounter {
+            count: usize,
+        }
+        impl<'src, 'ast> Visitor<'src, 'ast> for ReturnTypeCounter {
+            fn visit_return_type(&mut self, ty: &ReturnType<'src, 'ast>) {
+                self.count += 1;
+                walk_return_type(self, ty);
+            }
+        }
+
+        let source = "int foo() { return 0; } float bar() { return 0.0f; }";
+        let arena = bumpalo::Bump::new();
+        let script = crate::ast::parse(source, &arena).expect("Failed to parse");
+
+        let mut counter = ReturnTypeCounter { count: 0 };
+        walk_script(&mut counter, &script);
+
+        assert_eq!(counter.count, 2);
+    }
+
+    #[test]
+    fn test_param_type_traversal() {
+        struct ParamTypeCounter {
+            count: usize,
+        }
+        impl<'src, 'ast> Visitor<'src, 'ast> for ParamTypeCounter {
+            fn visit_param_type(&mut self, ty: &ParamType<'src, 'ast>) {
+                self.count += 1;
+                walk_param_type(self, ty);
+            }
+        }
+
+        let source = "void test(int a, float b, bool c) {}";
+        let arena = bumpalo::Bump::new();
+        let script = crate::ast::parse(source, &arena).expect("Failed to parse");
+
+        let mut counter = ParamTypeCounter { count: 0 };
+        walk_script(&mut counter, &script);
+
+        assert_eq!(counter.count, 3);
     }
 }

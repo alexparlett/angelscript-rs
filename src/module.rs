@@ -489,4 +489,124 @@ mod tests {
         module.update_source("file1.as", "void foo() { int x; }").unwrap();
         module.rebuild().unwrap();
     }
+
+    #[test]
+    fn default_module() {
+        let module = ScriptModule::default();
+        assert!(!module.is_built());
+        assert_eq!(module.source_count(), 0);
+        assert_eq!(module.function_count(), 0);
+    }
+
+    #[test]
+    fn build_already_built() {
+        let mut module = ScriptModule::new();
+        module.add_source("test.as", "void main() { }").unwrap();
+        module.build().unwrap();
+
+        // Trying to build again should fail
+        let result = module.build();
+        assert!(matches!(result, Err(BuildError::AlreadyBuilt)));
+    }
+
+    #[test]
+    fn multi_file_not_supported() {
+        let mut module = ScriptModule::new();
+        module.add_source("file1.as", "void foo() { }").unwrap();
+        module.add_source("file2.as", "void bar() { }").unwrap();
+
+        let result = module.build();
+        assert!(matches!(result, Err(BuildError::MultiFileNotSupported)));
+    }
+
+    #[test]
+    fn compiled_returns_module() {
+        let mut module = ScriptModule::new();
+        module.add_source("test.as", "void main() { }").unwrap();
+
+        assert!(module.compiled().is_none());
+        module.build().unwrap();
+        assert!(module.compiled().is_some());
+    }
+
+    #[test]
+    fn type_count_returns_zero() {
+        let mut module = ScriptModule::new();
+        module.add_source("test.as", "void main() { }").unwrap();
+        module.build().unwrap();
+
+        // Currently always returns 0 since registry is not stored
+        assert_eq!(module.type_count(), 0);
+    }
+
+    #[test]
+    fn dirty_files_list() {
+        let mut module = ScriptModule::new();
+        module.add_source("test.as", "void main() { }").unwrap();
+
+        // Before build, the file should be dirty
+        assert!(module.dirty_files().contains("test.as"));
+
+        module.build().unwrap();
+
+        // After build, dirty files should be cleared
+        assert!(module.dirty_files().is_empty());
+
+        // Update and check dirty again
+        module.update_source("test.as", "void main() { int x; }").unwrap();
+        assert!(module.dirty_files().contains("test.as"));
+    }
+
+    #[test]
+    fn rebuild_without_build() {
+        let mut module = ScriptModule::new();
+        module.add_source("test.as", "void main() { }").unwrap();
+
+        // Rebuild on unbuilt module should just build
+        module.rebuild().unwrap();
+        assert!(module.is_built());
+    }
+
+    #[test]
+    fn rebuild_no_changes() {
+        let mut module = ScriptModule::new();
+        module.add_source("test.as", "void main() { }").unwrap();
+        module.build().unwrap();
+
+        // Clear dirty files and rebuild should be a no-op
+        assert!(module.dirty_files().is_empty());
+        module.rebuild().unwrap();
+        assert!(module.is_built());
+    }
+
+    #[test]
+    fn compilation_error() {
+        let mut module = ScriptModule::new();
+        // Valid syntax but semantic error (undefined variable)
+        module.add_source("test.as", "void main() { x = 1; }").unwrap();
+
+        let result = module.build();
+        assert!(matches!(result, Err(BuildError::CompilationErrors(_))));
+    }
+
+    #[test]
+    fn module_error_display() {
+        let err = ModuleError::AlreadyBuilt;
+        assert!(err.to_string().contains("already been built"));
+
+        let err = ModuleError::FileNotFound("test.as".to_string());
+        assert!(err.to_string().contains("test.as"));
+    }
+
+    #[test]
+    fn build_error_display() {
+        let err = BuildError::NoSources;
+        assert!(err.to_string().contains("No sources"));
+
+        let err = BuildError::AlreadyBuilt;
+        assert!(err.to_string().contains("already been built"));
+
+        let err = BuildError::MultiFileNotSupported;
+        assert!(err.to_string().contains("not yet implemented"));
+    }
 }

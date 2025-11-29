@@ -2620,4 +2620,393 @@ mod tests {
         assert!(error.message.contains("circular inheritance detected"), "Error message should mention circular inheritance: {}", error.message);
         assert!(error.message.contains("Foo"), "Error message should mention the class name: {}", error.message);
     }
+
+    #[test]
+    fn auto_type_not_supported() {
+        let arena = Bump::new();
+        let data = compile(r#"
+            class Player {
+                auto x;
+            }
+        "#, &arena);
+
+        assert!(!data.errors.is_empty(), "Should produce an error for auto type");
+        assert!(data.errors.iter().any(|e| {
+            e.kind == SemanticErrorKind::UndefinedType &&
+            e.message.contains("auto type inference not yet supported")
+        }), "Should have auto type error: {:?}", data.errors);
+    }
+
+    #[test]
+    fn unknown_type() {
+        let arena = Bump::new();
+        let data = compile(r#"
+            class Player {
+                ? x;
+            }
+        "#, &arena);
+
+        assert!(!data.errors.is_empty(), "Should produce an error for unknown type");
+        assert!(data.errors.iter().any(|e| {
+            e.kind == SemanticErrorKind::UndefinedType &&
+            e.message.contains("unknown type '?'")
+        }), "Should have unknown type error: {:?}", data.errors);
+    }
+
+    #[test]
+    fn void_field_error() {
+        let arena = Bump::new();
+        let data = compile(r#"
+            class Player {
+                void x;
+            }
+        "#, &arena);
+
+        assert!(!data.errors.is_empty(), "Should produce an error for void field");
+        assert!(data.errors.iter().any(|e| {
+            e.kind == SemanticErrorKind::VoidExpression &&
+            e.message.contains("cannot declare field") &&
+            e.message.contains("void")
+        }), "Should have void field error: {:?}", data.errors);
+    }
+
+    #[test]
+    fn undefined_base_class() {
+        let arena = Bump::new();
+        let data = compile(r#"
+            class Player : UndefinedBaseClass {
+            }
+        "#, &arena);
+
+        assert!(!data.errors.is_empty(), "Should produce an error for undefined base class");
+        assert!(data.errors.iter().any(|e| {
+            e.kind == SemanticErrorKind::UndefinedType
+        }), "Should have undefined type error: {:?}", data.errors);
+    }
+
+    #[test]
+    fn inherit_from_non_class_type() {
+        let arena = Bump::new();
+        let data = compile(r#"
+            enum Color { Red, Green, Blue }
+            class Player : Color {
+            }
+        "#, &arena);
+
+        assert!(!data.errors.is_empty(), "Should produce an error for inheriting from enum");
+        assert!(data.errors.iter().any(|e| {
+            e.kind == SemanticErrorKind::UndefinedType &&
+            e.message.contains("not a class or interface")
+        }), "Should have type error: {:?}", data.errors);
+    }
+
+    #[test]
+    fn const_handle_to_const() {
+        // Test const T@ semantics - the const moves to handle_to_const
+        let arena = Bump::new();
+        let data = compile(r#"
+            class Item { }
+            class Player { const Item@ item; }
+        "#, &arena);
+        assert!(data.errors.is_empty(), "Errors: {:?}", data.errors);
+
+        let player_id = data.registry.lookup_type("Player").unwrap();
+        let typedef = data.registry.get_type(player_id);
+
+        if let TypeDef::Class { fields, .. } = typedef {
+            assert_eq!(fields.len(), 1);
+            assert!(fields[0].data_type.is_handle);
+            assert!(fields[0].data_type.is_handle_to_const);
+            // const should have been moved to handle_to_const
+            assert!(!fields[0].data_type.is_const);
+        } else {
+            panic!("Expected Class typedef");
+        }
+    }
+
+    #[test]
+    fn array_suffix_syntax() {
+        // Test T[] syntax creates array<T>
+        let arena = Bump::new();
+        let data = compile(r#"
+            class Player {
+                int[] scores;
+            }
+        "#, &arena);
+        assert!(data.errors.is_empty(), "Errors: {:?}", data.errors);
+
+        let player_id = data.registry.lookup_type("Player").unwrap();
+        let typedef = data.registry.get_type(player_id);
+
+        if let TypeDef::Class { fields, .. } = typedef {
+            assert_eq!(fields.len(), 1);
+            // Array types are handles
+            assert!(fields[0].data_type.is_handle);
+            // Should be a template instance (array<int>)
+            let field_type = data.registry.get_type(fields[0].data_type.type_id);
+            assert!(field_type.is_template_instance());
+        } else {
+            panic!("Expected Class typedef");
+        }
+    }
+
+    #[test]
+    fn typedef_alias() {
+        let arena = Bump::new();
+        let data = compile(r#"
+            typedef float real;
+            class Player {
+                real speed;
+            }
+        "#, &arena);
+        assert!(data.errors.is_empty(), "Errors: {:?}", data.errors);
+
+        let player_id = data.registry.lookup_type("Player").unwrap();
+        let typedef = data.registry.get_type(player_id);
+
+        if let TypeDef::Class { fields, .. } = typedef {
+            assert_eq!(fields.len(), 1);
+            // The field type should resolve to float
+            assert_eq!(fields[0].data_type.type_id, data.registry.float_type);
+        } else {
+            panic!("Expected Class typedef");
+        }
+    }
+
+    #[test]
+    fn typedef_undefined_base_type() {
+        let arena = Bump::new();
+        let data = compile(r#"
+            typedef UndefinedType mytype;
+        "#, &arena);
+
+        assert!(!data.errors.is_empty(), "Should produce an error for undefined base type");
+        assert!(data.errors.iter().any(|e| {
+            e.kind == SemanticErrorKind::UndefinedType
+        }), "Should have undefined type error: {:?}", data.errors);
+    }
+
+    #[test]
+    fn funcdef_with_params() {
+        let arena = Bump::new();
+        let data = compile(r#"
+            funcdef int Callback(int x, float y);
+        "#, &arena);
+        assert!(data.errors.is_empty(), "Errors: {:?}", data.errors);
+
+        let callback_id = data.registry.lookup_type("Callback").unwrap();
+        let typedef = data.registry.get_type(callback_id);
+
+        if let TypeDef::Funcdef { params, return_type, .. } = typedef {
+            assert_eq!(params.len(), 2);
+            assert_eq!(params[0].type_id, data.registry.int32_type);
+            assert_eq!(params[1].type_id, data.registry.float_type);
+            assert_eq!(return_type.type_id, data.registry.int32_type);
+        } else {
+            panic!("Expected Funcdef typedef");
+        }
+    }
+
+    #[test]
+    fn interface_method_signatures() {
+        let arena = Bump::new();
+        let data = compile(r#"
+            interface IDrawable {
+                void draw(int x, int y);
+                int getWidth() const;
+            }
+        "#, &arena);
+        assert!(data.errors.is_empty(), "Errors: {:?}", data.errors);
+
+        let drawable_id = data.registry.lookup_type("IDrawable").unwrap();
+        let typedef = data.registry.get_type(drawable_id);
+
+        if let TypeDef::Interface { methods, .. } = typedef {
+            assert_eq!(methods.len(), 2);
+            // Check draw method
+            let draw_method = methods.iter().find(|m| m.name == "draw").unwrap();
+            assert_eq!(draw_method.params.len(), 2);
+            // Check getWidth method
+            let get_width = methods.iter().find(|m| m.name == "getWidth").unwrap();
+            assert_eq!(get_width.params.len(), 0);
+        } else {
+            panic!("Expected Interface typedef");
+        }
+    }
+
+    #[test]
+    fn class_implementing_interface() {
+        let arena = Bump::new();
+        let data = compile(r#"
+            interface IDrawable {
+                void draw();
+            }
+            class Widget : IDrawable {
+                void draw() { }
+            }
+        "#, &arena);
+        assert!(data.errors.is_empty(), "Errors: {:?}", data.errors);
+
+        let widget_id = data.registry.lookup_type("Widget").unwrap();
+        let drawable_id = data.registry.lookup_type("IDrawable").unwrap();
+        let typedef = data.registry.get_type(widget_id);
+
+        if let TypeDef::Class { interfaces, .. } = typedef {
+            assert!(interfaces.contains(&drawable_id), "Widget should implement IDrawable");
+        } else {
+            panic!("Expected Class typedef");
+        }
+    }
+
+    #[test]
+    fn global_variable_registration() {
+        let arena = Bump::new();
+        let data = compile(r#"
+            int globalCounter;
+            float globalSpeed = 1.0f;
+        "#, &arena);
+        assert!(data.errors.is_empty(), "Errors: {:?}", data.errors);
+
+        // Global variables should be registered
+        // Note: The exact API depends on the Registry implementation
+        // This test ensures the code path is exercised
+    }
+
+    #[test]
+    fn namespace_types() {
+        let arena = Bump::new();
+        let data = compile(r#"
+            namespace Game {
+                class Player { int health; }
+            }
+        "#, &arena);
+        assert!(data.errors.is_empty(), "Errors: {:?}", data.errors);
+
+        // Look up type with namespace
+        let player_id = data.registry.lookup_type("Game::Player").unwrap();
+        let typedef = data.registry.get_type(player_id);
+        assert!(typedef.is_class());
+    }
+
+    #[test]
+    fn nested_namespace() {
+        let arena = Bump::new();
+        let data = compile(r#"
+            namespace Game::World {
+                class Entity { int id; }
+            }
+        "#, &arena);
+        assert!(data.errors.is_empty(), "Errors: {:?}", data.errors);
+
+        // Look up type with nested namespace
+        let entity_id = data.registry.lookup_type("Game::World::Entity").unwrap();
+        let typedef = data.registry.get_type(entity_id);
+        assert!(typedef.is_class());
+    }
+
+    #[test]
+    fn scoped_type_reference() {
+        let arena = Bump::new();
+        let data = compile(r#"
+            namespace Lib {
+                class Vector { float x; float y; }
+            }
+            class Player {
+                Lib::Vector position;
+            }
+        "#, &arena);
+        assert!(data.errors.is_empty(), "Errors: {:?}", data.errors);
+
+        let player_id = data.registry.lookup_type("Player").unwrap();
+        let vector_id = data.registry.lookup_type("Lib::Vector").unwrap();
+        let typedef = data.registry.get_type(player_id);
+
+        if let TypeDef::Class { fields, .. } = typedef {
+            assert_eq!(fields.len(), 1);
+            assert_eq!(fields[0].data_type.type_id, vector_id);
+        } else {
+            panic!("Expected Class typedef");
+        }
+    }
+
+    #[test]
+    fn field_visibility() {
+        // Note: AngelScript visibility is declared differently, using sections
+        // Here we test the visibility handling paths with existing supported syntax
+        let arena = Bump::new();
+        let data = compile(r#"
+            class Player {
+                int publicField;
+                private int privateField;
+            }
+        "#, &arena);
+        assert!(data.errors.is_empty(), "Errors: {:?}", data.errors);
+
+        let player_id = data.registry.lookup_type("Player").unwrap();
+        let typedef = data.registry.get_type(player_id);
+
+        if let TypeDef::Class { fields, .. } = typedef {
+            assert_eq!(fields.len(), 2);
+
+            let public_field = fields.iter().find(|f| f.name == "publicField").unwrap();
+            assert_eq!(public_field.visibility, Visibility::Public);
+
+            let private_field = fields.iter().find(|f| f.name == "privateField").unwrap();
+            assert_eq!(private_field.visibility, Visibility::Private);
+        } else {
+            panic!("Expected Class typedef");
+        }
+    }
+
+    #[test]
+    fn template_instantiation() {
+        let arena = Bump::new();
+        let data = compile(r#"
+            class Container {
+                array<int> items;
+            }
+        "#, &arena);
+        assert!(data.errors.is_empty(), "Errors: {:?}", data.errors);
+
+        let container_id = data.registry.lookup_type("Container").unwrap();
+        let typedef = data.registry.get_type(container_id);
+
+        if let TypeDef::Class { fields, .. } = typedef {
+            assert_eq!(fields.len(), 1);
+            // The field should be a template instance
+            let field_type = data.registry.get_type(fields[0].data_type.type_id);
+            assert!(field_type.is_template_instance());
+        } else {
+            panic!("Expected Class typedef");
+        }
+    }
+
+    #[test]
+    fn method_return_type_resolution() {
+        let arena = Bump::new();
+        let data = compile(r#"
+            class Player {
+                string getName() { return ""; }
+                int getHealth() { return 0; }
+            }
+        "#, &arena);
+        assert!(data.errors.is_empty(), "Errors: {:?}", data.errors);
+
+        let player_id = data.registry.lookup_type("Player").unwrap();
+        let typedef = data.registry.get_type(player_id);
+
+        if let TypeDef::Class { methods, .. } = typedef {
+            // Find getName method and check return type
+            for method_id in methods {
+                let func = data.registry.get_function(*method_id);
+                if func.name == "getName" {
+                    assert_eq!(func.return_type.type_id, data.registry.string_type);
+                } else if func.name == "getHealth" {
+                    assert_eq!(func.return_type.type_id, data.registry.int32_type);
+                }
+            }
+        } else {
+            panic!("Expected Class typedef");
+        }
+    }
 }

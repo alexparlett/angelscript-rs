@@ -1224,4 +1224,392 @@ mod tests {
             _ => panic!("Expected return statement"),
         }
     }
+
+    // Additional tests for coverage
+    #[test]
+    fn parse_foreach_basic() {
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("foreach (int x : items) sum += x;", &arena);
+        let stmt = parser.parse_statement().unwrap();
+        match stmt {
+            Stmt::Foreach(foreach) => {
+                assert_eq!(foreach.vars.len(), 1);
+            }
+            _ => panic!("Expected foreach statement"),
+        }
+    }
+
+    #[test]
+    fn parse_switch_multiple_case_labels_coverage() {
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("switch (x) { case 1: case 2: sum++; break; }", &arena);
+        let stmt = parser.parse_statement().unwrap();
+        match stmt {
+            Stmt::Switch(switch) => {
+                // First case has multiple labels before statements
+                assert!(!switch.cases.is_empty());
+            }
+            _ => panic!("Expected switch statement"),
+        }
+    }
+
+    #[test]
+    fn parse_switch_empty_cases_coverage() {
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("switch (x) { }", &arena);
+        let stmt = parser.parse_statement().unwrap();
+        match stmt {
+            Stmt::Switch(switch) => {
+                assert!(switch.cases.is_empty());
+            }
+            _ => panic!("Expected switch statement"),
+        }
+    }
+
+    #[test]
+    fn parse_switch_with_fallthrough_coverage() {
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new(r#"
+            switch (x) {
+                case 1:
+                case 2:
+                case 3:
+                    doSomething();
+                    break;
+                default:
+                    doDefault();
+            }
+        "#, &arena);
+        let stmt = parser.parse_statement().unwrap();
+        assert!(matches!(stmt, Stmt::Switch(_)));
+    }
+
+    #[test]
+    fn parse_var_decl_without_init_coverage() {
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("int x;", &arena);
+        let stmt = parser.parse_statement().unwrap();
+        match stmt {
+            Stmt::VarDecl(decl) => {
+                assert_eq!(decl.vars.len(), 1);
+                assert!(decl.vars[0].init.is_none());
+            }
+            _ => panic!("Expected variable declaration"),
+        }
+    }
+
+    #[test]
+    fn parse_var_decl_with_constructor_call_coverage() {
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("MyClass obj(1, 2, 3);", &arena);
+        let stmt = parser.parse_statement().unwrap();
+        match stmt {
+            Stmt::VarDecl(decl) => {
+                assert_eq!(decl.vars.len(), 1);
+                assert!(decl.vars[0].init.is_some());
+            }
+            _ => panic!("Expected variable declaration"),
+        }
+    }
+
+    #[test]
+    fn parse_var_decl_handle_coverage() {
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("Foo@ handle = null;", &arena);
+        let stmt = parser.parse_statement().unwrap();
+        match stmt {
+            Stmt::VarDecl(decl) => {
+                assert_eq!(decl.vars.len(), 1);
+            }
+            _ => panic!("Expected variable declaration"),
+        }
+    }
+
+    #[test]
+    fn parse_var_decl_array_type_coverage() {
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("array<int> arr;", &arena);
+        let stmt = parser.parse_statement().unwrap();
+        match stmt {
+            Stmt::VarDecl(decl) => {
+                assert_eq!(decl.vars.len(), 1);
+            }
+            _ => panic!("Expected variable declaration"),
+        }
+    }
+
+    #[test]
+    fn parse_try_catch_with_statements_coverage() {
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new(r#"
+            try {
+                x = riskyOperation();
+                y = anotherRisky();
+            } catch {
+                handleError();
+                logError();
+            }
+        "#, &arena);
+        let stmt = parser.parse_statement().unwrap();
+        match stmt {
+            Stmt::TryCatch(try_catch) => {
+                assert!(!try_catch.try_block.stmts.is_empty());
+                assert!(!try_catch.catch_block.stmts.is_empty());
+            }
+            _ => panic!("Expected try-catch statement"),
+        }
+    }
+
+    #[test]
+    fn parse_chained_else_if_coverage() {
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new(r#"
+            if (x == 1)
+                a();
+            else if (x == 2)
+                b();
+            else if (x == 3)
+                c();
+            else
+                d();
+        "#, &arena);
+        let stmt = parser.parse_statement().unwrap();
+        match stmt {
+            Stmt::If(if_stmt) => {
+                assert!(if_stmt.else_stmt.is_some());
+                // The else branch should be another if statement
+                match if_stmt.else_stmt.unwrap() {
+                    Stmt::If(_) => {}
+                    _ => panic!("Expected else if"),
+                }
+            }
+            _ => panic!("Expected if statement"),
+        }
+    }
+
+    #[test]
+    fn parse_while_with_block_coverage() {
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("while (x > 0) { x--; y++; }", &arena);
+        let stmt = parser.parse_statement().unwrap();
+        match stmt {
+            Stmt::While(while_stmt) => {
+                match &while_stmt.body {
+                    Stmt::Block(block) => {
+                        assert_eq!(block.stmts.len(), 2);
+                    }
+                    _ => panic!("Expected block body"),
+                }
+            }
+            _ => panic!("Expected while statement"),
+        }
+    }
+
+    #[test]
+    fn parse_do_while_with_block_coverage() {
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("do { x--; y++; } while (x > 0);", &arena);
+        let stmt = parser.parse_statement().unwrap();
+        match stmt {
+            Stmt::DoWhile(do_while) => {
+                match &do_while.body {
+                    Stmt::Block(block) => {
+                        assert_eq!(block.stmts.len(), 2);
+                    }
+                    _ => panic!("Expected block body"),
+                }
+            }
+            _ => panic!("Expected do-while statement"),
+        }
+    }
+
+    #[test]
+    fn parse_block_with_error_recovery() {
+        let arena = bumpalo::Bump::new();
+        // Syntax error: missing semicolon, should recover and continue
+        let mut parser = Parser::new("{ x = 1 y = 2; }", &arena);
+        let stmt = parser.parse_statement().unwrap();
+        match stmt {
+            Stmt::Block(block) => {
+                // Parser should recover and parse what it can
+                assert!(!block.stmts.is_empty() || !parser.errors.is_empty());
+            }
+            _ => panic!("Expected block"),
+        }
+    }
+
+    #[test]
+    fn parse_foreach_trailing_comma_error() {
+        let arena = bumpalo::Bump::new();
+        // Trailing comma before colon
+        let mut parser = Parser::new("foreach (int x, : arr) { }", &arena);
+        let result = parser.parse_statement();
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn parse_foreach_invalid_after_comma() {
+        let arena = bumpalo::Bump::new();
+        // Invalid token after comma (not a type or &)
+        let mut parser = Parser::new("foreach (int x, 123 : arr) { }", &arena);
+        let result = parser.parse_statement();
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn parse_switch_case_error_recovery() {
+        let arena = bumpalo::Bump::new();
+        // Syntax error in case body - should hit error recovery
+        let mut parser = Parser::new("switch (x) { case 1: x = }", &arena);
+        let result = parser.parse_statement();
+        // Either error or parsed with errors collected
+        assert!(result.is_err() || !parser.errors.is_empty());
+    }
+
+    #[test]
+    fn parse_constructor_call_with_named_arg() {
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("Point p(x: 1, y: 2);", &arena);
+        let stmt = parser.parse_statement().unwrap();
+        match stmt {
+            Stmt::VarDecl(decl) => {
+                assert_eq!(decl.vars.len(), 1);
+                assert!(decl.vars[0].init.is_some());
+            }
+            _ => panic!("Expected variable declaration"),
+        }
+    }
+
+    #[test]
+    fn parse_constructor_call_primitive_type_error() {
+        let arena = bumpalo::Bump::new();
+        // Trying constructor call on primitive type should fail
+        let mut parser = Parser::new("int x(42);", &arena);
+        let result = parser.parse_statement();
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn parse_for_expr_init_coverage() {
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("for (i = 0; i < 10; i++) { }", &arena);
+        let stmt = parser.parse_statement().unwrap();
+        match stmt {
+            Stmt::For(for_stmt) => {
+                match &for_stmt.init {
+                    Some(ForInit::Expr(_)) => {}
+                    _ => panic!("Expected expression init"),
+                }
+            }
+            _ => panic!("Expected for statement"),
+        }
+    }
+
+    #[test]
+    fn parse_block_with_eof() {
+        let arena = bumpalo::Bump::new();
+        // Unclosed block - hits EOF
+        let mut parser = Parser::new("{ x = 1;", &arena);
+        let result = parser.parse_statement();
+        // Should error due to missing closing brace
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn parse_switch_with_eof() {
+        let arena = bumpalo::Bump::new();
+        // Unclosed switch - hits EOF
+        let mut parser = Parser::new("switch (x) { case 1:", &arena);
+        let result = parser.parse_statement();
+        // Should error due to missing closing brace
+        assert!(result.is_err() || !parser.errors.is_empty());
+    }
+
+    #[test]
+    fn parse_var_decl_span_no_init() {
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("int x;", &arena);
+        let stmt = parser.parse_statement().unwrap();
+        match stmt {
+            Stmt::VarDecl(decl) => {
+                // The span of declarator without init should just be the name span
+                assert!(decl.vars[0].init.is_none());
+            }
+            _ => panic!("Expected variable declaration"),
+        }
+    }
+
+    #[test]
+    fn parse_for_with_var_decl_init() {
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("for (int i = 0; i < 10; i++) { }", &arena);
+        let stmt = parser.parse_statement().unwrap();
+        match stmt {
+            Stmt::For(for_stmt) => {
+                match &for_stmt.init {
+                    Some(ForInit::VarDecl(_)) => {}
+                    _ => panic!("Expected var decl init"),
+                }
+            }
+            _ => panic!("Expected for statement"),
+        }
+    }
+
+    #[test]
+    fn parse_if_span_without_else() {
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("if (x) y();", &arena);
+        let stmt = parser.parse_statement().unwrap();
+        match stmt {
+            Stmt::If(if_stmt) => {
+                // If without else - span should include just the then statement
+                assert!(if_stmt.else_stmt.is_none());
+            }
+            _ => panic!("Expected if statement"),
+        }
+    }
+
+    #[test]
+    fn parse_switch_case_span_with_stmts() {
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("switch (x) { case 1: a(); b(); break; }", &arena);
+        let stmt = parser.parse_statement().unwrap();
+        match stmt {
+            Stmt::Switch(switch_stmt) => {
+                assert_eq!(switch_stmt.cases.len(), 1);
+                assert_eq!(switch_stmt.cases[0].stmts.len(), 3);
+            }
+            _ => panic!("Expected switch statement"),
+        }
+    }
+
+    #[test]
+    fn parse_switch_default_only() {
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("switch (x) { default: break; }", &arena);
+        let stmt = parser.parse_statement().unwrap();
+        match stmt {
+            Stmt::Switch(switch_stmt) => {
+                assert_eq!(switch_stmt.cases.len(), 1);
+                // default case has no values
+                assert!(switch_stmt.cases[0].values.is_empty());
+            }
+            _ => panic!("Expected switch statement"),
+        }
+    }
+
+    #[test]
+    fn parse_switch_empty_intermediate_case_coverage() {
+        let arena = bumpalo::Bump::new();
+        // Multiple case labels without statements (fall through) then statements
+        let mut parser = Parser::new("switch (x) { case 1: case 2: default: break; }", &arena);
+        let stmt = parser.parse_statement().unwrap();
+        match stmt {
+            Stmt::Switch(switch_stmt) => {
+                assert!(!switch_stmt.cases.is_empty());
+            }
+            _ => panic!("Expected switch statement"),
+        }
+    }
+
 }

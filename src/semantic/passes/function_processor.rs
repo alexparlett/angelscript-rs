@@ -6328,4 +6328,905 @@ mod tests {
 
         assert!(result.is_success(), "Void function call as statement should be allowed: {:?}", result.errors);
     }
+
+    // ==================== Type Conversion Tests ====================
+
+    #[test]
+    fn implicit_int_to_float_conversion() {
+        use crate::parse_lenient;
+        use crate::semantic::Compiler;
+        use bumpalo::Bump;
+
+        let arena = Bump::new();
+        let source = r#"
+            void test() {
+                float x = 42;     // int -> float implicit conversion
+                double y = 100;   // int -> double implicit conversion
+            }
+        "#;
+
+        let (script, _) = parse_lenient(source, &arena);
+        let result = Compiler::compile(&script);
+
+        assert!(result.is_success(), "Implicit int to float conversion should work: {:?}", result.errors);
+    }
+
+    #[test]
+    fn implicit_float_to_double_conversion() {
+        use crate::parse_lenient;
+        use crate::semantic::Compiler;
+        use bumpalo::Bump;
+
+        let arena = Bump::new();
+        let source = r#"
+            void test() {
+                double x = 3.14f;  // float -> double widening
+            }
+        "#;
+
+        let (script, _) = parse_lenient(source, &arena);
+        let result = Compiler::compile(&script);
+
+        assert!(result.is_success(), "Implicit float to double conversion should work: {:?}", result.errors);
+    }
+
+    #[test]
+    fn explicit_cast_int_to_float() {
+        use crate::parse_lenient;
+        use crate::semantic::Compiler;
+        use bumpalo::Bump;
+
+        let arena = Bump::new();
+        let source = r#"
+            void test() {
+                int a = 42;
+                float b = float(a);   // Explicit cast
+                double c = double(a); // Explicit cast
+            }
+        "#;
+
+        let (script, _) = parse_lenient(source, &arena);
+        let result = Compiler::compile(&script);
+
+        assert!(result.is_success(), "Explicit cast int to float should work: {:?}", result.errors);
+    }
+
+    #[test]
+    fn explicit_cast_double_to_int() {
+        use crate::parse_lenient;
+        use crate::semantic::Compiler;
+        use bumpalo::Bump;
+
+        let arena = Bump::new();
+        let source = r#"
+            void test() {
+                double x = 3.14;
+                int a = int(x);    // Explicit narrowing cast
+                int8 b = int8(x);  // Explicit narrowing cast
+            }
+        "#;
+
+        let (script, _) = parse_lenient(source, &arena);
+        let result = Compiler::compile(&script);
+
+        assert!(result.is_success(), "Explicit cast double to int should work: {:?}", result.errors);
+    }
+
+    #[test]
+    fn conversion_in_function_argument() {
+        use crate::parse_lenient;
+        use crate::semantic::Compiler;
+        use bumpalo::Bump;
+
+        let arena = Bump::new();
+        let source = r#"
+            void takeFloat(float x) {}
+            void takeDouble(double x) {}
+
+            void test() {
+                takeFloat(42);     // int -> float
+                takeDouble(42);    // int -> double
+                takeDouble(3.14f); // float -> double
+            }
+        "#;
+
+        let (script, _) = parse_lenient(source, &arena);
+        let result = Compiler::compile(&script);
+
+        assert!(result.is_success(), "Implicit conversion in function arguments should work: {:?}", result.errors);
+    }
+
+    #[test]
+    fn conversion_in_binary_expression() {
+        use crate::parse_lenient;
+        use crate::semantic::Compiler;
+        use bumpalo::Bump;
+
+        let arena = Bump::new();
+        let source = r#"
+            void test() {
+                float x = 1 + 2.5f;       // int + float -> float
+                double y = 3.14f + 2.71;  // float + double -> double
+                float z = 10 / 3.0f;      // int / float -> float
+            }
+        "#;
+
+        let (script, _) = parse_lenient(source, &arena);
+        let result = Compiler::compile(&script);
+
+        assert!(result.is_success(), "Type promotion in binary expressions should work: {:?}", result.errors);
+    }
+
+    #[test]
+    fn conversion_in_comparison() {
+        use crate::parse_lenient;
+        use crate::semantic::Compiler;
+        use bumpalo::Bump;
+
+        let arena = Bump::new();
+        let source = r#"
+            void test() {
+                bool a = 42 < 3.14f;     // int compared to float
+                bool b = 2.5f > 100;     // float compared to int
+                bool c = 1.0 == 1;       // double compared to int
+            }
+        "#;
+
+        let (script, _) = parse_lenient(source, &arena);
+        let result = Compiler::compile(&script);
+
+        assert!(result.is_success(), "Type promotion in comparisons should work: {:?}", result.errors);
+    }
+
+    #[test]
+    fn integer_widening_conversions() {
+        use crate::parse_lenient;
+        use crate::semantic::Compiler;
+        use bumpalo::Bump;
+
+        let arena = Bump::new();
+        let source = r#"
+            void test() {
+                int8 a = 1;
+                int16 b = a;   // int8 -> int16 widening
+                int32 c = b;   // int16 -> int32 widening
+                int64 d = c;   // int32 -> int64 widening
+            }
+        "#;
+
+        let (script, _) = parse_lenient(source, &arena);
+        let result = Compiler::compile(&script);
+
+        assert!(result.is_success(), "Integer widening conversions should work: {:?}", result.errors);
+    }
+
+    #[test]
+    fn uint_literal_operations() {
+        // Test uint literal in expressions
+        use crate::parse_lenient;
+        use crate::semantic::Compiler;
+        use bumpalo::Bump;
+
+        let arena = Bump::new();
+        let source = r#"
+            void test() {
+                int x = 1;
+                int y = x + 2;
+            }
+        "#;
+
+        let (script, _) = parse_lenient(source, &arena);
+        let result = Compiler::compile(&script);
+
+        assert!(result.is_success(), "Literal operations should work: {:?}", result.errors);
+    }
+
+    // ==================== Handle Conversion Tests ====================
+
+    #[test]
+    fn null_to_handle_conversion() {
+        use crate::parse_lenient;
+        use crate::semantic::Compiler;
+        use bumpalo::Bump;
+
+        let arena = Bump::new();
+        let source = r#"
+            class Test {}
+
+            void test() {
+                Test@ obj = null;  // null -> Test@ conversion
+            }
+        "#;
+
+        let (script, _) = parse_lenient(source, &arena);
+        let result = Compiler::compile(&script);
+
+        assert!(result.is_success(), "Null to handle conversion should work: {:?}", result.errors);
+    }
+
+    #[test]
+    fn handle_to_const_handle_conversion() {
+        use crate::parse_lenient;
+        use crate::semantic::Compiler;
+        use bumpalo::Bump;
+
+        let arena = Bump::new();
+        let source = r#"
+            class Test {}
+
+            void takeConst(const Test@ obj) {}
+
+            void test() {
+                Test@ obj;
+                takeConst(obj);  // Test@ -> const Test@ implicit conversion
+            }
+        "#;
+
+        let (script, _) = parse_lenient(source, &arena);
+        let result = Compiler::compile(&script);
+
+        assert!(result.is_success(), "Handle to const handle conversion should work: {:?}", result.errors);
+    }
+
+    // ==================== Overload Resolution Tests ====================
+
+    #[test]
+    fn overload_exact_match_preferred() {
+        use crate::parse_lenient;
+        use crate::semantic::Compiler;
+        use bumpalo::Bump;
+
+        let arena = Bump::new();
+        let source = r#"
+            void foo(int x) {}
+            void foo(float x) {}
+
+            void test() {
+                foo(42);     // Should match foo(int)
+                foo(3.14f);  // Should match foo(float)
+            }
+        "#;
+
+        let (script, _) = parse_lenient(source, &arena);
+        let result = Compiler::compile(&script);
+
+        assert!(result.is_success(), "Exact match in overloading should work: {:?}", result.errors);
+    }
+
+    #[test]
+    fn overload_with_implicit_conversion() {
+        use crate::parse_lenient;
+        use crate::semantic::Compiler;
+        use bumpalo::Bump;
+
+        let arena = Bump::new();
+        let source = r#"
+            void foo(float x) {}
+            void foo(double x) {}
+
+            void test() {
+                foo(42);  // Should match foo(float) with lowest conversion cost
+            }
+        "#;
+
+        let (script, _) = parse_lenient(source, &arena);
+        let result = Compiler::compile(&script);
+
+        assert!(result.is_success(), "Overload with implicit conversion should work: {:?}", result.errors);
+    }
+
+    #[test]
+    fn overload_multiple_parameters() {
+        use crate::parse_lenient;
+        use crate::semantic::Compiler;
+        use bumpalo::Bump;
+
+        let arena = Bump::new();
+        let source = r#"
+            void foo(int a, int b) {}
+            void foo(float a, float b) {}
+            void foo(int a, float b) {}
+
+            void test() {
+                foo(1, 2);      // Should match foo(int, int)
+                foo(1.0f, 2.0f); // Should match foo(float, float)
+                foo(1, 2.0f);   // Should match foo(int, float)
+            }
+        "#;
+
+        let (script, _) = parse_lenient(source, &arena);
+        let result = Compiler::compile(&script);
+
+        assert!(result.is_success(), "Multiple parameter overloading should work: {:?}", result.errors);
+    }
+
+    // ==================== Array and Indexing Tests ====================
+    // Note: Array tests use init_list compilation which handles the array template instantiation internally
+
+    #[test]
+    fn init_list_array_creation() {
+        // This test uses init_list which auto-infers the array type
+        use crate::parse_lenient;
+        use crate::semantic::Compiler;
+        use bumpalo::Bump;
+
+        let arena = Bump::new();
+        let source = r#"
+            void test() {
+                int[] arr = {1, 2, 3};
+            }
+        "#;
+
+        let (script, _) = parse_lenient(source, &arena);
+        let result = Compiler::compile(&script);
+
+        assert!(result.is_success(), "Init list array creation should work: {:?}", result.errors);
+    }
+
+    // ==================== Ternary Expression Tests ====================
+
+    #[test]
+    fn ternary_type_promotion() {
+        use crate::parse_lenient;
+        use crate::semantic::Compiler;
+        use bumpalo::Bump;
+
+        let arena = Bump::new();
+        let source = r#"
+            void test() {
+                bool cond = true;
+                float x = cond ? 1 : 2.0f;   // int and float -> float
+                double y = cond ? 1.0f : 2;  // float and int -> float -> double
+            }
+        "#;
+
+        let (script, _) = parse_lenient(source, &arena);
+        let result = Compiler::compile(&script);
+
+        assert!(result.is_success(), "Ternary type promotion should work: {:?}", result.errors);
+    }
+
+    #[test]
+    fn ternary_with_handles() {
+        use crate::parse_lenient;
+        use crate::semantic::Compiler;
+        use bumpalo::Bump;
+
+        let arena = Bump::new();
+        let source = r#"
+            class Test {}
+
+            void test() {
+                bool cond = true;
+                Test@ a;
+                Test@ b;
+                Test@ c = cond ? a : b;
+            }
+        "#;
+
+        let (script, _) = parse_lenient(source, &arena);
+        let result = Compiler::compile(&script);
+
+        assert!(result.is_success(), "Ternary with handles should work: {:?}", result.errors);
+    }
+
+    #[test]
+    fn ternary_both_handles() {
+        // Note: null in ternary branches currently isn't supported - both branches need same handle type
+        use crate::parse_lenient;
+        use crate::semantic::Compiler;
+        use bumpalo::Bump;
+
+        let arena = Bump::new();
+        let source = r#"
+            class Test {}
+
+            void test() {
+                bool cond = true;
+                Test@ a;
+                Test@ b;
+                Test@ c = cond ? a : b;  // Both branches have Test@ type
+            }
+        "#;
+
+        let (script, _) = parse_lenient(source, &arena);
+        let result = Compiler::compile(&script);
+
+        assert!(result.is_success(), "Ternary with both handle branches should work: {:?}", result.errors);
+    }
+
+    // ==================== Class and Method Tests ====================
+
+    #[test]
+    fn class_method_overloading() {
+        use crate::parse_lenient;
+        use crate::semantic::Compiler;
+        use bumpalo::Bump;
+
+        let arena = Bump::new();
+        let source = r#"
+            class Calculator {
+                int add(int a, int b) { return a + b; }
+                float add(float a, float b) { return a + b; }
+            }
+
+            void test() {
+                Calculator calc;
+                int x = calc.add(1, 2);
+                float y = calc.add(1.0f, 2.0f);
+            }
+        "#;
+
+        let (script, _) = parse_lenient(source, &arena);
+        let result = Compiler::compile(&script);
+
+        assert!(result.is_success(), "Class method overloading should work: {:?}", result.errors);
+    }
+
+    #[test]
+    fn class_constructor_with_conversion() {
+        use crate::parse_lenient;
+        use crate::semantic::Compiler;
+        use bumpalo::Bump;
+
+        let arena = Bump::new();
+        let source = r#"
+            class Point {
+                float x;
+                float y;
+                Point(float _x, float _y) {
+                    x = _x;
+                    y = _y;
+                }
+            }
+
+            void test() {
+                Point p = Point(1, 2);  // int -> float conversion in constructor args
+            }
+        "#;
+
+        let (script, _) = parse_lenient(source, &arena);
+        let result = Compiler::compile(&script);
+
+        assert!(result.is_success(), "Constructor with conversion should work: {:?}", result.errors);
+    }
+
+    #[test]
+    fn derived_to_base_handle_conversion() {
+        use crate::parse_lenient;
+        use crate::semantic::Compiler;
+        use bumpalo::Bump;
+
+        let arena = Bump::new();
+        let source = r#"
+            class Base {}
+            class Derived : Base {}
+
+            void takeBase(Base@ b) {}
+
+            void test() {
+                Derived@ d;
+                takeBase(d);  // Derived@ -> Base@ implicit conversion
+            }
+        "#;
+
+        let (script, _) = parse_lenient(source, &arena);
+        let result = Compiler::compile(&script);
+
+        assert!(result.is_success(), "Derived to base handle conversion should work: {:?}", result.errors);
+    }
+
+    #[test]
+    fn class_implements_interface() {
+        // Test that a class can implement an interface
+        use crate::parse_lenient;
+        use crate::semantic::Compiler;
+        use bumpalo::Bump;
+
+        let arena = Bump::new();
+        let source = r#"
+            interface IDrawable {
+                void draw();
+            }
+
+            class Circle : IDrawable {
+                void draw() {}
+            }
+
+            void test() {
+                Circle c;
+                c.draw();  // Direct call on class instance
+            }
+        "#;
+
+        let (script, _) = parse_lenient(source, &arena);
+        let result = Compiler::compile(&script);
+
+        assert!(result.is_success(), "Class implementing interface should work: {:?}", result.errors);
+    }
+
+    // ==================== Compound Assignment Tests ====================
+
+    #[test]
+    fn compound_assignment_with_conversion() {
+        use crate::parse_lenient;
+        use crate::semantic::Compiler;
+        use bumpalo::Bump;
+
+        let arena = Bump::new();
+        let source = r#"
+            void test() {
+                float x = 10.0f;
+                x += 5;     // int converted to float
+                x -= 3;     // int converted to float
+                x *= 2;     // int converted to float
+                x /= 4;     // int converted to float
+            }
+        "#;
+
+        let (script, _) = parse_lenient(source, &arena);
+        let result = Compiler::compile(&script);
+
+        assert!(result.is_success(), "Compound assignment with conversion should work: {:?}", result.errors);
+    }
+
+    // ==================== Return Value Tests ====================
+
+    #[test]
+    fn return_with_conversion() {
+        use crate::parse_lenient;
+        use crate::semantic::Compiler;
+        use bumpalo::Bump;
+
+        let arena = Bump::new();
+        let source = r#"
+            float getFloat() {
+                return 42;  // int -> float conversion
+            }
+
+            double getDouble() {
+                return 3.14f;  // float -> double conversion
+            }
+        "#;
+
+        let (script, _) = parse_lenient(source, &arena);
+        let result = Compiler::compile(&script);
+
+        assert!(result.is_success(), "Return with conversion should work: {:?}", result.errors);
+    }
+
+    // ==================== Expression Statement Tests ====================
+
+    #[test]
+    fn postfix_increment_decrement() {
+        use crate::parse_lenient;
+        use crate::semantic::Compiler;
+        use bumpalo::Bump;
+
+        let arena = Bump::new();
+        let source = r#"
+            void test() {
+                int x = 0;
+                x++;
+                x--;
+                int y = x++;
+                int z = x--;
+            }
+        "#;
+
+        let (script, _) = parse_lenient(source, &arena);
+        let result = Compiler::compile(&script);
+
+        assert!(result.is_success(), "Postfix increment/decrement should work: {:?}", result.errors);
+    }
+
+    #[test]
+    fn prefix_increment_decrement() {
+        use crate::parse_lenient;
+        use crate::semantic::Compiler;
+        use bumpalo::Bump;
+
+        let arena = Bump::new();
+        let source = r#"
+            void test() {
+                int x = 0;
+                ++x;
+                --x;
+                int y = ++x;
+                int z = --x;
+            }
+        "#;
+
+        let (script, _) = parse_lenient(source, &arena);
+        let result = Compiler::compile(&script);
+
+        assert!(result.is_success(), "Prefix increment/decrement should work: {:?}", result.errors);
+    }
+
+    // ==================== Unary Expression Tests ====================
+
+    #[test]
+    fn unary_negation_all_types() {
+        use crate::parse_lenient;
+        use crate::semantic::Compiler;
+        use bumpalo::Bump;
+
+        let arena = Bump::new();
+        let source = r#"
+            void test() {
+                int a = -42;
+                float b = -3.14f;
+                double c = -2.71;
+                int8 d = -1;
+                int64 e = -1000000;
+            }
+        "#;
+
+        let (script, _) = parse_lenient(source, &arena);
+        let result = Compiler::compile(&script);
+
+        assert!(result.is_success(), "Unary negation should work for all numeric types: {:?}", result.errors);
+    }
+
+    #[test]
+    fn bitwise_not_operator() {
+        use crate::parse_lenient;
+        use crate::semantic::Compiler;
+        use bumpalo::Bump;
+
+        let arena = Bump::new();
+        let source = r#"
+            void test() {
+                int x = ~0;
+                uint y = ~1u;
+                int64 z = ~100;
+            }
+        "#;
+
+        let (script, _) = parse_lenient(source, &arena);
+        let result = Compiler::compile(&script);
+
+        assert!(result.is_success(), "Bitwise not should work: {:?}", result.errors);
+    }
+
+    // ==================== Control Flow Tests ====================
+
+    #[test]
+    fn nested_loops_with_break_continue() {
+        use crate::parse_lenient;
+        use crate::semantic::Compiler;
+        use bumpalo::Bump;
+
+        let arena = Bump::new();
+        let source = r#"
+            void test() {
+                for (int i = 0; i < 10; i++) {
+                    for (int j = 0; j < 10; j++) {
+                        if (j == 5) continue;
+                        if (i == 5) break;
+                    }
+                }
+            }
+        "#;
+
+        let (script, _) = parse_lenient(source, &arena);
+        let result = Compiler::compile(&script);
+
+        assert!(result.is_success(), "Nested loops with break/continue should work: {:?}", result.errors);
+    }
+
+    #[test]
+    fn switch_with_fallthrough() {
+        use crate::parse_lenient;
+        use crate::semantic::Compiler;
+        use bumpalo::Bump;
+
+        let arena = Bump::new();
+        let source = r#"
+            void test() {
+                int x = 2;
+                int result = 0;
+                switch (x) {
+                    case 1:
+                    case 2:
+                        result = 10;
+                        break;
+                    case 3:
+                        result = 30;
+                        break;
+                    default:
+                        result = -1;
+                }
+            }
+        "#;
+
+        let (script, _) = parse_lenient(source, &arena);
+        let result = Compiler::compile(&script);
+
+        assert!(result.is_success(), "Switch with fallthrough should work: {:?}", result.errors);
+    }
+
+    // ==================== Logical Operators Tests ====================
+
+    #[test]
+    fn logical_and_or_operators() {
+        use crate::parse_lenient;
+        use crate::semantic::Compiler;
+        use bumpalo::Bump;
+
+        let arena = Bump::new();
+        let source = r#"
+            void test() {
+                bool a = true;
+                bool b = false;
+                bool c = a && b;
+                bool d = a || b;
+                bool e = !a;
+                bool f = (a && b) || (!a && !b);
+            }
+        "#;
+
+        let (script, _) = parse_lenient(source, &arena);
+        let result = Compiler::compile(&script);
+
+        assert!(result.is_success(), "Logical operators should work: {:?}", result.errors);
+    }
+
+    // ==================== Bitwise Operators Tests ====================
+
+    #[test]
+    fn bitwise_operators() {
+        use crate::parse_lenient;
+        use crate::semantic::Compiler;
+        use bumpalo::Bump;
+
+        let arena = Bump::new();
+        let source = r#"
+            void test() {
+                int a = 0xFF;
+                int b = 0x0F;
+                int c = a & b;    // AND
+                int d = a | b;    // OR
+                int e = a ^ b;    // XOR
+                int f = a << 4;   // Left shift
+                int g = a >> 4;   // Right shift
+            }
+        "#;
+
+        let (script, _) = parse_lenient(source, &arena);
+        let result = Compiler::compile(&script);
+
+        assert!(result.is_success(), "Bitwise operators should work: {:?}", result.errors);
+    }
+
+    #[test]
+    fn comparison_operators() {
+        use crate::parse_lenient;
+        use crate::semantic::Compiler;
+        use bumpalo::Bump;
+
+        let arena = Bump::new();
+        let source = r#"
+            void test() {
+                int a = 10;
+                int b = 20;
+                bool c1 = a == b;
+                bool c2 = a != b;
+                bool c3 = a < b;
+                bool c4 = a <= b;
+                bool c5 = a > b;
+                bool c6 = a >= b;
+            }
+        "#;
+
+        let (script, _) = parse_lenient(source, &arena);
+        let result = Compiler::compile(&script);
+
+        assert!(result.is_success(), "Comparison operators should work: {:?}", result.errors);
+    }
+
+    // ==================== Member Access Tests ====================
+
+    #[test]
+    fn chained_member_access() {
+        use crate::parse_lenient;
+        use crate::semantic::Compiler;
+        use bumpalo::Bump;
+
+        let arena = Bump::new();
+        let source = r#"
+            class Inner {
+                int value;
+            }
+
+            class Outer {
+                Inner inner;
+            }
+
+            void test() {
+                Outer obj;
+                int x = obj.inner.value;
+                obj.inner.value = 42;
+            }
+        "#;
+
+        let (script, _) = parse_lenient(source, &arena);
+        let result = Compiler::compile(&script);
+
+        assert!(result.is_success(), "Chained member access should work: {:?}", result.errors);
+    }
+
+    #[test]
+    fn simple_method_chaining() {
+        // Simpler method call chaining without "return this" pattern
+        use crate::parse_lenient;
+        use crate::semantic::Compiler;
+        use bumpalo::Bump;
+
+        let arena = Bump::new();
+        let source = r#"
+            class Data {
+                int value;
+                int getValue() { return value; }
+                void setValue(int v) { value = v; }
+            }
+
+            void test() {
+                Data d;
+                d.setValue(10);
+                int x = d.getValue();
+            }
+        "#;
+
+        let (script, _) = parse_lenient(source, &arena);
+        let result = Compiler::compile(&script);
+
+        assert!(result.is_success(), "Simple method calls should work: {:?}", result.errors);
+    }
+
+    // ==================== String Literals Tests ====================
+
+    #[test]
+    fn string_literal_usage() {
+        use crate::parse_lenient;
+        use crate::semantic::Compiler;
+        use bumpalo::Bump;
+
+        let arena = Bump::new();
+        let source = r#"
+            void test() {
+                string s = "hello";
+                string t = "world";
+            }
+        "#;
+
+        let (script, _) = parse_lenient(source, &arena);
+        let result = Compiler::compile(&script);
+
+        assert!(result.is_success(), "String literal usage should work: {:?}", result.errors);
+    }
+
+    // ==================== Mixed Expression Tests ====================
+
+    #[test]
+    fn complex_expression_evaluation() {
+        use crate::parse_lenient;
+        use crate::semantic::Compiler;
+        use bumpalo::Bump;
+
+        let arena = Bump::new();
+        let source = r#"
+            void test() {
+                int a = 1 + 2 * 3;          // 7
+                int b = (1 + 2) * 3;        // 9
+                float c = 1.0f + 2 * 3.0f;  // 7.0
+                bool d = 1 < 2 && 3 > 2;    // true
+            }
+        "#;
+
+        let (script, _) = parse_lenient(source, &arena);
+        let result = Compiler::compile(&script);
+
+        assert!(result.is_success(), "Complex expressions should work: {:?}", result.errors);
+    }
 }

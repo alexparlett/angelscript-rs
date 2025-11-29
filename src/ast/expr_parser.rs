@@ -1744,4 +1744,137 @@ mod tests {
         }
         assert!(parser.has_errors());
     }
+
+    // ========================================================================
+    // Additional Coverage Tests
+    // ========================================================================
+
+    #[test]
+    fn parse_cast_expression_coverage() {
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("cast<int>(3.14)", &arena);
+        let expr = parser.parse_expr(0).unwrap();
+        match expr {
+            Expr::Cast(_) => {}
+            _ => panic!("Expected cast expression"),
+        }
+    }
+
+    #[test]
+    fn parse_super_keyword_coverage() {
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("super", &arena);
+        let expr = parser.parse_expr(0).unwrap();
+        match expr {
+            Expr::Ident(ident) => {
+                assert_eq!(ident.ident.name, "super");
+            }
+            _ => panic!("Expected ident expression"),
+        }
+    }
+
+    #[test]
+    fn parse_this_keyword_coverage() {
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("this", &arena);
+        let expr = parser.parse_expr(0).unwrap();
+        match expr {
+            Expr::Ident(ident) => {
+                assert_eq!(ident.ident.name, "this");
+            }
+            _ => panic!("Expected ident expression"),
+        }
+    }
+
+    #[test]
+    fn parse_bits_literal_decimal_coverage() {
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("0d99", &arena);
+        let expr = parser.parse_expr(0).unwrap();
+        match expr {
+            Expr::Literal(lit) => {
+                assert!(matches!(lit.kind, LiteralKind::Int(99)));
+            }
+            _ => panic!("Expected literal"),
+        }
+    }
+
+    #[test]
+    fn parse_heredoc_string_coverage() {
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new(r#""""multi
+line
+string""""#, &arena);
+        let expr = parser.parse_expr(0).unwrap();
+        match expr {
+            Expr::Literal(lit) => {
+                if let LiteralKind::String(_) = &lit.kind {
+                    // Heredoc string parsed
+                } else {
+                    panic!("Expected string literal");
+                }
+            }
+            _ => panic!("Expected literal"),
+        }
+    }
+
+    #[test]
+    fn parse_global_scoped_template_array_coverage() {
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("::array<int>()", &arena);
+        let expr = parser.parse_expr(0).unwrap();
+        match expr {
+            Expr::Call(_) => {}
+            _ => panic!("Expected call expression"),
+        }
+    }
+
+    #[test]
+    fn parse_lambda_custom_type_param() {
+        let arena = bumpalo::Bump::new();
+        // CustomType name pattern
+        let mut parser = Parser::new("function(MyType arg) { }", &arena);
+        let expr = parser.parse_expr(0).unwrap();
+        match expr {
+            Expr::Lambda(lambda) => {
+                assert_eq!(lambda.params.len(), 1);
+                assert!(lambda.params[0].ty.is_some());
+                assert!(lambda.params[0].name.is_some());
+            }
+            _ => panic!("Expected lambda expression"),
+        }
+    }
+
+    #[test]
+    fn parse_constructor_call_coverage() {
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("MyClass(1, 2)", &arena);
+        let expr = parser.parse_expr(0).unwrap();
+        match expr {
+            Expr::Call(_) => {}
+            _ => panic!("Expected call expression (constructor)"),
+        }
+    }
+
+    #[test]
+    fn parse_chained_member_access_coverage() {
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("a.b.c", &arena);
+        let expr = parser.parse_expr(0).unwrap();
+        match expr {
+            Expr::Member(_) => {}
+            _ => panic!("Expected member expression"),
+        }
+    }
+
+    #[test]
+    fn parse_complex_chained_expression_coverage() {
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("arr[0].field.method()", &arena);
+        let expr = parser.parse_expr(0).unwrap();
+        match expr {
+            Expr::Member(_) => {}
+            _ => panic!("Expected member expression"),
+        }
+    }
 }
