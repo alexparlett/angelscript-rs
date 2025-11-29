@@ -1687,6 +1687,79 @@ mod tests {
         assert!(data.errors.is_empty(), "Abstract class partial implementation completed by concrete. Errors: {:?}", data.errors);
     }
 
+    #[test]
+    fn abstract_class_final_method_cannot_be_overridden() {
+        // Abstract class implements interface method as final, concrete subclass cannot override
+        let arena = Bump::new();
+        let data = compile(r#"
+            interface IWidget {
+                void draw();
+            }
+
+            abstract class BaseWidget : IWidget {
+                void draw() final { }  // Abstract class implements draw() as final
+            }
+
+            class Button : BaseWidget {
+                void draw() { }  // ERROR: Cannot override final method
+            }
+        "#, &arena);
+        assert!(!data.errors.is_empty(), "Expected error for overriding final method");
+        assert!(data.errors[0].kind == SemanticErrorKind::CannotOverrideFinal);
+        assert!(data.errors[0].message.contains("draw"));
+    }
+
+    #[test]
+    fn abstract_class_chain_final_method_in_middle() {
+        // Final method in middle of abstract class chain
+        let arena = Bump::new();
+        let data = compile(r#"
+            interface IWidget {
+                void draw();
+                void update();
+            }
+
+            abstract class Widget : IWidget {
+                void draw() final { }  // Widget implements draw() as final
+                // update() left for subclasses
+            }
+
+            abstract class ClickableWidget : Widget {
+                // Cannot override draw() here either - it's final from Widget
+            }
+
+            class Button : ClickableWidget {
+                void update() { }   // OK: implement update()
+                void draw() { }     // ERROR: Cannot override final from Widget
+            }
+        "#, &arena);
+        assert!(!data.errors.is_empty(), "Expected error for overriding final method from abstract grandparent");
+        assert!(data.errors[0].kind == SemanticErrorKind::CannotOverrideFinal);
+        assert!(data.errors[0].message.contains("draw"));
+    }
+
+    #[test]
+    fn abstract_class_chain_final_method_not_overridden_ok() {
+        // Final method in abstract class, concrete subclass doesn't try to override - OK
+        let arena = Bump::new();
+        let data = compile(r#"
+            interface IWidget {
+                void draw();
+                void update();
+            }
+
+            abstract class BaseWidget : IWidget {
+                void draw() final { }  // Abstract class implements draw() as final
+                // update() left for subclasses
+            }
+
+            class Button : BaseWidget {
+                void update() { }  // Only implement update(), draw() is final from base
+            }
+        "#, &arena);
+        assert!(data.errors.is_empty(), "Not overriding final method is OK. Errors: {:?}", data.errors);
+    }
+
     // ========================================================================
     // Override Keyword Validation Tests
     // ========================================================================
