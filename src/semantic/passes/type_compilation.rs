@@ -1603,6 +1603,90 @@ mod tests {
         assert!(data.errors.is_empty(), "Chain of abstract classes, implementation at end. Errors: {:?}", data.errors);
     }
 
+    #[test]
+    fn abstract_class_chain_multiple_interfaces_all_implemented() {
+        // Abstract class chain with multiple interfaces at different levels
+        let arena = Bump::new();
+        let data = compile(r#"
+            interface IDrawable {
+                void draw();
+            }
+
+            interface IClickable {
+                void onClick();
+            }
+
+            interface IFocusable {
+                void onFocus();
+            }
+
+            abstract class Widget : IDrawable { }
+
+            abstract class InteractiveWidget : Widget, IClickable, IFocusable { }
+
+            class Button : InteractiveWidget {
+                void draw() { }      // From IDrawable (on Widget)
+                void onClick() { }   // From IClickable (on InteractiveWidget)
+                void onFocus() { }   // From IFocusable (on InteractiveWidget)
+            }
+        "#, &arena);
+        assert!(data.errors.is_empty(), "Concrete class implements all inherited interfaces. Errors: {:?}", data.errors);
+    }
+
+    #[test]
+    fn abstract_class_chain_multiple_interfaces_one_missing() {
+        // Abstract class chain with multiple interfaces, but concrete class misses one
+        let arena = Bump::new();
+        let data = compile(r#"
+            interface IDrawable {
+                void draw();
+            }
+
+            interface IClickable {
+                void onClick();
+            }
+
+            interface IFocusable {
+                void onFocus();
+            }
+
+            abstract class Widget : IDrawable { }
+
+            abstract class InteractiveWidget : Widget, IClickable, IFocusable { }
+
+            class Button : InteractiveWidget {
+                void draw() { }      // From IDrawable (on Widget)
+                void onClick() { }   // From IClickable (on InteractiveWidget)
+                // Missing: onFocus() from IFocusable
+            }
+        "#, &arena);
+        assert!(!data.errors.is_empty(), "Expected error for missing onFocus");
+        assert!(data.errors[0].kind == SemanticErrorKind::MissingInterfaceMethod);
+        assert!(data.errors[0].message.contains("onFocus"));
+    }
+
+    #[test]
+    fn abstract_class_partial_implementation() {
+        // Abstract class implements some interface methods, concrete class must implement the rest
+        let arena = Bump::new();
+        let data = compile(r#"
+            interface IWidget {
+                void draw();
+                void update();
+            }
+
+            abstract class BaseWidget : IWidget {
+                void draw() { }  // Abstract class implements draw()
+                // But leaves update() for concrete class
+            }
+
+            class Button : BaseWidget {
+                void update() { }  // Concrete class implements update()
+            }
+        "#, &arena);
+        assert!(data.errors.is_empty(), "Abstract class partial implementation completed by concrete. Errors: {:?}", data.errors);
+    }
+
     // ========================================================================
     // Override Keyword Validation Tests
     // ========================================================================
