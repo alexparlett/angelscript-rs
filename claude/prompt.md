@@ -143,7 +143,7 @@
 
 ### Remaining Features (Tasks 35-49)
 
-35. ⏳ Implement namespace resolution in call expressions
+35. ✅ Implement namespace resolution in call expressions
 36. ⏳ Implement enum value resolution (EnumName::VALUE)
 37. ⏳ Implement funcdef type checking
 38. ⏳ Implement interface method validation
@@ -176,11 +176,11 @@
 
 ## What's Next
 
-**Recommended:** Tasks 35-49 (Remaining Features)
-- Namespace resolution in call expressions
-- Enum value resolution
+**Recommended:** Tasks 36-49 (Remaining Features)
+- Enum value resolution (EnumName::VALUE)
 - Interface method validation
 - Template constraints
+- Mixin support
 
 **Or:** Tasks 50-52 (Integration & Testing)
 - Add more comprehensive integration tests
@@ -191,11 +191,60 @@
 ## Test Status
 
 ```
-✅ 711/711 tests passing (100%)
+✅ 718/718 tests passing (100%)
 ✅ All semantic analysis tests passing
 ✅ All switch/break tests passing
 ✅ All method overloading tests passing
+✅ All namespace function call tests passing
 ```
+
+---
+
+## Latest Work: Task 35 - Namespace Resolution ✅ COMPLETE
+
+**Status:** ✅ Complete
+**Date:** 2025-11-29
+
+### What Was Implemented
+
+1. **Namespace-qualified function calls** (e.g., `Game::getValue()`)
+   - Parser already correctly captures scopes in `IdentExpr`
+   - Registry stores functions with qualified names
+   - `check_call` builds qualified names from scope segments
+
+2. **Nested namespace calls** (e.g., `Game::Utils::helper()`)
+   - Multiple scope segments joined with `::`
+   - Works with any depth of nesting
+
+3. **Unqualified calls from within namespaces**
+   - When calling `helper()` inside `Game::test()`, resolver tries `Game::helper` first
+   - Falls back to global lookup if not found in namespace
+   - Fixed namespace path propagation to `compile_block_with_context`
+
+4. **Absolute scope calls** (e.g., `::globalHelper()`)
+   - Skip namespace lookup for absolute scope
+   - Directly looks up the unqualified name globally
+
+5. **Cross-namespace calls** (e.g., `Utils::helper()` from `Game` namespace)
+   - Uses explicit qualified name from scope
+
+### Files Modified
+
+- `src/semantic/passes/function_processor.rs`:
+  - Fixed `visit_namespace` to push individual path segments (not joined string)
+  - Added `compile_block_with_context` with namespace parameter
+  - Updated `check_call` to handle absolute scope and namespace lookup
+  - Added 7 new tests for namespace function calls
+
+### Tests Added
+
+- `namespace_qualified_function_call` - Basic namespace::function() call
+- `nested_namespace_function_call` - Game::Utils::helper() call
+- `namespace_function_with_arguments` - Arguments passed correctly
+- `namespace_function_overloading` - Overloads resolved within namespace
+- `call_from_within_namespace` - Unqualified calls find namespace functions
+- `absolute_scope_function_call` - ::globalFunction() bypasses namespace
+- `cross_namespace_function_call` - Utils::helper() from Game namespace
 
 ---
 
@@ -207,5 +256,5 @@
 
 ---
 
-**Current Work:** Tasks 30-34 ✅ COMPLETE (TODO Cleanup & Bug Fixes)
-**Next Work:** Tasks 35-49 (Remaining Features) or Tasks 50-52 (Integration & Testing)
+**Current Work:** Task 35 ✅ COMPLETE (Namespace Resolution in Call Expressions)
+**Next Work:** Task 36 (Enum Value Resolution) or Tasks 50-52 (Integration & Testing)

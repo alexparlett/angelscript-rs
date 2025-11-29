@@ -230,18 +230,21 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
         }
     }
 
-    /// Compiles a function body with class context (for methods/constructors).
+    /// Compiles a function body with class and namespace context.
     ///
-    /// This variant allows tracking the current class for super() resolution.
-    fn compile_block_with_class(
+    /// This variant allows tracking the current class for super() resolution
+    /// and the namespace path for unqualified name lookup.
+    fn compile_block_with_context(
         registry: &'ast Registry<'src, 'ast>,
         return_type: DataType,
         params: &[(String, DataType)],
         body: &'ast Block<'src, 'ast>,
         current_class: Option<TypeId>,
+        namespace_path: Vec<String>,
     ) -> CompiledFunction {
         let mut compiler = Self::new(registry, return_type);
         compiler.current_class = current_class;
+        compiler.namespace_path = namespace_path;
 
         // Enter function scope
         compiler.local_scope.enter_scope();
@@ -327,15 +330,19 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
 
     /// Visit a namespace and compile functions within it
     fn visit_namespace(&mut self, ns: &'ast NamespaceDecl<'src, 'ast>) {
-        // Build namespace path from segments
-        let ns_name = ns.path.iter().map(|id| id.name).collect::<Vec<_>>().join("::");
-        self.namespace_path.push(ns_name);
+        // Enter namespace (handle path which can be nested like A::B::C)
+        for ident in ns.path {
+            self.namespace_path.push(ident.name.to_string());
+        }
 
         for item in ns.items {
             self.visit_item(item);
         }
 
-        self.namespace_path.pop();
+        // Exit namespace (pop all path components we added)
+        for _ in ns.path {
+            self.namespace_path.pop();
+        }
     }
 
     /// Visit a class declaration and compile all its methods
@@ -451,13 +458,14 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
             constructor_prologue = Some(self.compile_constructor_prologue(class_decl, func_def.object_type, body));
         }
 
-        // Compile the function body
-        let mut compiled = Self::compile_block_with_class(
+        // Compile the function body with class and namespace context
+        let mut compiled = Self::compile_block_with_context(
             self.registry,
             func_def.return_type.clone(),
             &params,
             body,
             func_def.object_type,
+            self.namespace_path.clone(),
         );
 
         // Prepend constructor prologue if present
@@ -748,12 +756,14 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
             })
             .collect();
 
-        // Compile the function body
-        let compiled = Self::compile_block(
+        // Compile the function body with namespace context
+        let compiled = Self::compile_block_with_context(
             self.registry,
             func_def.return_type.clone(),
             &params,
             body,
+            None,
+            self.namespace_path.clone(),
         );
 
         // Store the compiled bytecode
@@ -2364,11 +2374,17 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
         match call.callee {
             Expr::Ident(ident_expr) => {
                 // Build qualified name (handling scope if present)
-                let name = if let Some(scope) = ident_expr.scope {
+                let (name, is_absolute_scope) = if let Some(scope) = ident_expr.scope {
                     let scope_parts: Vec<&str> = scope.segments.iter().map(|id| id.name).collect();
-                    format!("{}::{}", scope_parts.join("::"), ident_expr.ident.name)
+                    let name = if scope_parts.is_empty() {
+                        // Absolute scope with no prefix (e.g., ::globalFunction)
+                        ident_expr.ident.name.to_string()
+                    } else {
+                        format!("{}::{}", scope_parts.join("::"), ident_expr.ident.name)
+                    };
+                    (name, scope.is_absolute)
                 } else {
-                    ident_expr.ident.name.to_string()
+                    (ident_expr.ident.name.to_string(), false)
                 };
 
                 // Special handling for 'super' - resolve to base class constructor
@@ -2514,7 +2530,20 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
                 }
 
                 // Regular function call - look up candidates
-                let candidates = self.registry.lookup_functions(&name);
+                // For unqualified names (not absolute scope), try both the raw name and the namespace-qualified name
+                let candidates = if !is_absolute_scope && ident_expr.scope.is_none() && !self.namespace_path.is_empty() {
+                    // Try namespace-qualified name first
+                    let qualified_name = self.build_qualified_name(&name);
+                    let ns_candidates = self.registry.lookup_functions(&qualified_name);
+                    if !ns_candidates.is_empty() {
+                        ns_candidates
+                    } else {
+                        // Fall back to global/unqualified lookup
+                        self.registry.lookup_functions(&name)
+                    }
+                } else {
+                    self.registry.lookup_functions(&name)
+                };
 
                 if candidates.is_empty() {
                     self.error(
@@ -4985,5 +5014,189 @@ mod tests {
 
         // Continue in switch inside loop should target the loop
         assert!(result.is_success(), "Continue in switch inside loop should work: {:?}", result.errors);
+    }
+
+    #[test]
+    fn namespace_qualified_function_call() {
+        use crate::parse_lenient;
+        use crate::semantic::Compiler;
+        use bumpalo::Bump;
+
+        let arena = Bump::new();
+        let source = r#"
+            namespace Game {
+                int getValue() {
+                    return 42;
+                }
+            }
+
+            void test() {
+                int x = Game::getValue();
+            }
+        "#;
+
+        let (script, _) = parse_lenient(source, &arena);
+        let result = Compiler::compile(&script);
+
+        assert!(result.is_success(), "Namespace-qualified function call should work: {:?}", result.errors);
+    }
+
+    #[test]
+    fn nested_namespace_function_call() {
+        use crate::parse_lenient;
+        use crate::semantic::Compiler;
+        use bumpalo::Bump;
+
+        let arena = Bump::new();
+        let source = r#"
+            namespace Game {
+                namespace Utils {
+                    int helper() {
+                        return 100;
+                    }
+                }
+            }
+
+            void test() {
+                int x = Game::Utils::helper();
+            }
+        "#;
+
+        let (script, _) = parse_lenient(source, &arena);
+        let result = Compiler::compile(&script);
+
+        assert!(result.is_success(), "Nested namespace function call should work: {:?}", result.errors);
+    }
+
+    #[test]
+    fn namespace_function_with_arguments() {
+        use crate::parse_lenient;
+        use crate::semantic::Compiler;
+        use bumpalo::Bump;
+
+        let arena = Bump::new();
+        let source = r#"
+            namespace Math {
+                int add(int a, int b) {
+                    return a + b;
+                }
+            }
+
+            void test() {
+                int sum = Math::add(10, 20);
+            }
+        "#;
+
+        let (script, _) = parse_lenient(source, &arena);
+        let result = Compiler::compile(&script);
+
+        assert!(result.is_success(), "Namespace function with arguments should work: {:?}", result.errors);
+    }
+
+    #[test]
+    fn namespace_function_overloading() {
+        use crate::parse_lenient;
+        use crate::semantic::Compiler;
+        use bumpalo::Bump;
+
+        let arena = Bump::new();
+        let source = r#"
+            namespace Util {
+                int process(int x) {
+                    return x;
+                }
+                float process(float x) {
+                    return x;
+                }
+            }
+
+            void test() {
+                int a = Util::process(10);
+                float b = Util::process(3.14f);
+            }
+        "#;
+
+        let (script, _) = parse_lenient(source, &arena);
+        let result = Compiler::compile(&script);
+
+        assert!(result.is_success(), "Namespace function overloading should work: {:?}", result.errors);
+    }
+
+    #[test]
+    fn call_from_within_namespace() {
+        use crate::parse_lenient;
+        use crate::semantic::Compiler;
+        use bumpalo::Bump;
+
+        let arena = Bump::new();
+        let source = r#"
+            namespace Game {
+                int helper() {
+                    return 1;
+                }
+
+                void test() {
+                    int x = helper();           // Unqualified - should find Game::helper
+                    int y = Game::helper();     // Fully qualified
+                }
+            }
+        "#;
+
+        let (script, _) = parse_lenient(source, &arena);
+        let result = Compiler::compile(&script);
+
+        assert!(result.is_success(), "Calls from within namespace should work: {:?}", result.errors);
+    }
+
+    #[test]
+    fn absolute_scope_function_call() {
+        use crate::parse_lenient;
+        use crate::semantic::Compiler;
+        use bumpalo::Bump;
+
+        let arena = Bump::new();
+        let source = r#"
+            int globalHelper() {
+                return 42;
+            }
+
+            namespace Game {
+                int helper() {
+                    return ::globalHelper();  // Absolute scope - call global function
+                }
+            }
+        "#;
+
+        let (script, _) = parse_lenient(source, &arena);
+        let result = Compiler::compile(&script);
+
+        assert!(result.is_success(), "Absolute scope function call should work: {:?}", result.errors);
+    }
+
+    #[test]
+    fn cross_namespace_function_call() {
+        use crate::parse_lenient;
+        use crate::semantic::Compiler;
+        use bumpalo::Bump;
+
+        let arena = Bump::new();
+        let source = r#"
+            namespace Utils {
+                int helper() {
+                    return 100;
+                }
+            }
+
+            namespace Game {
+                void test() {
+                    int x = Utils::helper();  // Cross-namespace call
+                }
+            }
+        "#;
+
+        let (script, _) = parse_lenient(source, &arena);
+        let result = Compiler::compile(&script);
+
+        assert!(result.is_success(), "Cross-namespace function call should work: {:?}", result.errors);
     }
 }
