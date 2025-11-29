@@ -152,6 +152,8 @@ pub enum SemanticErrorKind {
     UndefinedField,
     /// Reference to an undefined method.
     UndefinedMethod,
+    /// Access to a private or protected member from invalid context.
+    AccessViolation,
 
     // Function call errors
     /// Wrong number of arguments in function call.
@@ -191,6 +193,7 @@ impl fmt::Display for SemanticErrorKind {
             VoidExpression => "void type in invalid context",
             UndefinedField => "undefined field",
             UndefinedMethod => "undefined method",
+            AccessViolation => "access violation",
             WrongArgumentCount => "wrong number of arguments",
             NotCallable => "not callable",
             InternalError => "internal semantic analyzer error",

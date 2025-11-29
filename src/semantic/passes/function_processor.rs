@@ -18,8 +18,8 @@ use crate::semantic::types::registry::FunctionDef;
 use crate::codegen::{BytecodeEmitter, CompiledBytecode, CompiledModule, Instruction};
 use crate::lexer::Span;
 use crate::semantic::{
-    eval_const_int, CapturedVar, DataType, LocalScope, OperatorBehavior, PrimitiveType, Registry,
-    SemanticError, SemanticErrorKind, TypeDef, TypeId, BOOL_TYPE, DOUBLE_TYPE, FLOAT_TYPE,
+    eval_const_int, CapturedVar, DataType, FieldDef, LocalScope, OperatorBehavior, PrimitiveType, Registry,
+    SemanticError, SemanticErrorKind, TypeDef, TypeId, Visibility, BOOL_TYPE, DOUBLE_TYPE, FLOAT_TYPE,
     INT32_TYPE, INT64_TYPE, NULL_TYPE, UINT8_TYPE, VOID_TYPE,
 };
 use crate::semantic::types::type_def::FunctionId;
@@ -1635,6 +1635,8 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
     /// Type checks an identifier expression.
     /// Variables are lvalues (mutable unless marked const).
     /// Enum values (EnumName::VALUE) are rvalues (integer constants).
+    /// The `this` keyword resolves to the current object in method bodies.
+    /// Unqualified identifiers in methods resolve to class members (implicit `this`).
     fn check_ident(&mut self, ident: &IdentExpr<'src, 'ast>) -> Option<ExprContext> {
         let name = ident.ident.name;
 
@@ -1676,12 +1678,38 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
             return None;
         }
 
-        // Check local variables first
+        // Check for explicit 'this' keyword
+        if name == "this" {
+            let class_id = match self.current_class {
+                Some(id) => id,
+                None => {
+                    self.error(
+                        SemanticErrorKind::UndefinedVariable,
+                        ident.span,
+                        "'this' can only be used in class methods",
+                    );
+                    return None;
+                }
+            };
+            self.bytecode.emit(Instruction::LoadThis);
+            // 'this' is an lvalue (you can access members on it, but can't reassign it)
+            // The object itself is mutable (you can modify fields through it)
+            return Some(ExprContext::lvalue(DataType::simple(class_id), true));
+        }
+
+        // Check local variables first (locals shadow class members)
         if let Some(local_var) = self.local_scope.lookup(name) {
             let offset = local_var.stack_offset;
             self.bytecode.emit(Instruction::LoadLocal(offset));
             let is_mutable = !local_var.data_type.is_const;
             return Some(ExprContext::lvalue(local_var.data_type.clone(), is_mutable));
+        }
+
+        // Check for implicit class member access (when inside a method)
+        if let Some(class_id) = self.current_class {
+            if let Some(result) = self.try_implicit_member_access(class_id, name, ident.span) {
+                return Some(result);
+            }
         }
 
         // Check global variables in registry
@@ -1700,6 +1728,62 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
             format!("variable '{}' is not defined", name),
         );
         None
+    }
+
+    /// Try to resolve an identifier as an implicit class member access.
+    /// This implements the implicit `this.member` semantics for unqualified identifiers
+    /// inside method bodies.
+    ///
+    /// Returns Some(ExprContext) if the name matches a field or property,
+    /// None otherwise (no error reported - caller should continue with other lookups).
+    fn try_implicit_member_access(
+        &mut self,
+        class_id: TypeId,
+        name: &str,
+        span: Span,
+    ) -> Option<ExprContext> {
+        let class_def = self.registry.get_type(class_id);
+
+        match class_def {
+            TypeDef::Class { fields, properties, .. } => {
+                // Check fields first
+                for (field_idx, field) in fields.iter().enumerate() {
+                    if field.name == name {
+                        // Emit LoadThis followed by LoadField
+                        self.bytecode.emit(Instruction::LoadThis);
+                        self.bytecode.emit(Instruction::LoadField(field_idx as u32));
+                        let is_mutable = !field.data_type.is_const;
+                        return Some(ExprContext::lvalue(field.data_type.clone(), is_mutable));
+                    }
+                }
+
+                // Check properties (getter access)
+                if let Some(accessors) = properties.get(name) {
+                    if let Some(getter_id) = accessors.getter {
+                        let getter = self.registry.get_function(getter_id);
+                        let return_type = getter.return_type.clone();
+
+                        // Emit LoadThis followed by CallMethod for the getter
+                        self.bytecode.emit(Instruction::LoadThis);
+                        self.bytecode.emit(Instruction::CallMethod(getter_id.as_u32()));
+
+                        // Properties accessed via getter are rvalues (unless there's also a setter)
+                        // If there's a setter, we could make it an lvalue, but for simplicity
+                        // we return rvalue here - assignment will use check_member for the setter
+                        return Some(ExprContext::rvalue(return_type));
+                    }
+                }
+
+                // Also check base class for inherited members
+                if let TypeDef::Class { base_class: Some(base_id), .. } = class_def {
+                    // Recursively check base class
+                    return self.try_implicit_member_access(*base_id, name, span);
+                }
+
+                None
+            }
+            _ => None,
+        }
     }
 
     /// Type checks a binary expression.
@@ -3572,11 +3656,24 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
 
         match &member.member {
             MemberAccess::Field(field_name) => {
-                // Look up the field in the class
+                // Look up the field in the class (including inherited fields)
                 match typedef {
-                    TypeDef::Class { fields, .. } => {
-                        // Find the field by name and get its index
-                        if let Some((field_index, field_def)) = fields.iter().enumerate().find(|(_, f)| f.name == field_name.name) {
+                    TypeDef::Class { .. } => {
+                        // Find the field by name, checking class hierarchy
+                        if let Some((field_index, field_def, defining_class_id)) =
+                            self.find_field_in_hierarchy(object_ctx.data_type.type_id, field_name.name)
+                        {
+                            // Check visibility access (use defining class for visibility check)
+                            if !self.check_visibility_access(field_def.visibility, defining_class_id) {
+                                self.report_access_violation(
+                                    field_def.visibility,
+                                    &field_def.name,
+                                    &self.type_name(&object_ctx.data_type),
+                                    member.span,
+                                );
+                                return None;
+                            }
+
                             // Emit load field instruction (using field index)
                             self.bytecode.emit(Instruction::LoadField(field_index as u32));
 
@@ -3683,6 +3780,17 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
                         )?;
 
                         let func_def = self.registry.get_function(matching_method);
+
+                        // Check visibility access
+                        if !self.check_visibility_access(func_def.visibility, object_ctx.data_type.type_id) {
+                            self.report_access_violation(
+                                func_def.visibility,
+                                &func_def.name,
+                                &self.type_name(&object_ctx.data_type),
+                                member.span,
+                            );
+                            return None;
+                        }
 
                         // Validate reference parameters
                         self.validate_reference_parameters(func_def, &arg_contexts, *args, member.span)?;
@@ -4257,6 +4365,94 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
     fn type_name(&self, ty: &DataType) -> String {
         let type_def = self.registry.get_type(ty.type_id);
         type_def.name().to_string()
+    }
+
+    /// Checks if access to a member with the given visibility is allowed from the current context.
+    ///
+    /// Returns true if access is allowed, false if it would be a visibility violation.
+    ///
+    /// Access rules:
+    /// - `Public`: Always accessible
+    /// - `Private`: Only accessible within the same class
+    /// - `Protected`: Accessible within the same class or derived classes
+    fn check_visibility_access(&self, visibility: Visibility, member_class: TypeId) -> bool {
+        match visibility {
+            Visibility::Public => true,
+            Visibility::Private => {
+                // Private: only accessible if we're compiling code within the same class
+                self.current_class == Some(member_class)
+            }
+            Visibility::Protected => {
+                // Protected: accessible within the class or any derived class
+                match self.current_class {
+                    None => false,
+                    Some(current_class_id) => {
+                        // Same class - always allowed
+                        if current_class_id == member_class {
+                            return true;
+                        }
+                        // Check if current class is derived from member_class
+                        self.registry.is_subclass_of(current_class_id, member_class)
+                    }
+                }
+            }
+        }
+    }
+
+    /// Finds a field by name in the class hierarchy (including inherited fields).
+    ///
+    /// Returns Some((field_index, field_def, defining_class_id)) if found,
+    /// where field_index is the position within the defining class's fields,
+    /// and defining_class_id is the TypeId of the class that defines the field.
+    ///
+    /// Searches the immediate class first, then walks up the inheritance chain.
+    fn find_field_in_hierarchy(
+        &self,
+        class_id: TypeId,
+        field_name: &str,
+    ) -> Option<(usize, FieldDef, TypeId)> {
+        let mut current_class_id = Some(class_id);
+
+        while let Some(cid) = current_class_id {
+            let typedef = self.registry.get_type(cid);
+            match typedef {
+                TypeDef::Class { fields, base_class, .. } => {
+                    // Check fields in this class
+                    for (idx, field) in fields.iter().enumerate() {
+                        if field.name == field_name {
+                            return Some((idx, field.clone(), cid));
+                        }
+                    }
+                    // Move to base class
+                    current_class_id = *base_class;
+                }
+                _ => break,
+            }
+        }
+        None
+    }
+
+    /// Reports an access violation error with detailed message.
+    fn report_access_violation(
+        &mut self,
+        visibility: Visibility,
+        member_name: &str,
+        member_class_name: &str,
+        span: Span,
+    ) {
+        let visibility_str = match visibility {
+            Visibility::Public => "public",
+            Visibility::Private => "private",
+            Visibility::Protected => "protected",
+        };
+        self.error(
+            SemanticErrorKind::AccessViolation,
+            span,
+            format!(
+                "cannot access {} member '{}' of class '{}'",
+                visibility_str, member_name, member_class_name
+            ),
+        );
     }
 
     /// Tries to find and call an operator overload for a binary operation.

@@ -559,8 +559,10 @@ impl MethodSignature {
 /// - Read-write: both getter and setter
 ///
 /// Getter must be const, setter receives value parameter
-#[derive(Debug, Clone, PartialEq, Default)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct PropertyAccessors {
+    // Note: Default implementation exists for building properties incrementally,
+    // defaulting to Public visibility. Use *_with_visibility methods for explicit control.
     /// Getter function (must be const)
     /// For virtual properties: get { } block
     /// For explicit methods: int get_prop() const property { }
@@ -570,30 +572,63 @@ pub struct PropertyAccessors {
     /// For virtual properties: set { } block (implicit 'value' parameter)
     /// For explicit methods: void set_prop(T value) property { }
     pub setter: Option<FunctionId>,
+
+    /// Visibility of the property (applies to both getter and setter)
+    pub visibility: Visibility,
 }
 
 impl PropertyAccessors {
-    /// Create read-only property (getter only)
+    /// Create read-only property (getter only) with default public visibility
     pub fn read_only(getter: FunctionId) -> Self {
         Self {
             getter: Some(getter),
             setter: None,
+            visibility: Visibility::Public,
         }
     }
 
-    /// Create write-only property (setter only)
+    /// Create read-only property (getter only) with specified visibility
+    pub fn read_only_with_visibility(getter: FunctionId, visibility: Visibility) -> Self {
+        Self {
+            getter: Some(getter),
+            setter: None,
+            visibility,
+        }
+    }
+
+    /// Create write-only property (setter only) with default public visibility
     pub fn write_only(setter: FunctionId) -> Self {
         Self {
             getter: None,
             setter: Some(setter),
+            visibility: Visibility::Public,
         }
     }
 
-    /// Create read-write property (both getter and setter)
+    /// Create write-only property (setter only) with specified visibility
+    pub fn write_only_with_visibility(setter: FunctionId, visibility: Visibility) -> Self {
+        Self {
+            getter: None,
+            setter: Some(setter),
+            visibility,
+        }
+    }
+
+    /// Create read-write property (both getter and setter) with default public visibility
     pub fn read_write(getter: FunctionId, setter: FunctionId) -> Self {
         Self {
             getter: Some(getter),
             setter: Some(setter),
+            visibility: Visibility::Public,
+        }
+    }
+
+    /// Create read-write property (both getter and setter) with specified visibility
+    pub fn read_write_with_visibility(getter: FunctionId, setter: FunctionId, visibility: Visibility) -> Self {
+        Self {
+            getter: Some(getter),
+            setter: Some(setter),
+            visibility,
         }
     }
 
@@ -610,6 +645,18 @@ impl PropertyAccessors {
     /// Check if this property is read-write
     pub fn is_read_write(&self) -> bool {
         self.getter.is_some() && self.setter.is_some()
+    }
+}
+
+impl Default for PropertyAccessors {
+    /// Default PropertyAccessors with no getter/setter and public visibility.
+    /// Used when building properties incrementally.
+    fn default() -> Self {
+        Self {
+            getter: None,
+            setter: None,
+            visibility: Visibility::Public,
+        }
     }
 }
 

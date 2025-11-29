@@ -1,6 +1,6 @@
-# Current Task: Task 48 Complete - Circular Dependency Detection
+# Current Task: Task 50 Complete - `this` Keyword and Implicit Member Access
 
-**Status:** ✅ Task 48 Complete
+**Status:** ✅ Task 50 Complete
 **Date:** 2025-11-29
 **Phase:** Semantic Analysis - Remaining Features
 
@@ -25,56 +25,87 @@
 - ✅ Task 46: Void Expression Validation Complete
 - ✅ Task 47: Constant Expression Evaluation Complete
 - ✅ Task 48: Circular Dependency Detection Complete
-- ⏳ Remaining: Tasks 49-56
+- ✅ Task 49: Visibility Enforcement Complete
+- ✅ Task 50: `this` Keyword and Implicit Member Access Complete
+- ⏳ Remaining: Tasks 51-57
 
-**Test Status:** ✅ 831 tests passing (100%)
+**Test Status:** ✅ 848 tests passing (100%)
 
 ---
 
-## Latest Work: Task 48 - Circular Dependency Detection - COMPLETE
+## Latest Work: Task 50 - `this` Keyword and Implicit Member Access - COMPLETE
 
 **Status:** ✅ Complete
 **Date:** 2025-11-29
 
 ### Implementation Summary
 
-Implemented circular inheritance detection to prevent stack overflows from cyclic class hierarchies.
+Implemented the `this` keyword and implicit member access for class methods.
 
 **Files Modified:**
-- `src/semantic/types/registry.rs` - Added cycle detection methods and protected recursive methods
-- `src/semantic/passes/type_compilation.rs` - Added validation during base class resolution
+- `src/lexer/token.rs` - Added `This` token variant and keyword lookup
+- `src/ast/expr_parser.rs` - Added parsing for `this` keyword as primary expression
+- `src/semantic/passes/function_processor.rs` - Implemented `this` resolution and implicit member access
+- `src/semantic/compiler.rs` - Added 8 new tests, un-ignored 4 visibility tests
 
 **Features Implemented:**
 
-1. **Cycle Detection Method (`would_create_circular_inheritance`)**:
-   - Detects direct self-inheritance (`class A : A {}`)
-   - Detects indirect cycles (`class A : B {}`, `class B : A {}`)
-   - Uses visited set to walk inheritance chain
+1. **Lexer Support (`This` Token)**:
+   - Added `TokenKind::This` variant
+   - Added "this" keyword lookup in `lookup_keyword()`
+   - Added token description for error messages
 
-2. **Validation in Type Compilation**:
-   - Checks before setting base class
-   - Generates `CircularInheritance` error with descriptive message
-   - Prevents base class assignment when cycle detected
+2. **Parser Support**:
+   - `this` keyword parses as `Expr::Ident` (like `super`)
+   - Allows `this.field`, `this.method()` member access syntax
 
-3. **Protected Recursive Methods** (defensive programming):
-   - `find_method()` - now uses visited set
-   - `find_methods_by_name()` - protected against cycles
-   - `get_all_methods()` - protected against cycles
-   - `get_all_properties()` - protected against cycles
-   - `get_all_interfaces()` - protected against cycles
+3. **Explicit `this` Resolution**:
+   - In `check_ident()`, recognizes "this" identifier
+   - Emits `LoadThis` instruction (already existed for constructor prologue)
+   - Returns lvalue context with current class type
+   - Reports error if used outside class method context
 
-**Tests Added (5 new tests):**
-- `circular_inheritance_direct_self` - `class A : A {}`
-- `circular_inheritance_two_classes` - `class A : B {}`, `class B : A {}`
-- `circular_inheritance_three_classes` - longer cycle chain
-- `valid_linear_inheritance` - ensures valid hierarchies still work
-- `circular_inheritance_error_message` - validates error message content
+4. **Implicit Member Access**:
+   - When identifier not found in local scope, checks current class
+   - Searches fields in class and base classes (inheritance hierarchy)
+   - Searches properties (getters) in class
+   - Emits `LoadThis` + `LoadField(index)` or `CallMethod(getter_id)`
+   - Respects shadowing: locals > class members > globals
+
+5. **Inherited Field Access Fix**:
+   - Added `find_field_in_hierarchy()` helper for `check_member()`
+   - Field access via `this.fieldName` now searches base classes
+   - Previously only searched immediate class fields
+
+**Resolution Order in `check_ident()`:**
+1. Scoped identifiers (e.g., `EnumName::VALUE`)
+2. Explicit `this` keyword → `LoadThis`
+3. Local variables (shadow class members)
+4. Implicit class member (field/property) → `LoadThis` + access
+5. Global variables
+6. Error: undefined variable
+
+**Tests Added (8 new tests):**
+- `this_keyword_explicit_field_access` - `this.field` syntax works ✅
+- `this_keyword_implicit_field_access` - bare `field` in method resolves ✅
+- `this_keyword_explicit_method_call` - `this.method()` works ✅
+- `this_keyword_outside_class_rejected` - error outside class ✅
+- `this_keyword_local_shadows_field` - local vars shadow fields ✅
+- `implicit_member_access_inherited_field` - inherited fields resolve ✅
+- `this_keyword_in_constructor` - works in constructors ✅
+- `this_keyword_used_in_member_access` - multiple `this.` accesses ✅
+
+**Tests Un-ignored (4 visibility tests now pass):**
+- `private_field_access_within_class_allowed` ✅
+- `private_method_access_within_class_allowed` ✅
+- `protected_field_access_from_derived_class_allowed` ✅
+- `protected_method_access_from_derived_class_allowed` ✅
 
 ---
 
-## Previous Work: Task 47 - Full Constant Expression Evaluation - COMPLETE
+## Previous Work: Task 49 - Visibility Enforcement - COMPLETE
 
-Created a full constant expression evaluator in `src/semantic/const_eval.rs` supporting compile-time evaluation.
+Implemented visibility enforcement (public/private/protected) for class members.
 
 ---
 
@@ -138,7 +169,7 @@ Created a full constant expression evaluator in `src/semantic/const_eval.rs` sup
 33. ✅ Fix switch/break bug
 34. ✅ Fix method overload resolution bugs
 
-### Remaining Features (Tasks 35-49)
+### Remaining Features (Tasks 35-50) ✅ COMPLETE
 
 35. ✅ Implement namespace resolution in call expressions
 36. ✅ Implement enum value resolution (EnumName::VALUE)
@@ -154,47 +185,45 @@ Created a full constant expression evaluator in `src/semantic/const_eval.rs` sup
 46. ✅ Implement void expression validation
 47. ✅ Constant expression evaluation (full implementation)
 48. ✅ Implement circular dependency detection
-49. ⏳ Implement visibility enforcement
+49. ✅ Implement visibility enforcement
+50. ✅ Implement `this` keyword and implicit member access
 
-### Integration & Testing (Tasks 50-52)
+### Integration & Testing (Tasks 51-53)
 
-50. ⏳ Add integration tests
-51. ⏳ Add performance benchmarks
-52. ⏳ Add stress tests
+51. ⏳ Add integration tests
+52. ⏳ Add performance benchmarks
+53. ⏳ Add stress tests
 
-### Documentation (Tasks 53-56)
+### Documentation (Tasks 54-57)
 
-53. ⏳ Update architecture documentation
-54. ✅ Update semantic_analysis_plan.md
-55. ⏳ Add API documentation
-56. ✅ Update prompt.md
+54. ⏳ Update architecture documentation
+55. ✅ Update semantic_analysis_plan.md
+56. ⏳ Add API documentation
+57. ✅ Update prompt.md
 
 ---
 
 ## What's Next
 
-**Recommended:** Task 49 (Remaining Features)
-- Task 49: Visibility enforcement
-
-**Or:** Tasks 50-52 (Integration & Testing)
+**Recommended:** Tasks 51-53 (Integration & Testing)
 - Add more comprehensive integration tests
 - Performance benchmarks
+- Stress tests
+
+**Or:** Tasks 54, 56 (Documentation)
+- Update architecture documentation
+- Add API documentation
 
 ---
 
 ## Test Status
 
 ```
-✅ 826/826 tests passing (100%)
+✅ 848/848 tests passing (100%), 0 ignored
 ✅ All semantic analysis tests passing
-✅ All interface validation tests passing
-✅ All override/final validation tests passing
-✅ All namespace function call tests passing
-✅ All enum value resolution tests passing
-✅ All mixin tests passing (15 tests)
-✅ All void expression validation tests passing (9 tests)
-✅ All constant expression evaluation tests passing (35 new tests)
-✅ All circular inheritance detection tests passing (5 new tests)
+✅ All `this` keyword tests passing (8 new tests)
+✅ All visibility enforcement tests passing (4 un-ignored)
+✅ All inherited field access tests passing
 ```
 
 ---
@@ -207,5 +236,5 @@ Created a full constant expression evaluator in `src/semantic/const_eval.rs` sup
 
 ---
 
-**Current Work:** Task 48 ✅ COMPLETE (Circular Dependency Detection)
-**Next Work:** Task 49 (Visibility Enforcement)
+**Current Work:** Task 50 ✅ COMPLETE (`this` keyword and implicit member access)
+**Next Work:** Tasks 51-53 (Integration & Testing) or Tasks 54, 56 (Documentation)

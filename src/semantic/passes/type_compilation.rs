@@ -455,8 +455,19 @@ impl<'src, 'ast> TypeCompiler<'src, 'ast> {
                         let (prop_name, is_getter) = prop_info;
 
                         if let Some(&func_id) = func_ids.first() {
+                            // Convert method visibility to semantic visibility for the property
+                            let method_visibility = match method.visibility {
+                                crate::ast::Visibility::Public => Visibility::Public,
+                                crate::ast::Visibility::Private => Visibility::Private,
+                                crate::ast::Visibility::Protected => Visibility::Protected,
+                            };
+
                             let accessor = explicit_properties.entry(prop_name)
-                                .or_insert_with(crate::semantic::types::PropertyAccessors::default);
+                                .or_insert_with(|| crate::semantic::types::PropertyAccessors {
+                                    getter: None,
+                                    setter: None,
+                                    visibility: method_visibility,
+                                });
 
                             if is_getter {
                                 accessor.getter = Some(func_id);
@@ -531,7 +542,19 @@ impl<'src, 'ast> TypeCompiler<'src, 'ast> {
         for member in class.members {
             if let ClassMember::VirtualProperty(prop) = member {
                 let prop_name = prop.name.name.to_string();
-                let mut prop_accessors = crate::semantic::types::PropertyAccessors::default();
+
+                // Convert AST visibility to semantic visibility
+                let prop_visibility = match prop.visibility {
+                    crate::ast::Visibility::Public => Visibility::Public,
+                    crate::ast::Visibility::Private => Visibility::Private,
+                    crate::ast::Visibility::Protected => Visibility::Protected,
+                };
+
+                let mut prop_accessors = crate::semantic::types::PropertyAccessors {
+                    getter: None,
+                    setter: None,
+                    visibility: prop_visibility,
+                };
 
                 // Resolve property type
                 let prop_type = if prop.ty.ty.is_void() {
@@ -1054,6 +1077,13 @@ impl<'src, 'ast> TypeCompiler<'src, 'ast> {
         // Get a new function ID
         let func_id = self.registry.next_function_id();
 
+        // Convert AST visibility to semantic visibility
+        let visibility = match method.visibility {
+            crate::ast::Visibility::Public => Visibility::Public,
+            crate::ast::Visibility::Private => Visibility::Private,
+            crate::ast::Visibility::Protected => Visibility::Protected,
+        };
+
         // Create and register the function
         let func_def = crate::semantic::types::registry::FunctionDef {
             id: func_id,
@@ -1065,6 +1095,7 @@ impl<'src, 'ast> TypeCompiler<'src, 'ast> {
             traits,
             is_native: false,
             default_args,
+            visibility,
         };
 
         self.registry.register_function(func_def);
@@ -1080,7 +1111,11 @@ impl<'src, 'ast> TypeCompiler<'src, 'ast> {
         if method.attrs.property {
             if let Some((prop_name, is_getter)) = self.parse_property_method(method.name.name) {
                 let accessor = explicit_properties.entry(prop_name)
-                    .or_insert_with(crate::semantic::types::PropertyAccessors::default);
+                    .or_insert_with(|| crate::semantic::types::PropertyAccessors {
+                        getter: None,
+                        setter: None,
+                        visibility,  // Use the method's visibility for the property
+                    });
 
                 if is_getter {
                     accessor.getter = Some(func_id);

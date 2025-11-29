@@ -25,7 +25,7 @@
 use super::data_type::DataType;
 use super::type_def::{
     TypeId, TypeDef, FunctionId, OperatorBehavior, PrimitiveType, FunctionTraits, PropertyAccessors,
-    VOID_TYPE, BOOL_TYPE, INT8_TYPE, INT16_TYPE, INT32_TYPE, INT64_TYPE,
+    Visibility, VOID_TYPE, BOOL_TYPE, INT8_TYPE, INT16_TYPE, INT32_TYPE, INT64_TYPE,
     UINT8_TYPE, UINT16_TYPE, UINT32_TYPE, UINT64_TYPE, FLOAT_TYPE, DOUBLE_TYPE,
     STRING_TYPE, ARRAY_TEMPLATE, DICT_TEMPLATE, FIRST_USER_TYPE_ID,
 };
@@ -55,6 +55,8 @@ pub struct FunctionDef<'src, 'ast> {
     pub is_native: bool,
     /// Default argument expressions (one per parameter, None if no default)
     pub default_args: Vec<Option<&'ast Expr<'src, 'ast>>>,
+    /// Visibility (public, private, protected) - only meaningful for methods
+    pub visibility: Visibility,
 }
 
 impl<'src, 'ast> FunctionDef<'src, 'ast> {
@@ -823,6 +825,28 @@ impl<'src, 'ast> Registry<'src, 'ast> {
         } else {
             false
         }
+    }
+
+    /// Check if `derived_class` is a subclass of `base_class` (directly or indirectly).
+    ///
+    /// Returns true if `derived_class` inherits from `base_class` at any level
+    /// in the inheritance hierarchy, or if they are the same class.
+    pub fn is_subclass_of(&self, derived_class: TypeId, base_class: TypeId) -> bool {
+        // Same class counts as "is subclass of"
+        if derived_class == base_class {
+            return true;
+        }
+
+        // Walk up the inheritance chain
+        let mut current = self.get_base_class(derived_class);
+        while let Some(parent_id) = current {
+            if parent_id == base_class {
+                return true;
+            }
+            current = self.get_base_class(parent_id);
+        }
+
+        false
     }
 
     /// Get the fields of a class (does not include inherited fields)
@@ -1596,6 +1620,7 @@ mod tests {
             traits: FunctionTraits::new(),
             is_native: false,
             default_args: Vec::new(),
+            visibility: Visibility::Public,
         };
 
         let func_id = registry.register_function(func);
@@ -1616,6 +1641,7 @@ mod tests {
             traits: FunctionTraits::new(),
             is_native: false,
             default_args: Vec::new(),
+            visibility: Visibility::Public,
         };
 
         registry.register_function(func);
@@ -1647,6 +1673,7 @@ mod tests {
             traits: FunctionTraits::new(),
             is_native: false,
             default_args: Vec::new(),
+            visibility: Visibility::Public,
         };
 
         // foo(float)
@@ -1660,6 +1687,7 @@ mod tests {
             traits: FunctionTraits::new(),
             is_native: false,
             default_args: Vec::new(),
+            visibility: Visibility::Public,
         };
 
         registry.register_function(func1);
@@ -1681,6 +1709,7 @@ mod tests {
             traits: FunctionTraits::new(),
             is_native: false,
             default_args: Vec::new(),
+            visibility: Visibility::Public,
         };
 
         assert_eq!(func.qualified_name(), "Game::Player::update");
@@ -1698,6 +1727,7 @@ mod tests {
             traits: FunctionTraits::new(),
             is_native: false,
             default_args: Vec::new(),
+            visibility: Visibility::Public,
         };
 
         assert_eq!(func.qualified_name(), "foo");
@@ -1717,6 +1747,7 @@ mod tests {
             traits: FunctionTraits::new(),
             is_native: false,
             default_args: Vec::new(),
+            visibility: Visibility::Public,
         };
 
         let func_id = registry.register_function(func.clone());
@@ -1741,6 +1772,7 @@ mod tests {
             traits: FunctionTraits::new(),
             is_native: false,
             default_args: Vec::new(),
+            visibility: Visibility::Public,
         };
 
         // Another method for Player
@@ -1754,6 +1786,7 @@ mod tests {
             traits: FunctionTraits::new(),
             is_native: false,
             default_args: Vec::new(),
+            visibility: Visibility::Public,
         };
 
         // Global function (not a method)
@@ -1767,6 +1800,7 @@ mod tests {
             traits: FunctionTraits::new(),
             is_native: false,
             default_args: Vec::new(),
+            visibility: Visibility::Public,
         };
 
         registry.register_function(method1);
@@ -1853,6 +1887,7 @@ mod tests {
             },
             is_native: false,
             default_args: Vec::new(),
+            visibility: Visibility::Public,
         };
 
         let func_id = registry.register_function(func_def);
@@ -1910,6 +1945,7 @@ mod tests {
             },
             is_native: false,
             default_args: Vec::new(),
+            visibility: Visibility::Public,
         };
 
         registry.register_function(func_def);
@@ -1964,6 +2000,7 @@ mod tests {
             },
             is_native: false,
             default_args: Vec::new(),
+            visibility: Visibility::Public,
         };
 
         let func_id = registry.register_function(func_def);
@@ -2013,6 +2050,7 @@ mod tests {
             },
             is_native: false,
             default_args: Vec::new(),
+            visibility: Visibility::Public,
         };
 
         // Register single-param constructor
@@ -2035,6 +2073,7 @@ mod tests {
             },
             is_native: false,
             default_args: Vec::new(),
+            visibility: Visibility::Public,
         };
 
         let func_id1 = registry.register_function(func_def1);
@@ -2092,6 +2131,7 @@ mod tests {
             },
             is_native: false,
             default_args: Vec::new(),
+            visibility: Visibility::Public,
         };
 
         let copy_ctor_id = registry.register_function(copy_ctor);
@@ -2142,6 +2182,7 @@ mod tests {
             },
             is_native: false,
             default_args: Vec::new(),
+            visibility: Visibility::Public,
         };
 
         let copy_ctor_id = registry.register_function(copy_ctor);
@@ -2193,6 +2234,7 @@ mod tests {
             },
             is_native: false,
             default_args: Vec::new(),
+            visibility: Visibility::Public,
         };
 
         let ctor_id = registry.register_function(ctor);
@@ -2243,6 +2285,7 @@ mod tests {
             },
             is_native: false,
             default_args: Vec::new(),
+            visibility: Visibility::Public,
         };
 
         let ctor_id = registry.register_function(ctor);
@@ -2293,6 +2336,7 @@ mod tests {
             },
             is_native: false,
             default_args: Vec::new(),
+            visibility: Visibility::Public,
         };
 
         let ctor_id = registry.register_function(ctor);
@@ -2440,6 +2484,7 @@ mod tests {
             traits: FunctionTraits::new(),
             is_native: false,
             default_args: Vec::new(),
+            visibility: Visibility::Public,
         };
         let base_method_id = registry.register_function(base_method);
 
@@ -2493,6 +2538,7 @@ mod tests {
             traits: FunctionTraits::new(),
             is_native: false,
             default_args: Vec::new(),
+            visibility: Visibility::Public,
         };
         let base_method_id = registry.register_function(base_method);
 
@@ -2522,6 +2568,7 @@ mod tests {
             traits: FunctionTraits::new(),
             is_native: false,
             default_args: Vec::new(),
+            visibility: Visibility::Public,
         };
         let derived_method_id = registry.register_function(derived_method);
 
@@ -2564,6 +2611,7 @@ mod tests {
             traits: FunctionTraits::new(),
             is_native: false,
             default_args: Vec::new(),
+            visibility: Visibility::Public,
         };
         let base_method_id = registry.register_function(base_method);
 

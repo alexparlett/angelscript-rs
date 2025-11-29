@@ -180,6 +180,8 @@ pub enum TokenKind {
     Cast,
     /// `super` (for calling base class constructor)
     Super,
+    /// `this` (reference to current object in methods)
+    This,
 
     // =========================================
     // Operators - Arithmetic
@@ -537,6 +539,7 @@ impl TokenKind {
             InOut => "'inout'",
             Cast => "'cast'",
             Super => "'super'",
+            This => "'this'",
             Plus => "'+'",
             Minus => "'-'",
             Star => "'*'",
@@ -666,6 +669,7 @@ pub fn lookup_keyword(ident: &str) -> Option<TokenKind> {
         "inout" => InOut,
         "cast" => Cast,
         "super" => Super,
+        "this" => This,
 
         _ => return None,
     })
