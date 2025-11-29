@@ -125,10 +125,13 @@ pub enum Instruction {
     ReturnVoid,
 
     // Object operations
+    /// Load the implicit 'this' object reference in a method/constructor
+    /// Stack: [...] → [... this]
+    LoadThis,
     /// Load a field from an object (pops object, pushes field value)
-    LoadField(u32), // Field ID
+    LoadField(u32), // Field index
     /// Store a value into an object field (pops value and object)
-    StoreField(u32), // Field ID
+    StoreField(u32), // Field index
     /// Index an array (pops index and array, pushes element)
     Index,
     /// Store into an array (pops value, index, and array)

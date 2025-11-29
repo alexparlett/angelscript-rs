@@ -12,8 +12,9 @@ use crate::{ast::{
         TernaryExpr, UnaryExpr,
     }, stmt::{
         Block, BreakStmt, ContinueStmt, DoWhileStmt, ExprStmt, ForInit, ForStmt, ForeachStmt, IfStmt, ReturnStmt, Stmt, SwitchStmt, TryCatchStmt, VarDeclStmt, WhileStmt
-    }, types::TypeExpr
+    }, types::{TypeExpr, TypeSuffix}
 }, semantic::STRING_TYPE};
+use crate::semantic::types::registry::FunctionDef;
 use crate::codegen::{BytecodeEmitter, CompiledBytecode, CompiledModule, Instruction};
 use crate::lexer::Span;
 use crate::semantic::{
@@ -274,6 +275,27 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
         }
     }
 
+    /// Compiles a field initializer expression.
+    ///
+    /// This creates a mini-compilation context to compile a single expression
+    /// used for field initialization in constructors.
+    ///
+    /// Returns: (instructions, errors)
+    fn compile_field_initializer(
+        registry: &'ast Registry<'src, 'ast>,
+        expr: &'ast Expr<'src, 'ast>,
+        class_type_id: TypeId,
+    ) -> (Vec<Instruction>, Vec<SemanticError>) {
+        let mut compiler = Self::new(registry, DataType::simple(VOID_TYPE));
+        compiler.current_class = Some(class_type_id);
+
+        // Compile the expression - this will emit bytecode to push the value onto the stack
+        let _expr_ctx = compiler.check_expr(expr);
+
+        // Return the compiled instructions and any errors
+        (compiler.bytecode.finish().instructions, compiler.errors)
+    }
+
     // ========================================================================
     // AST Walking (Module-level compilation)
     // ========================================================================
@@ -336,14 +358,13 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
         for member in class.members {
             if let ClassMember::Method(method_decl) = member {
                 // Find the matching FunctionId for this method
+                // Must match by name AND parameter signature for overloaded methods
                 let func_id = method_ids
                     .iter()
                     .copied()
                     .find(|&fid| {
                         let func_def = self.registry.get_function(fid);
-                        // Match by function name (unqualified)
-                        // TODO: Also match by parameters for overloaded methods
-                        func_def.name == method_decl.name.name
+                        self.method_signature_matches(method_decl, func_def)
                     });
 
                 if let Some(func_id) = func_id {
@@ -351,6 +372,51 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
                 }
             }
         }
+    }
+
+    /// Check if an AST method declaration matches a registered FunctionDef.
+    ///
+    /// This is used for overload resolution when compiling methods. It compares:
+    /// - Function name
+    /// - Parameter count (including parameters with defaults)
+    /// - Parameter types (base type and handle modifier)
+    fn method_signature_matches(
+        &self,
+        method_decl: &FunctionDecl<'src, 'ast>,
+        func_def: &FunctionDef<'src, 'ast>,
+    ) -> bool {
+        // Name must match
+        if func_def.name != method_decl.name.name {
+            return false;
+        }
+
+        // Parameter count must match (including parameters with defaults)
+        if func_def.params.len() != method_decl.params.len() {
+            return false;
+        }
+
+        // Each parameter type must match
+        for (ast_param, def_param) in method_decl.params.iter().zip(func_def.params.iter()) {
+            // Resolve AST parameter type to TypeId
+            let type_name = format!("{}", ast_param.ty.ty.base);
+            let ast_type_id = match self.registry.lookup_type(&type_name) {
+                Some(id) => id,
+                None => return false, // Unknown type - can't match
+            };
+
+            // Compare base type IDs
+            if ast_type_id != def_param.type_id {
+                return false;
+            }
+
+            // Check handle modifier (@) matches
+            let ast_is_handle = ast_param.ty.ty.suffixes.iter().any(|s| matches!(s, TypeSuffix::Handle { .. }));
+            if ast_is_handle != def_param.is_handle {
+                return false;
+            }
+        }
+
+        true
     }
 
     /// Compile a method given its AST and FunctionId
@@ -449,13 +515,13 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
             }
         }
 
-        // 1. Initialize fields without explicit initializers (default initialization)
-        for field in fields_without_init {
-            // Emit default initialization for this field
-            // For now, we'll emit a placeholder comment
-            // TODO: Implement actual default initialization based on field type
-            instructions.push(Instruction::Nop); // Placeholder
-        }
+        // 1. Fields without explicit initializers use default initialization
+        // The VM handles this automatically when allocating the object:
+        // - Primitives: 0, 0.0, false
+        // - Handles: null
+        // - Value types: default constructor is called
+        // No bytecode needed here - VM does it in CallConstructor
+        let _ = fields_without_init; // Acknowledge we're intentionally not emitting bytecode
 
         // 2. Call base class constructor if base class exists and super() not called in body
         if let Some(base_id) = base_class_id {
@@ -476,13 +542,32 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
         }
 
         // 3. Initialize fields with explicit initializers
+        // Get field definitions from the class typedef to find field indices
+        let field_defs = match class_typedef {
+            TypeDef::Class { fields, .. } => fields,
+            _ => return instructions,
+        };
+
         for field in fields_with_init {
             if let Some(init_expr) = field.init {
-                // Compile the initializer expression
-                // We need a temporary compiler context for this
-                // For now, emit a placeholder
-                // TODO: Properly compile the initializer expression
-                instructions.push(Instruction::Nop); // Placeholder
+                // Find the field index by name
+                let field_name = field.name.name;
+                let field_index = field_defs.iter().position(|f| f.name == field_name);
+
+                if let Some(field_idx) = field_index {
+                    // Emit: LoadThis, <expr>, StoreField(field_idx)
+                    // 1. Load `this` reference
+                    instructions.push(Instruction::LoadThis);
+
+                    // 2. Compile the initializer expression
+                    let (expr_instructions, expr_errors) =
+                        Self::compile_field_initializer(self.registry, init_expr, class_id);
+                    instructions.extend(expr_instructions);
+                    self.errors.extend(expr_errors);
+
+                    // 3. Store into the field
+                    instructions.push(Instruction::StoreField(field_idx as u32));
+                }
             }
         }
 
@@ -1348,7 +1433,7 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
         }
 
         // Track case values to detect duplicates
-        let _case_values: std::collections::HashSet<i64> = std::collections::HashSet::new();
+        let mut case_values: std::collections::HashSet<i64> = std::collections::HashSet::new();
         let mut has_default = false;
         let mut case_jump_positions = Vec::new();
 
@@ -1381,9 +1466,16 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
                             );
                         }
 
-                        // TODO: Check for duplicate case values
-                        // This would require evaluating constant expressions
-                        // For now, we skip this check
+                        // Check for duplicate case values (if we can evaluate as constant)
+                        if let Some(const_value) = Self::try_eval_const_int(value_expr) {
+                            if !case_values.insert(const_value) {
+                                self.error(
+                                    SemanticErrorKind::DuplicateDeclaration,
+                                    value_expr.span(),
+                                    format!("duplicate case value: {}", const_value),
+                                );
+                            }
+                        }
                     }
                 }
             }
@@ -2431,7 +2523,11 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
 
                 // Try to infer expected funcdef types for lambda arguments
                 // For simplicity: if there's only one candidate, use its parameter types
-                // TODO: Handle overloading more sophisticatedly
+                // Note: With multiple overloads, lambda type inference is disabled.
+                // A more sophisticated approach would:
+                // 1. First pass: type-check non-lambda arguments
+                // 2. Narrow overload candidates based on those types
+                // 3. Infer funcdef types for lambdas from remaining candidates
                 let expected_param_types = if candidates.len() == 1 {
                     let func_def = self.registry.get_function(candidates[0]);
                     Some(&func_def.params)
@@ -2533,11 +2629,47 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
 
                     let func_def = self.registry.get_function(func_id);
 
+                    // Validate argument count
+                    if arg_contexts.len() != func_def.params.len() {
+                        self.error(
+                            SemanticErrorKind::WrongArgumentCount,
+                            call.span,
+                            format!("opCall expects {} arguments but {} were provided",
+                                func_def.params.len(), arg_contexts.len()),
+                        );
+                        return None;
+                    }
+
                     // Validate reference parameters
                     self.validate_reference_parameters(func_def, &arg_contexts, call.args, call.span)?;
 
-                    // Type checking is done by the opCall signature
-                    // TODO: Could add conversion support here if needed
+                    // Emit conversions for arguments that need conversion
+                    for (i, (arg_ctx, param)) in arg_contexts.iter().zip(func_def.params.iter()).enumerate() {
+                        if arg_ctx.data_type.type_id != param.type_id {
+                            if let Some(conv) = arg_ctx.data_type.can_convert_to(param, self.registry) {
+                                if conv.is_implicit {
+                                    self.emit_conversion(&conv);
+                                } else {
+                                    self.error(
+                                        SemanticErrorKind::TypeMismatch,
+                                        call.args[i].span,
+                                        format!("argument {} requires explicit conversion", i + 1),
+                                    );
+                                    return None;
+                                }
+                            } else {
+                                self.error(
+                                    SemanticErrorKind::TypeMismatch,
+                                    call.args[i].span,
+                                    format!("cannot convert argument {} from '{}' to '{}'",
+                                        i + 1,
+                                        self.type_name(&arg_ctx.data_type),
+                                        self.type_name(param)),
+                                );
+                                return None;
+                            }
+                        }
+                    }
 
                     self.bytecode.emit(Instruction::Call(func_id.as_u32()));
                     return Some(ExprContext::rvalue(func_def.return_type.clone()));
@@ -3396,13 +3528,46 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
             lambda.params.iter().zip(expected_params.iter()).enumerate()
         {
             if let Some(param_ty) = &lambda_param.ty {
-                let explicit_type = self.resolve_type_expr(&param_ty.ty)?;
-                // TODO: Apply ref modifiers and validate match
+                let mut explicit_type = self.resolve_type_expr(&param_ty.ty)?;
+
+                // Apply ref modifier from parameter declaration
+                explicit_type.ref_modifier = match param_ty.ref_kind {
+                    crate::ast::RefKind::None => crate::semantic::RefModifier::None,
+                    crate::ast::RefKind::Ref => crate::semantic::RefModifier::InOut, // Plain & defaults to inout
+                    crate::ast::RefKind::RefIn => crate::semantic::RefModifier::In,
+                    crate::ast::RefKind::RefOut => crate::semantic::RefModifier::Out,
+                    crate::ast::RefKind::RefInOut => crate::semantic::RefModifier::InOut,
+                };
+
+                // Validate base type matches
                 if explicit_type.type_id != expected_param.type_id {
                     self.error(
                         SemanticErrorKind::TypeMismatch,
                         lambda_param.span,
-                        format!("lambda parameter {} type mismatch", i),
+                        format!("lambda parameter {} type mismatch: expected '{}', found '{}'",
+                            i,
+                            self.type_name(expected_param),
+                            self.type_name(&explicit_type)),
+                    );
+                    return None;
+                }
+
+                // Validate reference modifier matches
+                if explicit_type.ref_modifier != expected_param.ref_modifier {
+                    self.error(
+                        SemanticErrorKind::TypeMismatch,
+                        lambda_param.span,
+                        format!("lambda parameter {} reference modifier mismatch", i),
+                    );
+                    return None;
+                }
+
+                // Validate handle modifier matches
+                if explicit_type.is_handle != expected_param.is_handle {
+                    self.error(
+                        SemanticErrorKind::TypeMismatch,
+                        lambda_param.span,
+                        format!("lambda parameter {} handle modifier mismatch", i),
                     );
                     return None;
                 }
@@ -3609,14 +3774,23 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
             // Found existing array<T> type, return as rvalue
             Some(ExprContext::rvalue(DataType::with_handle(array_id, false)))
         } else {
-            // Array type doesn't exist yet - this is a limitation
-            // For now, return a generic array handle type
-            // TODO: This should be resolved in a pre-pass that instantiates all needed array types
+            // Array type doesn't exist yet
+            // This happens when:
+            // 1. No explicit array<T> declaration exists in the source
+            // 2. Pass 2a hasn't instantiated this array type
+            //
+            // Workaround: Declare a variable of the array type first, e.g.:
+            //   array<int> temp; // This causes array<int> to be instantiated
+            //   return {1, 2, 3}; // Now this works
+            //
+            // Proper fix: Add a pre-pass in Pass 2a that scans all initializer lists
+            // and instantiates the needed array template types.
             self.error(
                 SemanticErrorKind::InternalError,
                 init_list.span,
                 format!(
-                    "array<{}> type not found in registry - template instantiation needed",
+                    "array<{}> type not found - declare 'array<{}>' variable first to instantiate type",
+                    self.type_name(&common_type),
                     self.type_name(&common_type)
                 ),
             );
@@ -3632,21 +3806,81 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
 
     /// Resolves a type expression to a DataType.
     fn resolve_type_expr(&mut self, type_expr: &TypeExpr<'src, 'ast>) -> Option<DataType> {
-        // Simplified type resolution
-        // In a complete implementation, this would use the TypeCompiler's logic
         let type_name = format!("{}", type_expr.base);
 
-        if let Some(type_id) = self.registry.lookup_type(&type_name) {
-            // TODO: Handle type modifiers and template arguments
-            Some(DataType::simple(type_id))
+        // Handle template types (e.g., array<int>)
+        let type_id = if !type_expr.template_args.is_empty() {
+            // Build template instance name like "array<int>"
+            let arg_names: Vec<String> = type_expr
+                .template_args
+                .iter()
+                .map(|arg| format!("{}", arg.base))
+                .collect();
+            let template_name = format!("{}<{}>", type_name, arg_names.join(", "));
+
+            // Look up the instantiated template type
+            if let Some(id) = self.registry.lookup_type(&template_name) {
+                id
+            } else {
+                self.error(
+                    SemanticErrorKind::UndefinedType,
+                    type_expr.span,
+                    format!("undefined template type '{}' - may need explicit declaration", template_name),
+                );
+                return None;
+            }
         } else {
-            self.error(
-                SemanticErrorKind::UndefinedType,
-                type_expr.span,
-                format!("undefined type '{}'", type_name),
-            );
-            None
+            // Simple type lookup
+            if let Some(id) = self.registry.lookup_type(&type_name) {
+                id
+            } else {
+                self.error(
+                    SemanticErrorKind::UndefinedType,
+                    type_expr.span,
+                    format!("undefined type '{}'", type_name),
+                );
+                return None;
+            }
+        };
+
+        // Build DataType with modifiers
+        let mut data_type = DataType::simple(type_id);
+
+        // Apply leading const
+        if type_expr.is_const {
+            data_type.is_const = true;
         }
+
+        // Apply suffixes (handle, array)
+        for suffix in type_expr.suffixes {
+            match suffix {
+                TypeSuffix::Handle { is_const } => {
+                    // If already a handle, this is a const modifier on the handle
+                    if data_type.is_handle && *is_const {
+                        data_type.is_const = true;
+                    } else {
+                        data_type.is_handle = true;
+                        if *is_const {
+                            // @ const = const handle
+                            data_type.is_const = true;
+                        }
+                        // Leading const with handle = handle to const
+                        if type_expr.is_const && !*is_const {
+                            data_type.is_handle_to_const = true;
+                            data_type.is_const = false; // Reset since const applies to target
+                        }
+                    }
+                }
+                TypeSuffix::Array => {
+                    // Array suffix - the type should be looked up as array<base>
+                    // This is a complex case that would need template instantiation
+                    // For now, we handle it by noting arrays are always handles
+                    data_type.is_handle = true;
+                }
+            }
+        }
+
+        Some(data_type)
     }
 
     /// Checks if a value can be assigned to a target type.
@@ -3693,6 +3927,42 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
     fn type_name(&self, ty: &DataType) -> String {
         let type_def = self.registry.get_type(ty.type_id);
         type_def.name().to_string()
+    }
+
+    /// Tries to evaluate an expression as a compile-time constant integer.
+    ///
+    /// This is used for checking duplicate case values in switch statements.
+    /// Currently supports:
+    /// - Integer literals
+    /// - Unary negation of integer literals
+    /// - Boolean literals (as 0 or 1)
+    ///
+    /// Returns None if the expression cannot be evaluated as a constant.
+    fn try_eval_const_int(expr: &Expr<'src, 'ast>) -> Option<i64> {
+        match expr {
+            Expr::Literal(lit) => match &lit.kind {
+                LiteralKind::Int(v) => Some(*v),
+                LiteralKind::Bool(b) => Some(if *b { 1 } else { 0 }),
+                _ => None,
+            },
+            Expr::Unary(unary) => {
+                // Handle negation of integer literals
+                if unary.op == UnaryOp::Neg {
+                    if let Some(inner) = Self::try_eval_const_int(unary.operand) {
+                        return Some(-inner);
+                    }
+                }
+                // Handle bitwise NOT
+                if unary.op == UnaryOp::BitwiseNot {
+                    if let Some(inner) = Self::try_eval_const_int(unary.operand) {
+                        return Some(!inner);
+                    }
+                }
+                None
+            }
+            Expr::Paren(paren) => Self::try_eval_const_int(paren.expr),
+            _ => None,
+        }
     }
 
     /// Tries to find and call an operator overload for a binary operation.
