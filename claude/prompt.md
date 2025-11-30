@@ -1,8 +1,8 @@
-# Current Task: Task 52 Extended - Initialization List Instructions
+# Current Task: Fix Ignored Tests
 
-**Status:** ✅ Task 52 Extended Complete
-**Date:** 2025-11-29
-**Phase:** Semantic Analysis - Remaining Features
+**Status:** ⏳ In Progress
+**Date:** 2025-11-30
+**Phase:** Semantic Analysis - Bug Fixes & Missing Features
 
 ---
 
@@ -13,7 +13,7 @@
 - 20 comprehensive test files
 - Lambda parameter disambiguation with lookahead
 
-**Semantic Analysis:** ✅ 99% Complete
+**Semantic Analysis:** ✅ 99% Complete (with known issues)
 - ✅ Pass 1 (Registration): 100% Complete
 - ✅ Pass 2a (Type Compilation): 100% Complete
 - ✅ Pass 2b (Function Compilation): 100% Complete
@@ -30,73 +30,182 @@
 - ✅ Task 51: Switch Statement Bytecode Generation Complete
 - ✅ Task 52: Remove CreateArray + Add Initialization List Instructions Complete
 - ❌ Task 53: Deferred (runtime concern)
+- ✅ Task 54: Fix invalid test expectations (float→int implicit allowed)
+- ✅ Task 55: Fix Type Conversion Issues (const types, signed↔unsigned)
+- ⏳ Tasks 56-65: Fix remaining ignored tests (see below)
 
-**Test Status:** ✅ 859 tests passing (100%)
+**Test Status:** ✅ 1602 tests passing, 25 ignored (exposing real bugs)
 
 ---
 
-## Latest Work: Task 52 Extended - Initialization List Instructions
+## Ignored Test Fix Tasks
 
-**Status:** ✅ Complete
-**Date:** 2025-11-29
+Analysis found 31 ignored tests in `function_processor.rs`. These are now separate tasks.
 
-### Problem
+---
 
-1. The `CreateArray` bytecode instruction was a special-case instruction - inconsistent with using `CallConstructor` uniformly
-2. Simple stack-based approach doesn't support heterogeneous init lists like dictionaries: `{{"key1", 1}, {"key2", 2}}`
+### ✅ Task 54: Fix Invalid Test Expectations - COMPLETE
 
-### Solution
+**Issue:** AngelScript allows implicit float→int truncation. Tests incorrectly expected an error.
 
-1. Replaced `CreateArray` with `CallConstructor` (stack-based for simple arrays)
-2. Added buffer-based initialization list instructions for complex cases (dictionaries)
+| Test | Line | Status |
+|------|------|--------|
+| `variable_init_explicit_cast_required_error` | 8341 | ✅ Fixed |
+| `assignment_float_to_int_implicit_error` | 8457 | ✅ Fixed |
 
-### Files Modified
+---
 
-- `src/codegen/ir/instruction.rs`:
-  - Removed `CreateArray` instruction
-  - Added: `AllocListBuffer`, `SetListSize`, `PushListElement`, `SetListType`, `FreeListBuffer`
-- `src/semantic/types/type_def.rs` - Extended `TemplateInstance` with methods, operator_methods, properties
-- `src/semantic/types/registry.rs` - Added `register_array_init_constructor()`, updated methods for `TemplateInstance`
-- `src/semantic/passes/function_processor.rs` - Updated `check_init_list()` with documentation
-- `claude/vm_plan.md` - Added detailed documentation on initialization list approaches
+### ✅ Task 55: Fix Type Conversion Issues - COMPLETE
 
-### Two Initialization Strategies
+**Issue:** Int literals not converting to unsigned types, const references failing.
 
-#### 1. Stack-Based (Current - for homogeneous arrays)
-```
-// array<int> a = {1, 2, 3};
-PushInt(1)
-PushInt(2)
-PushInt(3)
-PushInt(3)  // count
-CallConstructor { type_id, func_id }  // pops count+elements
-```
+| Test | Line | Status |
+|------|------|--------|
+| `various_int_types` | 10259 | ✅ Fixed - `uint8 x = 255` now works |
+| `const_reference_parameter` | 10622 | ✅ Fixed - `const int &in` works |
+| `global_const_variable` | 10735 | ✅ Fixed - Global const access works |
 
-#### 2. Buffer-Based (For dictionaries, nested lists)
-```
-// dictionary d = {{"key1", 1}, {"key2", 2}};
-AllocListBuffer { buffer_var, size }
-SetListSize { buffer_var, offset: 0, count: 2 }
-// For each element: PushListElement, evaluate, store
-// For '?' pattern: SetListType with type_id
-LoadLocal(buffer_var)  // push buffer as constructor arg
-CallConstructor { type_id, func_id }
-FreeListBuffer { buffer_var, pattern_type_id }
-```
+**Fixes Applied:**
+1. Removed incorrect `is_const` check from `primitive_conversion()` - const doesn't affect type convertibility
+2. Added same-type-id identity conversion for types differing only in const qualifier
+3. Added all signed-to-unsigned conversions for different sizes (e.g., int32 → uint8)
+4. Added all unsigned-to-signed conversions for different sizes (e.g., uint16 → int32)
 
-### How C++ AngelScript Does It
+---
 
-- Uses `asBEHAVE_LIST_FACTORY` / `asBEHAVE_LIST_CONSTRUCT` behaviors
-- Pattern strings describe buffer layout: `{repeat T}`, `{repeat {string, ?}}`
-- Constructor receives buffer pointer containing: `[count][elements...]`
-- `?` pattern stores `[type_id][value]` pairs for heterogeneous values
+### ⏳ Task 56: Fix Function Call / Overload Resolution Issues
 
-### Current Status
+**Issue:** Overload resolution and funcdef calls not working.
 
-- ✅ Stack-based working for simple arrays
-- ✅ Buffer-based instructions defined
-- ⏳ TODO: Use buffer-based codegen for dictionary init lists (when dictionary type is implemented)
-- ⏳ TODO: Register `asBEHAVE_LIST_FACTORY` in FFI system
+| Test | Line | Status |
+|------|------|--------|
+| `funcdef_call` | 10305 | ⏳ `op(5, 3)` through funcdef |
+| `overload_resolution_exact_match` | 10669 | ⏳ Resolution picks wrong overload |
+| `overloaded_function_call_exact_match` | 10783 | ⏳ Same issue |
+
+**Action:** Fix overload resolution scoring and funcdef call detection.
+
+---
+
+### ⏳ Task 57: Fix Operator Overload Issues
+
+**Issue:** Various operator overloads not being found or called correctly.
+
+| Test | Line | Status |
+|------|------|--------|
+| `class_with_opAdd` | 9785 | ⏳ `a + b` doesn't find opAdd |
+| `class_with_op_index_multi` | 9941 | ⏳ `m[2, 3]` multi-index |
+| `class_with_op_call` | 9969 | ⏳ opCall not recognized |
+| `class_with_get_op_index` | 10281 | ⏳ get_opIndex accessor |
+
+**Action:** Fix operator lookup in `lookup_method_chain()` and `check_index_access()`.
+
+---
+
+### ⏳ Task 58: Implement is/!is Operators
+
+**Issue:** Handle identity comparison operators not implemented.
+
+| Test | Line | Status |
+|------|------|--------|
+| `is_operator_same_handle` | 9636 | ⏳ `a is b` |
+| `is_not_operator` | 9687 | ⏳ `a !is b` |
+| `is_operator_null_check` | 9711 | ⏳ `a is null` |
+| `is_operator_derived_types` | 9731 | ⏳ Derived handle comparison |
+
+**Action:** Implement `is` and `!is` operators in expression checking.
+
+---
+
+### ⏳ Task 59: Fix &out Parameter Lvalue Validation
+
+**Issue:** `&out` parameters not validating lvalue requirement.
+
+| Test | Line | Status |
+|------|------|--------|
+| `out_param_requires_lvalue_error` | 12688 | ⏳ `f(5)` should error |
+| `reference_out_param_with_literal_error` | 13069 | ⏳ Same issue |
+
+**Action:** Add lvalue validation for `&out` parameters in `check_call()`.
+
+---
+
+### ⏳ Task 60: Fix Init List Issues
+
+**Issue:** Array initialization with `{1, 2, 3}` syntax not working.
+
+| Test | Line | Status |
+|------|------|--------|
+| `init_list_basic` | 8687 | ⏳ `array<int> arr = {1, 2, 3}` |
+| `init_list_empty` | 8887 | ⏳ `array<int> arr = {}` |
+| `init_list_multidimensional` | 9177 | ⏳ Nested init lists |
+
+**Action:** Fix `check_init_list()` to properly handle array initialization.
+
+---
+
+### ⏳ Task 61: Fix Lambda Issues
+
+**Issue:** Lambda captures and lambda as function arguments not working.
+
+| Test | Line | Status |
+|------|------|--------|
+| `lambda_with_captures` | 9532 | ⏳ Capture outer variables |
+| `lambda_in_function_call` | 9609 | ⏳ Lambda as function argument |
+
+**Action:** Fix capture analysis and lambda-to-funcdef conversion.
+
+---
+
+### ⏳ Task 62: Fix Property Accessor Issues
+
+**Issue:** `get_X`/`set_X` pattern not recognized as property access.
+
+| Test | Line | Status |
+|------|------|--------|
+| `property_accessor_basic` | 13579 | ⏳ `obj.prop` → `get_prop()` |
+| `property_accessor_set` | 13621 | ⏳ `obj.prop = x` → `set_prop(x)` |
+
+**Action:** Implement property accessor detection in member access.
+
+---
+
+### ⏳ Task 63: Implement Auto Type Inference
+
+**Issue:** `auto` type inference not implemented.
+
+| Test | Line | Status |
+|------|------|--------|
+| `auto_type_inference` | 13977 | ⏳ `auto x = expr;` |
+| `auto_type_in_for_loop` | 14000 | ⏳ `for (auto x : arr)` |
+| `auto_with_handle` | 14068 | ⏳ `auto@ h = @obj;` |
+| `auto_with_const` | 14096 | ⏳ `const auto x = 5;` |
+
+**Action:** Implement auto type inference in variable declarations.
+
+---
+
+### ⏳ Task 64: Fix Ternary with Handles
+
+| Test | Line | Issue | Status |
+|------|------|-------|--------|
+| `ternary_conditional_handles` | 15163 | Handle type in ternary | ⏳ |
+
+---
+
+## Priority Order
+
+1. ✅ **Task 54** - Fix invalid test expectations (DONE)
+2. ⏳ **Task 55** - Type conversion issues (foundational)
+3. ⏳ **Task 56** - Function call/overload issues (high impact)
+4. ⏳ **Task 57** - Operator overload issues
+5. ⏳ **Task 58** - is/!is operators
+6. ⏳ **Task 59** - &out validation
+7. ⏳ **Task 60** - Init list issues
+8. ⏳ **Task 61** - Lambda issues
+9. ⏳ **Task 62** - Property accessors
+10. ⏳ **Task 63** - Auto type inference
+11. ⏳ **Task 64** - Ternary with handles
 
 ---
 
@@ -106,7 +215,7 @@ Implemented proper switch statement dispatch bytecode using if-else chain approa
 
 ---
 
-## Complete Task List (60 Tasks)
+## Complete Task List (70 Tasks)
 
 ### Documentation (Tasks 1-2) ✅ COMPLETE
 
@@ -188,40 +297,38 @@ Implemented proper switch statement dispatch bytecode using if-else chain approa
 52. ✅ Remove CreateArray instruction - use CallConstructor for array<T> instead
 53. ❌ DEFERRED (Null safety is a runtime concern - VM handles null pointer checks)
 
-### Integration & Testing (Tasks 54-56)
+### Integration & Testing (Tasks 65-67)
 
-54. ⏳ Add unit tests
-55. ⏳ Add integration tests
-56. ⏳ Add performance benchmarks
+65. ⏳ Add unit tests
+66. ⏳ Add integration tests
+67. ⏳ Add performance benchmarks
 
-### Documentation (Tasks 57-60)
+### Documentation (Tasks 68-70)
 
-57. ⏳ Update architecture documentation
-58. ✅ Update semantic_analysis_plan.md
-59. ⏳ Add API documentation
-60. ✅ Update prompt.md
+68. ⏳ Update architecture documentation
+69. ✅ Update semantic_analysis_plan.md
+70. ✅ Update prompt.md
 
 ---
 
 ## What's Next
 
-**Recommended:** Tasks 54-56 (Integration & Testing)
+**Current:** Task 56 - Fix Function Call / Overload Resolution Issues
+- Fix funcdef call through handle (`op(5, 3)`)
+- Fix overload resolution exact match preference
+
+**After Tasks 56-64:** Tasks 65-67 (Integration & Testing)
 - Add integration tests
 - Performance benchmarks
 - Stress tests
-
-**Or:** Tasks 57-60 (Documentation)
-- Update architecture documentation
-- Add API documentation
 
 ---
 
 ## Test Status
 
 ```
-✅ 859/859 tests passing (100%), 0 ignored
-✅ All semantic analysis tests passing
-✅ All array initializer list tests passing (using CallConstructor)
+✅ 1602 tests passing
+⏳ 25 tests ignored (exposing real bugs - tracked in Tasks 56-64 above)
 ```
 
 ---
@@ -234,5 +341,5 @@ Implemented proper switch statement dispatch bytecode using if-else chain approa
 
 ---
 
-**Current Work:** Task 53 ❌ DEFERRED (Null safety is runtime concern)
-**Next Work:** Tasks 54-56 (Integration & Testing) or Tasks 57-60 (Documentation)
+**Current Work:** Task 56 - Fix Function Call / Overload Resolution Issues
+**Next Work:** Continue through priority list (Tasks 57-64)

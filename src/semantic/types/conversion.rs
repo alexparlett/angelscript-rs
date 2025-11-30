@@ -226,6 +226,13 @@ impl DataType {
             return Some(Conversion::identity());
         }
 
+        // Same base type with different const qualifiers (for non-handles)
+        // e.g., const int -> int is allowed (reading a const value into a non-const variable)
+        if !self.is_handle && !target.is_handle && self.type_id == target.type_id {
+            // Same type_id means identity conversion, const doesn't matter for value types
+            return Some(Conversion::identity());
+        }
+
         // Null literal (NULL_TYPE) converts to any handle type
         if self.type_id == NULL_TYPE && target.is_handle {
             return Some(Conversion::null_to_handle());
@@ -250,8 +257,10 @@ impl DataType {
     }
 
     fn primitive_conversion(&self, target: &DataType) -> Option<Conversion> {
-        // Only convert base types (no handles, no const - those are separate rules)
-        if self.is_handle || target.is_handle || self.is_const || target.is_const {
+        // Only convert base types (no handles - those are separate rules)
+        // Note: const-ness doesn't prevent primitive conversion. A const int can convert to float.
+        // The const only affects mutability, not type compatibility.
+        if self.is_handle || target.is_handle {
             return None;
         }
 
@@ -351,6 +360,42 @@ impl DataType {
             (UINT16_TYPE, INT16_TYPE) => Some(Conversion::primitive(self.type_id, target.type_id, 2, true)),
             (UINT32_TYPE, INT32_TYPE) => Some(Conversion::primitive(self.type_id, target.type_id, 2, true)),
             (UINT64_TYPE, INT64_TYPE) => Some(Conversion::primitive(self.type_id, target.type_id, 2, true)),
+
+            // Signed to Unsigned (different sizes) - implicit with higher cost
+            // int8 -> uint16, uint32, uint64
+            (INT8_TYPE, UINT16_TYPE) => Some(Conversion::primitive(self.type_id, target.type_id, 2, true)),
+            (INT8_TYPE, UINT32_TYPE) => Some(Conversion::primitive(self.type_id, target.type_id, 2, true)),
+            (INT8_TYPE, UINT64_TYPE) => Some(Conversion::primitive(self.type_id, target.type_id, 2, true)),
+            // int16 -> uint8, uint32, uint64
+            (INT16_TYPE, UINT8_TYPE) => Some(Conversion::primitive(self.type_id, target.type_id, 2, true)),
+            (INT16_TYPE, UINT32_TYPE) => Some(Conversion::primitive(self.type_id, target.type_id, 2, true)),
+            (INT16_TYPE, UINT64_TYPE) => Some(Conversion::primitive(self.type_id, target.type_id, 2, true)),
+            // int32 -> uint8, uint16, uint64
+            (INT32_TYPE, UINT8_TYPE) => Some(Conversion::primitive(self.type_id, target.type_id, 2, true)),
+            (INT32_TYPE, UINT16_TYPE) => Some(Conversion::primitive(self.type_id, target.type_id, 2, true)),
+            (INT32_TYPE, UINT64_TYPE) => Some(Conversion::primitive(self.type_id, target.type_id, 2, true)),
+            // int64 -> uint8, uint16, uint32
+            (INT64_TYPE, UINT8_TYPE) => Some(Conversion::primitive(self.type_id, target.type_id, 2, true)),
+            (INT64_TYPE, UINT16_TYPE) => Some(Conversion::primitive(self.type_id, target.type_id, 2, true)),
+            (INT64_TYPE, UINT32_TYPE) => Some(Conversion::primitive(self.type_id, target.type_id, 2, true)),
+
+            // Unsigned to Signed (different sizes) - implicit with higher cost
+            // uint8 -> int16, int32, int64
+            (UINT8_TYPE, INT16_TYPE) => Some(Conversion::primitive(self.type_id, target.type_id, 2, true)),
+            (UINT8_TYPE, INT32_TYPE) => Some(Conversion::primitive(self.type_id, target.type_id, 2, true)),
+            (UINT8_TYPE, INT64_TYPE) => Some(Conversion::primitive(self.type_id, target.type_id, 2, true)),
+            // uint16 -> int8, int32, int64
+            (UINT16_TYPE, INT8_TYPE) => Some(Conversion::primitive(self.type_id, target.type_id, 2, true)),
+            (UINT16_TYPE, INT32_TYPE) => Some(Conversion::primitive(self.type_id, target.type_id, 2, true)),
+            (UINT16_TYPE, INT64_TYPE) => Some(Conversion::primitive(self.type_id, target.type_id, 2, true)),
+            // uint32 -> int8, int16, int64
+            (UINT32_TYPE, INT8_TYPE) => Some(Conversion::primitive(self.type_id, target.type_id, 2, true)),
+            (UINT32_TYPE, INT16_TYPE) => Some(Conversion::primitive(self.type_id, target.type_id, 2, true)),
+            (UINT32_TYPE, INT64_TYPE) => Some(Conversion::primitive(self.type_id, target.type_id, 2, true)),
+            // uint64 -> int8, int16, int32
+            (UINT64_TYPE, INT8_TYPE) => Some(Conversion::primitive(self.type_id, target.type_id, 2, true)),
+            (UINT64_TYPE, INT16_TYPE) => Some(Conversion::primitive(self.type_id, target.type_id, 2, true)),
+            (UINT64_TYPE, INT32_TYPE) => Some(Conversion::primitive(self.type_id, target.type_id, 2, true)),
 
             // No conversion
             _ => None,
@@ -1024,6 +1069,138 @@ mod tests {
     }
 
     #[test]
+    fn primitive_signed_to_unsigned_different_sizes() {
+        let registry = Registry::new();
+
+        let int8 = DataType::simple(INT8_TYPE);
+        let int16 = DataType::simple(INT16_TYPE);
+        let int32 = DataType::simple(INT32_TYPE);
+        let int64 = DataType::simple(INT64_TYPE);
+        let uint8 = DataType::simple(UINT8_TYPE);
+        let uint16 = DataType::simple(UINT16_TYPE);
+        let uint32 = DataType::simple(UINT32_TYPE);
+        let uint64 = DataType::simple(UINT64_TYPE);
+
+        // int8 -> uint16, uint32, uint64
+        let conv = int8.can_convert_to(&uint16, &registry);
+        assert!(conv.is_some());
+        assert_eq!(conv.unwrap().cost, 2);
+
+        let conv = int8.can_convert_to(&uint32, &registry);
+        assert!(conv.is_some());
+        assert_eq!(conv.unwrap().cost, 2);
+
+        let conv = int8.can_convert_to(&uint64, &registry);
+        assert!(conv.is_some());
+        assert_eq!(conv.unwrap().cost, 2);
+
+        // int16 -> uint8, uint32, uint64
+        let conv = int16.can_convert_to(&uint8, &registry);
+        assert!(conv.is_some());
+        assert_eq!(conv.unwrap().cost, 2);
+
+        let conv = int16.can_convert_to(&uint32, &registry);
+        assert!(conv.is_some());
+        assert_eq!(conv.unwrap().cost, 2);
+
+        let conv = int16.can_convert_to(&uint64, &registry);
+        assert!(conv.is_some());
+        assert_eq!(conv.unwrap().cost, 2);
+
+        // int32 -> uint8, uint16, uint64
+        let conv = int32.can_convert_to(&uint8, &registry);
+        assert!(conv.is_some());
+        assert_eq!(conv.unwrap().cost, 2);
+
+        let conv = int32.can_convert_to(&uint16, &registry);
+        assert!(conv.is_some());
+        assert_eq!(conv.unwrap().cost, 2);
+
+        let conv = int32.can_convert_to(&uint64, &registry);
+        assert!(conv.is_some());
+        assert_eq!(conv.unwrap().cost, 2);
+
+        // int64 -> uint8, uint16, uint32
+        let conv = int64.can_convert_to(&uint8, &registry);
+        assert!(conv.is_some());
+        assert_eq!(conv.unwrap().cost, 2);
+
+        let conv = int64.can_convert_to(&uint16, &registry);
+        assert!(conv.is_some());
+        assert_eq!(conv.unwrap().cost, 2);
+
+        let conv = int64.can_convert_to(&uint32, &registry);
+        assert!(conv.is_some());
+        assert_eq!(conv.unwrap().cost, 2);
+    }
+
+    #[test]
+    fn primitive_unsigned_to_signed_different_sizes() {
+        let registry = Registry::new();
+
+        let int8 = DataType::simple(INT8_TYPE);
+        let int16 = DataType::simple(INT16_TYPE);
+        let int32 = DataType::simple(INT32_TYPE);
+        let int64 = DataType::simple(INT64_TYPE);
+        let uint8 = DataType::simple(UINT8_TYPE);
+        let uint16 = DataType::simple(UINT16_TYPE);
+        let uint32 = DataType::simple(UINT32_TYPE);
+        let uint64 = DataType::simple(UINT64_TYPE);
+
+        // uint8 -> int16, int32, int64
+        let conv = uint8.can_convert_to(&int16, &registry);
+        assert!(conv.is_some());
+        assert_eq!(conv.unwrap().cost, 2);
+
+        let conv = uint8.can_convert_to(&int32, &registry);
+        assert!(conv.is_some());
+        assert_eq!(conv.unwrap().cost, 2);
+
+        let conv = uint8.can_convert_to(&int64, &registry);
+        assert!(conv.is_some());
+        assert_eq!(conv.unwrap().cost, 2);
+
+        // uint16 -> int8, int32, int64
+        let conv = uint16.can_convert_to(&int8, &registry);
+        assert!(conv.is_some());
+        assert_eq!(conv.unwrap().cost, 2);
+
+        let conv = uint16.can_convert_to(&int32, &registry);
+        assert!(conv.is_some());
+        assert_eq!(conv.unwrap().cost, 2);
+
+        let conv = uint16.can_convert_to(&int64, &registry);
+        assert!(conv.is_some());
+        assert_eq!(conv.unwrap().cost, 2);
+
+        // uint32 -> int8, int16, int64
+        let conv = uint32.can_convert_to(&int8, &registry);
+        assert!(conv.is_some());
+        assert_eq!(conv.unwrap().cost, 2);
+
+        let conv = uint32.can_convert_to(&int16, &registry);
+        assert!(conv.is_some());
+        assert_eq!(conv.unwrap().cost, 2);
+
+        let conv = uint32.can_convert_to(&int64, &registry);
+        assert!(conv.is_some());
+        assert_eq!(conv.unwrap().cost, 2);
+
+        // uint64 -> int8, int16, int32
+        let conv = uint64.can_convert_to(&int8, &registry);
+        assert!(conv.is_some());
+        assert_eq!(conv.unwrap().cost, 2);
+
+        let conv = uint64.can_convert_to(&int16, &registry);
+        assert!(conv.is_some());
+        assert_eq!(conv.unwrap().cost, 2);
+
+        let conv = uint64.can_convert_to(&int32, &registry);
+        assert!(conv.is_some());
+        assert_eq!(conv.unwrap().cost, 2);
+    }
+
+    #[test]
     fn primitive_no_conversion_void() {
         let registry = Registry::new();
         let int32 = DataType::simple(INT32_TYPE);
@@ -1278,12 +1455,11 @@ mod tests {
     }
 
     #[test]
-    fn no_primitive_conversion_for_const_values() {
+    fn const_values_can_convert() {
         use crate::semantic::RefModifier;
         let registry = Registry::new();
 
-        // const int -> float should not use primitive conversion
-        // (const affects the value, not the conversion path)
+        // const int -> float SHOULD work - const only affects mutability, not conversions
         let const_int = DataType {
             type_id: INT32_TYPE,
             is_handle: false,
@@ -1293,9 +1469,35 @@ mod tests {
         };
         let float = DataType::simple(FLOAT_TYPE);
 
-        // Const values don't participate in primitive conversion
+        // Const values CAN participate in primitive conversion
         let conv = const_int.can_convert_to(&float, &registry);
-        assert!(conv.is_none());
+        assert!(conv.is_some());
+        let conv = conv.unwrap();
+        assert!(matches!(conv.kind, ConversionKind::Primitive { .. }));
+        assert!(conv.is_implicit);
+    }
+
+    #[test]
+    fn const_int_to_int_conversion() {
+        use crate::semantic::RefModifier;
+        let registry = Registry::new();
+
+        // const int -> int should work (same base type, const doesn't matter for reading)
+        let const_int = DataType {
+            type_id: INT32_TYPE,
+            is_handle: false,
+            is_const: true,
+            is_handle_to_const: false,
+            ref_modifier: RefModifier::None,
+        };
+        let int = DataType::simple(INT32_TYPE);
+
+        // This should work - same base type, const is ignored for value conversions
+        let conv = const_int.can_convert_to(&int, &registry);
+        assert!(conv.is_some());
+        let conv = conv.unwrap();
+        assert_eq!(conv.kind, ConversionKind::Identity);
+        assert!(conv.is_implicit);
     }
 
     #[test]
