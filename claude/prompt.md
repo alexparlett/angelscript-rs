@@ -35,9 +35,10 @@
 - Task 56: Fix Function Overload Registration Issue - COMPLETE
 - Task 57: Fix Operator Overload Issues (opAdd, opCall, get_opIndex) - COMPLETE
 - Task 58: Implement is/!is Operators - COMPLETE
-- Tasks 59-64: Fix remaining ignored tests (see below)
+- Task 59: Fix &out Parameter Lvalue Validation - COMPLETE
+- Tasks 60-64: Fix remaining ignored tests (see below)
 
-**Test Status:** 1609 tests passing, 18 ignored (exposing real bugs)
+**Test Status:** 1622 tests passing, 16 ignored (exposing real bugs)
 
 ---
 
@@ -128,16 +129,21 @@ Analysis found 31 ignored tests in `function_processor.rs`. These are now separa
 
 ---
 
-### Task 59: Fix &out Parameter Lvalue Validation
+### Task 59: Fix &out Parameter Lvalue Validation - COMPLETE
 
 **Issue:** `&out` parameters not validating lvalue requirement.
 
 | Test | Line | Status |
 |------|------|--------|
-| `out_param_requires_lvalue_error` | 12688 | `f(5)` should error |
-| `reference_out_param_with_literal_error` | 13069 | Same issue |
+| `out_param_requires_lvalue_error` | 12790 | Fixed - `f(5+3)` now errors |
+| `reference_out_param_with_literal_error` | 10984 | Fixed - `f(5)` now errors |
 
-**Action:** Add lvalue validation for `&out` parameters in `check_call()`.
+**Root Cause:** The `ref_kind` field from AST `ParamType` was not being converted to `ref_modifier` on `DataType` when compiling function parameters in Pass 2a.
+
+**Fix Applied:** Added `resolve_param_type()` helper in `type_compilation.rs` that:
+1. Resolves the base type via `resolve_type_expr()`
+2. Converts AST `RefKind` to semantic `RefModifier`
+3. Updated all 5 places that resolve function parameters to use this helper
 
 ---
 
@@ -223,8 +229,8 @@ Analysis found 31 ignored tests in `function_processor.rs`. These are now separa
 ## Test Status
 
 ```
-1609 tests passing
-18 tests ignored (exposing real bugs - tracked in Tasks 59-64 above)
+1622 tests passing
+16 tests ignored (exposing real bugs - tracked in Tasks 60-64 above)
 ```
 
 ---
@@ -237,5 +243,5 @@ Analysis found 31 ignored tests in `function_processor.rs`. These are now separa
 
 ---
 
-**Current Work:** Task 59 - Fix &out Parameter Lvalue Validation
-**Next Work:** Continue through priority list (Tasks 60-64)
+**Current Work:** Task 60 - Fix Init List Issues
+**Next Work:** Continue through priority list (Tasks 61-64)

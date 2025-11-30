@@ -12830,8 +12830,197 @@ mod tests {
         let (script, _) = parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
-        // Note: This test may pass or fail depending on const handling
-        let _ = result;  // Exercise the code path
+        assert!(!result.is_success(), "Passing const lvalue to &inout parameter should fail");
+    }
+
+    #[test]
+    fn ref_in_param_accepts_rvalue() {
+        use crate::parse_lenient;
+        use crate::semantic::Compiler;
+        use bumpalo::Bump;
+
+        let arena = Bump::new();
+        let source = r#"
+            void process(int &in value) {
+                int x = value;
+            }
+
+            void test() {
+                process(42);        // rvalue literal - OK for &in
+                process(5 + 3);     // rvalue expression - OK for &in
+            }
+        "#;
+
+        let (script, _) = parse_lenient(source, &arena);
+        let result = Compiler::compile(&script);
+
+        assert!(result.is_success(), "&in should accept rvalue: {:?}", result.errors);
+    }
+
+    #[test]
+    fn ref_in_param_accepts_lvalue() {
+        use crate::parse_lenient;
+        use crate::semantic::Compiler;
+        use bumpalo::Bump;
+
+        let arena = Bump::new();
+        let source = r#"
+            void process(int &in value) {
+                int x = value;
+            }
+
+            void test() {
+                int a = 10;
+                process(a);  // lvalue - OK for &in
+            }
+        "#;
+
+        let (script, _) = parse_lenient(source, &arena);
+        let result = Compiler::compile(&script);
+
+        assert!(result.is_success(), "&in should accept lvalue: {:?}", result.errors);
+    }
+
+    #[test]
+    fn ref_out_param_accepts_mutable_lvalue() {
+        use crate::parse_lenient;
+        use crate::semantic::Compiler;
+        use bumpalo::Bump;
+
+        let arena = Bump::new();
+        let source = r#"
+            void getResult(int &out result) {
+                result = 42;
+            }
+
+            void test() {
+                int x;
+                getResult(x);  // mutable lvalue - OK for &out
+            }
+        "#;
+
+        let (script, _) = parse_lenient(source, &arena);
+        let result = Compiler::compile(&script);
+
+        assert!(result.is_success(), "&out should accept mutable lvalue: {:?}", result.errors);
+    }
+
+    #[test]
+    fn ref_out_param_rejects_const_lvalue() {
+        use crate::parse_lenient;
+        use crate::semantic::Compiler;
+        use bumpalo::Bump;
+
+        let arena = Bump::new();
+        let source = r#"
+            void getResult(int &out result) {
+                result = 42;
+            }
+
+            void test() {
+                const int x = 10;
+                getResult(x);  // const lvalue - NOT OK for &out
+            }
+        "#;
+
+        let (script, _) = parse_lenient(source, &arena);
+        let result = Compiler::compile(&script);
+
+        assert!(!result.is_success(), "&out should reject const lvalue");
+    }
+
+    #[test]
+    fn ref_inout_param_accepts_mutable_lvalue() {
+        use crate::parse_lenient;
+        use crate::semantic::Compiler;
+        use bumpalo::Bump;
+
+        let arena = Bump::new();
+        let source = r#"
+            void modify(int &inout value) {
+                value = value + 1;
+            }
+
+            void test() {
+                int x = 10;
+                modify(x);  // mutable lvalue - OK for &inout
+            }
+        "#;
+
+        let (script, _) = parse_lenient(source, &arena);
+        let result = Compiler::compile(&script);
+
+        assert!(result.is_success(), "&inout should accept mutable lvalue: {:?}", result.errors);
+    }
+
+    #[test]
+    fn ref_inout_param_rejects_rvalue() {
+        use crate::parse_lenient;
+        use crate::semantic::Compiler;
+        use bumpalo::Bump;
+
+        let arena = Bump::new();
+        let source = r#"
+            void modify(int &inout value) {
+                value = value + 1;
+            }
+
+            void test() {
+                modify(42);  // rvalue - NOT OK for &inout
+            }
+        "#;
+
+        let (script, _) = parse_lenient(source, &arena);
+        let result = Compiler::compile(&script);
+
+        assert!(!result.is_success(), "&inout should reject rvalue");
+    }
+
+    #[test]
+    fn bare_ref_param_treated_as_inout() {
+        use crate::parse_lenient;
+        use crate::semantic::Compiler;
+        use bumpalo::Bump;
+
+        let arena = Bump::new();
+        let source = r#"
+            void modify(int &value) {
+                value = value + 1;
+            }
+
+            void test() {
+                int x = 10;
+                modify(x);  // mutable lvalue - OK for bare & (treated as &inout)
+            }
+        "#;
+
+        let (script, _) = parse_lenient(source, &arena);
+        let result = Compiler::compile(&script);
+
+        assert!(result.is_success(), "bare & should accept mutable lvalue (like &inout): {:?}", result.errors);
+    }
+
+    #[test]
+    fn bare_ref_param_rejects_rvalue() {
+        use crate::parse_lenient;
+        use crate::semantic::Compiler;
+        use bumpalo::Bump;
+
+        let arena = Bump::new();
+        let source = r#"
+            void modify(int &value) {
+                value = value + 1;
+            }
+
+            void test() {
+                modify(42);  // rvalue - NOT OK for bare & (treated as &inout)
+            }
+        "#;
+
+        let (script, _) = parse_lenient(source, &arena);
+        let result = Compiler::compile(&script);
+
+        assert!(!result.is_success(), "bare & should reject rvalue (like &inout)");
     }
 
     // ==================== Init List Extra Tests ====================
