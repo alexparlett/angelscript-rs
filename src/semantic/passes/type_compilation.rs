@@ -982,22 +982,17 @@ impl<'src, 'ast> TypeCompiler<'src, 'ast> {
 
     /// Parse an operator method name and return the OperatorBehavior if it's an operator
     ///
-    /// Recognizes: opConv, opImplConv, opCast, opImplCast
-    /// The return type determines the target type for the conversion
+    /// Recognizes all operator methods: opAdd, opSub, opMul, opDiv, opIndex, opCall,
+    /// opConv, opImplConv, opCast, opImplCast, and more.
+    /// The return type is used as the target type for conversion operators.
     fn parse_operator_method(
         &self,
         method_name: &str,
         return_type: &DataType,
     ) -> Option<OperatorBehavior> {
-        let target_type_id = return_type.type_id;
-
-        match method_name {
-            "opConv" => Some(OperatorBehavior::OpConv(target_type_id)),
-            "opImplConv" => Some(OperatorBehavior::OpImplConv(target_type_id)),
-            "opCast" => Some(OperatorBehavior::OpCast(target_type_id)),
-            "opImplCast" => Some(OperatorBehavior::OpImplCast(target_type_id)),
-            _ => None,
-        }
+        // Use the canonical from_method_name implementation
+        // For conversion operators, the return type determines the target type
+        OperatorBehavior::from_method_name(method_name, Some(return_type.type_id))
     }
 
     /// Parse an explicit property accessor method name

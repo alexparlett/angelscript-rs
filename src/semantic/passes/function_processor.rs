@@ -2837,15 +2837,20 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
                     return Some(ExprContext::rvalue(DataType::simple(VOID_TYPE)));
                 }
 
-                // Check if this is a local variable (could be funcdef handle)
+                // Check if this is a local variable (could be funcdef handle or class with opCall)
                 if ident_expr.scope.is_none() {  // Only check locals for unqualified names
-                    if let Some(var) = self.local_scope.lookup(&name) {
-                        if var.data_type.is_handle {
-                            let type_def = self.registry.get_type(var.data_type.type_id);
-                            if matches!(type_def, TypeDef::Funcdef { .. }) {
-                                // This is a funcdef variable - use the default case to handle it
-                                // Fall through to handle as complex callee expression
-                                let callee_ctx = self.check_expr(call.callee)?;
+                    // Extract type info before mutable operations to avoid borrow conflicts
+                    let var_info = self.local_scope.lookup(&name).map(|var| {
+                        (var.data_type.type_id, var.data_type.is_handle)
+                    });
+
+                    if let Some((var_type_id, is_handle)) = var_info {
+                        // Check for funcdef handle
+                        if is_handle {
+                            let type_def = self.registry.get_type(var_type_id);
+                            if let TypeDef::Funcdef { params, return_type, .. } = type_def {
+                                // This is a funcdef variable
+                                let _callee_ctx = self.check_expr(call.callee)?;
 
                                 // Type-check arguments WITHOUT funcdef inference for now
                                 let mut arg_contexts = Vec::with_capacity(call.args.len());
@@ -2854,40 +2859,102 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
                                     arg_contexts.push(arg_ctx);
                                 }
 
-                                // Use funcdef calling logic from default case
-                                if let TypeDef::Funcdef { params, return_type, .. } = type_def {
-                                    // Validate arguments
-                                    if arg_contexts.len() != params.len() {
+                                // Clone params and return_type to avoid borrow issues
+                                let params = params.clone();
+                                let return_type = return_type.clone();
+
+                                // Validate arguments
+                                if arg_contexts.len() != params.len() {
+                                    self.error(
+                                        SemanticErrorKind::TypeMismatch,
+                                        call.span,
+                                        format!("funcdef call expects {} arguments but {} were provided",
+                                            params.len(), arg_contexts.len()),
+                                    );
+                                    return None;
+                                }
+
+                                // Validate and emit conversions for each argument
+                                for (i, (arg_ctx, param)) in arg_contexts.iter().zip(params.iter()).enumerate() {
+                                    if let Some(conv) = arg_ctx.data_type.can_convert_to(param, self.registry) {
+                                        self.emit_conversion(&conv);
+                                    } else {
                                         self.error(
                                             SemanticErrorKind::TypeMismatch,
-                                            call.span,
-                                            format!("funcdef call expects {} arguments but {} were provided",
-                                                params.len(), arg_contexts.len()),
+                                            call.args[i].span,
+                                            format!("argument {} type mismatch in funcdef call", i),
                                         );
                                         return None;
                                     }
+                                }
 
-                                    // Validate and emit conversions for each argument
-                                    for (i, (arg_ctx, param)) in arg_contexts.iter().zip(params.iter()).enumerate() {
-                                        if let Some(conv) = arg_ctx.data_type.can_convert_to(param, self.registry) {
+                                // Emit CallPtr instruction
+                                self.bytecode.emit(Instruction::CallPtr);
+
+                                // Return the funcdef's return type
+                                return Some(ExprContext::rvalue(return_type));
+                            }
+                        }
+
+                        // Check for class with opCall operator (callable objects)
+                        // This handles cases like: Functor f; f(5); where Functor has opCall(int)
+                        if let Some(func_id) = self.registry.find_operator_method(var_type_id, OperatorBehavior::OpCall) {
+                            // Evaluate the callee (load the object)
+                            let _callee_ctx = self.check_expr(call.callee)?;
+
+                            // Type-check arguments
+                            let mut arg_contexts = Vec::with_capacity(call.args.len());
+                            for arg in call.args {
+                                let arg_ctx = self.check_expr(arg.value)?;
+                                arg_contexts.push(arg_ctx);
+                            }
+
+                            let func_def = self.registry.get_function(func_id);
+
+                            // Validate argument count
+                            if arg_contexts.len() != func_def.params.len() {
+                                self.error(
+                                    SemanticErrorKind::WrongArgumentCount,
+                                    call.span,
+                                    format!("opCall expects {} arguments but {} were provided",
+                                        func_def.params.len(), arg_contexts.len()),
+                                );
+                                return None;
+                            }
+
+                            // Validate reference parameters
+                            self.validate_reference_parameters(func_def, &arg_contexts, call.args, call.span)?;
+
+                            // Emit conversions for arguments that need conversion
+                            for (i, (arg_ctx, param)) in arg_contexts.iter().zip(func_def.params.iter()).enumerate() {
+                                if arg_ctx.data_type.type_id != param.type_id {
+                                    if let Some(conv) = arg_ctx.data_type.can_convert_to(param, self.registry) {
+                                        if conv.is_implicit {
                                             self.emit_conversion(&conv);
                                         } else {
                                             self.error(
                                                 SemanticErrorKind::TypeMismatch,
                                                 call.args[i].span,
-                                                format!("argument {} type mismatch in funcdef call", i),
+                                                format!("argument {} requires explicit conversion", i + 1),
                                             );
                                             return None;
                                         }
+                                    } else {
+                                        self.error(
+                                            SemanticErrorKind::TypeMismatch,
+                                            call.args[i].span,
+                                            format!("cannot convert argument {} from '{}' to '{}'",
+                                                i + 1,
+                                                self.type_name(&arg_ctx.data_type),
+                                                self.type_name(param)),
+                                        );
+                                        return None;
                                     }
-
-                                    // Emit CallPtr instruction
-                                    self.bytecode.emit(Instruction::CallPtr);
-
-                                    // Return the funcdef's return type
-                                    return Some(ExprContext::rvalue(return_type.clone()));
                                 }
                             }
+
+                            self.bytecode.emit(Instruction::Call(func_id.as_u32()));
+                            return Some(ExprContext::rvalue(func_def.return_type.clone()));
                         }
                     }
                 }
@@ -9506,7 +9573,6 @@ mod tests {
     // ==================== Operator Overload Tests ====================
 
     #[test]
-    #[ignore] // TODO: opAdd operator overload should work for custom classes
     fn class_with_opAdd() {
         use crate::parse_lenient;
         use crate::semantic::Compiler;
@@ -12265,10 +12331,7 @@ mod tests {
 
     // ==================== opCall Operator ====================
 
-    // TODO: opCall is not being recognized as a call - the identifier 'f' is being resolved
-    // as a function name rather than a local variable with opCall
     #[test]
-    #[ignore]
     fn class_with_op_call() {
         use crate::parse_lenient;
         use crate::semantic::Compiler;
@@ -13012,9 +13075,7 @@ mod tests {
 
     // ==================== get_opIndex Accessor ====================
 
-    // TODO: get_opIndex is not being registered as an operator by the type compilation pass
     #[test]
-    #[ignore]
     fn class_with_get_op_index() {
         use crate::parse_lenient;
         use crate::semantic::Compiler;
