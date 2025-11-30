@@ -51,7 +51,8 @@ use crate::ast::decl::{
     InterfaceDecl, InterfaceMethod, Item, NamespaceDecl, TypedefDecl,
 };
 use crate::ast::expr::Expr;
-use crate::ast::types::{PrimitiveType, TypeBase, TypeExpr, TypeSuffix};
+use crate::ast::types::{ParamType, PrimitiveType, TypeBase, TypeExpr, TypeSuffix};
+use crate::ast::RefKind;
 use crate::ast::Script;
 use crate::lexer::Span;
 use rustc_hash::FxHashMap;
@@ -149,7 +150,7 @@ impl<'src, 'ast> TypeCompiler<'src, 'ast> {
         let params: Vec<DataType> = func
             .params
             .iter()
-            .filter_map(|p| self.resolve_type_expr(&p.ty.ty))
+            .filter_map(|p| self.resolve_param_type(&p.ty))
             .collect();
 
         // Check if we got all params (if any failed to resolve, we already logged errors)
@@ -670,7 +671,7 @@ impl<'src, 'ast> TypeCompiler<'src, 'ast> {
         let params: Vec<DataType> = method
             .params
             .iter()
-            .filter_map(|p| self.resolve_type_expr(&p.ty.ty))
+            .filter_map(|p| self.resolve_param_type(&p.ty))
             .collect();
 
         if params.len() != method.params.len() {
@@ -769,7 +770,7 @@ impl<'src, 'ast> TypeCompiler<'src, 'ast> {
         let params: Vec<DataType> = funcdef
             .params
             .iter()
-            .filter_map(|p| self.resolve_type_expr(&p.ty.ty))
+            .filter_map(|p| self.resolve_param_type(&p.ty))
             .collect();
 
         if params.len() != funcdef.params.len() {
@@ -868,6 +869,25 @@ impl<'src, 'ast> TypeCompiler<'src, 'ast> {
 
         // Step 4: Store in type_map for later reference
         self.type_map.insert(expr.span, data_type.clone());
+
+        Some(data_type)
+    }
+
+    /// Resolve a parameter type (type + reference modifier).
+    ///
+    /// This handles the full ParamType which includes both the type expression
+    /// and the reference kind (&in, &out, &inout).
+    fn resolve_param_type(&mut self, param: &ParamType<'src, 'ast>) -> Option<DataType> {
+        let mut data_type = self.resolve_type_expr(&param.ty)?;
+
+        // Convert AST RefKind to semantic RefModifier
+        data_type.ref_modifier = match param.ref_kind {
+            RefKind::None => RefModifier::None,
+            RefKind::Ref => RefModifier::InOut,      // Bare `&` is `&inout`
+            RefKind::RefIn => RefModifier::In,
+            RefKind::RefOut => RefModifier::Out,
+            RefKind::RefInOut => RefModifier::InOut,
+        };
 
         Some(data_type)
     }
@@ -1024,7 +1044,7 @@ impl<'src, 'ast> TypeCompiler<'src, 'ast> {
         let params: Vec<DataType> = method
             .params
             .iter()
-            .filter_map(|p| self.resolve_type_expr(&p.ty.ty))
+            .filter_map(|p| self.resolve_param_type(&p.ty))
             .collect();
 
         // Check if we got all params
@@ -1184,7 +1204,7 @@ impl<'src, 'ast> TypeCompiler<'src, 'ast> {
                     let params: Vec<DataType> = method
                         .params
                         .iter()
-                        .filter_map(|p| self.resolve_type_expr(&p.ty.ty))
+                        .filter_map(|p| self.resolve_param_type(&p.ty))
                         .collect();
 
                     let return_type = method

@@ -10981,7 +10981,6 @@ mod tests {
     // ==================== Reference Parameter with Literal Error ====================
 
     #[test]
-    #[ignore] // TODO: Passing literal to &out parameter should error but doesn't currently
     fn reference_out_param_with_literal_error() {
         use crate::parse_lenient;
         use crate::semantic::Compiler;
@@ -12787,9 +12786,7 @@ mod tests {
 
     // ==================== Reference Parameter Validation ====================
 
-    // TODO: The &out parameter validation is not detecting rvalue passed to &out
     #[test]
-    #[ignore]
     fn out_param_requires_lvalue_error() {
         use crate::parse_lenient;
         use crate::semantic::Compiler;
