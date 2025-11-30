@@ -1096,6 +1096,7 @@ impl<'src, 'ast> TypeCompiler<'src, 'ast> {
             is_native: false,
             default_args,
             visibility,
+            signature_filled: true, // Interface method - fully filled here
         };
 
         self.registry.register_function(func_def);

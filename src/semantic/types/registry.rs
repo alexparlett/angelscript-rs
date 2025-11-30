@@ -57,6 +57,9 @@ pub struct FunctionDef<'src, 'ast> {
     pub default_args: Vec<Option<&'ast Expr<'src, 'ast>>>,
     /// Visibility (public, private, protected) - only meaningful for methods
     pub visibility: Visibility,
+    /// Whether the function signature has been filled in by Pass 2a
+    /// Functions are registered with empty signatures in Pass 1, then filled in Pass 2a
+    pub signature_filled: bool,
 }
 
 impl<'src, 'ast> FunctionDef<'src, 'ast> {
@@ -402,6 +405,7 @@ impl<'src, 'ast> Registry<'src, 'ast> {
             is_native: true, // FFI-provided
             default_args: Vec::new(),
             visibility: Visibility::Public,
+            signature_filled: true, // Native function - fully filled
         };
 
         self.functions.push(func_def);
@@ -675,22 +679,15 @@ impl<'src, 'ast> Registry<'src, 'ast> {
                     // Match on object_type to ensure we update the right method
                     // For methods, object_type must match; for free functions, both should be None
                     let object_type_matches = func.object_type == object_type;
-                    // Use signature_not_yet_filled: a function hasn't been filled if its traits
-                    // are still default (no virtual, no final, no const, etc.) for non-constructor/destructor
-                    // OR if it's a method and we're looking for the same object_type that hasn't been filled
-                    // Simple approach: check if return_type is still void (for non-ctor/dtor) as proxy
-                    // Actually, the cleanest approach is to check if the traits haven't been updated yet
-                    // Since traits are set with just is_constructor/is_destructor in registration,
-                    // we can check if is_virtual or is_final are still false AND is_const is false
-                    // But that's fragile. Let's use: match by object_type AND check if this specific
-                    // function hasn't been updated by checking a simple heuristic.
-                    //
-                    // Best fix: match by object_type for methods
-                    if object_type_matches && !func.traits.is_virtual && !func.traits.is_final && !func.traits.is_const && !func.traits.is_abstract {
+                    // A function hasn't been filled in yet if signature_filled is false.
+                    // Pass 1 registers all functions with signature_filled: false,
+                    // and Pass 2a sets it to true when filling the signature.
+                    if object_type_matches && !func.signature_filled {
                         self.functions[index].params = params;
                         self.functions[index].return_type = return_type;
                         self.functions[index].traits = traits;
                         self.functions[index].default_args = default_args;
+                        self.functions[index].signature_filled = true;
                         return; // Only update one function
                     }
                 }
@@ -1671,6 +1668,7 @@ mod tests {
             is_native: false,
             default_args: Vec::new(),
             visibility: Visibility::Public,
+        signature_filled: true,
         };
 
         let func_id = registry.register_function(func);
@@ -1692,6 +1690,7 @@ mod tests {
             is_native: false,
             default_args: Vec::new(),
             visibility: Visibility::Public,
+        signature_filled: true,
         };
 
         registry.register_function(func);
@@ -1724,6 +1723,7 @@ mod tests {
             is_native: false,
             default_args: Vec::new(),
             visibility: Visibility::Public,
+        signature_filled: true,
         };
 
         // foo(float)
@@ -1738,6 +1738,7 @@ mod tests {
             is_native: false,
             default_args: Vec::new(),
             visibility: Visibility::Public,
+        signature_filled: true,
         };
 
         registry.register_function(func1);
@@ -1760,6 +1761,7 @@ mod tests {
             is_native: false,
             default_args: Vec::new(),
             visibility: Visibility::Public,
+        signature_filled: true,
         };
 
         assert_eq!(func.qualified_name(), "Game::Player::update");
@@ -1778,6 +1780,7 @@ mod tests {
             is_native: false,
             default_args: Vec::new(),
             visibility: Visibility::Public,
+        signature_filled: true,
         };
 
         assert_eq!(func.qualified_name(), "foo");
@@ -1798,6 +1801,7 @@ mod tests {
             is_native: false,
             default_args: Vec::new(),
             visibility: Visibility::Public,
+        signature_filled: true,
         };
 
         let func_id = registry.register_function(func.clone());
@@ -1823,6 +1827,7 @@ mod tests {
             is_native: false,
             default_args: Vec::new(),
             visibility: Visibility::Public,
+        signature_filled: true,
         };
 
         // Another method for Player
@@ -1837,6 +1842,7 @@ mod tests {
             is_native: false,
             default_args: Vec::new(),
             visibility: Visibility::Public,
+        signature_filled: true,
         };
 
         // Global function (not a method)
@@ -1851,6 +1857,7 @@ mod tests {
             is_native: false,
             default_args: Vec::new(),
             visibility: Visibility::Public,
+        signature_filled: true,
         };
 
         registry.register_function(method1);
@@ -1938,6 +1945,7 @@ mod tests {
             is_native: false,
             default_args: Vec::new(),
             visibility: Visibility::Public,
+        signature_filled: true,
         };
 
         let func_id = registry.register_function(func_def);
@@ -1996,6 +2004,7 @@ mod tests {
             is_native: false,
             default_args: Vec::new(),
             visibility: Visibility::Public,
+        signature_filled: true,
         };
 
         registry.register_function(func_def);
@@ -2051,6 +2060,7 @@ mod tests {
             is_native: false,
             default_args: Vec::new(),
             visibility: Visibility::Public,
+        signature_filled: true,
         };
 
         let func_id = registry.register_function(func_def);
@@ -2101,6 +2111,7 @@ mod tests {
             is_native: false,
             default_args: Vec::new(),
             visibility: Visibility::Public,
+        signature_filled: true,
         };
 
         // Register single-param constructor
@@ -2124,6 +2135,7 @@ mod tests {
             is_native: false,
             default_args: Vec::new(),
             visibility: Visibility::Public,
+        signature_filled: true,
         };
 
         let func_id1 = registry.register_function(func_def1);
@@ -2182,6 +2194,7 @@ mod tests {
             is_native: false,
             default_args: Vec::new(),
             visibility: Visibility::Public,
+        signature_filled: true,
         };
 
         let copy_ctor_id = registry.register_function(copy_ctor);
@@ -2233,6 +2246,7 @@ mod tests {
             is_native: false,
             default_args: Vec::new(),
             visibility: Visibility::Public,
+        signature_filled: true,
         };
 
         let copy_ctor_id = registry.register_function(copy_ctor);
@@ -2285,6 +2299,7 @@ mod tests {
             is_native: false,
             default_args: Vec::new(),
             visibility: Visibility::Public,
+        signature_filled: true,
         };
 
         let ctor_id = registry.register_function(ctor);
@@ -2336,6 +2351,7 @@ mod tests {
             is_native: false,
             default_args: Vec::new(),
             visibility: Visibility::Public,
+        signature_filled: true,
         };
 
         let ctor_id = registry.register_function(ctor);
@@ -2387,6 +2403,7 @@ mod tests {
             is_native: false,
             default_args: Vec::new(),
             visibility: Visibility::Public,
+        signature_filled: true,
         };
 
         let ctor_id = registry.register_function(ctor);
@@ -2535,6 +2552,7 @@ mod tests {
             is_native: false,
             default_args: Vec::new(),
             visibility: Visibility::Public,
+            signature_filled: true,
         };
         let base_method_id = registry.register_function(base_method);
 
@@ -2589,6 +2607,7 @@ mod tests {
             is_native: false,
             default_args: Vec::new(),
             visibility: Visibility::Public,
+            signature_filled: true,
         };
         let base_method_id = registry.register_function(base_method);
 
@@ -2619,6 +2638,7 @@ mod tests {
             is_native: false,
             default_args: Vec::new(),
             visibility: Visibility::Public,
+            signature_filled: true,
         };
         let derived_method_id = registry.register_function(derived_method);
 
@@ -2662,6 +2682,7 @@ mod tests {
             is_native: false,
             default_args: Vec::new(),
             visibility: Visibility::Public,
+            signature_filled: true,
         };
         let base_method_id = registry.register_function(base_method);
 

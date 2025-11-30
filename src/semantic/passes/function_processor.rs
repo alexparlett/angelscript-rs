@@ -9610,7 +9610,6 @@ mod tests {
     // ==================== Funcdef Call Tests ====================
 
     #[test]
-    #[ignore] // TODO: Calling a function via funcdef handle should work
     fn funcdef_call() {
         use crate::parse_lenient;
         use crate::semantic::Compiler;
@@ -9921,7 +9920,6 @@ mod tests {
     // ==================== Overloaded Function Call Tests ====================
 
     #[test]
-    #[ignore] // TODO: Function overload resolution should work but currently fails with "no matching overload found"
     fn overloaded_function_call_exact_match() {
         use crate::parse_lenient;
         use crate::semantic::Compiler;
@@ -12434,9 +12432,7 @@ mod tests {
 
     // ==================== Overload Resolution ====================
 
-    // TODO: Overload resolution is failing - functions are not being registered as overloads properly
     #[test]
-    #[ignore]
     fn overload_resolution_exact_match() {
         use crate::parse_lenient;
         use crate::semantic::Compiler;

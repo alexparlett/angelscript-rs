@@ -169,6 +169,7 @@ impl<'src, 'ast> Registrar<'src, 'ast> {
             is_native: false,
             default_args: Vec::new(), // Will be filled in Pass 2a
             visibility,
+            signature_filled: false, // Will be set to true in Pass 2a
         };
 
         self.registry.register_function(func_def);
@@ -546,6 +547,7 @@ impl<'src, 'ast> Registrar<'src, 'ast> {
             is_native: false,
             default_args: Vec::new(),
             visibility: Visibility::Public,  // Auto-generated constructors are public
+            signature_filled: true, // Auto-generated - already complete
         };
 
         self.registry.register_function(func_def);
@@ -579,6 +581,7 @@ impl<'src, 'ast> Registrar<'src, 'ast> {
             is_native: false,
             default_args: Vec::new(),
             visibility: Visibility::Public,  // Auto-generated constructors are public
+            signature_filled: true, // Auto-generated - params filled in Pass 2a via update_function_params
         };
 
         self.registry.register_function(func_def);
@@ -613,6 +616,7 @@ impl<'src, 'ast> Registrar<'src, 'ast> {
             is_native: false,
             default_args: Vec::new(),
             visibility: Visibility::Public,  // Auto-generated opAssign is public
+            signature_filled: true, // Auto-generated - params filled in Pass 2a via update_function_params
         };
 
         self.registry.register_function(func_def);
@@ -659,6 +663,7 @@ impl<'src, 'ast> Registrar<'src, 'ast> {
                         is_native: false,
                         default_args: Vec::new(),
                         visibility: prop_visibility,  // Inherit visibility from property
+                        signature_filled: true, // Virtual property - params filled separately
                     };
 
                     self.registry.register_function(func_def);
@@ -689,6 +694,7 @@ impl<'src, 'ast> Registrar<'src, 'ast> {
                         is_native: false,
                         default_args: Vec::new(),
                         visibility: prop_visibility,  // Inherit visibility from property
+                        signature_filled: true, // Virtual property - params filled separately
                     };
 
                     self.registry.register_function(func_def);
