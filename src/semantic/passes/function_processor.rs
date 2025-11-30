@@ -18,9 +18,9 @@ use crate::semantic::types::registry::FunctionDef;
 use crate::codegen::{BytecodeEmitter, CompiledBytecode, CompiledModule, Instruction};
 use crate::lexer::Span;
 use crate::semantic::{
-    eval_const_int, CapturedVar, DataType, FieldDef, LocalScope, OperatorBehavior, PrimitiveType, Registry,
+    eval_const_int, DataType, FieldDef, LocalScope, OperatorBehavior, Registry,
     SemanticError, SemanticErrorKind, TypeDef, TypeId, Visibility, BOOL_TYPE, DOUBLE_TYPE, FLOAT_TYPE,
-    INT32_TYPE, INT64_TYPE, NULL_TYPE, UINT8_TYPE, VOID_TYPE,
+    INT32_TYPE, INT64_TYPE, NULL_TYPE, VOID_TYPE,
 };
 use crate::semantic::types::type_def::FunctionId;
 use rustc_hash::FxHashMap;
@@ -2051,14 +2051,37 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
                 self.check_binary_op(binary.op, &left_ctx.data_type, &right_ctx.data_type, binary.span)?
             }
 
-            // Type comparison operators
+            // Handle identity comparison operators
             BinaryOp::Is | BinaryOp::NotIs => {
-                self.error(
-                    SemanticErrorKind::InvalidOperation,
-                    binary.span,
-                    "is/!is operators are not yet implemented",
-                );
-                return None;
+                // Both operands must be handles or null
+                let left_is_handle = left_ctx.data_type.is_handle || left_ctx.data_type.type_id == NULL_TYPE;
+                let right_is_handle = right_ctx.data_type.is_handle || right_ctx.data_type.type_id == NULL_TYPE;
+
+                if !left_is_handle {
+                    self.error(
+                        SemanticErrorKind::InvalidOperation,
+                        binary.span,
+                        "left operand of 'is' must be a handle type",
+                    );
+                    return None;
+                }
+                if !right_is_handle {
+                    self.error(
+                        SemanticErrorKind::InvalidOperation,
+                        binary.span,
+                        "right operand of 'is' must be a handle type",
+                    );
+                    return None;
+                }
+
+                // Emit pointer equality comparison
+                let instr = if binary.op == BinaryOp::Is {
+                    Instruction::Equal
+                } else {
+                    Instruction::NotEqual
+                };
+                self.bytecode.emit(instr);
+                return Some(ExprContext::rvalue(DataType::simple(BOOL_TYPE)));
             }
         };
 
@@ -2087,8 +2110,8 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
             BinaryOp::Greater => Instruction::GreaterThan,
             BinaryOp::GreaterEqual => Instruction::GreaterEqual,
             BinaryOp::Is | BinaryOp::NotIs => {
-                // Already handled above
-                return None;
+                // Already handled above with early return
+                unreachable!("is/!is operators return early")
             }
         };
 
@@ -8928,7 +8951,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore] // TODO: is/!is operators for handle comparison should be implemented
     fn handle_comparison() {
         use crate::parse_lenient;
         use crate::semantic::Compiler;
@@ -8950,6 +8972,77 @@ mod tests {
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Handle comparison with is/!is should work: {:?}", result.errors);
+    }
+
+    #[test]
+    fn handle_comparison_with_null() {
+        use crate::parse_lenient;
+        use crate::semantic::Compiler;
+        use bumpalo::Bump;
+
+        let arena = Bump::new();
+        let source = r#"
+            class MyClass { }
+
+            void test() {
+                MyClass@ a = null;
+                bool c = a is null;
+                bool d = a !is null;
+                bool e = null is a;
+                bool f = null !is a;
+            }
+        "#;
+
+        let (script, _) = parse_lenient(source, &arena);
+        let result = Compiler::compile(&script);
+
+        assert!(result.is_success(), "Handle comparison with null should work: {:?}", result.errors);
+    }
+
+    #[test]
+    fn is_operator_non_handle_error() {
+        use crate::parse_lenient;
+        use crate::semantic::Compiler;
+        use bumpalo::Bump;
+
+        let arena = Bump::new();
+        let source = r#"
+            void test() {
+                int a = 5;
+                int b = 10;
+                bool c = a is b;
+            }
+        "#;
+
+        let (script, _) = parse_lenient(source, &arena);
+        let result = Compiler::compile(&script);
+
+        assert!(!result.errors.is_empty(), "is operator with non-handles should error");
+        let error_msg = format!("{:?}", result.errors);
+        assert!(error_msg.contains("handle"), "Error should mention handle type requirement");
+    }
+
+    #[test]
+    fn is_operator_mixed_types_error() {
+        use crate::parse_lenient;
+        use crate::semantic::Compiler;
+        use bumpalo::Bump;
+
+        let arena = Bump::new();
+        let source = r#"
+            class MyClass { }
+
+            void test() {
+                MyClass@ a = null;
+                int b = 5;
+                bool c = a is b;
+            }
+        "#;
+
+        let (script, _) = parse_lenient(source, &arena);
+        let result = Compiler::compile(&script);
+
+        assert!(!result.errors.is_empty(), "is operator with mixed handle/non-handle should error");
     }
 
     // ==================== Logical Operator Tests ====================
