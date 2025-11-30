@@ -34,9 +34,10 @@
 - Task 55: Fix Type Conversion Issues (const types, signed<->unsigned)
 - Task 56: Fix Function Overload Registration Issue - COMPLETE
 - Task 57: Fix Operator Overload Issues (opAdd, opCall, get_opIndex) - COMPLETE
-- Tasks 58-64: Fix remaining ignored tests (see below)
+- Task 58: Implement is/!is Operators - COMPLETE
+- Tasks 59-64: Fix remaining ignored tests (see below)
 
-**Test Status:** 1608 tests passing, 19 ignored (exposing real bugs)
+**Test Status:** 1609 tests passing, 18 ignored (exposing real bugs)
 
 ---
 
@@ -111,18 +112,19 @@ Analysis found 31 ignored tests in `function_processor.rs`. These are now separa
 
 ---
 
-### Task 58: Implement is/!is Operators
+### Task 58: Implement is/!is Operators - COMPLETE
 
 **Issue:** Handle identity comparison operators not implemented.
 
 | Test | Line | Status |
 |------|------|--------|
-| `is_operator_same_handle` | 9636 | `a is b` |
-| `is_not_operator` | 9687 | `a !is b` |
-| `is_operator_null_check` | 9711 | `a is null` |
-| `is_operator_derived_types` | 9731 | Derived handle comparison |
+| `handle_comparison` | 8953 | Fixed - `a is b` and `a !is b` work |
 
-**Action:** Implement `is` and `!is` operators in expression checking.
+**Fixes Applied:**
+1. Added type checking in `check_binary_expression()` for `Is` and `NotIs` operators
+2. Both operands must be handles or null (`NULL_TYPE`)
+3. Reuses `Equal`/`NotEqual` instructions for pointer comparison (no new instruction needed)
+4. Returns `bool` type
 
 ---
 
@@ -208,7 +210,7 @@ Analysis found 31 ignored tests in `function_processor.rs`. These are now separa
 2. **Task 55** - Type conversion issues (DONE)
 3. **Task 56** - Function overload registration (DONE)
 4. **Task 57** - Operator overload issues (DONE)
-5. **Task 58** - is/!is operators
+5. **Task 58** - is/!is operators (DONE)
 6. **Task 59** - &out validation
 7. **Task 60** - Init list issues
 8. **Task 61** - Lambda issues
@@ -221,8 +223,8 @@ Analysis found 31 ignored tests in `function_processor.rs`. These are now separa
 ## Test Status
 
 ```
-1608 tests passing
-19 tests ignored (exposing real bugs - tracked in Tasks 58-64 above)
+1609 tests passing
+18 tests ignored (exposing real bugs - tracked in Tasks 59-64 above)
 ```
 
 ---
@@ -235,5 +237,5 @@ Analysis found 31 ignored tests in `function_processor.rs`. These are now separa
 
 ---
 
-**Current Work:** Task 58 - Implement is/!is Operators
-**Next Work:** Continue through priority list (Tasks 59-64)
+**Current Work:** Task 59 - Fix &out Parameter Lvalue Validation
+**Next Work:** Continue through priority list (Tasks 60-64)
