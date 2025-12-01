@@ -2504,6 +2504,17 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
                     // (this shouldn't happen as check_index_assignment handles all cases)
                 }
 
+                // Special handling for member access: obj.prop = value
+                // Check for property setter (set_X pattern)
+                if let Expr::Member(member_expr) = assign.target {
+                    if let MemberAccess::Field(field_name) = &member_expr.member {
+                        if let Some(result) = self.check_member_property_assignment(member_expr, field_name.name, assign.value, assign.span) {
+                            return Some(result);
+                        }
+                        // If returns None, property doesn't exist - fall through to regular assignment
+                    }
+                }
+
                 // Simple assignment: target = value
                 let target_ctx = self.check_expr(assign.target)?;
 
@@ -3817,6 +3828,121 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
         None
     }
 
+    /// Type checks a member property assignment: obj.prop = value
+    /// This handles set_X property accessor.
+    /// Returns Some(result) if a property setter was found and used,
+    /// or None if no property exists (caller should fall back to regular field assignment).
+    fn check_member_property_assignment(
+        &mut self,
+        member: &MemberExpr<'src, 'ast>,
+        property_name: &str,
+        value: &'ast Expr<'src, 'ast>,
+        span: Span,
+    ) -> Option<ExprContext> {
+        // First evaluate the object expression
+        let object_ctx = self.check_expr(member.object)?;
+
+        // Check if the object type has a property with this name
+        let property = self.registry.find_property(object_ctx.data_type.type_id, property_name)?;
+
+        // Property exists - check for setter
+        let setter_id = match property.setter {
+            Some(id) => id,
+            None => {
+                // Property is read-only (no setter)
+                self.error(
+                    SemanticErrorKind::InvalidOperation,
+                    span,
+                    format!(
+                        "property '{}' on type '{}' is read-only",
+                        property_name,
+                        self.type_name(&object_ctx.data_type)
+                    ),
+                );
+                return Some(ExprContext::rvalue(DataType::simple(VOID_TYPE))); // Return Some to prevent fallback
+            }
+        };
+
+        // Check visibility access for the property
+        if !self.check_visibility_access(property.visibility, object_ctx.data_type.type_id) {
+            self.report_access_violation(
+                property.visibility,
+                property_name,
+                &self.type_name(&object_ctx.data_type),
+                span,
+            );
+            return Some(ExprContext::rvalue(DataType::simple(VOID_TYPE))); // Return Some to prevent fallback
+        }
+
+        // Get setter function to validate value type
+        let setter_func = self.registry.get_function(setter_id);
+
+        // Setter should have exactly one parameter (the value)
+        if setter_func.params.len() != 1 {
+            self.error(
+                SemanticErrorKind::InvalidOperation,
+                span,
+                format!(
+                    "property setter 'set_{}' must have exactly 1 parameter, found {}",
+                    property_name,
+                    setter_func.params.len()
+                ),
+            );
+            return Some(ExprContext::rvalue(DataType::simple(VOID_TYPE)));
+        }
+
+        let value_param_type = &setter_func.params[0];
+
+        // Type check the value expression
+        let value_ctx = self.check_expr(value)?;
+
+        // Cannot assign a void expression
+        if value_ctx.data_type.type_id == VOID_TYPE {
+            self.error(
+                SemanticErrorKind::VoidExpression,
+                value.span(),
+                "cannot use void expression as property value",
+            );
+            return Some(ExprContext::rvalue(DataType::simple(VOID_TYPE)));
+        }
+
+        // Check type conversion for value
+        if let Some(conversion) = value_ctx.data_type.can_convert_to(value_param_type, self.registry) {
+            if !conversion.is_implicit {
+                self.error(
+                    SemanticErrorKind::TypeMismatch,
+                    span,
+                    format!(
+                        "cannot implicitly convert '{}' to '{}' for property '{}' setter",
+                        self.type_name(&value_ctx.data_type),
+                        self.type_name(value_param_type),
+                        property_name
+                    ),
+                );
+                return Some(ExprContext::rvalue(DataType::simple(VOID_TYPE)));
+            }
+            self.emit_conversion(&conversion);
+        } else {
+            self.error(
+                SemanticErrorKind::TypeMismatch,
+                span,
+                format!(
+                    "property '{}' setter expects type '{}', found '{}'",
+                    property_name,
+                    self.type_name(value_param_type),
+                    self.type_name(&value_ctx.data_type)
+                ),
+            );
+            return Some(ExprContext::rvalue(DataType::simple(VOID_TYPE)));
+        }
+
+        // Call setter method: object.set_prop(value)
+        self.bytecode.emit(Instruction::CallMethod(setter_id.as_u32()));
+
+        // Property assignment returns the assigned value as rvalue
+        Some(ExprContext::rvalue(value_ctx.data_type))
+    }
+
     /// Type checks a member access expression.
     /// Field access (obj.field) is an lvalue if obj is an lvalue.
     /// Method calls (obj.method()) always return rvalues.
@@ -3831,6 +3957,59 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
                 // Look up the field in the class (including inherited fields)
                 match typedef {
                     TypeDef::Class { .. } => {
+                        // First check for property accessor (get_X pattern)
+                        // Property accessors take precedence over direct field access
+                        if let Some(property) = self.registry.find_property(object_ctx.data_type.type_id, field_name.name) {
+                            if let Some(getter_id) = property.getter {
+                                // Check visibility access for the property
+                                if !self.check_visibility_access(property.visibility, object_ctx.data_type.type_id) {
+                                    self.report_access_violation(
+                                        property.visibility,
+                                        field_name.name,
+                                        &self.type_name(&object_ctx.data_type),
+                                        member.span,
+                                    );
+                                    return None;
+                                }
+
+                                // Check const-correctness: if object is const, getter must be const
+                                let is_const_object = object_ctx.data_type.is_const || object_ctx.data_type.is_handle_to_const;
+                                let getter_func = self.registry.get_function(getter_id);
+                                if is_const_object && !getter_func.traits.is_const {
+                                    self.error(
+                                        SemanticErrorKind::InvalidOperation,
+                                        member.span,
+                                        format!(
+                                            "cannot call non-const property getter '{}' on const object of type '{}'",
+                                            field_name.name,
+                                            self.type_name(&object_ctx.data_type)
+                                        ),
+                                    );
+                                    return None;
+                                }
+
+                                // Emit method call to getter
+                                self.bytecode.emit(Instruction::CallMethod(getter_id.as_u32()));
+
+                                // Property getter returns rvalue (can't assign to it directly)
+                                // This is a property accessor, not a reference
+                                return Some(ExprContext::rvalue(getter_func.return_type.clone()));
+                            } else {
+                                // Property exists but is write-only (no getter)
+                                self.error(
+                                    SemanticErrorKind::InvalidOperation,
+                                    member.span,
+                                    format!(
+                                        "property '{}' on type '{}' is write-only",
+                                        field_name.name,
+                                        self.type_name(&object_ctx.data_type)
+                                    ),
+                                );
+                                return None;
+                            }
+                        }
+
+                        // No property accessor found, try field lookup
                         // Find the field by name, checking class hierarchy
                         if let Some((field_index, field_def, defining_class_id)) =
                             self.find_field_in_hierarchy(object_ctx.data_type.type_id, field_name.name)
@@ -14624,9 +14803,8 @@ mod tests {
 
     // ==================== Property Accessor Tests ====================
 
-    // TODO: Property accessors (get_X/set_X) not being recognized as property access
+    // Property accessor using explicit method syntax with 'property' keyword
     #[test]
-    #[ignore]
     fn property_getter_only() {
         use crate::parse_lenient;
         use crate::semantic::Compiler;
@@ -14637,7 +14815,7 @@ mod tests {
             class Counter {
                 private int _count = 0;
 
-                int get_count() { return _count; }
+                int get_count() const property { return _count; }
             }
 
             void test() {
@@ -14652,9 +14830,8 @@ mod tests {
         assert!(result.is_success(), "Property getter should work: {:?}", result.errors);
     }
 
-    // TODO: Property accessors (get_X/set_X) not being recognized as property access
+    // Property accessor using explicit method syntax with 'property' keyword
     #[test]
-    #[ignore]
     fn property_getter_and_setter() {
         use crate::parse_lenient;
         use crate::semantic::Compiler;
@@ -14665,8 +14842,8 @@ mod tests {
             class Counter {
                 private int _count = 0;
 
-                int get_count() { return _count; }
-                void set_count(int value) { _count = value; }
+                int get_count() const property { return _count; }
+                void set_count(int value) property { _count = value; }
             }
 
             void test() {
@@ -14680,6 +14857,66 @@ mod tests {
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Property getter and setter should work: {:?}", result.errors);
+    }
+
+    // Property accessor using virtual property block syntax
+    #[test]
+    fn property_virtual_block_syntax() {
+        use crate::parse_lenient;
+        use crate::semantic::Compiler;
+        use bumpalo::Bump;
+
+        let arena = Bump::new();
+        let source = r#"
+            class Counter {
+                private int _count = 0;
+
+                int count {
+                    get const { return _count; }
+                    set { _count = value; }
+                }
+            }
+
+            void test() {
+                Counter c;
+                c.count = 10;
+                int x = c.count;
+            }
+        "#;
+
+        let (script, _) = parse_lenient(source, &arena);
+        let result = Compiler::compile(&script);
+
+        assert!(result.is_success(), "Virtual property block syntax should work: {:?}", result.errors);
+    }
+
+    // Property accessor - read-only virtual property
+    #[test]
+    fn property_read_only_virtual() {
+        use crate::parse_lenient;
+        use crate::semantic::Compiler;
+        use bumpalo::Bump;
+
+        let arena = Bump::new();
+        let source = r#"
+            class Counter {
+                private int _count = 0;
+
+                int count {
+                    get const { return _count; }
+                }
+            }
+
+            void test() {
+                Counter c;
+                int x = c.count;
+            }
+        "#;
+
+        let (script, _) = parse_lenient(source, &arena);
+        let result = Compiler::compile(&script);
+
+        assert!(result.is_success(), "Read-only virtual property should work: {:?}", result.errors);
     }
 
     // ==================== More Integer Type Conversions ====================

@@ -188,16 +188,26 @@ Analysis found 31 ignored tests in `function_processor.rs`. These are now separa
 
 ---
 
-### Task 62: Fix Property Accessor Issues
+### Task 62: Fix Property Accessor Issues - COMPLETE
 
-**Issue:** `get_X`/`set_X` pattern not recognized as property access.
+**Issue:** Property accessors not recognized during member access.
+
+**Note:** Tests were originally using invalid syntax (`int get_count()` without `property` keyword). AngelScript requires one of two valid forms:
+1. Block syntax: `int prop { get const { ... } set { ... } }`
+2. Explicit with `property` keyword: `int get_prop() const property { ... }`
 
 | Test | Line | Status |
 |------|------|--------|
-| `property_accessor_basic` | 13579 | `obj.prop` -> `get_prop()` |
-| `property_accessor_set` | 13621 | `obj.prop = x` -> `set_prop(x)` |
+| `property_getter_only` | 14808 | Fixed - `obj.count` calls `get_count()` |
+| `property_getter_and_setter` | 14835 | Fixed - both get/set work |
+| `property_virtual_block_syntax` | 14864 | Fixed - block syntax works |
+| `property_read_only_virtual` | 14895 | Fixed - read-only property access |
 
-**Action:** Implement property accessor detection in member access.
+**Fixes Applied:**
+1. Fixed test cases to use valid property syntax (`property` keyword or block syntax)
+2. Added property getter lookup in `check_member()` before field access
+3. Added `check_member_property_assignment()` helper for setter calls
+4. Modified `check_assign()` to check for property setters on member access
 
 ---
 
@@ -234,7 +244,7 @@ Analysis found 31 ignored tests in `function_processor.rs`. These are now separa
 6. **Task 59** - &out validation (DONE)
 7. **Task 60** - Init list issues (DONE)
 8. **Task 61** - Lambda issues (DONE)
-9. **Task 62** - Property accessors
+9. **Task 62** - Property accessors (DONE)
 10. **Task 63** - Auto type inference
 11. **Task 64** - Ternary with handles
 
@@ -243,8 +253,8 @@ Analysis found 31 ignored tests in `function_processor.rs`. These are now separa
 ## Test Status
 
 ```
-1634 tests passing
-11 tests ignored (exposing real bugs - tracked in Tasks 62-64 above)
+1638 tests passing
+9 tests ignored (exposing real bugs - tracked in Tasks 63-64 above)
 ```
 
 ---
@@ -257,5 +267,5 @@ Analysis found 31 ignored tests in `function_processor.rs`. These are now separa
 
 ---
 
-**Current Work:** Task 61 Complete
-**Next Work:** Task 62 - Fix Property Accessor Issues
+**Current Work:** Task 62 Complete
+**Next Work:** Task 63 - Implement Auto Type Inference
