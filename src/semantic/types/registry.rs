@@ -331,10 +331,31 @@ impl<'src, 'ast> Registry<'src, 'ast> {
         self.functions.insert(substr1_func_id, substr1_func_def);
         method_ids.push(substr1_func_id);
 
-        // 3. Register findFirst(const string &in, uint start = 0): int
+        // 3a. Register findFirst(const string &in): int - searches from start
         let find_first_func_id = FunctionId::next();
         let find_first_func_def = FunctionDef {
             id: find_first_func_id,
+            name: "findFirst".to_string(),
+            namespace: Vec::new(),
+            params: vec![string_param.clone()],
+            return_type: DataType::simple(self.int32_type),
+            object_type: Some(type_id),
+            traits: FunctionTraits {
+                is_const: true,
+                ..default_traits
+            },
+            is_native: true,
+            default_args: Vec::new(),
+            visibility: Visibility::Public,
+            signature_filled: true,
+        };
+        self.functions.insert(find_first_func_id, find_first_func_def);
+        method_ids.push(find_first_func_id);
+
+        // 3b. Register findFirst(const string &in, uint start): int - searches from position
+        let find_first2_func_id = FunctionId::next();
+        let find_first2_func_def = FunctionDef {
+            id: find_first2_func_id,
             name: "findFirst".to_string(),
             namespace: Vec::new(),
             params: vec![string_param.clone(), DataType::simple(self.uint32_type)],
@@ -349,8 +370,8 @@ impl<'src, 'ast> Registry<'src, 'ast> {
             visibility: Visibility::Public,
             signature_filled: true,
         };
-        self.functions.insert(find_first_func_id, find_first_func_def);
-        method_ids.push(find_first_func_id);
+        self.functions.insert(find_first2_func_id, find_first2_func_def);
+        method_ids.push(find_first2_func_id);
 
         // 4. Register findLast(const string &in, int start = -1): int
         let find_last_func_id = FunctionId::next();
@@ -699,7 +720,28 @@ impl<'src, 'ast> Registry<'src, 'ast> {
 
         let mut method_ids = Vec::new();
 
-        // 1. Register $array_init constructor
+        // 1. Register default constructor (no args)
+        let default_ctor_id = FunctionId::next();
+        let default_ctor_def = FunctionDef {
+            id: default_ctor_id,
+            name: "$array_default".to_string(),
+            namespace: Vec::new(),
+            params: vec![],
+            return_type: DataType::simple(self.void_type),
+            object_type: Some(array_type_id),
+            traits: FunctionTraits {
+                is_constructor: true,
+                ..default_traits
+            },
+            is_native: true,
+            default_args: Vec::new(),
+            visibility: Visibility::Public,
+            signature_filled: true,
+        };
+        self.functions.insert(default_ctor_id, default_ctor_def);
+        method_ids.push(default_ctor_id);
+
+        // 2. Register $array_init constructor (with count)
         let init_func_id = FunctionId::next();
         let init_func_def = FunctionDef {
             id: init_func_id,
@@ -1738,24 +1780,22 @@ impl<'src, 'ast> Registry<'src, 'ast> {
     ///
     /// Returns a map of all accessible properties. Derived class properties shadow base class
     /// properties with the same name.
-    pub fn get_all_properties(&self, type_id: TypeId) -> std::collections::HashMap<String, PropertyAccessors> {
+    pub fn get_all_properties(&self, type_id: TypeId) -> FxHashMap<String, PropertyAccessors> {
         let mut visited = rustc_hash::FxHashSet::default();
         self.get_all_properties_impl(type_id, &mut visited)
     }
 
-    fn get_all_properties_impl(&self, type_id: TypeId, visited: &mut rustc_hash::FxHashSet<TypeId>) -> std::collections::HashMap<String, PropertyAccessors> {
-        use std::collections::HashMap;
-
+    fn get_all_properties_impl(&self, type_id: TypeId, visited: &mut rustc_hash::FxHashSet<TypeId>) -> FxHashMap<String, PropertyAccessors> {
         // Cycle protection
         if self.has_visited_in_chain(type_id, visited) {
-            return HashMap::new();
+            return FxHashMap::default();
         }
 
         let typedef = self.get_type(type_id);
 
         match typedef {
             TypeDef::Class { properties, base_class, .. } => {
-                let mut all_properties = HashMap::new();
+                let mut all_properties = FxHashMap::default();
 
                 // First, add base class properties (if any)
                 // Base properties are added first so derived properties can override them
@@ -1769,7 +1809,7 @@ impl<'src, 'ast> Registry<'src, 'ast> {
 
                 all_properties
             }
-            _ => HashMap::new(),
+            _ => FxHashMap::default(),
         }
     }
 

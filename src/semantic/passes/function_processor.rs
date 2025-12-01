@@ -24,7 +24,7 @@ use crate::semantic::{
     NULL_TYPE, VOID_TYPE,
 };
 use crate::semantic::types::type_def::FunctionId;
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 
 /// Expression context - tracks type and lvalue/mutability information.
 ///
@@ -197,6 +197,7 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
     /// Compiles a function body.
     ///
     /// This is a convenience method for compiling a complete function with parameters.
+    #[cfg_attr(feature = "profiling", profiling::function)]
     pub fn compile_block(
         registry: &'ast Registry<'src, 'ast>,
         return_type: DataType,
@@ -804,6 +805,7 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
     }
 
     /// Visits a block of statements.
+    #[cfg_attr(feature = "profiling", profiling::function)]
     fn visit_block(&mut self, block: &'ast Block<'src, 'ast>) {
         self.local_scope.enter_scope();
 
@@ -815,6 +817,7 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
     }
 
     /// Visits a statement.
+    #[cfg_attr(feature = "profiling", profiling::function)]
     fn visit_stmt(&mut self, stmt: &'ast Stmt<'src, 'ast>) {
         match stmt {
             Stmt::Expr(expr_stmt) => self.visit_expr_stmt(expr_stmt),
@@ -1614,7 +1617,7 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
         self.bytecode.emit(Instruction::StoreLocal(switch_offset));
 
         // Track case values to detect duplicates
-        let mut case_values: std::collections::HashSet<i64> = std::collections::HashSet::new();
+        let mut case_values: FxHashSet<i64> = FxHashSet::default();
         let mut default_case_index: Option<usize> = None;
 
         // First pass: find default case and check for duplicate case values
@@ -1767,6 +1770,7 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
     /// Type checks an expression and returns its type.
     ///
     /// Returns None if type checking failed (error already recorded).
+    #[cfg_attr(feature = "profiling", profiling::function)]
     fn check_expr(&mut self, expr: &'ast Expr<'src, 'ast>) -> Option<ExprContext> {
         match expr {
             Expr::Literal(lit) => self.check_literal(lit),
@@ -2999,6 +3003,7 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
 
     /// Type checks a function call.
     /// Function calls produce rvalues (unless they return a reference, which we don't handle yet).
+    #[cfg_attr(feature = "profiling", profiling::function)]
     fn check_call(&mut self, call: &CallExpr<'src, 'ast>) -> Option<ExprContext> {
         // Determine what we're calling FIRST (before type-checking arguments)
         // This allows us to provide expected funcdef context for lambda inference
@@ -3065,7 +3070,10 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
                         let arg_ctx = self.check_expr(arg.value)?;
                         arg_contexts.push(arg_ctx);
                     }
-                    let arg_types: Vec<DataType> = arg_contexts.iter().map(|ctx| ctx.data_type.clone()).collect();
+                    let mut arg_types = Vec::with_capacity(arg_contexts.len());
+                    for ctx in &arg_contexts {
+                        arg_types.push(ctx.data_type.clone());
+                    }
 
                     // Find matching base constructor
                     let base_constructors = self.registry.find_constructors(base_id);
@@ -3122,7 +3130,10 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
                                         let arg_ctx = self.check_expr(arg.value)?;
                                         arg_contexts.push(arg_ctx);
                                     }
-                                    let arg_types: Vec<DataType> = arg_contexts.iter().map(|ctx| ctx.data_type.clone()).collect();
+                                    let mut arg_types = Vec::with_capacity(arg_contexts.len());
+                                    for ctx in &arg_contexts {
+                                        arg_types.push(ctx.data_type.clone());
+                                    }
 
                                     // Find best matching overload
                                     let (method_id, conversions) = self.find_best_function_overload(
@@ -3463,7 +3474,10 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
                 }
 
                 // Extract types for overload resolution
-                let arg_types: Vec<DataType> = arg_contexts.iter().map(|ctx| ctx.data_type.clone()).collect();
+                let mut arg_types = Vec::with_capacity(arg_contexts.len());
+                for ctx in &arg_contexts {
+                    arg_types.push(ctx.data_type.clone());
+                }
 
                 // Find best matching overload
                 let (matching_func, conversions) = self.find_best_function_overload(
@@ -3634,7 +3648,10 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
         span: Span,
     ) -> Option<ExprContext> {
         // Extract types for overload resolution
-        let arg_types: Vec<DataType> = arg_contexts.iter().map(|ctx| ctx.data_type.clone()).collect();
+        let mut arg_types = Vec::with_capacity(arg_contexts.len());
+        for ctx in arg_contexts {
+            arg_types.push(ctx.data_type.clone());
+        }
 
         // Get all constructors for this type
         let constructors = self.registry.find_constructors(type_id);
@@ -4455,7 +4472,10 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
                         }
 
                         // Extract types for overload resolution
-                        let arg_types: Vec<DataType> = arg_contexts.iter().map(|ctx| ctx.data_type.clone()).collect();
+                        let mut arg_types = Vec::with_capacity(arg_contexts.len());
+                        for ctx in &arg_contexts {
+                            arg_types.push(ctx.data_type.clone());
+                        }
 
                         // Find best matching overload from const-filtered candidates
                         let (matching_method, conversions) = self.find_best_function_overload(
@@ -4500,7 +4520,10 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
                         }
 
                         // Extract types for signature matching
-                        let arg_types: Vec<DataType> = arg_contexts.iter().map(|ctx| ctx.data_type.clone()).collect();
+                        let mut arg_types = Vec::with_capacity(arg_contexts.len());
+                        for ctx in &arg_contexts {
+                            arg_types.push(ctx.data_type.clone());
+                        }
 
                         // Find the method signature on the interface
                         let matching_methods: Vec<(usize, &MethodSignature)> = methods.iter()
@@ -5645,6 +5668,7 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
     /// Finds the best matching function overload for the given arguments.
     ///
     /// Returns the FunctionId of the best match, or None if no match found.
+    #[cfg_attr(feature = "profiling", profiling::function)]
     fn find_best_function_overload(
         &mut self,
         candidates: &[FunctionId],

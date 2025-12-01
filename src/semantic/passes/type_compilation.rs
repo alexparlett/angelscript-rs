@@ -57,7 +57,7 @@ use crate::ast::types::{ParamType, PrimitiveType, TypeBase, TypeExpr, TypeSuffix
 use crate::ast::RefKind;
 use crate::ast::Script;
 use crate::lexer::Span;
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 
 /// Output from Pass 2a: Type Compilation
 #[derive(Debug)]
@@ -105,6 +105,7 @@ impl<'src, 'ast> TypeCompiler<'src, 'ast> {
     }
 
     /// Perform Pass 2a type compilation on a script
+    #[cfg_attr(feature = "profiling", profiling::function)]
     pub fn compile(
         script: &Script<'src, 'ast>,
         registry: Registry<'src, 'ast>,
@@ -144,16 +145,18 @@ impl<'src, 'ast> TypeCompiler<'src, 'ast> {
     }
 
     /// Visit a function declaration and fill in its signature
+    #[cfg_attr(feature = "profiling", profiling::function)]
     fn visit_function(&mut self, func: &FunctionDecl<'src, 'ast>, object_type: Option<TypeId>) {
         let qualified_name = self.build_qualified_name(func.name.name);
 
         // Resolve parameter types
         // Note: void parameters can't occur from parsing (syntax doesn't allow `void param_name`)
-        let params: Vec<DataType> = func
-            .params
-            .iter()
-            .filter_map(|p| self.resolve_param_type(&p.ty))
-            .collect();
+        let mut params = Vec::with_capacity(func.params.len());
+        for p in func.params.iter() {
+            if let Some(dt) = self.resolve_param_type(&p.ty) {
+                params.push(dt);
+            }
+        }
 
         // Check if we got all params (if any failed to resolve, we already logged errors)
         if params.len() != func.params.len() {
@@ -195,11 +198,10 @@ impl<'src, 'ast> TypeCompiler<'src, 'ast> {
         };
 
         // Capture default arguments from AST
-        let default_args: Vec<Option<&'ast Expr<'src, 'ast>>> = func
-            .params
-            .iter()
-            .map(|p| p.default)
-            .collect();
+        let mut default_args = Vec::with_capacity(func.params.len());
+        for p in func.params.iter() {
+            default_args.push(p.default);
+        }
 
         // Update the function signature in the registry
         self.registry.update_function_signature(&qualified_name, params, return_type, object_type, traits, default_args);
@@ -213,6 +215,7 @@ impl<'src, 'ast> TypeCompiler<'src, 'ast> {
     }
 
     /// Visit a class declaration and fill in its details
+    #[cfg_attr(feature = "profiling", profiling::function)]
     fn visit_class(&mut self, class: &ClassDecl<'src, 'ast>) {
         let qualified_name = self.build_qualified_name(class.name.name);
 
@@ -307,27 +310,15 @@ impl<'src, 'ast> TypeCompiler<'src, 'ast> {
 
         // Collect the names of methods and fields defined in this class
         // These take precedence over mixin members
-        let class_method_names: std::collections::HashSet<&str> = class.members
-            .iter()
-            .filter_map(|m| {
-                if let ClassMember::Method(method) = m {
-                    Some(method.name.name)
-                } else {
-                    None
-                }
-            })
-            .collect();
-
-        let class_field_names: std::collections::HashSet<&str> = class.members
-            .iter()
-            .filter_map(|m| {
-                if let ClassMember::Field(field) = m {
-                    Some(field.name.name)
-                } else {
-                    None
-                }
-            })
-            .collect();
+        let mut class_method_names: FxHashSet<&str> = FxHashSet::default();
+        let mut class_field_names: FxHashSet<&str> = FxHashSet::default();
+        for member in class.members.iter() {
+            match member {
+                ClassMember::Method(method) => { class_method_names.insert(method.name.name); }
+                ClassMember::Field(field) => { class_field_names.insert(field.name.name); }
+                _ => {}
+            }
+        }
 
         // Resolve field types from class definition
         let mut fields = Vec::new();
@@ -359,13 +350,15 @@ impl<'src, 'ast> TypeCompiler<'src, 'ast> {
 
         // Add fields from mixins that don't conflict with class fields or inherited fields
         // Mixin fields are NOT added if already inherited from base class
-        let inherited_field_names: std::collections::HashSet<String> = if let Some(base_id) = base_class {
-            self.registry.get_class_fields(base_id)
-                .iter()
-                .map(|f| f.name.clone())
-                .collect()
+        let inherited_field_names: FxHashSet<String> = if let Some(base_id) = base_class {
+            let base_fields = self.registry.get_class_fields(base_id);
+            let mut set = FxHashSet::default();
+            for f in base_fields.iter() {
+                set.insert(f.name.clone());
+            }
+            set
         } else {
-            std::collections::HashSet::new()
+            FxHashSet::default()
         };
 
         for mixin_name in &mixins {
@@ -922,6 +915,7 @@ impl<'src, 'ast> TypeCompiler<'src, 'ast> {
     /// - Instantiates templates recursively
     /// - Applies type modifiers (const, @)
     /// - Stores the result in type_map for later reference
+    #[cfg_attr(feature = "profiling", profiling::function)]
     fn resolve_type_expr(&mut self, expr: &TypeExpr<'src, 'ast>) -> Option<DataType> {
         // Step 1: Resolve the base type name
         let base_type_id = self.resolve_base_type(&expr.base, expr.scope.as_ref(), expr.span)?;
