@@ -8858,7 +8858,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore] // TODO: Lambda with captures should work
     fn lambda_with_captures() {
         use crate::parse_lenient;
         use crate::semantic::Compiler;
@@ -10326,7 +10325,6 @@ mod tests {
     // ==================== Lambda With Context Tests ====================
 
     #[test]
-    #[ignore] // TODO: Lambda as function argument should work
     fn lambda_in_function_call() {
         use crate::parse_lenient;
         use crate::semantic::Compiler;

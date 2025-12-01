@@ -175,16 +175,16 @@ Analysis found 31 ignored tests in `function_processor.rs`. These are now separa
 
 ---
 
-### Task 61: Fix Lambda Issues
+### Task 61: Fix Lambda Issues - COMPLETE
 
 **Issue:** Lambda captures and lambda as function arguments not working.
 
 | Test | Line | Status |
 |------|------|--------|
-| `lambda_with_captures` | 9532 | Capture outer variables |
-| `lambda_in_function_call` | 9609 | Lambda as function argument |
+| `lambda_with_captures` | 8861 | Fixed - Captures work |
+| `lambda_in_function_call` | 10328 | Fixed - Lambda as argument works |
 
-**Action:** Fix capture analysis and lambda-to-funcdef conversion.
+**Resolution:** These tests were already passing due to fixes from earlier tasks (likely Task 60's template instantiation fixes which also handled funcdef type resolution). Removed `#[ignore]` attributes.
 
 ---
 
@@ -233,7 +233,7 @@ Analysis found 31 ignored tests in `function_processor.rs`. These are now separa
 5. **Task 58** - is/!is operators (DONE)
 6. **Task 59** - &out validation (DONE)
 7. **Task 60** - Init list issues (DONE)
-8. **Task 61** - Lambda issues
+8. **Task 61** - Lambda issues (DONE)
 9. **Task 62** - Property accessors
 10. **Task 63** - Auto type inference
 11. **Task 64** - Ternary with handles
@@ -243,8 +243,8 @@ Analysis found 31 ignored tests in `function_processor.rs`. These are now separa
 ## Test Status
 
 ```
-1625 tests passing
-13 tests ignored (exposing real bugs - tracked in Tasks 61-64 above)
+1634 tests passing
+11 tests ignored (exposing real bugs - tracked in Tasks 62-64 above)
 ```
 
 ---
@@ -257,5 +257,5 @@ Analysis found 31 ignored tests in `function_processor.rs`. These are now separa
 
 ---
 
-**Current Work:** Task 60 Complete
-**Next Work:** Task 61 - Fix Lambda Issues (captures and function arguments)
+**Current Work:** Task 61 Complete
+**Next Work:** Task 62 - Fix Property Accessor Issues
