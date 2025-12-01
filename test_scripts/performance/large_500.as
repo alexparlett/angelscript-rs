@@ -8,6 +8,13 @@
 // - Expression parsing
 // - Templates and handles
 
+// FFI placeholders - will be replaced with proper FFI bindings
+float sqrt(float x) { return x; }
+float sin(float x) { return x; }
+float cos(float x) { return x; }
+float random() { return 0.5; }
+void print(const string &in msg) {}
+
 // ============================================================================
 // Core Data Types
 // ============================================================================
@@ -157,6 +164,10 @@ abstract class Entity : IUpdatable, IRenderable {
         return visible;
     }
 
+    bool isActive() const {
+        return active;
+    }
+
     EntityType getType() const {
         return type;
     }
@@ -186,6 +197,7 @@ class Character : Entity, IDamageable {
     protected int maxHealth;
     protected float speed;
     protected int armor;
+    protected int level;
     protected array<DamageType> resistances;
 
     Character(const string&in _name, int _maxHealth) {
@@ -194,6 +206,7 @@ class Character : Entity, IDamageable {
         health = maxHealth;
         speed = 5.0;
         armor = 0;
+        level = 1;
     }
 
     void takeDamage(int amount, DamageType type) {
@@ -516,7 +529,7 @@ class GameManager {
         for (uint i = 0; i < projectiles.length(); i++) {
             projectiles[i].update(deltaTime);
 
-            if (!projectiles[i].active) {
+            if (!projectiles[i].isActive()) {
                 projectiles.removeAt(i);
                 i--;
             }

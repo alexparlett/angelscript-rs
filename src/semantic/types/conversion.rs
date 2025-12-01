@@ -67,6 +67,10 @@ pub enum ConversionKind {
     ImplicitCastMethod {
         method_id: FunctionId,
     },
+
+    /// Value type to handle conversion (T → T@)
+    /// This occurs when initializing a handle with a value, e.g., Node@ n = Node(args)
+    ValueToHandle,
 }
 
 /// Represents a valid type conversion.
@@ -255,6 +259,21 @@ impl DataType {
             if matches!(source_typedef, TypeDef::Funcdef { .. }) {
                 // Same funcdef type with different handle flags - identity conversion
                 return Some(Conversion::identity());
+            }
+        }
+
+        // Value type to handle of same type (e.g., Node -> Node@)
+        // In AngelScript, when you have `Node@ n = Node(args)`, the value is implicitly
+        // converted to a handle reference. This is a common pattern for handle initialization.
+        if !self.is_handle && target.is_handle && self.type_id == target.type_id {
+            // Check if target is a class/object type (not primitive)
+            let typedef = registry.get_type(self.type_id);
+            if matches!(typedef, TypeDef::Class { .. } | TypeDef::Interface { .. } | TypeDef::TemplateInstance { .. }) {
+                return Some(Conversion {
+                    kind: ConversionKind::ValueToHandle,
+                    cost: 1,
+                    is_implicit: true,
+                });
             }
         }
 

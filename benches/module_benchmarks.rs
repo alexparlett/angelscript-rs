@@ -5,15 +5,156 @@
 //! - Feature-specific: Functions, classes, expressions, etc.
 //! - Real-world: Game logic, utilities, data structures
 //!
-//! When run with the `profile-with-puffin` feature, phase timings (parsing vs compilation)
-//! are also collected and can be analyzed separately.
+//! ## Profiling with Puffin
+//!
+//! Run with the `profile-with-puffin` feature to collect detailed phase timings:
+//!
+//! ```bash
+//! cargo bench --features profile-with-puffin -- --profile-time 5
+//! ```
+//!
+//! After running, check the generated puffin report for parsing vs compilation breakdown.
+//!
+//! ## Quick Phase Timing Test
+//!
+//! For a quick breakdown of parsing vs compilation time on the stress test:
+//!
+//! ```bash
+//! cargo bench --features profile-with-puffin -- "stress_5000" --test
+//! ```
 
 use angelscript::ScriptModule;
 use criterion::{criterion_group, criterion_main, Criterion, Throughput};
 use std::hint::black_box;
 
+#[cfg(feature = "profile-with-puffin")]
+use std::collections::HashMap;
+
+#[cfg(feature = "profile-with-puffin")]
+static FRAME_VIEW: std::sync::OnceLock<puffin::GlobalFrameView> = std::sync::OnceLock::new();
+
+/// Initialize puffin profiler.
+#[cfg(feature = "profile-with-puffin")]
+fn setup_profiler() {
+    puffin::set_scopes_on(true);
+    // Create the global frame view which registers itself as a sink
+    FRAME_VIEW.get_or_init(puffin::GlobalFrameView::default);
+}
+
+#[cfg(not(feature = "profile-with-puffin"))]
+fn setup_profiler() {}
+
+/// Call at the end of each benchmark iteration to flush profiling data.
+#[cfg(feature = "profile-with-puffin")]
+fn end_profiling_frame() {
+    puffin::GlobalProfiler::lock().new_frame();
+}
+
+#[cfg(not(feature = "profile-with-puffin"))]
+fn end_profiling_frame() {}
+
+/// Recursively collect all scopes (including nested ones)
+#[cfg(feature = "profile-with-puffin")]
+fn collect_scopes_recursive(
+    stream: &puffin::Stream,
+    scope: &puffin::Scope,
+    scope_collection: &puffin::ScopeCollection,
+    scope_timings: &mut HashMap<String, i64>,
+) {
+    use puffin::Reader;
+
+    // Record this scope's timing
+    if let Some(details) = scope_collection.fetch_by_id(&scope.id) {
+        let name = details.name().to_string();
+        *scope_timings.entry(name).or_insert(0) += scope.record.duration_ns;
+    }
+
+    // Read children if any
+    if scope.child_begin_position < scope.child_end_position {
+        if let Ok(reader) = Reader::with_offset(stream, scope.child_begin_position) {
+            if let Ok(children) = reader.read_top_scopes() {
+                for child in children {
+                    collect_scopes_recursive(stream, &child, scope_collection, scope_timings);
+                }
+            }
+        }
+    }
+}
+
+/// Print accumulated profiling statistics for all scopes.
+#[cfg(feature = "profile-with-puffin")]
+fn print_profiling_stats() {
+    use puffin::Reader;
+
+    let Some(frame_view) = FRAME_VIEW.get() else {
+        println!("Profiler not initialized");
+        return;
+    };
+
+    let view = frame_view.lock();
+    let scope_collection = view.scope_collection();
+
+    // Accumulate timings across all frames
+    let mut scope_timings: HashMap<String, i64> = HashMap::new();
+    let mut frame_count = 0i64;
+
+    for frame in view.recent_frames() {
+        frame_count += 1;
+        let Ok(unpacked) = frame.unpacked() else { continue };
+        for (_thread_info, stream_info) in unpacked.thread_streams.iter() {
+            let reader = Reader::from_start(&stream_info.stream);
+            if let Ok(scopes) = reader.read_top_scopes() {
+                for scope in scopes {
+                    collect_scopes_recursive(
+                        &stream_info.stream,
+                        &scope,
+                        scope_collection,
+                        &mut scope_timings,
+                    );
+                }
+            }
+        }
+    }
+
+    println!("\n=== Profiling Summary ({} frames) ===", frame_count);
+
+    if scope_timings.is_empty() {
+        println!("  No scopes recorded.");
+        println!("  Make sure profiling::scope! calls exist in module.rs");
+    } else {
+        // Sort by total time descending
+        let mut entries: Vec<_> = scope_timings.iter().collect();
+        entries.sort_by(|a, b| b.1.cmp(a.1));
+
+        let total_ns: i64 = entries.iter().map(|(_, ns)| **ns).sum();
+
+        for (name, ns) in &entries {
+            let ns = **ns;
+            let avg_ns = if frame_count > 0 { ns / frame_count } else { ns };
+            let pct = if total_ns > 0 { ns as f64 / total_ns as f64 * 100.0 } else { 0.0 };
+            println!(
+                "  {:30} {:>10.2?} avg ({:>5.1}%)",
+                name,
+                std::time::Duration::from_nanos(avg_ns as u64),
+                pct
+            );
+        }
+
+        if frame_count > 0 {
+            let avg_total = total_ns / frame_count;
+            println!("  {:30} {:>10.2?}", "TOTAL", std::time::Duration::from_nanos(avg_total as u64));
+        }
+    }
+    println!("=====================================\n");
+}
+
+#[cfg(not(feature = "profile-with-puffin"))]
+fn print_profiling_stats() {}
+
 /// Benchmark build performance across different file sizes.
 fn size_based_benchmarks(c: &mut Criterion) {
+    setup_profiler();
+
     let mut group = c.benchmark_group("module/file_sizes");
 
     // Tiny: 5 lines - baseline build overhead
@@ -58,7 +199,9 @@ fn size_based_benchmarks(c: &mut Criterion) {
     group.bench_function("large_266_lines", |b| {
         b.iter(|| {
             let mut module = ScriptModule::new();
-            module.add_source("test.as", black_box(data_structures)).unwrap();
+            module
+                .add_source("test.as", black_box(data_structures))
+                .unwrap();
             module.build().unwrap();
             black_box(module.function_count())
         });
@@ -82,7 +225,9 @@ fn size_based_benchmarks(c: &mut Criterion) {
     group.bench_function("xxlarge_1000_lines", |b| {
         b.iter(|| {
             let mut module = ScriptModule::new();
-            module.add_source("test.as", black_box(xlarge_1000)).unwrap();
+            module
+                .add_source("test.as", black_box(xlarge_1000))
+                .unwrap();
             module.build().unwrap();
             black_box(module.function_count())
         });
@@ -94,13 +239,19 @@ fn size_based_benchmarks(c: &mut Criterion) {
     group.bench_function("stress_5000_lines", |b| {
         b.iter(|| {
             let mut module = ScriptModule::new();
-            module.add_source("test.as", black_box(xxlarge_5000)).unwrap();
+            module
+                .add_source("test.as", black_box(xxlarge_5000))
+                .unwrap();
             module.build().unwrap();
+            end_profiling_frame();
             black_box(module.function_count())
         });
     });
 
     group.finish();
+
+    // Print profiling summary
+    print_profiling_stats();
 }
 
 /// Benchmark build performance for specific language features.
@@ -112,7 +263,9 @@ fn feature_specific_benchmarks(c: &mut Criterion) {
     group.bench_function("many_functions", |b| {
         b.iter(|| {
             let mut module = ScriptModule::new();
-            module.add_source("test.as", black_box(many_functions)).unwrap();
+            module
+                .add_source("test.as", black_box(many_functions))
+                .unwrap();
             module.build().unwrap();
             black_box(module.function_count())
         });
@@ -123,7 +276,9 @@ fn feature_specific_benchmarks(c: &mut Criterion) {
     group.bench_function("large_function", |b| {
         b.iter(|| {
             let mut module = ScriptModule::new();
-            module.add_source("test.as", black_box(large_function)).unwrap();
+            module
+                .add_source("test.as", black_box(large_function))
+                .unwrap();
             module.build().unwrap();
             black_box(module.function_count())
         });
@@ -134,7 +289,9 @@ fn feature_specific_benchmarks(c: &mut Criterion) {
     group.bench_function("classes", |b| {
         b.iter(|| {
             let mut module = ScriptModule::new();
-            module.add_source("test.as", black_box(class_basic)).unwrap();
+            module
+                .add_source("test.as", black_box(class_basic))
+                .unwrap();
             module.build().unwrap();
             black_box(module.function_count())
         });
@@ -145,7 +302,9 @@ fn feature_specific_benchmarks(c: &mut Criterion) {
     group.bench_function("inheritance", |b| {
         b.iter(|| {
             let mut module = ScriptModule::new();
-            module.add_source("test.as", black_box(inheritance)).unwrap();
+            module
+                .add_source("test.as", black_box(inheritance))
+                .unwrap();
             module.build().unwrap();
             black_box(module.function_count())
         });
@@ -178,7 +337,9 @@ fn feature_specific_benchmarks(c: &mut Criterion) {
     group.bench_function("expressions", |b| {
         b.iter(|| {
             let mut module = ScriptModule::new();
-            module.add_source("test.as", black_box(expressions)).unwrap();
+            module
+                .add_source("test.as", black_box(expressions))
+                .unwrap();
             module.build().unwrap();
             black_box(module.function_count())
         });
@@ -189,7 +350,9 @@ fn feature_specific_benchmarks(c: &mut Criterion) {
     group.bench_function("control_flow", |b| {
         b.iter(|| {
             let mut module = ScriptModule::new();
-            module.add_source("test.as", black_box(control_flow)).unwrap();
+            module
+                .add_source("test.as", black_box(control_flow))
+                .unwrap();
             module.build().unwrap();
             black_box(module.function_count())
         });
@@ -265,7 +428,9 @@ fn real_world_benchmarks(c: &mut Criterion) {
     group.bench_function("data_structures", |b| {
         b.iter(|| {
             let mut module = ScriptModule::new();
-            module.add_source("test.as", black_box(data_structures)).unwrap();
+            module
+                .add_source("test.as", black_box(data_structures))
+                .unwrap();
             module.build().unwrap();
             black_box(module.function_count())
         });
@@ -283,7 +448,9 @@ fn complexity_benchmarks(c: &mut Criterion) {
     group.bench_function("wide_many_items", |b| {
         b.iter(|| {
             let mut module = ScriptModule::new();
-            module.add_source("test.as", black_box(many_functions)).unwrap();
+            module
+                .add_source("test.as", black_box(many_functions))
+                .unwrap();
             module.build().unwrap();
             black_box(module.function_count())
         });
@@ -305,7 +472,9 @@ fn complexity_benchmarks(c: &mut Criterion) {
     group.bench_function("complex_logic", |b| {
         b.iter(|| {
             let mut module = ScriptModule::new();
-            module.add_source("test.as", black_box(large_function)).unwrap();
+            module
+                .add_source("test.as", black_box(large_function))
+                .unwrap();
             module.build().unwrap();
             black_box(module.function_count())
         });

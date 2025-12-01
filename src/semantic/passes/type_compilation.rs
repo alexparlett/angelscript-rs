@@ -1129,29 +1129,58 @@ impl<'src, 'ast> TypeCompiler<'src, 'ast> {
         }
     }
 
-    /// Build a scoped name from a Scope and identifier
+    /// Build a scoped name from a Scope and identifier (no intermediate Vec allocation)
     fn build_scoped_name(&self, scope: &crate::ast::Scope<'src, 'ast>, name: &str) -> String {
-        let scope_parts: Vec<&str> = scope.segments.iter().map(|ident| ident.name).collect();
-        format!("{}::{}", scope_parts.join("::"), name)
+        // Calculate capacity: sum of segment lengths + "::" separators + final name
+        let capacity = scope.segments.iter().map(|s| s.name.len() + 2).sum::<usize>() + name.len();
+        let mut result = String::with_capacity(capacity);
+        for (i, segment) in scope.segments.iter().enumerate() {
+            if i > 0 {
+                result.push_str("::");
+            }
+            result.push_str(segment.name);
+        }
+        result.push_str("::");
+        result.push_str(name);
+        result
     }
 
-    /// Build a qualified name from the current namespace path
+    /// Build a qualified name from the current namespace path (no intermediate Vec allocation)
     fn build_qualified_name(&self, name: &str) -> String {
         if self.namespace_path.is_empty() {
             name.to_string()
         } else {
-            format!("{}::{}", self.namespace_path.join("::"), name)
+            // Calculate capacity
+            let capacity = self.namespace_path.iter().map(|s| s.len() + 2).sum::<usize>() + name.len();
+            let mut result = String::with_capacity(capacity);
+            for (i, part) in self.namespace_path.iter().enumerate() {
+                if i > 0 {
+                    result.push_str("::");
+                }
+                result.push_str(part);
+            }
+            result.push_str("::");
+            result.push_str(name);
+            result
         }
     }
 
-    /// Build the full name from an IdentExpr used in inheritance.
+    /// Build the full name from an IdentExpr used in inheritance (no intermediate Vec allocation)
     /// Handles both simple names (Base) and scoped names (Namespace::Interface).
     fn build_inherited_name(&self, ident_expr: &crate::ast::expr::IdentExpr) -> String {
         if let Some(scope) = &ident_expr.scope {
-            // Has explicit scope - use it directly
-            let mut parts: Vec<&str> = scope.segments.iter().map(|s| s.name).collect();
-            parts.push(ident_expr.ident.name);
-            parts.join("::")
+            // Has explicit scope - build directly without intermediate Vec
+            let capacity = scope.segments.iter().map(|s| s.name.len() + 2).sum::<usize>() + ident_expr.ident.name.len();
+            let mut result = String::with_capacity(capacity);
+            for (i, segment) in scope.segments.iter().enumerate() {
+                if i > 0 {
+                    result.push_str("::");
+                }
+                result.push_str(segment.name);
+            }
+            result.push_str("::");
+            result.push_str(ident_expr.ident.name);
+            result
         } else {
             // No scope - apply current namespace
             self.build_qualified_name(ident_expr.ident.name)

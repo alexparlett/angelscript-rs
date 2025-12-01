@@ -109,14 +109,14 @@ namespace Array {
         }
     }
     
-    bool contains(const array<int> &in arr, const T &in value) {
+    bool contains(const array<int> &in arr, const int &in value) {
         for (uint i = 0; i < arr.length(); i++) {
             if (arr[i] == value) return true;
         }
         return false;
     }
     
-    int indexOf(const array<int> &in arr, const T &in value) {
+    int indexOf(const array<int> &in arr, const int &in value) {
         for (uint i = 0; i < arr.length(); i++) {
             if (arr[i] == value) return int(i);
         }
@@ -125,10 +125,10 @@ namespace Array {
 
     funcdef bool Predicate(int value);
     
-    array<int> filter(const array<int> &in arr, Predicate pred) {
-        array<T> result;
+    array<int> filter(const array<int> &in arr, Predicate@ pred) {
+        array<int> result;
         for (uint i = 0; i < arr.length(); i++) {
-            if (Predicate(arr[i])) {
+            if (pred(arr[i])) {
                 result.insertLast(arr[i]);
             }
         }

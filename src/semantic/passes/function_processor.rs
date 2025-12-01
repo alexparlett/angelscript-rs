@@ -804,6 +804,43 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
             .push(SemanticError::new(kind, span, message));
     }
 
+    /// Build a scoped name from a Scope (without intermediate Vec allocation)
+    fn build_scope_name(scope: &crate::ast::Scope<'src, 'ast>) -> String {
+        if scope.segments.is_empty() {
+            return String::new();
+        }
+        // Calculate capacity: sum of segment lengths + "::" separators
+        let capacity = scope.segments.iter().map(|s| s.name.len()).sum::<usize>()
+            + (scope.segments.len() - 1) * 2;
+        let mut result = String::with_capacity(capacity);
+        for (i, segment) in scope.segments.iter().enumerate() {
+            if i > 0 {
+                result.push_str("::");
+            }
+            result.push_str(segment.name);
+        }
+        result
+    }
+
+    /// Build a qualified name from namespace path (without intermediate Vec allocation)
+    fn build_qualified_name_from_path(namespace_path: &[String], name: &str) -> String {
+        if namespace_path.is_empty() {
+            return name.to_string();
+        }
+        let capacity = namespace_path.iter().map(|s| s.len()).sum::<usize>()
+            + namespace_path.len() * 2 + name.len();
+        let mut result = String::with_capacity(capacity);
+        for (i, part) in namespace_path.iter().enumerate() {
+            if i > 0 {
+                result.push_str("::");
+            }
+            result.push_str(part);
+        }
+        result.push_str("::");
+        result.push_str(name);
+        result
+    }
+
     /// Visits a block of statements.
     #[cfg_attr(feature = "profiling", profiling::function)]
     fn visit_block(&mut self, block: &'ast Block<'src, 'ast>) {
@@ -1832,15 +1869,14 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
 
         // Check if this is a scoped identifier (e.g., EnumName::VALUE or Namespace::EnumName::VALUE)
         if let Some(scope) = ident.scope {
-            // Build the qualified type name from scope segments
-            let scope_parts: Vec<&str> = scope.segments.iter().map(|id| id.name).collect();
-            let type_name = scope_parts.join("::");
+            // Build the qualified type name from scope segments (no intermediate Vec)
+            let type_name = Self::build_scope_name(&scope);
 
             // Try to look up as an enum type - first with the given name, then with namespace prefix
             let type_id = self.registry.lookup_type(&type_name).or_else(|| {
                 // If not found and we're in a namespace, try with namespace prefix
                 if !self.namespace_path.is_empty() {
-                    let qualified_type_name = format!("{}::{}", self.namespace_path.join("::"), type_name);
+                    let qualified_type_name = Self::build_qualified_name_from_path(&self.namespace_path, &type_name);
                     self.registry.lookup_type(&qualified_type_name)
                 } else {
                     None
@@ -2401,13 +2437,17 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
                 // Check if this identifier is a function name (not a variable)
                 let name = ident.ident.name;
 
-                // Build qualified name if scoped
+                // Build qualified name if scoped (no intermediate Vec)
                 let qualified_name = if let Some(scope) = ident.scope {
-                    let scope_parts: Vec<&str> = scope.segments.iter().map(|id| id.name).collect();
-                    format!("{}::{}", scope_parts.join("::"), name)
+                    let scope_name = Self::build_scope_name(&scope);
+                    let mut result = String::with_capacity(scope_name.len() + 2 + name.len());
+                    result.push_str(&scope_name);
+                    result.push_str("::");
+                    result.push_str(name);
+                    result
                 } else if !self.namespace_path.is_empty() {
                     // Try with current namespace first
-                    format!("{}::{}", self.namespace_path.join("::"), name)
+                    Self::build_qualified_name_from_path(&self.namespace_path, name)
                 } else {
                     name.to_string()
                 };
@@ -3009,14 +3049,18 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
         // This allows us to provide expected funcdef context for lambda inference
         match call.callee {
             Expr::Ident(ident_expr) => {
-                // Build qualified name (handling scope if present)
+                // Build qualified name (handling scope if present) - no intermediate Vec
                 let (name, is_absolute_scope) = if let Some(scope) = ident_expr.scope {
-                    let scope_parts: Vec<&str> = scope.segments.iter().map(|id| id.name).collect();
-                    let name = if scope_parts.is_empty() {
+                    let name = if scope.segments.is_empty() {
                         // Absolute scope with no prefix (e.g., ::globalFunction)
                         ident_expr.ident.name.to_string()
                     } else {
-                        format!("{}::{}", scope_parts.join("::"), ident_expr.ident.name)
+                        let scope_name = Self::build_scope_name(&scope);
+                        let mut result = String::with_capacity(scope_name.len() + 2 + ident_expr.ident.name.len());
+                        result.push_str(&scope_name);
+                        result.push_str("::");
+                        result.push_str(ident_expr.ident.name);
+                        result
                     };
                     (name, scope.is_absolute)
                 } else {
@@ -5370,10 +5414,14 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
         }
     }
 
-    /// Build a scoped name from a Scope and a name
+    /// Build a scoped name from a Scope and a name (no intermediate Vec allocation)
     fn build_scoped_name(&self, scope: &crate::ast::Scope<'src, 'ast>, name: &str) -> String {
-        let scope_parts: Vec<&str> = scope.segments.iter().map(|ident| ident.name).collect();
-        format!("{}::{}", scope_parts.join("::"), name)
+        let scope_name = Self::build_scope_name(&scope);
+        let mut result = String::with_capacity(scope_name.len() + 2 + name.len());
+        result.push_str(&scope_name);
+        result.push_str("::");
+        result.push_str(name);
+        result
     }
 
     /// Checks if a value can be assigned to a target type.

@@ -226,9 +226,6 @@ impl ScriptModule {
 
         // Parse all sources
         let (scripts, all_parse_errors) = {
-            #[cfg(feature = "profiling")]
-            profiling::scope!("parsing");
-
             let mut all_parse_errors = Vec::new();
             let mut scripts = Vec::new();
 
@@ -258,9 +255,6 @@ impl ScriptModule {
 
         // Compile the script(s)
         let compilation_result = {
-            #[cfg(feature = "profiling")]
-            profiling::scope!("compilation");
-
             if scripts.len() == 1 {
                 // Single file - use existing Compiler
                 Compiler::compile(&scripts[0].1)

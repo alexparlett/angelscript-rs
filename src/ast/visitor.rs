@@ -922,6 +922,7 @@ mod tests {
         let expr = Expr::Ident(IdentExpr {
             scope: None,
             ident: Ident::new("myVar", Span::new(1, 0 + 1, 5 - 0)),
+            type_args: &[],
             span: Span::new(1, 0 + 1, 5 - 0),
         });
 
@@ -942,6 +943,7 @@ mod tests {
             left: arena.alloc(Expr::Ident(IdentExpr {
                 scope: None,
                 ident: Ident::new("x", Span::new(1, 0 + 1, 1 - 0)),
+                type_args: &[],
                 span: Span::new(1, 0 + 1, 1 - 0),
             })),
             op: BinaryOp::Add,

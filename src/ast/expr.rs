@@ -118,6 +118,8 @@ pub struct IdentExpr<'src, 'ast> {
     pub scope: Option<Scope<'src, 'ast>>,
     /// The identifier
     pub ident: Ident<'src>,
+    /// Type arguments for generic types/functions (e.g., `array<int>`, `Map<K,V>`)
+    pub type_args: &'ast [crate::ast::types::TypeExpr<'src, 'ast>],
     /// Source location
     pub span: Span,
 }
@@ -366,6 +368,7 @@ mod tests {
         let ident = Expr::Ident(IdentExpr {
             scope: None,
             ident: Ident::new("x", Span::new(1, 1, 1)),
+            type_args: &[],
             span: Span::new(1, 1, 1),
         });
         assert_eq!(ident.span(), Span::new(1, 1, 1));
@@ -403,6 +406,7 @@ mod tests {
         let target = arena.alloc(Expr::Ident(IdentExpr {
             scope: None,
             ident: Ident::new("x", Span::new(1, 1, 1)),
+            type_args: &[],
             span: Span::new(1, 1, 1),
         }));
         let value = arena.alloc(Expr::Literal(LiteralExpr {
@@ -442,6 +446,7 @@ mod tests {
         let callee = arena.alloc(Expr::Ident(IdentExpr {
             scope: None,
             ident: Ident::new("foo", Span::new(1, 1, 3)),
+            type_args: &[],
             span: Span::new(1, 1, 3),
         }));
         let call = Expr::Call(arena.alloc(CallExpr {
@@ -455,6 +460,7 @@ mod tests {
         let object = arena.alloc(Expr::Ident(IdentExpr {
             scope: None,
             ident: Ident::new("arr", Span::new(1, 1, 3)),
+            type_args: &[],
             span: Span::new(1, 1, 3),
         }));
         let index = Expr::Index(arena.alloc(IndexExpr {
@@ -468,6 +474,7 @@ mod tests {
         let object = arena.alloc(Expr::Ident(IdentExpr {
             scope: None,
             ident: Ident::new("obj", Span::new(1, 1, 3)),
+            type_args: &[],
             span: Span::new(1, 1, 3),
         }));
         let member = Expr::Member(arena.alloc(MemberExpr {
@@ -481,6 +488,7 @@ mod tests {
         let operand = arena.alloc(Expr::Ident(IdentExpr {
             scope: None,
             ident: Ident::new("i", Span::new(1, 1, 1)),
+            type_args: &[],
             span: Span::new(1, 1, 1),
         }));
         let postfix = Expr::Postfix(arena.alloc(PostfixExpr {

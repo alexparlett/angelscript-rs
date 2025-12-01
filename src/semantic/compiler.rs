@@ -87,6 +87,7 @@ impl Compiler {
     /// 3. Pass 2b: Function Compilation - Compile all function bodies to bytecode
     ///
     /// Returns a `CompilationResult` containing all compiled artifacts and any errors.
+    #[cfg_attr(feature = "profiling", profiling::function)]
     pub fn compile<'src, 'ast>(script: &'ast Script<'src, 'ast>) -> CompilationResult<'src, 'ast> {
         // Pass 1: Registration
         let registration = Registrar::register(script);

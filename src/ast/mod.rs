@@ -122,6 +122,7 @@ impl<'src, 'ast> Script<'src, 'ast> {
 ///     }
 /// }
 /// ```
+#[cfg_attr(feature = "profiling", profiling::function)]
 pub fn parse<'src, 'ast>(
     source: &'src str,
     arena: &'ast bumpalo::Bump,
@@ -200,6 +201,7 @@ pub fn parse<'src, 'ast>(
 ///     eprintln!("Warning: {}", error);
 /// }
 /// ```
+#[cfg_attr(feature = "profiling", profiling::function)]
 pub fn parse_lenient<'src, 'ast>(
     source: &'src str,
     arena: &'ast bumpalo::Bump,

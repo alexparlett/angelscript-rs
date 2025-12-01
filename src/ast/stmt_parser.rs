@@ -188,6 +188,7 @@ impl<'src, 'ast> Parser<'src, 'ast> {
         let callee = self.arena.alloc(Expr::Ident(IdentExpr {
             scope,
             ident,
+            type_args: ty.template_args,
             span: ty.span,
         }));
 

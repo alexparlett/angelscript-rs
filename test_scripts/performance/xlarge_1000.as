@@ -7,6 +7,13 @@
 // - State machines
 // - More interfaces and abstract classes
 
+// FFI placeholders - will be replaced with proper FFI bindings
+float sqrt(float x) { return x; }
+float sin(float x) { return x; }
+float cos(float x) { return x; }
+float random() { return 0.5; }
+void print(const string &in msg) {}
+
 // ============================================================================
 // Core Types and Enums
 // ============================================================================
@@ -410,6 +417,10 @@ abstract class Character : Entity, IDamageable {
 
     int getMaxHealth() const {
         return maxHealth;
+    }
+
+    int getMaxMana() const {
+        return maxMana;
     }
 
     bool isAlive() const {
@@ -1070,6 +1081,6 @@ class GameWorld {
     private void nextWave() {
         wave++;
         spawnEnemyWave();
-        player.restoreMana(player.maxMana);
+        player.restoreMana(player.getMaxMana());
     }
 }

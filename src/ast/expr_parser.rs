@@ -275,6 +275,7 @@ impl<'src, 'ast> Parser<'src, 'ast> {
                 Ok(self.arena.alloc(Expr::Ident(IdentExpr {
                     scope: None,
                     ident,
+                    type_args: &[],
                     span: token.span,
                 })))
             }
@@ -286,6 +287,7 @@ impl<'src, 'ast> Parser<'src, 'ast> {
                 Ok(self.arena.alloc(Expr::Ident(IdentExpr {
                     scope: None,
                     ident,
+                    type_args: &[],
                     span: token.span,
                 })))
             }
@@ -659,6 +661,7 @@ impl<'src, 'ast> Parser<'src, 'ast> {
                     let callee = self.arena.alloc(Expr::Ident(IdentExpr {
                         scope,
                         ident,
+                        type_args: ty.template_args,
                         span: ty.span,
                     }));
 
@@ -730,6 +733,7 @@ impl<'src, 'ast> Parser<'src, 'ast> {
             Ok(self.arena.alloc(Expr::Ident(IdentExpr {
                 scope,
                 ident,
+                type_args: &[],
                 span: start_span.merge(span),
             })))
         }

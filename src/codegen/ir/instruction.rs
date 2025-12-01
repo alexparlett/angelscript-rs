@@ -138,6 +138,9 @@ pub enum Instruction {
     /// Store a handle value (pops value and target address, stores reference)
     /// Used for @handle = value; syntax
     StoreHandle,
+    /// Convert a value type to a handle (e.g., Node -> Node@)
+    /// Used when initializing handles with value type expressions
+    ValueToHandle,
 
     // Type operations
     /// Cast to a type (pops 1, pushes 1)
