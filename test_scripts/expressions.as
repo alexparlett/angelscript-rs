@@ -65,9 +65,9 @@ class ComplexCalculator {
     }
     
     bool test(int value) {
-        return (value > 0 && value < 100) || 
+        return (value > 0 && value < 100) ||
                (value % 2 == 0 && value % 3 == 0) ||
-               (value & 0xFF == 0xFF);
+               ((value & 0xFF) == 0xFF);
     }
 }
 

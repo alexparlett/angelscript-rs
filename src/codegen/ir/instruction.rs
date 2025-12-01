@@ -119,6 +119,9 @@ pub enum Instruction {
     /// Call a method (pops object + args, pushes return value)
     /// The number of args is determined by looking up the method definition
     CallMethod(u32), // FunctionId
+    /// Call an interface method (pops object + args, pushes return value)
+    /// First u32 is the interface TypeId, second u32 is the method index in the interface
+    CallInterfaceMethod(u32, u32), // (InterfaceTypeId, MethodIndex)
     /// Return from function (pops return value if any)
     Return,
     /// Return void (no value)
@@ -132,6 +135,9 @@ pub enum Instruction {
     LoadField(u32), // Field index
     /// Store a value into an object field (pops value and object)
     StoreField(u32), // Field index
+    /// Store a handle value (pops value and target address, stores reference)
+    /// Used for @handle = value; syntax
+    StoreHandle,
 
     // Type operations
     /// Cast to a type (pops 1, pushes 1)

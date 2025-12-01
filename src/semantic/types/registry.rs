@@ -139,8 +139,9 @@ pub struct Registry<'src, 'ast> {
     // Mixin storage (mixins are not types, stored separately)
     mixins: FxHashMap<String, MixinDef<'src, 'ast>>,
 
-    // Template instantiation cache (Template TypeId + args → Instance TypeId)
-    template_cache: FxHashMap<(TypeId, Vec<DataType>), TypeId>,
+    // Template instantiation cache (Template TypeId + arg TypeIds → Instance TypeId)
+    // Note: Uses TypeId not DataType so array<int> and array<const int> share the same instance
+    template_cache: FxHashMap<(TypeId, Vec<TypeId>), TypeId>,
 
     // Fixed TypeIds for quick access
     pub void_type: TypeId,
@@ -636,8 +637,9 @@ impl<'src, 'ast> Registry<'src, 'ast> {
             ));
         }
 
-        // Check cache
-        let cache_key = (template_id, args.clone());
+        // Check cache - use only TypeIds for cache key so const qualifiers don't cause misses
+        let cache_key_type_ids: Vec<TypeId> = args.iter().map(|dt| dt.type_id).collect();
+        let cache_key = (template_id, cache_key_type_ids);
         if let Some(&cached_id) = self.template_cache.get(&cache_key) {
             return Ok(cached_id);
         }
@@ -660,7 +662,9 @@ impl<'src, 'ast> Registry<'src, 'ast> {
         };
 
         let instance_id = self.register_type(instance, Some(&instance_name));
-        self.template_cache.insert(cache_key, instance_id);
+        // Use the same cache key type as when checking
+        let insert_cache_key: Vec<TypeId> = args.iter().map(|dt| dt.type_id).collect();
+        self.template_cache.insert((template_id, insert_cache_key), instance_id);
 
         // For array templates, register placeholder methods
         // This will be implemented via FFI - the compiler just needs a FunctionId to emit

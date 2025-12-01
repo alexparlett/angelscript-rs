@@ -18,9 +18,10 @@ use crate::semantic::types::registry::FunctionDef;
 use crate::codegen::{BytecodeEmitter, CompiledBytecode, CompiledModule, Instruction};
 use crate::lexer::Span;
 use crate::semantic::{
-    eval_const_int, DataType, FieldDef, LocalScope, OperatorBehavior, Registry,
+    eval_const_int, Conversion, DataType, FieldDef, LocalScope, MethodSignature, OperatorBehavior, Registry,
     SemanticError, SemanticErrorKind, TypeDef, TypeId, Visibility, BOOL_TYPE, DOUBLE_TYPE, FLOAT_TYPE,
-    INT32_TYPE, INT64_TYPE, NULL_TYPE, VOID_TYPE,
+    INT8_TYPE, INT16_TYPE, INT32_TYPE, INT64_TYPE, UINT8_TYPE, UINT16_TYPE, UINT32_TYPE, UINT64_TYPE,
+    NULL_TYPE, VOID_TYPE,
 };
 use crate::semantic::types::type_def::FunctionId;
 use rustc_hash::FxHashMap;
@@ -1027,11 +1028,24 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
     /// Visits a return statement.
     fn visit_return(&mut self, ret: &ReturnStmt<'src, 'ast>) {
         if let Some(value) = ret.value {
+            // Set expected funcdef type if return type is a funcdef
+            // This allows lambda inference in return statements
+            // Note: funcdef types are always handles, so we just check the type
+            let type_def = self.registry.get_type(self.return_type.type_id);
+            if matches!(type_def, TypeDef::Funcdef { .. }) {
+                self.expected_funcdef_type = Some(self.return_type.type_id);
+            }
+
             // Check return value type
             let value_ctx = match self.check_expr(value) {
                 Some(ctx) => ctx,
-                None => return, // Error already recorded
+                None => {
+                    self.expected_funcdef_type = None;
+                    return; // Error already recorded
+                }
             };
+
+            self.expected_funcdef_type = None;
 
             // Cannot return a void expression
             if value_ctx.data_type.type_id == VOID_TYPE {
@@ -2277,15 +2291,20 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
                 }
             }
 
-            // Bitwise operators: require integer types
+            // Bitwise operators: require integer types (bool is implicitly converted to int)
             BinaryOp::BitwiseAnd
             | BinaryOp::BitwiseOr
             | BinaryOp::BitwiseXor
             | BinaryOp::ShiftLeft
             | BinaryOp::ShiftRight
             | BinaryOp::ShiftRightUnsigned => {
-                if self.is_integer(left) && self.is_integer(right) {
-                    Some(self.promote_numeric(left, right))
+                if self.is_bitwise_compatible(left) && self.is_bitwise_compatible(right) {
+                    // If either operand is bool, result is int32; otherwise promote
+                    if left.type_id == BOOL_TYPE || right.type_id == BOOL_TYPE {
+                        Some(DataType::simple(INT32_TYPE))
+                    } else {
+                        Some(self.promote_numeric(left, right))
+                    }
                 } else {
                     self.error(
                         SemanticErrorKind::InvalidOperation,
@@ -2597,6 +2616,80 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
                             return Some(result);
                         }
                         // If returns None, property doesn't exist - fall through to regular assignment
+
+                // Special handling for handle assignment: @handle_var = value
+                // In AngelScript, @var on the LHS means "assign to the handle variable"
+                if let Expr::Unary(unary) = assign.target
+                    && unary.op == UnaryOp::HandleOf {
+                        // This is a handle assignment - get the underlying lvalue
+                        let operand_ctx = self.check_expr(unary.operand)?;
+
+                        // The underlying operand must be an lvalue and a handle type
+                        if !operand_ctx.is_lvalue {
+                            self.error(
+                                SemanticErrorKind::InvalidOperation,
+                                unary.operand.span(),
+                                "handle assignment target must be an lvalue",
+                            );
+                            return None;
+                        }
+
+                        if !operand_ctx.data_type.is_handle {
+                            self.error(
+                                SemanticErrorKind::InvalidOperation,
+                                unary.operand.span(),
+                                "handle assignment target must be a handle type",
+                            );
+                            return None;
+                        }
+
+                        if !operand_ctx.is_mutable {
+                            self.error(
+                                SemanticErrorKind::InvalidOperation,
+                                unary.operand.span(),
+                                "cannot assign to a const handle",
+                            );
+                            return None;
+                        }
+
+                        // Check if target is a funcdef handle (for function reference assignment)
+                        let is_funcdef_target = matches!(
+                            self.registry.get_type(operand_ctx.data_type.type_id),
+                            TypeDef::Funcdef { .. }
+                        );
+
+                        if is_funcdef_target {
+                            self.expected_funcdef_type = Some(operand_ctx.data_type.type_id);
+                        }
+
+                        let value_ctx = self.check_expr(assign.value)?;
+
+                        self.expected_funcdef_type = None;
+
+                        // Check type compatibility
+                        // For handle assignment, the value must be convertible to the handle type
+                        if let Some(conversion) = value_ctx.data_type.can_convert_to(&operand_ctx.data_type, self.registry) {
+                            self.emit_conversion(&conversion);
+                        } else if value_ctx.data_type.type_id != operand_ctx.data_type.type_id {
+                            self.error(
+                                SemanticErrorKind::TypeMismatch,
+                                assign.span,
+                                format!(
+                                    "cannot assign '{}' to handle of type '{}'",
+                                    self.type_name(&value_ctx.data_type),
+                                    self.type_name(&operand_ctx.data_type)
+                                ),
+                            );
+                            return None;
+                        }
+
+                        // Emit store instruction for the handle
+                        // The bytecode emitter should have already emitted code to load the target address
+                        // and the value - we just need to emit a store
+                        self.bytecode.emit(Instruction::StoreHandle);
+
+                        return Some(ExprContext::rvalue(operand_ctx.data_type.clone()));
+                    }
 
                 // Simple assignment: target = value
                 let target_ctx = self.check_expr(assign.target)?;
@@ -4152,16 +4245,6 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
                 }
             }
             MemberAccess::Method { name, args } => {
-                // Type check all arguments first, collecting contexts
-                let mut arg_contexts = Vec::with_capacity(args.len());
-                for arg in *args {
-                    let arg_ctx = self.check_expr(arg.value)?;
-                    arg_contexts.push(arg_ctx);
-                }
-
-                // Extract types for overload resolution
-                let arg_types: Vec<DataType> = arg_contexts.iter().map(|ctx| ctx.data_type.clone()).collect();
-
                 // Verify the object is a class type or template instance (e.g., array<T>)
                 match typedef {
                     TypeDef::Class { .. } | TypeDef::TemplateInstance { .. } => {
@@ -4210,6 +4293,38 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
                             return None;
                         }
 
+                        // Type check arguments with lambda inference support
+                        // When there's a single matching method, we can infer funcdef types for lambdas
+                        let mut arg_contexts = Vec::with_capacity(args.len());
+                        let expected_param_types = if const_filtered.len() == 1 {
+                            let func_def = self.registry.get_function(const_filtered[0]);
+                            Some(&func_def.params)
+                        } else {
+                            None
+                        };
+
+                        for (i, arg) in args.iter().enumerate() {
+                            // Set expected_funcdef_type if this parameter expects a funcdef
+                            if let Some(params) = expected_param_types
+                                && i < params.len() {
+                                    let param_type = &params[i];
+                                    if param_type.is_handle {
+                                        let type_def = self.registry.get_type(param_type.type_id);
+                                        if matches!(type_def, TypeDef::Funcdef { .. }) {
+                                            self.expected_funcdef_type = Some(param_type.type_id);
+                                        }
+                                    }
+                                }
+
+                            let arg_ctx = self.check_expr(arg.value)?;
+                            arg_contexts.push(arg_ctx);
+
+                            self.expected_funcdef_type = None;
+                        }
+
+                        // Extract types for overload resolution
+                        let arg_types: Vec<DataType> = arg_contexts.iter().map(|ctx| ctx.data_type.clone()).collect();
+
                         // Find best matching overload from const-filtered candidates
                         let (matching_method, conversions) = self.find_best_function_overload(
                             &const_filtered,
@@ -4243,6 +4358,94 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
 
                         // Method calls return rvalues
                         Some(ExprContext::rvalue(func_def.return_type.clone()))
+                    }
+                    TypeDef::Interface { methods, .. } => {
+                        // Type check arguments first
+                        let mut arg_contexts = Vec::with_capacity(args.len());
+                        for arg in *args {
+                            let arg_ctx = self.check_expr(arg.value)?;
+                            arg_contexts.push(arg_ctx);
+                        }
+
+                        // Extract types for signature matching
+                        let arg_types: Vec<DataType> = arg_contexts.iter().map(|ctx| ctx.data_type.clone()).collect();
+
+                        // Find the method signature on the interface
+                        let matching_methods: Vec<(usize, &MethodSignature)> = methods.iter()
+                            .enumerate()
+                            .filter(|(_, sig)| sig.name == name.name)
+                            .collect();
+
+                        if matching_methods.is_empty() {
+                            self.error(
+                                SemanticErrorKind::UndefinedMethod,
+                                member.span,
+                                format!(
+                                    "interface '{}' has no method '{}'",
+                                    self.type_name(&object_ctx.data_type),
+                                    name.name
+                                ),
+                            );
+                            return None;
+                        }
+
+                        // Find best matching signature based on argument types
+                        // For interfaces, we don't have FunctionIds, so we do simple signature matching
+                        let mut best_match: Option<(usize, &MethodSignature, Vec<Option<Conversion>>)> = None;
+
+                        for (method_index, sig) in &matching_methods {
+                            if sig.params.len() != arg_types.len() {
+                                continue;
+                            }
+
+                            // Check if all arguments are compatible
+                            let mut conversions = Vec::with_capacity(arg_types.len());
+                            let mut all_match = true;
+
+                            for (arg_type, param_type) in arg_types.iter().zip(sig.params.iter()) {
+                                if let Some(conv) = arg_type.can_convert_to(param_type, self.registry) {
+                                    conversions.push(Some(conv));
+                                } else {
+                                    all_match = false;
+                                    break;
+                                }
+                            }
+
+                            if all_match {
+                                best_match = Some((*method_index, *sig, conversions));
+                                break;
+                            }
+                        }
+
+                        let (method_index, sig, conversions) = match best_match {
+                            Some(m) => m,
+                            None => {
+                                self.error(
+                                    SemanticErrorKind::WrongArgumentCount,
+                                    member.span,
+                                    format!(
+                                        "no matching overload for method '{}' on interface '{}'",
+                                        name.name,
+                                        self.type_name(&object_ctx.data_type)
+                                    ),
+                                );
+                                return None;
+                            }
+                        };
+
+                        // Emit conversion instructions for arguments
+                        for conv in conversions.into_iter().flatten() {
+                            self.emit_conversion(&conv);
+                        }
+
+                        // Emit interface method call instruction
+                        self.bytecode.emit(Instruction::CallInterfaceMethod(
+                            object_ctx.data_type.type_id.as_u32(),
+                            method_index as u32,
+                        ));
+
+                        // Interface method calls return rvalues
+                        Some(ExprContext::rvalue(sig.return_type.clone()))
                     }
                     _ => {
                         self.error(
@@ -4897,11 +5100,21 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
 
     /// Checks if a type is an integer type (includes enums since they're int32 underneath).
     fn is_integer(&self, ty: &DataType) -> bool {
-        if matches!(ty.type_id, INT32_TYPE | INT64_TYPE) {
+        if matches!(
+            ty.type_id,
+            INT8_TYPE | INT16_TYPE | INT32_TYPE | INT64_TYPE |
+            UINT8_TYPE | UINT16_TYPE | UINT32_TYPE | UINT64_TYPE
+        ) {
             return true;
         }
         // Enum types are also integers (int32 values)
         self.registry.get_type(ty.type_id).is_enum()
+    }
+
+    /// Checks if a type can be used in bitwise operations (integers and bool).
+    /// Bool is implicitly converted to 0 or 1 for bitwise ops.
+    fn is_bitwise_compatible(&self, ty: &DataType) -> bool {
+        self.is_integer(ty) || ty.type_id == BOOL_TYPE
     }
 
     /// Checks if a type is compatible with switch statements (integer or enum).

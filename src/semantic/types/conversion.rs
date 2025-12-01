@@ -248,6 +248,16 @@ impl DataType {
             return Some(conv);
         }
 
+        // Funcdef types are semantically always handles, so we should allow
+        // conversions between handle and non-handle forms with the same type_id
+        if self.type_id == target.type_id {
+            let source_typedef = registry.get_type(self.type_id);
+            if matches!(source_typedef, TypeDef::Funcdef { .. }) {
+                // Same funcdef type with different handle flags - identity conversion
+                return Some(Conversion::identity());
+            }
+        }
+
         // Try handle conversions
         if let Some(conv) = self.handle_conversion(target, registry) {
             return Some(conv);
@@ -462,8 +472,11 @@ impl DataType {
             } else if removing_handle_const || removing_object_const {
                 // Removing const requires explicit cast
                 return Some(Conversion { kind: ConversionKind::HandleToConst, cost: 100, is_implicit: false });
+            } else {
+                // Same type_id handles with no const change - identity conversion
+                // This handles cases where DataType fields like ref_modifier differ but type is same
+                return Some(Conversion::identity());
             }
-            // else: no const change, types are identical (handled by exact match earlier)
         }
 
         // Rule 2: Derived@ → Base@ (implicit if not removing const, cost 3)
