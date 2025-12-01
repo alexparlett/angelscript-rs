@@ -721,6 +721,8 @@ pub enum TypeDef {
 
     /// Template instantiation (array<int>, etc.)
     TemplateInstance {
+        /// The instance name (e.g., "array<int>")
+        name: String,
         template: TypeId,
         sub_types: Vec<DataType>,
         /// Methods for this template instance (constructors, opIndex, etc.)
@@ -743,7 +745,7 @@ impl TypeDef {
             TypeDef::Enum { name, .. } => name,
             TypeDef::Funcdef { name, .. } => name,
             TypeDef::Template { name, .. } => name,
-            TypeDef::TemplateInstance { .. } => "<template instance>",
+            TypeDef::TemplateInstance { name, .. } => name,
         }
     }
 
@@ -756,7 +758,7 @@ impl TypeDef {
             TypeDef::Enum { qualified_name, .. } => qualified_name,
             TypeDef::Funcdef { qualified_name, .. } => qualified_name,
             TypeDef::Template { name, .. } => name,
-            TypeDef::TemplateInstance { .. } => "<template instance>",
+            TypeDef::TemplateInstance { name, .. } => name,
         }
     }
 
@@ -1106,6 +1108,7 @@ mod tests {
     #[test]
     fn typedef_template_instance() {
         let typedef = TypeDef::TemplateInstance {
+            name: "array<int>".to_string(),
             template: ARRAY_TEMPLATE,
             sub_types: vec![DataType::simple(INT32_TYPE)],
             methods: Vec::new(),
@@ -1544,14 +1547,15 @@ mod tests {
     #[test]
     fn typedef_template_instance_name() {
         let typedef = TypeDef::TemplateInstance {
+            name: "array<int>".to_string(),
             template: ARRAY_TEMPLATE,
             sub_types: vec![DataType::simple(INT32_TYPE)],
             methods: Vec::new(),
             operator_methods: FxHashMap::default(),
             properties: FxHashMap::default(),
         };
-        assert_eq!(typedef.name(), "<template instance>");
-        assert_eq!(typedef.qualified_name(), "<template instance>");
+        assert_eq!(typedef.name(), "array<int>");
+        assert_eq!(typedef.qualified_name(), "array<int>");
     }
 
     #[test]

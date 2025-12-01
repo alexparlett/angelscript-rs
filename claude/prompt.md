@@ -38,7 +38,7 @@
 - Task 59: Fix &out Parameter Lvalue Validation - COMPLETE
 - Tasks 60-64: Fix remaining ignored tests (see below)
 
-**Test Status:** 1622 tests passing, 16 ignored (exposing real bugs)
+**Test Status:** 1625 tests passing, 13 ignored (exposing real bugs)
 
 ---
 
@@ -147,17 +147,31 @@ Analysis found 31 ignored tests in `function_processor.rs`. These are now separa
 
 ---
 
-### Task 60: Fix Init List Issues
+### Task 60: Fix Init List Issues - COMPLETE
 
 **Issue:** Array initialization with `{1, 2, 3}` syntax not working.
 
 | Test | Line | Status |
 |------|------|--------|
-| `init_list_basic` | 8687 | `array<int> arr = {1, 2, 3}` |
-| `init_list_empty` | 8887 | `array<int> arr = {}` |
-| `init_list_multidimensional` | 9177 | Nested init lists |
+| `init_list_basic` | 8632 | Fixed - `array<int> arr = {1, 2, 3}` |
+| `init_list_empty` | 9931 | Fixed - `array<int> arr = {}` |
+| `init_list_multidimensional` | 9950 | Fixed - `array<array<int>> matrix = {{1, 2}, {3, 4}}` |
 
-**Action:** Fix `check_init_list()` to properly handle array initialization.
+**Root Causes & Fixes:**
+
+1. **Template types not instantiated in function bodies:** Pass 2a (`TypeCompiler`) wasn't scanning function bodies for type expressions. Added `scan_block()`, `scan_statement()`, and `scan_expression()` methods to walk function bodies and resolve all type expressions, triggering template instantiation before Pass 2b.
+
+2. **Template instance names not registered:** `instantiate_template()` created template instances but didn't register their names (e.g., "array<int>") in the type lookup table. Added name generation and registration.
+
+3. **Template instance types returning `"<template instance>"` as name:** Added a `name` field to `TypeDef::TemplateInstance` so they return proper names like `"array<int>"`.
+
+4. **Array template types not recognized as handles:** In AngelScript, `array<T>` is always a reference type. Added check in `resolve_type_expr()` to automatically set `is_handle = true` for array template instances.
+
+5. **Empty init lists couldn't infer type:** Added `expected_init_list_type` context propagation from variable declaration to `check_init_list()`, allowing empty init lists like `array<int> arr = {}` to work.
+
+6. **Nested template lookups failing:** Fixed `resolve_type_expr()` to recursively resolve template arguments to get canonical names (e.g., `array<array<int>>` instead of `array<array>`).
+
+7. **Template element type comparison failing:** Fixed array type lookups to compare only `type_id` rather than full `DataType` (which includes handle flags that differ between stored and runtime representations).
 
 ---
 
@@ -217,8 +231,8 @@ Analysis found 31 ignored tests in `function_processor.rs`. These are now separa
 3. **Task 56** - Function overload registration (DONE)
 4. **Task 57** - Operator overload issues (DONE)
 5. **Task 58** - is/!is operators (DONE)
-6. **Task 59** - &out validation
-7. **Task 60** - Init list issues
+6. **Task 59** - &out validation (DONE)
+7. **Task 60** - Init list issues (DONE)
 8. **Task 61** - Lambda issues
 9. **Task 62** - Property accessors
 10. **Task 63** - Auto type inference
@@ -229,8 +243,8 @@ Analysis found 31 ignored tests in `function_processor.rs`. These are now separa
 ## Test Status
 
 ```
-1622 tests passing
-16 tests ignored (exposing real bugs - tracked in Tasks 60-64 above)
+1625 tests passing
+13 tests ignored (exposing real bugs - tracked in Tasks 61-64 above)
 ```
 
 ---
@@ -243,5 +257,5 @@ Analysis found 31 ignored tests in `function_processor.rs`. These are now separa
 
 ---
 
-**Current Work:** Task 60 - Fix Init List Issues
-**Next Work:** Continue through priority list (Tasks 61-64)
+**Current Work:** Task 60 Complete
+**Next Work:** Task 61 - Fix Lambda Issues (captures and function arguments)

@@ -327,8 +327,8 @@ impl<'src, 'ast> Registry<'src, 'ast> {
     ) -> Result<TypeId, SemanticError> {
         // Check if this is actually a template
         let template_def = self.get_type(template_id);
-        let param_count = match template_def {
-            TypeDef::Template { param_count, .. } => *param_count,
+        let (template_name, param_count) = match template_def {
+            TypeDef::Template { name, param_count } => (name.clone(), *param_count),
             _ => {
                 return Err(SemanticError::new(
                     SemanticErrorKind::NotATemplate,
@@ -357,8 +357,16 @@ impl<'src, 'ast> Registry<'src, 'ast> {
             return Ok(cached_id);
         }
 
+        // Build instance name like "array<int32>" or "dict<string, int32>"
+        let arg_names: Vec<String> = args
+            .iter()
+            .map(|arg| self.get_type(arg.type_id).name().to_string())
+            .collect();
+        let instance_name = format!("{}<{}>", template_name, arg_names.join(", "));
+
         // Create new instance
         let instance = TypeDef::TemplateInstance {
+            name: instance_name.clone(),
             template: template_id,
             sub_types: args.clone(),
             methods: Vec::new(),
@@ -366,7 +374,7 @@ impl<'src, 'ast> Registry<'src, 'ast> {
             properties: FxHashMap::default(),
         };
 
-        let instance_id = self.register_type(instance, None);
+        let instance_id = self.register_type(instance, Some(&instance_name));
         self.template_cache.insert(cache_key, instance_id);
 
         // For array templates, register a placeholder initializer constructor

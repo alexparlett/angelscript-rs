@@ -123,6 +123,9 @@ pub struct FunctionCompiler<'src, 'ast> {
     /// Expected funcdef type for lambda type inference
     expected_funcdef_type: Option<TypeId>,
 
+    /// Expected init list element type (for empty init lists or context-based inference)
+    expected_init_list_type: Option<DataType>,
+
     /// Errors encountered during compilation
     errors: Vec<SemanticError>,
 
@@ -160,6 +163,7 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
             current_class: None,
             current_function: None,
             expected_funcdef_type: None,
+            expected_init_list_type: None,
             errors: Vec::new(),
             _phantom: std::marker::PhantomData,
         }
@@ -183,6 +187,7 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
             current_class: None,
             current_function: None,
             expected_funcdef_type: None,
+            expected_init_list_type: None,
             errors: Vec::new(),
             _phantom: std::marker::PhantomData,
         }
@@ -869,16 +874,26 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
                     self.expected_funcdef_type = Some(var_type.type_id);
                 }
 
+                // Set expected init list type for empty init lists
+                // If the target is an array<T>, the element type is T
+                if let TypeDef::TemplateInstance { template, sub_types, .. } = self.registry.get_type(var_type.type_id) {
+                    if *template == self.registry.array_template && !sub_types.is_empty() {
+                        self.expected_init_list_type = Some(sub_types[0].clone());
+                    }
+                }
+
                 let init_ctx = match self.check_expr(init) {
                     Some(ctx) => ctx,
                     None => {
                         self.expected_funcdef_type = None;
+                        self.expected_init_list_type = None;
                         continue; // Error already recorded
                     }
                 };
 
-                // Clear expected funcdef type
+                // Clear expected types
                 self.expected_funcdef_type = None;
+                self.expected_init_list_type = None;
 
                 // Check if initializer can be converted to variable type and emit conversion if needed
                 if let Some(conversion) = init_ctx.data_type.can_convert_to(&var_type, self.registry) {
@@ -4230,14 +4245,20 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
     fn check_init_list(&mut self, init_list: &InitListExpr<'src, 'ast>) -> Option<ExprContext> {
         use crate::ast::InitElement;
 
-        // Handle empty initializer list
+        // Handle empty initializer list - use expected type if available
         if init_list.elements.is_empty() {
-            self.error(
-                SemanticErrorKind::TypeMismatch,
-                init_list.span,
-                "cannot infer type from empty initializer list".to_string(),
-            );
-            return None;
+            if let Some(expected_element_type) = self.expected_init_list_type.clone() {
+                // We have an expected type from context (e.g., array<int> arr = {})
+                // Create an empty array of the expected element type
+                return self.create_empty_array(init_list.span, expected_element_type);
+            } else {
+                self.error(
+                    SemanticErrorKind::TypeMismatch,
+                    init_list.span,
+                    "cannot infer type from empty initializer list".to_string(),
+                );
+                return None;
+            }
         }
 
         // Type check all elements and collect their types
@@ -4337,6 +4358,8 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
 
         // Look up if array<common_type> already exists in the registry
         // Search through all types to find a matching TemplateInstance
+        // We compare only type_id because common_type may have handle=true (arrays are handles)
+        // but sub_types stores the element type without handle modifiers
         let mut array_type_id = None;
         for i in 0..self.registry.type_count() {
             let type_id = TypeId(i as u32);
@@ -4344,7 +4367,8 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
             if let TypeDef::TemplateInstance { template, sub_types, .. } = typedef {
                 if *template == self.registry.array_template
                     && sub_types.len() == 1
-                    && sub_types[0] == common_type {
+                    && sub_types[0].type_id == common_type.type_id
+                {
                     array_type_id = Some(type_id);
                     break;
                 }
@@ -4416,6 +4440,69 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
         }
     }
 
+    /// Creates an empty array of the given element type.
+    /// Used for empty init lists like `array<int> arr = {}`.
+    fn create_empty_array(&mut self, span: Span, element_type: DataType) -> Option<ExprContext> {
+        // Look up the array<element_type> in the registry
+        // We compare only type_id because element_type may have handle=true
+        // but sub_types stores the element type without handle modifiers
+        let mut array_type_id = None;
+        for i in 0..self.registry.type_count() {
+            let type_id = TypeId(i as u32);
+            let typedef = self.registry.get_type(type_id);
+            if let TypeDef::TemplateInstance { template, sub_types, .. } = typedef {
+                if *template == self.registry.array_template
+                    && sub_types.len() == 1
+                    && sub_types[0].type_id == element_type.type_id
+                {
+                    array_type_id = Some(type_id);
+                    break;
+                }
+            }
+        }
+
+        if let Some(array_id) = array_type_id {
+            // Find the array initializer constructor
+            let constructors = self.registry.find_constructors(array_id);
+            let init_ctor = constructors.iter().find(|&&ctor_id| {
+                let func = self.registry.get_function(ctor_id);
+                func.name == "$array_init"
+            });
+
+            if let Some(&ctor_id) = init_ctor {
+                // Push 0 as count (empty array)
+                self.bytecode.emit(Instruction::PushInt(0));
+                self.bytecode.emit(Instruction::CallConstructor {
+                    type_id: array_id.as_u32(),
+                    func_id: ctor_id.as_u32(),
+                });
+
+                // Return the array type as a handle
+                Some(ExprContext::rvalue(DataType::with_handle(array_id, false)))
+            } else {
+                self.error(
+                    SemanticErrorKind::InternalError,
+                    span,
+                    format!(
+                        "array<{}> initializer constructor not found",
+                        self.type_name(&element_type)
+                    ),
+                );
+                None
+            }
+        } else {
+            self.error(
+                SemanticErrorKind::InternalError,
+                span,
+                format!(
+                    "array<{}> type not found for empty initializer list",
+                    self.type_name(&element_type)
+                ),
+            );
+            None
+        }
+    }
+
     /// Type checks a parenthesized expression.
     /// Parentheses preserve the lvalue-ness of the inner expression.
     fn check_paren(&mut self, paren: &ParenExpr<'src, 'ast>) -> Option<ExprContext> {
@@ -4428,12 +4515,19 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
 
         // Handle template types (e.g., array<int>)
         let type_id = if !type_expr.template_args.is_empty() {
-            // Build template instance name like "array<int>"
-            let arg_names: Vec<String> = type_expr
-                .template_args
-                .iter()
-                .map(|arg| format!("{}", arg.base))
-                .collect();
+            // Build template instance name like "array<int>" or "array<array<int>>"
+            // For nested templates, we need to recursively resolve the inner type first
+            // to get its registered name (which uses canonical type names like "int" not "int32")
+            let mut arg_names: Vec<String> = Vec::new();
+            for arg in type_expr.template_args {
+                // Recursively resolve the template argument to get its canonical name
+                if let Some(resolved) = self.resolve_type_expr(arg) {
+                    let typedef = self.registry.get_type(resolved.type_id);
+                    arg_names.push(typedef.name().to_string());
+                } else {
+                    return None; // Error already reported
+                }
+            }
             let template_name = format!("{}<{}>", type_name, arg_names.join(", "));
 
             // Look up the instantiated template type
@@ -4464,9 +4558,23 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
         // Build DataType with modifiers
         let mut data_type = DataType::simple(type_id);
 
+        // Check if this is an array template instance - arrays are always reference types (handles)
+        let typedef = self.registry.get_type(type_id);
+        if let TypeDef::TemplateInstance { template, .. } = typedef {
+            if *template == self.registry.array_template {
+                // Arrays are reference types, so they're implicitly handles
+                data_type.is_handle = true;
+            }
+        }
+
         // Apply leading const
         if type_expr.is_const {
-            data_type.is_const = true;
+            if data_type.is_handle {
+                // For handle types, leading const means handle to const
+                data_type.is_handle_to_const = true;
+            } else {
+                data_type.is_const = true;
+            }
         }
 
         // Apply suffixes (handle, array)
@@ -8521,7 +8629,6 @@ mod tests {
     // ==================== Init List Tests ====================
 
     #[test]
-    #[ignore] // TODO: Array initialization with init list should work
     fn init_list_basic() {
         use crate::parse_lenient;
         use crate::semantic::Compiler;
@@ -9821,7 +9928,6 @@ mod tests {
     // ==================== Init List Tests ====================
 
     #[test]
-    #[ignore] // TODO: Empty init list for arrays should work
     fn init_list_empty() {
         use crate::parse_lenient;
         use crate::semantic::Compiler;
@@ -9841,7 +9947,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore] // TODO: Multidimensional init list for arrays should work
     fn init_list_multidimensional() {
         use crate::parse_lenient;
         use crate::semantic::Compiler;

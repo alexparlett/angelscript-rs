@@ -50,7 +50,8 @@ use crate::ast::decl::{
     ClassDecl, ClassMember, EnumDecl, FuncdefDecl, FunctionDecl, GlobalVarDecl,
     InterfaceDecl, InterfaceMethod, Item, NamespaceDecl, TypedefDecl,
 };
-use crate::ast::expr::Expr;
+use crate::ast::expr::{Expr, InitElement};
+use crate::ast::stmt::{Block, Stmt, ForInit};
 use crate::ast::types::{ParamType, PrimitiveType, TypeBase, TypeExpr, TypeSuffix};
 use crate::ast::RefKind;
 use crate::ast::Script;
@@ -201,6 +202,13 @@ impl<'src, 'ast> TypeCompiler<'src, 'ast> {
 
         // Update the function signature in the registry
         self.registry.update_function_signature(&qualified_name, params, return_type, object_type, traits, default_args);
+
+        // Scan function body for type expressions that need instantiation
+        // This ensures template types like array<int> used in local variables
+        // are instantiated before Pass 2b
+        if let Some(body) = &func.body {
+            self.scan_block(body);
+        }
     }
 
     /// Visit a class declaration and fill in its details
@@ -1246,6 +1254,208 @@ impl<'src, 'ast> TypeCompiler<'src, 'ast> {
                     ));
                 }
             }
+        }
+    }
+
+    // ========================================================================
+    // Function Body Scanning - Pre-instantiate template types
+    // ========================================================================
+
+    /// Scan a block for type expressions that need instantiation.
+    ///
+    /// This walks through all statements in a function body to find type
+    /// expressions (e.g., `array<int>` in local variable declarations) and
+    /// resolves them. This triggers template instantiation before Pass 2b.
+    fn scan_block(&mut self, block: &Block<'src, 'ast>) {
+        for stmt in block.stmts {
+            self.scan_statement(stmt);
+        }
+    }
+
+    /// Scan a single statement for type expressions.
+    fn scan_statement(&mut self, stmt: &Stmt<'src, 'ast>) {
+        match stmt {
+            Stmt::VarDecl(var_decl) => {
+                // Resolve the variable type (triggers template instantiation)
+                let _ = self.resolve_type_expr(&var_decl.ty);
+                // Also scan initializers for expressions with types
+                for var in var_decl.vars {
+                    if let Some(init) = var.init {
+                        self.scan_expression(init);
+                    }
+                }
+            }
+            Stmt::Expr(expr_stmt) => {
+                if let Some(expr) = expr_stmt.expr {
+                    self.scan_expression(expr);
+                }
+            }
+            Stmt::Return(ret) => {
+                if let Some(value) = ret.value {
+                    self.scan_expression(value);
+                }
+            }
+            Stmt::Block(block) => {
+                self.scan_block(block);
+            }
+            Stmt::If(if_stmt) => {
+                self.scan_expression(if_stmt.condition);
+                self.scan_statement(if_stmt.then_stmt);
+                if let Some(else_stmt) = if_stmt.else_stmt {
+                    self.scan_statement(else_stmt);
+                }
+            }
+            Stmt::While(while_stmt) => {
+                self.scan_expression(while_stmt.condition);
+                self.scan_statement(while_stmt.body);
+            }
+            Stmt::DoWhile(do_while) => {
+                self.scan_statement(do_while.body);
+                self.scan_expression(do_while.condition);
+            }
+            Stmt::For(for_stmt) => {
+                // Scan initializer
+                if let Some(init) = &for_stmt.init {
+                    match init {
+                        ForInit::VarDecl(var_decl) => {
+                            let _ = self.resolve_type_expr(&var_decl.ty);
+                            for var in var_decl.vars {
+                                if let Some(init_expr) = var.init {
+                                    self.scan_expression(init_expr);
+                                }
+                            }
+                        }
+                        ForInit::Expr(expr) => {
+                            self.scan_expression(expr);
+                        }
+                    }
+                }
+                // Scan condition
+                if let Some(cond) = for_stmt.condition {
+                    self.scan_expression(cond);
+                }
+                // Scan update expressions
+                for update in for_stmt.update {
+                    self.scan_expression(update);
+                }
+                // Scan body
+                self.scan_statement(for_stmt.body);
+            }
+            Stmt::Foreach(foreach) => {
+                // Scan iteration variable types
+                for var in foreach.vars {
+                    let _ = self.resolve_type_expr(&var.ty);
+                }
+                // Scan the iterable expression
+                self.scan_expression(foreach.expr);
+                // Scan body
+                self.scan_statement(foreach.body);
+            }
+            Stmt::Switch(switch) => {
+                self.scan_expression(switch.expr);
+                for case in switch.cases {
+                    for value in case.values {
+                        self.scan_expression(value);
+                    }
+                    for case_stmt in case.stmts {
+                        self.scan_statement(case_stmt);
+                    }
+                }
+            }
+            Stmt::TryCatch(try_catch) => {
+                self.scan_block(&try_catch.try_block);
+                self.scan_block(&try_catch.catch_block);
+            }
+            Stmt::Break(_) | Stmt::Continue(_) => {
+                // No types to scan
+            }
+        }
+    }
+
+    /// Scan an expression for type expressions (casts, lambdas, etc.)
+    fn scan_expression(&mut self, expr: &Expr<'src, 'ast>) {
+        match expr {
+            Expr::Cast(cast) => {
+                // Cast expressions have explicit target types
+                let _ = self.resolve_type_expr(&cast.target_type);
+                self.scan_expression(cast.expr);
+            }
+            Expr::Lambda(lambda) => {
+                // Lambda parameters may have types
+                for param in lambda.params {
+                    if let Some(param_type) = &param.ty {
+                        let _ = self.resolve_type_expr(&param_type.ty);
+                    }
+                }
+                // Lambda return type
+                if let Some(ret_type) = &lambda.return_type {
+                    let _ = self.resolve_type_expr(&ret_type.ty);
+                }
+                // Scan lambda body
+                self.scan_block(lambda.body);
+            }
+            Expr::InitList(init_list) => {
+                // Init list may have explicit type annotation
+                if let Some(ty) = &init_list.ty {
+                    let _ = self.resolve_type_expr(ty);
+                }
+                // Scan elements
+                for element in init_list.elements {
+                    match element {
+                        InitElement::Expr(e) => self.scan_expression(e),
+                        InitElement::InitList(nested) => {
+                            for nested_elem in nested.elements {
+                                match nested_elem {
+                                    InitElement::Expr(e) => self.scan_expression(e),
+                                    InitElement::InitList(_) => {
+                                        // Deeply nested - would need recursion
+                                        // For now, assume 2 levels is enough
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            Expr::Binary(binary) => {
+                self.scan_expression(binary.left);
+                self.scan_expression(binary.right);
+            }
+            Expr::Unary(unary) => {
+                self.scan_expression(unary.operand);
+            }
+            Expr::Call(call) => {
+                self.scan_expression(call.callee);
+                for arg in call.args {
+                    self.scan_expression(arg.value);
+                }
+            }
+            Expr::Index(index) => {
+                self.scan_expression(index.object);
+                for idx in index.indices {
+                    self.scan_expression(idx.index);
+                }
+            }
+            Expr::Member(member) => {
+                self.scan_expression(member.object);
+            }
+            Expr::Ternary(ternary) => {
+                self.scan_expression(ternary.condition);
+                self.scan_expression(ternary.then_expr);
+                self.scan_expression(ternary.else_expr);
+            }
+            Expr::Paren(paren) => {
+                self.scan_expression(paren.expr);
+            }
+            Expr::Assign(assign) => {
+                self.scan_expression(assign.target);
+                self.scan_expression(assign.value);
+            }
+            Expr::Postfix(postfix) => {
+                self.scan_expression(postfix.operand);
+            }
+            // Leaf expressions - no nested types
+            Expr::Literal(_) | Expr::Ident(_) => {}
         }
     }
 }
