@@ -3459,148 +3459,162 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
 
     /// Type checks an index expression.
     /// Index expressions (arr[i]) are lvalues if the array is an lvalue.
-    /// Multi-dimensional indexing (arr[0][1]) is handled by chaining opIndex calls.
+    ///
+    /// AngelScript supports two forms of indexing:
+    /// - Single-arg: `arr[i]` calls `opIndex(i)` with 1 parameter
+    /// - Multi-arg: `m[i, j]` calls `opIndex(i, j)` with multiple parameters
+    ///
+    /// Note: Multi-dimensional chaining (`arr[0][1]`) is handled by the parser
+    /// creating nested IndexExpr nodes, so each call to check_index handles
+    /// one bracket pair with potentially multiple arguments.
     fn check_index(&mut self, index: &IndexExpr<'src, 'ast>) -> Option<ExprContext> {
-        // Start with the base object
-        let mut current_ctx = self.check_expr(index.object)?;
+        // Evaluate the base object
+        let current_ctx = self.check_expr(index.object)?;
 
-        // Process each index dimension sequentially, chaining opIndex calls
-        // For arr[0][1], this becomes: temp = arr.opIndex(0); temp.opIndex(1)
+        // Empty index is invalid
+        if index.indices.is_empty() {
+            self.error(
+                SemanticErrorKind::InvalidOperation,
+                index.span,
+                "index expression requires at least one index".to_string(),
+            );
+            return None;
+        }
+
+        // Evaluate all index arguments first
+        let mut idx_contexts = Vec::new();
         for idx_item in index.indices {
-            // Evaluate the index expression for this dimension
             let idx_ctx = self.check_expr(idx_item.index)?;
+            idx_contexts.push((idx_ctx, idx_item.span));
+        }
 
-            // Try to find opIndex for the current object type (priority 1)
-            if let Some(func_id) = self.registry.find_operator_method(current_ctx.data_type.type_id, OperatorBehavior::OpIndex) {
-                let func = self.registry.get_function(func_id);
+        // Try to find opIndex for the object type (priority 1)
+        if let Some(func_id) = self.registry.find_operator_method(current_ctx.data_type.type_id, OperatorBehavior::OpIndex) {
+            let func = self.registry.get_function(func_id);
 
-                // opIndex should have exactly 1 parameter (the index)
-                // Note: AngelScript only supports single-parameter opIndex
-                if func.params.len() != 1 {
-                    self.error(
-                        SemanticErrorKind::InvalidOperation,
-                        idx_item.span,
-                        format!(
-                            "opIndex must have exactly 1 parameter, found {}",
-                            func.params.len()
-                        ),
-                    );
-                    return None;
-                }
-
-                let param_type = &func.params[0];
-
-                // Type check the index argument against opIndex parameter
-                if let Some(conversion) = idx_ctx.data_type.can_convert_to(param_type, self.registry) {
-                    if !conversion.is_implicit {
-                        // Explicit conversion required
-                        self.error(
-                            SemanticErrorKind::TypeMismatch,
-                            idx_item.span,
-                            format!(
-                                "cannot implicitly convert '{}' to '{}' for opIndex parameter (explicit cast required)",
-                                self.type_name(&idx_ctx.data_type),
-                                self.type_name(param_type)
-                            ),
-                        );
-                        return None;
-                    }
-                    // Emit implicit conversion instruction
-                    self.emit_conversion(&conversion);
-                } else {
-                    // No conversion possible - type mismatch
-                    self.error(
-                        SemanticErrorKind::TypeMismatch,
-                        idx_item.span,
-                        format!(
-                            "opIndex parameter expects type '{}', found '{}'",
-                            self.type_name(param_type),
-                            self.type_name(&idx_ctx.data_type)
-                        ),
-                    );
-                    return None;
-                }
-
-                // Call opIndex on current object
-                // Stack: [object, index] → object.opIndex(index)
-                self.bytecode.emit(Instruction::Call(func_id.as_u32()));
-
-                // opIndex returns a reference, so result is an lvalue
-                // The return type becomes the object for the next index (if any)
-                let is_mutable = current_ctx.is_mutable && !func.return_type.is_const;
-                current_ctx = ExprContext::lvalue(func.return_type.clone(), is_mutable);
-            } else if let Some(func_id) = self.registry.find_operator_method(current_ctx.data_type.type_id, OperatorBehavior::OpIndexGet) {
-                // No opIndex found, try get_opIndex accessor (priority 2)
-                let func = self.registry.get_function(func_id);
-
-                // get_opIndex should have exactly 1 parameter (the index)
-                if func.params.len() != 1 {
-                    self.error(
-                        SemanticErrorKind::InvalidOperation,
-                        idx_item.span,
-                        format!(
-                            "get_opIndex must have exactly 1 parameter, found {}",
-                            func.params.len()
-                        ),
-                    );
-                    return None;
-                }
-
-                let param_type = &func.params[0];
-
-                // Type check the index argument
-                if let Some(conversion) = idx_ctx.data_type.can_convert_to(param_type, self.registry) {
-                    if !conversion.is_implicit {
-                        self.error(
-                            SemanticErrorKind::TypeMismatch,
-                            idx_item.span,
-                            format!(
-                                "cannot implicitly convert '{}' to '{}' for get_opIndex parameter (explicit cast required)",
-                                self.type_name(&idx_ctx.data_type),
-                                self.type_name(param_type)
-                            ),
-                        );
-                        return None;
-                    }
-                    self.emit_conversion(&conversion);
-                } else {
-                    self.error(
-                        SemanticErrorKind::TypeMismatch,
-                        idx_item.span,
-                        format!(
-                            "get_opIndex parameter expects type '{}', found '{}'",
-                            self.type_name(param_type),
-                            self.type_name(&idx_ctx.data_type)
-                        ),
-                    );
-                    return None;
-                }
-
-                // Call get_opIndex on current object
-                // Stack: [object, index] → object.get_opIndex(index)
-                self.bytecode.emit(Instruction::Call(func_id.as_u32()));
-
-                // get_opIndex returns a value (read-only), so result is an rvalue
-                // This is a property accessor, not a reference
-                current_ctx = ExprContext::rvalue(func.return_type.clone());
-            } else {
-                // No opIndex or get_opIndex registered for this type
-                // This includes:
-                // - Built-in types (array<T>, dictionary<K,V>, string) - should register opIndex via FFI
-                // - Template instances without opIndex
-                // - Classes without opIndex
-                // - Primitives (which can't be indexed)
+            // Check parameter count matches
+            if func.params.len() != idx_contexts.len() {
                 self.error(
                     SemanticErrorKind::InvalidOperation,
-                    idx_item.span,
-                    format!("type '{}' does not support indexing", self.type_name(&current_ctx.data_type)),
+                    index.span,
+                    format!(
+                        "opIndex expects {} parameter(s), found {}",
+                        func.params.len(),
+                        idx_contexts.len()
+                    ),
                 );
                 return None;
             }
+
+            // Type check each index argument against corresponding opIndex parameter
+            for (i, (idx_ctx, idx_span)) in idx_contexts.iter().enumerate() {
+                let param_type = &func.params[i];
+
+                if let Some(conversion) = idx_ctx.data_type.can_convert_to(param_type, self.registry) {
+                    if !conversion.is_implicit {
+                        self.error(
+                            SemanticErrorKind::TypeMismatch,
+                            *idx_span,
+                            format!(
+                                "cannot implicitly convert '{}' to '{}' for opIndex parameter {} (explicit cast required)",
+                                self.type_name(&idx_ctx.data_type),
+                                self.type_name(param_type),
+                                i + 1
+                            ),
+                        );
+                        return None;
+                    }
+                    self.emit_conversion(&conversion);
+                } else {
+                    self.error(
+                        SemanticErrorKind::TypeMismatch,
+                        *idx_span,
+                        format!(
+                            "opIndex parameter {} expects type '{}', found '{}'",
+                            i + 1,
+                            self.type_name(param_type),
+                            self.type_name(&idx_ctx.data_type)
+                        ),
+                    );
+                    return None;
+                }
+            }
+
+            // Call opIndex on current object
+            // Stack: [object, idx1, idx2, ...] → object.opIndex(idx1, idx2, ...)
+            self.bytecode.emit(Instruction::Call(func_id.as_u32()));
+
+            // opIndex returns a reference, so result is an lvalue
+            let is_mutable = current_ctx.is_mutable && !func.return_type.is_const;
+            return Some(ExprContext::lvalue(func.return_type.clone(), is_mutable));
         }
 
-        // Return the final result after all indices have been processed
-        Some(current_ctx)
+        // Try get_opIndex accessor (priority 2)
+        if let Some(func_id) = self.registry.find_operator_method(current_ctx.data_type.type_id, OperatorBehavior::OpIndexGet) {
+            let func = self.registry.get_function(func_id);
+
+            // Check parameter count matches
+            if func.params.len() != idx_contexts.len() {
+                self.error(
+                    SemanticErrorKind::InvalidOperation,
+                    index.span,
+                    format!(
+                        "get_opIndex expects {} parameter(s), found {}",
+                        func.params.len(),
+                        idx_contexts.len()
+                    ),
+                );
+                return None;
+            }
+
+            // Type check each index argument
+            for (i, (idx_ctx, idx_span)) in idx_contexts.iter().enumerate() {
+                let param_type = &func.params[i];
+
+                if let Some(conversion) = idx_ctx.data_type.can_convert_to(param_type, self.registry) {
+                    if !conversion.is_implicit {
+                        self.error(
+                            SemanticErrorKind::TypeMismatch,
+                            *idx_span,
+                            format!(
+                                "cannot implicitly convert '{}' to '{}' for get_opIndex parameter {} (explicit cast required)",
+                                self.type_name(&idx_ctx.data_type),
+                                self.type_name(param_type),
+                                i + 1
+                            ),
+                        );
+                        return None;
+                    }
+                    self.emit_conversion(&conversion);
+                } else {
+                    self.error(
+                        SemanticErrorKind::TypeMismatch,
+                        *idx_span,
+                        format!(
+                            "get_opIndex parameter {} expects type '{}', found '{}'",
+                            i + 1,
+                            self.type_name(param_type),
+                            self.type_name(&idx_ctx.data_type)
+                        ),
+                    );
+                    return None;
+                }
+            }
+
+            // Call get_opIndex on current object
+            self.bytecode.emit(Instruction::Call(func_id.as_u32()));
+
+            // get_opIndex returns a value (read-only), so result is an rvalue
+            return Some(ExprContext::rvalue(func.return_type.clone()));
+        }
+
+        // No opIndex or get_opIndex registered for this type
+        self.error(
+            SemanticErrorKind::InvalidOperation,
+            index.span,
+            format!("type '{}' does not support indexing", self.type_name(&current_ctx.data_type)),
+        );
+        None
     }
 
     /// Type checks an index assignment expression: obj[idx] = value
@@ -10114,7 +10128,6 @@ mod tests {
     // ==================== Index Expression Tests ====================
 
     #[test]
-    #[ignore] // TODO: Multi-index opIndex should work with multiple arguments
     fn index_expression_multi() {
         use crate::parse_lenient;
         use crate::semantic::Compiler;
