@@ -605,18 +605,18 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
     fn stmt_contains_super_call(&self, stmt: &Stmt<'src, 'ast>) -> bool {
         match stmt {
             Stmt::Expr(expr_stmt) => {
-                expr_stmt.expr.map_or(false, |e| self.expr_contains_super_call(e))
+                expr_stmt.expr.is_some_and(|e| self.expr_contains_super_call(e))
             }
             Stmt::VarDecl(var_decl) => {
                 // VarDeclStmt has a `vars` slice of VarDeclarator
                 var_decl.vars.iter().any(|var| {
-                    var.init.map_or(false, |e| self.expr_contains_super_call(e))
+                    var.init.is_some_and(|e| self.expr_contains_super_call(e))
                 })
             }
             Stmt::If(if_stmt) => {
                 self.expr_contains_super_call(if_stmt.condition)
                     || self.stmt_contains_super_call(if_stmt.then_stmt)
-                    || if_stmt.else_stmt.map_or(false, |s| self.stmt_contains_super_call(s))
+                    || if_stmt.else_stmt.is_some_and(|s| self.stmt_contains_super_call(s))
             }
             Stmt::While(while_stmt) => {
                 self.expr_contains_super_call(while_stmt.condition)
@@ -630,7 +630,7 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
                 let init_has_super = match &for_stmt.init {
                     Some(ForInit::VarDecl(var_decl_stmt)) => {
                         var_decl_stmt.vars.iter().any(|var| {
-                            var.init.map_or(false, |e| self.expr_contains_super_call(e))
+                            var.init.is_some_and(|e| self.expr_contains_super_call(e))
                         })
                     }
                     Some(ForInit::Expr(expr)) => self.expr_contains_super_call(expr),
@@ -638,7 +638,7 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
                 };
                 let update_has_super = for_stmt.update.iter().any(|e| self.expr_contains_super_call(e));
                 init_has_super
-                    || for_stmt.condition.map_or(false, |e| self.expr_contains_super_call(e))
+                    || for_stmt.condition.is_some_and(|e| self.expr_contains_super_call(e))
                     || update_has_super
                     || self.stmt_contains_super_call(for_stmt.body)
             }
@@ -646,7 +646,7 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
                 self.expr_contains_super_call(foreach.expr)
                     || self.stmt_contains_super_call(foreach.body)
             }
-            Stmt::Return(ret) => ret.value.map_or(false, |e| self.expr_contains_super_call(e)),
+            Stmt::Return(ret) => ret.value.is_some_and(|e| self.expr_contains_super_call(e)),
             Stmt::Block(block) => self.contains_super_call(block),
             Stmt::Switch(switch) => {
                 self.expr_contains_super_call(switch.expr)
@@ -667,11 +667,10 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
         match expr {
             Expr::Call(call) => {
                 // Check if this is a super() call
-                if let Expr::Ident(ident) = call.callee {
-                    if ident.scope.is_none() && ident.ident.name == "super" {
+                if let Expr::Ident(ident) = call.callee
+                    && ident.scope.is_none() && ident.ident.name == "super" {
                         return true;
                     }
-                }
                 // Check arguments
                 call.args.iter().any(|arg| self.expr_contains_super_call(arg.value))
             }
@@ -703,7 +702,7 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
                     })
                 }
             }),
-            Expr::Lambda(lambda) => self.contains_super_call(&lambda.body),
+            Expr::Lambda(lambda) => self.contains_super_call(lambda.body),
             Expr::Paren(paren) => self.expr_contains_super_call(paren.expr),
             Expr::Ident(_) | Expr::Literal(_) => false,
         }
@@ -964,11 +963,10 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
 
                 // Set expected init list type for empty init lists
                 // If the target is an array<T>, the element type is T
-                if let TypeDef::TemplateInstance { template, sub_types, .. } = self.registry.get_type(var_type.type_id) {
-                    if *template == self.registry.array_template && !sub_types.is_empty() {
+                if let TypeDef::TemplateInstance { template, sub_types, .. } = self.registry.get_type(var_type.type_id)
+                    && *template == self.registry.array_template && !sub_types.is_empty() {
                         self.expected_init_list_type = Some(sub_types[0].clone());
                     }
-                }
 
                 let init_ctx = match self.check_expr(init) {
                     Some(ctx) => ctx,
@@ -1525,11 +1523,10 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
                 let var_offset = var_local.stack_offset; // Extract offset before mutable borrow
                 let var_type = var_local.data_type.clone();
 
-                if let Some(conversion) = element_type.can_convert_to(&var_type, self.registry) {
-                    if conversion.is_implicit {
+                if let Some(conversion) = element_type.can_convert_to(&var_type, self.registry)
+                    && conversion.is_implicit {
                         self.emit_conversion(&conversion);
                     }
-                }
 
                 // Store value in loop variable
                 self.bytecode.emit(Instruction::StoreLocal(var_offset));
@@ -1621,15 +1618,14 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
             } else {
                 // Check for duplicate case values (if we can evaluate as constant)
                 for value_expr in case.values {
-                    if let Some(const_value) = eval_const_int(value_expr) {
-                        if !case_values.insert(const_value) {
+                    if let Some(const_value) = eval_const_int(value_expr)
+                        && !case_values.insert(const_value) {
                             self.error(
                                 SemanticErrorKind::DuplicateDeclaration,
                                 value_expr.span(),
                                 format!("duplicate case value: {}", const_value),
                             );
                         }
-                    }
                 }
             }
         }
@@ -1882,11 +1878,10 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
         }
 
         // Check for implicit class member access (when inside a method)
-        if let Some(class_id) = self.current_class {
-            if let Some(result) = self.try_implicit_member_access(class_id, name, ident.span) {
+        if let Some(class_id) = self.current_class
+            && let Some(result) = self.try_implicit_member_access(class_id, name, ident.span) {
                 return Some(result);
             }
-        }
 
         // Check global variables in registry
         if let Some(global_var) = self.registry.lookup_global_var(name) {
@@ -1923,8 +1918,8 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
         match class_def {
             TypeDef::Class { fields, properties, .. } => {
                 // Check properties (getter access)
-                if let Some(accessors) = properties.get(name) {
-                    if let Some(getter_id) = accessors.getter {
+                if let Some(accessors) = properties.get(name)
+                    && let Some(getter_id) = accessors.getter {
                         let getter = self.registry.get_function(getter_id);
                         let return_type = getter.return_type.clone();
 
@@ -1937,7 +1932,6 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
                         // we return rvalue here - assignment will use check_member for the setter
                         return Some(ExprContext::rvalue(return_type));
                     }
-                }
 
                 // Check fields first
                 for (field_idx, field) in fields.iter().enumerate() {
@@ -2347,8 +2341,8 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
     fn check_unary(&mut self, unary: &UnaryExpr<'src, 'ast>) -> Option<ExprContext> {
         // Special case: @ operator on function name to create function handle
         // This must be handled before check_expr because function names aren't variables
-        if unary.op == UnaryOp::HandleOf {
-            if let Expr::Ident(ident) = unary.operand {
+        if unary.op == UnaryOp::HandleOf
+            && let Expr::Ident(ident) = unary.operand {
                 // Check if this identifier is a function name (not a variable)
                 let name = ident.ident.name;
 
@@ -2374,12 +2368,11 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
                     }
 
                     // Try without namespace if that failed
-                    if !self.namespace_path.is_empty() {
-                        if let Some(func_id) = self.registry.find_compatible_function(name, funcdef_type_id) {
+                    if !self.namespace_path.is_empty()
+                        && let Some(func_id) = self.registry.find_compatible_function(name, funcdef_type_id) {
                             self.bytecode.emit(Instruction::FuncPtr(func_id.as_u32()));
                             return Some(ExprContext::rvalue(DataType::with_handle(funcdef_type_id, false)));
                         }
-                    }
 
                     // Function not found or not compatible
                     self.error(
@@ -2404,7 +2397,6 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
 
                 // Not a function, fall through to normal handling (will try as variable)
             }
-        }
 
         let operand_ctx = self.check_expr(unary.operand)?;
 
@@ -2590,24 +2582,21 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
             Assign => {
                 // Special handling for index expressions: obj[idx] = value
                 // Try set_opIndex accessor if opIndex doesn't exist
-                if let Expr::Index(index_expr) = assign.target {
-                    if let Some(result) = self.check_index_assignment(index_expr, assign.value, assign.span) {
+                if let Expr::Index(index_expr) = assign.target
+                    && let Some(result) = self.check_index_assignment(index_expr, assign.value, assign.span) {
                         return Some(result);
                     }
                     // If check_index_assignment returns None, fall through to regular assignment
                     // (this shouldn't happen as check_index_assignment handles all cases)
-                }
 
                 // Special handling for member access: obj.prop = value
                 // Check for property setter (set_X pattern)
-                if let Expr::Member(member_expr) = assign.target {
-                    if let MemberAccess::Field(field_name) = &member_expr.member {
-                        if let Some(result) = self.check_member_property_assignment(member_expr, field_name.name, assign.value, assign.span) {
+                if let Expr::Member(member_expr) = assign.target
+                    && let MemberAccess::Field(field_name) = &member_expr.member
+                        && let Some(result) = self.check_member_property_assignment(member_expr, field_name.name, assign.value, assign.span) {
                             return Some(result);
                         }
                         // If returns None, property doesn't exist - fall through to regular assignment
-                    }
-                }
 
                 // Simple assignment: target = value
                 let target_ctx = self.check_expr(assign.target)?;
@@ -2967,10 +2956,8 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
                     self.validate_reference_parameters(func_def, &arg_contexts, call.args, call.span)?;
 
                     // Emit conversion instructions for arguments
-                    for conversion in conversions {
-                        if let Some(conv) = conversion {
-                            self.emit_conversion(&conv);
-                        }
+                    for conv in conversions.into_iter().flatten() {
+                        self.emit_conversion(&conv);
                     }
 
                     // Emit regular Call instruction - base constructor executes with current 'this'
@@ -3173,17 +3160,15 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
                             }
                             // Check non-lambda argument types match
                             for (i, opt_type) in non_lambda_types.iter().enumerate() {
-                                if let Some(arg_type) = opt_type {
-                                    if i < func_def.params.len() {
+                                if let Some(arg_type) = opt_type
+                                    && i < func_def.params.len() {
                                         let param = &func_def.params[i];
                                         // Check if types are compatible (exact match or implicit conversion)
-                                        if arg_type.type_id != param.type_id {
-                                            if arg_type.can_convert_to(param, self.registry).map_or(true, |c| !c.is_implicit) {
+                                        if arg_type.type_id != param.type_id
+                                            && arg_type.can_convert_to(param, self.registry).is_none_or(|c| !c.is_implicit) {
                                                 return false;
                                             }
-                                        }
                                     }
-                                }
                             }
                             true
                         })
@@ -3203,8 +3188,8 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
                     for (i, arg) in call.args.iter().enumerate() {
                         if lambda_positions.contains(&i) {
                             // Set expected_funcdef_type for lambda inference
-                            if let Some(ref params) = expected_param_types {
-                                if i < params.len() {
+                            if let Some(ref params) = expected_param_types
+                                && i < params.len() {
                                     let param_type = &params[i];
                                     if param_type.is_handle {
                                         let type_def = self.registry.get_type(param_type.type_id);
@@ -3213,7 +3198,6 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
                                         }
                                     }
                                 }
-                            }
                             let arg_ctx = self.check_expr(arg.value)?;
                             full_arg_contexts.push(arg_ctx);
                             self.expected_funcdef_type = None;
@@ -3235,8 +3219,8 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
 
                     for (i, arg) in call.args.iter().enumerate() {
                         // Set expected_funcdef_type if this parameter expects a funcdef
-                        if let Some(params) = expected_param_types {
-                            if i < params.len() {
+                        if let Some(params) = expected_param_types
+                            && i < params.len() {
                                 let param_type = &params[i];
                                 if param_type.is_handle {
                                     let type_def = self.registry.get_type(param_type.type_id);
@@ -3245,7 +3229,6 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
                                     }
                                 }
                             }
-                        }
 
                         let arg_ctx = self.check_expr(arg.value)?;
                         arg_contexts.push(arg_ctx);
@@ -3294,10 +3277,8 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
                 self.validate_reference_parameters(func_def, &arg_contexts, call.args, call.span)?;
 
                 // Emit conversion instructions for explicitly provided arguments
-                for conversion in conversions {
-                    if let Some(conv) = conversion {
-                        self.emit_conversion(&conv);
-                    }
+                for conv in conversions.into_iter().flatten() {
+                    self.emit_conversion(&conv);
                 }
 
                 // Emit call instruction
@@ -3447,10 +3428,8 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
         let (matching_ctor, conversions) = self.find_best_function_overload(&constructors, &arg_types, span)?;
 
         // Emit conversion instructions for arguments
-        for conversion in conversions {
-            if let Some(conv) = conversion {
-                self.emit_conversion(&conv);
-            }
+        for conv in conversions.into_iter().flatten() {
+            self.emit_conversion(&conv);
         }
 
         // Emit constructor call instruction
@@ -4252,13 +4231,11 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
                         }
 
                         // Validate reference parameters
-                        self.validate_reference_parameters(func_def, &arg_contexts, *args, member.span)?;
+                        self.validate_reference_parameters(func_def, &arg_contexts, args, member.span)?;
 
                         // Emit conversion instructions for arguments
-                        for conversion in conversions {
-                            if let Some(conv) = conversion {
-                                self.emit_conversion(&conv);
-                            }
+                        for conv in conversions.into_iter().flatten() {
+                            self.emit_conversion(&conv);
                         }
 
                         // Emit method call instruction
@@ -4651,15 +4628,14 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
         for i in 0..self.registry.type_count() {
             let type_id = TypeId(i as u32);
             let typedef = self.registry.get_type(type_id);
-            if let TypeDef::TemplateInstance { template, sub_types, .. } = typedef {
-                if *template == self.registry.array_template
+            if let TypeDef::TemplateInstance { template, sub_types, .. } = typedef
+                && *template == self.registry.array_template
                     && sub_types.len() == 1
                     && sub_types[0].type_id == common_type.type_id
                 {
                     array_type_id = Some(type_id);
                     break;
                 }
-            }
         }
 
         if let Some(array_id) = array_type_id {
@@ -4737,15 +4713,14 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
         for i in 0..self.registry.type_count() {
             let type_id = TypeId(i as u32);
             let typedef = self.registry.get_type(type_id);
-            if let TypeDef::TemplateInstance { template, sub_types, .. } = typedef {
-                if *template == self.registry.array_template
+            if let TypeDef::TemplateInstance { template, sub_types, .. } = typedef
+                && *template == self.registry.array_template
                     && sub_types.len() == 1
                     && sub_types[0].type_id == element_type.type_id
                 {
                     array_type_id = Some(type_id);
                     break;
                 }
-            }
         }
 
         if let Some(array_id) = array_type_id {
@@ -4847,12 +4822,11 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
 
         // Check if this is an array template instance - arrays are always reference types (handles)
         let typedef = self.registry.get_type(type_id);
-        if let TypeDef::TemplateInstance { template, .. } = typedef {
-            if *template == self.registry.array_template {
+        if let TypeDef::TemplateInstance { template, .. } = typedef
+            && *template == self.registry.array_template {
                 // Arrays are reference types, so they're implicitly handles
                 data_type.is_handle = true;
             }
-        }
 
         // Apply leading const
         if type_expr.is_const {

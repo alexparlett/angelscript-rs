@@ -31,7 +31,7 @@
 //! module.call("main", &[])?;
 //! ```
 
-use crate::semantic::{Compiler, CompiledModule, Registry, SemanticError};
+use crate::semantic::{Compiler, CompiledModule, SemanticError};
 use crate::{parse_lenient, ParseError};
 use bumpalo::Bump;
 use std::collections::{HashMap, HashSet};
@@ -45,6 +45,7 @@ use std::collections::{HashMap, HashSet};
 /// 4. Execute functions with `call()`
 ///
 /// All parsing and compilation happens internally during `build()`.
+#[derive(Default)]
 pub struct ScriptModule {
     /// Source files to compile (filename → source code)
     sources: HashMap<String, String>,
@@ -318,19 +319,6 @@ impl ScriptModule {
     }
 }
 
-impl Default for ScriptModule {
-    fn default() -> Self {
-        Self {
-            sources: HashMap::new(),
-            source_hashes: HashMap::new(),
-            dirty_files: HashSet::new(),
-            arena: None,
-            compiled: None,
-            // registry: None,
-            is_built: false,
-        }
-    }
-}
 
 /// Errors that can occur when adding sources or managing the module.
 #[derive(Debug, Clone, thiserror::Error)]

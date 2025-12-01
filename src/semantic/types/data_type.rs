@@ -22,7 +22,7 @@
 //! let handle_to_const = DataType::with_handle(INT32_TYPE, true);
 //! ```
 
-use super::type_def::{TypeId, NULL_TYPE, VOID_TYPE};
+use super::type_def::{TypeId, NULL_TYPE};
 
 /// Reference modifier for parameters.
 ///

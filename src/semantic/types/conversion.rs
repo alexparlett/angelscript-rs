@@ -607,11 +607,10 @@ impl DataType {
         // 1. opImplCast() method (implicit cast)
         // 2. opCast() method (explicit cast)
 
-        if self.is_handle && target.is_handle {
-            if let Some(conv) = self.handle_operator_conversion(target, registry) {
+        if self.is_handle && target.is_handle
+            && let Some(conv) = self.handle_operator_conversion(target, registry) {
                 return Some(conv);
             }
-        }
 
         None
     }

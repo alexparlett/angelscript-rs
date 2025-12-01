@@ -689,13 +689,7 @@ impl<'src, 'ast> Registry<'src, 'ast> {
         let func_ids = self.func_by_name.get(name)?;
 
         // Find the first function that matches the funcdef signature
-        for &func_id in func_ids {
-            if self.is_function_compatible_with_funcdef(func_id, funcdef_type_id) {
-                return Some(func_id);
-            }
-        }
-
-        None
+        func_ids.iter().find(|&&func_id| self.is_function_compatible_with_funcdef(func_id, funcdef_type_id)).copied()
     }
 
     /// Update a function's signature
