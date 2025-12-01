@@ -1464,7 +1464,7 @@ impl<'src, 'ast> TypeCompiler<'src, 'ast> {
 mod tests {
     use super::*;
     use crate::parse_lenient;
-    use crate::semantic::{Registrar, OperatorBehavior};
+    use crate::semantic::{Registrar, OperatorBehavior, TypeDef};
     use bumpalo::Bump;
 
     fn compile<'src, 'ast>(source: &'src str, arena: &'ast Bump) -> TypeCompilationData<'src, 'ast> {

@@ -1,5 +1,8 @@
 // Data structures example - demonstrates custom data structures
 
+// FFI placeholder - will be replaced with proper FFI bindings
+void print(int value) {}
+
 class Node {
     int value;
     Node@ next;

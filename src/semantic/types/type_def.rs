@@ -7,6 +7,13 @@ use rustc_hash::FxHashMap;
 
 use super::data_type::DataType;
 use std::fmt;
+use std::sync::atomic::{AtomicU32, Ordering};
+
+/// Global atomic counter for generating unique TypeIds
+static TYPE_ID_COUNTER: AtomicU32 = AtomicU32::new(0);
+
+/// Global atomic counter for generating unique FunctionIds
+static FUNCTION_ID_COUNTER: AtomicU32 = AtomicU32::new(0);
 
 /// A unique identifier for a type in the type system.
 ///
@@ -22,10 +29,24 @@ impl TypeId {
         TypeId(id)
     }
 
+    /// Generate the next unique TypeId using the global atomic counter.
+    #[inline]
+    pub fn next() -> Self {
+        TypeId(TYPE_ID_COUNTER.fetch_add(1, Ordering::Relaxed))
+    }
+
     /// Get the underlying u32 value.
     #[inline]
     pub const fn as_u32(self) -> u32 {
         self.0
+    }
+
+    /// Reset the global TypeId counter (useful for testing).
+    ///
+    /// # Safety
+    /// This should only be called when no other threads are generating TypeIds.
+    pub fn reset_counter(start: u32) {
+        TYPE_ID_COUNTER.store(start, Ordering::Relaxed);
     }
 }
 
@@ -216,10 +237,24 @@ impl FunctionId {
         FunctionId(id)
     }
 
+    /// Generate the next unique FunctionId using the global atomic counter.
+    #[inline]
+    pub fn next() -> Self {
+        FunctionId(FUNCTION_ID_COUNTER.fetch_add(1, Ordering::Relaxed))
+    }
+
     /// Get the underlying u32 value
     #[inline]
     pub const fn as_u32(self) -> u32 {
         self.0
+    }
+
+    /// Reset the global FunctionId counter (useful for testing).
+    ///
+    /// # Safety
+    /// This should only be called when no other threads are generating FunctionIds.
+    pub fn reset_counter(start: u32) {
+        FUNCTION_ID_COUNTER.store(start, Ordering::Relaxed);
     }
 }
 

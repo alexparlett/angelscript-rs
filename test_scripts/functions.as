@@ -1,5 +1,9 @@
 // Test function declarations with various parameters
 
+// FFI placeholder - will be replaced with proper FFI bindings
+void print(const string &in msg) {}
+void print(int value) {}
+
 void noParams() {
     print("No parameters");
 }
@@ -29,7 +33,7 @@ int defaultParams(int x = 10, int y = 20) {
     return x + y;
 }
 
-auto autoReturn() {
+int autoReturn() {
     return 42;
 }
 

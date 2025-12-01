@@ -1,5 +1,12 @@
 // Test complex nested expressions
 
+// FFI placeholder - will be replaced with proper FFI bindings
+void print(const string &in msg) {}
+void print(int value) {}
+int max(int a, int b) { return a > b ? a : b; }
+int min(int a, int b) { return a < b ? a : b; }
+int abs(int x) { return x < 0 ? -x : x; }
+
 void testComplexExpressions() {
     // Deeply nested arithmetic
     int result1 = ((1 + 2) * (3 - 4)) / ((5 + 6) * (7 - 8));

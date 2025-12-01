@@ -1,5 +1,10 @@
 // Utility functions - demonstrates common helper functions
 
+// FFI placeholder - will be replaced with proper FFI bindings
+float sqrt(float x) { return x; }
+int rand() { return 0; }
+const int RAND_MAX = 32767;
+
 namespace Math {
     float clamp(float value, float min, float max) {
         if (value < min) return min;

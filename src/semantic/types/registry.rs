@@ -130,7 +130,7 @@ pub struct Registry<'src, 'ast> {
     type_by_name: FxHashMap<String, TypeId>,
 
     // Function storage
-    functions: Vec<FunctionDef<'src, 'ast>>,
+    functions: FxHashMap<FunctionId, FunctionDef<'src, 'ast>>,
     func_by_name: FxHashMap<String, Vec<FunctionId>>,
 
     // Global variable storage
@@ -166,7 +166,7 @@ impl<'src, 'ast> Registry<'src, 'ast> {
         let mut registry = Self {
             types: Vec::with_capacity(32),
             type_by_name: FxHashMap::default(),
-            functions: Vec::new(),
+            functions: FxHashMap::default(),
             func_by_name: FxHashMap::default(),
             global_vars: FxHashMap::default(),
             mixins: FxHashMap::default(),
@@ -233,7 +233,7 @@ impl<'src, 'ast> Registry<'src, 'ast> {
         self.type_by_name.insert(kind.name().to_string(), type_id);
     }
 
-    /// Register built-in string type
+    /// Register built-in string type with methods and operators
     fn register_builtin_string(&mut self, type_id: TypeId) {
         let index = type_id.as_u32() as usize;
 
@@ -241,14 +241,299 @@ impl<'src, 'ast> Registry<'src, 'ast> {
             self.types.push(TypeDef::Primitive { kind: PrimitiveType::Void });
         }
 
+        let default_traits = FunctionTraits {
+            is_constructor: false,
+            is_destructor: false,
+            is_final: false,
+            is_virtual: false,
+            is_abstract: false,
+            is_const: false,
+            is_explicit: false,
+            auto_generated: None,
+        };
+
+        let mut method_ids = Vec::new();
+        let mut operator_methods = FxHashMap::default();
+
+        // String parameter type (const string &in)
+        let string_param = DataType {
+            type_id,
+            is_handle: false,
+            is_handle_to_const: false,
+            is_const: true,
+            ref_modifier: RefModifier::In,
+        };
+
+        // 1. Register length(): uint
+        let length_func_id = FunctionId::next();
+        let length_func_def = FunctionDef {
+            id: length_func_id,
+            name: "length".to_string(),
+            namespace: Vec::new(),
+            params: vec![],
+            return_type: DataType::simple(self.uint32_type),
+            object_type: Some(type_id),
+            traits: FunctionTraits {
+                is_const: true,
+                ..default_traits
+            },
+            is_native: true,
+            default_args: Vec::new(),
+            visibility: Visibility::Public,
+            signature_filled: true,
+        };
+        self.functions.insert(length_func_id, length_func_def);
+        method_ids.push(length_func_id);
+
+        // 2. Register substr(uint start, int count = -1): string
+        let substr_func_id = FunctionId::next();
+        let substr_func_def = FunctionDef {
+            id: substr_func_id,
+            name: "substr".to_string(),
+            namespace: Vec::new(),
+            params: vec![
+                DataType::simple(self.uint32_type),
+                DataType::simple(self.int32_type),
+            ],
+            return_type: DataType::simple(type_id),
+            object_type: Some(type_id),
+            traits: FunctionTraits {
+                is_const: true,
+                ..default_traits
+            },
+            is_native: true,
+            default_args: Vec::new(),
+            visibility: Visibility::Public,
+            signature_filled: true,
+        };
+        self.functions.insert(substr_func_id, substr_func_def);
+        method_ids.push(substr_func_id);
+
+        // 2b. Register substr(uint start): string (single-arg overload)
+        let substr1_func_id = FunctionId::next();
+        let substr1_func_def = FunctionDef {
+            id: substr1_func_id,
+            name: "substr".to_string(),
+            namespace: Vec::new(),
+            params: vec![DataType::simple(self.uint32_type)],
+            return_type: DataType::simple(type_id),
+            object_type: Some(type_id),
+            traits: FunctionTraits {
+                is_const: true,
+                ..default_traits
+            },
+            is_native: true,
+            default_args: Vec::new(),
+            visibility: Visibility::Public,
+            signature_filled: true,
+        };
+        self.functions.insert(substr1_func_id, substr1_func_def);
+        method_ids.push(substr1_func_id);
+
+        // 3. Register findFirst(const string &in, uint start = 0): int
+        let find_first_func_id = FunctionId::next();
+        let find_first_func_def = FunctionDef {
+            id: find_first_func_id,
+            name: "findFirst".to_string(),
+            namespace: Vec::new(),
+            params: vec![string_param.clone(), DataType::simple(self.uint32_type)],
+            return_type: DataType::simple(self.int32_type),
+            object_type: Some(type_id),
+            traits: FunctionTraits {
+                is_const: true,
+                ..default_traits
+            },
+            is_native: true,
+            default_args: Vec::new(),
+            visibility: Visibility::Public,
+            signature_filled: true,
+        };
+        self.functions.insert(find_first_func_id, find_first_func_def);
+        method_ids.push(find_first_func_id);
+
+        // 4. Register findLast(const string &in, int start = -1): int
+        let find_last_func_id = FunctionId::next();
+        let find_last_func_def = FunctionDef {
+            id: find_last_func_id,
+            name: "findLast".to_string(),
+            namespace: Vec::new(),
+            params: vec![string_param.clone(), DataType::simple(self.int32_type)],
+            return_type: DataType::simple(self.int32_type),
+            object_type: Some(type_id),
+            traits: FunctionTraits {
+                is_const: true,
+                ..default_traits
+            },
+            is_native: true,
+            default_args: Vec::new(),
+            visibility: Visibility::Public,
+            signature_filled: true,
+        };
+        self.functions.insert(find_last_func_id, find_last_func_def);
+        method_ids.push(find_last_func_id);
+
+        // 5. Register isEmpty(): bool
+        let is_empty_func_id = FunctionId::next();
+        let is_empty_func_def = FunctionDef {
+            id: is_empty_func_id,
+            name: "isEmpty".to_string(),
+            namespace: Vec::new(),
+            params: vec![],
+            return_type: DataType::simple(self.bool_type),
+            object_type: Some(type_id),
+            traits: FunctionTraits {
+                is_const: true,
+                ..default_traits
+            },
+            is_native: true,
+            default_args: Vec::new(),
+            visibility: Visibility::Public,
+            signature_filled: true,
+        };
+        self.functions.insert(is_empty_func_id, is_empty_func_def);
+        method_ids.push(is_empty_func_id);
+
+        // 6. Register opAdd(const string &in): string - for string concatenation
+        let op_add_func_id = FunctionId::next();
+        let op_add_func_def = FunctionDef {
+            id: op_add_func_id,
+            name: "opAdd".to_string(),
+            namespace: Vec::new(),
+            params: vec![string_param.clone()],
+            return_type: DataType::simple(type_id),
+            object_type: Some(type_id),
+            traits: FunctionTraits {
+                is_const: true,
+                ..default_traits
+            },
+            is_native: true,
+            default_args: Vec::new(),
+            visibility: Visibility::Public,
+            signature_filled: true,
+        };
+        self.functions.insert(op_add_func_id, op_add_func_def);
+        method_ids.push(op_add_func_id);
+        operator_methods.insert(OperatorBehavior::OpAdd, op_add_func_id);
+
+        // 7. Register opAdd(int): string - for string + int
+        let op_add_int_func_id = FunctionId::next();
+        let op_add_int_func_def = FunctionDef {
+            id: op_add_int_func_id,
+            name: "opAdd".to_string(),
+            namespace: Vec::new(),
+            params: vec![DataType::simple(self.int32_type)],
+            return_type: DataType::simple(type_id),
+            object_type: Some(type_id),
+            traits: FunctionTraits {
+                is_const: true,
+                ..default_traits
+            },
+            is_native: true,
+            default_args: Vec::new(),
+            visibility: Visibility::Public,
+            signature_filled: true,
+        };
+        self.functions.insert(op_add_int_func_id, op_add_int_func_def);
+        method_ids.push(op_add_int_func_id);
+
+        // 8. Register opAdd(float): string - for string + float
+        let op_add_float_func_id = FunctionId::next();
+        let op_add_float_func_def = FunctionDef {
+            id: op_add_float_func_id,
+            name: "opAdd".to_string(),
+            namespace: Vec::new(),
+            params: vec![DataType::simple(self.float_type)],
+            return_type: DataType::simple(type_id),
+            object_type: Some(type_id),
+            traits: FunctionTraits {
+                is_const: true,
+                ..default_traits
+            },
+            is_native: true,
+            default_args: Vec::new(),
+            visibility: Visibility::Public,
+            signature_filled: true,
+        };
+        self.functions.insert(op_add_float_func_id, op_add_float_func_def);
+        method_ids.push(op_add_float_func_id);
+
+        // 9. Register opAddAssign(const string &in): string& - for string +=
+        let op_add_assign_func_id = FunctionId::next();
+        let op_add_assign_func_def = FunctionDef {
+            id: op_add_assign_func_id,
+            name: "opAddAssign".to_string(),
+            namespace: Vec::new(),
+            params: vec![string_param.clone()],
+            return_type: DataType {
+                type_id,
+                is_handle: false,
+                is_handle_to_const: false,
+                is_const: false,
+                ref_modifier: RefModifier::InOut,
+            },
+            object_type: Some(type_id),
+            traits: default_traits,
+            is_native: true,
+            default_args: Vec::new(),
+            visibility: Visibility::Public,
+            signature_filled: true,
+        };
+        self.functions.insert(op_add_assign_func_id, op_add_assign_func_def);
+        method_ids.push(op_add_assign_func_id);
+        operator_methods.insert(OperatorBehavior::OpAddAssign, op_add_assign_func_id);
+
+        // 10. Register opEquals(const string &in): bool - for string comparison
+        let op_equals_func_id = FunctionId::next();
+        let op_equals_func_def = FunctionDef {
+            id: op_equals_func_id,
+            name: "opEquals".to_string(),
+            namespace: Vec::new(),
+            params: vec![string_param.clone()],
+            return_type: DataType::simple(self.bool_type),
+            object_type: Some(type_id),
+            traits: FunctionTraits {
+                is_const: true,
+                ..default_traits
+            },
+            is_native: true,
+            default_args: Vec::new(),
+            visibility: Visibility::Public,
+            signature_filled: true,
+        };
+        self.functions.insert(op_equals_func_id, op_equals_func_def);
+        method_ids.push(op_equals_func_id);
+        operator_methods.insert(OperatorBehavior::OpEquals, op_equals_func_id);
+
+        // 11. Register opIndex(uint): uint8 - for character access
+        let op_index_func_id = FunctionId::next();
+        let op_index_func_def = FunctionDef {
+            id: op_index_func_id,
+            name: "opIndex".to_string(),
+            namespace: Vec::new(),
+            params: vec![DataType::simple(self.uint32_type)],
+            return_type: DataType::simple(self.uint8_type),
+            object_type: Some(type_id),
+            traits: FunctionTraits {
+                is_const: true,
+                ..default_traits
+            },
+            is_native: true,
+            default_args: Vec::new(),
+            visibility: Visibility::Public,
+            signature_filled: true,
+        };
+        self.functions.insert(op_index_func_id, op_index_func_def);
+        method_ids.push(op_index_func_id);
+        operator_methods.insert(OperatorBehavior::OpIndex, op_index_func_id);
+
         self.types[index] = TypeDef::Class {
             name: "string".to_string(),
             qualified_name: "string".to_string(),
             fields: Vec::new(),
-            methods: Vec::new(),
+            methods: method_ids,
             base_class: None,
             interfaces: Vec::new(),
-            operator_methods: FxHashMap::default(),
+            operator_methods,
             properties: FxHashMap::default(),
             is_final: false,
             is_abstract: false,
@@ -377,10 +662,15 @@ impl<'src, 'ast> Registry<'src, 'ast> {
         let instance_id = self.register_type(instance, Some(&instance_name));
         self.template_cache.insert(cache_key, instance_id);
 
-        // For array templates, register a placeholder initializer constructor
+        // For array templates, register placeholder methods
         // This will be implemented via FFI - the compiler just needs a FunctionId to emit
         if template_id == self.array_template {
-            self.register_array_init_constructor(instance_id, args);
+            self.register_array_methods(instance_id, args.clone());
+        }
+
+        // For dictionary templates, register placeholder methods
+        if template_id == self.dict_template {
+            self.register_dictionary_methods(instance_id, args);
         }
 
         Ok(instance_id)
@@ -388,12 +678,25 @@ impl<'src, 'ast> Registry<'src, 'ast> {
 
     /// Register placeholder methods for an array<T> type
     /// The actual implementations will be provided via FFI
-    fn register_array_init_constructor(&mut self, array_type_id: TypeId, sub_types: Vec<DataType>) {
+    fn register_array_methods(&mut self, array_type_id: TypeId, sub_types: Vec<DataType>) {
         // Get the element type (T in array<T>)
         let element_type = sub_types.first().cloned().unwrap_or_else(|| DataType::simple(self.void_type));
 
+        let default_traits = FunctionTraits {
+            is_constructor: false,
+            is_destructor: false,
+            is_final: false,
+            is_virtual: false,
+            is_abstract: false,
+            is_const: false,
+            is_explicit: false,
+            auto_generated: None,
+        };
+
+        let mut method_ids = Vec::new();
+
         // 1. Register $array_init constructor
-        let init_func_id = FunctionId::new(self.functions.len() as u32);
+        let init_func_id = FunctionId::next();
         let init_func_def = FunctionDef {
             id: init_func_id,
             name: "$array_init".to_string(),
@@ -403,24 +706,19 @@ impl<'src, 'ast> Registry<'src, 'ast> {
             object_type: Some(array_type_id),
             traits: FunctionTraits {
                 is_constructor: true,
-                is_destructor: false,
-                is_final: false,
-                is_virtual: false,
-                is_abstract: false,
-                is_const: false,
-                is_explicit: false,
-                auto_generated: None,
+                ..default_traits
             },
             is_native: true,
             default_args: Vec::new(),
             visibility: Visibility::Public,
             signature_filled: true,
         };
-        self.functions.push(init_func_def);
+        self.functions.insert(init_func_id, init_func_def);
+        method_ids.push(init_func_id);
 
         // 2. Register opIndex: T& opIndex(int index)
         // Returns a reference to the element, allowing both read and write
-        let opindex_func_id = FunctionId::new(self.functions.len() as u32);
+        let opindex_func_id = FunctionId::next();
         let opindex_return_type = DataType {
             type_id: element_type.type_id,
             is_handle: element_type.is_handle,
@@ -435,28 +733,381 @@ impl<'src, 'ast> Registry<'src, 'ast> {
             params: vec![DataType::simple(self.int32_type)], // index parameter
             return_type: opindex_return_type,
             object_type: Some(array_type_id),
+            traits: default_traits,
+            is_native: true,
+            default_args: Vec::new(),
+            visibility: Visibility::Public,
+            signature_filled: true,
+        };
+        self.functions.insert(opindex_func_id, opindex_func_def);
+        method_ids.push(opindex_func_id);
+
+        // 3. Register opIndex with uint: T& opIndex(uint index)
+        let opindex_uint_func_id = FunctionId::next();
+        let opindex_uint_return_type = DataType {
+            type_id: element_type.type_id,
+            is_handle: element_type.is_handle,
+            is_handle_to_const: false,
+            is_const: false,
+            ref_modifier: RefModifier::InOut,
+        };
+        let opindex_uint_func_def = FunctionDef {
+            id: opindex_uint_func_id,
+            name: "opIndex".to_string(),
+            namespace: Vec::new(),
+            params: vec![DataType::simple(self.uint32_type)], // uint index parameter
+            return_type: opindex_uint_return_type,
+            object_type: Some(array_type_id),
+            traits: default_traits,
+            is_native: true,
+            default_args: Vec::new(),
+            visibility: Visibility::Public,
+            signature_filled: true,
+        };
+        self.functions.insert(opindex_uint_func_id, opindex_uint_func_def);
+        method_ids.push(opindex_uint_func_id);
+
+        // 4. Register length(): uint
+        let length_func_id = FunctionId::next();
+        let length_func_def = FunctionDef {
+            id: length_func_id,
+            name: "length".to_string(),
+            namespace: Vec::new(),
+            params: vec![],
+            return_type: DataType::simple(self.uint32_type),
+            object_type: Some(array_type_id),
             traits: FunctionTraits {
-                is_constructor: false,
-                is_destructor: false,
-                is_final: false,
-                is_virtual: false,
-                is_abstract: false,
-                is_const: false,
-                is_explicit: false,
-                auto_generated: None,
+                is_const: true,
+                ..default_traits
             },
             is_native: true,
             default_args: Vec::new(),
             visibility: Visibility::Public,
             signature_filled: true,
         };
-        self.functions.push(opindex_func_def);
+        self.functions.insert(length_func_id, length_func_def);
+        method_ids.push(length_func_id);
+
+        // 5. Register resize(uint): void
+        let resize_func_id = FunctionId::next();
+        let resize_func_def = FunctionDef {
+            id: resize_func_id,
+            name: "resize".to_string(),
+            namespace: Vec::new(),
+            params: vec![DataType::simple(self.uint32_type)],
+            return_type: DataType::simple(self.void_type),
+            object_type: Some(array_type_id),
+            traits: default_traits,
+            is_native: true,
+            default_args: Vec::new(),
+            visibility: Visibility::Public,
+            signature_filled: true,
+        };
+        self.functions.insert(resize_func_id, resize_func_def);
+        method_ids.push(resize_func_id);
+
+        // 6. Register insertLast(const T &in): void
+        let insert_last_func_id = FunctionId::next();
+        let insert_param = DataType {
+            type_id: element_type.type_id,
+            is_handle: element_type.is_handle,
+            is_handle_to_const: false,
+            is_const: true,
+            ref_modifier: RefModifier::In,
+        };
+        let insert_last_func_def = FunctionDef {
+            id: insert_last_func_id,
+            name: "insertLast".to_string(),
+            namespace: Vec::new(),
+            params: vec![insert_param],
+            return_type: DataType::simple(self.void_type),
+            object_type: Some(array_type_id),
+            traits: default_traits,
+            is_native: true,
+            default_args: Vec::new(),
+            visibility: Visibility::Public,
+            signature_filled: true,
+        };
+        self.functions.insert(insert_last_func_id, insert_last_func_def);
+        method_ids.push(insert_last_func_id);
+
+        // 7. Register removeLast(): void
+        let remove_last_func_id = FunctionId::next();
+        let remove_last_func_def = FunctionDef {
+            id: remove_last_func_id,
+            name: "removeLast".to_string(),
+            namespace: Vec::new(),
+            params: vec![],
+            return_type: DataType::simple(self.void_type),
+            object_type: Some(array_type_id),
+            traits: default_traits,
+            is_native: true,
+            default_args: Vec::new(),
+            visibility: Visibility::Public,
+            signature_filled: true,
+        };
+        self.functions.insert(remove_last_func_id, remove_last_func_def);
+        method_ids.push(remove_last_func_id);
+
+        // 8. Register insertAt(uint, const T &in): void
+        let insert_at_func_id = FunctionId::next();
+        let insert_at_param = DataType {
+            type_id: element_type.type_id,
+            is_handle: element_type.is_handle,
+            is_handle_to_const: false,
+            is_const: true,
+            ref_modifier: RefModifier::In,
+        };
+        let insert_at_func_def = FunctionDef {
+            id: insert_at_func_id,
+            name: "insertAt".to_string(),
+            namespace: Vec::new(),
+            params: vec![DataType::simple(self.uint32_type), insert_at_param],
+            return_type: DataType::simple(self.void_type),
+            object_type: Some(array_type_id),
+            traits: default_traits,
+            is_native: true,
+            default_args: Vec::new(),
+            visibility: Visibility::Public,
+            signature_filled: true,
+        };
+        self.functions.insert(insert_at_func_id, insert_at_func_def);
+        method_ids.push(insert_at_func_id);
+
+        // 9. Register removeAt(uint): void
+        let remove_at_func_id = FunctionId::next();
+        let remove_at_func_def = FunctionDef {
+            id: remove_at_func_id,
+            name: "removeAt".to_string(),
+            namespace: Vec::new(),
+            params: vec![DataType::simple(self.uint32_type)],
+            return_type: DataType::simple(self.void_type),
+            object_type: Some(array_type_id),
+            traits: default_traits,
+            is_native: true,
+            default_args: Vec::new(),
+            visibility: Visibility::Public,
+            signature_filled: true,
+        };
+        self.functions.insert(remove_at_func_id, remove_at_func_def);
+        method_ids.push(remove_at_func_id);
 
         // Add to the template instance's methods and operator_methods
         let typedef = self.get_type_mut(array_type_id);
         if let TypeDef::TemplateInstance { methods, operator_methods, .. } = typedef {
-            methods.push(init_func_id);
-            methods.push(opindex_func_id);
+            methods.extend(method_ids);
+            operator_methods.insert(OperatorBehavior::OpIndex, opindex_func_id);
+        }
+    }
+
+    /// Register placeholder methods for a dictionary<K, V> type
+    /// The actual implementations will be provided via FFI
+    fn register_dictionary_methods(&mut self, dict_type_id: TypeId, sub_types: Vec<DataType>) {
+        // Get the key type (K) and value type (V) from dictionary<K, V>
+        let key_type = sub_types.first().cloned().unwrap_or_else(|| DataType::simple(self.void_type));
+        let value_type = sub_types.get(1).cloned().unwrap_or_else(|| DataType::simple(self.void_type));
+
+        let default_traits = FunctionTraits {
+            is_constructor: false,
+            is_destructor: false,
+            is_final: false,
+            is_virtual: false,
+            is_abstract: false,
+            is_const: false,
+            is_explicit: false,
+            auto_generated: None,
+        };
+
+        let mut method_ids = Vec::new();
+
+        // 1. Register set(const K &in, const V &in): void
+        let set_func_id = FunctionId::next();
+        let key_param = DataType {
+            type_id: key_type.type_id,
+            is_handle: key_type.is_handle,
+            is_handle_to_const: false,
+            is_const: true,
+            ref_modifier: RefModifier::In,
+        };
+        let value_param = DataType {
+            type_id: value_type.type_id,
+            is_handle: value_type.is_handle,
+            is_handle_to_const: false,
+            is_const: true,
+            ref_modifier: RefModifier::In,
+        };
+        let set_func_def = FunctionDef {
+            id: set_func_id,
+            name: "set".to_string(),
+            namespace: Vec::new(),
+            params: vec![key_param.clone(), value_param.clone()],
+            return_type: DataType::simple(self.void_type),
+            object_type: Some(dict_type_id),
+            traits: default_traits,
+            is_native: true,
+            default_args: Vec::new(),
+            visibility: Visibility::Public,
+            signature_filled: true,
+        };
+        self.functions.insert(set_func_id, set_func_def);
+        method_ids.push(set_func_id);
+
+        // 2. Register get(const K &in, V &out): bool
+        let get_func_id = FunctionId::next();
+        let value_out_param = DataType {
+            type_id: value_type.type_id,
+            is_handle: value_type.is_handle,
+            is_handle_to_const: false,
+            is_const: false,
+            ref_modifier: RefModifier::Out,
+        };
+        let get_func_def = FunctionDef {
+            id: get_func_id,
+            name: "get".to_string(),
+            namespace: Vec::new(),
+            params: vec![key_param.clone(), value_out_param],
+            return_type: DataType::simple(self.bool_type),
+            object_type: Some(dict_type_id),
+            traits: FunctionTraits {
+                is_const: true,
+                ..default_traits
+            },
+            is_native: true,
+            default_args: Vec::new(),
+            visibility: Visibility::Public,
+            signature_filled: true,
+        };
+        self.functions.insert(get_func_id, get_func_def);
+        method_ids.push(get_func_id);
+
+        // 3. Register exists(const K &in): bool
+        let exists_func_id = FunctionId::next();
+        let exists_func_def = FunctionDef {
+            id: exists_func_id,
+            name: "exists".to_string(),
+            namespace: Vec::new(),
+            params: vec![key_param.clone()],
+            return_type: DataType::simple(self.bool_type),
+            object_type: Some(dict_type_id),
+            traits: FunctionTraits {
+                is_const: true,
+                ..default_traits
+            },
+            is_native: true,
+            default_args: Vec::new(),
+            visibility: Visibility::Public,
+            signature_filled: true,
+        };
+        self.functions.insert(exists_func_id, exists_func_def);
+        method_ids.push(exists_func_id);
+
+        // 4. Register delete(const K &in): bool
+        let delete_func_id = FunctionId::next();
+        let delete_func_def = FunctionDef {
+            id: delete_func_id,
+            name: "delete".to_string(),
+            namespace: Vec::new(),
+            params: vec![key_param.clone()],
+            return_type: DataType::simple(self.bool_type),
+            object_type: Some(dict_type_id),
+            traits: default_traits,
+            is_native: true,
+            default_args: Vec::new(),
+            visibility: Visibility::Public,
+            signature_filled: true,
+        };
+        self.functions.insert(delete_func_id, delete_func_def);
+        method_ids.push(delete_func_id);
+
+        // 5. Register isEmpty(): bool
+        let is_empty_func_id = FunctionId::next();
+        let is_empty_func_def = FunctionDef {
+            id: is_empty_func_id,
+            name: "isEmpty".to_string(),
+            namespace: Vec::new(),
+            params: vec![],
+            return_type: DataType::simple(self.bool_type),
+            object_type: Some(dict_type_id),
+            traits: FunctionTraits {
+                is_const: true,
+                ..default_traits
+            },
+            is_native: true,
+            default_args: Vec::new(),
+            visibility: Visibility::Public,
+            signature_filled: true,
+        };
+        self.functions.insert(is_empty_func_id, is_empty_func_def);
+        method_ids.push(is_empty_func_id);
+
+        // 6. Register getSize(): uint
+        let get_size_func_id = FunctionId::next();
+        let get_size_func_def = FunctionDef {
+            id: get_size_func_id,
+            name: "getSize".to_string(),
+            namespace: Vec::new(),
+            params: vec![],
+            return_type: DataType::simple(self.uint32_type),
+            object_type: Some(dict_type_id),
+            traits: FunctionTraits {
+                is_const: true,
+                ..default_traits
+            },
+            is_native: true,
+            default_args: Vec::new(),
+            visibility: Visibility::Public,
+            signature_filled: true,
+        };
+        self.functions.insert(get_size_func_id, get_size_func_def);
+        method_ids.push(get_size_func_id);
+
+        // 7. Register deleteAll(): void
+        let delete_all_func_id = FunctionId::next();
+        let delete_all_func_def = FunctionDef {
+            id: delete_all_func_id,
+            name: "deleteAll".to_string(),
+            namespace: Vec::new(),
+            params: vec![],
+            return_type: DataType::simple(self.void_type),
+            object_type: Some(dict_type_id),
+            traits: default_traits,
+            is_native: true,
+            default_args: Vec::new(),
+            visibility: Visibility::Public,
+            signature_filled: true,
+        };
+        self.functions.insert(delete_all_func_id, delete_all_func_def);
+        method_ids.push(delete_all_func_id);
+
+        // 8. Register opIndex(const K &in): V& - for dictionary[key] access
+        let opindex_func_id = FunctionId::next();
+        let opindex_return_type = DataType {
+            type_id: value_type.type_id,
+            is_handle: value_type.is_handle,
+            is_handle_to_const: false,
+            is_const: false,
+            ref_modifier: RefModifier::InOut,
+        };
+        let opindex_func_def = FunctionDef {
+            id: opindex_func_id,
+            name: "opIndex".to_string(),
+            namespace: Vec::new(),
+            params: vec![key_param],
+            return_type: opindex_return_type,
+            object_type: Some(dict_type_id),
+            traits: default_traits,
+            is_native: true,
+            default_args: Vec::new(),
+            visibility: Visibility::Public,
+            signature_filled: true,
+        };
+        self.functions.insert(opindex_func_id, opindex_func_def);
+        method_ids.push(opindex_func_id);
+
+        // Add to the template instance's methods and operator_methods
+        let typedef = self.get_type_mut(dict_type_id);
+        if let TypeDef::TemplateInstance { methods, operator_methods, .. } = typedef {
+            methods.extend(method_ids);
             operator_methods.insert(OperatorBehavior::OpIndex, opindex_func_id);
         }
     }
@@ -466,7 +1117,7 @@ impl<'src, 'ast> Registry<'src, 'ast> {
         let func_id = def.id;
         let qualified_name = def.qualified_name();
 
-        self.functions.push(def);
+        self.functions.insert(func_id, def);
 
         // Add to overload map
         self.func_by_name
@@ -487,12 +1138,12 @@ impl<'src, 'ast> Registry<'src, 'ast> {
 
     /// Get a function definition by FunctionId
     pub fn get_function(&self, func_id: FunctionId) -> &FunctionDef<'src, 'ast> {
-        &self.functions[func_id.as_u32() as usize]
+        self.functions.get(&func_id).expect("FunctionId not found in registry")
     }
 
     /// Get a mutable function definition by FunctionId
     pub fn get_function_mut(&mut self, func_id: FunctionId) -> &mut FunctionDef<'src, 'ast> {
-        &mut self.functions[func_id.as_u32() as usize]
+        self.functions.get_mut(&func_id).expect("FunctionId not found in registry")
     }
 
     /// Get the count of registered functions
@@ -502,7 +1153,7 @@ impl<'src, 'ast> Registry<'src, 'ast> {
 
     /// Get the next available function ID
     pub fn next_function_id(&self) -> FunctionId {
-        FunctionId::new(self.functions.len() as u32)
+        FunctionId::next()
     }
 
     /// Get the count of registered types
@@ -513,7 +1164,7 @@ impl<'src, 'ast> Registry<'src, 'ast> {
     /// Get all methods for a given type
     pub fn get_methods(&self, type_id: TypeId) -> Vec<FunctionId> {
         self.functions
-            .iter()
+            .values()
             .filter(|f| f.object_type == Some(type_id))
             .map(|f| f.id)
             .collect()
@@ -711,9 +1362,7 @@ impl<'src, 'ast> Registry<'src, 'ast> {
             // Find the first function that hasn't been filled in yet
             // Match by object_type to ensure we update the right method
             for func_id in func_ids {
-                let index = func_id.as_u32() as usize;
-                if index < self.functions.len() {
-                    let func = &self.functions[index];
+                if let Some(func) = self.functions.get(&func_id) {
                     // Match on object_type to ensure we update the right method
                     // For methods, object_type must match; for free functions, both should be None
                     let object_type_matches = func.object_type == object_type;
@@ -721,11 +1370,13 @@ impl<'src, 'ast> Registry<'src, 'ast> {
                     // Pass 1 registers all functions with signature_filled: false,
                     // and Pass 2a sets it to true when filling the signature.
                     if object_type_matches && !func.signature_filled {
-                        self.functions[index].params = params;
-                        self.functions[index].return_type = return_type;
-                        self.functions[index].traits = traits;
-                        self.functions[index].default_args = default_args;
-                        self.functions[index].signature_filled = true;
+                        if let Some(func_mut) = self.functions.get_mut(&func_id) {
+                            func_mut.params = params;
+                            func_mut.return_type = return_type;
+                            func_mut.traits = traits;
+                            func_mut.default_args = default_args;
+                            func_mut.signature_filled = true;
+                        }
                         return; // Only update one function
                     }
                 }
@@ -736,18 +1387,16 @@ impl<'src, 'ast> Registry<'src, 'ast> {
     /// Update a function's parameters directly by FunctionId
     /// Used to fill in params for auto-generated constructors
     pub fn update_function_params(&mut self, func_id: FunctionId, params: Vec<DataType>) {
-        let index = func_id.as_u32() as usize;
-        if index < self.functions.len() {
-            self.functions[index].params = params;
+        if let Some(func) = self.functions.get_mut(&func_id) {
+            func.params = params;
         }
     }
 
     /// Update a function's return type directly by FunctionId
     /// Used to fill in return type for auto-generated operators like opAssign
     pub fn update_function_return_type(&mut self, func_id: FunctionId, return_type: DataType) {
-        let index = func_id.as_u32() as usize;
-        if index < self.functions.len() {
-            self.functions[index].return_type = return_type;
+        if let Some(func) = self.functions.get_mut(&func_id) {
+            func.return_type = return_type;
         }
     }
 
@@ -1033,6 +1682,13 @@ impl<'src, 'ast> Registry<'src, 'ast> {
                 }
 
                 matching_methods
+            }
+            TypeDef::TemplateInstance { methods, .. } => {
+                // Get all methods with matching name from this template instance
+                methods.iter()
+                    .copied()
+                    .filter(|&id| self.get_function(id).name == name)
+                    .collect()
             }
             _ => Vec::new(),
         }

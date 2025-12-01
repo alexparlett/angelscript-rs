@@ -4162,10 +4162,10 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
                 // Extract types for overload resolution
                 let arg_types: Vec<DataType> = arg_contexts.iter().map(|ctx| ctx.data_type.clone()).collect();
 
-                // Verify the object is a class type
+                // Verify the object is a class type or template instance (e.g., array<T>)
                 match typedef {
-                    TypeDef::Class { .. } => {
-                        // Look up methods with this name on the class type
+                    TypeDef::Class { .. } | TypeDef::TemplateInstance { .. } => {
+                        // Look up methods with this name on the type
                         let candidates = self.registry.find_methods_by_name(object_ctx.data_type.type_id, name.name);
 
                         if candidates.is_empty() {
@@ -5640,16 +5640,19 @@ mod tests {
         assert_eq!(result.module.functions.len(), 3,
             "Expected 3 functions (takeCallback, main, lambda), got {}", result.module.functions.len());
 
-        // Functions are registered in declaration order:
-        // FunctionId(0) = takeCallback
-        // FunctionId(1) = main
-        // FunctionId(2) = lambda
-        let takecb_id = FunctionId(0);
-        let main_id = FunctionId(1);
-        let lambda_id = FunctionId(2);
+        // Find the functions by name via the registry
+        let takecb_ids = result.registry.lookup_functions("takeCallback");
+        assert_eq!(takecb_ids.len(), 1, "Expected 1 takeCallback function");
+        let takecb_id = takecb_ids[0];
 
-        assert!(result.module.functions.contains_key(&lambda_id),
-            "Lambda bytecode not found in compiled module");
+        let main_ids = result.registry.lookup_functions("main");
+        assert_eq!(main_ids.len(), 1, "Expected 1 main function");
+        let main_id = main_ids[0];
+
+        // Lambda should be any function that's not takeCallback or main
+        let lambda_id = result.module.functions.keys()
+            .find(|&&id| id != takecb_id && id != main_id)
+            .expect("Lambda bytecode not found in compiled module");
 
         // Verify main function contains FuncPtr instruction
         let main_bytecode = result.module.functions.get(&main_id).expect("main function not found");
@@ -5732,9 +5735,16 @@ mod tests {
         // Should compile successfully with variable capture
         assert!(result.is_success(), "Lambda variable capture failed: {:?}", result.errors);
 
-        // Lambda should have captured 'counter' variable
-        let lambda_id = FunctionId(2);
-        let lambda_bytecode = result.module.functions.get(&lambda_id)
+        // Find lambda - it's any function that's not runAction or main
+        let run_action_ids = result.registry.lookup_functions("runAction");
+        let main_ids = result.registry.lookup_functions("main");
+        let run_action_id = run_action_ids.first().copied();
+        let main_id = main_ids.first().copied();
+
+        let lambda_id = result.module.functions.keys()
+            .find(|&&id| Some(id) != run_action_id && Some(id) != main_id)
+            .expect("Lambda bytecode not found");
+        let lambda_bytecode = result.module.functions.get(lambda_id)
             .expect("Lambda bytecode not found");
 
         // The lambda body should reference the captured variable
@@ -14187,7 +14197,7 @@ mod tests {
     // ==================== String Index Not Supported ====================
 
     #[test]
-    fn string_index_error() {
+    fn string_index_works() {
         use crate::parse_lenient;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
@@ -14196,15 +14206,15 @@ mod tests {
         let source = r#"
             void test() {
                 string s = "hello";
-                int c = s[0];  // Error: string doesn't have opIndex registered
+                uint8 c = s[0];  // String opIndex returns uint8
             }
         "#;
 
         let (script, _) = parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
-        // String indexing not supported without FFI registration
-        assert!(!result.is_success(), "String index should fail without opIndex");
+        // String indexing should work with built-in opIndex
+        assert!(result.is_success(), "String index should work with opIndex: {:?}", result.errors);
     }
 
     // ==================== Nested Init List ====================

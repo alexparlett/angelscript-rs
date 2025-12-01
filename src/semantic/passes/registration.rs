@@ -76,9 +76,6 @@ pub struct Registrar<'src, 'ast> {
     /// Errors found during registration
     errors: Vec<SemanticError>,
 
-    /// Next function ID to assign
-    next_func_id: u32,
-
     /// Phantom markers
     _phantom: std::marker::PhantomData<(&'src str, &'ast ())>,
 }
@@ -92,7 +89,6 @@ impl<'src, 'ast> Registrar<'src, 'ast> {
             current_class: None,
             declared_names: FxHashMap::default(),
             errors: Vec::new(),
-            next_func_id: 0,
             _phantom: std::marker::PhantomData,
         }
     }
@@ -140,8 +136,7 @@ impl<'src, 'ast> Registrar<'src, 'ast> {
         // (checking signatures) happens in Pass 2a.
 
         // Register function (with empty signature for now)
-        let func_id = FunctionId::new(self.next_func_id);
-        self.next_func_id += 1;
+        let func_id = FunctionId::next();
 
         // Build basic function traits from AST
         // Full traits will be updated in Pass 2a
@@ -524,8 +519,7 @@ impl<'src, 'ast> Registrar<'src, 'ast> {
     /// Default constructor: ClassName()
     /// Params will be filled in Pass 2a
     fn generate_default_constructor(&mut self, class_name: &str, _qualified_name: &str, type_id: TypeId) {
-        let func_id = FunctionId::new(self.next_func_id);
-        self.next_func_id += 1;
+        let func_id = FunctionId::next();
 
         let func_def = FunctionDef {
             id: func_id,
@@ -558,8 +552,7 @@ impl<'src, 'ast> Registrar<'src, 'ast> {
     /// Copy constructor: ClassName(const ClassName& in)
     /// Params will be filled in Pass 2a
     fn generate_copy_constructor(&mut self, class_name: &str, _qualified_name: &str, type_id: TypeId) {
-        let func_id = FunctionId::new(self.next_func_id);
-        self.next_func_id += 1;
+        let func_id = FunctionId::next();
 
         let func_def = FunctionDef {
             id: func_id,
@@ -593,8 +586,7 @@ impl<'src, 'ast> Registrar<'src, 'ast> {
     /// Params will be filled in Pass 2a
     /// Generated automatically unless explicitly declared or marked as deleted
     fn generate_op_assign(&mut self, _class_name: &str, type_id: TypeId) {
-        let func_id = FunctionId::new(self.next_func_id);
-        self.next_func_id += 1;
+        let func_id = FunctionId::next();
 
         let func_def = FunctionDef {
             id: func_id,
@@ -640,8 +632,7 @@ impl<'src, 'ast> Registrar<'src, 'ast> {
             match accessor.kind {
                 PropertyAccessorKind::Get => {
                     // Create synthetic getter function: T get_$propname() const
-                    let func_id = FunctionId::new(self.next_func_id);
-                    self.next_func_id += 1;
+                    let func_id = FunctionId::next();
 
                     let func_def = FunctionDef {
                         id: func_id,
@@ -671,8 +662,7 @@ impl<'src, 'ast> Registrar<'src, 'ast> {
                 }
                 PropertyAccessorKind::Set => {
                     // Create synthetic setter function: void set_$propname(T value)
-                    let func_id = FunctionId::new(self.next_func_id);
-                    self.next_func_id += 1;
+                    let func_id = FunctionId::next();
 
                     let func_def = FunctionDef {
                         id: func_id,

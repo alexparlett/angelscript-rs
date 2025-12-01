@@ -211,6 +211,7 @@ impl ScriptModule {
     /// # Errors
     ///
     /// Returns errors if parsing or compilation fails.
+    #[cfg_attr(feature = "profiling", profiling::function)]
     pub fn build(&mut self) -> Result<(), BuildError> {
         if self.is_built {
             return Err(BuildError::AlreadyBuilt);
@@ -224,18 +225,25 @@ impl ScriptModule {
         let arena = Bump::new();
 
         // Parse all sources
-        let mut all_parse_errors = Vec::new();
-        let mut scripts = Vec::new();
+        let (scripts, all_parse_errors) = {
+            #[cfg(feature = "profiling")]
+            profiling::scope!("parsing");
 
-        for (filename, source) in &self.sources {
-            let (script, parse_errors) = parse_lenient(source, &arena);
+            let mut all_parse_errors = Vec::new();
+            let mut scripts = Vec::new();
 
-            if !parse_errors.is_empty() {
-                all_parse_errors.push((filename.clone(), parse_errors));
+            for (filename, source) in &self.sources {
+                let (script, parse_errors) = parse_lenient(source, &arena);
+
+                if !parse_errors.is_empty() {
+                    all_parse_errors.push((filename.clone(), parse_errors));
+                }
+
+                scripts.push((filename.clone(), script));
             }
 
-            scripts.push((filename.clone(), script));
-        }
+            (scripts, all_parse_errors)
+        };
 
         // If there were parse errors, fail early
         if !all_parse_errors.is_empty() {
@@ -249,12 +257,17 @@ impl ScriptModule {
         }
 
         // Compile the script(s)
-        let compilation_result = if scripts.len() == 1 {
-            // Single file - use existing Compiler
-            Compiler::compile(&scripts[0].1)
-        } else {
-            // Multi-file - TODO: implement
-            todo!("Multi-file compilation not yet implemented")
+        let compilation_result = {
+            #[cfg(feature = "profiling")]
+            profiling::scope!("compilation");
+
+            if scripts.len() == 1 {
+                // Single file - use existing Compiler
+                Compiler::compile(&scripts[0].1)
+            } else {
+                // Multi-file - TODO: implement
+                todo!("Multi-file compilation not yet implemented")
+            }
         };
 
         // Check for compilation errors

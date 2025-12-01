@@ -1,5 +1,8 @@
 // Test enum declarations
 
+// FFI placeholder - will be replaced with proper FFI bindings
+void print(const string &in msg) {}
+
 enum Color {
     Red,
     Green,
