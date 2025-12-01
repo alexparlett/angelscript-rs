@@ -9965,6 +9965,176 @@ mod tests {
         assert!(result.is_success(), "Multidimensional init list should work: {:?}", result.errors);
     }
 
+    #[test]
+    fn init_list_in_nested_block() {
+        // Test that template types are instantiated when used in nested blocks
+        use crate::parse_lenient;
+        use crate::semantic::Compiler;
+        use bumpalo::Bump;
+
+        let arena = Bump::new();
+        let source = r#"
+            void test() {
+                if (true) {
+                    array<int> arr = {1, 2, 3};
+                }
+            }
+        "#;
+
+        let (script, _) = parse_lenient(source, &arena);
+        let result = Compiler::compile(&script);
+
+        assert!(result.is_success(), "Init list in nested block should work: {:?}", result.errors);
+    }
+
+    #[test]
+    fn init_list_in_for_loop() {
+        // Test that template types are instantiated when used in for loop body
+        use crate::parse_lenient;
+        use crate::semantic::Compiler;
+        use bumpalo::Bump;
+
+        let arena = Bump::new();
+        let source = r#"
+            void test() {
+                for (int i = 0; i < 10; i++) {
+                    array<int> arr = {i, i+1, i+2};
+                }
+            }
+        "#;
+
+        let (script, _) = parse_lenient(source, &arena);
+        let result = Compiler::compile(&script);
+
+        assert!(result.is_success(), "Init list in for loop should work: {:?}", result.errors);
+    }
+
+    #[test]
+    fn init_list_in_while_loop() {
+        // Test that template types are instantiated when used in while loop body
+        use crate::parse_lenient;
+        use crate::semantic::Compiler;
+        use bumpalo::Bump;
+
+        let arena = Bump::new();
+        let source = r#"
+            void test() {
+                int i = 0;
+                while (i < 5) {
+                    array<float> arr = {1.0f, 2.0f};
+                    i++;
+                }
+            }
+        "#;
+
+        let (script, _) = parse_lenient(source, &arena);
+        let result = Compiler::compile(&script);
+
+        assert!(result.is_success(), "Init list in while loop should work: {:?}", result.errors);
+    }
+
+    #[test]
+    fn init_list_deeply_nested_blocks() {
+        // Test template instantiation in deeply nested control structures
+        use crate::parse_lenient;
+        use crate::semantic::Compiler;
+        use bumpalo::Bump;
+
+        let arena = Bump::new();
+        let source = r#"
+            void test() {
+                if (true) {
+                    for (int i = 0; i < 3; i++) {
+                        while (i > 0) {
+                            array<double> arr = {1.0, 2.0, 3.0};
+                            break;
+                        }
+                    }
+                }
+            }
+        "#;
+
+        let (script, _) = parse_lenient(source, &arena);
+        let result = Compiler::compile(&script);
+
+        assert!(result.is_success(), "Init list in deeply nested blocks should work: {:?}", result.errors);
+    }
+
+    #[test]
+    fn template_type_in_switch() {
+        // Test template instantiation in switch case blocks
+        use crate::parse_lenient;
+        use crate::semantic::Compiler;
+        use bumpalo::Bump;
+
+        let arena = Bump::new();
+        let source = r#"
+            void test() {
+                int x = 1;
+                switch (x) {
+                    case 1:
+                        array<int> arr = {10, 20};
+                        break;
+                    case 2:
+                        array<float> arr2 = {1.5f, 2.5f};
+                        break;
+                }
+            }
+        "#;
+
+        let (script, _) = parse_lenient(source, &arena);
+        let result = Compiler::compile(&script);
+
+        assert!(result.is_success(), "Template type in switch should work: {:?}", result.errors);
+    }
+
+    #[test]
+    fn template_type_in_try_catch() {
+        // Test template instantiation in try/catch blocks
+        use crate::parse_lenient;
+        use crate::semantic::Compiler;
+        use bumpalo::Bump;
+
+        let arena = Bump::new();
+        let source = r#"
+            void test() {
+                try {
+                    array<int> arr = {1, 2, 3};
+                }
+                catch {
+                    array<float> arr2 = {0.0f};
+                }
+            }
+        "#;
+
+        let (script, _) = parse_lenient(source, &arena);
+        let result = Compiler::compile(&script);
+
+        assert!(result.is_success(), "Template type in try/catch should work: {:?}", result.errors);
+    }
+
+    #[test]
+    fn multiple_template_types_same_function() {
+        // Test multiple different template instantiations in same function
+        use crate::parse_lenient;
+        use crate::semantic::Compiler;
+        use bumpalo::Bump;
+
+        let arena = Bump::new();
+        let source = r#"
+            void test() {
+                array<int> intArr = {1, 2, 3};
+                array<float> floatArr = {1.0f, 2.0f};
+                array<double> doubleArr = {1.0, 2.0, 3.0};
+            }
+        "#;
+
+        let (script, _) = parse_lenient(source, &arena);
+        let result = Compiler::compile(&script);
+
+        assert!(result.is_success(), "Multiple template types should work: {:?}", result.errors);
+    }
+
     // ==================== Super Call Detection in Expressions ====================
 
     #[test]
