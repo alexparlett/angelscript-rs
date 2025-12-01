@@ -9684,7 +9684,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore] // TODO: Array init list in constructor with super should work
     fn super_call_in_index_expr() {
         use crate::parse_lenient;
         use crate::semantic::Compiler;
@@ -10436,7 +10435,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore] // TODO: Init list in constructor should work with super detection
     fn super_detection_in_init_list() {
         use crate::parse_lenient;
         use crate::semantic::Compiler;
@@ -14402,9 +14400,7 @@ mod tests {
         assert!(result.is_success(), "int8 to float conversion should work: {:?}", result.errors);
     }
 
-    // TODO: Numeric literals default to 'int' and don't convert implicitly to uint8
     #[test]
-    #[ignore]
     fn uint8_to_double_conversion() {
         use crate::parse_lenient;
         use crate::semantic::Compiler;
@@ -14444,9 +14440,7 @@ mod tests {
         assert!(result.is_success(), "int16 to int32 widening should work: {:?}", result.errors);
     }
 
-    // TODO: Numeric literals default to 'int' and don't convert implicitly to uint16
     #[test]
-    #[ignore]
     fn uint16_to_uint32_widening() {
         use crate::parse_lenient;
         use crate::semantic::Compiler;
