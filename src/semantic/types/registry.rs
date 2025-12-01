@@ -22,7 +22,7 @@
 //! assert!(int_type.is_primitive());
 //! ```
 
-use super::data_type::DataType;
+use super::data_type::{DataType, RefModifier};
 use super::type_def::{
     TypeId, TypeDef, FunctionId, OperatorBehavior, PrimitiveType, FunctionTraits, PropertyAccessors,
     Visibility, VOID_TYPE, BOOL_TYPE, INT8_TYPE, INT16_TYPE, INT32_TYPE, INT64_TYPE,
@@ -386,15 +386,16 @@ impl<'src, 'ast> Registry<'src, 'ast> {
         Ok(instance_id)
     }
 
-    /// Register a placeholder initializer constructor for an array<T> type
-    /// The actual implementation will be provided via FFI
-    fn register_array_init_constructor(&mut self, array_type_id: TypeId, _sub_types: Vec<DataType>) {
-        let func_id = FunctionId::new(self.functions.len() as u32);
+    /// Register placeholder methods for an array<T> type
+    /// The actual implementations will be provided via FFI
+    fn register_array_init_constructor(&mut self, array_type_id: TypeId, sub_types: Vec<DataType>) {
+        // Get the element type (T in array<T>)
+        let element_type = sub_types.first().cloned().unwrap_or_else(|| DataType::simple(self.void_type));
 
-        // Create placeholder constructor: array<T>(int count)
-        // The count parameter tells the VM how many elements to pop from the stack
-        let func_def = FunctionDef {
-            id: func_id,
+        // 1. Register $array_init constructor
+        let init_func_id = FunctionId::new(self.functions.len() as u32);
+        let init_func_def = FunctionDef {
+            id: init_func_id,
             name: "$array_init".to_string(),
             namespace: Vec::new(),
             params: vec![DataType::simple(self.int32_type)], // count parameter
@@ -410,18 +411,53 @@ impl<'src, 'ast> Registry<'src, 'ast> {
                 is_explicit: false,
                 auto_generated: None,
             },
-            is_native: true, // FFI-provided
+            is_native: true,
             default_args: Vec::new(),
             visibility: Visibility::Public,
-            signature_filled: true, // Native function - fully filled
+            signature_filled: true,
         };
+        self.functions.push(init_func_def);
 
-        self.functions.push(func_def);
+        // 2. Register opIndex: T& opIndex(int index)
+        // Returns a reference to the element, allowing both read and write
+        let opindex_func_id = FunctionId::new(self.functions.len() as u32);
+        let opindex_return_type = DataType {
+            type_id: element_type.type_id,
+            is_handle: element_type.is_handle,
+            is_handle_to_const: false,
+            is_const: false,
+            ref_modifier: RefModifier::InOut, // Returns a reference
+        };
+        let opindex_func_def = FunctionDef {
+            id: opindex_func_id,
+            name: "opIndex".to_string(),
+            namespace: Vec::new(),
+            params: vec![DataType::simple(self.int32_type)], // index parameter
+            return_type: opindex_return_type,
+            object_type: Some(array_type_id),
+            traits: FunctionTraits {
+                is_constructor: false,
+                is_destructor: false,
+                is_final: false,
+                is_virtual: false,
+                is_abstract: false,
+                is_const: false,
+                is_explicit: false,
+                auto_generated: None,
+            },
+            is_native: true,
+            default_args: Vec::new(),
+            visibility: Visibility::Public,
+            signature_filled: true,
+        };
+        self.functions.push(opindex_func_def);
 
-        // Add to the template instance's methods
+        // Add to the template instance's methods and operator_methods
         let typedef = self.get_type_mut(array_type_id);
-        if let TypeDef::TemplateInstance { methods, .. } = typedef {
-            methods.push(func_id);
+        if let TypeDef::TemplateInstance { methods, operator_methods, .. } = typedef {
+            methods.push(init_func_id);
+            methods.push(opindex_func_id);
+            operator_methods.insert(OperatorBehavior::OpIndex, opindex_func_id);
         }
     }
 
@@ -856,6 +892,9 @@ impl<'src, 'ast> Registry<'src, 'ast> {
         let typedef = self.get_type(type_id);
         match typedef {
             TypeDef::Class {
+                operator_methods, ..
+            } => operator_methods.get(&operator).copied(),
+            TypeDef::TemplateInstance {
                 operator_methods, ..
             } => operator_methods.get(&operator).copied(),
             _ => None,

@@ -10928,7 +10928,6 @@ mod tests {
     // ==================== Array Tests ====================
 
     #[test]
-    #[ignore] // TODO: Array index access should work
     fn array_access() {
         use crate::parse_lenient;
         use crate::semantic::Compiler;
