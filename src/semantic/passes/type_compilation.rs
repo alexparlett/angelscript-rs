@@ -1044,19 +1044,33 @@ impl<'src, 'ast> TypeCompiler<'src, 'ast> {
                     // Scoped type: Namespace::Type
                     self.build_scoped_name(scope, ident.name)
                 } else {
-                    // Try current namespace first, then global
+                    // Try current namespace first, then ancestor namespaces, then global
+                    // For namespace_path = ["Utils", "Colors"], try:
+                    //   1. Utils::Colors::Color
+                    //   2. Utils::Color
+                    //   3. Color (global)
                     let qualified = self.build_qualified_name(ident.name);
 
-                    // Look up in registry
+                    // Look up in registry - full namespace qualified
                     if let Some(type_id) = self.registry.lookup_type(&qualified) {
                         return Some(type_id);
                     }
 
-                    // If not found in current namespace, try global scope
-                    if !self.namespace_path.is_empty()
-                        && let Some(type_id) = self.registry.lookup_type(ident.name) {
+                    // Try progressively shorter namespace prefixes
+                    if !self.namespace_path.is_empty() {
+                        for prefix_len in (1..self.namespace_path.len()).rev() {
+                            let prefix = self.namespace_path[..prefix_len].join("::");
+                            let ancestor_qualified = format!("{}::{}", prefix, ident.name);
+                            if let Some(type_id) = self.registry.lookup_type(&ancestor_qualified) {
+                                return Some(type_id);
+                            }
+                        }
+
+                        // Finally try global scope
+                        if let Some(type_id) = self.registry.lookup_type(ident.name) {
                             return Some(type_id);
                         }
+                    }
 
                     // Not found anywhere
                     self.errors.push(SemanticError::new(

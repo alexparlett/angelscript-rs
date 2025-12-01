@@ -3092,6 +3092,67 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
                     return Some(ExprContext::rvalue(DataType::simple(VOID_TYPE)));
                 }
 
+                // Check for base class method call pattern: BaseClass::method(args)
+                // This is when inside a derived class and calling the parent's implementation directly
+                if let Some(scope) = ident_expr.scope {
+                    if !scope.is_absolute && scope.segments.len() == 1 {
+                        let scope_name = scope.segments[0].name;
+                        let method_name = ident_expr.ident.name;
+
+                        // Check if we're in a class method and the scope refers to a base class
+                        if let Some(current_class_id) = self.current_class {
+                            if let Some(base_class_id) = self.get_base_class_by_name(current_class_id, scope_name) {
+                                // This is a base class method call - load 'this' and call the base method
+                                // Look up the method in the base class
+                                let all_methods = self.registry.get_methods(base_class_id);
+                                let base_methods: Vec<FunctionId> = all_methods.into_iter()
+                                    .filter(|&func_id| {
+                                        let func = self.registry.get_function(func_id);
+                                        func.name == method_name
+                                    })
+                                    .collect();
+
+                                if !base_methods.is_empty() {
+                                    // Load 'this' for the method call
+                                    self.bytecode.emit(Instruction::LoadLocal(0)); // 'this' is always local 0
+
+                                    // Type-check arguments
+                                    let mut arg_contexts = Vec::with_capacity(call.args.len());
+                                    for arg in call.args {
+                                        let arg_ctx = self.check_expr(arg.value)?;
+                                        arg_contexts.push(arg_ctx);
+                                    }
+                                    let arg_types: Vec<DataType> = arg_contexts.iter().map(|ctx| ctx.data_type.clone()).collect();
+
+                                    // Find best matching overload
+                                    let (method_id, conversions) = self.find_best_function_overload(
+                                        &base_methods,
+                                        &arg_types,
+                                        call.span,
+                                    )?;
+
+                                    let func_def = self.registry.get_function(method_id);
+
+                                    // Validate reference parameters
+                                    self.validate_reference_parameters(func_def, &arg_contexts, call.args, call.span)?;
+
+                                    // Emit any needed conversions
+                                    for conv in conversions {
+                                        if let Some(c) = conv {
+                                            self.emit_conversion(&c);
+                                        }
+                                    }
+
+                                    // Emit call instruction
+                                    self.bytecode.emit(Instruction::Call(method_id.as_u32()));
+
+                                    return Some(ExprContext::rvalue(func_def.return_type.clone()));
+                                }
+                            }
+                        }
+                    }
+                }
+
                 // Check if this is a local variable (could be funcdef handle or class with opCall)
                 if ident_expr.scope.is_none() {  // Only check locals for unqualified names
                     // Extract type info before mutable operations to avoid borrow conflicts
@@ -3232,14 +3293,25 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
                     self.registry.lookup_type(&full_type_name)
                 } else {
                     // Simple type lookup - try raw name first, then namespace-qualified
+                    // Try raw name first, then progressively qualified names
                     self.registry.lookup_type(&name).or_else(|| {
-                        // If not found and we're in a namespace, try with namespace prefix
+                        // Try ancestor namespaces (current, then parent, then grandparent, etc.)
                         if !self.namespace_path.is_empty() {
+                            // Try full namespace first
                             let qualified_name = self.build_qualified_name(&name);
-                            self.registry.lookup_type(&qualified_name)
-                        } else {
-                            None
+                            if let Some(type_id) = self.registry.lookup_type(&qualified_name) {
+                                return Some(type_id);
+                            }
+                            // Try progressively shorter namespace prefixes
+                            for prefix_len in (1..self.namespace_path.len()).rev() {
+                                let prefix = self.namespace_path[..prefix_len].join("::");
+                                let ancestor_qualified = format!("{}::{}", prefix, name);
+                                if let Some(type_id) = self.registry.lookup_type(&ancestor_qualified) {
+                                    return Some(type_id);
+                                }
+                            }
                         }
+                        None
                     })
                 };
 
@@ -5196,7 +5268,11 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
                     );
                     None
                 } else {
-                    // Try current namespace first, then global
+                    // Try current namespace first, then ancestor namespaces, then global
+                    // For namespace_path = ["Utils", "Colors"], try:
+                    //   1. Utils::Colors::Color
+                    //   2. Utils::Color
+                    //   3. Color (global)
                     let qualified = self.build_qualified_name(ident.name);
 
                     // Look up in registry
@@ -5204,8 +5280,17 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
                         return Some(type_id);
                     }
 
-                    // If not found in current namespace, try global scope
+                    // Try progressively shorter namespace prefixes
                     if !self.namespace_path.is_empty() {
+                        for prefix_len in (1..self.namespace_path.len()).rev() {
+                            let prefix = self.namespace_path[..prefix_len].join("::");
+                            let ancestor_qualified = format!("{}::{}", prefix, ident.name);
+                            if let Some(type_id) = self.registry.lookup_type(&ancestor_qualified) {
+                                return Some(type_id);
+                            }
+                        }
+
+                        // Finally try global scope
                         if let Some(type_id) = self.registry.lookup_type(ident.name) {
                             return Some(type_id);
                         }
@@ -5830,6 +5915,24 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
                 self.bytecode.emit(Instruction::ValueToHandle);
             }
         }
+    }
+
+    /// Check if a class has a base class with the given name (short name, not qualified).
+    /// Walks up the inheritance chain and returns the base class's TypeId if found.
+    fn get_base_class_by_name(&self, class_id: TypeId, name: &str) -> Option<TypeId> {
+        let class_def = self.registry.get_type(class_id);
+        if let TypeDef::Class { base_class, .. } = class_def {
+            if let Some(base_id) = base_class {
+                let base_def = self.registry.get_type(*base_id);
+                // Check if the base class name matches (short name only)
+                if base_def.name() == name {
+                    return Some(*base_id);
+                }
+                // Recursively check further up the chain
+                return self.get_base_class_by_name(*base_id, name);
+            }
+        }
+        None
     }
 }
 
@@ -6603,6 +6706,49 @@ mod tests {
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Namespace types should be constructible from within namespace: {:?}", result.errors);
+    }
+
+    #[test]
+    fn base_class_method_call() {
+        use crate::parse_lenient;
+        use crate::semantic::Compiler;
+        use bumpalo::Bump;
+
+        let arena = Bump::new();
+        let source = r#"
+            abstract class Character {
+                protected int health;
+
+                Character() { health = 100; }
+
+                protected void onUpdate(float deltaTime) {
+                    // Base implementation
+                }
+            }
+
+            class Player : Character {
+                int mana;
+
+                Player() {
+                    super();
+                    mana = 50;
+                }
+
+                protected void onUpdate(float deltaTime) override {
+                    Character::onUpdate(deltaTime);  // Call base class method
+                    // Player-specific update
+                }
+            }
+
+            void main() {
+                Player@ p = Player();
+            }
+        "#;
+
+        let (script, _) = parse_lenient(source, &arena);
+        let result = Compiler::compile(&script);
+
+        assert!(result.is_success(), "Base class method call should work: {:?}", result.errors);
     }
 
     #[test]
