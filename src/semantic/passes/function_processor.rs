@@ -1650,8 +1650,14 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
                     self.bytecode.emit(Instruction::LoadLocal(switch_offset));
                     // Emit case value expression and type check
                     if let Some(value_ctx) = self.check_expr(value_expr) {
-                        // Case value must match switch type
-                        if value_ctx.data_type.type_id != switch_ctx.data_type.type_id {
+                        // Case value must be compatible with switch type.
+                        // For switch statements, we only allow:
+                        // - Exact type match
+                        // - Enum ↔ int conversion (both are int32 underneath)
+                        let types_compatible = value_ctx.data_type.type_id == switch_ctx.data_type.type_id
+                            || (self.is_integer(&value_ctx.data_type) && self.is_integer(&switch_ctx.data_type));
+
+                        if !types_compatible {
                             self.error(
                                 SemanticErrorKind::TypeMismatch,
                                 value_expr.span(),
@@ -1824,8 +1830,8 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
                     if let Some(value) = self.registry.lookup_enum_value(type_id, name) {
                         // Emit instruction to push the enum value as an integer constant
                         self.bytecode.emit(Instruction::PushInt(value));
-                        // Enum values are rvalues of type int32
-                        return Some(ExprContext::rvalue(DataType::simple(INT32_TYPE)));
+                        // Enum values are rvalues of the enum type (implicitly convertible to int)
+                        return Some(ExprContext::rvalue(DataType::simple(type_id)));
                     } else {
                         // Enum exists but value doesn't
                         self.error(
@@ -4903,17 +4909,25 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
         }
     }
 
-    /// Checks if a type is numeric.
+    /// Checks if a type is numeric (includes enums since they're int32 underneath).
     fn is_numeric(&self, ty: &DataType) -> bool {
-        matches!(
+        if matches!(
             ty.type_id,
             INT32_TYPE | INT64_TYPE | FLOAT_TYPE | DOUBLE_TYPE
-        )
+        ) {
+            return true;
+        }
+        // Enum types are also numeric (int32 values)
+        self.registry.get_type(ty.type_id).is_enum()
     }
 
-    /// Checks if a type is an integer type.
+    /// Checks if a type is an integer type (includes enums since they're int32 underneath).
     fn is_integer(&self, ty: &DataType) -> bool {
-        matches!(ty.type_id, INT32_TYPE | INT64_TYPE)
+        if matches!(ty.type_id, INT32_TYPE | INT64_TYPE) {
+            return true;
+        }
+        // Enum types are also integers (int32 values)
+        self.registry.get_type(ty.type_id).is_enum()
     }
 
     /// Checks if a type is compatible with switch statements (integer or enum).
@@ -5423,6 +5437,16 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
 
             ConversionKind::ImplicitCastMethod { method_id } => {
                 self.bytecode.emit(Instruction::CallMethod(method_id.0));
+            }
+
+            ConversionKind::EnumToInt { .. } => {
+                // No instruction needed - enums are stored as int32 internally
+                // This is a type-level conversion only
+            }
+
+            ConversionKind::IntToEnum { .. } => {
+                // No instruction needed - enums are stored as int32 internally
+                // This is a type-level conversion only
             }
         }
     }
@@ -16131,9 +16155,7 @@ mod tests {
 
     // ==================== Enum With Explicit Values ====================
 
-    // TODO: Enum conversion to int and back is not working - needs explicit cast or implicit conversion
     #[test]
-    #[ignore]
     fn enum_with_explicit_values() {
         use crate::parse_lenient;
         use crate::semantic::Compiler;

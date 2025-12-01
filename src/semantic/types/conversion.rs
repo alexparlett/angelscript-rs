@@ -67,6 +67,16 @@ pub enum ConversionKind {
     ImplicitCastMethod {
         method_id: FunctionId,
     },
+
+    /// Enum to integer conversion (enum → int)
+    EnumToInt {
+        enum_type: TypeId,
+    },
+
+    /// Integer to enum conversion (int → enum) - implicit in AngelScript
+    IntToEnum {
+        enum_type: TypeId,
+    },
 }
 
 /// Represents a valid type conversion.
@@ -190,6 +200,24 @@ impl Conversion {
             is_implicit: false,
         }
     }
+
+    /// Create an enum-to-int conversion
+    pub fn enum_to_int(enum_type: TypeId) -> Self {
+        Self {
+            kind: ConversionKind::EnumToInt { enum_type },
+            cost: 1,
+            is_implicit: true,
+        }
+    }
+
+    /// Create an int-to-enum conversion
+    pub fn int_to_enum(enum_type: TypeId) -> Self {
+        Self {
+            kind: ConversionKind::IntToEnum { enum_type },
+            cost: 1,
+            is_implicit: true,
+        }
+    }
 }
 
 impl DataType {
@@ -243,6 +271,11 @@ impl DataType {
             return Some(conv);
         }
 
+        // Try enum conversions (enum ↔ int)
+        if let Some(conv) = self.enum_conversion(target, registry) {
+            return Some(conv);
+        }
+
         // Try handle conversions
         if let Some(conv) = self.handle_conversion(target, registry) {
             return Some(conv);
@@ -251,6 +284,30 @@ impl DataType {
         // Try user-defined conversions
         if let Some(conv) = self.user_defined_conversion(target, registry) {
             return Some(conv);
+        }
+
+        None
+    }
+
+    /// Check for enum ↔ integer conversions.
+    /// In AngelScript, enums implicitly convert to/from their underlying integer type.
+    fn enum_conversion(&self, target: &DataType, registry: &Registry) -> Option<Conversion> {
+        // Don't convert handles
+        if self.is_handle || target.is_handle {
+            return None;
+        }
+
+        let source_typedef = registry.get_type(self.type_id);
+        let target_typedef = registry.get_type(target.type_id);
+
+        // Enum -> int (implicit)
+        if source_typedef.is_enum() && target.type_id == INT32_TYPE {
+            return Some(Conversion::enum_to_int(self.type_id));
+        }
+
+        // Int -> enum (implicit)
+        if self.type_id == INT32_TYPE && target_typedef.is_enum() {
+            return Some(Conversion::int_to_enum(target.type_id));
         }
 
         None
