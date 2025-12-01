@@ -67,16 +67,6 @@ pub enum ConversionKind {
     ImplicitCastMethod {
         method_id: FunctionId,
     },
-
-    /// Enum to integer conversion (enum → int)
-    EnumToInt {
-        enum_type: TypeId,
-    },
-
-    /// Integer to enum conversion (int → enum) - implicit in AngelScript
-    IntToEnum {
-        enum_type: TypeId,
-    },
 }
 
 /// Represents a valid type conversion.
@@ -200,24 +190,6 @@ impl Conversion {
             is_implicit: false,
         }
     }
-
-    /// Create an enum-to-int conversion
-    pub fn enum_to_int(enum_type: TypeId) -> Self {
-        Self {
-            kind: ConversionKind::EnumToInt { enum_type },
-            cost: 1,
-            is_implicit: true,
-        }
-    }
-
-    /// Create an int-to-enum conversion
-    pub fn int_to_enum(enum_type: TypeId) -> Self {
-        Self {
-            kind: ConversionKind::IntToEnum { enum_type },
-            cost: 1,
-            is_implicit: true,
-        }
-    }
 }
 
 impl DataType {
@@ -300,14 +272,14 @@ impl DataType {
         let source_typedef = registry.get_type(self.type_id);
         let target_typedef = registry.get_type(target.type_id);
 
-        // Enum -> int (implicit)
+        // Enum -> int (implicit) - enums are int32 internally, no conversion needed
         if source_typedef.is_enum() && target.type_id == INT32_TYPE {
-            return Some(Conversion::enum_to_int(self.type_id));
+            return Some(Conversion::identity());
         }
 
-        // Int -> enum (implicit)
+        // Int -> enum (implicit) - enums are int32 internally, no conversion needed
         if self.type_id == INT32_TYPE && target_typedef.is_enum() {
-            return Some(Conversion::int_to_enum(target.type_id));
+            return Some(Conversion::identity());
         }
 
         None

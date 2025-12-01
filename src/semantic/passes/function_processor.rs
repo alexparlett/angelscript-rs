@@ -5438,16 +5438,6 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
             ConversionKind::ImplicitCastMethod { method_id } => {
                 self.bytecode.emit(Instruction::CallMethod(method_id.0));
             }
-
-            ConversionKind::EnumToInt { .. } => {
-                // No instruction needed - enums are stored as int32 internally
-                // This is a type-level conversion only
-            }
-
-            ConversionKind::IntToEnum { .. } => {
-                // No instruction needed - enums are stored as int32 internally
-                // This is a type-level conversion only
-            }
         }
     }
 }
