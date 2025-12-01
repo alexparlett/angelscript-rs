@@ -1023,6 +1023,7 @@ impl<'src, 'ast> TypeCompiler<'src, 'ast> {
     }
 
     /// Resolve the base type (without template args or modifiers)
+    #[cfg_attr(feature = "profiling", profiling::function)]
     fn resolve_base_type(
         &mut self,
         base: &TypeBase<'src>,
@@ -1440,6 +1441,7 @@ impl<'src, 'ast> TypeCompiler<'src, 'ast> {
     /// This walks through all statements in a function body to find type
     /// expressions (e.g., `array<int>` in local variable declarations) and
     /// resolves them. This triggers template instantiation before Pass 2b.
+    #[cfg_attr(feature = "profiling", profiling::function)]
     fn scan_block(&mut self, block: &Block<'src, 'ast>) {
         for stmt in block.stmts {
             self.scan_statement(stmt);
@@ -1556,6 +1558,7 @@ impl<'src, 'ast> TypeCompiler<'src, 'ast> {
     }
 
     /// Scan an expression for type expressions (casts, lambdas, etc.)
+    #[cfg_attr(feature = "profiling", profiling::function)]
     fn scan_expression(&mut self, expr: &Expr<'src, 'ast>) {
         match expr {
             Expr::Cast(cast) => {
