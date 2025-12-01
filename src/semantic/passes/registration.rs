@@ -499,7 +499,7 @@ impl<'src, 'ast> Registrar<'src, 'ast> {
         // Mixins can only inherit from interfaces, not from classes
         let required_interfaces: Vec<String> = class.inheritance
             .iter()
-            .map(|ident| self.build_qualified_name(ident.name))
+            .map(|ident_expr| self.build_inherited_name(ident_expr))
             .collect();
 
         // Register the mixin (not as a type)
@@ -699,6 +699,20 @@ impl<'src, 'ast> Registrar<'src, 'ast> {
             name.to_string()
         } else {
             format!("{}::{}", self.namespace_path.join("::"), name)
+        }
+    }
+
+    /// Build the full name from an IdentExpr used in inheritance.
+    /// Handles both simple names (Base) and scoped names (Namespace::Interface).
+    fn build_inherited_name(&self, ident_expr: &crate::ast::expr::IdentExpr) -> String {
+        if let Some(scope) = &ident_expr.scope {
+            // Has explicit scope - use it directly
+            let mut parts: Vec<&str> = scope.segments.iter().map(|s| s.name).collect();
+            parts.push(ident_expr.ident.name);
+            parts.join("::")
+        } else {
+            // No scope - apply current namespace
+            self.build_qualified_name(ident_expr.ident.name)
         }
     }
 

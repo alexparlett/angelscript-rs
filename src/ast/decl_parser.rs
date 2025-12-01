@@ -5,6 +5,7 @@
 
 use crate::ast::{DeclModifiers, FuncAttr, Ident, ParseError, ParseErrorKind, PropertyAccessorKind as PropAccessorKind, Visibility};
 use crate::ast::decl::*;
+use crate::ast::expr::IdentExpr;
 use crate::ast::types::ParamType;
 use crate::lexer::TokenKind;
 use super::parser::Parser;
@@ -810,7 +811,8 @@ mod tests {
         match item {
             Item::Class(class) => {
                 assert_eq!(class.inheritance.len(), 1);
-                assert_eq!(class.inheritance[0].name, "Base");
+                assert_eq!(class.inheritance[0].ident.name, "Base");
+                assert!(class.inheritance[0].scope.is_none());
             }
             _ => panic!("Expected class"),
         }
@@ -824,6 +826,31 @@ mod tests {
         match item {
             Item::Class(class) => {
                 assert_eq!(class.inheritance.len(), 3);
+                assert_eq!(class.inheritance[0].ident.name, "Base1");
+                assert_eq!(class.inheritance[1].ident.name, "Base2");
+                assert_eq!(class.inheritance[2].ident.name, "Base3");
+            }
+            _ => panic!("Expected class"),
+        }
+    }
+
+    #[test]
+    fn parse_class_scoped_inheritance() {
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("class Entity : BaseEntity, GameEngine::IRenderable { }", &arena);
+        let item = parser.parse_item().unwrap();
+        match item {
+            Item::Class(class) => {
+                assert_eq!(class.inheritance.len(), 2);
+                // First: simple name
+                assert_eq!(class.inheritance[0].ident.name, "BaseEntity");
+                assert!(class.inheritance[0].scope.is_none());
+                // Second: scoped name
+                assert_eq!(class.inheritance[1].ident.name, "IRenderable");
+                let scope = class.inheritance[1].scope.as_ref().expect("Expected scope");
+                assert!(!scope.is_absolute);
+                assert_eq!(scope.segments.len(), 1);
+                assert_eq!(scope.segments[0].name, "GameEngine");
             }
             _ => panic!("Expected class"),
         }
@@ -1916,12 +1943,12 @@ impl<'src, 'ast> Parser<'src, 'ast> {
             Vec::new()
         };
 
-        // Optional inheritance
+        // Optional inheritance (supports scoped names like Namespace::Interface)
         let inheritance_slice = if self.eat(TokenKind::Colon).is_some() {
-            let inheritance_vec = self.parse_ident_list()?;
+            let inheritance_vec = self.parse_scoped_ident_list()?;
             self.arena.alloc_slice_copy(&inheritance_vec)
         } else {
-            self.arena.alloc_slice_copy::<Ident>(&[])
+            self.arena.alloc_slice_copy::<IdentExpr>(&[])
         };
 
         // Check for forward declaration (just semicolon)
@@ -2542,6 +2569,71 @@ impl<'src, 'ast> Parser<'src, 'ast> {
         }
         // Convert tokens to Idents after all parsing is done
         Ok(tokens.into_iter().map(|(name, span)| Ident::new(name, span)).collect())
+    }
+
+    /// Parse a comma-separated list of scoped identifiers (for inheritance lists).
+    /// Supports scoped names like `Namespace::Interface`.
+    fn parse_scoped_ident_list(&mut self) -> Result<Vec<IdentExpr<'src, 'ast>>, ParseError> {
+        let mut idents = Vec::new();
+        loop {
+            let ident_expr = self.parse_scoped_ident()?;
+            idents.push(ident_expr);
+            if !self.check(TokenKind::Comma) {
+                break;
+            }
+            self.eat(TokenKind::Comma);
+        }
+        Ok(idents)
+    }
+
+    /// Parse a scoped identifier like `Namespace::Type` or just `Type`.
+    fn parse_scoped_ident(&mut self) -> Result<IdentExpr<'src, 'ast>, ParseError> {
+        use crate::ast::Scope;
+
+        let start_span = self.peek().span;
+
+        // Check for absolute scope (::)
+        let is_absolute = self.eat(TokenKind::ColonColon).is_some();
+
+        // Parse first identifier
+        let first_token = self.expect(TokenKind::Identifier)?;
+        let mut segments = vec![(first_token.lexeme, first_token.span)];
+
+        // Parse any additional scope segments
+        while self.check(TokenKind::ColonColon) {
+            self.advance(); // consume ::
+            let token = self.expect(TokenKind::Identifier)?;
+            segments.push((token.lexeme, token.span));
+        }
+
+        // Last segment is the identifier, everything before is scope
+        let (ident_name, ident_span) = segments.pop().unwrap();
+        let ident = Ident::new(ident_name, ident_span);
+
+        let scope = if is_absolute || !segments.is_empty() {
+            let scope_idents: Vec<_> = segments.into_iter()
+                .map(|(name, span)| Ident::new(name, span))
+                .collect();
+            let scope_span = if scope_idents.is_empty() {
+                start_span
+            } else {
+                start_span.merge(scope_idents.last().unwrap().span)
+            };
+            Some(Scope {
+                is_absolute,
+                segments: self.arena.alloc_slice_copy(&scope_idents),
+                span: scope_span,
+            })
+        } else {
+            None
+        };
+
+        Ok(IdentExpr {
+            scope,
+            ident,
+            type_args: &[],
+            span: start_span.merge(ident_span),
+        })
     }
 
     /// Parse a ::-separated list of identifiers (namespace path).

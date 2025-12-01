@@ -10,7 +10,7 @@
 //! - Imports and mixins
 
 use crate::ast::{DeclModifiers, FuncAttr, Ident, Visibility};
-use crate::ast::expr::Expr;
+use crate::ast::expr::{Expr, IdentExpr};
 use crate::ast::stmt::Block;
 use crate::ast::types::{ParamType, ReturnType, TypeExpr};
 use crate::lexer::Span;
@@ -135,8 +135,8 @@ pub struct ClassDecl<'src, 'ast> {
     /// Template parameters (for application-registered template classes)
     /// Example: Container<T> has template_params = ["T"]
     pub template_params: &'ast [Ident<'src>],
-    /// Base class and interfaces
-    pub inheritance: &'ast [Ident<'src>],
+    /// Base class and interfaces (supports scoped names like Namespace::Interface)
+    pub inheritance: &'ast [IdentExpr<'src, 'ast>],
     /// Class members
     pub members: &'ast [ClassMember<'src, 'ast>],
     /// Source location

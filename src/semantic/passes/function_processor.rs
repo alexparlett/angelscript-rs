@@ -1832,8 +1832,18 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
             let scope_parts: Vec<&str> = scope.segments.iter().map(|id| id.name).collect();
             let type_name = scope_parts.join("::");
 
-            // Try to look up as an enum type
-            if let Some(type_id) = self.registry.lookup_type(&type_name) {
+            // Try to look up as an enum type - first with the given name, then with namespace prefix
+            let type_id = self.registry.lookup_type(&type_name).or_else(|| {
+                // If not found and we're in a namespace, try with namespace prefix
+                if !self.namespace_path.is_empty() {
+                    let qualified_type_name = format!("{}::{}", self.namespace_path.join("::"), type_name);
+                    self.registry.lookup_type(&qualified_type_name)
+                } else {
+                    None
+                }
+            });
+
+            if let Some(type_id) = type_id {
                 let typedef = self.registry.get_type(type_id);
                 if typedef.is_enum() {
                     // Look up the enum value
@@ -1854,8 +1864,17 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
                 }
             }
 
-            // Not an enum - could be a namespace-qualified variable
-            // For now, fall through to report undefined (namespaced variables handled elsewhere)
+            // Not an enum - try namespace-qualified global variable
+            let qualified_name = format!("{}::{}", type_name, name);
+            if let Some(global_var) = self.registry.lookup_global_var(&qualified_name) {
+                // Emit load global instruction (using string constant for qualified name)
+                let name_idx = self.bytecode.add_string_constant(global_var.qualified_name());
+                self.bytecode.emit(Instruction::LoadGlobal(name_idx));
+                let is_mutable = !global_var.data_type.is_const;
+                return Some(ExprContext::lvalue(global_var.data_type.clone(), is_mutable));
+            }
+
+            // Not found as enum or global variable
             self.error(
                 SemanticErrorKind::UndefinedVariable,
                 ident.span,
@@ -1898,12 +1917,25 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
             }
 
         // Check global variables in registry
+        // First try the unqualified name (for global scope variables)
         if let Some(global_var) = self.registry.lookup_global_var(name) {
             // Emit load global instruction (using string constant for name)
             let name_idx = self.bytecode.add_string_constant(global_var.qualified_name());
             self.bytecode.emit(Instruction::LoadGlobal(name_idx));
             let is_mutable = !global_var.data_type.is_const;
             return Some(ExprContext::lvalue(global_var.data_type.clone(), is_mutable));
+        }
+
+        // If we're inside a namespace, try looking up with the namespace-qualified name
+        // This allows code in `namespace Foo` to reference `Foo::PI` as just `PI`
+        if !self.namespace_path.is_empty() {
+            let qualified_name = format!("{}::{}", self.namespace_path.join("::"), name);
+            if let Some(global_var) = self.registry.lookup_global_var(&qualified_name) {
+                let name_idx = self.bytecode.add_string_constant(global_var.qualified_name());
+                self.bytecode.emit(Instruction::LoadGlobal(name_idx));
+                let is_mutable = !global_var.data_type.is_const;
+                return Some(ExprContext::lvalue(global_var.data_type.clone(), is_mutable));
+            }
         }
 
         // Not found in locals or globals
@@ -3183,7 +3215,35 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
                 }
 
                 // Check if this is a type name (constructor call)
-                if let Some(type_id) = self.registry.lookup_type(&name) {
+                // First, check if there are type arguments (e.g., array<int>())
+                let type_id = if !ident_expr.type_args.is_empty() {
+                    // Build the full type name (e.g., "array<int>")
+                    // Template should already be instantiated during type compilation
+                    let mut arg_names = Vec::with_capacity(ident_expr.type_args.len());
+                    for arg in ident_expr.type_args {
+                        if let Some(dt) = self.resolve_type_expr(arg) {
+                            let typedef = self.registry.get_type(dt.type_id);
+                            arg_names.push(typedef.name().to_string());
+                        } else {
+                            return None; // Error already reported
+                        }
+                    }
+                    let full_type_name = format!("{}<{}>", name, arg_names.join(", "));
+                    self.registry.lookup_type(&full_type_name)
+                } else {
+                    // Simple type lookup - try raw name first, then namespace-qualified
+                    self.registry.lookup_type(&name).or_else(|| {
+                        // If not found and we're in a namespace, try with namespace prefix
+                        if !self.namespace_path.is_empty() {
+                            let qualified_name = self.build_qualified_name(&name);
+                            self.registry.lookup_type(&qualified_name)
+                        } else {
+                            None
+                        }
+                    })
+                };
+
+                if let Some(type_id) = type_id {
                     // Type-check arguments WITHOUT funcdef inference context for constructor calls
                     let mut arg_contexts = Vec::with_capacity(call.args.len());
                     for arg in call.args {
@@ -4533,14 +4593,32 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
 
     /// Type checks a cast expression.
     /// Casts produce rvalues.
+    ///
+    /// In AngelScript, `cast<Type>(expr)` is a handle cast operation that:
+    /// - Always produces a handle to the target type (Type@)
+    /// - Works for any object handle to any class/interface handle
+    /// - Returns null at runtime if the object doesn't implement the target type
     fn check_cast(&mut self, cast: &CastExpr<'src, 'ast>) -> Option<ExprContext> {
         let expr_ctx = self.check_expr(cast.expr)?;
-        let target_type = self.resolve_type_expr(&cast.target_type)?;
+        let mut target_type = self.resolve_type_expr(&cast.target_type)?;
+
+        // The cast<> syntax in AngelScript is a handle cast operation.
+        // If the target type is a class or interface, it's implicitly a handle.
+        let target_typedef = self.registry.get_type(target_type.type_id);
+        if matches!(target_typedef, TypeDef::Class { .. } | TypeDef::Interface { .. }) {
+            target_type.is_handle = true;
+        }
 
         // Check if conversion is valid
         if let Some(conversion) = expr_ctx.data_type.can_convert_to(&target_type, self.registry) {
             // Emit the appropriate conversion instruction
             self.emit_conversion(&conversion);
+            Some(ExprContext::rvalue(target_type))
+        } else if self.is_handle_to_handle_cast(&expr_ctx.data_type, &target_type) {
+            // Handle-to-handle casts are always allowed at compile time.
+            // At runtime, they return null if the object doesn't implement the target type.
+            // This supports patterns like: cast<IDamageable>(entity)
+            self.bytecode.emit(Instruction::Cast(target_type.type_id));
             Some(ExprContext::rvalue(target_type))
         } else {
             self.error(
@@ -4554,6 +4632,32 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
             );
             None
         }
+    }
+
+    /// Check if this is a valid handle-to-handle cast.
+    /// In AngelScript, any object handle can be cast to any class/interface handle.
+    /// The cast succeeds at runtime if the actual object implements the target type.
+    fn is_handle_to_handle_cast(&self, source: &DataType, target: &DataType) -> bool {
+        // Both must be handles
+        if !source.is_handle || !target.is_handle {
+            return false;
+        }
+
+        // Source must be a class or interface
+        let source_typedef = self.registry.get_type(source.type_id);
+        let source_is_object = matches!(
+            source_typedef,
+            TypeDef::Class { .. } | TypeDef::Interface { .. }
+        );
+
+        // Target must be a class or interface
+        let target_typedef = self.registry.get_type(target.type_id);
+        let target_is_object = matches!(
+            target_typedef,
+            TypeDef::Class { .. } | TypeDef::Interface { .. }
+        );
+
+        source_is_object && target_is_object
     }
 
     /// Type checks a lambda expression.
@@ -4976,13 +5080,15 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
 
     /// Resolves a type expression to a DataType.
     fn resolve_type_expr(&mut self, type_expr: &TypeExpr<'src, 'ast>) -> Option<DataType> {
-        let type_name = format!("{}", type_expr.base);
+        // Resolve the base type, considering scope/namespace
+        let base_type_id = self.resolve_base_type(&type_expr.base, type_expr.scope.as_ref(), type_expr.span)?;
 
         // Handle template types (e.g., array<int>)
         let type_id = if !type_expr.template_args.is_empty() {
             // Build template instance name like "array<int>" or "array<array<int>>"
             // For nested templates, we need to recursively resolve the inner type first
             // to get its registered name (which uses canonical type names like "int" not "int32")
+            let base_name = self.registry.get_type(base_type_id).name().to_string();
             let mut arg_names: Vec<String> = Vec::new();
             for arg in type_expr.template_args {
                 // Recursively resolve the template argument to get its canonical name
@@ -4993,7 +5099,7 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
                     return None; // Error already reported
                 }
             }
-            let template_name = format!("{}<{}>", type_name, arg_names.join(", "));
+            let template_name = format!("{}<{}>", base_name, arg_names.join(", "));
 
             // Look up the instantiated template type
             if let Some(id) = self.registry.lookup_type(&template_name) {
@@ -5007,17 +5113,7 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
                 return None;
             }
         } else {
-            // Simple type lookup
-            if let Some(id) = self.registry.lookup_type(&type_name) {
-                id
-            } else {
-                self.error(
-                    SemanticErrorKind::UndefinedType,
-                    type_expr.span,
-                    format!("undefined type '{}'", type_name),
-                );
-                return None;
-            }
+            base_type_id
         };
 
         // Build DataType with modifiers
@@ -5073,6 +5169,105 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
         Some(data_type)
     }
 
+    /// Resolve a base type (primitive or named) to a TypeId, considering scope and namespaces.
+    fn resolve_base_type(
+        &mut self,
+        base: &TypeBase<'src>,
+        scope: Option<&crate::ast::Scope<'src, 'ast>>,
+        span: Span,
+    ) -> Option<TypeId> {
+        use crate::ast::types::TypeBase;
+
+        match base {
+            TypeBase::Primitive(prim) => Some(self.primitive_to_type_id(*prim)),
+
+            TypeBase::Named(ident) => {
+                // Build the qualified name based on scope
+                if let Some(scope) = scope {
+                    // Scoped type: Namespace::Type
+                    let type_name = self.build_scoped_name(scope, ident.name);
+                    if let Some(type_id) = self.registry.lookup_type(&type_name) {
+                        return Some(type_id);
+                    }
+                    self.error(
+                        SemanticErrorKind::UndefinedType,
+                        span,
+                        format!("undefined type '{}'", type_name),
+                    );
+                    None
+                } else {
+                    // Try current namespace first, then global
+                    let qualified = self.build_qualified_name(ident.name);
+
+                    // Look up in registry
+                    if let Some(type_id) = self.registry.lookup_type(&qualified) {
+                        return Some(type_id);
+                    }
+
+                    // If not found in current namespace, try global scope
+                    if !self.namespace_path.is_empty() {
+                        if let Some(type_id) = self.registry.lookup_type(ident.name) {
+                            return Some(type_id);
+                        }
+                    }
+
+                    // Not found anywhere
+                    self.error(
+                        SemanticErrorKind::UndefinedType,
+                        span,
+                        format!("undefined type '{}'", ident.name),
+                    );
+                    None
+                }
+            }
+
+            TypeBase::Auto => {
+                // Auto type should be handled by the caller before reaching here
+                self.error(
+                    SemanticErrorKind::UndefinedType,
+                    span,
+                    "auto type inference not valid in this context".to_string(),
+                );
+                None
+            }
+
+            TypeBase::Unknown => {
+                self.error(
+                    SemanticErrorKind::UndefinedType,
+                    span,
+                    "unknown type '?'".to_string(),
+                );
+                None
+            }
+        }
+    }
+
+    /// Map a primitive type to its TypeId
+    #[inline]
+    fn primitive_to_type_id(&self, prim: crate::ast::types::PrimitiveType) -> TypeId {
+        use crate::ast::types::PrimitiveType;
+        match prim {
+            PrimitiveType::Void => VOID_TYPE,
+            PrimitiveType::Bool => BOOL_TYPE,
+            PrimitiveType::Int => INT32_TYPE,
+            PrimitiveType::Int8 => INT8_TYPE,
+            PrimitiveType::Int16 => INT16_TYPE,
+            PrimitiveType::Int64 => INT64_TYPE,
+            PrimitiveType::UInt => UINT32_TYPE,
+            PrimitiveType::UInt8 => UINT8_TYPE,
+            PrimitiveType::UInt16 => UINT16_TYPE,
+            PrimitiveType::UInt64 => UINT64_TYPE,
+            PrimitiveType::Float => FLOAT_TYPE,
+            PrimitiveType::Double => DOUBLE_TYPE,
+        }
+    }
+
+    /// Build a scoped name from a Scope and a name
+    fn build_scoped_name(&self, scope: &crate::ast::Scope<'src, 'ast>, name: &str) -> String {
+        let scope_parts: Vec<&str> = scope.segments.iter().map(|ident| ident.name).collect();
+        format!("{}::{}", scope_parts.join("::"), name)
+    }
+
     /// Checks if a value can be assigned to a target type.
     ///
     /// Returns true if:
@@ -5086,11 +5281,13 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
         }
     }
 
-    /// Checks if a type is numeric (includes enums since they're int32 underneath).
+    /// Checks if a type is numeric (includes all integer types, floats, and enums).
     fn is_numeric(&self, ty: &DataType) -> bool {
         if matches!(
             ty.type_id,
-            INT32_TYPE | INT64_TYPE | FLOAT_TYPE | DOUBLE_TYPE
+            INT8_TYPE | INT16_TYPE | INT32_TYPE | INT64_TYPE |
+            UINT8_TYPE | UINT16_TYPE | UINT32_TYPE | UINT64_TYPE |
+            FLOAT_TYPE | DOUBLE_TYPE
         ) {
             return true;
         }
@@ -5624,6 +5821,13 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
 
             ConversionKind::ImplicitCastMethod { method_id } => {
                 self.bytecode.emit(Instruction::CallMethod(method_id.0));
+            }
+
+            ConversionKind::ValueToHandle => {
+                // Value type to handle conversion - the VM handles this by creating
+                // a reference to the value on the stack. No additional instruction needed
+                // since the value is already on the stack and can be used as a handle.
+                self.bytecode.emit(Instruction::ValueToHandle);
             }
         }
     }
@@ -6292,6 +6496,113 @@ mod tests {
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Calls from within namespace should work: {:?}", result.errors);
+    }
+
+    #[test]
+    fn namespace_constant_access_from_within() {
+        use crate::parse_lenient;
+        use crate::semantic::Compiler;
+        use bumpalo::Bump;
+
+        let arena = Bump::new();
+        let source = r#"
+            namespace Math {
+                const float PI = 3.14;
+                const float TAU = 6.28;
+
+                class Circle {
+                    float radius;
+
+                    Circle() { radius = 1.0; }
+
+                    float area() const {
+                        return PI * radius * radius;  // Should find Math::PI
+                    }
+
+                    float circumference() const {
+                        return TAU * radius;  // Should find Math::TAU
+                    }
+                }
+            }
+
+            void main() {
+                Math::Circle c;
+            }
+        "#;
+
+        let (script, _) = parse_lenient(source, &arena);
+        let result = Compiler::compile(&script);
+
+        assert!(result.is_success(), "Namespace constants should be visible within namespace: {:?}", result.errors);
+    }
+
+    #[test]
+    fn global_function_call_from_namespace() {
+        use crate::parse_lenient;
+        use crate::semantic::Compiler;
+        use bumpalo::Bump;
+
+        let arena = Bump::new();
+        let source = r#"
+            float sqrt(float x) { return x; }
+
+            namespace Core {
+                class Vector2 {
+                    float x;
+                    float y;
+
+                    Vector2() { x = 0.0; y = 0.0; }
+
+                    float length() const {
+                        return sqrt(x * x + y * y);  // Should find global sqrt
+                    }
+                }
+            }
+
+            void main() {
+                Core::Vector2 v;
+                float len = v.length();
+            }
+        "#;
+
+        let (script, _) = parse_lenient(source, &arena);
+        let result = Compiler::compile(&script);
+
+        assert!(result.is_success(), "Global functions should be callable from within namespace: {:?}", result.errors);
+    }
+
+    #[test]
+    fn namespace_type_constructor_call_from_within() {
+        use crate::parse_lenient;
+        use crate::semantic::Compiler;
+        use bumpalo::Bump;
+
+        let arena = Bump::new();
+        let source = r#"
+            namespace Core {
+                class Vector2 {
+                    float x;
+                    float y;
+
+                    Vector2() { x = 0.0; y = 0.0; }
+                    Vector2(float _x, float _y) { x = _x; y = _y; }
+
+                    Vector2 perpendicular() const {
+                        return Vector2(-y, x);  // Should find Core::Vector2 constructor
+                    }
+                }
+            }
+
+            void main() {
+                Core::Vector2 v;
+                Core::Vector2 p = v.perpendicular();
+            }
+        "#;
+
+        let (script, _) = parse_lenient(source, &arena);
+        let result = Compiler::compile(&script);
+
+        assert!(result.is_success(), "Namespace types should be constructible from within namespace: {:?}", result.errors);
     }
 
     #[test]

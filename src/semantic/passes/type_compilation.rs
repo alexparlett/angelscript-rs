@@ -238,7 +238,7 @@ impl<'src, 'ast> TypeCompiler<'src, 'ast> {
 
         for (i, inherited_ident) in class.inheritance.iter().enumerate() {
             // Look up the type or mixin
-            let inherited_name = self.build_qualified_name(inherited_ident.name);
+            let inherited_name = self.build_inherited_name(inherited_ident);
 
             // First check if it's a mixin
             if self.registry.is_mixin(&inherited_name) {
@@ -1133,6 +1133,20 @@ impl<'src, 'ast> TypeCompiler<'src, 'ast> {
             name.to_string()
         } else {
             format!("{}::{}", self.namespace_path.join("::"), name)
+        }
+    }
+
+    /// Build the full name from an IdentExpr used in inheritance.
+    /// Handles both simple names (Base) and scoped names (Namespace::Interface).
+    fn build_inherited_name(&self, ident_expr: &crate::ast::expr::IdentExpr) -> String {
+        if let Some(scope) = &ident_expr.scope {
+            // Has explicit scope - use it directly
+            let mut parts: Vec<&str> = scope.segments.iter().map(|s| s.name).collect();
+            parts.push(ident_expr.ident.name);
+            parts.join("::")
+        } else {
+            // No scope - apply current namespace
+            self.build_qualified_name(ident_expr.ident.name)
         }
     }
 
