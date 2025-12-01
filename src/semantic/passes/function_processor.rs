@@ -12,7 +12,7 @@ use crate::{ast::{
         TernaryExpr, UnaryExpr,
     }, stmt::{
         Block, BreakStmt, ContinueStmt, DoWhileStmt, ExprStmt, ForInit, ForStmt, ForeachStmt, IfStmt, ReturnStmt, Stmt, SwitchStmt, TryCatchStmt, VarDeclStmt, WhileStmt
-    }, types::{TypeExpr, TypeSuffix}
+    }, types::{TypeBase, TypeExpr, TypeSuffix}
 }, semantic::STRING_TYPE};
 use crate::semantic::types::registry::FunctionDef;
 use crate::codegen::{BytecodeEmitter, CompiledBytecode, CompiledModule, Instruction};
@@ -844,29 +844,117 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
 
     /// Visits a variable declaration statement.
     fn visit_var_decl(&mut self, var_decl: &VarDeclStmt<'src, 'ast>) {
-        // Resolve the type
-        let var_type = match self.resolve_type_expr(&var_decl.ty) {
-            Some(ty) => ty,
-            None => return, // Error already recorded
+        // Check if this is an auto type declaration
+        let is_auto = matches!(var_decl.ty.base, TypeBase::Auto);
+
+        // For non-auto types, resolve the type upfront
+        let base_var_type = if is_auto {
+            None
+        } else {
+            match self.resolve_type_expr(&var_decl.ty) {
+                Some(ty) => {
+                    // Void type cannot be used for variables
+                    if ty.type_id == VOID_TYPE {
+                        self.error(
+                            SemanticErrorKind::VoidExpression,
+                            var_decl.ty.span,
+                            "cannot declare variable of type 'void'",
+                        );
+                        return;
+                    }
+                    Some(ty)
+                }
+                None => return, // Error already recorded
+            }
         };
 
-        // Void type cannot be used for variables
-        if var_type.type_id == VOID_TYPE {
-            self.error(
-                SemanticErrorKind::VoidExpression,
-                var_decl.ty.span,
-                "cannot declare variable of type 'void'",
-            );
-            return;
-        }
-
-        // Check if variable type is a funcdef (for function handle inference)
-        let is_funcdef = matches!(
-            self.registry.get_type(var_type.type_id),
-            TypeDef::Funcdef { .. }
-        );
-
         for var in var_decl.vars {
+            // Determine the variable type (either from declaration or inferred from initializer)
+            let var_type = if is_auto {
+                // Auto type requires an initializer
+                let init = match var.init {
+                    Some(init) => init,
+                    None => {
+                        self.error(
+                            SemanticErrorKind::TypeMismatch,
+                            var.span,
+                            "cannot use 'auto' without an initializer",
+                        );
+                        continue;
+                    }
+                };
+
+                // Evaluate the initializer to infer the type
+                let init_ctx = match self.check_expr(init) {
+                    Some(ctx) => ctx,
+                    None => continue, // Error already recorded
+                };
+
+                // Cannot infer void type
+                if init_ctx.data_type.type_id == VOID_TYPE {
+                    self.error(
+                        SemanticErrorKind::VoidExpression,
+                        var.span,
+                        "cannot infer type from void expression",
+                    );
+                    continue;
+                }
+
+                // Build the inferred type, applying modifiers from the auto declaration
+                let mut inferred_type = init_ctx.data_type.clone();
+
+                // Apply const from "const auto"
+                if var_decl.ty.is_const {
+                    inferred_type.is_const = true;
+                }
+
+                // Apply handle from "auto@"
+                for suffix in var_decl.ty.suffixes {
+                    match suffix {
+                        TypeSuffix::Handle { is_const } => {
+                            // If the initializer isn't already a handle, make it one
+                            if !inferred_type.is_handle {
+                                inferred_type.is_handle = true;
+                            }
+                            // Apply const handle if specified
+                            if *is_const {
+                                inferred_type.is_const = true;
+                            }
+                        }
+                        TypeSuffix::Array => {
+                            // auto[] doesn't make sense - the array type should come from initializer
+                            self.error(
+                                SemanticErrorKind::TypeMismatch,
+                                var_decl.ty.span,
+                                "cannot use array suffix with 'auto'; type is inferred from initializer",
+                            );
+                            continue;
+                        }
+                    }
+                }
+
+                // Declare the variable with inferred type
+                let offset = self.local_scope.declare_variable_auto(
+                    var.name.name.to_string(),
+                    inferred_type,
+                    true,
+                );
+
+                // Store the initializer value
+                self.bytecode.emit(Instruction::StoreLocal(offset));
+
+                // Continue to next variable (we've already handled the initializer)
+                continue;
+            } else {
+                base_var_type.clone().unwrap()
+            };
+
+            // Check if variable type is a funcdef (for function handle inference)
+            let is_funcdef = matches!(
+                self.registry.get_type(var_type.type_id),
+                TypeDef::Funcdef { .. }
+            );
+
             // Check initializer if present
             if let Some(init) = var.init {
                 // Set expected funcdef type for function handle inference
@@ -14712,9 +14800,7 @@ mod tests {
 
     // ==================== Auto Type Inference ====================
 
-    // TODO: auto type inference not implemented
     #[test]
-    #[ignore]
     fn auto_with_function_call() {
         use crate::parse_lenient;
         use crate::semantic::Compiler;
@@ -14735,9 +14821,7 @@ mod tests {
         assert!(result.is_success(), "Auto with function call should work: {:?}", result.errors);
     }
 
-    // TODO: auto type inference not implemented
     #[test]
-    #[ignore]
     fn auto_with_complex_expression() {
         use crate::parse_lenient;
         use crate::semantic::Compiler;
@@ -14756,6 +14840,91 @@ mod tests {
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Auto with complex expression should work: {:?}", result.errors);
+    }
+
+    #[test]
+    fn auto_with_const() {
+        use crate::parse_lenient;
+        use crate::semantic::Compiler;
+        use bumpalo::Bump;
+
+        let arena = Bump::new();
+        let source = r#"
+            void test() {
+                const auto x = 42;
+            }
+        "#;
+
+        let (script, _) = parse_lenient(source, &arena);
+        let result = Compiler::compile(&script);
+
+        assert!(result.is_success(), "Const auto should work: {:?}", result.errors);
+    }
+
+    #[test]
+    fn auto_with_handle() {
+        use crate::parse_lenient;
+        use crate::semantic::Compiler;
+        use bumpalo::Bump;
+
+        let arena = Bump::new();
+        let source = r#"
+            class Foo { int value; }
+
+            void test() {
+                Foo obj;
+                auto@ h = @obj;
+            }
+        "#;
+
+        let (script, _) = parse_lenient(source, &arena);
+        let result = Compiler::compile(&script);
+
+        assert!(result.is_success(), "Auto with handle should work: {:?}", result.errors);
+    }
+
+    #[test]
+    fn auto_without_initializer_error() {
+        use crate::parse_lenient;
+        use crate::semantic::Compiler;
+        use bumpalo::Bump;
+
+        let arena = Bump::new();
+        let source = r#"
+            void test() {
+                auto x;
+            }
+        "#;
+
+        let (script, _) = parse_lenient(source, &arena);
+        let result = Compiler::compile(&script);
+
+        assert!(!result.is_success(), "Auto without initializer should fail");
+        assert!(result.errors.iter().any(|e| e.message.contains("cannot use 'auto' without an initializer")),
+            "Should have auto without initializer error: {:?}", result.errors);
+    }
+
+    #[test]
+    fn auto_with_void_error() {
+        use crate::parse_lenient;
+        use crate::semantic::Compiler;
+        use bumpalo::Bump;
+
+        let arena = Bump::new();
+        let source = r#"
+            void doNothing() { }
+
+            void test() {
+                auto x = doNothing();
+            }
+        "#;
+
+        let (script, _) = parse_lenient(source, &arena);
+        let result = Compiler::compile(&script);
+
+        assert!(!result.is_success(), "Auto with void expression should fail");
+        assert!(result.errors.iter().any(|e| e.message.contains("cannot infer type from void expression")),
+            "Should have void inference error: {:?}", result.errors);
     }
 
     // ==================== Unary Operator Edge Cases ====================

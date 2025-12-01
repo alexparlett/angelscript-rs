@@ -1277,7 +1277,10 @@ impl<'src, 'ast> TypeCompiler<'src, 'ast> {
         match stmt {
             Stmt::VarDecl(var_decl) => {
                 // Resolve the variable type (triggers template instantiation)
-                let _ = self.resolve_type_expr(&var_decl.ty);
+                // Skip auto types - they are resolved from initializers in function_processor
+                if !matches!(var_decl.ty.base, TypeBase::Auto) {
+                    self.resolve_type_expr(&var_decl.ty);
+                }
                 // Also scan initializers for expressions with types
                 for var in var_decl.vars {
                     if let Some(init) = var.init {
@@ -1318,7 +1321,10 @@ impl<'src, 'ast> TypeCompiler<'src, 'ast> {
                 if let Some(init) = &for_stmt.init {
                     match init {
                         ForInit::VarDecl(var_decl) => {
-                            let _ = self.resolve_type_expr(&var_decl.ty);
+                            // Skip auto types - resolved from initializers in function_processor
+                            if !matches!(var_decl.ty.base, TypeBase::Auto) {
+                                self.resolve_type_expr(&var_decl.ty);
+                            }
                             for var in var_decl.vars {
                                 if let Some(init_expr) = var.init {
                                     self.scan_expression(init_expr);
@@ -1343,8 +1349,11 @@ impl<'src, 'ast> TypeCompiler<'src, 'ast> {
             }
             Stmt::Foreach(foreach) => {
                 // Scan iteration variable types
+                // Skip auto types - resolved from iterable in function_processor
                 for var in foreach.vars {
-                    let _ = self.resolve_type_expr(&var.ty);
+                    if !matches!(var.ty.base, TypeBase::Auto) {
+                        self.resolve_type_expr(&var.ty);
+                    }
                 }
                 // Scan the iterable expression
                 self.scan_expression(foreach.expr);
