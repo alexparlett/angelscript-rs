@@ -922,16 +922,13 @@ impl<'src, 'ast> TypeCompiler<'src, 'ast> {
 
         // Step 2: Handle template arguments
         let type_id = if !expr.template_args.is_empty() {
-            // Resolve all template argument types recursively
-            let arg_types: Vec<DataType> = expr
-                .template_args
-                .iter()
-                .filter_map(|arg| self.resolve_type_expr(arg))
-                .collect();
-
-            // Check that all template args resolved
-            if arg_types.len() != expr.template_args.len() {
-                return None; // Some template args failed to resolve
+            // Resolve all template argument types recursively (pre-allocate capacity)
+            let mut arg_types = Vec::with_capacity(expr.template_args.len());
+            for arg in expr.template_args {
+                match self.resolve_type_expr(arg) {
+                    Some(dt) => arg_types.push(dt),
+                    None => return None, // Error already recorded
+                }
             }
 
             // Instantiate the template
@@ -1054,8 +1051,11 @@ impl<'src, 'ast> TypeCompiler<'src, 'ast> {
                     // Try progressively shorter namespace prefixes
                     if !self.namespace_path.is_empty() {
                         for prefix_len in (1..self.namespace_path.len()).rev() {
-                            let prefix = self.namespace_path[..prefix_len].join("::");
-                            let ancestor_qualified = format!("{}::{}", prefix, ident.name);
+                            // Build ancestor qualified name without intermediate allocations
+                            let ancestor_qualified = Self::build_qualified_name_from_slice(
+                                &self.namespace_path[..prefix_len],
+                                ident.name,
+                            );
                             if let Some(type_id) = self.registry.lookup_type(&ancestor_qualified) {
                                 return Some(type_id);
                             }
@@ -1148,13 +1148,18 @@ impl<'src, 'ast> TypeCompiler<'src, 'ast> {
 
     /// Build a qualified name from the current namespace path (no intermediate Vec allocation)
     fn build_qualified_name(&self, name: &str) -> String {
-        if self.namespace_path.is_empty() {
+        Self::build_qualified_name_from_slice(&self.namespace_path, name)
+    }
+
+    /// Build a qualified name from a namespace path slice (static helper, no self needed)
+    fn build_qualified_name_from_slice(namespace_path: &[String], name: &str) -> String {
+        if namespace_path.is_empty() {
             name.to_string()
         } else {
             // Calculate capacity
-            let capacity = self.namespace_path.iter().map(|s| s.len() + 2).sum::<usize>() + name.len();
+            let capacity = namespace_path.iter().map(|s| s.len() + 2).sum::<usize>() + name.len();
             let mut result = String::with_capacity(capacity);
-            for (i, part) in self.namespace_path.iter().enumerate() {
+            for (i, part) in namespace_path.iter().enumerate() {
                 if i > 0 {
                     result.push_str("::");
                 }

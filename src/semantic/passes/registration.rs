@@ -696,10 +696,27 @@ impl<'src, 'ast> Registrar<'src, 'ast> {
     }
 
     fn build_qualified_name(&self, name: &str) -> String {
-        if self.namespace_path.is_empty() {
+        Self::build_qualified_name_from_slice(&self.namespace_path, name)
+    }
+
+    /// Build a qualified name from a namespace path slice (no intermediate allocations)
+    fn build_qualified_name_from_slice(namespace_path: &[String], name: &str) -> String {
+        if namespace_path.is_empty() {
             name.to_string()
         } else {
-            format!("{}::{}", self.namespace_path.join("::"), name)
+            // Calculate capacity upfront
+            let capacity = namespace_path.iter().map(|s| s.len()).sum::<usize>()
+                + (namespace_path.len() - 1) * 2 + 2 + name.len();
+            let mut result = String::with_capacity(capacity);
+            for (i, part) in namespace_path.iter().enumerate() {
+                if i > 0 {
+                    result.push_str("::");
+                }
+                result.push_str(part);
+            }
+            result.push_str("::");
+            result.push_str(name);
+            result
         }
     }
 
@@ -707,10 +724,19 @@ impl<'src, 'ast> Registrar<'src, 'ast> {
     /// Handles both simple names (Base) and scoped names (Namespace::Interface).
     fn build_inherited_name(&self, ident_expr: &crate::ast::expr::IdentExpr) -> String {
         if let Some(scope) = &ident_expr.scope {
-            // Has explicit scope - use it directly
-            let mut parts: Vec<&str> = scope.segments.iter().map(|s| s.name).collect();
-            parts.push(ident_expr.ident.name);
-            parts.join("::")
+            // Has explicit scope - build directly without intermediate Vec
+            let capacity = scope.segments.iter().map(|s| s.name.len()).sum::<usize>()
+                + scope.segments.len() * 2 + ident_expr.ident.name.len();
+            let mut result = String::with_capacity(capacity);
+            for (i, segment) in scope.segments.iter().enumerate() {
+                if i > 0 {
+                    result.push_str("::");
+                }
+                result.push_str(segment.name);
+            }
+            result.push_str("::");
+            result.push_str(ident_expr.ident.name);
+            result
         } else {
             // No scope - apply current namespace
             self.build_qualified_name(ident_expr.ident.name)

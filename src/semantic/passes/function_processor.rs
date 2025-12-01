@@ -787,11 +787,7 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
 
     /// Build a qualified name from the current namespace path
     fn build_qualified_name(&self, name: &str) -> String {
-        if self.namespace_path.is_empty() {
-            name.to_string()
-        } else {
-            format!("{}::{}", self.namespace_path.join("::"), name)
-        }
+        Self::build_qualified_name_from_path(&self.namespace_path, name)
     }
 
     // ========================================================================
@@ -1973,7 +1969,7 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
         // If we're inside a namespace, try looking up with the namespace-qualified name
         // This allows code in `namespace Foo` to reference `Foo::PI` as just `PI`
         if !self.namespace_path.is_empty() {
-            let qualified_name = format!("{}::{}", self.namespace_path.join("::"), name);
+            let qualified_name = Self::build_qualified_name_from_path(&self.namespace_path, name);
             if let Some(global_var) = self.registry.lookup_global_var(&qualified_name) {
                 let name_idx = self.bytecode.add_string_constant(global_var.qualified_name());
                 self.bytecode.emit(Instruction::LoadGlobal(name_idx));
@@ -3342,16 +3338,28 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
                 let type_id = if !ident_expr.type_args.is_empty() {
                     // Build the full type name (e.g., "array<int>")
                     // Template should already be instantiated during type compilation
-                    let mut arg_names = Vec::with_capacity(ident_expr.type_args.len());
+                    let mut arg_names: Vec<&str> = Vec::with_capacity(ident_expr.type_args.len());
                     for arg in ident_expr.type_args {
                         if let Some(dt) = self.resolve_type_expr(arg) {
                             let typedef = self.registry.get_type(dt.type_id);
-                            arg_names.push(typedef.name().to_string());
+                            arg_names.push(typedef.name());
                         } else {
                             return None; // Error already reported
                         }
                     }
-                    let full_type_name = format!("{}<{}>", name, arg_names.join(", "));
+                    // Build full type name without intermediate allocations
+                    let capacity = name.len() + 2 + arg_names.iter().map(|n| n.len()).sum::<usize>()
+                        + if arg_names.len() > 1 { (arg_names.len() - 1) * 2 } else { 0 };
+                    let mut full_type_name = String::with_capacity(capacity);
+                    full_type_name.push_str(&name);
+                    full_type_name.push('<');
+                    for (i, arg_name) in arg_names.iter().enumerate() {
+                        if i > 0 {
+                            full_type_name.push_str(", ");
+                        }
+                        full_type_name.push_str(arg_name);
+                    }
+                    full_type_name.push('>');
                     self.registry.lookup_type(&full_type_name)
                 } else {
                     // Simple type lookup - try raw name first, then namespace-qualified
@@ -3366,8 +3374,10 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
                             }
                             // Try progressively shorter namespace prefixes
                             for prefix_len in (1..self.namespace_path.len()).rev() {
-                                let prefix = self.namespace_path[..prefix_len].join("::");
-                                let ancestor_qualified = format!("{}::{}", prefix, name);
+                                let ancestor_qualified = Self::build_qualified_name_from_path(
+                                    &self.namespace_path[..prefix_len],
+                                    &name,
+                                );
                                 if let Some(type_id) = self.registry.lookup_type(&ancestor_qualified) {
                                     return Some(type_id);
                                 }
@@ -5236,18 +5246,33 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
             // Build template instance name like "array<int>" or "array<array<int>>"
             // For nested templates, we need to recursively resolve the inner type first
             // to get its registered name (which uses canonical type names like "int" not "int32")
-            let base_name = self.registry.get_type(base_type_id).name().to_string();
-            let mut arg_names: Vec<String> = Vec::new();
+            let base_name = self.registry.get_type(base_type_id).name();
+
+            // Collect arg names and calculate capacity
+            let mut arg_names: Vec<&str> = Vec::with_capacity(type_expr.template_args.len());
             for arg in type_expr.template_args {
                 // Recursively resolve the template argument to get its canonical name
                 if let Some(resolved) = self.resolve_type_expr(arg) {
                     let typedef = self.registry.get_type(resolved.type_id);
-                    arg_names.push(typedef.name().to_string());
+                    arg_names.push(typedef.name());
                 } else {
                     return None; // Error already reported
                 }
             }
-            let template_name = format!("{}<{}>", base_name, arg_names.join(", "));
+
+            // Build template name without intermediate allocations
+            let capacity = base_name.len() + 2 + arg_names.iter().map(|n| n.len()).sum::<usize>()
+                + if arg_names.len() > 1 { (arg_names.len() - 1) * 2 } else { 0 };
+            let mut template_name = String::with_capacity(capacity);
+            template_name.push_str(base_name);
+            template_name.push('<');
+            for (i, name) in arg_names.iter().enumerate() {
+                if i > 0 {
+                    template_name.push_str(", ");
+                }
+                template_name.push_str(name);
+            }
+            template_name.push('>');
 
             // Look up the instantiated template type
             if let Some(id) = self.registry.lookup_type(&template_name) {
@@ -5359,8 +5384,11 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
                     // Try progressively shorter namespace prefixes
                     if !self.namespace_path.is_empty() {
                         for prefix_len in (1..self.namespace_path.len()).rev() {
-                            let prefix = self.namespace_path[..prefix_len].join("::");
-                            let ancestor_qualified = format!("{}::{}", prefix, ident.name);
+                            // Build ancestor qualified name without intermediate allocations
+                            let ancestor_qualified = Self::build_qualified_name_from_path(
+                                &self.namespace_path[..prefix_len],
+                                ident.name,
+                            );
                             if let Some(type_id) = self.registry.lookup_type(&ancestor_qualified) {
                                 return Some(type_id);
                             }
