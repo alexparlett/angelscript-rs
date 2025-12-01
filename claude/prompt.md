@@ -1,7 +1,7 @@
-# Current Task: Fix Ignored Tests
+# Current Task: Fix Remaining Ignored Tests
 
 **Status:** In Progress
-**Date:** 2025-11-30
+**Date:** 2025-12-01
 **Phase:** Semantic Analysis - Bug Fixes & Missing Features
 
 ---
@@ -30,15 +30,19 @@
 - Task 51: Switch Statement Bytecode Generation Complete
 - Task 52: Remove CreateArray + Add Initialization List Instructions Complete
 - Task 53: Deferred (runtime concern)
-- Task 54: Fix invalid test expectations (float->int implicit allowed)
-- Task 55: Fix Type Conversion Issues (const types, signed<->unsigned)
+- Task 54: Fix invalid test expectations (float->int implicit allowed) - COMPLETE
+- Task 55: Fix Type Conversion Issues (const types, signed<->unsigned) - COMPLETE
 - Task 56: Fix Function Overload Registration Issue - COMPLETE
 - Task 57: Fix Operator Overload Issues (opAdd, opCall, get_opIndex) - COMPLETE
 - Task 58: Implement is/!is Operators - COMPLETE
 - Task 59: Fix &out Parameter Lvalue Validation - COMPLETE
-- Tasks 60-64: Fix remaining ignored tests (see below)
+- Task 60: Fix Init List Issues - COMPLETE
+- Task 61: Fix Lambda Issues - COMPLETE
+- Task 62: Fix Property Accessor Issues - COMPLETE
+- Task 63: Implement Auto Type Inference - COMPLETE
+- Tasks 64-70: Fix remaining ignored tests (see below)
 
-**Test Status:** 1625 tests passing, 13 ignored (exposing real bugs)
+**Test Status:** 1644 tests passing, 7 ignored (exposing real bugs)
 
 ---
 
@@ -231,26 +235,155 @@ Analysis found 31 ignored tests in `function_processor.rs`. These are now separa
 
 ---
 
-### Task 64: Fix Ternary with Handles - N/A
+## Remaining Ignored Tests (Tasks 64-70)
 
-The ternary with handles tests (`ternary_with_handles`, `ternary_both_handles`) already pass.
-This task can be skipped.
+7 ignored tests remain in `function_processor.rs`. Each needs investigation to determine if:
+1. The test logic is correct
+2. If so, fix the underlying implementation bug
+
+---
+
+### Task 64: Fix super_call_in_index_expr - PENDING
+
+**Test:** `super_call_in_index_expr` (line 9687)
+**Issue:** Array init list in constructor with super should work
+
+```angelscript
+class Base { Base() { } }
+class Derived : Base {
+    Derived() {
+        super();
+        array<int> arr = {1, 2, 3};  // Fails
+    }
+}
+```
+
+**Analysis:** TBD
+
+---
+
+### Task 65: Fix index_expression_multi - PENDING
+
+**Test:** `index_expression_multi` (line 10118)
+**Issue:** Multi-index opIndex should work with multiple arguments
+
+```angelscript
+class Matrix {
+    int opIndex(int row, int col) { return row * 10 + col; }
+}
+void test() {
+    Matrix m;
+    int val = m[2, 3];  // Should call opIndex(2, 3)
+}
+```
+
+**Analysis:** TBD
+
+---
+
+### Task 66: Fix super_detection_in_init_list - PENDING
+
+**Test:** `super_detection_in_init_list` (line 10439)
+**Issue:** Init list in constructor should work with super detection
+
+```angelscript
+class Base { Base() { } }
+class Derived : Base {
+    Derived() {
+        super();
+        array<int> arr = {1, 2, 3};  // Fails
+    }
+}
+```
+
+**Note:** This appears to be the same scenario as Task 64. May be a duplicate test.
+
+**Analysis:** TBD
+
+---
+
+### Task 67: Fix array_access - PENDING
+
+**Test:** `array_access` (line 10933)
+**Issue:** Array index access should work
+
+```angelscript
+void test() {
+    array<int> arr = {1, 2, 3, 4, 5};
+    int first = arr[0];   // Read access
+    arr[1] = 42;          // Write access
+}
+```
+
+**Analysis:** TBD
+
+---
+
+### Task 68: Fix uint8_to_double_conversion - PENDING
+
+**Test:** `uint8_to_double_conversion` (line 14407)
+**Issue:** Implicit conversion from uint8 to double not working
+
+```angelscript
+void test() {
+    uint8 a = 200;
+    double b = a;  // Should implicitly convert
+}
+```
+
+**Analysis:** TBD
+
+---
+
+### Task 69: Fix uint16_to_uint32_widening - PENDING
+
+**Test:** `uint16_to_uint32_widening` (line 14449)
+**Issue:** Widening conversion from uint16 to uint32 not working
+
+```angelscript
+void test() {
+    uint16 a = 50000;  // Note: literal 50000 may need explicit cast
+    uint32 b = a;      // Should implicitly widen
+}
+```
+
+**Note:** There may be two issues here:
+1. Literal `50000` not converting to `uint16`
+2. `uint16` to `uint32` widening conversion
+
+**Analysis:** TBD
+
+---
+
+### Task 70: Fix enum_with_explicit_values - PENDING
+
+**Test:** `enum_with_explicit_values` (line 16130)
+**Issue:** Enum with explicit values should work
+
+```angelscript
+enum Priority { Low = 0, Medium = 5, High = 10 }
+
+void test() {
+    Priority p = Priority::Medium;
+    int v = p;  // Should convert enum to int
+}
+```
+
+**Analysis:** TBD
 
 ---
 
 ## Priority Order
 
-1. **Task 54** - Fix invalid test expectations (DONE)
-2. **Task 55** - Type conversion issues (DONE)
-3. **Task 56** - Function overload registration (DONE)
-4. **Task 57** - Operator overload issues (DONE)
-5. **Task 58** - is/!is operators (DONE)
-6. **Task 59** - &out validation (DONE)
-7. **Task 60** - Init list issues (DONE)
-8. **Task 61** - Lambda issues (DONE)
-9. **Task 62** - Property accessors (DONE)
-10. **Task 63** - Auto type inference (DONE)
-11. **Task 64** - Ternary with handles
+1. **Task 64** - super_call_in_index_expr (array init with super)
+2. **Task 65** - index_expression_multi (multi-arg opIndex)
+3. **Task 66** - super_detection_in_init_list (likely duplicate of 64)
+4. **Task 67** - array_access (basic array indexing)
+5. **Task 68** - uint8_to_double_conversion
+6. **Task 69** - uint16_to_uint32_widening
+7. **Task 70** - enum_with_explicit_values
+
+**Note:** Tasks 64, 66, and 67 may all be related to array/init list handling.
 
 ---
 
@@ -258,7 +391,7 @@ This task can be skipped.
 
 ```
 1644 tests passing
-7 tests ignored (exposing real bugs - tracked in Task 64 and other issues)
+7 tests ignored (exposing real bugs)
 ```
 
 ---
@@ -271,5 +404,5 @@ This task can be skipped.
 
 ---
 
-**Current Work:** Task 63 Complete
-**Next Work:** Task 64 - Fix Ternary with Handles
+**Current Work:** Planning Tasks 64-70
+**Next Work:** Task 64 - Fix super_call_in_index_expr
