@@ -19,30 +19,30 @@
 //! # Example: Basic Usage (Recommended)
 //!
 //! ```
-//! use angelscript::ScriptModule;
+//! use angelscript::Unit;
 //!
-//! let mut module = ScriptModule::new();
+//! let mut unit = Unit::new();
 //!
 //! // Add source files
-//! module.add_source("player.as", r#"
+//! unit.add_source("player.as", r#"
 //!     class Player {
 //!         int health;
 //!         Player(int h) { }
 //!     }
 //! "#).unwrap();
 //!
-//! module.add_source("main.as", r#"
+//! unit.add_source("main.as", r#"
 //!     void main() {
 //!         Player p = Player(100);
 //!     }
 //! "#).unwrap();
 //!
 //! // Build (parse + compile)
-//! module.build().unwrap();
+//! unit.build().unwrap();
 //!
-//! // Module is now ready for execution
-//! println!("Compiled {} functions", module.function_count());
-//! println!("Registered {} types", module.type_count());
+//! // Unit is now ready for execution
+//! println!("Compiled {} functions", unit.function_count());
+//! println!("Registered {} types", unit.type_count());
 //! ```
 //!
 //! # Example: Parse Only
@@ -61,11 +61,13 @@
 //! ```
 
 mod ast;
-mod ffi;
+mod context;
+pub mod ffi;
 mod lexer;
 mod module;
 pub mod semantic;
 pub mod codegen;
+mod unit;
 
 pub use ast::{parse, parse_expression, parse_lenient, parse_statement, parse_type_expr};
 
@@ -135,8 +137,16 @@ pub use ast::{
     ParseError, ParseErrorKind, ParseErrors,
 };
 
-// Re-export high-level module API (recommended for most users)
-pub use module::{ScriptModule, BuildError, ModuleError};
+// Re-export compilation unit API (recommended for most users)
+pub use unit::{Unit, BuildError, UnitError};
+
+// Re-export FFI module and context API
+pub use module::{Module, FfiModuleError, NativeEnumDef, NativeTemplateDef};
+pub use context::{Context, ContextError};
+
+// Backwards compatibility alias (deprecated)
+#[deprecated(since = "0.2.0", note = "Use `Unit` instead")]
+pub type ScriptModule = Unit;
 
 // Re-export semantic compiler (for advanced use cases)
 pub use semantic::Compiler;

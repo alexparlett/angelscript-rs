@@ -7,6 +7,7 @@
 //! - Native function storage (`NativeFn`, `CallContext`)
 //! - Type specifications for registration (`TypeSpec`, `ParamDef`)
 //! - Variable parameter type support (`AnyRef`, `AnyRefMut`)
+//! - Global property definitions (`GlobalPropertyDef`)
 //!
 //! # Architecture
 //!
@@ -19,6 +20,7 @@
 
 mod any_type;
 mod error;
+mod global_property;
 mod native_fn;
 mod traits;
 mod types;
@@ -26,6 +28,7 @@ mod types;
 // Re-export core types
 pub use any_type::{AnyRef, AnyRefMut};
 pub use error::{ConversionError, NativeError};
+pub use global_property::GlobalPropertyDef;
 pub use native_fn::{CallContext, NativeCallable, NativeFn, ObjectHandle, ObjectHeap, VmSlot};
 pub use traits::{FromScript, NativeType, ToScript};
 pub use types::{
