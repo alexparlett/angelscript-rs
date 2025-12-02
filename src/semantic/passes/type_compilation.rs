@@ -105,7 +105,6 @@ impl<'src, 'ast> TypeCompiler<'src, 'ast> {
     }
 
     /// Perform Pass 2a type compilation on a script
-    #[cfg_attr(feature = "profiling", profiling::function)]
     pub fn compile(
         script: &Script<'src, 'ast>,
         registry: Registry<'src, 'ast>,
@@ -145,7 +144,6 @@ impl<'src, 'ast> TypeCompiler<'src, 'ast> {
     }
 
     /// Visit a function declaration and fill in its signature
-    #[cfg_attr(feature = "profiling", profiling::function)]
     fn visit_function(&mut self, func: &FunctionDecl<'src, 'ast>, object_type: Option<TypeId>) {
         let qualified_name = self.build_qualified_name(func.name.name);
 
@@ -215,7 +213,6 @@ impl<'src, 'ast> TypeCompiler<'src, 'ast> {
     }
 
     /// Visit a class declaration and fill in its details
-    #[cfg_attr(feature = "profiling", profiling::function)]
     fn visit_class(&mut self, class: &ClassDecl<'src, 'ast>) {
         let qualified_name = self.build_qualified_name(class.name.name);
 
@@ -917,7 +914,6 @@ impl<'src, 'ast> TypeCompiler<'src, 'ast> {
     /// - Instantiates templates recursively
     /// - Applies type modifiers (const, @)
     /// - Stores the result in type_map for later reference
-    #[cfg_attr(feature = "profiling", profiling::function)]
     fn resolve_type_expr(&mut self, expr: &TypeExpr<'src, 'ast>) -> Option<DataType> {
         // Step 1: Resolve the base type name
         let base_type_id = self.resolve_base_type(&expr.base, expr.scope.as_ref(), expr.span)?;
@@ -1022,7 +1018,6 @@ impl<'src, 'ast> TypeCompiler<'src, 'ast> {
     }
 
     /// Resolve the base type (without template args or modifiers)
-    #[cfg_attr(feature = "profiling", profiling::function)]
     fn resolve_base_type(
         &mut self,
         base: &TypeBase<'src>,
@@ -1448,7 +1443,6 @@ impl<'src, 'ast> TypeCompiler<'src, 'ast> {
     /// This walks through all statements in a function body to find type
     /// expressions (e.g., `array<int>` in local variable declarations) and
     /// resolves them. This triggers template instantiation before Pass 2b.
-    #[cfg_attr(feature = "profiling", profiling::function)]
     fn scan_block(&mut self, block: &Block<'src, 'ast>) {
         for stmt in block.stmts {
             self.scan_statement(stmt);
@@ -1565,7 +1559,6 @@ impl<'src, 'ast> TypeCompiler<'src, 'ast> {
     }
 
     /// Scan an expression for type expressions (casts, lambdas, etc.)
-    #[cfg_attr(feature = "profiling", profiling::function)]
     fn scan_expression(&mut self, expr: &Expr<'src, 'ast>) {
         match expr {
             Expr::Cast(cast) => {

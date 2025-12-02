@@ -197,7 +197,6 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
     /// Compiles a function body.
     ///
     /// This is a convenience method for compiling a complete function with parameters.
-    #[cfg_attr(feature = "profiling", profiling::function)]
     pub fn compile_block(
         registry: &'ast Registry<'src, 'ast>,
         return_type: DataType,
@@ -830,7 +829,6 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
     }
 
     /// Visits a block of statements.
-    #[cfg_attr(feature = "profiling", profiling::function)]
     fn visit_block(&mut self, block: &'ast Block<'src, 'ast>) {
         self.local_scope.enter_scope();
 
@@ -842,7 +840,6 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
     }
 
     /// Visits a statement.
-    #[cfg_attr(feature = "profiling", profiling::function)]
     fn visit_stmt(&mut self, stmt: &'ast Stmt<'src, 'ast>) {
         match stmt {
             Stmt::Expr(expr_stmt) => self.visit_expr_stmt(expr_stmt),
@@ -862,7 +859,6 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
     }
 
     /// Visits an expression statement.
-    #[cfg_attr(feature = "profiling", profiling::function)]
     fn visit_expr_stmt(&mut self, expr_stmt: &ExprStmt<'src, 'ast>) {
         if let Some(expr) = expr_stmt.expr {
             let _ = self.check_expr(expr);
@@ -872,7 +868,6 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
     }
 
     /// Visits a variable declaration statement.
-    #[cfg_attr(feature = "profiling", profiling::function)]
     fn visit_var_decl(&mut self, var_decl: &VarDeclStmt<'src, 'ast>) {
         // Check if this is an auto type declaration
         let is_auto = matches!(var_decl.ty.base, TypeBase::Auto);
@@ -1797,7 +1792,6 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
     /// Type checks an expression and returns its type.
     ///
     /// Returns None if type checking failed (error already recorded).
-    #[cfg_attr(feature = "profiling", profiling::function)]
     fn check_expr(&mut self, expr: &'ast Expr<'src, 'ast>) -> Option<ExprContext> {
         match expr {
             Expr::Literal(lit) => self.check_literal(lit),
@@ -1819,7 +1813,6 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
 
     /// Type checks a literal expression.
     /// Literals are always rvalues (temporary values).
-    #[cfg_attr(feature = "profiling", profiling::function)]
     fn check_literal(&mut self, lit: &LiteralExpr) -> Option<ExprContext> {
         let type_id = match &lit.kind {
             LiteralKind::Int(_) => INT32_TYPE, // Default integer literals to int32 (matches 'int' type)
@@ -1855,7 +1848,6 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
     /// Enum values (EnumName::VALUE) are rvalues (integer constants).
     /// The `this` keyword resolves to the current object in method bodies.
     /// Unqualified identifiers in methods resolve to class members (implicit `this`).
-    #[cfg_attr(feature = "profiling", profiling::function)]
     fn check_ident(&mut self, ident: &IdentExpr<'src, 'ast>) -> Option<ExprContext> {
         let name = ident.ident.name;
 
@@ -2036,7 +2028,6 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
 
     /// Type checks a binary expression.
     /// Binary expressions always produce rvalues (temporary results).
-    #[cfg_attr(feature = "profiling", profiling::function)]
     fn check_binary(&mut self, binary: &BinaryExpr<'src, 'ast>) -> Option<ExprContext> {
         let left_ctx = self.check_expr(binary.left)?;
         let right_ctx = self.check_expr(binary.right)?;
@@ -2422,7 +2413,6 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
 
     /// Type checks a unary expression.
     /// Most unary operations produce rvalues, but ++x/--x preserve lvalue-ness.
-    #[cfg_attr(feature = "profiling", profiling::function)]
     fn check_unary(&mut self, unary: &UnaryExpr<'src, 'ast>) -> Option<ExprContext> {
         // Special case: @ operator on function name to create function handle
         // This must be handled before check_expr because function names aren't variables
@@ -2664,7 +2654,6 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
 
     /// Type checks an assignment expression.
     /// Assignments require a mutable lvalue as target and produce an rvalue.
-    #[cfg_attr(feature = "profiling", profiling::function)]
     fn check_assign(&mut self, assign: &AssignExpr<'src, 'ast>) -> Option<ExprContext> {
         use AssignOp::*;
 
@@ -3038,7 +3027,6 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
 
     /// Type checks a function call.
     /// Function calls produce rvalues (unless they return a reference, which we don't handle yet).
-    #[cfg_attr(feature = "profiling", profiling::function)]
     fn check_call(&mut self, call: &CallExpr<'src, 'ast>) -> Option<ExprContext> {
         // Determine what we're calling FIRST (before type-checking arguments)
         // This allows us to provide expected funcdef context for lambda inference
@@ -3753,7 +3741,6 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
     /// Note: Multi-dimensional chaining (`arr[0][1]`) is handled by the parser
     /// creating nested IndexExpr nodes, so each call to check_index handles
     /// one bracket pair with potentially multiple arguments.
-    #[cfg_attr(feature = "profiling", profiling::function)]
     fn check_index(&mut self, index: &IndexExpr<'src, 'ast>) -> Option<ExprContext> {
         // Evaluate the base object
         let current_ctx = self.check_expr(index.object)?;
@@ -4335,7 +4322,6 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
     /// Type checks a member access expression.
     /// Field access (obj.field) is an lvalue if obj is an lvalue.
     /// Method calls (obj.method()) always return rvalues.
-    #[cfg_attr(feature = "profiling", profiling::function)]
     fn check_member(&mut self, member: &MemberExpr<'src, 'ast>) -> Option<ExprContext> {
         let object_ctx = self.check_expr(member.object)?;
 
@@ -5753,7 +5739,6 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
     /// Finds the best matching function overload for the given arguments.
     ///
     /// Returns the FunctionId of the best match, or None if no match found.
-    #[cfg_attr(feature = "profiling", profiling::function)]
     fn find_best_function_overload(
         &mut self,
         candidates: &[FunctionId],

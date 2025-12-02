@@ -94,7 +94,6 @@ impl<'src, 'ast> Registrar<'src, 'ast> {
     }
 
     /// Perform Pass 1 registration on a script
-    #[cfg_attr(feature = "profiling", profiling::function)]
     pub fn register(script: &Script<'src, 'ast>) -> RegistrationData<'src, 'ast> {
         let mut registrar = Self::new();
         registrar.visit_script(script);
