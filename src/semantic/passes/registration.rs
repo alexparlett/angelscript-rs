@@ -41,7 +41,7 @@ use crate::semantic::types::{
 };
 use crate::ast::decl::{
     ClassDecl, ClassMember, EnumDecl, FuncdefDecl, FunctionDecl, GlobalVarDecl, InterfaceDecl,
-    Item, MixinDecl, NamespaceDecl, TypedefDecl,
+    Item, MixinDecl, NamespaceDecl, TypedefDecl, UsingNamespaceDecl,
 };
 use crate::ast::Script;
 use crate::lexer::Span;
@@ -67,6 +67,9 @@ pub struct Registrar<'src, 'ast> {
     /// Current namespace path (e.g., ["Game", "World"])
     namespace_path: Vec<String>,
 
+    /// Imported namespace paths from `using namespace` directives (fully qualified)
+    imported_namespaces: Vec<String>,
+
     /// Current class being processed (if inside a class)
     current_class: Option<TypeId>,
 
@@ -86,6 +89,7 @@ impl<'src, 'ast> Registrar<'src, 'ast> {
         Self {
             registry: Registry::new(),
             namespace_path: Vec::new(),
+            imported_namespaces: Vec::new(),
             current_class: None,
             declared_names: FxHashMap::default(),
             errors: Vec::new(),
@@ -126,6 +130,7 @@ impl<'src, 'ast> Registrar<'src, 'ast> {
             Item::Import(_) => {
                 // Skip imports for now
             }
+            Item::UsingNamespace(using) => self.visit_using_namespace(using),
         }
     }
 
@@ -403,6 +408,8 @@ impl<'src, 'ast> Registrar<'src, 'ast> {
 
         // Save current declared names scope
         let saved_names = std::mem::take(&mut self.declared_names);
+        // Save imported namespaces count for scoping
+        let import_count_before = self.imported_namespaces.len();
 
         // Visit items inside namespace
         for item in ns.items {
@@ -411,11 +418,26 @@ impl<'src, 'ast> Registrar<'src, 'ast> {
 
         // Restore declared names scope
         self.declared_names = saved_names;
+        // Remove any imports added within this namespace scope
+        self.imported_namespaces.truncate(import_count_before);
 
         // Exit namespace (pop all path components we added)
         for _ in ns.path {
             self.namespace_path.pop();
         }
+    }
+
+    /// Visit a using namespace declaration
+    fn visit_using_namespace(&mut self, using: &UsingNamespaceDecl<'src, 'ast>) {
+        // Build the fully qualified namespace path
+        let ns_path: String = using.path
+            .iter()
+            .map(|id| id.name)
+            .collect::<Vec<_>>()
+            .join("::");
+
+        // Record the import (validation happens in later passes)
+        self.imported_namespaces.push(ns_path);
     }
 
     /// Visit a typedef declaration

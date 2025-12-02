@@ -146,6 +146,8 @@ pub enum TokenKind {
     Mixin,
     /// `typedef`
     Typedef,
+    /// `using`
+    Using,
     /// `import`
     Import,
     /// `const`
@@ -371,6 +373,7 @@ impl TokenKind {
                 | Namespace
                 | Mixin
                 | Typedef
+                | Using
                 | Import
                 | Const
                 | Private
@@ -524,6 +527,7 @@ impl TokenKind {
             Namespace => "'namespace'",
             Mixin => "'mixin'",
             Typedef => "'typedef'",
+            Using => "'using'",
             Import => "'import'",
             Const => "'const'",
             Private => "'private'",
@@ -653,6 +657,7 @@ pub fn lookup_keyword(ident: &str) -> Option<TokenKind> {
         "namespace" => Namespace,
         "mixin" => Mixin,
         "typedef" => Typedef,
+        "using" => Using,
         "import" => Import,
         "const" => Const,
         "private" => Private,

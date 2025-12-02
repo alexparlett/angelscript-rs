@@ -117,6 +117,13 @@ fn test_nested() {
 }
 
 #[test]
+fn test_using_namespace() {
+    let module = build_script("using_namespace.as");
+    assert!(module.is_built());
+    assert!(module.function_count() >= 5);
+}
+
+#[test]
 fn test_expressions() {
     let module = build_script("expressions.as");
     assert!(module.is_built());

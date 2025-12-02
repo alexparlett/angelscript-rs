@@ -98,6 +98,8 @@ pub enum SemanticErrorKind {
     UndefinedFunction,
     /// Reference to an undefined type.
     UndefinedType,
+    /// Ambiguous name found in multiple imported namespaces.
+    AmbiguousName,
     /// Duplicate declaration in the same scope.
     DuplicateDeclaration,
     /// Variable used in its own initializer.
@@ -173,6 +175,7 @@ impl fmt::Display for SemanticErrorKind {
             UndefinedVariable => "undefined variable",
             UndefinedFunction => "undefined function",
             UndefinedType => "undefined type",
+            AmbiguousName => "ambiguous name",
             DuplicateDeclaration => "duplicate declaration",
             UseBeforeDefinition => "use before definition",
             ReturnOutsideFunction => "return outside function",

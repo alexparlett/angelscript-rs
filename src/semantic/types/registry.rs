@@ -603,6 +603,11 @@ impl<'src, 'ast> Registry<'src, 'ast> {
         self.type_by_name.get(name).copied()
     }
 
+    /// Get access to the type name map for iteration
+    pub fn type_by_name(&self) -> &FxHashMap<String, TypeId> {
+        &self.type_by_name
+    }
+
     /// Get a type definition by TypeId
     pub fn get_type(&self, type_id: TypeId) -> &TypeDef {
         &self.types[type_id.as_u32() as usize]

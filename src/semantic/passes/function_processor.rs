@@ -6,7 +6,7 @@
 
 
 use crate::{ast::{
-    AssignOp, BinaryOp, PostfixOp, Script, UnaryOp, decl::{ClassDecl, ClassMember, FunctionDecl, Item, NamespaceDecl}, expr::{
+    AssignOp, BinaryOp, PostfixOp, Script, UnaryOp, decl::{ClassDecl, ClassMember, FunctionDecl, Item, NamespaceDecl, UsingNamespaceDecl}, expr::{
         AssignExpr, BinaryExpr, CallExpr, CastExpr, Expr, IdentExpr, IndexExpr, InitElement, InitListExpr,
         LambdaExpr, LiteralExpr, LiteralKind, MemberAccess, MemberExpr, ParenExpr, PostfixExpr,
         TernaryExpr, UnaryExpr,
@@ -138,6 +138,9 @@ pub struct FunctionCompiler<'src, 'ast> {
     /// Current namespace path (e.g., ["Game", "World"])
     namespace_path: Vec<String>,
 
+    /// Imported namespace paths from `using namespace` directives (fully qualified)
+    imported_namespaces: Vec<String>,
+
     /// Current class context (when compiling methods)
     current_class: Option<TypeId>,
 
@@ -187,6 +190,7 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
             return_type: DataType::simple(VOID_TYPE),
             compiled_functions: FxHashMap::default(),
             namespace_path: Vec::new(),
+            imported_namespaces: Vec::new(),
             current_class: None,
             current_function: None,
             expected_funcdef_type: None,
@@ -211,6 +215,7 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
             return_type,
             compiled_functions: FxHashMap::default(),
             namespace_path: Vec::new(),
+            imported_namespaces: Vec::new(),
             current_class: None,
             current_function: None,
             expected_funcdef_type: None,
@@ -274,10 +279,12 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
         body: &'ast Block<'src, 'ast>,
         current_class: Option<TypeId>,
         namespace_path: Vec<String>,
+        imported_namespaces: Vec<String>,
     ) -> CompiledFunction {
         let mut compiler = Self::new(registry, return_type);
         compiler.current_class = current_class;
         compiler.namespace_path = namespace_path;
+        compiler.imported_namespaces = imported_namespaces;
 
         // Enter function scope
         compiler.local_scope.enter_scope();
@@ -358,6 +365,7 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
             | Item::Import(_) => {
                 // These don't have function bodies to compile
             }
+            Item::UsingNamespace(using) => self.visit_using_namespace(using),
         }
     }
 
@@ -368,14 +376,33 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
             self.namespace_path.push(ident.name.to_string());
         }
 
+        // Save imported namespaces count for scoping
+        let import_count_before = self.imported_namespaces.len();
+
         for item in ns.items {
             self.visit_item(item);
         }
+
+        // Remove any imports added within this namespace scope
+        self.imported_namespaces.truncate(import_count_before);
 
         // Exit namespace (pop all path components we added)
         for _ in ns.path {
             self.namespace_path.pop();
         }
+    }
+
+    /// Visit a using namespace declaration
+    fn visit_using_namespace(&mut self, using: &UsingNamespaceDecl<'src, 'ast>) {
+        // Build the fully qualified namespace path
+        let ns_path: String = using.path
+            .iter()
+            .map(|id| id.name)
+            .collect::<Vec<_>>()
+            .join("::");
+
+        // Record the import for use in symbol resolution
+        self.imported_namespaces.push(ns_path);
     }
 
     /// Visit a class declaration and compile all its methods
@@ -495,6 +522,7 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
             body,
             func_def.object_type,
             self.namespace_path.clone(),
+            self.imported_namespaces.clone(),
         );
 
         // Prepend constructor prologue if present
@@ -788,6 +816,7 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
             body,
             None,
             self.namespace_path.clone(),
+            self.imported_namespaces.clone(),
         );
 
         // Store the compiled bytecode
@@ -852,6 +881,19 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
         result.push_str("::");
         result.push_str(name);
         result
+    }
+
+    /// Look up a function in imported namespaces.
+    /// Returns all matching candidates from all imported namespaces (as owned Vec).
+    fn lookup_function_in_imports(&self, name: &str) -> Vec<FunctionId> {
+        for ns in &self.imported_namespaces {
+            let qualified = format!("{}::{}", ns, name);
+            let candidates = self.registry.lookup_functions(&qualified);
+            if !candidates.is_empty() {
+                return candidates.to_vec();
+            }
+        }
+        Vec::new()
     }
 
     /// Visits a block of statements.
@@ -1998,15 +2040,24 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
             // Build the qualified type name from scope segments (no intermediate Vec)
             let type_name = Self::build_scope_name(&scope);
 
-            // Try to look up as an enum type - first with the given name, then with namespace prefix
+            // Try to look up as an enum type - first with the given name, then with namespace prefix,
+            // then in imported namespaces
             let type_id = self.registry.lookup_type(&type_name).or_else(|| {
                 // If not found and we're in a namespace, try with namespace prefix
                 if !self.namespace_path.is_empty() {
                     let qualified_type_name = Self::build_qualified_name_from_path(&self.namespace_path, &type_name);
-                    self.registry.lookup_type(&qualified_type_name)
-                } else {
-                    None
+                    if let Some(id) = self.registry.lookup_type(&qualified_type_name) {
+                        return Some(id);
+                    }
                 }
+                // Try imported namespaces
+                for ns in &self.imported_namespaces {
+                    let imported_qualified = format!("{}::{}", ns, type_name);
+                    if let Some(id) = self.registry.lookup_type(&imported_qualified) {
+                        return Some(id);
+                    }
+                }
+                None
             });
 
             if let Some(type_id) = type_id {
@@ -2101,6 +2152,35 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
                 self.bytecode.emit(Instruction::LoadGlobal(name_idx));
                 let is_mutable = !global_var.data_type.is_const;
                 return Some(ExprContext::lvalue(global_var.data_type.clone(), is_mutable));
+            }
+        }
+
+        // Try to look up as an enum value in imported namespaces (e.g., `using namespace Color; Red;`)
+        for ns in &self.imported_namespaces {
+            // Look up the enum type in the imported namespace
+            let qualified_enum = format!("{}::{}", ns, name);
+
+            // First, check if this is a global variable in the imported namespace
+            if let Some(global_var) = self.registry.lookup_global_var(&qualified_enum) {
+                let name_idx = self.bytecode.add_string_constant(global_var.qualified_name());
+                self.bytecode.emit(Instruction::LoadGlobal(name_idx));
+                let is_mutable = !global_var.data_type.is_const;
+                return Some(ExprContext::lvalue(global_var.data_type.clone(), is_mutable));
+            }
+
+            // Check if this is an enum value by looking for it in all enum types in the namespace
+            // We need to search all enum types since the name might be an unscoped enum value like `Red`
+            // First, collect enum types from this namespace
+            for (type_name, &type_id) in self.registry.type_by_name() {
+                if type_name.starts_with(ns) && type_name.starts_with(&format!("{}::", ns)) {
+                    let typedef = self.registry.get_type(type_id);
+                    if typedef.is_enum() {
+                        if let Some(value) = self.registry.lookup_enum_value(type_id, name) {
+                            self.bytecode.emit(Instruction::PushInt(value));
+                            return Some(ExprContext::rvalue(DataType::simple(type_id)));
+                        }
+                    }
+                }
             }
         }
 
@@ -3485,7 +3565,7 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
                     full_type_name.push('>');
                     self.registry.lookup_type(&full_type_name)
                 } else {
-                    // Simple type lookup - try raw name first, then namespace-qualified
+                    // Simple type lookup - try raw name first, then namespace-qualified, then imports
                     // Try raw name first, then progressively qualified names
                     self.registry.lookup_type(&name).or_else(|| {
                         // Try ancestor namespaces (current, then parent, then grandparent, etc.)
@@ -3506,6 +3586,13 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
                                 }
                             }
                         }
+                        // Try imported namespaces
+                        for ns in &self.imported_namespaces {
+                            let imported_qualified = format!("{}::{}", ns, name);
+                            if let Some(type_id) = self.registry.lookup_type(&imported_qualified) {
+                                return Some(type_id);
+                            }
+                        }
                         None
                     })
                 };
@@ -3521,19 +3608,38 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
                 }
 
                 // Regular function call - look up candidates
-                // For unqualified names (not absolute scope), try both the raw name and the namespace-qualified name
-                let candidates = if !is_absolute_scope && ident_expr.scope.is_none() && !self.namespace_path.is_empty() {
+                // For unqualified names (not absolute scope), try:
+                // 1. Current namespace
+                // 2. Global scope
+                // 3. Imported namespaces
+                let candidates: Vec<FunctionId> = if !is_absolute_scope && ident_expr.scope.is_none() {
                     // Try namespace-qualified name first
-                    let qualified_name = self.build_qualified_name(&name);
-                    let ns_candidates = self.registry.lookup_functions(&qualified_name);
-                    if !ns_candidates.is_empty() {
-                        ns_candidates
+                    if !self.namespace_path.is_empty() {
+                        let qualified_name = self.build_qualified_name(&name);
+                        let ns_candidates = self.registry.lookup_functions(&qualified_name);
+                        if !ns_candidates.is_empty() {
+                            ns_candidates.to_vec()
+                        } else {
+                            // Try global scope
+                            let global = self.registry.lookup_functions(&name);
+                            if !global.is_empty() {
+                                global.to_vec()
+                            } else {
+                                // Try imported namespaces
+                                self.lookup_function_in_imports(&name)
+                            }
+                        }
                     } else {
-                        // Fall back to global/unqualified lookup
-                        self.registry.lookup_functions(&name)
+                        // Not in a namespace, try global then imports
+                        let global = self.registry.lookup_functions(&name);
+                        if !global.is_empty() {
+                            global.to_vec()
+                        } else {
+                            self.lookup_function_in_imports(&name)
+                        }
                     }
                 } else {
-                    self.registry.lookup_functions(&name)
+                    self.registry.lookup_functions(&name).to_vec()
                 };
 
                 if candidates.is_empty() {
@@ -3573,7 +3679,7 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
 
                     // Narrow candidates based on non-lambda argument types (pre-allocate)
                     let mut narrowed_candidates = Vec::with_capacity(candidates.len());
-                    for &func_id in candidates {
+                    for &func_id in &candidates {
                         let func_def = self.registry.get_function(func_id);
                         // Check argument count (considering defaults)
                         let min_params = func_def.params.len() - func_def.default_args.iter().filter(|a| a.is_some()).count();
@@ -3670,7 +3776,7 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
 
                 // Find best matching overload
                 let (matching_func, conversions) = self.find_best_function_overload(
-                    candidates,
+                    &candidates,
                     &arg_types,
                     call.span,
                 )?;
@@ -5521,11 +5627,32 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
                                 return Some(type_id);
                             }
                         }
+                    }
 
-                        // Finally try global scope
-                        if let Some(type_id) = self.registry.lookup_type(ident.name) {
-                            return Some(type_id);
+                    // Try global scope
+                    if let Some(type_id) = self.registry.lookup_type(ident.name) {
+                        return Some(type_id);
+                    }
+
+                    // Try imported namespaces
+                    let mut found_in_import: Option<TypeId> = None;
+                    for ns in &self.imported_namespaces {
+                        let imported_qualified = format!("{}::{}", ns, ident.name);
+                        if let Some(type_id) = self.registry.lookup_type(&imported_qualified) {
+                            if found_in_import.is_some() {
+                                // Ambiguous - found in multiple imported namespaces
+                                self.error(
+                                    SemanticErrorKind::AmbiguousName,
+                                    span,
+                                    format!("ambiguous type '{}' found in multiple imported namespaces", ident.name),
+                                );
+                                return None;
+                            }
+                            found_in_import = Some(type_id);
                         }
+                    }
+                    if let Some(type_id) = found_in_import {
+                        return Some(type_id);
                     }
 
                     // Not found anywhere
@@ -6986,6 +7113,31 @@ mod tests {
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Namespace types should be constructible from within namespace: {:?}", result.errors);
+    }
+
+    #[test]
+    fn using_namespace_function_call() {
+        use crate::parse_lenient;
+        use crate::semantic::Compiler;
+        use bumpalo::Bump;
+
+        let arena = Bump::new();
+        let source = r#"
+            namespace test {
+                void helper() { }
+            }
+
+            using namespace test;
+
+            void main() {
+                helper();  // Should find test::helper via import
+            }
+        "#;
+
+        let (script, _) = parse_lenient(source, &arena);
+        let result = Compiler::compile(&script);
+
+        assert!(result.is_success(), "Using namespace should allow unqualified function calls: {:?}", result.errors);
     }
 
     #[test]

@@ -38,6 +38,8 @@ pub enum Item<'src, 'ast> {
     Mixin(MixinDecl<'src, 'ast>),
     /// Import statement
     Import(ImportDecl<'src, 'ast>),
+    /// Using namespace directive
+    UsingNamespace(UsingNamespaceDecl<'src, 'ast>),
 }
 
 impl<'src, 'ast> Item<'src, 'ast> {
@@ -54,6 +56,7 @@ impl<'src, 'ast> Item<'src, 'ast> {
             Self::Funcdef(d) => d.span,
             Self::Mixin(d) => d.span,
             Self::Import(d) => d.span,
+            Self::UsingNamespace(d) => d.span,
         }
     }
 }
@@ -319,6 +322,20 @@ pub struct NamespaceDecl<'src, 'ast> {
     pub path: &'ast [Ident<'src>],
     /// Namespace contents
     pub items: &'ast [Item<'src, 'ast>],
+    /// Source location
+    pub span: Span,
+}
+
+/// A using namespace directive.
+///
+/// Example:
+/// ```as
+/// using namespace Game::Utils;
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct UsingNamespaceDecl<'src, 'ast> {
+    /// Namespace path to import (e.g., ["Game", "Utils"])
+    pub path: &'ast [Ident<'src>],
     /// Source location
     pub span: Span,
 }

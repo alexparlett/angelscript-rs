@@ -49,7 +49,7 @@ use crate::semantic::types::{
 use crate::semantic::{INT32_TYPE, FLOAT_TYPE, DOUBLE_TYPE, STRING_TYPE, BOOL_TYPE};
 use crate::ast::decl::{
     ClassDecl, ClassMember, EnumDecl, FuncdefDecl, FunctionDecl, GlobalVarDecl,
-    InterfaceDecl, InterfaceMethod, Item, NamespaceDecl, TypedefDecl,
+    InterfaceDecl, InterfaceMethod, Item, NamespaceDecl, TypedefDecl, UsingNamespaceDecl,
 };
 use crate::ast::expr::{Expr, InitElement};
 use crate::ast::stmt::{Block, Stmt, ForInit};
@@ -85,6 +85,9 @@ pub struct TypeCompiler<'src, 'ast> {
     /// Current namespace path (e.g., ["Game", "World"])
     namespace_path: Vec<String>,
 
+    /// Imported namespace paths from `using namespace` directives (fully qualified)
+    imported_namespaces: Vec<String>,
+
     /// Errors found during compilation
     errors: Vec<SemanticError>,
 
@@ -99,6 +102,7 @@ impl<'src, 'ast> TypeCompiler<'src, 'ast> {
             registry,
             type_map: FxHashMap::default(),
             namespace_path: Vec::new(),
+            imported_namespaces: Vec::new(),
             errors: Vec::new(),
             _phantom: std::marker::PhantomData,
         }
@@ -140,6 +144,7 @@ impl<'src, 'ast> TypeCompiler<'src, 'ast> {
             Item::Mixin(_) | Item::Import(_) => {
                 // Skip mixins and imports for now
             }
+            Item::UsingNamespace(using) => self.visit_using_namespace(using),
         }
     }
 
@@ -832,15 +837,34 @@ impl<'src, 'ast> TypeCompiler<'src, 'ast> {
             self.namespace_path.push(ident.name.to_string());
         }
 
+        // Save imported namespaces count for scoping
+        let import_count_before = self.imported_namespaces.len();
+
         // Visit items inside namespace
         for item in ns.items {
             self.visit_item(item);
         }
 
+        // Remove any imports added within this namespace scope
+        self.imported_namespaces.truncate(import_count_before);
+
         // Exit namespace (pop all path components we added)
         for _ in ns.path {
             self.namespace_path.pop();
         }
+    }
+
+    /// Visit a using namespace declaration
+    fn visit_using_namespace(&mut self, using: &UsingNamespaceDecl<'src, 'ast>) {
+        // Build the fully qualified namespace path
+        let ns_path: String = using.path
+            .iter()
+            .map(|id| id.name)
+            .collect::<Vec<_>>()
+            .join("::");
+
+        // Record the import for use in type resolution
+        self.imported_namespaces.push(ns_path);
     }
 
     /// Visit a typedef declaration
@@ -1033,11 +1057,12 @@ impl<'src, 'ast> TypeCompiler<'src, 'ast> {
                     // Scoped type: Namespace::Type
                     self.build_scoped_name(scope, ident.name)
                 } else {
-                    // Try current namespace first, then ancestor namespaces, then global
+                    // Try current namespace first, then ancestor namespaces, then global, then imports
                     // For namespace_path = ["Utils", "Colors"], try:
                     //   1. Utils::Colors::Color
                     //   2. Utils::Color
                     //   3. Color (global)
+                    //   4. ImportedNs::Color (for each `using namespace ImportedNs`)
                     let qualified = self.build_qualified_name(ident.name);
 
                     // Look up in registry - full namespace qualified
@@ -1057,11 +1082,32 @@ impl<'src, 'ast> TypeCompiler<'src, 'ast> {
                                 return Some(type_id);
                             }
                         }
+                    }
 
-                        // Finally try global scope
-                        if let Some(type_id) = self.registry.lookup_type(ident.name) {
-                            return Some(type_id);
+                    // Try global scope
+                    if let Some(type_id) = self.registry.lookup_type(ident.name) {
+                        return Some(type_id);
+                    }
+
+                    // Try imported namespaces
+                    let mut found_in_import: Option<TypeId> = None;
+                    for ns in &self.imported_namespaces {
+                        let imported_qualified = format!("{}::{}", ns, ident.name);
+                        if let Some(type_id) = self.registry.lookup_type(&imported_qualified) {
+                            if found_in_import.is_some() {
+                                // Ambiguous - found in multiple imported namespaces
+                                self.errors.push(SemanticError::new(
+                                    SemanticErrorKind::AmbiguousName,
+                                    span,
+                                    format!("ambiguous type '{}' found in multiple imported namespaces", ident.name),
+                                ));
+                                return None;
+                            }
+                            found_in_import = Some(type_id);
                         }
+                    }
+                    if let Some(type_id) = found_in_import {
+                        return Some(type_id);
                     }
 
                     // Not found anywhere

@@ -111,6 +111,11 @@ pub trait Visitor<'src, 'ast>: Sized {
         walk_import_decl(self, import);
     }
 
+    /// Visit a using namespace declaration.
+    fn visit_using_namespace_decl(&mut self, _using: &UsingNamespaceDecl<'src, 'ast>) {
+        // Default: no-op (no child nodes to walk)
+    }
+
     // === Class Members ===
 
     /// Visit a class member.
@@ -335,6 +340,7 @@ pub fn walk_item<'src, 'ast, V: Visitor<'src, 'ast>>(visitor: &mut V, item: &Ite
         Item::Funcdef(funcdef) => visitor.visit_funcdef_decl(funcdef),
         Item::Mixin(mixin) => visitor.visit_mixin_decl(mixin),
         Item::Import(import) => visitor.visit_import_decl(import),
+        Item::UsingNamespace(using) => visitor.visit_using_namespace_decl(using),
     }
 }
 

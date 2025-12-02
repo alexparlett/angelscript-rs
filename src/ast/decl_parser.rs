@@ -65,6 +65,7 @@ impl<'src, 'ast> Parser<'src, 'ast> {
             TokenKind::Enum => self.parse_enum(modifiers),
             TokenKind::FuncDef => self.parse_funcdef(modifiers),
             TokenKind::Namespace => self.parse_namespace(),
+            TokenKind::Using => self.parse_using_namespace(),
             TokenKind::Typedef => self.parse_typedef(),
             TokenKind::Import => self.parse_import(),
             TokenKind::Mixin => self.parse_mixin(modifiers),
@@ -1282,6 +1283,40 @@ mod tests {
     }
 
     // ========================================================================
+    // Using Namespace Tests
+    // ========================================================================
+
+    #[test]
+    fn parse_using_namespace_simple() {
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("using namespace Foo;", &arena);
+        let item = parser.parse_item().unwrap();
+        match item {
+            Item::UsingNamespace(using) => {
+                assert_eq!(using.path.len(), 1);
+                assert_eq!(using.path[0].name, "Foo");
+            }
+            _ => panic!("Expected using namespace"),
+        }
+    }
+
+    #[test]
+    fn parse_using_namespace_nested() {
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("using namespace A::B::C;", &arena);
+        let item = parser.parse_item().unwrap();
+        match item {
+            Item::UsingNamespace(using) => {
+                assert_eq!(using.path.len(), 3);
+                assert_eq!(using.path[0].name, "A");
+                assert_eq!(using.path[1].name, "B");
+                assert_eq!(using.path[2].name, "C");
+            }
+            _ => panic!("Expected using namespace"),
+        }
+    }
+
+    // ========================================================================
     // Typedef Tests
     // ========================================================================
 
@@ -2436,6 +2471,25 @@ impl<'src, 'ast> Parser<'src, 'ast> {
         Ok(Item::Namespace(NamespaceDecl {
             path: path_slice,
             items: items_slice,
+            span: start_span.merge(end_span),
+        }))
+    }
+
+    /// Parse a using namespace directive.
+    ///
+    /// Syntax: `using namespace A::B::C;`
+    pub fn parse_using_namespace(&mut self) -> Result<Item<'src, 'ast>, ParseError> {
+        let start_span = self.expect(TokenKind::Using)?.span;
+        self.expect(TokenKind::Namespace)?;
+
+        // Parse namespace path (can be nested: A::B::C)
+        let path_vec = self.parse_namespace_path()?;
+        let path_slice = self.arena.alloc_slice_copy(&path_vec);
+
+        let end_span = self.expect(TokenKind::Semicolon)?.span;
+
+        Ok(Item::UsingNamespace(UsingNamespaceDecl {
+            path: path_slice,
             span: start_span.merge(end_span),
         }))
     }
