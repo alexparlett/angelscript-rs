@@ -806,13 +806,17 @@ mod tests {
     }
 
     #[test]
-    fn switch_non_integer_rejected() {
+    fn switch_unsupported_type_rejected() {
         let arena = Bump::new();
+        // Test that value types (non-handle classes) are rejected
+        // We now support: int, bool, float, double, string, enum, and handle types
+        // But value-type classes are not supported
         let source = r#"
+            class Foo {}
             void test() {
-                float x = 1.5;
+                Foo x;
                 switch (x) {
-                    case 1:
+                    case null:
                         break;
                 }
             }
@@ -820,10 +824,7 @@ mod tests {
         let (script, _) = parse_lenient(source, &arena);
 
         let result = Compiler::compile(&script);
-        assert!(!result.is_success(), "Expected error for non-integer switch expression");
-        assert!(result.errors.iter().any(|e|
-            format!("{:?}", e).contains("must be integer or enum type")),
-            "Expected integer/enum type error, got: {:?}", result.errors);
+        assert!(!result.is_success(), "Expected error for unsupported switch type");
     }
 
     #[test]

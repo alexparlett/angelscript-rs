@@ -145,6 +145,9 @@ pub enum Instruction {
     // Type operations
     /// Cast to a type (pops 1, pushes 1)
     Cast(TypeId),
+    /// Check if handle on stack is instance of type (including subclasses/interfaces)
+    /// Stack: [handle] → [bool]
+    IsInstanceOf(TypeId),
 
     // Type conversion operations - Primitive conversions
     // Integer to Float conversions

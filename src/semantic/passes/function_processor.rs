@@ -18,13 +18,39 @@ use crate::semantic::types::registry::FunctionDef;
 use crate::codegen::{BytecodeEmitter, CompiledBytecode, CompiledModule, Instruction};
 use crate::lexer::Span;
 use crate::semantic::{
-    eval_const_int, Conversion, DataType, FieldDef, LocalScope, MethodSignature, OperatorBehavior, Registry,
+    ConstEvaluator, ConstValue, Conversion, DataType, FieldDef, LocalScope, MethodSignature, OperatorBehavior, Registry,
     SemanticError, SemanticErrorKind, TypeDef, TypeId, Visibility, BOOL_TYPE, DOUBLE_TYPE, FLOAT_TYPE,
     INT8_TYPE, INT16_TYPE, INT32_TYPE, INT64_TYPE, UINT8_TYPE, UINT16_TYPE, UINT32_TYPE, UINT64_TYPE,
     NULL_TYPE, VOID_TYPE,
 };
 use crate::semantic::types::type_def::FunctionId;
 use rustc_hash::{FxHashMap, FxHashSet};
+
+/// Category of switch expression for determining comparison strategy.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SwitchCategory {
+    /// Integer types (int8-64, uint8-64, enum) - use primitive Equal
+    Integer,
+    /// Boolean type - use primitive Equal
+    Bool,
+    /// Float/double types - use primitive Equal
+    Float,
+    /// String type - use opEquals method call
+    String,
+    /// Handle types - identity comparison + type patterns
+    Handle,
+}
+
+/// Key for detecting duplicate switch case values at compile time.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+enum SwitchCaseKey {
+    Int(i64),
+    Float(u64),      // f64::to_bits() for exact bit comparison
+    Bool(bool),
+    String(String),
+    Null,
+    Type(TypeId),    // For type pattern matching
+}
 
 /// Expression context - tracks type and lvalue/mutability information.
 ///
@@ -1606,6 +1632,9 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
     /// 3. Jump to default case (or end if no default)
     /// 4. Emit case bodies with fallthrough semantics
     /// 5. Break statements jump to switch end
+    ///
+    /// Supports: integers, enums, bool, float, double, string, and handle types.
+    /// Handle types support type pattern matching (case ClassName:) and null checks.
     fn visit_switch(&mut self, switch: &'ast SwitchStmt<'src, 'ast>) {
         // Type check the switch expression
         let switch_ctx = match self.check_expr(switch.expr) {
@@ -1613,18 +1642,21 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
             None => return, // Error already recorded
         };
 
-        // Switch expressions must be integer or enum types
-        if !self.is_switch_compatible(&switch_ctx.data_type) {
-            self.error(
-                SemanticErrorKind::TypeMismatch,
-                switch.expr.span(),
-                format!(
-                    "switch expression must be integer or enum type, found '{}'",
-                    self.type_name(&switch_ctx.data_type)
-                ),
-            );
-            return;
-        }
+        // Determine switch category
+        let switch_category = match self.get_switch_category(&switch_ctx.data_type) {
+            Some(cat) => cat,
+            None => {
+                self.error(
+                    SemanticErrorKind::TypeMismatch,
+                    switch.expr.span(),
+                    format!(
+                        "switch expression must be integer, enum, bool, float, string, or handle type, found '{}'",
+                        self.type_name(&switch_ctx.data_type)
+                    ),
+                );
+                return;
+            }
+        };
 
         // Enter a new scope for the switch temp variable
         self.local_scope.enter_scope();
@@ -1638,12 +1670,11 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
         );
         self.bytecode.emit(Instruction::StoreLocal(switch_offset));
 
-        // Track case values to detect duplicates
-        let mut case_values: FxHashSet<i64> = FxHashSet::default();
+        // Track case values to detect duplicates (now supports all types)
+        let mut case_values: FxHashSet<SwitchCaseKey> = FxHashSet::default();
         let mut default_case_index: Option<usize> = None;
 
         // First pass: find default case and check for duplicate case values
-        // (Type checking happens in the dispatch phase when we emit bytecode)
         for (case_idx, case) in switch.cases.iter().enumerate() {
             if case.is_default() {
                 if default_case_index.is_some() {
@@ -1655,16 +1686,69 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
                 }
                 default_case_index = Some(case_idx);
             } else {
-                // Check for duplicate case values (if we can evaluate as constant)
                 for value_expr in case.values {
-                    if let Some(const_value) = eval_const_int(value_expr)
-                        && !case_values.insert(const_value) {
+                    // Check for type pattern (only valid for Handle category)
+                    if switch_category == SwitchCategory::Handle {
+                        if let Some(type_id) = self.try_resolve_type_pattern(value_expr) {
+                            let key = SwitchCaseKey::Type(type_id);
+                            if !case_values.insert(key) {
+                                let type_name = self.registry.get_type(type_id).name();
+                                self.error(
+                                    SemanticErrorKind::DuplicateDeclaration,
+                                    value_expr.span(),
+                                    format!("duplicate case type: {}", type_name),
+                                );
+                            }
+                            continue;
+                        }
+                    }
+
+                    // Check for null literal
+                    if let Expr::Literal(lit) = value_expr {
+                        if matches!(lit.kind, LiteralKind::Null) {
+                            if switch_category != SwitchCategory::Handle {
+                                self.error(
+                                    SemanticErrorKind::TypeMismatch,
+                                    value_expr.span(),
+                                    "case null is only valid for handle types".to_string(),
+                                );
+                            } else if !case_values.insert(SwitchCaseKey::Null) {
+                                self.error(
+                                    SemanticErrorKind::DuplicateDeclaration,
+                                    value_expr.span(),
+                                    "duplicate case null".to_string(),
+                                );
+                            }
+                            continue;
+                        }
+                    }
+
+                    // Evaluate constant value for duplicate detection
+                    let evaluator = ConstEvaluator::new(self.registry);
+                    if let Some(const_value) = evaluator.eval(value_expr) {
+                        let key = match &const_value {
+                            ConstValue::Int(i) => SwitchCaseKey::Int(*i),
+                            ConstValue::UInt(u) => SwitchCaseKey::Int(*u as i64),
+                            ConstValue::Float(f) => SwitchCaseKey::Float(f.to_bits()),
+                            ConstValue::Bool(b) => SwitchCaseKey::Bool(*b),
+                            ConstValue::String(s) => SwitchCaseKey::String(s.clone()),
+                        };
+
+                        if !case_values.insert(key) {
+                            let display = match &const_value {
+                                ConstValue::Int(i) => format!("{}", i),
+                                ConstValue::UInt(u) => format!("{}", u),
+                                ConstValue::Float(f) => format!("{}", f),
+                                ConstValue::Bool(b) => format!("{}", b),
+                                ConstValue::String(s) => format!("\"{}\"", s),
+                            };
                             self.error(
                                 SemanticErrorKind::DuplicateDeclaration,
                                 value_expr.span(),
-                                format!("duplicate case value: {}", const_value),
+                                format!("duplicate case value: {}", display),
                             );
                         }
+                    }
                 }
             }
         }
@@ -1681,16 +1765,55 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
             if !case.is_default() {
                 // For each case value (handles case 1: case 2: ... syntax)
                 for value_expr in case.values {
+                    // Check for type pattern (only valid for Handle category)
+                    if switch_category == SwitchCategory::Handle {
+                        if let Some(type_id) = self.try_resolve_type_pattern(value_expr) {
+                            // Emit: LoadLocal(switch_offset), IsInstanceOf(type_id), JumpIfTrue
+                            self.bytecode.emit(Instruction::LoadLocal(switch_offset));
+                            self.bytecode.emit(Instruction::IsInstanceOf(type_id));
+                            let jump_pos = self.bytecode.emit(Instruction::JumpIfTrue(0));
+                            case_jumps.push((case_idx, jump_pos));
+                            continue;
+                        }
+                    }
+
+                    // Check for null literal
+                    if let Expr::Literal(lit) = value_expr {
+                        if matches!(lit.kind, LiteralKind::Null) {
+                            // Emit: LoadLocal(switch_offset), PushNull, Equal, JumpIfTrue
+                            self.bytecode.emit(Instruction::LoadLocal(switch_offset));
+                            self.bytecode.emit(Instruction::PushNull);
+                            self.bytecode.emit(Instruction::Equal);
+                            let jump_pos = self.bytecode.emit(Instruction::JumpIfTrue(0));
+                            case_jumps.push((case_idx, jump_pos));
+                            continue;
+                        }
+                    }
+
                     // Load switch value
                     self.bytecode.emit(Instruction::LoadLocal(switch_offset));
+
                     // Emit case value expression and type check
                     if let Some(value_ctx) = self.check_expr(value_expr) {
-                        // Case value must be compatible with switch type.
-                        // For switch statements, we only allow:
-                        // - Exact type match
-                        // - Enum ↔ int conversion (both are int32 underneath)
-                        let types_compatible = value_ctx.data_type.type_id == switch_ctx.data_type.type_id
-                            || (self.is_integer(&value_ctx.data_type) && self.is_integer(&switch_ctx.data_type));
+                        // Check type compatibility based on switch category
+                        let types_compatible = match switch_category {
+                            SwitchCategory::Integer => {
+                                value_ctx.data_type.type_id == switch_ctx.data_type.type_id
+                                    || (self.is_integer(&value_ctx.data_type) && self.is_integer(&switch_ctx.data_type))
+                            }
+                            SwitchCategory::Bool => value_ctx.data_type.type_id == BOOL_TYPE,
+                            SwitchCategory::Float => {
+                                value_ctx.data_type.type_id == FLOAT_TYPE
+                                    || value_ctx.data_type.type_id == DOUBLE_TYPE
+                                    || self.is_integer(&value_ctx.data_type)
+                            }
+                            SwitchCategory::String => value_ctx.data_type.type_id == STRING_TYPE,
+                            SwitchCategory::Handle => {
+                                value_ctx.data_type.type_id == NULL_TYPE
+                                    || (value_ctx.data_type.is_handle
+                                        && value_ctx.data_type.type_id == switch_ctx.data_type.type_id)
+                            }
+                        };
 
                         if !types_compatible {
                             self.error(
@@ -1704,8 +1827,27 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
                             );
                         }
                     }
-                    // Compare
-                    self.bytecode.emit(Instruction::Equal);
+
+                    // Emit comparison based on switch category
+                    match switch_category {
+                        SwitchCategory::String => {
+                            // String comparison via opEquals
+                            if let Some(func_id) = self.registry.find_operator_method(
+                                switch_ctx.data_type.type_id,
+                                OperatorBehavior::OpEquals,
+                            ) {
+                                self.bytecode.emit(Instruction::Call(func_id.as_u32()));
+                            } else {
+                                // Fallback to primitive Equal (shouldn't happen for strings)
+                                self.bytecode.emit(Instruction::Equal);
+                            }
+                        }
+                        _ => {
+                            // Primitive equality for int, bool, float, handle identity
+                            self.bytecode.emit(Instruction::Equal);
+                        }
+                    }
+
                     // Jump if equal (placeholder offset, will be patched)
                     let jump_pos = self.bytecode.emit(Instruction::JumpIfTrue(0));
                     case_jumps.push((case_idx, jump_pos));
@@ -5494,13 +5636,57 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
     }
 
     /// Checks if a type is compatible with switch statements (integer or enum).
-    fn is_switch_compatible(&self, ty: &DataType) -> bool {
-        if self.is_integer(ty) {
-            return true;
+    /// Determines the switch category for a type, or None if not switch-compatible.
+    fn get_switch_category(&self, ty: &DataType) -> Option<SwitchCategory> {
+        // Handle types support type pattern matching
+        if ty.is_handle {
+            return Some(SwitchCategory::Handle);
         }
-        // Check if it's an enum type
+
+        // Integer types (int8-64, uint8-64)
+        if self.is_integer(ty) {
+            return Some(SwitchCategory::Integer);
+        }
+
+        // Enum types (treated as integers)
         let typedef = self.registry.get_type(ty.type_id);
-        typedef.is_enum()
+        if typedef.is_enum() {
+            return Some(SwitchCategory::Integer);
+        }
+
+        // Boolean
+        if ty.type_id == BOOL_TYPE {
+            return Some(SwitchCategory::Bool);
+        }
+
+        // Float/Double
+        if ty.type_id == FLOAT_TYPE || ty.type_id == DOUBLE_TYPE {
+            return Some(SwitchCategory::Float);
+        }
+
+        // String
+        if ty.type_id == STRING_TYPE {
+            return Some(SwitchCategory::String);
+        }
+
+        None
+    }
+
+    /// Try to resolve a case expression as a type pattern (class/interface name).
+    /// Returns Some(TypeId) if the expression is an identifier that resolves to a class or interface.
+    fn try_resolve_type_pattern(&self, expr: &Expr) -> Option<TypeId> {
+        // Only identifiers can be type patterns
+        if let Expr::Ident(ident) = expr {
+            // Look up as type name, not variable
+            if let Some(type_id) = self.registry.lookup_type(ident.ident.name) {
+                let typedef = self.registry.get_type(type_id);
+                // Only classes and interfaces are valid type patterns
+                if typedef.is_class() || typedef.is_interface() {
+                    return Some(type_id);
+                }
+            }
+        }
+        None
     }
 
     /// Promotes two numeric types to their common type.
@@ -9038,17 +9224,20 @@ mod tests {
     }
 
     #[test]
-    fn switch_type_mismatch_error() {
+    fn switch_unsupported_value_type_error() {
         use crate::parse_lenient;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
         let arena = Bump::new();
+        // Value types (non-handle classes) should still be rejected
+        // Only int, bool, float, double, string, enum, and handle types are supported
         let source = r#"
+            class Foo {}
             void test() {
-                float x = 2.5f;
+                Foo x;
                 switch (x) {
-                    case 1:
+                    default:
                         break;
                 }
             }
@@ -9057,7 +9246,7 @@ mod tests {
         let (script, _) = parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
-        assert!(!result.errors.is_empty(), "Switch on non-integer type should error");
+        assert!(!result.errors.is_empty(), "Switch on value type should error");
     }
 
     // ==================== For Loop Tests ====================
@@ -17010,5 +17199,379 @@ mod tests {
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Prefix decrement in while loop should work: {:?}", result.errors);
+    }
+
+    // ==================== Enhanced Switch Tests ====================
+
+    #[test]
+    fn switch_on_bool() {
+        use crate::parse_lenient;
+        use crate::semantic::Compiler;
+        use bumpalo::Bump;
+
+        let arena = Bump::new();
+        let source = r#"
+            void test() {
+                bool b = true;
+                switch (b) {
+                    case true:
+                        break;
+                    case false:
+                        break;
+                }
+            }
+        "#;
+
+        let (script, _) = parse_lenient(source, &arena);
+        let result = Compiler::compile(&script);
+
+        assert!(result.is_success(), "Bool switch should work: {:?}", result.errors);
+    }
+
+    #[test]
+    fn switch_on_bool_duplicate_error() {
+        use crate::parse_lenient;
+        use crate::semantic::Compiler;
+        use bumpalo::Bump;
+
+        let arena = Bump::new();
+        let source = r#"
+            void test() {
+                bool b = true;
+                switch (b) {
+                    case true:
+                        break;
+                    case true:
+                        break;
+                }
+            }
+        "#;
+
+        let (script, _) = parse_lenient(source, &arena);
+        let result = Compiler::compile(&script);
+
+        assert!(!result.errors.is_empty(), "Should detect duplicate bool case");
+        assert!(result.errors.iter().any(|e| e.message.contains("duplicate")),
+            "Error should mention duplicate: {:?}", result.errors);
+    }
+
+    #[test]
+    fn switch_on_float() {
+        use crate::parse_lenient;
+        use crate::semantic::Compiler;
+        use bumpalo::Bump;
+
+        let arena = Bump::new();
+        let source = r#"
+            void test() {
+                float f = 1.5f;
+                switch (f) {
+                    case 1.5f:
+                        break;
+                    case 2.5f:
+                        break;
+                }
+            }
+        "#;
+
+        let (script, _) = parse_lenient(source, &arena);
+        let result = Compiler::compile(&script);
+
+        assert!(result.is_success(), "Float switch should work: {:?}", result.errors);
+    }
+
+    #[test]
+    fn switch_on_double() {
+        use crate::parse_lenient;
+        use crate::semantic::Compiler;
+        use bumpalo::Bump;
+
+        let arena = Bump::new();
+        let source = r#"
+            void test() {
+                double d = 1.0;
+                switch (d) {
+                    case 1.0:
+                        break;
+                    case 2.0:
+                        break;
+                }
+            }
+        "#;
+
+        let (script, _) = parse_lenient(source, &arena);
+        let result = Compiler::compile(&script);
+
+        assert!(result.is_success(), "Double switch should work: {:?}", result.errors);
+    }
+
+    #[test]
+    fn switch_on_string() {
+        use crate::parse_lenient;
+        use crate::semantic::Compiler;
+        use bumpalo::Bump;
+
+        let arena = Bump::new();
+        let source = r#"
+            void test() {
+                string s = "hello";
+                switch (s) {
+                    case "hello":
+                        break;
+                    case "world":
+                        break;
+                    default:
+                        break;
+                }
+            }
+        "#;
+
+        let (script, _) = parse_lenient(source, &arena);
+        let result = Compiler::compile(&script);
+
+        assert!(result.is_success(), "String switch should work: {:?}", result.errors);
+    }
+
+    #[test]
+    fn switch_on_string_duplicate_error() {
+        use crate::parse_lenient;
+        use crate::semantic::Compiler;
+        use bumpalo::Bump;
+
+        let arena = Bump::new();
+        let source = r#"
+            void test() {
+                string s = "hello";
+                switch (s) {
+                    case "hello":
+                        break;
+                    case "hello":
+                        break;
+                }
+            }
+        "#;
+
+        let (script, _) = parse_lenient(source, &arena);
+        let result = Compiler::compile(&script);
+
+        assert!(!result.errors.is_empty(), "Should detect duplicate string case");
+        assert!(result.errors.iter().any(|e| e.message.contains("duplicate")),
+            "Error should mention duplicate: {:?}", result.errors);
+    }
+
+    #[test]
+    fn switch_on_handle_with_null() {
+        use crate::parse_lenient;
+        use crate::semantic::Compiler;
+        use bumpalo::Bump;
+
+        let arena = Bump::new();
+        let source = r#"
+            class Foo {}
+            void test() {
+                Foo@ obj = null;
+                switch (obj) {
+                    case null:
+                        break;
+                    default:
+                        break;
+                }
+            }
+        "#;
+
+        let (script, _) = parse_lenient(source, &arena);
+        let result = Compiler::compile(&script);
+
+        assert!(result.is_success(), "Handle switch with null case should work: {:?}", result.errors);
+    }
+
+    #[test]
+    fn switch_null_on_non_handle_error() {
+        use crate::parse_lenient;
+        use crate::semantic::Compiler;
+        use bumpalo::Bump;
+
+        let arena = Bump::new();
+        let source = r#"
+            void test() {
+                int x = 1;
+                switch (x) {
+                    case null:
+                        break;
+                }
+            }
+        "#;
+
+        let (script, _) = parse_lenient(source, &arena);
+        let result = Compiler::compile(&script);
+
+        assert!(!result.errors.is_empty(), "Should error on null case for non-handle");
+        assert!(result.errors.iter().any(|e| e.message.contains("null") && e.message.contains("handle")),
+            "Error should mention null and handle: {:?}", result.errors);
+    }
+
+    #[test]
+    fn switch_duplicate_null_error() {
+        use crate::parse_lenient;
+        use crate::semantic::Compiler;
+        use bumpalo::Bump;
+
+        let arena = Bump::new();
+        let source = r#"
+            class Foo {}
+            void test() {
+                Foo@ obj = null;
+                switch (obj) {
+                    case null:
+                        break;
+                    case null:
+                        break;
+                }
+            }
+        "#;
+
+        let (script, _) = parse_lenient(source, &arena);
+        let result = Compiler::compile(&script);
+
+        assert!(!result.errors.is_empty(), "Should detect duplicate null case");
+        assert!(result.errors.iter().any(|e| e.message.contains("duplicate")),
+            "Error should mention duplicate: {:?}", result.errors);
+    }
+
+    #[test]
+    fn switch_type_pattern_matching() {
+        use crate::parse_lenient;
+        use crate::semantic::Compiler;
+        use bumpalo::Bump;
+
+        let arena = Bump::new();
+        let source = r#"
+            class Animal {
+                Animal() {}
+            }
+            class Dog : Animal {
+                Dog() { super(); }
+            }
+            class Cat : Animal {
+                Cat() { super(); }
+            }
+
+            void test() {
+                Dog@ dog = Dog();
+                Animal@ pet = dog;
+                switch (pet) {
+                    case Dog:
+                        break;
+                    case Cat:
+                        break;
+                    default:
+                        break;
+                }
+            }
+        "#;
+
+        let (script, _) = parse_lenient(source, &arena);
+        let result = Compiler::compile(&script);
+
+        assert!(result.is_success(), "Type pattern matching in switch should work: {:?}", result.errors);
+    }
+
+    #[test]
+    fn switch_type_pattern_duplicate_error() {
+        use crate::parse_lenient;
+        use crate::semantic::Compiler;
+        use bumpalo::Bump;
+
+        let arena = Bump::new();
+        let source = r#"
+            class Animal {
+                Animal() {}
+            }
+            class Dog : Animal {
+                Dog() { super(); }
+            }
+
+            void test() {
+                Dog@ dog = Dog();
+                Animal@ pet = dog;
+                switch (pet) {
+                    case Dog:
+                        break;
+                    case Dog:
+                        break;
+                }
+            }
+        "#;
+
+        let (script, _) = parse_lenient(source, &arena);
+        let result = Compiler::compile(&script);
+
+        assert!(!result.errors.is_empty(), "Should detect duplicate type pattern");
+        assert!(result.errors.iter().any(|e| e.message.contains("duplicate")),
+            "Error should mention duplicate: {:?}", result.errors);
+    }
+
+    #[test]
+    fn switch_type_pattern_with_null() {
+        use crate::parse_lenient;
+        use crate::semantic::Compiler;
+        use bumpalo::Bump;
+
+        let arena = Bump::new();
+        let source = r#"
+            class Animal {}
+            class Dog : Animal {}
+
+            void test() {
+                Animal@ pet = null;
+                switch (pet) {
+                    case null:
+                        break;
+                    case Dog:
+                        break;
+                    default:
+                        break;
+                }
+            }
+        "#;
+
+        let (script, _) = parse_lenient(source, &arena);
+        let result = Compiler::compile(&script);
+
+        assert!(result.is_success(), "Type pattern with null case should work: {:?}", result.errors);
+    }
+
+    #[test]
+    fn switch_interface_pattern() {
+        use crate::parse_lenient;
+        use crate::semantic::Compiler;
+        use bumpalo::Bump;
+
+        let arena = Bump::new();
+        let source = r#"
+            interface IWalkable {
+                void walk();
+            }
+            class Dog : IWalkable {
+                Dog() {}
+                void walk() {}
+            }
+
+            void test() {
+                Dog@ dog = Dog();
+                IWalkable@ walker = dog;
+                switch (walker) {
+                    case Dog:
+                        break;
+                    default:
+                        break;
+                }
+            }
+        "#;
+
+        let (script, _) = parse_lenient(source, &arena);
+        let result = Compiler::compile(&script);
+
+        assert!(result.is_success(), "Interface type pattern should work: {:?}", result.errors);
     }
 }
