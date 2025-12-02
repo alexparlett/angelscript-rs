@@ -16,36 +16,36 @@ use crate::lexer::Span;
 
 /// A statement.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub enum Stmt<'src, 'ast> {
+pub enum Stmt<'ast> {
     /// Expression statement (expr;)
-    Expr(ExprStmt<'src, 'ast>),
+    Expr(ExprStmt<'ast>),
     /// Variable declaration
-    VarDecl(VarDeclStmt<'src, 'ast>),
+    VarDecl(VarDeclStmt<'ast>),
     /// Return statement
-    Return(ReturnStmt<'src, 'ast>),
+    Return(ReturnStmt<'ast>),
     /// Break statement
     Break(BreakStmt),
     /// Continue statement
     Continue(ContinueStmt),
     /// Block statement
-    Block(Block<'src, 'ast>),
+    Block(Block<'ast>),
     /// If statement
-    If(&'ast IfStmt<'src, 'ast>),
+    If(&'ast IfStmt<'ast>),
     /// While loop
-    While(&'ast WhileStmt<'src, 'ast>),
+    While(&'ast WhileStmt<'ast>),
     /// Do-while loop
-    DoWhile(&'ast DoWhileStmt<'src, 'ast>),
+    DoWhile(&'ast DoWhileStmt<'ast>),
     /// For loop
-    For(&'ast ForStmt<'src, 'ast>),
+    For(&'ast ForStmt<'ast>),
     /// Foreach loop
-    Foreach(&'ast ForeachStmt<'src, 'ast>),
+    Foreach(&'ast ForeachStmt<'ast>),
     /// Switch statement
-    Switch(&'ast SwitchStmt<'src, 'ast>),
+    Switch(&'ast SwitchStmt<'ast>),
     /// Try-catch statement
-    TryCatch(&'ast TryCatchStmt<'src, 'ast>),
+    TryCatch(&'ast TryCatchStmt<'ast>),
 }
 
-impl<'src, 'ast> Stmt<'src, 'ast> {
+impl<'ast> Stmt<'ast> {
     /// Get the span of this statement.
     pub fn span(&self) -> Span {
         match self {
@@ -68,9 +68,9 @@ impl<'src, 'ast> Stmt<'src, 'ast> {
 
 /// An expression statement (expression followed by semicolon).
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct ExprStmt<'src, 'ast> {
+pub struct ExprStmt<'ast> {
     /// The expression (can be None for empty statement `;`)
-    pub expr: Option<&'ast Expr<'src, 'ast>>,
+    pub expr: Option<&'ast Expr<'ast>>,
     /// Source location
     pub span: Span,
 }
@@ -83,22 +83,22 @@ pub struct ExprStmt<'src, 'ast> {
 /// - `int x = 5, y = 10;`
 /// - `MyClass@ obj = MyClass();`
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct VarDeclStmt<'src, 'ast> {
+pub struct VarDeclStmt<'ast> {
     /// The type of the variable(s)
-    pub ty: TypeExpr<'src, 'ast>,
+    pub ty: TypeExpr<'ast>,
     /// Variable declarations (can be multiple)
-    pub vars: &'ast [VarDeclarator<'src, 'ast>],
+    pub vars: &'ast [VarDeclarator<'ast>],
     /// Source location
     pub span: Span,
 }
 
 /// A single variable declarator within a variable declaration.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct VarDeclarator<'src, 'ast> {
+pub struct VarDeclarator<'ast> {
     /// Variable name
-    pub name: Ident<'src>,
+    pub name: Ident<'ast>,
     /// Optional initializer
-    pub init: Option<&'ast Expr<'src, 'ast>>,
+    pub init: Option<&'ast Expr<'ast>>,
     /// Source location
     pub span: Span,
 }
@@ -109,9 +109,9 @@ pub struct VarDeclarator<'src, 'ast> {
 /// - `return;`
 /// - `return expr;`
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct ReturnStmt<'src, 'ast> {
+pub struct ReturnStmt<'ast> {
     /// Optional return value
-    pub value: Option<&'ast Expr<'src, 'ast>>,
+    pub value: Option<&'ast Expr<'ast>>,
     /// Source location
     pub span: Span,
 }
@@ -132,9 +132,9 @@ pub struct ContinueStmt {
 
 /// A block of statements.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct Block<'src, 'ast> {
+pub struct Block<'ast> {
     /// Statements in the block
-    pub stmts: &'ast [Stmt<'src, 'ast>],
+    pub stmts: &'ast [Stmt<'ast>],
     /// Source location
     pub span: Span,
 }
@@ -145,13 +145,13 @@ pub struct Block<'src, 'ast> {
 /// - `if (condition) statement`
 /// - `if (condition) statement else statement`
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct IfStmt<'src, 'ast> {
+pub struct IfStmt<'ast> {
     /// Condition
-    pub condition: &'ast Expr<'src, 'ast>,
+    pub condition: &'ast Expr<'ast>,
     /// Then branch
-    pub then_stmt: &'ast Stmt<'src, 'ast>,
+    pub then_stmt: &'ast Stmt<'ast>,
     /// Optional else branch
-    pub else_stmt: Option<&'ast Stmt<'src, 'ast>>,
+    pub else_stmt: Option<&'ast Stmt<'ast>>,
     /// Source location
     pub span: Span,
 }
@@ -160,11 +160,11 @@ pub struct IfStmt<'src, 'ast> {
 ///
 /// Example: `while (condition) statement`
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct WhileStmt<'src, 'ast> {
+pub struct WhileStmt<'ast> {
     /// Condition
-    pub condition: &'ast Expr<'src, 'ast>,
+    pub condition: &'ast Expr<'ast>,
     /// Body
-    pub body: &'ast Stmt<'src, 'ast>,
+    pub body: &'ast Stmt<'ast>,
     /// Source location
     pub span: Span,
 }
@@ -173,11 +173,11 @@ pub struct WhileStmt<'src, 'ast> {
 ///
 /// Example: `do statement while (condition);`
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct DoWhileStmt<'src, 'ast> {
+pub struct DoWhileStmt<'ast> {
     /// Body
-    pub body: &'ast Stmt<'src, 'ast>,
+    pub body: &'ast Stmt<'ast>,
     /// Condition
-    pub condition: &'ast Expr<'src, 'ast>,
+    pub condition: &'ast Expr<'ast>,
     /// Source location
     pub span: Span,
 }
@@ -188,26 +188,26 @@ pub struct DoWhileStmt<'src, 'ast> {
 ///
 /// The init can be either a variable declaration or an expression.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct ForStmt<'src, 'ast> {
+pub struct ForStmt<'ast> {
     /// Initializer (variable declaration or expression)
-    pub init: Option<ForInit<'src, 'ast>>,
+    pub init: Option<ForInit<'ast>>,
     /// Condition
-    pub condition: Option<&'ast Expr<'src, 'ast>>,
+    pub condition: Option<&'ast Expr<'ast>>,
     /// Update expressions
-    pub update: &'ast [&'ast Expr<'src, 'ast>],
+    pub update: &'ast [&'ast Expr<'ast>],
     /// Body
-    pub body: &'ast Stmt<'src, 'ast>,
+    pub body: &'ast Stmt<'ast>,
     /// Source location
     pub span: Span,
 }
 
 /// The initializer in a for loop.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub enum ForInit<'src, 'ast> {
+pub enum ForInit<'ast> {
     /// Variable declaration
-    VarDecl(VarDeclStmt<'src, 'ast>),
+    VarDecl(VarDeclStmt<'ast>),
     /// Expression
-    Expr(&'ast Expr<'src, 'ast>),
+    Expr(&'ast Expr<'ast>),
 }
 
 /// A foreach loop.
@@ -217,24 +217,24 @@ pub enum ForInit<'src, 'ast> {
 /// AngelScript also supports multiple iteration variables:
 /// `foreach (Type1 var1, Type2 var2 : expr) statement`
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct ForeachStmt<'src, 'ast> {
+pub struct ForeachStmt<'ast> {
     /// Iteration variables
-    pub vars: &'ast [ForeachVar<'src, 'ast>],
+    pub vars: &'ast [ForeachVar<'ast>],
     /// Expression to iterate over
-    pub expr: &'ast Expr<'src, 'ast>,
+    pub expr: &'ast Expr<'ast>,
     /// Body
-    pub body: &'ast Stmt<'src, 'ast>,
+    pub body: &'ast Stmt<'ast>,
     /// Source location
     pub span: Span,
 }
 
 /// A foreach iteration variable.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct ForeachVar<'src, 'ast> {
+pub struct ForeachVar<'ast> {
     /// Variable type
-    pub ty: TypeExpr<'src, 'ast>,
+    pub ty: TypeExpr<'ast>,
     /// Variable name
-    pub name: Ident<'src>,
+    pub name: Ident<'ast>,
     /// Source location
     pub span: Span,
 }
@@ -253,27 +253,27 @@ pub struct ForeachVar<'src, 'ast> {
 /// }
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct SwitchStmt<'src, 'ast> {
+pub struct SwitchStmt<'ast> {
     /// Expression to switch on
-    pub expr: &'ast Expr<'src, 'ast>,
+    pub expr: &'ast Expr<'ast>,
     /// Cases
-    pub cases: &'ast [SwitchCase<'src, 'ast>],
+    pub cases: &'ast [SwitchCase<'ast>],
     /// Source location
     pub span: Span,
 }
 
 /// A switch case.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct SwitchCase<'src, 'ast> {
+pub struct SwitchCase<'ast> {
     /// Case values (empty for default)
-    pub values: &'ast [&'ast Expr<'src, 'ast>],
+    pub values: &'ast [&'ast Expr<'ast>],
     /// Statements
-    pub stmts: &'ast [Stmt<'src, 'ast>],
+    pub stmts: &'ast [Stmt<'ast>],
     /// Source location
     pub span: Span,
 }
 
-impl<'src, 'ast> SwitchCase<'src, 'ast> {
+impl<'ast> SwitchCase<'ast> {
     /// Check if this is the default case.
     pub fn is_default(&self) -> bool {
         self.values.is_empty()
@@ -291,11 +291,11 @@ impl<'src, 'ast> SwitchCase<'src, 'ast> {
 /// }
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct TryCatchStmt<'src, 'ast> {
+pub struct TryCatchStmt<'ast> {
     /// Try block
-    pub try_block: Block<'src, 'ast>,
+    pub try_block: Block<'ast>,
     /// Catch block
-    pub catch_block: Block<'src, 'ast>,
+    pub catch_block: Block<'ast>,
     /// Source location
     pub span: Span,
 }

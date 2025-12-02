@@ -22,8 +22,8 @@ use rustc_hash::FxHashSet;
 
 use super::{FunctionCompiler, SwitchCategory, SwitchCaseKey};
 
-impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
-    pub(super) fn visit_block(&mut self, block: &'ast Block<'src, 'ast>) {
+impl<'ast> FunctionCompiler<'ast> {
+    pub(super) fn visit_block(&mut self, block: &'ast Block<'ast>) {
         self.local_scope.enter_scope();
 
         for stmt in block.stmts {
@@ -34,7 +34,7 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
     }
 
     /// Visits a statement.
-    pub(super) fn visit_stmt(&mut self, stmt: &'ast Stmt<'src, 'ast>) {
+    pub(super) fn visit_stmt(&mut self, stmt: &'ast Stmt<'ast>) {
         match stmt {
             Stmt::Expr(expr_stmt) => self.visit_expr_stmt(expr_stmt),
             Stmt::VarDecl(var_decl) => self.visit_var_decl(var_decl),
@@ -53,7 +53,7 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
     }
 
     /// Visits an expression statement.
-    pub(super) fn visit_expr_stmt(&mut self, expr_stmt: &ExprStmt<'src, 'ast>) {
+    pub(super) fn visit_expr_stmt(&mut self, expr_stmt: &ExprStmt<'ast>) {
         if let Some(expr) = expr_stmt.expr {
             let _ = self.check_expr(expr);
             // Expression result is discarded
@@ -62,7 +62,7 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
     }
 
     /// Visits a variable declaration statement.
-    pub(super) fn visit_var_decl(&mut self, var_decl: &VarDeclStmt<'src, 'ast>) {
+    pub(super) fn visit_var_decl(&mut self, var_decl: &VarDeclStmt<'ast>) {
         // Check if this is an auto type declaration
         let is_auto = matches!(var_decl.ty.base, TypeBase::Auto);
 
@@ -245,7 +245,7 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
     }
 
     /// Visits a return statement.
-    pub(super) fn visit_return(&mut self, ret: &ReturnStmt<'src, 'ast>) {
+    pub(super) fn visit_return(&mut self, ret: &ReturnStmt<'ast>) {
         if let Some(value) = ret.value {
             // Set expected funcdef type if return type is a funcdef
             // This allows lambda inference in return statements
@@ -345,7 +345,7 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
     }
 
     /// Visits an if statement.
-    pub(super) fn visit_if(&mut self, if_stmt: &'ast IfStmt<'src, 'ast>) {
+    pub(super) fn visit_if(&mut self, if_stmt: &'ast IfStmt<'ast>) {
         // Check condition
         if let Some(cond_ctx) = self.check_expr(if_stmt.condition)
             && cond_ctx.data_type.type_id != BOOL_TYPE {
@@ -387,7 +387,7 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
     }
 
     /// Visits a while loop.
-    pub(super) fn visit_while(&mut self, while_stmt: &'ast WhileStmt<'src, 'ast>) {
+    pub(super) fn visit_while(&mut self, while_stmt: &'ast WhileStmt<'ast>) {
         let loop_start = self.bytecode.current_position();
         self.bytecode.enter_loop(loop_start);
 
@@ -422,7 +422,7 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
     }
 
     /// Visits a do-while loop.
-    pub(super) fn visit_do_while(&mut self, do_while: &'ast DoWhileStmt<'src, 'ast>) {
+    pub(super) fn visit_do_while(&mut self, do_while: &'ast DoWhileStmt<'ast>) {
         let loop_start = self.bytecode.current_position();
         self.bytecode.enter_loop(loop_start);
 
@@ -452,7 +452,7 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
     }
 
     /// Visits a for loop.
-    pub(super) fn visit_for(&mut self, for_stmt: &'ast ForStmt<'src, 'ast>) {
+    pub(super) fn visit_for(&mut self, for_stmt: &'ast ForStmt<'ast>) {
         // Enter scope for loop (init variables live in loop scope)
         self.local_scope.enter_scope();
 
@@ -514,7 +514,7 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
     }
 
     /// Visits a foreach loop.
-    pub(super) fn visit_foreach(&mut self, foreach: &'ast ForeachStmt<'src, 'ast>) {
+    pub(super) fn visit_foreach(&mut self, foreach: &'ast ForeachStmt<'ast>) {
         // Type check the container expression
         let container_ctx = match self.check_expr(foreach.expr) {
             Some(ctx) => ctx,
@@ -803,7 +803,7 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
     ///
     /// Supports: integers, enums, bool, float, double, string, and handle types.
     /// Handle types support type pattern matching (case ClassName:) and null checks.
-    pub(super) fn visit_switch(&mut self, switch: &'ast SwitchStmt<'src, 'ast>) {
+    pub(super) fn visit_switch(&mut self, switch: &'ast SwitchStmt<'ast>) {
         // Type check the switch expression
         let switch_ctx = match self.check_expr(switch.expr) {
             Some(ctx) => ctx,
@@ -1068,7 +1068,7 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
     }
 
     /// Visits a try-catch statement.
-    pub(super) fn visit_try_catch(&mut self, try_catch: &'ast TryCatchStmt<'src, 'ast>) {
+    pub(super) fn visit_try_catch(&mut self, try_catch: &'ast TryCatchStmt<'ast>) {
         // Emit try block start (marks exception handler boundary)
         let _try_start = self.bytecode.current_position();
         self.bytecode.emit(Instruction::TryStart);

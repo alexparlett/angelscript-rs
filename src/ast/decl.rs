@@ -17,32 +17,32 @@ use crate::lexer::Span;
 
 /// A top-level item in a script.
 #[derive(Debug, Clone, PartialEq)]
-pub enum Item<'src, 'ast> {
+pub enum Item<'ast> {
     /// Function declaration
-    Function(FunctionDecl<'src, 'ast>),
+    Function(FunctionDecl<'ast>),
     /// Class declaration
-    Class(ClassDecl<'src, 'ast>),
+    Class(ClassDecl<'ast>),
     /// Interface declaration
-    Interface(InterfaceDecl<'src, 'ast>),
+    Interface(InterfaceDecl<'ast>),
     /// Enum declaration
-    Enum(EnumDecl<'src, 'ast>),
+    Enum(EnumDecl<'ast>),
     /// Global variable declaration
-    GlobalVar(GlobalVarDecl<'src, 'ast>),
+    GlobalVar(GlobalVarDecl<'ast>),
     /// Namespace declaration
-    Namespace(NamespaceDecl<'src, 'ast>),
+    Namespace(NamespaceDecl<'ast>),
     /// Typedef declaration
-    Typedef(TypedefDecl<'src, 'ast>),
+    Typedef(TypedefDecl<'ast>),
     /// Funcdef declaration
-    Funcdef(FuncdefDecl<'src, 'ast>),
+    Funcdef(FuncdefDecl<'ast>),
     /// Mixin declaration
-    Mixin(MixinDecl<'src, 'ast>),
+    Mixin(MixinDecl<'ast>),
     /// Import statement
-    Import(ImportDecl<'src, 'ast>),
+    Import(ImportDecl<'ast>),
     /// Using namespace directive
-    UsingNamespace(UsingNamespaceDecl<'src, 'ast>),
+    UsingNamespace(UsingNamespaceDecl<'ast>),
 }
 
-impl<'src, 'ast> Item<'src, 'ast> {
+impl<'ast> Item<'ast> {
     /// Get the span of this item.
     pub fn span(&self) -> Span {
         match self {
@@ -69,33 +69,33 @@ impl<'src, 'ast> Item<'src, 'ast> {
 /// - `void method() const { }`
 /// - `~MyClass() { }` (destructor)
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct FunctionDecl<'src, 'ast> {
+pub struct FunctionDecl<'ast> {
     /// Declaration modifiers (shared, external)
     pub modifiers: DeclModifiers,
     /// Visibility (for class members)
     pub visibility: Visibility,
     /// Return type (None for constructors/destructors)
-    pub return_type: Option<ReturnType<'src, 'ast>>,
+    pub return_type: Option<ReturnType<'ast>>,
     /// Function name
-    pub name: Ident<'src>,
+    pub name: Ident<'ast>,
     /// Template parameters (for application-registered template functions)
     /// Example: swap<T> has template_params = ["T"]
-    pub template_params: &'ast [Ident<'src>],
+    pub template_params: &'ast [Ident<'ast>],
     /// Parameters
-    pub params: &'ast [FunctionParam<'src, 'ast>],
+    pub params: &'ast [FunctionParam<'ast>],
     /// Whether this is a const method
     pub is_const: bool,
     /// Function attributes (override, final, etc.)
     pub attrs: FuncAttr,
     /// Body (None for declarations without implementation)
-    pub body: Option<Block<'src, 'ast>>,
+    pub body: Option<Block<'ast>>,
     /// Whether this is a destructor
     pub is_destructor: bool,
     /// Source location
     pub span: Span,
 }
 
-impl<'src, 'ast> FunctionDecl<'src, 'ast> {
+impl<'ast> FunctionDecl<'ast> {
     /// Check if this is a constructor.
     pub fn is_constructor(&self) -> bool {
         self.return_type.is_none() && !self.is_destructor
@@ -104,13 +104,13 @@ impl<'src, 'ast> FunctionDecl<'src, 'ast> {
 
 /// A function parameter.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct FunctionParam<'src, 'ast> {
+pub struct FunctionParam<'ast> {
     /// Parameter type
-    pub ty: ParamType<'src, 'ast>,
+    pub ty: ParamType<'ast>,
     /// Parameter name (optional for interface methods)
-    pub name: Option<Ident<'src>>,
+    pub name: Option<Ident<'ast>>,
     /// Default value
-    pub default: Option<&'ast Expr<'src, 'ast>>,
+    pub default: Option<&'ast Expr<'ast>>,
     /// Whether this is a variadic parameter (...)
     pub is_variadic: bool,
     /// Source location
@@ -130,46 +130,46 @@ pub struct FunctionParam<'src, 'ast> {
 /// }
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct ClassDecl<'src, 'ast> {
+pub struct ClassDecl<'ast> {
     /// Declaration modifiers (shared, abstract, final, external)
     pub modifiers: DeclModifiers,
     /// Class name
-    pub name: Ident<'src>,
+    pub name: Ident<'ast>,
     /// Template parameters (for application-registered template classes)
     /// Example: Container<T> has template_params = ["T"]
-    pub template_params: &'ast [Ident<'src>],
+    pub template_params: &'ast [Ident<'ast>],
     /// Base class and interfaces (supports scoped names like Namespace::Interface)
-    pub inheritance: &'ast [IdentExpr<'src, 'ast>],
+    pub inheritance: &'ast [IdentExpr<'ast>],
     /// Class members
-    pub members: &'ast [ClassMember<'src, 'ast>],
+    pub members: &'ast [ClassMember<'ast>],
     /// Source location
     pub span: Span,
 }
 
 /// A class member.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub enum ClassMember<'src, 'ast> {
+pub enum ClassMember<'ast> {
     /// Method
-    Method(FunctionDecl<'src, 'ast>),
+    Method(FunctionDecl<'ast>),
     /// Field (variable)
-    Field(FieldDecl<'src, 'ast>),
+    Field(FieldDecl<'ast>),
     /// Virtual property
-    VirtualProperty(VirtualPropertyDecl<'src, 'ast>),
+    VirtualProperty(VirtualPropertyDecl<'ast>),
     /// Nested funcdef
-    Funcdef(FuncdefDecl<'src, 'ast>),
+    Funcdef(FuncdefDecl<'ast>),
 }
 
 /// A field declaration in a class.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct FieldDecl<'src, 'ast> {
+pub struct FieldDecl<'ast> {
     /// Visibility
     pub visibility: Visibility,
     /// Field type
-    pub ty: TypeExpr<'src, 'ast>,
+    pub ty: TypeExpr<'ast>,
     /// Field name
-    pub name: Ident<'src>,
+    pub name: Ident<'ast>,
     /// Optional initializer
-    pub init: Option<&'ast Expr<'src, 'ast>>,
+    pub init: Option<&'ast Expr<'ast>>,
     /// Source location
     pub span: Span,
 }
@@ -184,22 +184,22 @@ pub struct FieldDecl<'src, 'ast> {
 /// }
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct VirtualPropertyDecl<'src, 'ast> {
+pub struct VirtualPropertyDecl<'ast> {
     /// Visibility
     pub visibility: Visibility,
     /// Property type
-    pub ty: ReturnType<'src, 'ast>,
+    pub ty: ReturnType<'ast>,
     /// Property name
-    pub name: Ident<'src>,
+    pub name: Ident<'ast>,
     /// Accessors (get/set)
-    pub accessors: &'ast [PropertyAccessor<'src, 'ast>],
+    pub accessors: &'ast [PropertyAccessor<'ast>],
     /// Source location
     pub span: Span,
 }
 
 /// A property accessor (get or set).
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct PropertyAccessor<'src, 'ast> {
+pub struct PropertyAccessor<'ast> {
     /// Accessor kind (get or set)
     pub kind: crate::ast::PropertyAccessorKind,
     /// Whether this accessor is const
@@ -207,7 +207,7 @@ pub struct PropertyAccessor<'src, 'ast> {
     /// Function attributes
     pub attrs: FuncAttr,
     /// Body (None for interface)
-    pub body: Option<Block<'src, 'ast>>,
+    pub body: Option<Block<'ast>>,
     /// Source location
     pub span: Span,
 }
@@ -221,37 +221,37 @@ pub struct PropertyAccessor<'src, 'ast> {
 /// }
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct InterfaceDecl<'src, 'ast> {
+pub struct InterfaceDecl<'ast> {
     /// Declaration modifiers (external, shared)
     pub modifiers: DeclModifiers,
     /// Interface name
-    pub name: Ident<'src>,
+    pub name: Ident<'ast>,
     /// Base interfaces
-    pub bases: &'ast [Ident<'src>],
+    pub bases: &'ast [Ident<'ast>],
     /// Interface members
-    pub members: &'ast [InterfaceMember<'src, 'ast>],
+    pub members: &'ast [InterfaceMember<'ast>],
     /// Source location
     pub span: Span,
 }
 
 /// An interface member.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub enum InterfaceMember<'src, 'ast> {
+pub enum InterfaceMember<'ast> {
     /// Method signature
-    Method(InterfaceMethod<'src, 'ast>),
+    Method(InterfaceMethod<'ast>),
     /// Virtual property
-    VirtualProperty(VirtualPropertyDecl<'src, 'ast>),
+    VirtualProperty(VirtualPropertyDecl<'ast>),
 }
 
 /// An interface method signature.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct InterfaceMethod<'src, 'ast> {
+pub struct InterfaceMethod<'ast> {
     /// Return type
-    pub return_type: ReturnType<'src, 'ast>,
+    pub return_type: ReturnType<'ast>,
     /// Method name
-    pub name: Ident<'src>,
+    pub name: Ident<'ast>,
     /// Parameters
-    pub params: &'ast [FunctionParam<'src, 'ast>],
+    pub params: &'ast [FunctionParam<'ast>],
     /// Whether this is a const method
     pub is_const: bool,
     /// Source location
@@ -269,24 +269,24 @@ pub struct InterfaceMethod<'src, 'ast> {
 /// }
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct EnumDecl<'src, 'ast> {
+pub struct EnumDecl<'ast> {
     /// Declaration modifiers (shared, external)
     pub modifiers: DeclModifiers,
     /// Enum name
-    pub name: Ident<'src>,
+    pub name: Ident<'ast>,
     /// Enumerators
-    pub enumerators: &'ast [Enumerator<'src, 'ast>],
+    pub enumerators: &'ast [Enumerator<'ast>],
     /// Source location
     pub span: Span,
 }
 
 /// An enumerator (enum value).
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct Enumerator<'src, 'ast> {
+pub struct Enumerator<'ast> {
     /// Enumerator name
-    pub name: Ident<'src>,
+    pub name: Ident<'ast>,
     /// Optional value
-    pub value: Option<&'ast Expr<'src, 'ast>>,
+    pub value: Option<&'ast Expr<'ast>>,
     /// Source location
     pub span: Span,
 }
@@ -295,15 +295,15 @@ pub struct Enumerator<'src, 'ast> {
 ///
 /// Example: `int globalCounter = 0;`
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct GlobalVarDecl<'src, 'ast> {
+pub struct GlobalVarDecl<'ast> {
     /// Visibility
     pub visibility: Visibility,
     /// Variable type
-    pub ty: TypeExpr<'src, 'ast>,
+    pub ty: TypeExpr<'ast>,
     /// Variable name
-    pub name: Ident<'src>,
+    pub name: Ident<'ast>,
     /// Optional initializer
-    pub init: Option<&'ast Expr<'src, 'ast>>,
+    pub init: Option<&'ast Expr<'ast>>,
     /// Source location
     pub span: Span,
 }
@@ -317,11 +317,11 @@ pub struct GlobalVarDecl<'src, 'ast> {
 /// }
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct NamespaceDecl<'src, 'ast> {
+pub struct NamespaceDecl<'ast> {
     /// Namespace path (can be nested: A::B::C)
-    pub path: &'ast [Ident<'src>],
+    pub path: &'ast [Ident<'ast>],
     /// Namespace contents
-    pub items: &'ast [Item<'src, 'ast>],
+    pub items: &'ast [Item<'ast>],
     /// Source location
     pub span: Span,
 }
@@ -333,9 +333,9 @@ pub struct NamespaceDecl<'src, 'ast> {
 /// using namespace Game::Utils;
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct UsingNamespaceDecl<'src, 'ast> {
+pub struct UsingNamespaceDecl<'ast> {
     /// Namespace path to import (e.g., ["Game", "Utils"])
-    pub path: &'ast [Ident<'src>],
+    pub path: &'ast [Ident<'ast>],
     /// Source location
     pub span: Span,
 }
@@ -344,11 +344,11 @@ pub struct UsingNamespaceDecl<'src, 'ast> {
 ///
 /// Example: `typedef int EntityId;`
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct TypedefDecl<'src, 'ast> {
+pub struct TypedefDecl<'ast> {
     /// Base type (must be primitive)
-    pub base_type: TypeExpr<'src, 'ast>,
+    pub base_type: TypeExpr<'ast>,
     /// New type name
-    pub name: Ident<'src>,
+    pub name: Ident<'ast>,
     /// Source location
     pub span: Span,
 }
@@ -357,18 +357,18 @@ pub struct TypedefDecl<'src, 'ast> {
 ///
 /// Example: `funcdef void Callback(int);`
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct FuncdefDecl<'src, 'ast> {
+pub struct FuncdefDecl<'ast> {
     /// Declaration modifiers (external, shared)
     pub modifiers: DeclModifiers,
     /// Return type
-    pub return_type: ReturnType<'src, 'ast>,
+    pub return_type: ReturnType<'ast>,
     /// Funcdef name
-    pub name: Ident<'src>,
+    pub name: Ident<'ast>,
     /// Template parameters (for application-registered template funcdefs)
     /// Example: Callback<T> has template_params = ["T"]
-    pub template_params: &'ast [Ident<'src>],
+    pub template_params: &'ast [Ident<'ast>],
     /// Parameters
-    pub params: &'ast [FunctionParam<'src, 'ast>],
+    pub params: &'ast [FunctionParam<'ast>],
     /// Source location
     pub span: Span,
 }
@@ -377,9 +377,9 @@ pub struct FuncdefDecl<'src, 'ast> {
 ///
 /// Example: `mixin class MyMixin { }`
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct MixinDecl<'src, 'ast> {
+pub struct MixinDecl<'ast> {
     /// The class being declared as a mixin
-    pub class: ClassDecl<'src, 'ast>,
+    pub class: ClassDecl<'ast>,
     /// Source location
     pub span: Span,
 }
@@ -388,13 +388,13 @@ pub struct MixinDecl<'src, 'ast> {
 ///
 /// Example: `import void func(int) from "module";`
 #[derive(Debug, Clone, PartialEq)]
-pub struct ImportDecl<'src, 'ast> {
+pub struct ImportDecl<'ast> {
     /// Return type
-    pub return_type: ReturnType<'src, 'ast>,
+    pub return_type: ReturnType<'ast>,
     /// Function name
-    pub name: Ident<'src>,
+    pub name: Ident<'ast>,
     /// Parameters
-    pub params: &'ast [FunctionParam<'src, 'ast>],
+    pub params: &'ast [FunctionParam<'ast>],
     /// Function attributes
     pub attrs: FuncAttr,
     /// Module to import from

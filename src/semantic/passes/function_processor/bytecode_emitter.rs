@@ -12,7 +12,7 @@ use crate::semantic::types::type_def::{
 
 use super::FunctionCompiler;
 
-impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
+impl<'ast> FunctionCompiler<'ast> {
     /// Emit conversion instruction based on ConversionKind.
     ///
     /// Maps semantic conversion information to the appropriate bytecode instruction.

@@ -143,7 +143,8 @@ impl Unit {
     pub fn update_source(&mut self, filename: impl AsRef<str>, source: impl Into<String>) -> Result<bool, UnitError> {
         let filename = filename.as_ref();
 
-        if !self.sources.contains_key(filename) {
+        // Check source_hashes since sources is cleared after build
+        if !self.source_hashes.contains_key(filename) {
             return Err(UnitError::FileNotFound(filename.to_string()));
         }
 
@@ -275,6 +276,11 @@ impl Unit {
         self.arena = Some(arena);
         self.is_built = true;
         self.dirty_files.clear();
+
+        // Clear source strings - they're no longer needed since the lexer copies
+        // all string content into the arena. We keep the hashes for hot-reload
+        // change detection.
+        self.sources.clear();
 
         Ok(())
     }

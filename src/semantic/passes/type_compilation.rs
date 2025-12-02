@@ -61,9 +61,9 @@ use rustc_hash::{FxHashMap, FxHashSet};
 
 /// Output from Pass 2a: Type Compilation
 #[derive(Debug)]
-pub struct TypeCompilationData<'src, 'ast> {
+pub struct TypeCompilationData<'ast> {
     /// Registry with complete type information
-    pub registry: Registry<'src, 'ast>,
+    pub registry: Registry<'ast>,
 
     /// Maps AST TypeExpr spans to resolved DataType
     pub type_map: FxHashMap<Span, DataType>,
@@ -75,9 +75,9 @@ pub struct TypeCompilationData<'src, 'ast> {
 /// Pass 2a: Type Compilation visitor
 ///
 /// Walks the AST and fills in all type details in the Registry.
-pub struct TypeCompiler<'src, 'ast> {
+pub struct TypeCompiler<'ast> {
     /// The registry we're filling in
-    registry: Registry<'src, 'ast>,
+    registry: Registry<'ast>,
 
     /// Maps AST spans to resolved types
     type_map: FxHashMap<Span, DataType>,
@@ -92,12 +92,12 @@ pub struct TypeCompiler<'src, 'ast> {
     errors: Vec<SemanticError>,
 
     /// Phantom markers
-    _phantom: std::marker::PhantomData<(&'src str, &'ast ())>,
+    _phantom: std::marker::PhantomData<&'ast ()>,
 }
 
-impl<'src, 'ast> TypeCompiler<'src, 'ast> {
+impl<'ast> TypeCompiler<'ast> {
     /// Create a new type compiler
-    fn new(registry: Registry<'src, 'ast>) -> Self {
+    fn new(registry: Registry<'ast>) -> Self {
         Self {
             registry,
             type_map: FxHashMap::default(),
@@ -110,9 +110,9 @@ impl<'src, 'ast> TypeCompiler<'src, 'ast> {
 
     /// Perform Pass 2a type compilation on a script
     pub fn compile(
-        script: &Script<'src, 'ast>,
-        registry: Registry<'src, 'ast>,
-    ) -> TypeCompilationData<'src, 'ast> {
+        script: &Script<'ast>,
+        registry: Registry<'ast>,
+    ) -> TypeCompilationData<'ast> {
         let mut compiler = Self::new(registry);
         compiler.visit_script(script);
 
@@ -124,14 +124,14 @@ impl<'src, 'ast> TypeCompiler<'src, 'ast> {
     }
 
     /// Visit the entire script
-    fn visit_script(&mut self, script: &Script<'src, 'ast>) {
+    fn visit_script(&mut self, script: &Script<'ast>) {
         for item in script.items() {
             self.visit_item(item);
         }
     }
 
     /// Visit a top-level item
-    fn visit_item(&mut self, item: &Item<'src, 'ast>) {
+    fn visit_item(&mut self, item: &Item<'ast>) {
         match item {
             Item::Function(func) => self.visit_function(func, None),
             Item::Class(class) => self.visit_class(class),
@@ -149,7 +149,7 @@ impl<'src, 'ast> TypeCompiler<'src, 'ast> {
     }
 
     /// Visit a function declaration and fill in its signature
-    fn visit_function(&mut self, func: &FunctionDecl<'src, 'ast>, object_type: Option<TypeId>) {
+    fn visit_function(&mut self, func: &FunctionDecl<'ast>, object_type: Option<TypeId>) {
         let qualified_name = self.build_qualified_name(func.name.name);
 
         // Resolve parameter types
@@ -218,7 +218,7 @@ impl<'src, 'ast> TypeCompiler<'src, 'ast> {
     }
 
     /// Visit a class declaration and fill in its details
-    fn visit_class(&mut self, class: &ClassDecl<'src, 'ast>) {
+    fn visit_class(&mut self, class: &ClassDecl<'ast>) {
         let qualified_name = self.build_qualified_name(class.name.name);
 
         // Look up the class type (registered in Pass 1)
@@ -638,7 +638,7 @@ impl<'src, 'ast> TypeCompiler<'src, 'ast> {
     }
 
     /// Visit an interface declaration and fill in its details
-    fn visit_interface(&mut self, iface: &InterfaceDecl<'src, 'ast>) {
+    fn visit_interface(&mut self, iface: &InterfaceDecl<'ast>) {
         let qualified_name = self.build_qualified_name(iface.name.name);
 
         // Look up the interface type (registered in Pass 1)
@@ -668,7 +668,7 @@ impl<'src, 'ast> TypeCompiler<'src, 'ast> {
     }
 
     /// Resolve an interface method to a MethodSignature
-    fn resolve_interface_method(&mut self, method: &InterfaceMethod<'src, 'ast>) -> Option<MethodSignature> {
+    fn resolve_interface_method(&mut self, method: &InterfaceMethod<'ast>) -> Option<MethodSignature> {
         // Resolve parameter types
         let params: Vec<DataType> = method
             .params
@@ -691,12 +691,12 @@ impl<'src, 'ast> TypeCompiler<'src, 'ast> {
     }
 
     /// Visit an enum declaration (already complete from Pass 1)
-    fn visit_enum(&mut self, _enum_decl: &EnumDecl<'src, 'ast>) {
+    fn visit_enum(&mut self, _enum_decl: &EnumDecl<'ast>) {
         // Enums are fully registered in Pass 1, nothing to do here
     }
 
     /// Visit a global variable declaration and resolve its type
-    fn visit_global_var(&mut self, var: &GlobalVarDecl<'src, 'ast>) {
+    fn visit_global_var(&mut self, var: &GlobalVarDecl<'ast>) {
         // Check if this is an auto type declaration
         let is_auto = matches!(var.ty.base, TypeBase::Auto);
 
@@ -773,7 +773,7 @@ impl<'src, 'ast> TypeCompiler<'src, 'ast> {
 
     /// Infer the type of a simple expression (for auto type inference).
     /// This handles literals and simple constant expressions.
-    fn infer_type_from_expr(&self, expr: &Expr<'src, 'ast>) -> Option<DataType> {
+    fn infer_type_from_expr(&self, expr: &Expr<'ast>) -> Option<DataType> {
         use crate::ast::expr::LiteralKind;
         use crate::ast::BinaryOp;
 
@@ -831,7 +831,7 @@ impl<'src, 'ast> TypeCompiler<'src, 'ast> {
     }
 
     /// Visit a namespace declaration
-    fn visit_namespace(&mut self, ns: &NamespaceDecl<'src, 'ast>) {
+    fn visit_namespace(&mut self, ns: &NamespaceDecl<'ast>) {
         // Enter namespace (handle path which can be nested like A::B::C)
         for ident in ns.path {
             self.namespace_path.push(ident.name.to_string());
@@ -855,7 +855,7 @@ impl<'src, 'ast> TypeCompiler<'src, 'ast> {
     }
 
     /// Visit a using namespace declaration
-    fn visit_using_namespace(&mut self, using: &UsingNamespaceDecl<'src, 'ast>) {
+    fn visit_using_namespace(&mut self, using: &UsingNamespaceDecl<'ast>) {
         // Build the fully qualified namespace path
         let ns_path: String = using.path
             .iter()
@@ -871,7 +871,7 @@ impl<'src, 'ast> TypeCompiler<'src, 'ast> {
     ///
     /// Typedefs create type aliases for primitive types.
     /// Example: `typedef float real;` creates `real` as an alias for `float`.
-    fn visit_typedef(&mut self, typedef: &TypedefDecl<'src, 'ast>) {
+    fn visit_typedef(&mut self, typedef: &TypedefDecl<'ast>) {
         // Resolve the base type
         let base_type = match self.resolve_type_expr(&typedef.base_type) {
             Some(dt) => dt,
@@ -893,7 +893,7 @@ impl<'src, 'ast> TypeCompiler<'src, 'ast> {
     }
 
     /// Visit a funcdef declaration and fill in its signature
-    fn visit_funcdef(&mut self, funcdef: &FuncdefDecl<'src, 'ast>) {
+    fn visit_funcdef(&mut self, funcdef: &FuncdefDecl<'ast>) {
         let qualified_name = self.build_qualified_name(funcdef.name.name);
 
         // Look up the funcdef type (registered in Pass 1)
@@ -938,7 +938,7 @@ impl<'src, 'ast> TypeCompiler<'src, 'ast> {
     /// - Instantiates templates recursively
     /// - Applies type modifiers (const, @)
     /// - Stores the result in type_map for later reference
-    fn resolve_type_expr(&mut self, expr: &TypeExpr<'src, 'ast>) -> Option<DataType> {
+    fn resolve_type_expr(&mut self, expr: &TypeExpr<'ast>) -> Option<DataType> {
         // Step 1: Resolve the base type name
         let base_type_id = self.resolve_base_type(&expr.base, expr.scope.as_ref(), expr.span)?;
 
@@ -1026,7 +1026,7 @@ impl<'src, 'ast> TypeCompiler<'src, 'ast> {
     ///
     /// This handles the full ParamType which includes both the type expression
     /// and the reference kind (&in, &out, &inout).
-    fn resolve_param_type(&mut self, param: &ParamType<'src, 'ast>) -> Option<DataType> {
+    fn resolve_param_type(&mut self, param: &ParamType<'ast>) -> Option<DataType> {
         let mut data_type = self.resolve_type_expr(&param.ty)?;
 
         // Convert AST RefKind to semantic RefModifier
@@ -1044,8 +1044,8 @@ impl<'src, 'ast> TypeCompiler<'src, 'ast> {
     /// Resolve the base type (without template args or modifiers)
     fn resolve_base_type(
         &mut self,
-        base: &TypeBase<'src>,
-        scope: Option<&crate::ast::Scope<'src, 'ast>>,
+        base: &TypeBase<'ast>,
+        scope: Option<&crate::ast::Scope<'ast>>,
         span: Span,
     ) -> Option<TypeId> {
         match base {
@@ -1174,7 +1174,7 @@ impl<'src, 'ast> TypeCompiler<'src, 'ast> {
     }
 
     /// Build a scoped name from a Scope and identifier (no intermediate Vec allocation)
-    fn build_scoped_name(&self, scope: &crate::ast::Scope<'src, 'ast>, name: &str) -> String {
+    fn build_scoped_name(&self, scope: &crate::ast::Scope<'ast>, name: &str) -> String {
         // Calculate capacity: sum of segment lengths + "::" separators + final name
         let capacity = scope.segments.iter().map(|s| s.name.len() + 2).sum::<usize>() + name.len();
         let mut result = String::with_capacity(capacity);
@@ -1266,7 +1266,7 @@ impl<'src, 'ast> TypeCompiler<'src, 'ast> {
     /// The method is compiled in the context of the including class.
     fn register_mixin_method(
         &mut self,
-        method: &FunctionDecl<'src, 'ast>,
+        method: &FunctionDecl<'ast>,
         type_id: TypeId,
         method_ids: &mut Vec<FunctionId>,
         operator_methods: &mut FxHashMap<OperatorBehavior, FunctionId>,
@@ -1315,7 +1315,7 @@ impl<'src, 'ast> TypeCompiler<'src, 'ast> {
         };
 
         // Capture default arguments
-        let default_args: Vec<Option<&'ast Expr<'src, 'ast>>> = method
+        let default_args: Vec<Option<&'ast Expr<'ast>>> = method
             .params
             .iter()
             .map(|p| p.default)
@@ -1379,7 +1379,7 @@ impl<'src, 'ast> TypeCompiler<'src, 'ast> {
     /// checks that the class provides a method with matching signature.
     fn validate_interface_implementation(
         &mut self,
-        class: &ClassDecl<'src, 'ast>,
+        class: &ClassDecl<'ast>,
         type_id: TypeId,
     ) {
         // Skip validation for abstract classes - they can defer implementation
@@ -1422,7 +1422,7 @@ impl<'src, 'ast> TypeCompiler<'src, 'ast> {
     /// Also validates that methods are not overriding a final method.
     fn validate_method_overrides(
         &mut self,
-        class: &ClassDecl<'src, 'ast>,
+        class: &ClassDecl<'ast>,
         type_id: TypeId,
     ) {
         for member in class.members {
@@ -1489,14 +1489,14 @@ impl<'src, 'ast> TypeCompiler<'src, 'ast> {
     /// This walks through all statements in a function body to find type
     /// expressions (e.g., `array<int>` in local variable declarations) and
     /// resolves them. This triggers template instantiation before Pass 2b.
-    fn scan_block(&mut self, block: &Block<'src, 'ast>) {
+    fn scan_block(&mut self, block: &Block<'ast>) {
         for stmt in block.stmts {
             self.scan_statement(stmt);
         }
     }
 
     /// Scan a single statement for type expressions.
-    fn scan_statement(&mut self, stmt: &Stmt<'src, 'ast>) {
+    fn scan_statement(&mut self, stmt: &Stmt<'ast>) {
         match stmt {
             Stmt::VarDecl(var_decl) => {
                 // Resolve the variable type (triggers template instantiation)
@@ -1605,7 +1605,7 @@ impl<'src, 'ast> TypeCompiler<'src, 'ast> {
     }
 
     /// Scan an expression for type expressions (casts, lambdas, etc.)
-    fn scan_expression(&mut self, expr: &Expr<'src, 'ast>) {
+    fn scan_expression(&mut self, expr: &Expr<'ast>) {
         match expr {
             Expr::Cast(cast) => {
                 // Cast expressions have explicit target types
@@ -1699,7 +1699,7 @@ mod tests {
     use crate::semantic::{Registrar, OperatorBehavior, TypeDef};
     use bumpalo::Bump;
 
-    fn compile<'src, 'ast>(source: &'src str, arena: &'ast Bump) -> TypeCompilationData<'src, 'ast> {
+    fn compile<'ast>(source: &str, arena: &'ast Bump) -> TypeCompilationData<'ast> {
         let (script, parse_errors) = parse_lenient(source, arena);
         assert!(parse_errors.is_empty(), "Parse errors: {:?}", parse_errors);
 

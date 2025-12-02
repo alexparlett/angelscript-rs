@@ -120,9 +120,9 @@ pub struct CompiledFunction {
 /// 1. Module mode: Walk entire AST and compile all functions
 /// 2. Single function mode: Compile one function body
 #[derive(Debug)]
-pub struct FunctionCompiler<'src, 'ast> {
+pub struct FunctionCompiler<'ast> {
     /// Global registry (read-only) - contains all type information
-    registry: &'ast Registry<'src, 'ast>,
+    registry: &'ast Registry<'ast>,
 
     /// Local variables for current function (only used in single-function mode)
     local_scope: LocalScope,
@@ -161,16 +161,16 @@ pub struct FunctionCompiler<'src, 'ast> {
     errors: Vec<SemanticError>,
 
     /// Phantom data for source lifetime
-    _phantom: std::marker::PhantomData<&'src ()>,
+    _phantom: std::marker::PhantomData<&'ast ()>,
 }
 
-impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
+impl<'ast> FunctionCompiler<'ast> {
     /// Perform Pass 2b function compilation on a script.
     ///
     /// This is the main entry point for compiling all functions in a module.
     pub fn compile(
-        script: &Script<'src, 'ast>,
-        registry: &'ast Registry<'src, 'ast>,
+        script: &Script<'ast>,
+        registry: &'ast Registry<'ast>,
     ) -> CompiledModule {
         let mut compiler = Self::new_module_compiler(registry);
         compiler.visit_script(script);
@@ -182,7 +182,7 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
     }
 
     /// Creates a new module-level compiler (for compiling all functions).
-    fn new_module_compiler(registry: &'ast Registry<'src, 'ast>) -> Self {
+    fn new_module_compiler(registry: &'ast Registry<'ast>) -> Self {
         Self {
             next_lambda_id: registry.function_count() as u32,  // Start after regular functions
             registry,
@@ -207,7 +207,7 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
     ///
     /// - `registry`: The complete type registry from Pass 2a
     /// - `return_type`: The expected return type for this function
-    fn new(registry: &'ast Registry<'src, 'ast>, return_type: DataType) -> Self {
+    fn new(registry: &'ast Registry<'ast>, return_type: DataType) -> Self {
         Self {
             next_lambda_id: registry.function_count() as u32,  // Start after regular functions
             registry,
@@ -230,10 +230,10 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
     ///
     /// This is a convenience method for compiling a complete function with parameters.
     pub fn compile_block(
-        registry: &'ast Registry<'src, 'ast>,
+        registry: &'ast Registry<'ast>,
         return_type: DataType,
         params: &[(String, DataType)],
-        body: &'ast Block<'src, 'ast>,
+        body: &'ast Block<'ast>,
     ) -> CompiledFunction {
         let mut compiler = Self::new(registry, return_type);
 
@@ -274,10 +274,10 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
     /// This variant allows tracking the current class for super() resolution
     /// and the namespace path for unqualified name lookup.
     fn compile_block_with_context(
-        registry: &'ast Registry<'src, 'ast>,
+        registry: &'ast Registry<'ast>,
         return_type: DataType,
         params: &[(String, DataType)],
-        body: &'ast Block<'src, 'ast>,
+        body: &'ast Block<'ast>,
         current_class: Option<TypeId>,
         namespace_path: Vec<String>,
         imported_namespaces: Vec<String>,
@@ -326,8 +326,8 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
     ///
     /// Returns: (instructions, errors)
     fn compile_field_initializer(
-        registry: &'ast Registry<'src, 'ast>,
-        expr: &'ast Expr<'src, 'ast>,
+        registry: &'ast Registry<'ast>,
+        expr: &'ast Expr<'ast>,
         class_type_id: TypeId,
     ) -> (Vec<Instruction>, Vec<SemanticError>) {
         let mut compiler = Self::new(registry, DataType::simple(VOID_TYPE));
@@ -345,14 +345,14 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
     // ========================================================================
 
     /// Visit the entire script and compile all functions
-    fn visit_script(&mut self, script: &'ast Script<'src, 'ast>) {
+    fn visit_script(&mut self, script: &'ast Script<'ast>) {
         for item in script.items() {
             self.visit_item(item);
         }
     }
 
     /// Visit a top-level item
-    fn visit_item(&mut self, item: &'ast Item<'src, 'ast>) {
+    fn visit_item(&mut self, item: &'ast Item<'ast>) {
         match item {
             Item::Function(func) => self.visit_function_decl(func, None),
             Item::Class(class) => self.visit_class_decl(class),
@@ -371,7 +371,7 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
     }
 
     /// Visit a namespace and compile functions within it
-    fn visit_namespace(&mut self, ns: &'ast NamespaceDecl<'src, 'ast>) {
+    fn visit_namespace(&mut self, ns: &'ast NamespaceDecl<'ast>) {
         // Enter namespace (handle path which can be nested like A::B::C)
         for ident in ns.path {
             self.namespace_path.push(ident.name.to_string());
@@ -394,7 +394,7 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
     }
 
     /// Visit a using namespace declaration
-    fn visit_using_namespace(&mut self, using: &UsingNamespaceDecl<'src, 'ast>) {
+    fn visit_using_namespace(&mut self, using: &UsingNamespaceDecl<'ast>) {
         // Build the fully qualified namespace path
         let ns_path: String = using.path
             .iter()
@@ -407,7 +407,7 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
     }
 
     /// Visit a class declaration and compile all its methods
-    fn visit_class_decl(&mut self, class: &'ast ClassDecl<'src, 'ast>) {
+    fn visit_class_decl(&mut self, class: &'ast ClassDecl<'ast>) {
         let qualified_name = self.build_qualified_name(class.name.name);
 
         // Look up the class type ID
@@ -450,8 +450,8 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
     /// - Parameter types (base type and handle modifier)
     fn method_signature_matches(
         &self,
-        method_decl: &FunctionDecl<'src, 'ast>,
-        func_def: &FunctionDef<'src, 'ast>,
+        method_decl: &FunctionDecl<'ast>,
+        func_def: &FunctionDef<'ast>,
     ) -> bool {
         // Name must match
         if func_def.name != method_decl.name.name {
@@ -488,7 +488,7 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
     }
 
     /// Compile a method given its AST and FunctionId
-    fn compile_method(&mut self, func: &'ast FunctionDecl<'src, 'ast>, func_id: FunctionId, class: Option<&'ast ClassDecl<'src, 'ast>>) {
+    fn compile_method(&mut self, func: &'ast FunctionDecl<'ast>, func_id: FunctionId, class: Option<&'ast ClassDecl<'ast>>) {
         // Skip functions without bodies (abstract methods, forward declarations)
         let body = match &func.body {
             Some(body) => body,
@@ -552,7 +552,7 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
     /// 1. Initialize fields WITHOUT explicit initializers
     /// 2. Call base class constructor (if base class exists and super() not called in body)
     /// 3. Initialize fields WITH explicit initializers
-    fn compile_constructor_prologue(&mut self, class: &'ast ClassDecl<'src, 'ast>, class_type_id: Option<TypeId>, body: &'ast Block<'src, 'ast>) -> Vec<Instruction> {
+    fn compile_constructor_prologue(&mut self, class: &'ast ClassDecl<'ast>, class_type_id: Option<TypeId>, body: &'ast Block<'ast>) -> Vec<Instruction> {
         let mut instructions = Vec::new();
 
         // Get the class type to check for base class
@@ -644,7 +644,7 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
     ///
     /// This recursively searches through statements and expressions to find
     /// any call expression where the callee is the identifier "super".
-    fn contains_super_call(&self, block: &Block<'src, 'ast>) -> bool {
+    fn contains_super_call(&self, block: &Block<'ast>) -> bool {
         for stmt in block.stmts {
             if self.stmt_contains_super_call(stmt) {
                 return true;
@@ -654,7 +654,7 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
     }
 
     /// Check if a statement contains a super() call (helper for contains_super_call)
-    fn stmt_contains_super_call(&self, stmt: &Stmt<'src, 'ast>) -> bool {
+    fn stmt_contains_super_call(&self, stmt: &Stmt<'ast>) -> bool {
         match stmt {
             Stmt::Expr(expr_stmt) => {
                 expr_stmt.expr.is_some_and(|e| self.expr_contains_super_call(e))
@@ -715,7 +715,7 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
     }
 
     /// Check if an expression contains a super() call (helper for contains_super_call)
-    fn expr_contains_super_call(&self, expr: &Expr<'src, 'ast>) -> bool {
+    fn expr_contains_super_call(&self, expr: &Expr<'ast>) -> bool {
         match expr {
             Expr::Call(call) => {
                 // Check if this is a super() call
@@ -761,7 +761,7 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
     }
 
     /// Visit a function declaration and compile its body
-    fn visit_function_decl(&mut self, func: &'ast FunctionDecl<'src, 'ast>, object_type: Option<TypeId>) {
+    fn visit_function_decl(&mut self, func: &'ast FunctionDecl<'ast>, object_type: Option<TypeId>) {
         // Skip functions without bodies (abstract methods, forward declarations)
         let body = match &func.body {
             Some(body) => body,
@@ -845,7 +845,7 @@ mod tests {
     use super::*;
     use crate::semantic::{DataType, Registry, INT32_TYPE, DOUBLE_TYPE};
 
-    fn create_test_registry() -> Registry<'static, 'static> {
+    fn create_test_registry() -> Registry<'static> {
         Registry::new()
     }
 
@@ -853,7 +853,7 @@ mod tests {
     fn new_compiler_initializes() {
         let registry = create_test_registry();
         let return_type = DataType::simple(VOID_TYPE);
-        let compiler = FunctionCompiler::<'_, '_>::new(&registry, return_type);
+        let compiler = FunctionCompiler::<'_>::new(&registry, return_type);
 
         assert_eq!(compiler.errors.len(), 0);
         assert_eq!(compiler.return_type.type_id, VOID_TYPE);
@@ -1016,7 +1016,7 @@ mod tests {
     }
 
     // NOTE: Integration tests for opIndex accessors are blocked by pre-existing
-    // lifetime issues in the test infrastructure (Registry<'src, 'ast> lifetimes).
+    // lifetime issues in the test infrastructure (Registry<'ast> lifetimes).
     // The implementation compiles successfully and logic has been manually verified:
     // - check_index() tries get_opIndex after opIndex (read context)
     // - check_index_assignment() detects write context and uses set_opIndex

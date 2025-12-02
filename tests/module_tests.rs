@@ -1,9 +1,9 @@
-//! Integration tests for AngelScript using ScriptModule as the entry point.
+//! Integration tests for AngelScript using Unit as the entry point.
 //!
 //! These tests validate the full build pipeline (parsing + compilation)
 //! against complete AngelScript programs.
 
-use angelscript::ScriptModule;
+use angelscript::Unit;
 use std::path::PathBuf;
 
 /// Load a test script from the test_scripts directory.
@@ -16,8 +16,8 @@ fn load_script(filename: &str) -> String {
 }
 
 /// Helper to build a module from a single test script.
-fn build_script(filename: &str) -> ScriptModule {
-    let mut module = ScriptModule::new();
+fn build_script(filename: &str) -> Unit {
+    let mut module = Unit::new();
     module
         .add_source(filename, load_script(filename))
         .expect("Failed to add source");

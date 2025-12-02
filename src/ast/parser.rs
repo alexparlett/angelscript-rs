@@ -11,11 +11,14 @@ use bumpalo::Bump;
 ///
 /// The parser uses a lookahead approach with buffered tokens, allowing
 /// arbitrary peeking ahead without consuming tokens.
-pub struct Parser<'src, 'ast> {
-    /// Lexer for tokenizing the source
-    pub(super) lexer: Lexer<'src>,
-    /// Buffered tokens for lookahead
-    pub(super) buffer: Vec<Token<'src>>,
+///
+/// The `'ast` lifetime refers to the arena where AST nodes and token
+/// lexemes are allocated. The source string only needs to live during
+/// the call to `new()` - after tokenization, all string content is
+/// copied into the arena.
+pub struct Parser<'ast> {
+    /// Buffered tokens for lookahead (lexemes allocated in arena)
+    pub(super) buffer: Vec<Token<'ast>>,
     /// Current position in the buffer
     pub(super) position: usize,
     /// Accumulated parse errors
@@ -26,14 +29,17 @@ pub struct Parser<'src, 'ast> {
     pub(super) arena: &'ast Bump,
 }
 
-impl<'src, 'ast> Parser<'src, 'ast> {
+impl<'ast> Parser<'ast> {
     /// Create a new parser for the given source code.
     ///
     /// This performs eager tokenization - the entire source is tokenized
     /// upfront into a buffer. This eliminates the overhead of lazy tokenization
     /// and provides better performance for complete file parsing.
-    pub fn new(source: &'src str, arena: &'ast Bump) -> Self {
-        let mut lexer = Lexer::new(source);
+    ///
+    /// The source string is only needed during this call - all token lexemes
+    /// are copied into the arena, allowing the source to be freed afterward.
+    pub fn new(source: &str, arena: &'ast Bump) -> Self {
+        let mut lexer = Lexer::new(source, arena);
         let mut buffer = Vec::with_capacity(Self::estimate_token_count(source));
         let mut errors = ParseErrors::new();
 
@@ -62,7 +68,6 @@ impl<'src, 'ast> Parser<'src, 'ast> {
         }
 
         Self {
-            lexer,
             buffer,
             position: 0,
             errors,
@@ -96,19 +101,19 @@ impl<'src, 'ast> Parser<'src, 'ast> {
     // ========================================================================
 
     /// Peek at the current token without consuming it.
-    pub fn peek(&mut self) -> &Token<'src> {
+    pub fn peek(&mut self) -> &Token<'ast> {
         self.fill_buffer(1);
         &self.buffer[self.position]
     }
 
     /// Peek ahead n tokens without consuming.
-    pub fn peek_nth(&mut self, n: usize) -> &Token<'src> {
+    pub fn peek_nth(&mut self, n: usize) -> &Token<'ast> {
         self.fill_buffer(n + 1);
         &self.buffer[self.position + n]
     }
 
     /// Get the current token and advance to the next.
-    pub fn advance(&mut self) -> Token<'src> {
+    pub fn advance(&mut self) -> Token<'ast> {
         self.fill_buffer(1);
         let token = self.buffer[self.position];
         self.position += 1;
@@ -127,7 +132,7 @@ impl<'src, 'ast> Parser<'src, 'ast> {
 
     /// If the current token matches the given kind, consume it and return Some.
     /// Otherwise, return None without consuming.
-    pub fn eat(&mut self, kind: TokenKind) -> Option<Token<'src>> {
+    pub fn eat(&mut self, kind: TokenKind) -> Option<Token<'ast>> {
         if self.check(kind) {
             Some(self.advance())
         } else {
@@ -137,7 +142,7 @@ impl<'src, 'ast> Parser<'src, 'ast> {
 
     /// Expect the current token to be of the given kind.
     /// If it matches, consume and return it. Otherwise, return an error.
-    pub fn expect(&mut self, kind: TokenKind) -> Result<Token<'src>, ParseError> {
+    pub fn expect(&mut self, kind: TokenKind) -> Result<Token<'ast>, ParseError> {
         if self.check(kind) {
             Ok(self.advance())
         } else {
@@ -158,7 +163,7 @@ impl<'src, 'ast> Parser<'src, 'ast> {
     }
 
     /// Consume an identifier if it matches the given contextual keyword.
-    pub fn eat_contextual(&mut self, name: &str) -> Option<Token<'src>> {
+    pub fn eat_contextual(&mut self, name: &str) -> Option<Token<'ast>> {
         if self.check_contextual(name) {
             Some(self.advance())
         } else {

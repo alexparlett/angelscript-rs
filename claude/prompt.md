@@ -10,11 +10,13 @@
 
 **Parser:** 100% Complete
 **Semantic Analysis:** 100% Complete
-**Test Status:** 1672 tests passing, 0 ignored
+**Test Status:** 1894 tests passing, 0 ignored
 
 **Recent Additions:**
-- Enhanced switch: bool, float, string, handle null, type patterns
-- Refactored function_processor.rs into submodules
+- Refactored lexer to copy strings into arena (single `'ast` lifetime)
+- Updated GlobalPropertyDef to use parsed AST types (Ident, TypeExpr)
+- Module now owns arena for parsed FFI declarations
+- Added parse_property_expr function for parsing property declarations
 
 ---
 
@@ -53,7 +55,9 @@ Detailed task files are in `/claude/tasks/`. Complete in order:
 
 ## Key Design Decisions
 
-- **Module has `'app` lifetime** for global property references
+- **Module owns arena** for storing parsed AST types (TypeExpr, Ident)
+- **GlobalPropertyDef uses AST types** - `Ident<'ast>` and `TypeExpr<'ast>` instead of String/TypeSpec
+- **Module has `'app` lifetime** for global property value references
 - **Global properties on Module**, not Context (follows same pattern as functions)
 - **Two calling conventions**: type-safe (closure) and raw (CallContext)
 - **Built-ins via FFI**: Replace ~800 lines of hardcoded registry.rs

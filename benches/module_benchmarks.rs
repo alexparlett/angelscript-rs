@@ -1,4 +1,4 @@
-//! Performance benchmarks for the AngelScript module build pipeline.
+//! Performance benchmarks for the AngelScript unit build pipeline.
 //!
 //! This benchmark suite measures build performance across different workloads:
 //! - Size-based: Tiny to stress-test sized files (5 to 5000 lines)
@@ -23,7 +23,7 @@
 //! cargo bench --features profile-with-puffin -- "stress_5000" --test
 //! ```
 
-use angelscript::ScriptModule;
+use angelscript::Unit;
 use criterion::{criterion_group, criterion_main, Criterion, Throughput};
 use std::hint::black_box;
 
@@ -120,7 +120,7 @@ fn print_profiling_stats() {
 
     if scope_timings.is_empty() {
         println!("  No scopes recorded.");
-        println!("  Make sure profiling::scope! calls exist in module.rs");
+        println!("  Make sure profiling::scope! calls exist in unit.rs");
     } else {
         // Sort by total time descending
         let mut entries: Vec<_> = scope_timings.iter().collect();
@@ -155,17 +155,17 @@ fn print_profiling_stats() {}
 fn size_based_benchmarks(c: &mut Criterion) {
     setup_profiler();
 
-    let mut group = c.benchmark_group("module/file_sizes");
+    let mut group = c.benchmark_group("unit/file_sizes");
 
     // Tiny: 5 lines - baseline build overhead
     let hello_world = include_str!("../test_scripts/hello_world.as");
     group.throughput(Throughput::Bytes(hello_world.len() as u64));
     group.bench_function("tiny_5_lines", |b| {
         b.iter(|| {
-            let mut module = ScriptModule::new();
-            module.add_source("test.as", black_box(hello_world)).unwrap();
-            module.build().unwrap();
-            black_box(module.function_count())
+            let mut unit = Unit::new();
+            unit.add_source("test.as", black_box(hello_world)).unwrap();
+            unit.build().unwrap();
+            black_box(unit.function_count())
         });
     });
 
@@ -174,10 +174,10 @@ fn size_based_benchmarks(c: &mut Criterion) {
     group.throughput(Throughput::Bytes(functions.len() as u64));
     group.bench_function("small_60_lines", |b| {
         b.iter(|| {
-            let mut module = ScriptModule::new();
-            module.add_source("test.as", black_box(functions)).unwrap();
-            module.build().unwrap();
-            black_box(module.function_count())
+            let mut unit = Unit::new();
+            unit.add_source("test.as", black_box(functions)).unwrap();
+            unit.build().unwrap();
+            black_box(unit.function_count())
         });
     });
 
@@ -186,10 +186,10 @@ fn size_based_benchmarks(c: &mut Criterion) {
     group.throughput(Throughput::Bytes(expressions.len() as u64));
     group.bench_function("medium_130_lines", |b| {
         b.iter(|| {
-            let mut module = ScriptModule::new();
-            module.add_source("test.as", black_box(expressions)).unwrap();
-            module.build().unwrap();
-            black_box(module.function_count())
+            let mut unit = Unit::new();
+            unit.add_source("test.as", black_box(expressions)).unwrap();
+            unit.build().unwrap();
+            black_box(unit.function_count())
         });
     });
 
@@ -198,12 +198,12 @@ fn size_based_benchmarks(c: &mut Criterion) {
     group.throughput(Throughput::Bytes(data_structures.len() as u64));
     group.bench_function("large_266_lines", |b| {
         b.iter(|| {
-            let mut module = ScriptModule::new();
-            module
+            let mut unit = Unit::new();
+            unit
                 .add_source("test.as", black_box(data_structures))
                 .unwrap();
-            module.build().unwrap();
-            black_box(module.function_count())
+            unit.build().unwrap();
+            black_box(unit.function_count())
         });
     });
 
@@ -212,10 +212,10 @@ fn size_based_benchmarks(c: &mut Criterion) {
     group.throughput(Throughput::Bytes(large_500.len() as u64));
     group.bench_function("xlarge_500_lines", |b| {
         b.iter(|| {
-            let mut module = ScriptModule::new();
-            module.add_source("test.as", black_box(large_500)).unwrap();
-            module.build().unwrap();
-            black_box(module.function_count())
+            let mut unit = Unit::new();
+            unit.add_source("test.as", black_box(large_500)).unwrap();
+            unit.build().unwrap();
+            black_box(unit.function_count())
         });
     });
 
@@ -224,12 +224,12 @@ fn size_based_benchmarks(c: &mut Criterion) {
     group.throughput(Throughput::Bytes(xlarge_1000.len() as u64));
     group.bench_function("xxlarge_1000_lines", |b| {
         b.iter(|| {
-            let mut module = ScriptModule::new();
-            module
+            let mut unit = Unit::new();
+            unit
                 .add_source("test.as", black_box(xlarge_1000))
                 .unwrap();
-            module.build().unwrap();
-            black_box(module.function_count())
+            unit.build().unwrap();
+            black_box(unit.function_count())
         });
     });
 
@@ -238,13 +238,13 @@ fn size_based_benchmarks(c: &mut Criterion) {
     group.throughput(Throughput::Bytes(xxlarge_5000.len() as u64));
     group.bench_function("stress_5000_lines", |b| {
         b.iter(|| {
-            let mut module = ScriptModule::new();
-            module
+            let mut unit = Unit::new();
+            unit
                 .add_source("test.as", black_box(xxlarge_5000))
                 .unwrap();
-            module.build().unwrap();
+            unit.build().unwrap();
             end_profiling_frame();
-            black_box(module.function_count())
+            black_box(unit.function_count())
         });
     });
 
@@ -256,18 +256,18 @@ fn size_based_benchmarks(c: &mut Criterion) {
 
 /// Benchmark build performance for specific language features.
 fn feature_specific_benchmarks(c: &mut Criterion) {
-    let mut group = c.benchmark_group("module/features");
+    let mut group = c.benchmark_group("unit/features");
 
     // Many functions - throughput test
     let many_functions = include_str!("../test_scripts/many_functions.as");
     group.bench_function("many_functions", |b| {
         b.iter(|| {
-            let mut module = ScriptModule::new();
-            module
+            let mut unit = Unit::new();
+            unit
                 .add_source("test.as", black_box(many_functions))
                 .unwrap();
-            module.build().unwrap();
-            black_box(module.function_count())
+            unit.build().unwrap();
+            black_box(unit.function_count())
         });
     });
 
@@ -275,12 +275,12 @@ fn feature_specific_benchmarks(c: &mut Criterion) {
     let large_function = include_str!("../test_scripts/large_function.as");
     group.bench_function("large_function", |b| {
         b.iter(|| {
-            let mut module = ScriptModule::new();
-            module
+            let mut unit = Unit::new();
+            unit
                 .add_source("test.as", black_box(large_function))
                 .unwrap();
-            module.build().unwrap();
-            black_box(module.function_count())
+            unit.build().unwrap();
+            black_box(unit.function_count())
         });
     });
 
@@ -288,12 +288,12 @@ fn feature_specific_benchmarks(c: &mut Criterion) {
     let class_basic = include_str!("../test_scripts/class_basic.as");
     group.bench_function("classes", |b| {
         b.iter(|| {
-            let mut module = ScriptModule::new();
-            module
+            let mut unit = Unit::new();
+            unit
                 .add_source("test.as", black_box(class_basic))
                 .unwrap();
-            module.build().unwrap();
-            black_box(module.function_count())
+            unit.build().unwrap();
+            black_box(unit.function_count())
         });
     });
 
@@ -301,12 +301,12 @@ fn feature_specific_benchmarks(c: &mut Criterion) {
     let inheritance = include_str!("../test_scripts/inheritance.as");
     group.bench_function("inheritance", |b| {
         b.iter(|| {
-            let mut module = ScriptModule::new();
-            module
+            let mut unit = Unit::new();
+            unit
                 .add_source("test.as", black_box(inheritance))
                 .unwrap();
-            module.build().unwrap();
-            black_box(module.function_count())
+            unit.build().unwrap();
+            black_box(unit.function_count())
         });
     });
 
@@ -314,10 +314,10 @@ fn feature_specific_benchmarks(c: &mut Criterion) {
     let interface = include_str!("../test_scripts/interface.as");
     group.bench_function("interfaces", |b| {
         b.iter(|| {
-            let mut module = ScriptModule::new();
-            module.add_source("test.as", black_box(interface)).unwrap();
-            module.build().unwrap();
-            black_box(module.function_count())
+            let mut unit = Unit::new();
+            unit.add_source("test.as", black_box(interface)).unwrap();
+            unit.build().unwrap();
+            black_box(unit.function_count())
         });
     });
 
@@ -325,10 +325,10 @@ fn feature_specific_benchmarks(c: &mut Criterion) {
     let operators = include_str!("../test_scripts/operators.as");
     group.bench_function("operators", |b| {
         b.iter(|| {
-            let mut module = ScriptModule::new();
-            module.add_source("test.as", black_box(operators)).unwrap();
-            module.build().unwrap();
-            black_box(module.function_count())
+            let mut unit = Unit::new();
+            unit.add_source("test.as", black_box(operators)).unwrap();
+            unit.build().unwrap();
+            black_box(unit.function_count())
         });
     });
 
@@ -336,12 +336,12 @@ fn feature_specific_benchmarks(c: &mut Criterion) {
     let expressions = include_str!("../test_scripts/expressions.as");
     group.bench_function("expressions", |b| {
         b.iter(|| {
-            let mut module = ScriptModule::new();
-            module
+            let mut unit = Unit::new();
+            unit
                 .add_source("test.as", black_box(expressions))
                 .unwrap();
-            module.build().unwrap();
-            black_box(module.function_count())
+            unit.build().unwrap();
+            black_box(unit.function_count())
         });
     });
 
@@ -349,12 +349,12 @@ fn feature_specific_benchmarks(c: &mut Criterion) {
     let control_flow = include_str!("../test_scripts/control_flow.as");
     group.bench_function("control_flow", |b| {
         b.iter(|| {
-            let mut module = ScriptModule::new();
-            module
+            let mut unit = Unit::new();
+            unit
                 .add_source("test.as", black_box(control_flow))
                 .unwrap();
-            module.build().unwrap();
-            black_box(module.function_count())
+            unit.build().unwrap();
+            black_box(unit.function_count())
         });
     });
 
@@ -362,10 +362,10 @@ fn feature_specific_benchmarks(c: &mut Criterion) {
     let templates = include_str!("../test_scripts/templates.as");
     group.bench_function("templates", |b| {
         b.iter(|| {
-            let mut module = ScriptModule::new();
-            module.add_source("test.as", black_box(templates)).unwrap();
-            module.build().unwrap();
-            black_box(module.function_count())
+            let mut unit = Unit::new();
+            unit.add_source("test.as", black_box(templates)).unwrap();
+            unit.build().unwrap();
+            black_box(unit.function_count())
         });
     });
 
@@ -373,10 +373,10 @@ fn feature_specific_benchmarks(c: &mut Criterion) {
     let properties = include_str!("../test_scripts/properties.as");
     group.bench_function("properties", |b| {
         b.iter(|| {
-            let mut module = ScriptModule::new();
-            module.add_source("test.as", black_box(properties)).unwrap();
-            module.build().unwrap();
-            black_box(module.function_count())
+            let mut unit = Unit::new();
+            unit.add_source("test.as", black_box(properties)).unwrap();
+            unit.build().unwrap();
+            black_box(unit.function_count())
         });
     });
 
@@ -384,10 +384,10 @@ fn feature_specific_benchmarks(c: &mut Criterion) {
     let nested = include_str!("../test_scripts/nested.as");
     group.bench_function("nested", |b| {
         b.iter(|| {
-            let mut module = ScriptModule::new();
-            module.add_source("test.as", black_box(nested)).unwrap();
-            module.build().unwrap();
-            black_box(module.function_count())
+            let mut unit = Unit::new();
+            unit.add_source("test.as", black_box(nested)).unwrap();
+            unit.build().unwrap();
+            black_box(unit.function_count())
         });
     });
 
@@ -396,17 +396,17 @@ fn feature_specific_benchmarks(c: &mut Criterion) {
 
 /// Benchmark real-world use cases.
 fn real_world_benchmarks(c: &mut Criterion) {
-    let mut group = c.benchmark_group("module/real_world");
+    let mut group = c.benchmark_group("unit/real_world");
 
     // Game logic - typical game scripting
     let game_logic = include_str!("../test_scripts/game_logic.as");
     group.throughput(Throughput::Bytes(game_logic.len() as u64));
     group.bench_function("game_logic", |b| {
         b.iter(|| {
-            let mut module = ScriptModule::new();
-            module.add_source("test.as", black_box(game_logic)).unwrap();
-            module.build().unwrap();
-            black_box(module.function_count())
+            let mut unit = Unit::new();
+            unit.add_source("test.as", black_box(game_logic)).unwrap();
+            unit.build().unwrap();
+            black_box(unit.function_count())
         });
     });
 
@@ -415,10 +415,10 @@ fn real_world_benchmarks(c: &mut Criterion) {
     group.throughput(Throughput::Bytes(utilities.len() as u64));
     group.bench_function("utilities", |b| {
         b.iter(|| {
-            let mut module = ScriptModule::new();
-            module.add_source("test.as", black_box(utilities)).unwrap();
-            module.build().unwrap();
-            black_box(module.function_count())
+            let mut unit = Unit::new();
+            unit.add_source("test.as", black_box(utilities)).unwrap();
+            unit.build().unwrap();
+            black_box(unit.function_count())
         });
     });
 
@@ -427,12 +427,12 @@ fn real_world_benchmarks(c: &mut Criterion) {
     group.throughput(Throughput::Bytes(data_structures.len() as u64));
     group.bench_function("data_structures", |b| {
         b.iter(|| {
-            let mut module = ScriptModule::new();
-            module
+            let mut unit = Unit::new();
+            unit
                 .add_source("test.as", black_box(data_structures))
                 .unwrap();
-            module.build().unwrap();
-            black_box(module.function_count())
+            unit.build().unwrap();
+            black_box(unit.function_count())
         });
     });
 
@@ -441,18 +441,18 @@ fn real_world_benchmarks(c: &mut Criterion) {
 
 /// Benchmark build with different complexity characteristics.
 fn complexity_benchmarks(c: &mut Criterion) {
-    let mut group = c.benchmark_group("module/complexity");
+    let mut group = c.benchmark_group("unit/complexity");
 
     // Wide: Many top-level items (many_functions.as has 67 functions)
     let many_functions = include_str!("../test_scripts/many_functions.as");
     group.bench_function("wide_many_items", |b| {
         b.iter(|| {
-            let mut module = ScriptModule::new();
-            module
+            let mut unit = Unit::new();
+            unit
                 .add_source("test.as", black_box(many_functions))
                 .unwrap();
-            module.build().unwrap();
-            black_box(module.function_count())
+            unit.build().unwrap();
+            black_box(unit.function_count())
         });
     });
 
@@ -460,10 +460,10 @@ fn complexity_benchmarks(c: &mut Criterion) {
     let nested = include_str!("../test_scripts/nested.as");
     group.bench_function("deep_nesting", |b| {
         b.iter(|| {
-            let mut module = ScriptModule::new();
-            module.add_source("test.as", black_box(nested)).unwrap();
-            module.build().unwrap();
-            black_box(module.function_count())
+            let mut unit = Unit::new();
+            unit.add_source("test.as", black_box(nested)).unwrap();
+            unit.build().unwrap();
+            black_box(unit.function_count())
         });
     });
 
@@ -471,12 +471,12 @@ fn complexity_benchmarks(c: &mut Criterion) {
     let large_function = include_str!("../test_scripts/large_function.as");
     group.bench_function("complex_logic", |b| {
         b.iter(|| {
-            let mut module = ScriptModule::new();
-            module
+            let mut unit = Unit::new();
+            unit
                 .add_source("test.as", black_box(large_function))
                 .unwrap();
-            module.build().unwrap();
-            black_box(module.function_count())
+            unit.build().unwrap();
+            black_box(unit.function_count())
         });
     });
 

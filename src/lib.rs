@@ -69,7 +69,7 @@ pub mod semantic;
 pub mod codegen;
 mod unit;
 
-pub use ast::{parse, parse_expression, parse_lenient, parse_statement, parse_type_expr};
+pub use ast::{parse, parse_expression, parse_lenient, parse_property_expr, parse_statement, parse_type_expr};
 
 // Re-export visitor for AST traversal
 pub use ast::visitor;

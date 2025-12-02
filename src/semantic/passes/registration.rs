@@ -49,9 +49,9 @@ use rustc_hash::FxHashMap;
 
 /// Output from Pass 1: Registration
 #[derive(Debug)]
-pub struct RegistrationData<'src, 'ast> {
+pub struct RegistrationData<'ast> {
     /// Registry with all global names registered (empty shells)
-    pub registry: Registry<'src, 'ast>,
+    pub registry: Registry<'ast>,
 
     /// Errors found during registration
     pub errors: Vec<SemanticError>,
@@ -60,9 +60,9 @@ pub struct RegistrationData<'src, 'ast> {
 /// Pass 1: Registration visitor
 ///
 /// Walks the AST and registers all global declarations in the Registry.
-pub struct Registrar<'src, 'ast> {
+pub struct Registrar<'ast> {
     /// The registry we're building
-    registry: Registry<'src, 'ast>,
+    registry: Registry<'ast>,
 
     /// Current namespace path (e.g., ["Game", "World"])
     namespace_path: Vec<String>,
@@ -80,10 +80,10 @@ pub struct Registrar<'src, 'ast> {
     errors: Vec<SemanticError>,
 
     /// Phantom markers
-    _phantom: std::marker::PhantomData<(&'src str, &'ast ())>,
+    _phantom: std::marker::PhantomData<&'ast ()>,
 }
 
-impl<'src, 'ast> Registrar<'src, 'ast> {
+impl<'ast> Registrar<'ast> {
     /// Create a new registrar
     fn new() -> Self {
         Self {
@@ -98,7 +98,7 @@ impl<'src, 'ast> Registrar<'src, 'ast> {
     }
 
     /// Perform Pass 1 registration on a script
-    pub fn register(script: &Script<'src, 'ast>) -> RegistrationData<'src, 'ast> {
+    pub fn register(script: &Script<'ast>) -> RegistrationData<'ast> {
         let mut registrar = Self::new();
         registrar.visit_script(script);
 
@@ -109,14 +109,14 @@ impl<'src, 'ast> Registrar<'src, 'ast> {
     }
 
     /// Visit the entire script
-    fn visit_script(&mut self, script: &Script<'src, 'ast>) {
+    fn visit_script(&mut self, script: &Script<'ast>) {
         for item in script.items() {
             self.visit_item(item);
         }
     }
 
     /// Visit a top-level item
-    fn visit_item(&mut self, item: &Item<'src, 'ast>) {
+    fn visit_item(&mut self, item: &Item<'ast>) {
         match item {
             Item::Function(func) => self.visit_function(func, None),
             Item::Class(class) => self.visit_class(class),
@@ -135,7 +135,7 @@ impl<'src, 'ast> Registrar<'src, 'ast> {
     }
 
     /// Visit a function declaration
-    fn visit_function(&mut self, func: &FunctionDecl<'src, 'ast>, object_type: Option<TypeId>) {
+    fn visit_function(&mut self, func: &FunctionDecl<'ast>, object_type: Option<TypeId>) {
         // Note: We don't check for duplicate function names here because
         // AngelScript supports function overloading. Actual duplicate detection
         // (checking signatures) happens in Pass 2a.
@@ -181,7 +181,7 @@ impl<'src, 'ast> Registrar<'src, 'ast> {
     }
 
     /// Visit a class declaration
-    fn visit_class(&mut self, class: &ClassDecl<'src, 'ast>) {
+    fn visit_class(&mut self, class: &ClassDecl<'ast>) {
         let qualified_name = self.build_qualified_name(class.name.name);
 
         // Check for duplicate declaration
@@ -301,7 +301,7 @@ impl<'src, 'ast> Registrar<'src, 'ast> {
     }
 
     /// Visit an interface declaration
-    fn visit_interface(&mut self, iface: &InterfaceDecl<'src, 'ast>) {
+    fn visit_interface(&mut self, iface: &InterfaceDecl<'ast>) {
         let qualified_name = self.build_qualified_name(iface.name.name);
 
         // Check for duplicate declaration
@@ -326,7 +326,7 @@ impl<'src, 'ast> Registrar<'src, 'ast> {
     }
 
     /// Visit an enum declaration
-    fn visit_enum(&mut self, enum_decl: &EnumDecl<'src, 'ast>) {
+    fn visit_enum(&mut self, enum_decl: &EnumDecl<'ast>) {
         let qualified_name = self.build_qualified_name(enum_decl.name.name);
 
         // Check for duplicate declaration
@@ -382,7 +382,7 @@ impl<'src, 'ast> Registrar<'src, 'ast> {
     }
 
     /// Visit a global variable declaration
-    fn visit_global_var(&mut self, var: &GlobalVarDecl<'src, 'ast>) {
+    fn visit_global_var(&mut self, var: &GlobalVarDecl<'ast>) {
         let qualified_name = self.build_qualified_name(var.name.name);
 
         // Check for duplicate declaration
@@ -400,7 +400,7 @@ impl<'src, 'ast> Registrar<'src, 'ast> {
     }
 
     /// Visit a namespace declaration
-    fn visit_namespace(&mut self, ns: &NamespaceDecl<'src, 'ast>) {
+    fn visit_namespace(&mut self, ns: &NamespaceDecl<'ast>) {
         // Enter namespace (handle path which can be nested like A::B::C)
         for ident in ns.path {
             self.namespace_path.push(ident.name.to_string());
@@ -428,7 +428,7 @@ impl<'src, 'ast> Registrar<'src, 'ast> {
     }
 
     /// Visit a using namespace declaration
-    fn visit_using_namespace(&mut self, using: &UsingNamespaceDecl<'src, 'ast>) {
+    fn visit_using_namespace(&mut self, using: &UsingNamespaceDecl<'ast>) {
         // Build the fully qualified namespace path
         let ns_path: String = using.path
             .iter()
@@ -441,13 +441,13 @@ impl<'src, 'ast> Registrar<'src, 'ast> {
     }
 
     /// Visit a typedef declaration
-    fn visit_typedef(&mut self, _typedef: &TypedefDecl<'src, 'ast>) {
+    fn visit_typedef(&mut self, _typedef: &TypedefDecl<'ast>) {
         // Typedef handling will be implemented in Pass 2a
         // For now, we just skip it
     }
 
     /// Visit a funcdef declaration
-    fn visit_funcdef(&mut self, funcdef: &FuncdefDecl<'src, 'ast>) {
+    fn visit_funcdef(&mut self, funcdef: &FuncdefDecl<'ast>) {
         let qualified_name = self.build_qualified_name(funcdef.name.name);
 
         // Check for duplicate declaration
@@ -473,7 +473,7 @@ impl<'src, 'ast> Registrar<'src, 'ast> {
     }
 
     /// Visit a mixin declaration
-    fn visit_mixin(&mut self, mixin: &MixinDecl<'src, 'ast>) {
+    fn visit_mixin(&mut self, mixin: &MixinDecl<'ast>) {
         let class = &mixin.class;
         let qualified_name = self.build_qualified_name(class.name.name);
 
@@ -773,7 +773,7 @@ mod tests {
     use crate::semantic::types::type_def::OperatorBehavior;
     use bumpalo::Bump;
 
-    fn register<'src, 'ast>(source: &'src str, arena: &'ast Bump) -> RegistrationData<'src, 'ast> {
+    fn register<'ast>(source: &str, arena: &'ast Bump) -> RegistrationData<'ast> {
         let (script, parse_errors) = parse_lenient(source, arena);
         assert!(parse_errors.is_empty(), "Parse errors: {:?}", parse_errors);
         Registrar::register(&script)

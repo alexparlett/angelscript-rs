@@ -35,28 +35,28 @@ use std::fmt;
 /// - `const array<int>[]` - const template with array suffix
 /// - `MyClass@ const` - const handle
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct TypeExpr<'src, 'ast> {
+pub struct TypeExpr<'ast> {
     /// Leading const (makes the object const, not the handle)
     pub is_const: bool,
     /// Optional namespace scope
-    pub scope: Option<Scope<'src, 'ast>>,
+    pub scope: Option<Scope<'ast>>,
     /// The base type
-    pub base: TypeBase<'src>,
+    pub base: TypeBase<'ast>,
     /// Template arguments if this is a template type
-    pub template_args: &'ast [TypeExpr<'src, 'ast>],
+    pub template_args: &'ast [TypeExpr<'ast>],
     /// Type suffixes (arrays, handles)
     pub suffixes: &'ast [TypeSuffix],
     /// Source location
     pub span: Span,
 }
 
-impl<'src, 'ast> TypeExpr<'src, 'ast> {
+impl<'ast> TypeExpr<'ast> {
     /// Create a new type expression.
     pub fn new(
         is_const: bool,
-        scope: Option<Scope<'src, 'ast>>,
-        base: TypeBase<'src>,
-        template_args: &'ast [TypeExpr<'src, 'ast>],
+        scope: Option<Scope<'ast>>,
+        base: TypeBase<'ast>,
+        template_args: &'ast [TypeExpr<'ast>],
         suffixes: &'ast [TypeSuffix],
         span: Span,
     ) -> Self {
@@ -83,7 +83,7 @@ impl<'src, 'ast> TypeExpr<'src, 'ast> {
     }
 
     /// Create a simple named type.
-    pub fn named(name: Ident<'src>) -> Self {
+    pub fn named(name: Ident<'ast>) -> Self {
         let span = name.span;
         Self {
             is_const: false,
@@ -116,7 +116,7 @@ impl<'src, 'ast> TypeExpr<'src, 'ast> {
     }
 }
 
-impl<'src, 'ast> fmt::Display for TypeExpr<'src, 'ast> {
+impl<'ast> fmt::Display for TypeExpr<'ast> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         if self.is_const {
             write!(f, "const ")?;
@@ -144,18 +144,18 @@ impl<'src, 'ast> fmt::Display for TypeExpr<'src, 'ast> {
 
 /// The base type without modifiers or suffixes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TypeBase<'src> {
+pub enum TypeBase<'ast> {
     /// Primitive type (int, float, void, etc.)
     Primitive(PrimitiveType),
     /// Named user-defined type or identifier
-    Named(Ident<'src>),
+    Named(Ident<'ast>),
     /// Auto type (compiler infers)
     Auto,
     /// Unknown/placeholder type (?)
     Unknown,
 }
 
-impl<'src> fmt::Display for TypeBase<'src> {
+impl<'ast> fmt::Display for TypeBase<'ast> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Primitive(p) => write!(f, "{}", p),
@@ -291,23 +291,23 @@ impl fmt::Display for TypeSuffix {
 /// - `int&` - return by reference
 /// - `const string&` - return const reference
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct ReturnType<'src, 'ast> {
+pub struct ReturnType<'ast> {
     /// The base type
-    pub ty: TypeExpr<'src, 'ast>,
+    pub ty: TypeExpr<'ast>,
     /// Whether this is returned by reference (&)
     pub is_ref: bool,
     /// Source location
     pub span: Span,
 }
 
-impl<'src, 'ast> ReturnType<'src, 'ast> {
+impl<'ast> ReturnType<'ast> {
     /// Create a new return type.
-    pub fn new(ty: TypeExpr<'src, 'ast>, is_ref: bool, span: Span) -> Self {
+    pub fn new(ty: TypeExpr<'ast>, is_ref: bool, span: Span) -> Self {
         Self { ty, is_ref, span }
     }
 }
 
-impl<'src, 'ast> fmt::Display for ReturnType<'src, 'ast> {
+impl<'ast> fmt::Display for ReturnType<'ast> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.ty)?;
         if self.is_ref {
@@ -327,18 +327,18 @@ impl<'src, 'ast> fmt::Display for ReturnType<'src, 'ast> {
 /// - `int& out` - output reference
 /// - `int& inout` - input/output reference
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct ParamType<'src, 'ast> {
+pub struct ParamType<'ast> {
     /// The base type
-    pub ty: TypeExpr<'src, 'ast>,
+    pub ty: TypeExpr<'ast>,
     /// Reference kind (None, Ref, RefIn, RefOut, RefInOut)
     pub ref_kind: crate::ast::RefKind,
     /// Source location
     pub span: Span,
 }
 
-impl<'src, 'ast> ParamType<'src, 'ast> {
+impl<'ast> ParamType<'ast> {
     /// Create a new parameter type.
-    pub fn new(ty: TypeExpr<'src, 'ast>, ref_kind: crate::ast::RefKind, span: Span) -> Self {
+    pub fn new(ty: TypeExpr<'ast>, ref_kind: crate::ast::RefKind, span: Span) -> Self {
         Self { ty, ref_kind, span }
     }
 
@@ -348,7 +348,7 @@ impl<'src, 'ast> ParamType<'src, 'ast> {
     }
 }
 
-impl<'src, 'ast> fmt::Display for ParamType<'src, 'ast> {
+impl<'ast> fmt::Display for ParamType<'ast> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.ty)?;
         if self.ref_kind.is_ref() {

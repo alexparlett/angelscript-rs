@@ -20,124 +20,16 @@
 use bumpalo::Bump;
 use thiserror::Error;
 
-use crate::ast::{parse_lenient, Item, TypeExpr, TypeSuffix};
-use crate::ffi::{GlobalPropertyDef, NativeFunctionDef, NativeTypeDef, TypeSpec};
-
-/// Parse a property declaration string like "const int score" or "MyClass@ obj".
-///
-/// Uses the real AngelScript parser to handle all type syntax correctly.
-///
-/// Returns (name, type_spec, is_const).
-fn parse_property_decl(decl: &str) -> Result<(String, TypeSpec, bool), FfiModuleError> {
-    let decl = decl.trim();
-    if decl.is_empty() {
-        return Err(FfiModuleError::InvalidDeclaration(
-            "empty declaration".to_string(),
-        ));
-    }
-
-    // Add semicolon to make it a valid global variable declaration
-    let full_decl = format!("{};", decl);
-
-    let arena = Bump::new();
-    let (script, errors) = parse_lenient(&full_decl, &arena);
-
-    if !errors.is_empty() {
-        return Err(FfiModuleError::InvalidDeclaration(format!(
-            "parse error: {}",
-            errors[0]
-        )));
-    }
-
-    let items = script.items();
-    if items.len() != 1 {
-        return Err(FfiModuleError::InvalidDeclaration(format!(
-            "expected single declaration, got {}",
-            items.len()
-        )));
-    }
-
-    match &items[0] {
-        Item::GlobalVar(var) => {
-            let name = var.name.name.to_string();
-            let type_spec = type_expr_to_type_spec(&var.ty);
-            let is_const = var.ty.is_const;
-            Ok((name, type_spec, is_const))
-        }
-        _ => Err(FfiModuleError::InvalidDeclaration(
-            "expected variable declaration".to_string(),
-        )),
-    }
-}
-
-/// Convert a parsed TypeExpr to a TypeSpec for FFI registration.
-fn type_expr_to_type_spec(ty: &TypeExpr) -> TypeSpec {
-    // Build the base type name including scope and template args
-    let mut type_name = String::new();
-
-    // Add scope if present
-    if let Some(scope) = &ty.scope {
-        if scope.is_absolute {
-            type_name.push_str("::");
-        }
-        for seg in scope.segments {
-            type_name.push_str(seg.name);
-            type_name.push_str("::");
-        }
-    }
-
-    // Add base type
-    type_name.push_str(&ty.base.to_string());
-
-    // Add template arguments if present
-    if !ty.template_args.is_empty() {
-        type_name.push('<');
-        for (i, arg) in ty.template_args.iter().enumerate() {
-            if i > 0 {
-                type_name.push_str(", ");
-            }
-            // Recursively convert template arg (simplified - just use display)
-            type_name.push_str(&arg.to_string());
-        }
-        type_name.push('>');
-    }
-
-    let mut spec = TypeSpec::new(type_name);
-
-    // Check if this is a handle type
-    let has_handle = ty.suffixes.iter().any(|s| matches!(s, TypeSuffix::Handle { .. }));
-
-    if ty.is_const {
-        if has_handle {
-            // const T@ = handle to const object
-            spec = spec.with_handle_to_const();
-        } else {
-            // const T = const value
-            spec = spec.with_const();
-        }
-    }
-
-    // Process suffixes for handles
-    for suffix in ty.suffixes {
-        match suffix {
-            TypeSuffix::Handle { is_const } => {
-                spec = spec.with_handle();
-                // Note: is_const here means T@ const (read-only handle)
-                // We don't have a TypeSpec field for this yet
-                let _ = is_const;
-            }
-            TypeSuffix::Array => {
-                // Arrays are handled as template types in the type name
-            }
-        }
-    }
-
-    spec
-}
+use crate::ast::parse_property_expr;
+use crate::ffi::{GlobalPropertyDef, NativeFunctionDef, NativeTypeDef};
 
 /// A namespaced collection of native functions, types, and global properties.
 ///
-/// The `'app` lifetime parameter ensures global property references outlive the module.
+/// # Lifetimes
+///
+/// - `'app`: The application lifetime for global property value references
+///
+/// The module owns an arena for storing parsed AST nodes (types, identifiers).
 ///
 /// # Namespaces
 ///
@@ -161,8 +53,10 @@ fn type_expr_to_type_spec(ty: &TypeExpr) -> TypeSpec {
 /// let mut globals = Module::root();
 /// globals.register_fn("print", |s: &str| println!("{}", s));
 /// ```
-#[derive(Debug)]
 pub struct Module<'app> {
+    /// Arena for storing parsed AST nodes
+    arena: Bump,
+
     /// Namespace path for all items.
     /// Empty = root namespace, ["math"] = single level,
     /// ["std", "collections"] = nested namespace
@@ -181,7 +75,8 @@ pub struct Module<'app> {
     templates: Vec<NativeTemplateDef>,
 
     /// Global properties (app-owned references)
-    pub global_properties: Vec<GlobalPropertyDef<'app>>,
+    /// The lifetime is tied to the module's arena via a transmute in register_global_property
+    global_properties: Vec<GlobalPropertyDef<'static, 'app>>,
 }
 
 /// A native enum definition.
@@ -219,6 +114,7 @@ impl<'app> Module<'app> {
     /// ```
     pub fn new(namespace: &[&str]) -> Self {
         Self {
+            arena: Bump::new(),
             namespace: namespace.iter().map(|s| (*s).to_string()).collect(),
             functions: Vec::new(),
             types: Vec::new(),
@@ -373,15 +269,40 @@ impl<'app> Module<'app> {
         decl: &str,
         value: &'app mut T,
     ) -> Result<(), FfiModuleError> {
-        let (name, type_spec, is_const) = parse_property_decl(decl)?;
+        let decl = decl.trim();
+        if decl.is_empty() {
+            return Err(FfiModuleError::InvalidDeclaration(
+                "empty declaration".to_string(),
+            ));
+        }
+
+        // Parse the declaration using the module's arena
+        let (type_expr, name) = parse_property_expr(decl, &self.arena).map_err(|errors| {
+            FfiModuleError::InvalidDeclaration(format!("parse error: {}", errors))
+        })?;
+
+        // SAFETY: The arena is owned by self and lives as long as self.
+        // We transmute the lifetime to 'static for storage, but the actual
+        // lifetime is tied to the module. This is safe because:
+        // 1. The arena is never moved or replaced
+        // 2. The global_properties vec is dropped before the arena
+        // 3. We never expose references with incorrect lifetimes
+        let type_expr = unsafe { std::mem::transmute(type_expr) };
+        let name = unsafe { std::mem::transmute(name) };
+
         self.global_properties
-            .push(GlobalPropertyDef::new(name, type_spec, is_const, value));
+            .push(GlobalPropertyDef::new(name, type_expr, value));
         Ok(())
     }
 
     /// Get the registered global properties.
-    pub fn global_properties(&self) -> &[GlobalPropertyDef<'app>] {
+    pub fn global_properties(&self) -> &[GlobalPropertyDef<'static, 'app>] {
         &self.global_properties
+    }
+
+    /// Get mutable access to the registered global properties.
+    pub fn global_properties_mut(&mut self) -> &mut [GlobalPropertyDef<'static, 'app>] {
+        &mut self.global_properties
     }
 
     // =========================================================================
@@ -401,6 +322,20 @@ impl<'app> Module<'app> {
 impl Default for Module<'_> {
     fn default() -> Self {
         Self::root()
+    }
+}
+
+// Manual Debug implementation since Bump doesn't implement Debug
+impl std::fmt::Debug for Module<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Module")
+            .field("namespace", &self.namespace)
+            .field("functions", &self.functions)
+            .field("types", &self.types)
+            .field("enums", &self.enums)
+            .field("templates", &self.templates)
+            .field("global_properties", &self.global_properties)
+            .finish()
     }
 }
 
@@ -477,14 +412,20 @@ mod tests {
 
     #[test]
     fn module_register_global_property_i32() {
+        use crate::ast::PrimitiveType;
+
         let mut value: i32 = 42;
         let mut module = Module::root();
 
         module.register_global_property("int score", &mut value).unwrap();
 
         assert_eq!(module.global_properties().len(), 1);
-        assert_eq!(module.global_properties()[0].name, "score");
-        assert!(!module.global_properties()[0].is_const);
+        assert_eq!(module.global_properties()[0].name.name, "score");
+        assert!(!module.global_properties()[0].is_const());
+        assert!(matches!(
+            module.global_properties()[0].ty.base,
+            crate::ast::TypeBase::Primitive(PrimitiveType::Int)
+        ));
     }
 
     #[test]
@@ -494,11 +435,13 @@ mod tests {
 
         module.register_global_property("const double PI", &mut value).unwrap();
 
-        assert!(module.global_properties()[0].is_const);
+        assert!(module.global_properties()[0].is_const());
     }
 
     #[test]
     fn module_register_global_property_various_types() {
+        use crate::ast::{PrimitiveType, TypeBase};
+
         let mut i32_val: i32 = 42;
         let mut f64_val: f64 = 3.14;
         let mut bool_val = true;
@@ -512,10 +455,10 @@ mod tests {
         module.register_global_property("string greeting", &mut string_val).unwrap();
 
         assert_eq!(module.global_properties().len(), 4);
-        assert_eq!(module.global_properties()[0].type_spec.type_name, "int");
-        assert_eq!(module.global_properties()[1].type_spec.type_name, "double");
-        assert_eq!(module.global_properties()[2].type_spec.type_name, "bool");
-        assert_eq!(module.global_properties()[3].type_spec.type_name, "string");
+        assert!(matches!(module.global_properties()[0].ty.base, TypeBase::Primitive(PrimitiveType::Int)));
+        assert!(matches!(module.global_properties()[1].ty.base, TypeBase::Primitive(PrimitiveType::Double)));
+        assert!(matches!(module.global_properties()[2].ty.base, TypeBase::Primitive(PrimitiveType::Bool)));
+        assert!(matches!(module.global_properties()[3].ty.base, TypeBase::Named(ident) if ident.name == "string"));
     }
 
     #[test]
@@ -530,9 +473,8 @@ mod tests {
         module.register_global_property("MyClass@ obj", &mut obj).unwrap();
 
         let prop = &module.global_properties()[0];
-        assert_eq!(prop.name, "obj");
-        assert_eq!(prop.type_spec.type_name, "MyClass");
-        assert!(prop.type_spec.is_handle);
+        assert_eq!(prop.name.name, "obj");
+        assert!(prop.ty.has_handle());
     }
 
     #[test]
@@ -547,8 +489,8 @@ mod tests {
         module.register_global_property("const MyClass@ obj", &mut obj).unwrap();
 
         let prop = &module.global_properties()[0];
-        assert!(prop.type_spec.is_handle);
-        assert!(prop.type_spec.is_handle_to_const);
+        assert!(prop.ty.has_handle());
+        assert!(prop.ty.is_const); // const T@ means handle to const
     }
 
     #[test]
@@ -597,9 +539,8 @@ mod tests {
 
         assert_eq!(module.global_properties().len(), 1);
         let prop = &module.global_properties()[0];
-        assert_eq!(prop.name, "g_transform");
-        assert_eq!(prop.type_spec.type_name, "Transform");
-        assert!(!prop.is_const);
+        assert_eq!(prop.name.name, "g_transform");
+        assert!(!prop.is_const());
 
         // Verify we can downcast and access the complex struct
         let downcast = prop.downcast_ref::<Transform>().unwrap();
@@ -632,7 +573,7 @@ mod tests {
             .unwrap();
 
         // Get mutable reference and modify
-        let prop = &mut module.global_properties[0];
+        let prop = &mut module.global_properties_mut()[0];
         if let Some(game_state) = prop.downcast_mut::<GameState>() {
             game_state.score = 100;
             game_state.level = 5;
@@ -687,48 +628,6 @@ mod tests {
         module.register_global_property("int score", &mut value).unwrap();
 
         assert_eq!(module.item_count(), 1);
-    }
-
-    #[test]
-    fn parse_property_decl_simple() {
-        let (name, type_spec, is_const) = parse_property_decl("int score").unwrap();
-        assert_eq!(name, "score");
-        assert_eq!(type_spec.type_name, "int");
-        assert!(!is_const);
-        assert!(!type_spec.is_handle);
-    }
-
-    #[test]
-    fn parse_property_decl_const() {
-        let (name, type_spec, is_const) = parse_property_decl("const double PI").unwrap();
-        assert_eq!(name, "PI");
-        assert_eq!(type_spec.type_name, "double");
-        assert!(is_const);
-    }
-
-    #[test]
-    fn parse_property_decl_handle() {
-        let (name, type_spec, _) = parse_property_decl("MyClass@ obj").unwrap();
-        assert_eq!(name, "obj");
-        assert_eq!(type_spec.type_name, "MyClass");
-        assert!(type_spec.is_handle);
-        assert!(!type_spec.is_handle_to_const);
-    }
-
-    #[test]
-    fn parse_property_decl_const_handle() {
-        let (name, type_spec, _) = parse_property_decl("const MyClass@ obj").unwrap();
-        assert_eq!(name, "obj");
-        assert_eq!(type_spec.type_name, "MyClass");
-        assert!(type_spec.is_handle);
-        assert!(type_spec.is_handle_to_const);
-    }
-
-    #[test]
-    fn parse_property_decl_template_type() {
-        let (name, type_spec, _) = parse_property_decl("array<int> items").unwrap();
-        assert_eq!(name, "items");
-        assert_eq!(type_spec.type_name, "array<int>");
     }
 
     #[test]

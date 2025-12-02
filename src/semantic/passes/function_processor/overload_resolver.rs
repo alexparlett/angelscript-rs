@@ -12,7 +12,7 @@ use crate::semantic::types::type_def::FunctionId;
 
 use super::{ExprContext, FunctionCompiler};
 
-impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
+impl<'ast> FunctionCompiler<'ast> {
     pub(super) fn try_binary_operator_overload(
         &mut self,
         operator: OperatorBehavior,
@@ -68,7 +68,7 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
         &mut self,
         func_def: &crate::semantic::types::registry::FunctionDef,
         arg_contexts: &[ExprContext],
-        call_args: &[crate::ast::expr::Argument<'src, 'ast>],
+        call_args: &[crate::ast::expr::Argument<'ast>],
         _span: Span,
     ) -> Option<()> {
         use crate::semantic::types::RefModifier;

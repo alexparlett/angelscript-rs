@@ -8,16 +8,16 @@ use std::fmt;
 
 /// An identifier with source location.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct Ident<'src> {
-    /// The identifier name (reference to source).
-    pub name: &'src str,
+pub struct Ident<'ast> {
+    /// The identifier name (allocated in arena).
+    pub name: &'ast str,
     /// Source location.
     pub span: Span,
 }
 
-impl<'src> Ident<'src> {
-    /// Create a new identifier from source.
-    pub fn new(name: &'src str, span: Span) -> Self {
+impl<'ast> Ident<'ast> {
+    /// Create a new identifier.
+    pub fn new(name: &'ast str, span: Span) -> Self {
         Self {
             name,
             span,
@@ -25,7 +25,7 @@ impl<'src> Ident<'src> {
     }
 }
 
-impl<'src> fmt::Display for Ident<'src> {
+impl<'ast> fmt::Display for Ident<'ast> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.name)
     }
@@ -38,18 +38,18 @@ impl<'src> fmt::Display for Ident<'src> {
 /// - `Namespace::Type` - relative scope
 /// - `::Namespace::SubNamespace::Type` - absolute nested scope
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Scope<'src, 'ast> {
+pub struct Scope<'ast> {
     /// Whether this is an absolute scope (starts with `::`)
     pub is_absolute: bool,
     /// The path segments (namespace names)
-    pub segments: &'ast [Ident<'src>],
+    pub segments: &'ast [Ident<'ast>],
     /// Source location covering the entire scope
     pub span: Span,
 }
 
-impl<'src, 'ast> Scope<'src, 'ast> {
+impl<'ast> Scope<'ast> {
     /// Create a new scope.
-    pub fn new(is_absolute: bool, segments: &'ast [Ident<'src>], span: Span) -> Self {
+    pub fn new(is_absolute: bool, segments: &'ast [Ident<'ast>], span: Span) -> Self {
         Self {
             is_absolute,
             segments,
@@ -72,7 +72,7 @@ impl<'src, 'ast> Scope<'src, 'ast> {
     }
 }
 
-impl<'src, 'ast> fmt::Display for Scope<'src, 'ast> {
+impl<'ast> fmt::Display for Scope<'ast> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         if self.is_absolute {
             write!(f, "::")?;

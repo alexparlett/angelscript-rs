@@ -42,12 +42,12 @@ use rustc_hash::FxHashMap;
 ///
 /// This contains all the artifacts from the three compilation passes.
 #[derive(Debug)]
-pub struct CompilationResult<'src, 'ast> {
+pub struct CompilationResult<'ast> {
     /// The compiled module with all function bytecode (including lambdas)
     pub module: CompiledModule,
 
     /// The complete type registry with all type information
-    pub registry: Registry<'src, 'ast>,
+    pub registry: Registry<'ast>,
 
     /// Type resolution map (AST span → resolved DataType)
     pub type_map: FxHashMap<crate::lexer::Span, super::DataType>,
@@ -56,7 +56,7 @@ pub struct CompilationResult<'src, 'ast> {
     pub errors: Vec<SemanticError>,
 }
 
-impl<'src, 'ast> CompilationResult<'src, 'ast> {
+impl<'ast> CompilationResult<'ast> {
     /// Check if compilation succeeded (no errors)
     pub fn is_success(&self) -> bool {
         self.errors.is_empty()
@@ -88,7 +88,7 @@ impl Compiler {
     ///
     /// Returns a `CompilationResult` containing all compiled artifacts and any errors.
     #[cfg_attr(feature = "profiling", profiling::function)]
-    pub fn compile<'src, 'ast>(script: &'ast Script<'src, 'ast>) -> CompilationResult<'src, 'ast> {
+    pub fn compile<'ast>(script: &'ast Script<'ast>) -> CompilationResult<'ast> {
         // Pass 1: Registration
         let registration = Registrar::register(script);
 
@@ -118,7 +118,7 @@ impl Compiler {
     /// Compile a script and return only the registry (for testing or type-only compilation).
     ///
     /// This performs Pass 1 and Pass 2a only, skipping function body compilation.
-    pub fn compile_types<'src, 'ast>(script: &'ast Script<'src, 'ast>) -> TypeCompilationResult<'src, 'ast> {
+    pub fn compile_types<'ast>(script: &'ast Script<'ast>) -> TypeCompilationResult<'ast> {
         // Pass 1: Registration
         let registration = Registrar::register(script);
 
@@ -143,9 +143,9 @@ impl Compiler {
 ///
 /// Useful for tools that only need type information without function bodies.
 #[derive(Debug)]
-pub struct TypeCompilationResult<'src, 'ast> {
+pub struct TypeCompilationResult<'ast> {
     /// The complete type registry
-    pub registry: Registry<'src, 'ast>,
+    pub registry: Registry<'ast>,
 
     /// Type resolution map
     pub type_map: FxHashMap<crate::lexer::Span, super::DataType>,
@@ -154,7 +154,7 @@ pub struct TypeCompilationResult<'src, 'ast> {
     pub errors: Vec<SemanticError>,
 }
 
-impl<'src, 'ast> TypeCompilationResult<'src, 'ast> {
+impl<'ast> TypeCompilationResult<'ast> {
     /// Check if compilation succeeded (no errors)
     pub fn is_success(&self) -> bool {
         self.errors.is_empty()

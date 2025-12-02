@@ -36,7 +36,7 @@ use rustc_hash::FxHashMap;
 
 /// Function definition with complete signature
 #[derive(Debug, Clone, PartialEq)]
-pub struct FunctionDef<'src, 'ast> {
+pub struct FunctionDef<'ast> {
     /// Function identifier
     pub id: FunctionId,
     /// Function name (unqualified)
@@ -54,7 +54,7 @@ pub struct FunctionDef<'src, 'ast> {
     /// True if this is a native (FFI) function
     pub is_native: bool,
     /// Default argument expressions (one per parameter, None if no default)
-    pub default_args: Vec<Option<&'ast Expr<'src, 'ast>>>,
+    pub default_args: Vec<Option<&'ast Expr<'ast>>>,
     /// Visibility (public, private, protected) - only meaningful for methods
     pub visibility: Visibility,
     /// Whether the function signature has been filled in by Pass 2a
@@ -62,7 +62,7 @@ pub struct FunctionDef<'src, 'ast> {
     pub signature_filled: bool,
 }
 
-impl<'src, 'ast> FunctionDef<'src, 'ast> {
+impl<'ast> FunctionDef<'ast> {
     /// Get the qualified name of this function
     pub fn qualified_name(&self) -> String {
         if self.namespace.is_empty() {
@@ -101,7 +101,7 @@ impl GlobalVarDef {
 /// They are not real types and cannot be instantiated. When a class includes a mixin,
 /// the mixin's methods and properties are copied into the class.
 #[derive(Debug, Clone)]
-pub struct MixinDef<'src, 'ast> {
+pub struct MixinDef<'ast> {
     /// Mixin name (unqualified)
     pub name: String,
     /// Qualified name with namespace
@@ -112,10 +112,10 @@ pub struct MixinDef<'src, 'ast> {
     pub required_interfaces: Vec<String>,
     /// Members of the mixin class (methods and fields)
     /// This is a slice into arena-allocated memory
-    pub members: &'ast [crate::ast::decl::ClassMember<'src, 'ast>],
+    pub members: &'ast [crate::ast::decl::ClassMember<'ast>],
 }
 
-impl<'src, 'ast> MixinDef<'src, 'ast> {
+impl<'ast> MixinDef<'ast> {
     /// Get the qualified name of this mixin
     pub fn qualified_name(&self) -> &str {
         &self.qualified_name
@@ -124,20 +124,20 @@ impl<'src, 'ast> MixinDef<'src, 'ast> {
 
 /// Global registry for all types, functions, and variables
 #[derive(Debug, Clone)]
-pub struct Registry<'src, 'ast> {
+pub struct Registry<'ast> {
     // Type storage
     types: Vec<TypeDef>,
     type_by_name: FxHashMap<String, TypeId>,
 
     // Function storage
-    functions: FxHashMap<FunctionId, FunctionDef<'src, 'ast>>,
+    functions: FxHashMap<FunctionId, FunctionDef<'ast>>,
     func_by_name: FxHashMap<String, Vec<FunctionId>>,
 
     // Global variable storage
     global_vars: FxHashMap<String, GlobalVarDef>,
 
     // Mixin storage (mixins are not types, stored separately)
-    mixins: FxHashMap<String, MixinDef<'src, 'ast>>,
+    mixins: FxHashMap<String, MixinDef<'ast>>,
 
     // Template instantiation cache (Template TypeId + arg TypeIds → Instance TypeId)
     // Note: Uses TypeId not DataType so array<int> and array<const int> share the same instance
@@ -161,7 +161,7 @@ pub struct Registry<'src, 'ast> {
     pub dict_template: TypeId,
 }
 
-impl<'src, 'ast> Registry<'src, 'ast> {
+impl<'ast> Registry<'ast> {
     /// Create a new registry with all built-in types pre-registered
     pub fn new() -> Self {
         let mut registry = Self {
@@ -1164,7 +1164,7 @@ impl<'src, 'ast> Registry<'src, 'ast> {
     }
 
     /// Register a function and return its FunctionId
-    pub fn register_function(&mut self, def: FunctionDef<'src, 'ast>) -> FunctionId {
+    pub fn register_function(&mut self, def: FunctionDef<'ast>) -> FunctionId {
         let func_id = def.id;
         let qualified_name = def.qualified_name();
 
@@ -1188,12 +1188,12 @@ impl<'src, 'ast> Registry<'src, 'ast> {
     }
 
     /// Get a function definition by FunctionId
-    pub fn get_function(&self, func_id: FunctionId) -> &FunctionDef<'src, 'ast> {
+    pub fn get_function(&self, func_id: FunctionId) -> &FunctionDef<'ast> {
         self.functions.get(&func_id).expect("FunctionId not found in registry")
     }
 
     /// Get a mutable function definition by FunctionId
-    pub fn get_function_mut(&mut self, func_id: FunctionId) -> &mut FunctionDef<'src, 'ast> {
+    pub fn get_function_mut(&mut self, func_id: FunctionId) -> &mut FunctionDef<'ast> {
         self.functions.get_mut(&func_id).expect("FunctionId not found in registry")
     }
 
@@ -1245,13 +1245,13 @@ impl<'src, 'ast> Registry<'src, 'ast> {
     }
 
     /// Register a mixin class
-    pub fn register_mixin(&mut self, mixin: MixinDef<'src, 'ast>) {
+    pub fn register_mixin(&mut self, mixin: MixinDef<'ast>) {
         let qualified_name = mixin.qualified_name.clone();
         self.mixins.insert(qualified_name, mixin);
     }
 
     /// Look up a mixin by qualified name
-    pub fn lookup_mixin(&self, name: &str) -> Option<&MixinDef<'src, 'ast>> {
+    pub fn lookup_mixin(&self, name: &str) -> Option<&MixinDef<'ast>> {
         self.mixins.get(name)
     }
 
@@ -1406,7 +1406,7 @@ impl<'src, 'ast> Registry<'src, 'ast> {
         return_type: DataType,
         object_type: Option<TypeId>,
         traits: FunctionTraits,
-        default_args: Vec<Option<&'ast Expr<'src, 'ast>>>,
+        default_args: Vec<Option<&'ast Expr<'ast>>>,
     ) {
         // Find the function(s) with this name
         if let Some(func_ids) = self.func_by_name.get(qualified_name).cloned() {
@@ -2057,7 +2057,7 @@ impl<'src, 'ast> Registry<'src, 'ast> {
     }
 }
 
-impl<'src, 'ast> Default for Registry<'src, 'ast> {
+impl<'ast> Default for Registry<'ast> {
     fn default() -> Self {
         Self::new()
     }

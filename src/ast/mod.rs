@@ -66,19 +66,19 @@ pub use types::*;
 /// For multi-file compilation, use `CompilationContext` which owns the arena
 /// and allows multiple scripts to share the same arena.
 #[derive(Debug)]
-pub struct Script<'src, 'ast> {
-    items: &'ast [Item<'src, 'ast>],
+pub struct Script<'ast> {
+    items: &'ast [Item<'ast>],
     span: crate::lexer::Span,
 }
 
-impl<'src, 'ast> Script<'src, 'ast> {
+impl<'ast> Script<'ast> {
     /// Create a new script from parsed items.
-    pub(crate) fn new(items: &'ast [Item<'src, 'ast>], span: crate::lexer::Span) -> Self {
+    pub(crate) fn new(items: &'ast [Item<'ast>], span: crate::lexer::Span) -> Self {
         Self { items, span }
     }
 
     /// Get the top-level items in this script.
-    pub fn items(&self) -> &[Item<'src, 'ast>] {
+    pub fn items(&self) -> &[Item<'ast>] {
         self.items
     }
 
@@ -123,24 +123,15 @@ impl<'src, 'ast> Script<'src, 'ast> {
 /// }
 /// ```
 #[cfg_attr(feature = "profiling", profiling::function)]
-pub fn parse<'src, 'ast>(
-    source: &'src str,
+pub fn parse<'ast>(
+    source: &str,
     arena: &'ast bumpalo::Bump,
-) -> Result<Script<'src, 'ast>, ParseErrors> {
+) -> Result<Script<'ast>, ParseErrors> {
     let mut parser = Parser::new(source, arena);
 
     let result = parser.parse_script();
 
-    // Check for any remaining lexer errors
-    if parser.lexer.has_errors() {
-        for lexer_error in parser.lexer.take_errors() {
-            parser.errors.push(ParseError::new(
-                ParseErrorKind::InvalidSyntax,
-                lexer_error.span,
-                format!("lexer error: {}", lexer_error.message),
-            ));
-        }
-    }
+    // Lexer errors are collected during Parser::new() and already in parser.errors
 
     match result {
         Ok((items, span)) => {
@@ -202,10 +193,10 @@ pub fn parse<'src, 'ast>(
 /// }
 /// ```
 #[cfg_attr(feature = "profiling", profiling::function)]
-pub fn parse_lenient<'src, 'ast>(
-    source: &'src str,
+pub fn parse_lenient<'ast>(
+    source: &str,
     arena: &'ast bumpalo::Bump,
-) -> (Script<'src, 'ast>, Vec<ParseError>) {
+) -> (Script<'ast>, Vec<ParseError>) {
     let mut parser = Parser::new(source, arena);
 
     let (items, span) = parser.parse_script().unwrap_or_else(|err| {
@@ -213,16 +204,7 @@ pub fn parse_lenient<'src, 'ast>(
         (&[][..], crate::lexer::Span::new(1, 1, 0))
     });
 
-    // Check for any remaining lexer errors
-    if parser.lexer.has_errors() {
-        for lexer_error in parser.lexer.take_errors() {
-            parser.errors.push(ParseError::new(
-                ParseErrorKind::InvalidSyntax,
-                lexer_error.span,
-                format!("lexer error: {}", lexer_error.message),
-            ));
-        }
-    }
+    // Lexer errors are collected during Parser::new() and already in parser.errors
 
     let errors = parser.take_errors().into_vec();
     (Script::new(items, span), errors)
@@ -245,24 +227,15 @@ pub fn parse_lenient<'src, 'ast>(
 ///     Err(errors) => eprintln!("Errors: {}", errors),
 /// }
 /// ```
-pub fn parse_expression<'src, 'ast>(
-    source: &'src str,
+pub fn parse_expression<'ast>(
+    source: &str,
     arena: &'ast bumpalo::Bump,
-) -> Result<&'ast Expr<'src, 'ast>, ParseErrors> {
+) -> Result<&'ast Expr<'ast>, ParseErrors> {
     let mut parser = Parser::new(source, arena);
 
     let result = parser.parse_expr(0);
 
-    // Check for any remaining lexer errors
-    if parser.lexer.has_errors() {
-        for lexer_error in parser.lexer.take_errors() {
-            parser.errors.push(ParseError::new(
-                ParseErrorKind::InvalidSyntax,
-                lexer_error.span,
-                format!("lexer error: {}", lexer_error.message),
-            ));
-        }
-    }
+    // Lexer errors are collected during Parser::new() and already in parser.errors
 
     match result {
         Ok(expr) => {
@@ -296,24 +269,15 @@ pub fn parse_expression<'src, 'ast>(
 ///     Err(errors) => eprintln!("Errors: {}", errors),
 /// }
 /// ```
-pub fn parse_statement<'src, 'ast>(
-    source: &'src str,
+pub fn parse_statement<'ast>(
+    source: &str,
     arena: &'ast bumpalo::Bump,
-) -> Result<Stmt<'src, 'ast>, ParseErrors> {
+) -> Result<Stmt<'ast>, ParseErrors> {
     let mut parser = Parser::new(source, arena);
 
     let result = parser.parse_statement();
 
-    // Check for any remaining lexer errors
-    if parser.lexer.has_errors() {
-        for lexer_error in parser.lexer.take_errors() {
-            parser.errors.push(ParseError::new(
-                ParseErrorKind::InvalidSyntax,
-                lexer_error.span,
-                format!("lexer error: {}", lexer_error.message),
-            ));
-        }
-    }
+    // Lexer errors are collected during Parser::new() and already in parser.errors
 
     match result {
         Ok(stmt) => {
@@ -347,24 +311,15 @@ pub fn parse_statement<'src, 'ast>(
 ///     Err(errors) => eprintln!("Errors: {}", errors),
 /// }
 /// ```
-pub fn parse_type_expr<'src, 'ast>(
-    source: &'src str,
+pub fn parse_type_expr<'ast>(
+    source: &str,
     arena: &'ast bumpalo::Bump,
-) -> Result<TypeExpr<'src, 'ast>, ParseErrors> {
+) -> Result<TypeExpr<'ast>, ParseErrors> {
     let mut parser = Parser::new(source, arena);
 
     let result = parser.parse_type();
 
-    // Check for any remaining lexer errors
-    if parser.lexer.has_errors() {
-        for lexer_error in parser.lexer.take_errors() {
-            parser.errors.push(ParseError::new(
-                ParseErrorKind::InvalidSyntax,
-                lexer_error.span,
-                format!("lexer error: {}", lexer_error.message),
-            ));
-        }
-    }
+    // Lexer errors are collected during Parser::new() and already in parser.errors
 
     match result {
         Ok(type_expr) => {
@@ -378,6 +333,58 @@ pub fn parse_type_expr<'src, 'ast>(
             parser.errors.push(err);
             Err(parser.take_errors())
         }
+    }
+}
+
+/// Parse a property declaration expression (type followed by identifier).
+///
+/// This parses strings like "const int score" or "MyClass@ obj" and returns
+/// the type expression and identifier name.
+///
+/// # Example
+///
+/// ```
+/// use angelscript::parse_property_expr;
+/// use bumpalo::Bump;
+///
+/// let arena = Bump::new();
+/// match parse_property_expr("const int score", &arena) {
+///     Ok((ty, name)) => println!("Property '{}' of type '{}'", name.name, ty),
+///     Err(errors) => eprintln!("Errors: {}", errors),
+/// }
+/// ```
+pub fn parse_property_expr<'ast>(
+    source: &str,
+    arena: &'ast bumpalo::Bump,
+) -> Result<(TypeExpr<'ast>, Ident<'ast>), ParseErrors> {
+    use crate::lexer::TokenKind;
+
+    let mut parser = Parser::new(source, arena);
+
+    // Parse the type expression
+    let type_result = parser.parse_type();
+    let type_expr = match type_result {
+        Ok(ty) => ty,
+        Err(err) => {
+            parser.errors.push(err);
+            return Err(parser.take_errors());
+        }
+    };
+
+    // Parse the identifier name
+    let name_result = parser.expect(TokenKind::Identifier);
+    let name = match name_result {
+        Ok(token) => Ident::new(token.lexeme, token.span),
+        Err(err) => {
+            parser.errors.push(err);
+            return Err(parser.take_errors());
+        }
+    };
+
+    if parser.has_errors() {
+        Err(parser.take_errors())
+    } else {
+        Ok((type_expr, name))
     }
 }
 

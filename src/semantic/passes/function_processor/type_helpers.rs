@@ -18,13 +18,13 @@ use crate::semantic::types::type_def::FunctionId;
 
 use super::{FunctionCompiler, SwitchCategory};
 
-impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
+impl<'ast> FunctionCompiler<'ast> {
     pub(super) fn build_qualified_name(&self, name: &str) -> String {
         Self::build_qualified_name_from_path(&self.namespace_path, name)
     }
 
     /// Build a scoped name from a Scope (without intermediate Vec allocation)
-    pub(super) fn build_scope_name(scope: &crate::ast::Scope<'src, 'ast>) -> String {
+    pub(super) fn build_scope_name(scope: &crate::ast::Scope<'ast>) -> String {
         if scope.segments.is_empty() {
             return String::new();
         }
@@ -77,7 +77,7 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
 
 
 
-    pub(super) fn resolve_type_expr(&mut self, type_expr: &TypeExpr<'src, 'ast>) -> Option<DataType> {
+    pub(super) fn resolve_type_expr(&mut self, type_expr: &TypeExpr<'ast>) -> Option<DataType> {
         // Resolve the base type, considering scope/namespace
         let base_type_id = self.resolve_base_type(&type_expr.base, type_expr.scope.as_ref(), type_expr.span)?;
 
@@ -185,8 +185,8 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
     /// Resolve a base type (primitive or named) to a TypeId, considering scope and namespaces.
     pub(super) fn resolve_base_type(
         &mut self,
-        base: &TypeBase<'src>,
-        scope: Option<&crate::ast::Scope<'src, 'ast>>,
+        base: &TypeBase<'ast>,
+        scope: Option<&crate::ast::Scope<'ast>>,
         span: Span,
     ) -> Option<TypeId> {
         use crate::ast::types::TypeBase;
@@ -313,7 +313,7 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
     }
 
     /// Build a scoped name from a Scope and a name (no intermediate Vec allocation)
-    pub(super) fn build_scoped_name(&self, scope: &crate::ast::Scope<'src, 'ast>, name: &str) -> String {
+    pub(super) fn build_scoped_name(&self, scope: &crate::ast::Scope<'ast>, name: &str) -> String {
         let scope_name = Self::build_scope_name(&scope);
         let mut result = String::with_capacity(scope_name.len() + 2 + name.len());
         result.push_str(&scope_name);

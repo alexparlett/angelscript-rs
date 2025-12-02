@@ -114,20 +114,20 @@ impl ConstValue {
 ///
 /// Evaluates expressions at compile time when possible.
 /// Returns `None` if the expression cannot be evaluated as a constant.
-pub struct ConstEvaluator<'a, 'src, 'ast> {
-    registry: &'a Registry<'src, 'ast>,
+pub struct ConstEvaluator<'a, 'ast> {
+    registry: &'a Registry<'ast>,
 }
 
-impl<'a, 'src, 'ast> ConstEvaluator<'a, 'src, 'ast> {
+impl<'a, 'ast> ConstEvaluator<'a, 'ast> {
     /// Create a new constant evaluator.
-    pub fn new(registry: &'a Registry<'src, 'ast>) -> Self {
+    pub fn new(registry: &'a Registry<'ast>) -> Self {
         Self { registry }
     }
 
     /// Evaluate an expression as a constant value.
     ///
     /// Returns `None` if the expression cannot be evaluated at compile time.
-    pub fn eval(&self, expr: &Expr<'src, 'ast>) -> Option<ConstValue> {
+    pub fn eval(&self, expr: &Expr<'ast>) -> Option<ConstValue> {
         match expr {
             Expr::Literal(lit) => self.eval_literal(&lit.kind),
             Expr::Unary(unary) => self.eval_unary(unary.op, unary.operand),
@@ -142,22 +142,22 @@ impl<'a, 'src, 'ast> ConstEvaluator<'a, 'src, 'ast> {
     }
 
     /// Evaluate and return as i64 (convenience method).
-    pub fn eval_as_int(&self, expr: &Expr<'src, 'ast>) -> Option<i64> {
+    pub fn eval_as_int(&self, expr: &Expr<'ast>) -> Option<i64> {
         self.eval(expr).and_then(|v| v.as_int())
     }
 
     /// Evaluate and return as u64 (convenience method).
-    pub fn eval_as_uint(&self, expr: &Expr<'src, 'ast>) -> Option<u64> {
+    pub fn eval_as_uint(&self, expr: &Expr<'ast>) -> Option<u64> {
         self.eval(expr).and_then(|v| v.as_uint())
     }
 
     /// Evaluate and return as f64 (convenience method).
-    pub fn eval_as_float(&self, expr: &Expr<'src, 'ast>) -> Option<f64> {
+    pub fn eval_as_float(&self, expr: &Expr<'ast>) -> Option<f64> {
         self.eval(expr).and_then(|v| v.as_float())
     }
 
     /// Evaluate and return as bool (convenience method).
-    pub fn eval_as_bool(&self, expr: &Expr<'src, 'ast>) -> Option<bool> {
+    pub fn eval_as_bool(&self, expr: &Expr<'ast>) -> Option<bool> {
         self.eval(expr).and_then(|v| v.as_bool())
     }
 
@@ -172,7 +172,7 @@ impl<'a, 'src, 'ast> ConstEvaluator<'a, 'src, 'ast> {
         }
     }
 
-    fn eval_unary(&self, op: UnaryOp, operand: &Expr<'src, 'ast>) -> Option<ConstValue> {
+    fn eval_unary(&self, op: UnaryOp, operand: &Expr<'ast>) -> Option<ConstValue> {
         let value = self.eval(operand)?;
 
         match op {
@@ -202,9 +202,9 @@ impl<'a, 'src, 'ast> ConstEvaluator<'a, 'src, 'ast> {
 
     fn eval_binary(
         &self,
-        left: &Expr<'src, 'ast>,
+        left: &Expr<'ast>,
         op: BinaryOp,
-        right: &Expr<'src, 'ast>,
+        right: &Expr<'ast>,
     ) -> Option<ConstValue> {
         let left_val = self.eval(left)?;
         let right_val = self.eval(right)?;
@@ -261,9 +261,9 @@ impl<'a, 'src, 'ast> ConstEvaluator<'a, 'src, 'ast> {
 
     fn eval_ternary(
         &self,
-        condition: &Expr<'src, 'ast>,
-        then_expr: &Expr<'src, 'ast>,
-        else_expr: &Expr<'src, 'ast>,
+        condition: &Expr<'ast>,
+        then_expr: &Expr<'ast>,
+        else_expr: &Expr<'ast>,
     ) -> Option<ConstValue> {
         let cond = self.eval(condition)?;
         if cond.is_truthy() {
@@ -273,7 +273,7 @@ impl<'a, 'src, 'ast> ConstEvaluator<'a, 'src, 'ast> {
         }
     }
 
-    fn eval_ident(&self, ident: &crate::ast::expr::IdentExpr<'src, 'ast>) -> Option<ConstValue> {
+    fn eval_ident(&self, ident: &crate::ast::expr::IdentExpr<'ast>) -> Option<ConstValue> {
         // Check if this is a qualified name like EnumName::VALUE
         if let Some(scope) = &ident.scope {
             // Build the qualified enum name from scope segments

@@ -13,7 +13,7 @@ use crate::ast::types::*;
 use crate::lexer::{self, Span, TokenKind};
 use super::parser::Parser;
 
-impl<'src, 'ast> Parser<'src, 'ast> {
+impl<'ast> Parser<'ast> {
     /// Parse a complete type expression.
     ///
     /// Grammar: `'const'? SCOPE DATATYPE TEMPLTYPELIST? ( ('[' ']') | ('@' 'const'?) )*`
@@ -23,7 +23,7 @@ impl<'src, 'ast> Parser<'src, 'ast> {
     /// - `const array<int>[]`
     /// - `Namespace::MyClass@`
     /// - `const MyClass@ const`
-    pub fn parse_type(&mut self) -> Result<TypeExpr<'src, 'ast>, ParseError> {
+    pub fn parse_type(&mut self) -> Result<TypeExpr<'ast>, ParseError> {
         let start_span = self.peek().span;
 
         // Leading const (makes the object const, not the handle)
@@ -72,7 +72,7 @@ impl<'src, 'ast> Parser<'src, 'ast> {
     /// - `void`
     /// - `int&`
     /// - `const string&`
-    pub fn parse_return_type(&mut self) -> Result<ReturnType<'src, 'ast>, ParseError> {
+    pub fn parse_return_type(&mut self) -> Result<ReturnType<'ast>, ParseError> {
         let ty = self.parse_type()?;
         let is_ref = self.eat(TokenKind::Amp).is_some();
         let span = if is_ref {
@@ -96,7 +96,7 @@ impl<'src, 'ast> Parser<'src, 'ast> {
     /// - `int& in`
     /// - `int& out`
     /// - `int& inout`
-    pub fn parse_param_type(&mut self) -> Result<ParamType<'src, 'ast>, ParseError> {
+    pub fn parse_param_type(&mut self) -> Result<ParamType<'ast>, ParseError> {
         let ty = self.parse_type()?;
 
         let ref_kind = if self.eat(TokenKind::Amp).is_some() {
@@ -132,7 +132,7 @@ impl<'src, 'ast> Parser<'src, 'ast> {
     /// - `Namespace::`
     /// - `::Namespace::SubSpace::`
     /// - `Container<T>::`
-    pub fn parse_optional_scope(&mut self) -> Result<Option<Scope<'src, 'ast>>, ParseError> {
+    pub fn parse_optional_scope(&mut self) -> Result<Option<Scope<'ast>>, ParseError> {
         let start_span = self.peek().span;
 
         // Check for leading ::
@@ -194,7 +194,7 @@ impl<'src, 'ast> Parser<'src, 'ast> {
             // SAFETY: Scope borrows from the arena which outlives the parser.
             // We transmute the lifetime from the local borrow to 'ast which is sound
             // because the arena (&'ast Bump) lives for 'ast.
-            let scope = unsafe { std::mem::transmute::<Scope<'_, '_>, Scope<'src, 'ast>>(scope) };
+            // The scope is already allocated in the arena, so no transmute needed
             Ok(Some(scope))
         } else {
             Ok(None)
@@ -204,7 +204,7 @@ impl<'src, 'ast> Parser<'src, 'ast> {
     /// Parse the base type (primitive, identifier, auto, or ?).
     ///
     /// Grammar: `IDENTIFIER | PRIMTYPE | '?' | 'auto'`
-    fn parse_type_base(&mut self) -> Result<TypeBase<'src>, ParseError> {
+    fn parse_type_base(&mut self) -> Result<TypeBase<'ast>, ParseError> {
         let token = *self.peek();
 
         match token.kind {
@@ -291,7 +291,7 @@ impl<'src, 'ast> Parser<'src, 'ast> {
     /// Grammar: `'<' TYPE (',' TYPE)* '>'`
     ///
     /// Note: Handles >> splitting for nested templates.
-    fn parse_template_args(&mut self) -> Result<&'ast [TypeExpr<'src, 'ast>], ParseError> {
+    fn parse_template_args(&mut self) -> Result<&'ast [TypeExpr<'ast>], ParseError> {
         self.expect(TokenKind::Less)?;
 
         let mut args = bumpalo::collections::Vec::new_in(self.arena);

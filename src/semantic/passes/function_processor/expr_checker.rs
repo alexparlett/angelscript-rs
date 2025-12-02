@@ -22,11 +22,11 @@ use crate::semantic::types::type_def::FunctionId;
 
 use super::{ExprContext, FunctionCompiler};
 
-impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
+impl<'ast> FunctionCompiler<'ast> {
     /// Type checks an expression and returns its type.
     ///
     /// Returns None if type checking failed (error already recorded).
-    pub(super) fn check_expr(&mut self, expr: &'ast Expr<'src, 'ast>) -> Option<ExprContext> {
+    pub(super) fn check_expr(&mut self, expr: &'ast Expr<'ast>) -> Option<ExprContext> {
         match expr {
             Expr::Literal(lit) => self.check_literal(lit),
             Expr::Ident(ident) => self.check_ident(ident),
@@ -82,7 +82,7 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
     /// Enum values (EnumName::VALUE) are rvalues (integer constants).
     /// The `this` keyword resolves to the current object in method bodies.
     /// Unqualified identifiers in methods resolve to class members (implicit `this`).
-    pub(super) fn check_ident(&mut self, ident: &IdentExpr<'src, 'ast>) -> Option<ExprContext> {
+    pub(super) fn check_ident(&mut self, ident: &IdentExpr<'ast>) -> Option<ExprContext> {
         let name = ident.ident.name;
 
         // Check if this is a scoped identifier (e.g., EnumName::VALUE or Namespace::EnumName::VALUE)
@@ -300,7 +300,7 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
 
     /// Type checks a binary expression.
     /// Binary expressions always produce rvalues (temporary results).
-    pub(super) fn check_binary(&mut self, binary: &BinaryExpr<'src, 'ast>) -> Option<ExprContext> {
+    pub(super) fn check_binary(&mut self, binary: &BinaryExpr<'ast>) -> Option<ExprContext> {
         let left_ctx = self.check_expr(binary.left)?;
         let right_ctx = self.check_expr(binary.right)?;
 
@@ -685,7 +685,7 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
 
     /// Type checks a unary expression.
     /// Most unary operations produce rvalues, but ++x/--x preserve lvalue-ness.
-    pub(super) fn check_unary(&mut self, unary: &UnaryExpr<'src, 'ast>) -> Option<ExprContext> {
+    pub(super) fn check_unary(&mut self, unary: &UnaryExpr<'ast>) -> Option<ExprContext> {
         // Special case: @ operator on function name to create function handle
         // This must be handled before check_expr because function names aren't variables
         if unary.op == UnaryOp::HandleOf
@@ -926,7 +926,7 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
 
     /// Type checks an assignment expression.
     /// Assignments require a mutable lvalue as target and produce an rvalue.
-    pub(super) fn check_assign(&mut self, assign: &AssignExpr<'src, 'ast>) -> Option<ExprContext> {
+    pub(super) fn check_assign(&mut self, assign: &AssignExpr<'ast>) -> Option<ExprContext> {
         use AssignOp::*;
 
         match assign.op {
@@ -1244,7 +1244,7 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
 
     /// Type checks a ternary expression.
     /// Ternary expressions produce rvalues (temporary values).
-    pub(super) fn check_ternary(&mut self, ternary: &TernaryExpr<'src, 'ast>) -> Option<ExprContext> {
+    pub(super) fn check_ternary(&mut self, ternary: &TernaryExpr<'ast>) -> Option<ExprContext> {
         // Check condition
         let cond_ctx = self.check_expr(ternary.condition)?;
         if cond_ctx.data_type.type_id != BOOL_TYPE {
@@ -1299,7 +1299,7 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
 
     /// Type checks a function call.
     /// Function calls produce rvalues (unless they return a reference, which we don't handle yet).
-    pub(super) fn check_call(&mut self, call: &CallExpr<'src, 'ast>) -> Option<ExprContext> {
+    pub(super) fn check_call(&mut self, call: &CallExpr<'ast>) -> Option<ExprContext> {
         // Determine what we're calling FIRST (before type-checking arguments)
         // This allows us to provide expected funcdef context for lambda inference
         match call.callee {
@@ -2039,7 +2039,7 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
     /// Note: Multi-dimensional chaining (`arr[0][1]`) is handled by the parser
     /// creating nested IndexExpr nodes, so each call to check_index handles
     /// one bracket pair with potentially multiple arguments.
-    pub(super) fn check_index(&mut self, index: &IndexExpr<'src, 'ast>) -> Option<ExprContext> {
+    pub(super) fn check_index(&mut self, index: &IndexExpr<'ast>) -> Option<ExprContext> {
         // Evaluate the base object
         let current_ctx = self.check_expr(index.object)?;
 
@@ -2194,8 +2194,8 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
     /// Returns None if error occurred, Some(ExprContext) for the assignment result.
     pub(super) fn check_index_assignment(
         &mut self,
-        index: &IndexExpr<'src, 'ast>,
-        value: &'ast Expr<'src, 'ast>,
+        index: &IndexExpr<'ast>,
+        value: &'ast Expr<'ast>,
         span: Span,
     ) -> Option<ExprContext> {
         // For multi-dimensional indexing like arr[0][1] = value:
@@ -2508,9 +2508,9 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
     /// or None if no property exists (caller should fall back to regular field assignment).
     pub(super) fn check_member_property_assignment(
         &mut self,
-        member: &MemberExpr<'src, 'ast>,
+        member: &MemberExpr<'ast>,
         property_name: &str,
-        value: &'ast Expr<'src, 'ast>,
+        value: &'ast Expr<'ast>,
         span: Span,
     ) -> Option<ExprContext> {
         // First evaluate the object expression
@@ -2620,7 +2620,7 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
     /// Type checks a member access expression.
     /// Field access (obj.field) is an lvalue if obj is an lvalue.
     /// Method calls (obj.method()) always return rvalues.
-    pub(super) fn check_member(&mut self, member: &MemberExpr<'src, 'ast>) -> Option<ExprContext> {
+    pub(super) fn check_member(&mut self, member: &MemberExpr<'ast>) -> Option<ExprContext> {
         let object_ctx = self.check_expr(member.object)?;
 
         // Check that the object is a class/interface type
@@ -2967,7 +2967,7 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
 
     /// Type checks a postfix expression.
     /// x++ and x-- require mutable lvalues and produce rvalues.
-    pub(super) fn check_postfix(&mut self, postfix: &PostfixExpr<'src, 'ast>) -> Option<ExprContext> {
+    pub(super) fn check_postfix(&mut self, postfix: &PostfixExpr<'ast>) -> Option<ExprContext> {
         let operand_ctx = self.check_expr(postfix.operand)?;
 
         // Try operator overload first
@@ -3040,7 +3040,7 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
     /// - Always produces a handle to the target type (Type@)
     /// - Works for any object handle to any class/interface handle
     /// - Returns null at runtime if the object doesn't implement the target type
-    pub(super) fn check_cast(&mut self, cast: &CastExpr<'src, 'ast>) -> Option<ExprContext> {
+    pub(super) fn check_cast(&mut self, cast: &CastExpr<'ast>) -> Option<ExprContext> {
         let expr_ctx = self.check_expr(cast.expr)?;
         let mut target_type = self.resolve_type_expr(&cast.target_type)?;
 
@@ -3104,7 +3104,7 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
 
     /// Type checks a lambda expression.
     /// Lambdas produce rvalues (function references).
-    pub(super) fn check_lambda(&mut self, lambda: &LambdaExpr<'src, 'ast>) -> Option<ExprContext> {
+    pub(super) fn check_lambda(&mut self, lambda: &LambdaExpr<'ast>) -> Option<ExprContext> {
         // Get expected funcdef type from context (set by check_call or assignment)
         let funcdef_type_id = match self.expected_funcdef_type {
             Some(type_id) => type_id,
@@ -3255,7 +3255,7 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
 
     /// Type checks an initializer list.
     /// Initializer lists produce rvalues (newly constructed arrays/objects).
-    pub(super) fn check_init_list(&mut self, init_list: &InitListExpr<'src, 'ast>) -> Option<ExprContext> {
+    pub(super) fn check_init_list(&mut self, init_list: &InitListExpr<'ast>) -> Option<ExprContext> {
         use crate::ast::InitElement;
 
         // Handle empty initializer list - use expected type if available
@@ -3516,7 +3516,7 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
 
     /// Type checks a parenthesized expression.
     /// Parentheses preserve the lvalue-ness of the inner expression.
-    pub(super) fn check_paren(&mut self, paren: &ParenExpr<'src, 'ast>) -> Option<ExprContext> {
+    pub(super) fn check_paren(&mut self, paren: &ParenExpr<'ast>) -> Option<ExprContext> {
         self.check_expr(paren.expr)
     }
 }
