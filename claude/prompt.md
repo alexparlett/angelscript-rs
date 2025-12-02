@@ -12,27 +12,8 @@
 **Semantic Analysis:** 100% Complete
 **Test Status:** 1669 tests passing, 0 ignored
 
----
-
-## Recently Completed: Enhanced Switch Statement
-
-**Commit:** b5dcba2
-
-Extended switch statement to support additional types beyond integers/enums:
-
-### New Capabilities
-- **Bool switches**: `switch (b) { case true: case false: }`
-- **Float/Double switches**: `switch (f) { case 1.5f: case 2.5f: }`
-- **String switches**: `switch (s) { case "hello": case "world": }` (uses opEquals)
-- **Handle null checks**: `switch (obj) { case null: ... }`
-- **Type pattern matching**: `switch (animal) { case Dog: case Cat: }` (Kotlin-style)
-
-### Implementation Details
-- Added `SwitchCategory` enum to classify switch expression types
-- Added `SwitchCaseKey` enum for duplicate detection across all types
-- Added `IsInstanceOf(TypeId)` bytecode instruction for runtime type checking
-- Uses `opEquals` for string comparison
-- Type patterns check inheritance/interface implementation
+**Recent Additions:**
+- Enhanced switch: bool, float, string, handle null, type patterns
 
 ---
 
