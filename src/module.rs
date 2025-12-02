@@ -21,7 +21,10 @@ use bumpalo::Bump;
 use thiserror::Error;
 
 use crate::ast::parse_property_expr;
-use crate::ffi::{GlobalPropertyDef, NativeFunctionDef, NativeTypeDef};
+use crate::ffi::{
+    GlobalPropertyDef, NativeFuncdefDef, NativeFunctionDef, NativeInterfaceDef, NativeTypeDef,
+};
+use crate::semantic::types::type_def::TypeId;
 
 /// A namespaced collection of native functions, types, and global properties.
 ///
@@ -73,6 +76,14 @@ pub struct Module<'app> {
     /// Registered enums (name -> values)
     enums: Vec<NativeEnumDef>,
 
+    /// Registered interfaces
+    /// The 'static lifetime is transmuted - actual lifetime is tied to arena
+    interfaces: Vec<NativeInterfaceDef<'static>>,
+
+    /// Registered funcdefs (function pointer types)
+    /// The 'static lifetime is transmuted - actual lifetime is tied to arena
+    funcdefs: Vec<NativeFuncdefDef<'static>>,
+
     /// Registered templates
     templates: Vec<NativeTemplateDef>,
 
@@ -84,6 +95,8 @@ pub struct Module<'app> {
 /// A native enum definition.
 #[derive(Debug, Clone)]
 pub struct NativeEnumDef {
+    /// Unique type ID (assigned at registration via TypeId::next())
+    pub id: TypeId,
     /// Enum name
     pub name: String,
     /// Enum values (name -> value)
@@ -121,6 +134,8 @@ impl<'app> Module<'app> {
             functions: Vec::new(),
             types: Vec::new(),
             enums: Vec::new(),
+            interfaces: Vec::new(),
+            funcdefs: Vec::new(),
             templates: Vec::new(),
             global_properties: Vec::new(),
         }
@@ -211,6 +226,40 @@ impl<'app> Module<'app> {
     /// Get the registered enums.
     pub fn enums(&self) -> &[NativeEnumDef] {
         &self.enums
+    }
+
+    // =========================================================================
+    // Interface registration (placeholder - InterfaceBuilder in Task 05)
+    // =========================================================================
+
+    /// Register a native interface (placeholder).
+    ///
+    /// The full implementation with InterfaceBuilder will be added in Task 05.
+    /// For now, this stores a raw NativeInterfaceDef.
+    pub fn add_interface(&mut self, interface_def: NativeInterfaceDef<'static>) {
+        self.interfaces.push(interface_def);
+    }
+
+    /// Get the registered interfaces.
+    pub fn interfaces(&self) -> &[NativeInterfaceDef<'static>] {
+        &self.interfaces
+    }
+
+    // =========================================================================
+    // Funcdef registration (placeholder - will be implemented in Task 05)
+    // =========================================================================
+
+    /// Register a native funcdef (placeholder).
+    ///
+    /// The full implementation will be added in Task 05.
+    /// For now, this stores a raw NativeFuncdefDef.
+    pub fn add_funcdef(&mut self, funcdef_def: NativeFuncdefDef<'static>) {
+        self.funcdefs.push(funcdef_def);
+    }
+
+    /// Get the registered funcdefs.
+    pub fn funcdefs(&self) -> &[NativeFuncdefDef<'static>] {
+        &self.funcdefs
     }
 
     // =========================================================================
@@ -316,6 +365,8 @@ impl<'app> Module<'app> {
         self.functions.len()
             + self.types.len()
             + self.enums.len()
+            + self.interfaces.len()
+            + self.funcdefs.len()
             + self.templates.len()
             + self.global_properties.len()
     }
@@ -335,6 +386,8 @@ impl std::fmt::Debug for Module<'_> {
             .field("functions", &self.functions)
             .field("types", &self.types)
             .field("enums", &self.enums)
+            .field("interfaces", &self.interfaces)
+            .field("funcdefs", &self.funcdefs)
             .field("templates", &self.templates)
             .field("global_properties", &self.global_properties)
             .finish()
@@ -637,6 +690,7 @@ mod tests {
         let mut module = Module::<'static>::root();
 
         module.add_enum(NativeEnumDef {
+            id: TypeId::next(),
             name: "Color".to_string(),
             values: vec![
                 ("Red".to_string(), 0),
@@ -695,6 +749,7 @@ mod tests {
     #[test]
     fn native_enum_def_clone() {
         let enum_def = NativeEnumDef {
+            id: TypeId::next(),
             name: "Color".to_string(),
             values: vec![("Red".to_string(), 0)],
         };

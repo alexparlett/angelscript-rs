@@ -2,9 +2,12 @@
 //!
 //! These types are used during registration to specify type information.
 //! Type specifications use AST primitives parsed from declaration strings.
+//!
+//! IDs are assigned at registration time using the global atomic counters
+//! (`TypeId::next()` and `FunctionId::next()`).
 
 use crate::ast::{FunctionParam, Ident, ReturnType, TypeExpr};
-use crate::semantic::types::type_def::{FunctionTraits, Visibility};
+use crate::semantic::types::type_def::{FunctionId, FunctionTraits, TypeId, Visibility};
 use crate::semantic::types::DataType;
 
 use super::native_fn::NativeFn;
@@ -223,6 +226,8 @@ impl Default for TemplateValidation {
 /// Uses AST primitives: Ident, FunctionParam, ReturnType.
 #[derive(Debug)]
 pub struct NativeFunctionDef<'ast> {
+    /// Unique function ID (assigned at registration via FunctionId::next())
+    pub id: FunctionId,
     /// Function name
     pub name: Ident<'ast>,
     /// Parameter definitions (parsed from declaration string)
@@ -245,6 +250,8 @@ pub struct NativeFunctionDef<'ast> {
 /// Uses AST primitives: Ident for template params.
 #[derive(Debug)]
 pub struct NativeTypeDef<'ast> {
+    /// Unique type ID (assigned at registration via TypeId::next())
+    pub id: TypeId,
     /// Type name (unqualified)
     pub name: String,
     /// Template parameters (e.g., ["T"] or ["K", "V"])
@@ -296,6 +303,47 @@ pub struct NativePropertyDef<'ast> {
     pub getter: NativeFn,
     /// Setter function (if writable)
     pub setter: Option<NativeFn>,
+}
+
+/// Native interface definition.
+/// Interfaces define abstract method signatures that classes can implement.
+/// Uses AST primitives for method signatures.
+#[derive(Debug)]
+pub struct NativeInterfaceDef<'ast> {
+    /// Unique type ID (assigned at registration via TypeId::next())
+    pub id: TypeId,
+    /// Interface name
+    pub name: String,
+    /// Abstract method signatures
+    pub methods: Vec<NativeInterfaceMethod<'ast>>,
+}
+
+/// An abstract method signature in an interface.
+/// Interface methods have no implementation (no FunctionId).
+#[derive(Debug)]
+pub struct NativeInterfaceMethod<'ast> {
+    /// Method name
+    pub name: Ident<'ast>,
+    /// Parameter definitions
+    pub params: &'ast [FunctionParam<'ast>],
+    /// Return type
+    pub return_type: ReturnType<'ast>,
+    /// Whether this is a const method
+    pub is_const: bool,
+}
+
+/// Native funcdef (function pointer type) definition.
+/// Uses AST primitives for the function signature.
+#[derive(Debug)]
+pub struct NativeFuncdefDef<'ast> {
+    /// Unique type ID (assigned at registration via TypeId::next())
+    pub id: TypeId,
+    /// Funcdef name
+    pub name: Ident<'ast>,
+    /// Parameter definitions
+    pub params: &'ast [FunctionParam<'ast>],
+    /// Return type
+    pub return_type: ReturnType<'ast>,
 }
 
 #[cfg(test)]
@@ -452,4 +500,17 @@ mod tests {
         let v = TemplateValidation::default();
         assert!(v.is_valid);
     }
+
+    #[test]
+    fn native_interface_def_debug() {
+        let interface = NativeInterfaceDef {
+            id: TypeId::next(),
+            name: "ISerializable".to_string(),
+            methods: Vec::new(),
+        };
+        let debug = format!("{:?}", interface);
+        assert!(debug.contains("NativeInterfaceDef"));
+        assert!(debug.contains("ISerializable"));
+    }
+
 }

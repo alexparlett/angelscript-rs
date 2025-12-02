@@ -38,6 +38,7 @@ pub use global_property::GlobalPropertyDef;
 pub use native_fn::{CallContext, NativeCallable, NativeFn, ObjectHandle, ObjectHeap, VmSlot};
 pub use traits::{FromScript, NativeType, ToScript};
 pub use types::{
-    Behaviors, NativeFunctionDef, NativeMethodDef, NativePropertyDef, NativeTypeDef,
-    ReferenceKind, TemplateInstanceInfo, TemplateValidation, TypeKind,
+    Behaviors, NativeFuncdefDef, NativeFunctionDef, NativeInterfaceDef, NativeInterfaceMethod,
+    NativeMethodDef, NativePropertyDef, NativeTypeDef, ReferenceKind, TemplateInstanceInfo,
+    TemplateValidation, TypeKind,
 };
