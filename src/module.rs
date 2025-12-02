@@ -63,10 +63,12 @@ pub struct Module<'app> {
     namespace: Vec<String>,
 
     /// Registered native functions
-    functions: Vec<NativeFunctionDef>,
+    /// The 'static lifetime is transmuted - actual lifetime is tied to arena
+    functions: Vec<NativeFunctionDef<'static>>,
 
     /// Registered native types
-    types: Vec<NativeTypeDef>,
+    /// The 'static lifetime is transmuted - actual lifetime is tied to arena
+    types: Vec<NativeTypeDef<'static>>,
 
     /// Registered enums (name -> values)
     enums: Vec<NativeEnumDef>,
@@ -169,12 +171,12 @@ impl<'app> Module<'app> {
     ///
     /// The full implementation with type-safe closures will be added in Task 03.
     /// For now, this stores a raw NativeFunctionDef.
-    pub fn add_function(&mut self, func: NativeFunctionDef) {
+    pub fn add_function(&mut self, func: NativeFunctionDef<'static>) {
         self.functions.push(func);
     }
 
     /// Get the registered functions.
-    pub fn functions(&self) -> &[NativeFunctionDef] {
+    pub fn functions(&self) -> &[NativeFunctionDef<'static>] {
         &self.functions
     }
 
@@ -186,12 +188,12 @@ impl<'app> Module<'app> {
     ///
     /// The full implementation with ClassBuilder will be added in Task 04.
     /// For now, this stores a raw NativeTypeDef.
-    pub fn add_type(&mut self, type_def: NativeTypeDef) {
+    pub fn add_type(&mut self, type_def: NativeTypeDef<'static>) {
         self.types.push(type_def);
     }
 
     /// Get the registered types.
-    pub fn types(&self) -> &[NativeTypeDef] {
+    pub fn types(&self) -> &[NativeTypeDef<'static>] {
         &self.types
     }
 

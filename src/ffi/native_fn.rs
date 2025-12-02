@@ -354,7 +354,7 @@ impl<'vm> CallContext<'vm> {
                 count: self.arg_count(),
             });
         }
-        T::from_slot(&self.slots[slot_index]).map_err(NativeError::from)
+        T::from_vm(&self.slots[slot_index]).map_err(NativeError::from)
     }
 
     /// Get a raw reference to an argument slot.
@@ -433,7 +433,7 @@ impl<'vm> CallContext<'vm> {
 
     /// Set the return value.
     pub fn set_return<T: ToScript>(&mut self, value: T) -> Result<(), NativeError> {
-        *self.return_slot = value.to_slot().map_err(NativeError::from)?;
+        value.to_vm(self.return_slot).map_err(NativeError::from)?;
         Ok(())
     }
 

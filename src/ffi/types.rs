@@ -1,177 +1,13 @@
 //! Core types for FFI registration.
 //!
 //! These types are used during registration to specify type information.
-//! They are converted to semantic analysis types during `apply_to_registry()`.
+//! Type specifications use AST primitives parsed from declaration strings.
 
-use crate::semantic::types::data_type::RefModifier;
+use crate::ast::{FunctionParam, Ident, ReturnType, TypeExpr};
 use crate::semantic::types::type_def::{FunctionTraits, Visibility};
+use crate::semantic::types::DataType;
 
 use super::native_fn::NativeFn;
-
-/// AngelScript type specification - stored explicitly, NOT inferred from Rust types.
-///
-/// This allows declaring signatures like `int@` (handle to primitive) that have
-/// no Rust equivalent, or `const Foo@` vs `Foo @const` distinctions.
-///
-/// # Examples
-///
-/// ```ignore
-/// // Simple type: int
-/// TypeSpec::simple("int")
-///
-/// // Const type: const int
-/// TypeSpec::new("int").with_const()
-///
-/// // Handle: Foo@
-/// TypeSpec::new("Foo").with_handle()
-///
-/// // Handle to const: const Foo@
-/// TypeSpec::new("Foo").with_handle().with_handle_to_const()
-///
-/// // Reference parameter: const string &in
-/// TypeSpec::new("string").with_const().with_ref(RefModifier::In)
-/// ```
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct TypeSpec {
-    /// The type name (resolved to TypeId during apply)
-    pub type_name: String,
-    /// `const T` - the value is const
-    pub is_const: bool,
-    /// `T@` - this is a handle
-    pub is_handle: bool,
-    /// `const T@` - handle points to const
-    pub is_handle_to_const: bool,
-    /// `T@+` - auto handle (automatic AddRef/Release)
-    pub is_auto_handle: bool,
-    /// Reference modifier (&in, &out, &inout)
-    pub ref_modifier: RefModifier,
-}
-
-impl TypeSpec {
-    /// Create a simple type specification with no modifiers.
-    pub fn simple(type_name: impl Into<String>) -> Self {
-        Self {
-            type_name: type_name.into(),
-            is_const: false,
-            is_handle: false,
-            is_handle_to_const: false,
-            is_auto_handle: false,
-            ref_modifier: RefModifier::None,
-        }
-    }
-
-    /// Create a new type specification (same as `simple`).
-    pub fn new(type_name: impl Into<String>) -> Self {
-        Self::simple(type_name)
-    }
-
-    /// Create a void type specification.
-    pub fn void() -> Self {
-        Self::simple("void")
-    }
-
-    /// Mark as const.
-    pub fn with_const(mut self) -> Self {
-        self.is_const = true;
-        self
-    }
-
-    /// Mark as a handle (`T@`).
-    pub fn with_handle(mut self) -> Self {
-        self.is_handle = true;
-        self
-    }
-
-    /// Mark as handle to const (`const T@`).
-    pub fn with_handle_to_const(mut self) -> Self {
-        self.is_handle_to_const = true;
-        self
-    }
-
-    /// Mark as auto handle (`T@+`).
-    pub fn with_auto_handle(mut self) -> Self {
-        self.is_auto_handle = true;
-        self
-    }
-
-    /// Set reference modifier.
-    pub fn with_ref(mut self, modifier: RefModifier) -> Self {
-        self.ref_modifier = modifier;
-        self
-    }
-
-    /// Set as `&in` reference.
-    pub fn ref_in(mut self) -> Self {
-        self.ref_modifier = RefModifier::In;
-        self
-    }
-
-    /// Set as `&out` reference.
-    pub fn ref_out(mut self) -> Self {
-        self.ref_modifier = RefModifier::Out;
-        self
-    }
-
-    /// Set as `&inout` reference.
-    pub fn ref_inout(mut self) -> Self {
-        self.ref_modifier = RefModifier::InOut;
-        self
-    }
-
-    /// Check if this is a void type.
-    pub fn is_void(&self) -> bool {
-        self.type_name == "void"
-            && !self.is_const
-            && !self.is_handle
-            && self.ref_modifier == RefModifier::None
-    }
-
-    /// Check if this is a variable parameter type (`?`).
-    pub fn is_any_type(&self) -> bool {
-        self.type_name == "?"
-    }
-}
-
-impl Default for TypeSpec {
-    fn default() -> Self {
-        Self::void()
-    }
-}
-
-/// A parameter definition for FFI functions.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ParamDef {
-    /// Parameter name
-    pub name: String,
-    /// Parameter type specification
-    pub type_spec: TypeSpec,
-}
-
-impl ParamDef {
-    /// Create a new parameter definition.
-    pub fn new(name: impl Into<String>, type_spec: TypeSpec) -> Self {
-        Self {
-            name: name.into(),
-            type_spec,
-        }
-    }
-
-    /// Create a variable parameter (`?&in`).
-    pub fn any_in(name: impl Into<String>) -> Self {
-        Self {
-            name: name.into(),
-            type_spec: TypeSpec::new("?").ref_in(),
-        }
-    }
-
-    /// Create a variable out parameter (`?&out`).
-    pub fn any_out(name: impl Into<String>) -> Self {
-        Self {
-            name: name.into(),
-            type_spec: TypeSpec::new("?").ref_out(),
-        }
-    }
-}
 
 /// Type kind determines memory semantics for registered types.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -183,17 +19,16 @@ pub enum TypeKind {
         size: usize,
         /// Alignment requirement
         align: usize,
+        /// Plain Old Data - no constructor/destructor needed, can memcpy
+        is_pod: bool,
     },
 
     /// Reference type - heap allocated via factory, handle semantics.
-    /// Requires: factory, addref, release behaviors.
-    Reference,
-
-    /// Scoped reference type - RAII-style, destroyed at scope exit, no handles.
-    Scoped,
-
-    /// Single-ref type - app-controlled lifetime, no handles in script.
-    SingleRef,
+    /// The `kind` field specifies the reference semantics.
+    Reference {
+        /// The kind of reference type
+        kind: ReferenceKind,
+    },
 }
 
 impl TypeKind {
@@ -202,12 +37,45 @@ impl TypeKind {
         TypeKind::Value {
             size: std::mem::size_of::<T>(),
             align: std::mem::align_of::<T>(),
+            is_pod: false,
         }
     }
 
-    /// Create a reference type kind.
+    /// Create a POD value type kind.
+    pub fn pod<T>() -> Self {
+        TypeKind::Value {
+            size: std::mem::size_of::<T>(),
+            align: std::mem::align_of::<T>(),
+            is_pod: true,
+        }
+    }
+
+    /// Create a standard reference type kind.
     pub fn reference() -> Self {
-        TypeKind::Reference
+        TypeKind::Reference {
+            kind: ReferenceKind::Standard,
+        }
+    }
+
+    /// Create a scoped reference type kind.
+    pub fn scoped() -> Self {
+        TypeKind::Reference {
+            kind: ReferenceKind::Scoped,
+        }
+    }
+
+    /// Create a single-ref type kind.
+    pub fn single_ref() -> Self {
+        TypeKind::Reference {
+            kind: ReferenceKind::SingleRef,
+        }
+    }
+
+    /// Create a generic handle type kind.
+    pub fn generic_handle() -> Self {
+        TypeKind::Reference {
+            kind: ReferenceKind::GenericHandle,
+        }
     }
 
     /// Check if this is a value type.
@@ -217,8 +85,29 @@ impl TypeKind {
 
     /// Check if this is a reference type.
     pub fn is_reference(&self) -> bool {
-        matches!(self, TypeKind::Reference)
+        matches!(self, TypeKind::Reference { .. })
     }
+
+    /// Check if this is a POD type.
+    pub fn is_pod(&self) -> bool {
+        matches!(self, TypeKind::Value { is_pod: true, .. })
+    }
+}
+
+/// Reference type variants for different ownership/lifetime semantics.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReferenceKind {
+    /// Standard reference type - full handle support with AddRef/Release ref counting.
+    Standard,
+
+    /// Scoped reference type - RAII-style, destroyed at scope exit, no handles.
+    Scoped,
+
+    /// Single-ref type - app-controlled lifetime, no handles in script.
+    SingleRef,
+
+    /// Generic handle - type-erased container that can hold any type.
+    GenericHandle,
 }
 
 /// Object behaviors for lifecycle management.
@@ -248,20 +137,98 @@ impl Behaviors {
     pub fn new() -> Self {
         Self::default()
     }
+
+    /// Check if has addref behavior.
+    pub fn has_addref(&self) -> bool {
+        self.addref.is_some()
+    }
+
+    /// Check if has release behavior.
+    pub fn has_release(&self) -> bool {
+        self.release.is_some()
+    }
+
+    /// Check if has destruct behavior.
+    pub fn has_destruct(&self) -> bool {
+        self.destruct.is_some()
+    }
 }
 
-/// Internal storage for a native function definition.
-///
-/// This is the lifetime-free internal representation that gets converted
-/// to `FunctionDef` during `apply_to_registry()`.
+/// Information about a template instantiation for validation callback.
+#[derive(Debug, Clone)]
+pub struct TemplateInstanceInfo {
+    /// The template name (e.g., "array")
+    pub template_name: String,
+    /// The type arguments (e.g., [int] for array<int>)
+    pub sub_types: Vec<DataType>,
+}
+
+impl TemplateInstanceInfo {
+    /// Create a new template instance info.
+    pub fn new(template_name: impl Into<String>, sub_types: Vec<DataType>) -> Self {
+        Self {
+            template_name: template_name.into(),
+            sub_types,
+        }
+    }
+}
+
+/// Result of template validation callback.
+#[derive(Debug, Clone)]
+pub struct TemplateValidation {
+    /// Is this instantiation valid?
+    pub is_valid: bool,
+    /// Error message if invalid
+    pub error: Option<String>,
+    /// Should this instance use garbage collection?
+    pub needs_gc: bool,
+}
+
+impl TemplateValidation {
+    /// Create a valid template validation result.
+    pub fn valid() -> Self {
+        Self {
+            is_valid: true,
+            error: None,
+            needs_gc: false,
+        }
+    }
+
+    /// Create an invalid template validation result with an error message.
+    pub fn invalid(msg: impl Into<String>) -> Self {
+        Self {
+            is_valid: false,
+            error: Some(msg.into()),
+            needs_gc: false,
+        }
+    }
+
+    /// Create a valid result that needs garbage collection.
+    pub fn with_gc() -> Self {
+        Self {
+            is_valid: true,
+            error: None,
+            needs_gc: true,
+        }
+    }
+}
+
+impl Default for TemplateValidation {
+    fn default() -> Self {
+        Self::valid()
+    }
+}
+
+/// Native function registration (global functions).
+/// Uses AST primitives: Ident, FunctionParam, ReturnType.
 #[derive(Debug)]
-pub struct NativeFunctionDef {
+pub struct NativeFunctionDef<'ast> {
     /// Function name
-    pub name: String,
-    /// Parameter definitions
-    pub params: Vec<ParamDef>,
-    /// Return type specification
-    pub return_type: TypeSpec,
+    pub name: Ident<'ast>,
+    /// Parameter definitions (parsed from declaration string)
+    pub params: &'ast [FunctionParam<'ast>],
+    /// Return type (parsed from declaration string)
+    pub return_type: ReturnType<'ast>,
     /// Owning type name for methods (None for global functions)
     pub object_type: Option<String>,
     /// Function traits (const, constructor, etc.)
@@ -274,70 +241,61 @@ pub struct NativeFunctionDef {
     pub native_fn: NativeFn,
 }
 
-impl NativeFunctionDef {
-    /// Create a new native function definition.
-    pub fn new(name: impl Into<String>, native_fn: NativeFn) -> Self {
-        Self {
-            name: name.into(),
-            params: Vec::new(),
-            return_type: TypeSpec::void(),
-            object_type: None,
-            traits: FunctionTraits::new(),
-            default_exprs: Vec::new(),
-            visibility: Visibility::Public,
-            native_fn,
-        }
-    }
-}
-
-/// Internal storage for a native type definition.
-///
-/// This is used by ClassBuilder to collect type information before
-/// it's applied to the registry.
+/// Native type registration (value types, reference types).
+/// Uses AST primitives: Ident for template params.
 #[derive(Debug)]
-pub struct NativeTypeDef {
+pub struct NativeTypeDef<'ast> {
     /// Type name (unqualified)
     pub name: String,
+    /// Template parameters (e.g., ["T"] or ["K", "V"])
+    pub template_params: Option<&'ast [Ident<'ast>]>,
     /// Type kind (value or reference)
     pub type_kind: TypeKind,
     /// Object behaviors
     pub behaviors: Behaviors,
     /// Constructors
-    pub constructors: Vec<NativeFunctionDef>,
+    pub constructors: Vec<NativeMethodDef<'ast>>,
+    /// Factory functions (for reference types)
+    pub factories: Vec<NativeMethodDef<'ast>>,
     /// Methods
-    pub methods: Vec<NativeFunctionDef>,
-    /// Properties (name -> (getter, setter))
-    pub properties: Vec<NativePropertyDef>,
+    pub methods: Vec<NativeMethodDef<'ast>>,
+    /// Properties
+    pub properties: Vec<NativePropertyDef<'ast>>,
+    /// Operators
+    pub operators: Vec<NativeMethodDef<'ast>>,
     /// Rust TypeId for runtime type checking
     pub rust_type_id: std::any::TypeId,
 }
 
-/// A property definition with optional getter and setter.
+/// Native method - same structure as NativeFunctionDef but for class methods.
 #[derive(Debug)]
-pub struct NativePropertyDef {
-    /// Property name
-    pub name: String,
-    /// Property type
-    pub type_spec: TypeSpec,
-    /// Getter function (if readable)
-    pub getter: Option<NativeFn>,
-    /// Setter function (if writable)
-    pub setter: Option<NativeFn>,
-    /// Visibility
-    pub visibility: Visibility,
+pub struct NativeMethodDef<'ast> {
+    /// Method name
+    pub name: Ident<'ast>,
+    /// Parameter definitions
+    pub params: &'ast [FunctionParam<'ast>],
+    /// Return type
+    pub return_type: ReturnType<'ast>,
+    /// Whether this is a const method
+    pub is_const: bool,
+    /// The native function implementation
+    pub native_fn: NativeFn,
 }
 
-impl NativePropertyDef {
-    /// Create a new property definition.
-    pub fn new(name: impl Into<String>, type_spec: TypeSpec) -> Self {
-        Self {
-            name: name.into(),
-            type_spec,
-            getter: None,
-            setter: None,
-            visibility: Visibility::Public,
-        }
-    }
+/// A property definition with getter and optional setter.
+/// Uses AST primitives for type.
+#[derive(Debug)]
+pub struct NativePropertyDef<'ast> {
+    /// Property name
+    pub name: Ident<'ast>,
+    /// Property type
+    pub ty: &'ast TypeExpr<'ast>,
+    /// Whether this is read-only
+    pub is_const: bool,
+    /// Getter function
+    pub getter: NativeFn,
+    /// Setter function (if writable)
+    pub setter: Option<NativeFn>,
 }
 
 #[cfg(test)]
@@ -345,111 +303,41 @@ mod tests {
     use super::*;
 
     #[test]
-    fn type_spec_simple() {
-        let spec = TypeSpec::simple("int");
-        assert_eq!(spec.type_name, "int");
-        assert!(!spec.is_const);
-        assert!(!spec.is_handle);
-        assert!(!spec.is_handle_to_const);
-        assert!(!spec.is_auto_handle);
-        assert_eq!(spec.ref_modifier, RefModifier::None);
-    }
-
-    #[test]
-    fn type_spec_void() {
-        let spec = TypeSpec::void();
-        assert_eq!(spec.type_name, "void");
-        assert!(spec.is_void());
-    }
-
-    #[test]
-    fn type_spec_with_modifiers() {
-        let spec = TypeSpec::new("Foo")
-            .with_const()
-            .with_handle()
-            .with_handle_to_const();
-        assert_eq!(spec.type_name, "Foo");
-        assert!(spec.is_const);
-        assert!(spec.is_handle);
-        assert!(spec.is_handle_to_const);
-    }
-
-    #[test]
-    fn type_spec_with_ref() {
-        let spec = TypeSpec::new("string").with_const().ref_in();
-        assert!(spec.is_const);
-        assert_eq!(spec.ref_modifier, RefModifier::In);
-    }
-
-    #[test]
-    fn type_spec_ref_out() {
-        let spec = TypeSpec::new("int").ref_out();
-        assert_eq!(spec.ref_modifier, RefModifier::Out);
-    }
-
-    #[test]
-    fn type_spec_ref_inout() {
-        let spec = TypeSpec::new("MyClass").ref_inout();
-        assert_eq!(spec.ref_modifier, RefModifier::InOut);
-    }
-
-    #[test]
-    fn type_spec_auto_handle() {
-        let spec = TypeSpec::new("Foo").with_handle().with_auto_handle();
-        assert!(spec.is_handle);
-        assert!(spec.is_auto_handle);
-    }
-
-    #[test]
-    fn type_spec_is_any_type() {
-        let spec = TypeSpec::new("?").ref_in();
-        assert!(spec.is_any_type());
-
-        let spec = TypeSpec::new("int");
-        assert!(!spec.is_any_type());
-    }
-
-    #[test]
-    fn type_spec_default_is_void() {
-        let spec = TypeSpec::default();
-        assert!(spec.is_void());
-    }
-
-    #[test]
-    fn param_def_new() {
-        let param = ParamDef::new("count", TypeSpec::simple("int"));
-        assert_eq!(param.name, "count");
-        assert_eq!(param.type_spec.type_name, "int");
-    }
-
-    #[test]
-    fn param_def_any_in() {
-        let param = ParamDef::any_in("value");
-        assert_eq!(param.name, "value");
-        assert!(param.type_spec.is_any_type());
-        assert_eq!(param.type_spec.ref_modifier, RefModifier::In);
-    }
-
-    #[test]
-    fn param_def_any_out() {
-        let param = ParamDef::any_out("result");
-        assert_eq!(param.name, "result");
-        assert!(param.type_spec.is_any_type());
-        assert_eq!(param.type_spec.ref_modifier, RefModifier::Out);
-    }
-
-    #[test]
     fn type_kind_value() {
         let kind = TypeKind::value::<i32>();
         match kind {
-            TypeKind::Value { size, align } => {
+            TypeKind::Value {
+                size,
+                align,
+                is_pod,
+            } => {
                 assert_eq!(size, 4);
                 assert_eq!(align, 4);
+                assert!(!is_pod);
             }
             _ => panic!("Expected Value variant"),
         }
         assert!(kind.is_value());
         assert!(!kind.is_reference());
+        assert!(!kind.is_pod());
+    }
+
+    #[test]
+    fn type_kind_pod() {
+        let kind = TypeKind::pod::<i32>();
+        match kind {
+            TypeKind::Value {
+                size,
+                align,
+                is_pod,
+            } => {
+                assert_eq!(size, 4);
+                assert_eq!(align, 4);
+                assert!(is_pod);
+            }
+            _ => panic!("Expected Value variant"),
+        }
+        assert!(kind.is_pod());
     }
 
     #[test]
@@ -457,27 +345,111 @@ mod tests {
         let kind = TypeKind::reference();
         assert!(kind.is_reference());
         assert!(!kind.is_value());
+        match kind {
+            TypeKind::Reference { kind } => {
+                assert_eq!(kind, ReferenceKind::Standard);
+            }
+            _ => panic!("Expected Reference variant"),
+        }
+    }
+
+    #[test]
+    fn type_kind_scoped() {
+        let kind = TypeKind::scoped();
+        assert!(kind.is_reference());
+        match kind {
+            TypeKind::Reference { kind } => {
+                assert_eq!(kind, ReferenceKind::Scoped);
+            }
+            _ => panic!("Expected Reference variant"),
+        }
+    }
+
+    #[test]
+    fn type_kind_single_ref() {
+        let kind = TypeKind::single_ref();
+        assert!(kind.is_reference());
+        match kind {
+            TypeKind::Reference { kind } => {
+                assert_eq!(kind, ReferenceKind::SingleRef);
+            }
+            _ => panic!("Expected Reference variant"),
+        }
+    }
+
+    #[test]
+    fn type_kind_generic_handle() {
+        let kind = TypeKind::generic_handle();
+        assert!(kind.is_reference());
+        match kind {
+            TypeKind::Reference { kind } => {
+                assert_eq!(kind, ReferenceKind::GenericHandle);
+            }
+            _ => panic!("Expected Reference variant"),
+        }
     }
 
     #[test]
     fn behaviors_default() {
         let behaviors = Behaviors::new();
-        assert!(behaviors.factory.is_none());
-        assert!(behaviors.addref.is_none());
-        assert!(behaviors.release.is_none());
-        assert!(behaviors.construct.is_none());
-        assert!(behaviors.destruct.is_none());
-        assert!(behaviors.copy_construct.is_none());
-        assert!(behaviors.assign.is_none());
+        assert!(!behaviors.has_addref());
+        assert!(!behaviors.has_release());
+        assert!(!behaviors.has_destruct());
     }
 
     #[test]
-    fn native_property_def_new() {
-        let prop = NativePropertyDef::new("health", TypeSpec::simple("int"));
-        assert_eq!(prop.name, "health");
-        assert_eq!(prop.type_spec.type_name, "int");
-        assert!(prop.getter.is_none());
-        assert!(prop.setter.is_none());
-        assert_eq!(prop.visibility, Visibility::Public);
+    fn behaviors_with_addref() {
+        use super::super::native_fn::CallContext;
+        let behaviors = Behaviors {
+            addref: Some(NativeFn::new(|_: &mut CallContext| Ok(()))),
+            ..Default::default()
+        };
+        assert!(behaviors.has_addref());
+        assert!(!behaviors.has_release());
+    }
+
+    #[test]
+    fn behaviors_debug() {
+        let behaviors = Behaviors::new();
+        let debug = format!("{:?}", behaviors);
+        assert!(debug.contains("Behaviors"));
+        assert!(debug.contains("addref"));
+    }
+
+    #[test]
+    fn template_instance_info_new() {
+        let info = TemplateInstanceInfo::new("array", vec![]);
+        assert_eq!(info.template_name, "array");
+        assert!(info.sub_types.is_empty());
+    }
+
+    #[test]
+    fn template_validation_valid() {
+        let v = TemplateValidation::valid();
+        assert!(v.is_valid);
+        assert!(v.error.is_none());
+        assert!(!v.needs_gc);
+    }
+
+    #[test]
+    fn template_validation_invalid() {
+        let v = TemplateValidation::invalid("Key must be hashable");
+        assert!(!v.is_valid);
+        assert_eq!(v.error, Some("Key must be hashable".to_string()));
+        assert!(!v.needs_gc);
+    }
+
+    #[test]
+    fn template_validation_with_gc() {
+        let v = TemplateValidation::with_gc();
+        assert!(v.is_valid);
+        assert!(v.error.is_none());
+        assert!(v.needs_gc);
+    }
+
+    #[test]
+    fn template_validation_default() {
+        let v = TemplateValidation::default();
+        assert!(v.is_valid);
     }
 }

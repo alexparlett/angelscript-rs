@@ -5,14 +5,20 @@
 //!
 //! - Type conversion traits (`FromScript`, `ToScript`)
 //! - Native function storage (`NativeFn`, `CallContext`)
-//! - Type specifications for registration (`TypeSpec`, `ParamDef`)
+//! - Type kind and behavior definitions (`TypeKind`, `ReferenceKind`, `Behaviors`)
 //! - Variable parameter type support (`AnyRef`, `AnyRefMut`)
-//! - Global property definitions (`GlobalPropertyDef`)
+//! - Template support (`TemplateInstanceInfo`, `TemplateValidation`)
 //!
 //! # Architecture
 //!
 //! The FFI system is designed for registration only - it stores type metadata
 //! and function pointers for semantic analysis. VM execution is separate.
+//!
+//! Type specifications (parameters, return types) use AST primitives parsed from
+//! declaration strings, not FFI-specific types. This module provides only:
+//! - Runtime value conversion (FromScript/ToScript)
+//! - Type memory semantics (TypeKind, ReferenceKind)
+//! - Lifecycle behaviors (Behaviors)
 //!
 //! ```text
 //! Module (registration) -> apply_to_registry() -> Registry (semantic analysis)
@@ -32,5 +38,6 @@ pub use global_property::GlobalPropertyDef;
 pub use native_fn::{CallContext, NativeCallable, NativeFn, ObjectHandle, ObjectHeap, VmSlot};
 pub use traits::{FromScript, NativeType, ToScript};
 pub use types::{
-    Behaviors, NativeFunctionDef, NativeTypeDef, ParamDef, TypeKind, TypeSpec,
+    Behaviors, NativeFunctionDef, NativeMethodDef, NativePropertyDef, NativeTypeDef,
+    ReferenceKind, TemplateInstanceInfo, TemplateValidation, TypeKind,
 };
