@@ -430,11 +430,13 @@ impl<'src, 'ast> TypeCompiler<'src, 'ast> {
                 // Methods are registered with their unqualified name in the current namespace
                 // We filter by object_type to only get methods belonging to THIS class
                 let method_qualified_name = self.build_qualified_name(method.name.name);
-                let func_ids: Vec<FunctionId> = self.registry.lookup_functions(&method_qualified_name)
-                    .iter()
-                    .copied()
-                    .filter(|&id| self.registry.get_function(id).object_type == Some(type_id))
-                    .collect();
+                let all_funcs = self.registry.lookup_functions(&method_qualified_name);
+                let mut func_ids = Vec::with_capacity(all_funcs.len().min(4));
+                for &id in all_funcs {
+                    if self.registry.get_function(id).object_type == Some(type_id) {
+                        func_ids.push(id);
+                    }
+                }
                 method_ids.extend(func_ids.iter().copied());
 
                 // Check if this is an operator method

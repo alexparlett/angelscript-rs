@@ -444,21 +444,17 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
 
         let func_def = self.registry.get_function(func_id);
 
-        // Extract parameters for compilation
-        let params: Vec<(String, DataType)> = func_def
-            .params
-            .iter()
-            .enumerate()
-            .map(|(i, param_type)| {
-                // Get parameter name from AST
-                let name = if i < func.params.len() {
-                    func.params[i].name.map(|id| id.name.to_string()).unwrap_or_else(|| format!("param{}", i))
-                } else {
-                    format!("param{}", i)
-                };
-                (name, param_type.clone())
-            })
-            .collect();
+        // Extract parameters for compilation (pre-allocate capacity)
+        let mut params = Vec::with_capacity(func_def.params.len());
+        for (i, param_type) in func_def.params.iter().enumerate() {
+            // Get parameter name from AST
+            let name = if i < func.params.len() {
+                func.params[i].name.map(|id| id.name.to_string()).unwrap_or_else(|| format!("param{}", i))
+            } else {
+                format!("param{}", i)
+            };
+            params.push((name, param_type.clone()));
+        }
 
         // For constructors, emit member initialization in the correct order
         let mut constructor_prologue = None;
@@ -747,21 +743,17 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
 
         let func_def = self.registry.get_function(func_id);
 
-        // Extract parameters for compilation
-        let params: Vec<(String, DataType)> = func_def
-            .params
-            .iter()
-            .enumerate()
-            .map(|(i, param_type)| {
-                // Get parameter name from AST
-                let name = if i < func.params.len() {
-                    func.params[i].name.map(|id| id.name.to_string()).unwrap_or_else(|| format!("param{}", i))
-                } else {
-                    format!("param{}", i)
-                };
-                (name, param_type.clone())
-            })
-            .collect();
+        // Extract parameters for compilation (pre-allocate capacity)
+        let mut params = Vec::with_capacity(func_def.params.len());
+        for (i, param_type) in func_def.params.iter().enumerate() {
+            // Get parameter name from AST
+            let name = if i < func.params.len() {
+                func.params[i].name.map(|id| id.name.to_string()).unwrap_or_else(|| format!("param{}", i))
+            } else {
+                format!("param{}", i)
+            };
+            params.push((name, param_type.clone()));
+        }
 
         // Compile the function body with namespace context
         let compiled = Self::compile_block_with_context(
@@ -3158,14 +3150,15 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
                         if let Some(current_class_id) = self.current_class {
                             if let Some(base_class_id) = self.get_base_class_by_name(current_class_id, scope_name) {
                                 // This is a base class method call - load 'this' and call the base method
-                                // Look up the method in the base class
+                                // Look up the method in the base class (pre-allocate)
                                 let all_methods = self.registry.get_methods(base_class_id);
-                                let base_methods: Vec<FunctionId> = all_methods.into_iter()
-                                    .filter(|&func_id| {
-                                        let func = self.registry.get_function(func_id);
-                                        func.name == method_name
-                                    })
-                                    .collect();
+                                let mut base_methods = Vec::with_capacity(all_methods.len().min(4));
+                                for func_id in all_methods {
+                                    let func = self.registry.get_function(func_id);
+                                    if func.name == method_name {
+                                        base_methods.push(func_id);
+                                    }
+                                }
 
                                 if !base_methods.is_empty() {
                                     // Load 'this' for the method call
@@ -3426,11 +3419,13 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
                 // Pass 1: Identify which arguments are lambdas and type-check non-lambda args
                 // Pass 2: Use narrowed candidates to infer funcdef types for lambda args
 
-                // Identify lambda argument positions
-                let lambda_positions: Vec<usize> = call.args.iter().enumerate()
-                    .filter(|(_, arg)| matches!(arg.value, Expr::Lambda(_)))
-                    .map(|(i, _)| i)
-                    .collect();
+                // Identify lambda argument positions (pre-allocate with estimated capacity)
+                let mut lambda_positions = Vec::with_capacity(call.args.len().min(4)); // Most calls have few lambdas
+                for (i, arg) in call.args.iter().enumerate() {
+                    if matches!(arg.value, Expr::Lambda(_)) {
+                        lambda_positions.push(i);
+                    }
+                }
 
                 // If there are lambdas and multiple candidates, use two-pass approach
                 let mut arg_contexts = Vec::with_capacity(call.args.len());
@@ -3446,30 +3441,33 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
                         }
                     }
 
-                    // Narrow candidates based on non-lambda argument types
-                    let narrowed_candidates: Vec<_> = candidates.iter().copied()
-                        .filter(|&func_id| {
-                            let func_def = self.registry.get_function(func_id);
-                            // Check argument count (considering defaults)
-                            let min_params = func_def.params.len() - func_def.default_args.iter().filter(|a| a.is_some()).count();
-                            if call.args.len() < min_params || call.args.len() > func_def.params.len() {
-                                return false;
-                            }
-                            // Check non-lambda argument types match
-                            for (i, opt_type) in non_lambda_types.iter().enumerate() {
-                                if let Some(arg_type) = opt_type
-                                    && i < func_def.params.len() {
-                                        let param = &func_def.params[i];
-                                        // Check if types are compatible (exact match or implicit conversion)
-                                        if arg_type.type_id != param.type_id
-                                            && arg_type.can_convert_to(param, self.registry).is_none_or(|c| !c.is_implicit) {
-                                                return false;
-                                            }
-                                    }
-                            }
-                            true
-                        })
-                        .collect();
+                    // Narrow candidates based on non-lambda argument types (pre-allocate)
+                    let mut narrowed_candidates = Vec::with_capacity(candidates.len());
+                    for &func_id in candidates {
+                        let func_def = self.registry.get_function(func_id);
+                        // Check argument count (considering defaults)
+                        let min_params = func_def.params.len() - func_def.default_args.iter().filter(|a| a.is_some()).count();
+                        if call.args.len() < min_params || call.args.len() > func_def.params.len() {
+                            continue;
+                        }
+                        // Check non-lambda argument types match
+                        let mut matches = true;
+                        for (i, opt_type) in non_lambda_types.iter().enumerate() {
+                            if let Some(arg_type) = opt_type
+                                && i < func_def.params.len() {
+                                    let param = &func_def.params[i];
+                                    // Check if types are compatible (exact match or implicit conversion)
+                                    if arg_type.type_id != param.type_id
+                                        && arg_type.can_convert_to(param, self.registry).is_none_or(|c| !c.is_implicit) {
+                                            matches = false;
+                                            break;
+                                        }
+                                }
+                        }
+                        if matches {
+                            narrowed_candidates.push(func_id);
+                        }
+                    }
 
                     // Pass 2: Type-check lambda arguments with inferred funcdef types
                     let expected_param_types = if narrowed_candidates.len() == 1 {
@@ -4480,13 +4478,15 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
                         let is_const_object = object_ctx.data_type.is_const || object_ctx.data_type.is_handle_to_const;
 
                         let const_filtered: Vec<_> = if is_const_object {
-                            // Const objects can only call const methods
-                            candidates.into_iter()
-                                .filter(|&func_id| {
-                                    let func_def = self.registry.get_function(func_id);
-                                    func_def.traits.is_const
-                                })
-                                .collect()
+                            // Const objects can only call const methods (pre-allocate)
+                            let mut filtered = Vec::with_capacity(candidates.len());
+                            for func_id in candidates {
+                                let func_def = self.registry.get_function(func_id);
+                                if func_def.traits.is_const {
+                                    filtered.push(func_id);
+                                }
+                            }
+                            filtered
                         } else {
                             // Non-const objects can call both const and non-const methods
                             candidates
