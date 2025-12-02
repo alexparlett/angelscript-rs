@@ -56,10 +56,12 @@ pub fn apply_to_registry<'src, 'ast>(
 
 ## Conversions
 
-- `TypeSpec` → `DataType` (resolve type names to TypeId)
-- `NativeFunctionDef` → `FunctionDef` (set `is_native: true`)
-- `NativeTypeDef` → `TypeDef::Class` or `TypeDef::Interface`
-- Parse default parameter expressions into arena
+FFI storage types already use AST primitives, so conversion is straightforward:
+
+- `TypeExpr<'ast>` → `DataType` (resolve type names to TypeId using Registry)
+- `NativeFunctionDef<'ast>` → `FunctionDef` (set `is_native: true`, convert `FunctionParam` to params)
+- `NativeTypeDef<'ast>` → `TypeDef::Class` or `TypeDef::Interface`
+- Default expressions are already parsed and stored in `FunctionParam.default_value`
 
 ## Implementation Notes
 

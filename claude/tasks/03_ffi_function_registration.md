@@ -121,24 +121,30 @@ impl<'ast> Parser<'ast> {
 
 ### Parsed Result Types
 
+Parser returns data using existing AST types directly:
+
 ```rust
-// These wrap existing AST types
-pub struct FunctionSignature<'ast> {
-    pub return_type: &'ast TypeExpr<'ast>,
-    pub name: &'ast Ident<'ast>,
-    pub params: Vec<&'ast FunctionParam<'ast>>,
-    pub is_const: bool,  // For methods: "void foo() const"
+/// Function signature data returned by parse_ffi_function_signature
+/// Composed directly of AST primitives
+pub struct FunctionSignatureData<'ast> {
+    pub return_type: ReturnType<'ast>,           // AST ReturnType (Void or Typed)
+    pub name: Ident<'ast>,                        // AST Ident
+    pub params: &'ast [FunctionParam<'ast>],     // Slice of AST FunctionParam
+    pub is_const: bool,                           // For methods: "void foo() const"
+    pub attrs: FuncAttrs,                         // Function attributes
 }
 
+/// Property declaration - for ClassBuilder.property()
 pub struct PropertyDecl<'ast> {
-    pub type_expr: &'ast TypeExpr<'ast>,
-    pub name: &'ast Ident<'ast>,
+    pub type_expr: &'ast TypeExpr<'ast>,  // AST TypeExpr
+    pub name: Ident<'ast>,                 // AST Ident
     pub is_const: bool,
 }
 
-pub struct TypeDecl<'ast> {
-    pub name: &'ast Ident<'ast>,
-    pub template_params: Option<Vec<&'ast Ident<'ast>>>,  // ["T"] or ["K", "V"]
+/// Type name with optional template params - for register_type("array<class T>")
+pub struct TypeNameDecl<'ast> {
+    pub name: Ident<'ast>,                             // Base type name
+    pub template_params: Option<&'ast [Ident<'ast>]>,  // ["T"] or ["K", "V"]
 }
 ```
 
@@ -213,15 +219,27 @@ module.register_fn_raw("bool parse(const string &in s, int &out result)", |ctx| 
 
 ## Internal Storage
 
-Functions are stored in Module using parsed AST types (arena-allocated):
+Functions are stored in Module using FFI-specific container types that compose AST primitives (arena-allocated). IDs are assigned at registration time using the global atomic counters.
 
 ```rust
+/// See ffi_plan.md "FFI Storage Types" for full definition
 pub(crate) struct NativeFunctionDef<'ast> {
-    pub name: &'ast Ident<'ast>,
-    pub params: Vec<&'ast FunctionParam<'ast>>,
-    pub return_type: &'ast TypeExpr<'ast>,
+    pub id: FunctionId,                       // Assigned via FunctionId::next() at registration
+    pub name: Ident<'ast>,                    // AST primitive (not reference)
+    pub params: &'ast [FunctionParam<'ast>],  // Slice of AST primitives
+    pub return_type: ReturnType<'ast>,        // AST primitive
+    pub is_const: bool,                       // For methods: "void foo() const"
     pub native_fn: NativeFn,
 }
+
+// FunctionParam is an existing AST type that includes:
+// - name: Ident<'ast>
+// - type_expr: &'ast TypeExpr<'ast>
+// - default_value: Option<&'ast Expr<'ast>>  // Default args parsed from declaration
+
+// TypeExpr includes all type modifiers:
+// - const, handle (@), reference (&in, &out, &inout)
+// - Template arguments
 ```
 
 ## Error Handling

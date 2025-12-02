@@ -16,6 +16,12 @@ Implement `Module.register_enum()`, `Module.register_interface()`, and `Module.r
 - `src/ffi/enum_builder.rs` - `EnumBuilder` implementation
 - `src/ffi/interface_builder.rs` - `InterfaceBuilder` implementation
 
+## Design Decision: AST Primitive Reuse
+
+- **Enums**: Don't use AST types - builder provides simple string names and i64 values
+- **Interfaces**: Use AST primitives (`Ident`, `FunctionParam`, `ReturnType`) for method signatures
+- **Funcdefs**: Use AST primitives for the full signature, parsed via `parse_ffi_funcdef`
+
 ## API Design
 
 ```rust
@@ -248,30 +254,48 @@ For **InterfaceBuilder.method()**, we reuse the function signature parsing from 
 
 ## Internal Storage
 
+FFI-specific container types that compose AST primitives (see ffi_plan.md "FFI Storage Types"). IDs are assigned at registration time using global atomic counters (`TypeId::next()`).
+
 ```rust
+/// Enum - simple strings and values (no AST parsing needed)
+/// Builder provides resolved values, not parsed AST
 pub(crate) struct NativeEnumDef {
+    pub id: TypeId,                 // Assigned via TypeId::next() at registration
     pub name: String,
     pub values: Vec<(String, i64)>,
 }
 
+/// Interface - uses AST primitives for method signatures
 pub(crate) struct NativeInterfaceDef<'ast> {
+    pub id: TypeId,                 // Assigned via TypeId::next() at registration
     pub name: String,
-    pub methods: Vec<InterfaceMethod<'ast>>,
+    pub methods: Vec<NativeInterfaceMethod<'ast>>,
 }
 
-pub(crate) struct InterfaceMethod<'ast> {
-    pub name: &'ast Ident<'ast>,
-    pub params: &'ast [FunctionParam<'ast>],
-    pub return_type: &'ast TypeExpr<'ast>,
+/// Interface method signature - no implementation (scripts implement these)
+/// NO FunctionId - these are abstract signatures, not callable functions
+pub(crate) struct NativeInterfaceMethod<'ast> {
+    pub name: Ident<'ast>,                    // AST primitive
+    pub params: &'ast [FunctionParam<'ast>],  // AST primitive slice
+    pub return_type: ReturnType<'ast>,        // AST primitive
     pub is_const: bool,
 }
 
+/// Funcdef (function pointer type) - uses AST primitives
 pub(crate) struct NativeFuncdefDef<'ast> {
-    pub name: &'ast Ident<'ast>,
-    pub params: &'ast [FunctionParam<'ast>],
-    pub return_type: &'ast TypeExpr<'ast>,
+    pub id: TypeId,                           // Assigned via TypeId::next() at registration
+    pub name: Ident<'ast>,                    // AST primitive
+    pub params: &'ast [FunctionParam<'ast>],  // AST primitive slice
+    pub return_type: ReturnType<'ast>,        // AST primitive
 }
 ```
+
+**Key points:**
+- `NativeEnumDef` doesn't use AST types - the builder provides simple strings and i64 values
+- `NativeEnumDef`, `NativeInterfaceDef`, and `NativeFuncdefDef` all get a `TypeId` at registration
+- `NativeInterfaceMethod` does NOT get a `FunctionId` - these are abstract method signatures that scripts implement
+- `NativeInterfaceDef` and `NativeFuncdefDef` use AST primitives for parsed signatures
+- All `'ast` lifetime types are arena-allocated in Module's `Bump` arena
 
 ## Error Handling
 

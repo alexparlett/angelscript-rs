@@ -14,14 +14,19 @@ Implement `ClassBuilder` for registering native types (value types, reference ty
 
 - `src/ffi/class.rs` - ClassBuilder implementation
 
+## Design Decision: AST Primitive Reuse
+
+ClassBuilder builds `NativeTypeDef` which uses FFI-specific container types that compose AST primitives. Methods, properties, and operators store parsed signatures using `Ident`, `FunctionParam`, `TypeExpr`, and `ReturnType` from the AST.
+
 ## Key Types
 
 ```rust
 pub struct ClassBuilder<'m, 'app, T: NativeType> {
     module: &'m mut Module<'app>,
     name: String,
-    template_params: Option<Vec<String>>,  // For templates: ["T"] or ["K", "V"]
+    template_params: Option<&'m [Ident<'m>]>,  // Parsed from "array<class T>"
     type_kind: TypeKind,
+    // All these use AST primitives via FFI storage types
     constructors: Vec<NativeMethodDef<'m>>,
     factories: Vec<NativeMethodDef<'m>>,
     methods: Vec<NativeMethodDef<'m>>,
@@ -30,6 +35,43 @@ pub struct ClassBuilder<'m, 'app, T: NativeType> {
     behaviors: Behaviors,
     template_callback: Option<Box<dyn Fn(&TemplateInstanceInfo) -> TemplateValidation + Send + Sync>>,
     _marker: PhantomData<T>,
+}
+
+// FFI storage types using AST primitives (see ffi_plan.md):
+// IDs are assigned at registration time using global atomic counters
+
+/// Type definition - uses AST primitives for template params
+pub struct NativeTypeDef<'ast> {
+    pub id: TypeId,                                   // Assigned via TypeId::next() at registration
+    pub name: String,
+    pub template_params: Option<&'ast [Ident<'ast>]>, // Parsed from "array<class T>"
+    pub type_kind: TypeKind,
+    pub constructors: Vec<NativeMethodDef<'ast>>,
+    pub factories: Vec<NativeMethodDef<'ast>>,
+    pub methods: Vec<NativeMethodDef<'ast>>,
+    pub properties: Vec<NativePropertyDef<'ast>>,
+    pub operators: Vec<NativeMethodDef<'ast>>,
+    pub behaviors: Behaviors,
+    pub template_callback: Option<Box<dyn Fn(&TemplateInstanceInfo) -> TemplateValidation + Send + Sync>>,
+}
+
+/// Method/constructor/factory/operator - uses AST primitives
+pub struct NativeMethodDef<'ast> {
+    pub id: FunctionId,                   // Assigned via FunctionId::next() at registration
+    pub name: Ident<'ast>,
+    pub params: &'ast [FunctionParam<'ast>],
+    pub return_type: ReturnType<'ast>,
+    pub is_const: bool,
+    pub native_fn: NativeFn,
+}
+
+/// Property - uses AST primitives
+pub struct NativePropertyDef<'ast> {
+    pub name: Ident<'ast>,
+    pub type_expr: &'ast TypeExpr<'ast>,
+    pub is_const: bool,
+    pub getter: NativeFn,
+    pub setter: Option<NativeFn>,
 }
 
 pub enum TypeKind {
@@ -45,9 +87,9 @@ pub enum ReferenceKind {
 }
 
 pub struct Behaviors {
-    pub addref: Option<Box<dyn Fn(&T) + Send + Sync>>,
-    pub release: Option<Box<dyn Fn(&T) + Send + Sync>>,
-    pub destruct: Option<Box<dyn Fn(&mut T) + Send + Sync>>,
+    pub addref: Option<Box<dyn Fn(*const ()) + Send + Sync>>,
+    pub release: Option<Box<dyn Fn(*const ()) + Send + Sync>>,
+    pub destruct: Option<Box<dyn Fn(*mut ()) + Send + Sync>>,
 }
 ```
 

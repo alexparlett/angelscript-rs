@@ -77,11 +77,24 @@ Design and implement a comprehensive FFI registration API for angelscript-rust t
 
 **Key architectural decision:** We reuse the existing AST parser infrastructure rather than creating a separate parsing system for FFI declarations.
 
+**Two levels of reuse:**
+1. **AST Primitives** - Reuse `Ident<'ast>`, `FunctionParam<'ast>`, `TypeExpr<'ast>`, `ReturnType<'ast>`, `Visibility`, `DeclModifiers` from existing AST
+2. **FFI Container Types** - Create FFI-specific top-level types that compose these primitives
+
+**Why not use full AST types directly?**
+The existing AST declaration types (`FunctionDecl`, `EnumDecl`, `InterfaceDecl`, etc.) have fields we don't need for FFI:
+- `body` - FFI functions don't have script bodies
+- `span` - No source location for FFI declarations
+- Script-specific modifiers and attributes
+
+Instead, we create lightweight FFI-specific container types that hold exactly what we need.
+
 **Benefits:**
 - Single source of truth for AngelScript syntax
 - Consistent semantics between script code and FFI declarations
 - Less code to maintain
 - Arena allocation (`Bump`) already handles memory efficiently
+- FFI container types are simpler and don't carry script-specific baggage
 
 **Parser Analysis:**
 
@@ -188,6 +201,112 @@ impl<'app> Module<'app> {
     }
 }
 ```
+
+### FFI Storage Types
+
+FFI-specific container types that compose AST primitives. These are simpler than full AST declaration types - they hold exactly what's needed for registration.
+
+```rust
+// ════════════════════════════════════════════════════════════════════════════
+// FFI Storage Types - compose AST primitives
+// IDs are assigned at registration time via TypeId::next() / FunctionId::next()
+// This uses global atomic counters, ensuring consistency across all Units
+// ════════════════════════════════════════════════════════════════════════════
+
+/// Native function registration (global functions)
+/// Uses AST primitives: Ident, FunctionParam, ReturnType
+pub struct NativeFunctionDef<'ast> {
+    pub id: FunctionId,  // Assigned at registration via FunctionId::next()
+    pub name: Ident<'ast>,
+    pub params: &'ast [FunctionParam<'ast>],
+    pub return_type: ReturnType<'ast>,
+    pub is_const: bool,  // For methods: "void foo() const"
+    pub native_fn: NativeFn,
+}
+
+/// Native type registration (value types, reference types, templates)
+/// Uses AST primitives: Ident for template params
+pub struct NativeTypeDef<'ast> {
+    pub id: TypeId,  // Assigned at registration via TypeId::next()
+    pub name: String,
+    pub template_params: Option<&'ast [Ident<'ast>]>,  // ["T"] or ["K", "V"]
+    pub type_kind: TypeKind,
+    pub constructors: Vec<NativeMethodDef<'ast>>,
+    pub factories: Vec<NativeMethodDef<'ast>>,
+    pub methods: Vec<NativeMethodDef<'ast>>,
+    pub properties: Vec<NativePropertyDef<'ast>>,
+    pub operators: Vec<NativeMethodDef<'ast>>,
+    pub behaviors: Behaviors,
+    pub template_callback: Option<TemplateCallback>,
+}
+
+/// Native method - same structure as NativeFunctionDef but for class methods
+pub struct NativeMethodDef<'ast> {
+    pub id: FunctionId,  // Assigned at registration via FunctionId::next()
+    pub name: Ident<'ast>,
+    pub params: &'ast [FunctionParam<'ast>],
+    pub return_type: ReturnType<'ast>,
+    pub is_const: bool,
+    pub native_fn: NativeFn,
+}
+
+/// Native property - uses AST primitives for type
+pub struct NativePropertyDef<'ast> {
+    pub name: Ident<'ast>,
+    pub type_expr: &'ast TypeExpr<'ast>,
+    pub is_const: bool,  // Read-only property
+    pub getter: NativeFn,
+    pub setter: Option<NativeFn>,
+}
+
+/// Native enum - simple strings and values (no parsing needed)
+/// Enums don't reuse AST types since builder provides resolved values
+pub struct NativeEnumDef {
+    pub id: TypeId,  // Assigned at registration via TypeId::next()
+    pub name: String,
+    pub values: Vec<(String, i64)>,
+}
+
+/// Native interface - uses AST primitives for method signatures
+pub struct NativeInterfaceDef<'ast> {
+    pub id: TypeId,  // Assigned at registration via TypeId::next()
+    pub name: String,
+    pub methods: Vec<NativeInterfaceMethod<'ast>>,
+}
+
+/// Interface method signature - no implementation, just signature
+/// NO FunctionId - these are abstract, scripts implement them
+pub struct NativeInterfaceMethod<'ast> {
+    pub name: Ident<'ast>,
+    pub params: &'ast [FunctionParam<'ast>],
+    pub return_type: ReturnType<'ast>,
+    pub is_const: bool,
+}
+
+/// Native funcdef (function pointer type)
+/// Uses AST primitives: Ident, FunctionParam, ReturnType
+pub struct NativeFuncdefDef<'ast> {
+    pub id: TypeId,  // Assigned at registration via TypeId::next()
+    pub name: Ident<'ast>,
+    pub params: &'ast [FunctionParam<'ast>],
+    pub return_type: ReturnType<'ast>,
+}
+
+/// Global property reference
+pub struct GlobalPropertyDef<'app, 'ast> {
+    pub name: Ident<'ast>,
+    pub type_expr: &'ast TypeExpr<'ast>,
+    pub is_const: bool,
+    pub value: GlobalPropertyRef<'app>,
+}
+```
+
+**Key points:**
+- All `'ast` lifetime types are arena-allocated in Module's `Bump` arena
+- `TypeId` and `FunctionId` use global atomic counters - consistent across all Units
+- `NativeEnumDef` doesn't use AST types since the builder provides simple strings and values
+- `NativeInterfaceMethod` has no `FunctionId` - interfaces are abstract, scripts implement them
+- `GlobalPropertyDef` has both `'app` (for value reference) and `'ast` (for parsed type)
 
 ### Top-Level API: Context + Module
 
@@ -499,16 +618,14 @@ For raw methods, use `ctx.this::<T>()`:
 ```rust
 // src/ffi/traits.rs
 
-/// Maps Rust types to AngelScript DataType for parameters
+/// Convert from VM slot to Rust type (for extracting arguments)
 pub trait FromScript: Sized {
-    /// The AngelScript type(s) this can convert from
-    fn script_type() -> DataType;
+    fn from_vm(slot: &VmSlot) -> Result<Self, ConversionError>;
 }
 
-/// Maps Rust types to AngelScript DataType for return values
+/// Convert from Rust type to VM slot (for setting return values)
 pub trait ToScript {
-    /// The AngelScript type this produces
-    fn script_type() -> DataType;
+    fn to_vm(self, slot: &mut VmSlot) -> Result<(), ConversionError>;
 }
 
 /// Marker for types that can be registered as native types
@@ -517,6 +634,8 @@ pub trait NativeType: 'static {
     const NAME: &'static str;
 }
 ```
+
+**Note:** These traits do NOT have `script_type()` methods. Type information comes from parsed declaration strings (`TypeExpr`, `FunctionParam`) stored in the Module's arena, not from Rust type inference.
 
 ### Native Function Storage
 
@@ -859,9 +978,10 @@ Global properties allow scripts to read and write app-owned data. Following the 
 // src/ffi/global_property.rs
 
 /// Internal storage for a global property reference
-pub struct GlobalPropertyDef<'app> {
-    pub name: String,
-    pub type_spec: TypeSpec,
+/// Uses AST primitives for name and type
+pub struct GlobalPropertyDef<'app, 'ast> {
+    pub name: Ident<'ast>,           // AST primitive
+    pub type_expr: &'ast TypeExpr<'ast>,  // AST primitive
     pub is_const: bool,
     pub value: GlobalPropertyRef<'app>,
 }
@@ -1029,34 +1149,29 @@ pub struct FunctionDef<'src, 'ast> {
 }
 ```
 
-**Internal storage** (lifetime-free, converted to FunctionDef during apply):
+**Internal storage** (uses AST primitives, converted to FunctionDef during apply):
 ```rust
-pub struct NativeFunctionDef {
-    pub name: String,
-    pub params: Vec<ParamDef>,
-    pub return_type: TypeSpec,
-    pub object_type: Option<String>,     // Type name, resolved to TypeId during apply
-    pub traits: FunctionTraits,
-    pub default_exprs: Vec<Option<String>>,  // Parsed during apply
-    pub visibility: Visibility,
+/// See "FFI Storage Types" section above for full definitions.
+/// Key types use AST primitives:
+pub struct NativeFunctionDef<'ast> {
+    pub name: Ident<'ast>,                    // AST primitive
+    pub params: &'ast [FunctionParam<'ast>],  // AST primitive (includes type, name, default)
+    pub return_type: ReturnType<'ast>,        // AST primitive
+    pub is_const: bool,
     pub native_fn: NativeFn,
 }
 
-pub struct ParamDef {
-    pub name: String,
-    pub type_spec: TypeSpec,
-}
+// FunctionParam is from AST - includes:
+// - name: Ident<'ast>
+// - type_expr: &'ast TypeExpr<'ast>  (has const, handle, ref_modifier info)
+// - default_value: Option<&'ast Expr<'ast>>
 
-/// AngelScript type specification - stored explicitly, NOT inferred from Rust types.
-/// This allows declaring signatures like `int@` (handle to primitive) that have
-/// no Rust equivalent, or `const Foo@` vs `Foo @const` distinctions.
-pub struct TypeSpec {
-    pub type_name: String,               // Resolved to TypeId during apply
-    pub is_const: bool,                  // `const T` - the value is const
-    pub is_handle: bool,                 // `T@` - this is a handle
-    pub is_handle_to_const: bool,        // `const T@` - handle points to const
-    pub ref_modifier: RefModifier,       // &in, &out, &inout
-}
+// TypeExpr is from AST - includes:
+// - Base type name
+// - Const qualifiers
+// - Handle (@) modifiers
+// - Reference modifiers (&in, &out, &inout)
+// - Template arguments
 ```
 
 **What semantic analysis checks (all work with native functions):**

@@ -34,18 +34,18 @@ pub use unit::Unit;
 pub mod ffi {
     pub use crate::ffi::module::Module;
     pub use crate::ffi::traits::{FromScript, ToScript, NativeType};
-    pub use crate::ffi::types::{TypeSpec, RefModifier, TypeKind, ReferenceKind};
+    pub use crate::ffi::types::{TypeKind, ReferenceKind, Behaviors};
+    pub use crate::ffi::types::{TemplateInstanceInfo, TemplateValidation};
     pub use crate::ffi::native_fn::{NativeFn, CallContext};
-    pub use crate::ffi::error::{NativeError, ModuleError, ContextError};
+    pub use crate::ffi::error::{NativeError, FfiRegistrationError, ContextError};
     pub use crate::ffi::any_type::{AnyRef, AnyRefMut};
 
-    // Builders
-    pub use crate::ffi::function::FunctionBuilder;
-    pub use crate::ffi::class::{ClassBuilder, MethodBuilder, PropertyBuilder};
+    // Builders (no separate FunctionBuilder - registration is on Module directly)
+    pub use crate::ffi::class::ClassBuilder;
     pub use crate::ffi::enum_builder::EnumBuilder;
-    pub use crate::ffi::interface::InterfaceBuilder;
-    pub use crate::ffi::funcdef::FuncdefBuilder;
-    pub use crate::ffi::template::{TemplateBuilder, TemplateInstanceBuilder};
+    pub use crate::ffi::interface_builder::InterfaceBuilder;
+    // Note: No FuncdefBuilder - funcdefs use declaration string parsing
+    // Note: No TemplateBuilder - templates use register_type with <class T> syntax
 }
 
 // Built-in modules
