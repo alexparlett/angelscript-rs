@@ -65,11 +65,129 @@ Design and implement a comprehensive FFI registration API for angelscript-rust t
 
 ### Design Principles
 
-1. **Builder pattern initially**, macros later for convenience
-2. **Function pointers stored for semantic analysis** - not just signatures
-3. **Template callback pattern** inspired by AngelScript
-4. **Full coverage**: enums, interfaces, funcdefs, templates, variadics
-5. **Shareable across modules** - FFI definitions can be reused
+1. **Declaration string API** - parse AngelScript syntax for registration metadata
+2. **AST reuse** - leverage existing `Parser`, `Lexer`, and AST types (`TypeExpr`, `Ident`, `FunctionParam`)
+3. **Function pointers stored for semantic analysis** - not just signatures
+4. **Template callback pattern** inspired by AngelScript (unified under register_type)
+5. **Full coverage**: enums, interfaces, funcdefs, templates, variadics
+6. **Shareable across modules** - FFI definitions can be reused
+7. **All registration methods return Result** - handle parse errors at registration time
+
+### AST Reuse Strategy
+
+**Key architectural decision:** We reuse the existing AST parser infrastructure rather than creating a separate parsing system for FFI declarations.
+
+**Benefits:**
+- Single source of truth for AngelScript syntax
+- Consistent semantics between script code and FFI declarations
+- Less code to maintain
+- Arena allocation (`Bump`) already handles memory efficiently
+
+**Parser Analysis:**
+
+Looking at the existing parser (`src/ast/decl_parser.rs`):
+
+| Parser Method | Terminator | FFI Status |
+|---------------|------------|------------|
+| `parse_enum` | `}` | ✅ Usable as-is |
+| `parse_interface` | `}` | ✅ Usable as-is |
+| `parse_funcdef` | `;` (line 2531) | ⚠️ Needs refactoring |
+| `parse_function_or_global_var` | `;` (lines 372, 418) | ⚠️ Needs refactoring |
+
+**Key constraint:** Normal script parsing must not regress - semicolons are still required where the language expects them.
+
+**Refactoring approach:**
+1. Extract internal parsing methods from `parse_funcdef` and `parse_function_or_global_var`
+2. Existing script parsing continues to call internal method + expect semicolon
+3. New FFI entry points call internal method + expect EOF
+
+```rust
+impl<'ast> Parser<'ast> {
+    // ═══════════════════════════════════════════════════════════════════
+    // Function signatures - needs refactoring
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// New internal method - parses signature without terminator
+    fn parse_function_signature_inner(&mut self) -> Result<FunctionSignatureData<'ast>, ParseError> {
+        let return_type = self.parse_return_type()?;
+        let name = self.parse_ident()?;
+        let params = self.parse_function_params()?;
+        let is_const = self.eat(TokenKind::Const).is_some();
+        let attrs = self.parse_func_attrs()?;
+        Ok(FunctionSignatureData { return_type, name, params, is_const, attrs })
+    }
+
+    // Existing parse_function_or_global_var calls internal + handles body/semicolon
+
+    /// FFI entry point - accepts EOF
+    pub fn parse_ffi_function_signature(&mut self) -> Result<FunctionSignatureData<'ast>, ParseError> {
+        let sig = self.parse_function_signature_inner()?;
+        self.expect_eof()?;
+        Ok(sig)
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Funcdef - needs refactoring
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// New internal method - parses funcdef without semicolon
+    fn parse_funcdef_inner(&mut self, modifiers: DeclModifiers) -> Result<FuncdefDecl<'ast>, ParseError>;
+
+    // Existing parse_funcdef calls internal + expects semicolon
+
+    /// FFI entry point - accepts EOF
+    pub fn parse_ffi_funcdef(&mut self) -> Result<FuncdefDecl<'ast>, ParseError> {
+        let decl = self.parse_funcdef_inner(DeclModifiers::new())?;
+        self.expect_eof()?;
+        Ok(decl)
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Enum/Interface - usable as-is (end at `}`)
+    // ═══════════════════════════════════════════════════════════════════
+
+    // parse_enum and parse_interface already end at `}`
+    // FFI code calls them directly, then verifies EOF
+
+    /// Helper: expect end of input for FFI parsing
+    fn expect_eof(&mut self) -> Result<(), ParseError> {
+        if !self.is_eof() {
+            return Err(ParseError::new(
+                ParseErrorKind::UnexpectedToken,
+                self.peek().span,
+                "expected end of declaration",
+            ));
+        }
+        Ok(())
+    }
+}
+```
+
+**Implementation:**
+- Module owns a `Bump` arena for storing parsed AST nodes
+- New `Parser` entry points for partial declarations (no semicolons required)
+- Template context passed to parser so `T`, `K`, `V` are recognized as type placeholders
+- Output uses existing AST types: `TypeExpr<'ast>`, `Ident<'ast>`, `FunctionParam<'ast>`
+
+```rust
+// Module owns arena, parsed nodes live there
+pub struct Module<'app> {
+    namespace: Vec<String>,
+    arena: Bump,
+    functions: Vec<NativeFunctionDef<'_>>,  // Contains &'ast TypeExpr, etc.
+    // ...
+}
+
+// Parsing uses existing infrastructure - no semicolons needed
+impl<'app> Module<'app> {
+    fn parse_fn_decl(&self, decl: &str) -> Result<FunctionSignature<'_>, FfiRegistrationError> {
+        let lexer = Lexer::new(decl, "ffi");
+        let mut parser = Parser::new(lexer, &self.arena);
+        parser.parse_function_signature()  // Accepts "float sqrt(float x)" directly
+            .map_err(|e| FfiRegistrationError::ParseError { decl: decl.into(), error: e.to_string() })
+    }
+}
+```
 
 ### Top-Level API: Context + Module
 
@@ -79,23 +197,27 @@ Inspired by Rune's module system, native registrations are organized into **Modu
 ```rust
 // Create a module with a namespace
 let mut math = Module::new(&["math"]);
-math.register_fn("sqrt", |x: f64| x.sqrt());
-math.register_fn("sin", |x: f64| x.sin());
+math.register_fn("float sqrt(float x)", |x: f64| x.sqrt())?;
+math.register_fn("float sin(float x)", |x: f64| x.sin())?;
 math.register_type::<Vec3>("Vec3")
     .value_type()
-    .method("length", Vec3::length)
-    .build();
+    .method("float length() const", Vec3::length)?
+    .build()?;
 
 // Nested namespaces using array syntax
 let mut collections = Module::new(&["std", "collections"]);
-collections.register_template("HashMap")...;
+collections.register_type::<ScriptHashMap>("HashMap<class K, class V>")
+    .reference_type()
+    .template_callback(|info| TemplateValidation::valid())?
+    .method("void set(const K &in, const V &in)", hashmap_set)?
+    .build()?;
 // In script: std::collections::HashMap<string, int>
 
 // More nesting examples
 let mut game_physics = Module::new(&["game", "physics"]);
 game_physics.register_type::<RigidBody>("RigidBody")
     .reference_type()
-    .build();
+    .build()?;
 // In script: game::physics::RigidBody@ body;
 ```
 
@@ -168,7 +290,7 @@ HashMap<string, int> map;
 ```rust
 // Root namespace (no prefix needed in script)
 let mut globals = Module::root();
-globals.register_fn("print", |s: &str| println!("{}", s));
+globals.register_fn("void print(const string &in s)", |s: &str| println!("{}", s))?;
 ctx.install(globals)?;
 
 // In script: print("hello") - no namespace prefix
@@ -187,10 +309,11 @@ ctx.install(globals)?;
 │                                                             │
 │  Methods:                                                   │
 │  ├── new(namespace) → Module                                │
-│  ├── register_fn() → FunctionBuilder                        │
-│  ├── register_type<T>() → ClassBuilder                      │
-│  ├── register_enum() → EnumBuilder                          │
-│  └── register_template() → TemplateBuilder                  │
+│  ├── register_fn(decl, f) → Result                          │
+│  ├── register_type<T>(decl) → ClassBuilder                  │
+│  ├── register_enum(decl) → Result                           │
+│  ├── register_interface(decl) → Result                      │
+│  └── register_funcdef(decl) → Result                        │
 └─────────────────────────────────────────────────────────────┘
                               │
                               │ install()
@@ -292,8 +415,8 @@ Native functions need to bridge between Rust and the VM. We support **two callin
 
 | Convention | API | Use Case | Signature Declaration |
 |------------|-----|----------|----------------------|
-| **Type-Safe** | `register_fn`, `method` | Simple functions, known types | Inferred from Rust closure |
-| **Generic** | `register_fn_raw`, `method_raw` | `?&` params, complex logic | Explicit via `FunctionBuilder` |
+| **Type-Safe** | `register_fn`, `method` | Simple functions, known types | Declaration string parsed |
+| **Generic** | `register_fn_raw`, `method_raw` | `?&` params, complex logic | Declaration string parsed |
 
 **Why both?**
 - Type-safe is ergonomic for 90% of cases - just pass a closure
@@ -304,58 +427,57 @@ Both conventions store a `NativeFn` internally - the difference is in how argume
 
 **1. Type-Safe (High-Level)** - Idiomatic Rust signatures with automatic conversion:
 ```rust
-// Global function - direct Rust types
-module.register_fn("sqrt", |x: f64| x.sqrt());
-module.register_fn("contains", |s: &ScriptString, needle: &str| -> bool {
-    s.as_str().contains(needle)
-});
+// Global function - declaration string + Rust closure
+module.register_fn("float sqrt(float x)", |x: f64| x.sqrt())?;
+module.register_fn("bool contains(const string &in s, const string &in needle)",
+    |s: &ScriptString, needle: &str| s.as_str().contains(needle))?;
 
 // Method - self is first parameter, inferred from ClassBuilder<T>
 module.register_type::<Vec3>("Vec3")
-    .method("length", |this: &Vec3| this.length())           // &self
-    .method("normalize", |this: &mut Vec3| this.normalize()) // &mut self
-    .method("add", |this: &Vec3, other: &Vec3| *this + *other); // &self + params
+    .value_type()
+    .method("float length() const", |this: &Vec3| this.length())?        // &self
+    .method("void normalize()", |this: &mut Vec3| this.normalize())?     // &mut self
+    .method("Vec3 add(const Vec3 &in other) const", |this: &Vec3, other: &Vec3| *this + *other)?
+    .build()?;
 ```
 
 **2. Generic (Low-Level)** - Manual argument extraction for complex cases:
 ```rust
 // For ?& parameters, complex types, or full control
-module.register_fn_raw("format", |ctx: &mut CallContext| -> Result<(), NativeError> {
-    let fmt: &str = ctx.arg::<&str>(0)?;
-    let any_val = ctx.arg_any(1)?;  // ?&in - returns AnyRef
-    let type_id = any_val.type_id();
-    // ... format based on type
-    ctx.set_return(result);
-    Ok(())
-});
+module.register_fn_raw("string format(const string &in fmt, ?&in value)",
+    |ctx: &mut CallContext| -> Result<(), NativeError> {
+        let fmt: &str = ctx.arg::<&str>(0)?;
+        let any_val = ctx.arg_any(1)?;  // ?&in - returns AnyRef
+        let type_id = any_val.type_id();
+        // ... format based on type
+        ctx.set_return(result);
+        Ok(())
+    })?;
 
 // Methods with raw context
 module.register_type::<Foo>("Foo")
-    .method_raw("complex", |ctx: &mut CallContext| {
+    .value_type()
+    .method_raw("void complex(?&in value)", |ctx: &mut CallContext| {
         let this: &Foo = ctx.this()?;  // Get self reference
         let arg = ctx.arg_any(0)?;      // ?&in parameter
         // ...
-    })
-    .with_signature("void complex(?&in)");  // Explicit signature required
+        Ok(())
+    })?
+    .build()?;
 ```
 
 **Signature Declaration:**
-- **Type-safe**: Signature inferred from Rust closure types via `FromScript`/`ToScript`
-- **Generic**: Signature declared explicitly via `FunctionBuilder::with_signature()` or builder methods:
-  ```rust
-  module.register_fn_raw("format", |ctx| { ... })
-      .param::<&str>("fmt")       // Typed param
-      .param_any_in("value")      // ?&in param
-      .returns::<String>();       // Return type
-  ```
+- Both type-safe and generic use declaration strings parsed at registration time
+- Declaration string is AngelScript syntax: `"ReturnType name(ParamType param, ...)"`
+- Parse errors are returned as `Result::Err` at registration time
 
 **Self Handling for Methods:**
 
 For type-safe methods, `self` is always the first parameter in the closure:
 ```rust
 // These are equivalent:
-.method("length", |this: &Vec3| this.length())
-.method("length", Vec3::length)  // fn(&self) -> f32
+.method("float length() const", |this: &Vec3| this.length())?
+.method("float length() const", Vec3::length)?  // fn(&self) -> f32
 
 // The ClassBuilder knows T, so it can:
 // 1. Extract `this` from VM's first argument slot
@@ -365,10 +487,11 @@ For type-safe methods, `self` is always the first parameter in the closure:
 
 For raw methods, use `ctx.this::<T>()`:
 ```rust
-.method_raw("foo", |ctx: &mut CallContext| {
+.method_raw("void foo()", |ctx: &mut CallContext| {
     let this: &Foo = ctx.this()?;        // Immutable borrow
     let this: &mut Foo = ctx.this_mut()?; // Mutable borrow
-});
+    Ok(())
+})?;
 ```
 
 ### Core Traits
@@ -654,31 +777,45 @@ impl<'app> Module<'app> {
     pub fn root() -> Self;
 
     /// Register a global native function.
-    pub fn register_fn<F, Args, Ret>(&mut self, name: &str, f: F) -> &mut Self
+    /// Declaration string format: "ReturnType name(ParamType param, ...)"
+    pub fn register_fn<F, Args, Ret>(
+        &mut self,
+        decl: &str,
+        f: F,
+    ) -> Result<&mut Self, FfiRegistrationError>
     where
         F: IntoNativeFn<Args, Ret>;
 
+    /// Register a global native function with raw CallContext.
+    pub fn register_fn_raw(
+        &mut self,
+        decl: &str,
+        f: impl NativeCallable,
+    ) -> Result<&mut Self, FfiRegistrationError>;
+
     /// Register a global property. The app owns the data; scripts read/write via reference.
-    pub fn register_global_property<T: NativeType>(
+    /// Declaration string format: "[const] Type name"
+    pub fn register_global_property<T: 'static>(
         &mut self,
         decl: &str,
         value: &'app mut T,
-    ) -> Result<(), ModuleError>;
+    ) -> Result<&mut Self, FfiRegistrationError>;
 
-    /// Register a native class type.
-    pub fn register_type<T: NativeType>(&mut self, name: &str) -> ClassBuilder<'_, T>;
+    /// Register a native class type (or template with <class T> syntax).
+    /// For templates: "array<class T>", "dictionary<class K, class V>"
+    pub fn register_type<T: NativeType>(&mut self, name: &str) -> ClassBuilder<'_, 'app, T>;
 
     /// Register a native enum.
-    pub fn register_enum(&mut self, name: &str) -> EnumBuilder<'_>;
+    /// Declaration string format: "enum Name { Value1 = 0, Value2, ... }"
+    pub fn register_enum(&mut self, decl: &str) -> Result<&mut Self, FfiRegistrationError>;
 
     /// Register a native interface.
-    pub fn register_interface(&mut self, name: &str) -> InterfaceBuilder<'_>;
+    /// Declaration string format: "interface Name { void method() const; ... }"
+    pub fn register_interface(&mut self, decl: &str) -> Result<&mut Self, FfiRegistrationError>;
 
     /// Register a funcdef (function pointer type).
-    pub fn register_funcdef(&mut self, name: &str) -> FuncdefBuilder<'_>;
-
-    /// Register a template type.
-    pub fn register_template(&mut self, name: &str) -> TemplateBuilder<'_>;
+    /// Declaration string format: "funcdef ReturnType Name(ParamType, ...)"
+    pub fn register_funcdef(&mut self, decl: &str) -> Result<&mut Self, FfiRegistrationError>;
 }
 ```
 
@@ -930,114 +1067,61 @@ pub struct TypeSpec {
 - Handle vs value type semantics
 - Reference modifier compatibility (&in, &out, &inout)
 
-### Function Builder
+### Function Registration
+
+Functions are registered directly on Module with declaration strings - no separate FunctionBuilder needed:
 
 ```rust
-// src/native/function.rs
+// Type-safe registration
+module.register_fn("float sqrt(float x)", |x: f32| x.sqrt())?;
+module.register_fn("void print(const string &in s)", |s: &str| println!("{}", s))?;
+module.register_fn("int max(int a, int b)", |a: i32, b: i32| a.max(b))?;
 
-pub struct FunctionBuilder<'m> {
-    module: &'m mut Module,
-    name: String,
-    params: Vec<ParamDef>,
-    return_type: Option<TypeSpec>,
-    native_fn: Option<NativeFn>,
-    default_exprs: Vec<Option<String>>,  // Parsed into arena during apply
-}
+// With default arguments (parsed from declaration)
+module.register_fn("void log(const string &in msg, int level = 0)", log_fn)?;
 
-impl<'m> FunctionBuilder<'m> {
-    /// Declare full signature from string (alternative to individual param/returns calls)
-    /// e.g., "string format(const string &in fmt, ?&in value)"
-    pub fn with_signature(mut self, sig: &str) -> Self;
-
-    /// Add a parameter (type inferred from Rust type)
-    pub fn param<T: FromScript>(mut self, name: &str) -> Self;
-
-    /// Add a parameter with explicit reference modifier
-    pub fn param_ref<T: FromScript>(mut self, name: &str, modifier: RefModifier) -> Self;
-
-    /// Add a variable type parameter (?&in)
-    pub fn param_any_in(mut self, name: &str) -> Self;
-
-    /// Add a variable type parameter (?&out)
-    pub fn param_any_out(mut self, name: &str) -> Self;
-
-    /// Add a parameter with a default value (expression string parsed during apply)
-    pub fn param_with_default<T: FromScript>(mut self, name: &str, default_expr: &str) -> Self;
-
-    /// Set return type
-    pub fn returns<T: ToScript>(mut self) -> Self;
-
-    /// Set the native implementation
-    pub fn native<F>(mut self, f: F) -> Self
-    where
-        F: NativeCallable + Send + Sync + 'static;
-
-    /// Finish building
-    pub fn build(self);
-}
+// Raw/generic for ?& parameters
+module.register_fn_raw("string format(const string &in fmt, ?&in value)", |ctx| {
+    let fmt: &str = ctx.arg(0)?;
+    let value = ctx.arg_any(1)?;
+    // ...
+    Ok(())
+})?;
 ```
 
 ### Class Builder
 
 ```rust
-// src/native/class.rs
+// src/ffi/class.rs
 
-pub struct ClassBuilder<'m, T: NativeType> {
-    module: &'m mut Module,
+pub struct ClassBuilder<'m, 'app, T: NativeType> {
+    module: &'m mut Module<'app>,
     name: String,
-    type_kind: TypeKind,  // Value or Reference
-    constructors: Vec<ConstructorDef>,
-    methods: Vec<MethodDef>,
-    properties: Vec<PropertyDef>,
-    operators: Vec<OperatorDef>,
-    behaviors: Behaviors,  // Factory, AddRef, Release, etc.
-    _marker: PhantomData<T>,
+    template_params: Option<Vec<String>>,  // For templates: ["T"] or ["K", "V"]
+    type_kind: TypeKind,
+    // ... internal storage
 }
 
-/// Type kind determines memory semantics
-pub enum TypeKind {
-    /// Value type - stack allocated, copied on assignment
-    /// Requires: constructor, destructor, copy/assignment behaviors
-    Value {
-        /// Size in bytes for stack allocation
-        size: usize,
-        /// Alignment requirement
-        align: usize,
-    },
-    /// Reference type - heap allocated via factory, handle semantics
-    /// Requires: factory, addref, release behaviors
-    Reference,
-}
-
-/// Object behaviors for lifecycle management (registered but executed by VM)
-pub struct Behaviors {
-    /// Factory function - creates new instance (reference types)
-    pub factory: Option<NativeFn>,
-    /// AddRef - increment reference count (reference types)
-    pub addref: Option<NativeFn>,
-    /// Release - decrement reference count, delete if zero (reference types)
-    pub release: Option<NativeFn>,
-    /// Constructor - initialize value in pre-allocated memory (value types)
-    pub construct: Option<NativeFn>,
-    /// Destructor - cleanup before deallocation (value types)
-    pub destruct: Option<NativeFn>,
-    /// Copy constructor - initialize from another instance (value types)
-    pub copy_construct: Option<NativeFn>,
-    /// Assignment - copy contents from another instance
-    pub assign: Option<NativeFn>,
-}
-
-impl<'m, T: NativeType> ClassBuilder<'m, T> {
+impl<'m, 'app, T: NativeType> ClassBuilder<'m, 'app, T> {
     /// Mark as value type (default) - stack allocated, copied on assignment
-    /// Size and alignment are inferred from T
     pub fn value_type(mut self) -> Self;
 
     /// Mark as reference type - heap allocated, handle semantics
     pub fn reference_type(mut self) -> Self;
 
-    /// Register a factory function (reference types)
-    pub fn factory<F>(mut self, f: F) -> Self
-    where F: Fn() -> T + Send + Sync + 'static;
+    /// Register template validation callback (for template types)
+    pub fn template_callback<F>(mut self, f: F) -> Result<Self, FfiRegistrationError>
+    where F: Fn(&TemplateInstanceInfo) -> TemplateValidation + Send + Sync + 'static;
+
+    /// Register a constructor (value types)
+    /// Declaration: "void f()" or "void f(int x, int y)"
+    pub fn constructor<F, Args>(mut self, decl: &str, f: F) -> Result<Self, FfiRegistrationError>
+    where F: IntoNativeFn<Args, T>;
+
+    /// Register a factory (reference types)
+    /// Declaration: "T@ f()" or "T@ f(const string &in name)"
+    pub fn factory<F, Args>(mut self, decl: &str, f: F) -> Result<Self, FfiRegistrationError>
+    where F: IntoNativeFn<Args, T>;
 
     /// Register AddRef behavior (reference types)
     pub fn addref<F>(mut self, f: F) -> Self
@@ -1047,149 +1131,147 @@ impl<'m, T: NativeType> ClassBuilder<'m, T> {
     pub fn release<F>(mut self, f: F) -> Self
     where F: Fn(&T) + Send + Sync + 'static;
 
-    /// Register a constructor (value types)
-    pub fn constructor<Args>(mut self) -> ConstructorBuilder<'m, T, Args>;
-
     /// Register destructor (value types)
     pub fn destructor<F>(mut self, f: F) -> Self
     where F: Fn(&mut T) + Send + Sync + 'static;
 
     /// Register a method
-    pub fn method(mut self, name: &str) -> MethodBuilder<'m, T>;
+    /// Declaration: "ReturnType name(params) [const]"
+    pub fn method<F, Args, Ret>(mut self, decl: &str, f: F) -> Result<Self, FfiRegistrationError>
+    where F: IntoNativeFn<(&T, Args), Ret>;
 
-    /// Register a const method
-    pub fn const_method(mut self, name: &str) -> MethodBuilder<'m, T>;
+    /// Register a method with raw CallContext
+    pub fn method_raw<F>(mut self, decl: &str, f: F) -> Result<Self, FfiRegistrationError>
+    where F: NativeCallable + Send + Sync + 'static;
 
-    /// Register a property with getter
-    pub fn property(mut self, name: &str) -> PropertyBuilder<'m, T>;
-
-    /// Register an operator
-    pub fn operator(mut self, op: OperatorBehavior) -> OperatorBuilder<'m, T>;
-
-    /// Finish building
-    pub fn build(self);
-}
-
-/// Builder for property accessors
-pub struct PropertyBuilder<'m, T: NativeType> {
-    class: &'m mut ClassBuilder<'_, T>,
-    name: String,
-    getter: Option<NativeFn>,
-    setter: Option<NativeFn>,
-    prop_type: Option<TypeSpec>,
-}
-
-impl<'m, T: NativeType> PropertyBuilder<'m, T> {
-    /// Set the getter function (makes property readable)
-    pub fn getter<V, F>(mut self, f: F) -> Self
+    /// Register a read-only property
+    /// Declaration: "Type name"
+    pub fn property_get<V, F>(mut self, decl: &str, getter: F) -> Result<Self, FfiRegistrationError>
     where
         V: ToScript,
         F: Fn(&T) -> V + Send + Sync + 'static;
 
-    /// Set the setter function (makes property writable)
-    pub fn setter<V, F>(mut self, f: F) -> Self
+    /// Register a read-write property
+    /// Declaration: "Type name"
+    pub fn property<V, G, S>(mut self, decl: &str, getter: G, setter: S) -> Result<Self, FfiRegistrationError>
     where
-        V: FromScript,
-        F: Fn(&mut T, V) + Send + Sync + 'static;
+        V: ToScript + FromScript,
+        G: Fn(&T) -> V + Send + Sync + 'static,
+        S: Fn(&mut T, V) + Send + Sync + 'static;
 
-    /// Finish building the property
-    pub fn done(self);
-}
-```
-
-### Enum Builder
-
-```rust
-// src/native/enum_builder.rs
-
-pub struct EnumBuilder<'m> {
-    module: &'m mut Module,
-    name: String,
-    values: Vec<(String, i64)>,
-}
-
-impl<'m> EnumBuilder<'m> {
-    /// Add an enum value
-    pub fn value(mut self, name: &str, val: i64) -> Self;
-
-    /// Add consecutive values starting from 0
-    pub fn values(mut self, names: &[&str]) -> Self;
+    /// Register an operator
+    /// Declaration: "ReturnType opName(params)" e.g. "Vec3 opAdd(const Vec3 &in)"
+    pub fn operator<F, Args, Ret>(mut self, decl: &str, f: F) -> Result<Self, FfiRegistrationError>
+    where F: IntoNativeFn<(&T, Args), Ret>;
 
     /// Finish building
-    pub fn build(self);
+    pub fn build(self) -> Result<(), FfiRegistrationError>;
 }
 ```
 
-### Interface Builder
+**Usage Examples:**
 
 ```rust
-// src/native/interface.rs
+// Value type
+module.register_type::<Vec3>("Vec3")
+    .value_type()
+    .constructor("void f()", || Vec3::default())?
+    .constructor("void f(float x, float y, float z)", Vec3::new)?
+    .method("float length() const", |v: &Vec3| v.length())?
+    .method("void normalize()", |v: &mut Vec3| v.normalize())?
+    .property("float x", |v| v.x, |v, x| v.x = x)?
+    .property_get("float lengthSq", |v| v.length_squared())?
+    .operator("Vec3 opAdd(const Vec3 &in)", |a, b| *a + *b)?
+    .operator("bool opEquals(const Vec3 &in)", |a, b| a == b)?
+    .build()?;
 
-pub struct InterfaceBuilder<'m> {
-    module: &'m mut Module,
-    name: String,
-    methods: Vec<MethodSignature>,
-}
+// Reference type
+module.register_type::<Entity>("Entity")
+    .reference_type()
+    .factory("Entity@ f()", || Entity::new())?
+    .factory("Entity@ f(const string &in name)", Entity::with_name)?
+    .addref(Entity::add_ref)
+    .release(Entity::release)
+    .method("string getName() const", |e| e.name.clone())?
+    .method("void setName(const string &in)", |e, name| e.name = name)?
+    .build()?;
 
-impl<'m> InterfaceBuilder<'m> {
-    /// Add a method signature
-    pub fn method(&mut self, name: &str) -> InterfaceMethodBuilder<'_>;
-
-    /// Finish building
-    pub fn build(self);
-}
-
-pub struct InterfaceMethodBuilder<'i> {
-    interface: &'i mut InterfaceBuilder<'_>,
-    name: String,
-    params: Vec<TypeSpec>,
-    return_type: TypeSpec,
-    is_const: bool,
-}
-
-impl InterfaceMethodBuilder<'_> {
-    pub fn param<T: FromScript>(mut self) -> Self;
-    pub fn returns<T: ToScript>(mut self) -> Self;
-    pub fn is_const(mut self) -> Self;
-    pub fn done(self);  // returns to interface builder
-}
+// Template type (unified under register_type)
+module.register_type::<ScriptArray>("array<class T>")
+    .reference_type()
+    .template_callback(|info| TemplateValidation::valid())?
+    .factory("array<T>@ f()", || ScriptArray::new())?
+    .factory("array<T>@ f(uint size)", ScriptArray::with_capacity)?
+    .method("void insertLast(const T &in)", array_insert_last)?
+    .method("uint length() const", ScriptArray::len)?
+    .operator("T& opIndex(uint)", array_index)?
+    .build()?;
 ```
 
-### Funcdef Builder
+### Enum, Interface, and Funcdef Registration
+
+These are registered directly on Module with declaration strings - no separate builders needed:
 
 ```rust
-// src/native/funcdef.rs
+// Enums - full declaration parsed
+module.register_enum("enum Color { Red = 0, Green = 1, Blue = 2 }")?;
+module.register_enum("enum Direction { North, East, South, West }")?;  // auto-numbered
+module.register_enum("enum Flags { None = 0, Read = 1, Write = 2, Execute = 4 }")?;
 
-pub struct FuncdefBuilder<'m> {
-    module: &'m mut Module,
-    name: String,
-    params: Vec<TypeSpec>,
-    return_type: TypeSpec,
-}
+// Interfaces - full declaration parsed
+module.register_interface("interface IDrawable { void draw() const; void setVisible(bool); }")?;
+module.register_interface("
+    interface ISerializable {
+        string serialize() const;
+        void deserialize(const string &in data);
+    }
+")?;
 
-impl<'m> FuncdefBuilder<'m> {
-    /// Add a parameter type
-    pub fn param<T: FromScript>(mut self) -> Self;
-
-    /// Set return type
-    pub fn returns<T: ToScript>(mut self) -> Self;
-
-    /// Finish building
-    pub fn build(self);
-}
+// Funcdefs - full declaration parsed
+module.register_funcdef("funcdef void Callback()")?;
+module.register_funcdef("funcdef bool Predicate(int value)")?;
+module.register_funcdef("funcdef void EventHandler(const string &in event, ?&in data)")?;
 ```
 
-### Template Builder
+### Template Type Parameter Handling
+
+Templates are registered using `register_type` with `<class T>` syntax. The parser extracts template parameter names from the type declaration and recognizes them in method signatures:
 
 ```rust
-// src/native/template.rs
+// Single type parameter - T is recognized in method signatures
+module.register_type::<ScriptArray>("array<class T>")
+    .reference_type()
+    .template_callback(|info| TemplateValidation::valid())?
+    .factory("array<T>@ f()", || ScriptArray::new())?
+    .method("void insertLast(const T &in)", array_insert_last)?
+    .method("uint length() const", ScriptArray::len)?
+    .operator("T& opIndex(uint)", array_index)?
+    .build()?;
 
+// Multiple type parameters - K and V are recognized
+module.register_type::<ScriptDict>("dictionary<class K, class V>")
+    .reference_type()
+    .template_callback(|info| {
+        if is_hashable(&info.sub_types[0]) {
+            TemplateValidation::valid()
+        } else {
+            TemplateValidation::invalid("Key must be hashable")
+        }
+    })?
+    .method("void set(const K &in, const V &in)", dict_set)?
+    .method("V& opIndex(const K &in)", dict_index)?
+    .build()?;
+```
+
+**TemplateInstanceInfo and TemplateValidation:**
+
+```rust
 /// Information about a template instantiation for validation callback
 pub struct TemplateInstanceInfo {
-    /// The template name
+    /// The template name (e.g., "array")
     pub template_name: String,
     /// The type arguments (e.g., [int] for array<int>)
-    pub sub_types: Vec<TypeSpec>,
+    pub sub_types: Vec<DataType>,
 }
 
 /// Result of template validation callback
@@ -1202,123 +1284,11 @@ pub struct TemplateValidation {
     pub needs_gc: bool,
 }
 
-pub struct TemplateBuilder<'m> {
-    module: &'m mut Module,
-    name: String,
-    param_count: usize,
-    validator: Option<Box<dyn Fn(&TemplateInstanceInfo) -> TemplateValidation + Send + Sync>>,
-    instance_builder: Option<Box<dyn Fn(&mut TemplateInstanceBuilder, &[TypeSpec]) + Send + Sync>>,
+impl TemplateValidation {
+    pub fn valid() -> Self;
+    pub fn invalid(msg: &str) -> Self;
+    pub fn with_gc() -> Self;  // Valid and needs garbage collection
 }
-
-impl<'m> TemplateBuilder<'m> {
-    /// Set number of type parameters
-    pub fn params(mut self, count: usize) -> Self;
-
-    /// Set validation callback (called at compile time)
-    pub fn validator<F>(mut self, f: F) -> Self
-    where
-        F: Fn(&TemplateInstanceInfo) -> TemplateValidation + 'static;
-
-    /// Set instance builder callback (called when template is instantiated)
-    pub fn on_instantiate<F>(mut self, f: F) -> Self
-    where
-        F: Fn(&mut TemplateInstanceBuilder, &[DataType]) + 'static;
-
-    /// Finish building
-    pub fn build(self);
-}
-
-/// Builder for configuring a template instance's methods
-pub struct TemplateInstanceBuilder {
-    methods: Vec<InstanceMethod>,
-    operators: Vec<(OperatorBehavior, InstanceMethod)>,
-    properties: Vec<InstanceProperty>,
-}
-
-impl TemplateInstanceBuilder {
-    /// Add a method. Use `SubType(0)`, `SubType(1)` for type parameters
-    pub fn method(&mut self, name: &str) -> InstanceMethodBuilder<'_>;
-
-    /// Add an operator
-    pub fn operator(&mut self, op: OperatorBehavior) -> InstanceOperatorBuilder<'_>;
-
-    /// Add a property
-    pub fn property(&mut self, name: &str) -> InstancePropertyBuilder<'_>;
-}
-
-/// Placeholder for template type parameter in instance methods
-pub struct SubType(pub usize);
-```
-
----
-
-## Template Type Parameter Handling
-
-For template methods that use the element type (like `array<T>.insertLast(T)`):
-
-```rust
-/// Represents a type that may be a template parameter
-pub enum TypeOrSubType {
-    /// A concrete type
-    Concrete(DataType),
-    /// A template type parameter (index into sub_types)
-    SubType(usize),
-}
-
-impl TemplateInstanceBuilder {
-    pub fn method(&mut self, name: &str) -> InstanceMethodBuilder<'_> {
-        InstanceMethodBuilder { ... }
-    }
-}
-
-impl InstanceMethodBuilder<'_> {
-    /// Parameter is a concrete type
-    pub fn param<T: FromScript>(self) -> Self;
-
-    /// Parameter is the Nth template type parameter
-    pub fn param_subtype(self, index: usize) -> Self;
-
-    /// Return type is a concrete type
-    pub fn returns<T: ToScript>(self) -> Self;
-
-    /// Return type is the Nth template type parameter
-    pub fn returns_subtype(self, index: usize) -> Self;
-
-    /// Return type is a reference to the Nth template type parameter
-    pub fn returns_ref_subtype(self, index: usize) -> Self;
-}
-```
-
-Example usage for array:
-
-```rust
-module.register_template("array")
-    .params(1)
-    .validator(|info| {
-        // Arrays can hold any type
-        TemplateValidation { is_valid: true, error: None, needs_gc: false }
-    })
-    .on_instantiate(|builder, sub_types| {
-        // sub_types[0] is the element type (T)
-        builder.method("insertLast")
-            .param_subtype(0)  // T
-            .returns::<()>()
-            .native(array_insert_last)
-            .done();
-
-        builder.method("length")
-            .returns::<u32>()
-            .is_const()
-            .native(array_length)
-            .done();
-
-        builder.operator(OperatorBehavior::OpIndex)
-            .param::<i32>()
-            .returns_ref_subtype(0)  // &T or &mut T
-            .native(array_index)
-            .done();
-    })
-    .build();
 ```
 
 ---
@@ -1330,19 +1300,14 @@ src/
 ├── context.rs          # Context (owns installed modules)
 ├── unit.rs             # Unit (compilation unit, replaces current module.rs)
 ├── ffi/                # FFI registration system
-│   ├── mod.rs          # Public re-exports (Module, builders, traits)
+│   ├── mod.rs          # Public re-exports (Module, ClassBuilder, traits)
 │   ├── module.rs       # Module<'app> struct (namespaced native registrations)
 │   ├── traits.rs       # FromScript, ToScript, NativeType, IntoNativeFn
 │   ├── native_fn.rs    # NativeFn, NativeCallable, CallContext
-│   ├── error.rs        # NativeError, ModuleError, ContextError
-│   ├── function.rs     # FunctionBuilder
-│   ├── class.rs        # ClassBuilder, MethodBuilder, PropertyBuilder
-│   ├── enum_builder.rs # EnumBuilder
-│   ├── interface.rs    # InterfaceBuilder
-│   ├── funcdef.rs      # FuncdefBuilder
-│   ├── template.rs     # TemplateBuilder, TemplateInstanceBuilder
+│   ├── error.rs        # NativeError, FfiRegistrationError
+│   ├── class.rs        # ClassBuilder (value/ref types with declaration string methods)
 │   ├── any_type.rs     # AnyRef, AnyRefMut for ?& parameters
-│   ├── types.rs        # TypeSpec, ParamDef, TypeKind, Behaviors, etc.
+│   ├── types.rs        # TypeKind, Behaviors, TemplateInstanceInfo, TemplateValidation
 │   ├── global_property.rs # GlobalPropertyDef, GlobalPropertyRef
 │   └── apply.rs        # apply_to_registry() implementation
 ├── modules/            # Built-in modules (re-exported as angelscript::modules)
@@ -1393,52 +1358,21 @@ test_scripts/
 ```rust
 // src/modules/string.rs
 
-pub fn string() -> Module {
+pub fn string() -> Result<Module<'static>, FfiRegistrationError> {
     let mut module = Module::root();
     module.register_type::<ScriptString>("string")
         .value_type()
-        .constructor::<()>()
-            .native(|| ScriptString::new())
-            .done()
-        .constructor::<(&str,)>()
-            .native(|s| ScriptString::from(s))
-            .done()
-        .const_method("length")
-            .returns::<u32>()
-            .native(|s: &ScriptString| s.len() as u32)
-            .done()
-        .const_method("substr")
-            .param::<u32>("start")
-            .param::<i32>("count")
-            .returns::<String>()
-            .native(ScriptString::substr)
-            .done()
-        .const_method("findFirst")
-            .param::<&str>("str")
-            .returns::<i32>()
-            .native(ScriptString::find_first)
-            .done()
-        .const_method("isEmpty")
-            .returns::<bool>()
-            .native(|s: &ScriptString| s.is_empty())
-            .done()
-        .operator(OperatorBehavior::OpAdd)
-            .param::<&str>()
-            .returns::<String>()
-            .native(|a: &ScriptString, b: &str| a.concat(b))
-            .done()
-        .operator(OperatorBehavior::OpEquals)
-            .param::<&str>()
-            .returns::<bool>()
-            .native(|a: &ScriptString, b: &str| a.as_str() == b)
-            .done()
-        .operator(OperatorBehavior::OpIndex)
-            .param::<u32>()
-            .returns::<u8>()
-            .native(|s: &ScriptString, i: u32| s.char_at(i))
-            .done()
-        .build();
-    module
+        .constructor("void f()", || ScriptString::new())?
+        .constructor("void f(const string &in s)", ScriptString::from)?
+        .method("uint length() const", |s: &ScriptString| s.len() as u32)?
+        .method("string substr(uint start, int count = -1) const", ScriptString::substr)?
+        .method("int findFirst(const string &in str, uint start = 0) const", ScriptString::find_first)?
+        .method("bool isEmpty() const", |s: &ScriptString| s.is_empty())?
+        .operator("string opAdd(const string &in)", |a: &ScriptString, b: &str| a.concat(b))?
+        .operator("bool opEquals(const string &in)", |a: &ScriptString, b: &str| a.as_str() == b)?
+        .operator("uint8 opIndex(uint)", |s: &ScriptString, i: u32| s.char_at(i))?
+        .build()?;
+    Ok(module)
 }
 ```
 
@@ -1447,30 +1381,30 @@ pub fn string() -> Module {
 ```rust
 // src/modules/std.rs
 
-pub fn std() -> Module {
+pub fn std() -> Result<Module<'static>, FfiRegistrationError> {
     let mut module = Module::root();
 
     // Print without newline
-    module.register_fn("print", |s: &str| {
+    module.register_fn("void print(const string &in s)", |s: &str| {
         print!("{}", s);
-    });
+    })?;
 
     // Print with newline
-    module.register_fn("println", |s: &str| {
+    module.register_fn("void println(const string &in s)", |s: &str| {
         println!("{}", s);
-    });
+    })?;
 
     // Print to stderr without newline
-    module.register_fn("eprint", |s: &str| {
+    module.register_fn("void eprint(const string &in s)", |s: &str| {
         eprint!("{}", s);
-    });
+    })?;
 
     // Print to stderr with newline
-    module.register_fn("eprintln", |s: &str| {
+    module.register_fn("void eprintln(const string &in s)", |s: &str| {
         eprintln!("{}", s);
-    });
+    })?;
 
-    module
+    Ok(module)
 }
 ```
 
@@ -1479,55 +1413,20 @@ pub fn std() -> Module {
 ```rust
 // src/modules/array.rs
 
-pub fn array() -> Module {
+pub fn array() -> Result<Module<'static>, FfiRegistrationError> {
     let mut module = Module::root();
-    module.register_template("array")
-        .params(1)
-        .validator(|_| TemplateValidation::valid())
-        .on_instantiate(|builder, sub_types| {
-            let elem_type = &sub_types[0];
-
-            // Constructor
-            builder.constructor()
-                .native(|| ScriptArray::new())
-                .done();
-            builder.constructor()
-                .param::<u32>()  // initial size
-                .native(|size| ScriptArray::with_capacity(size))
-                .done();
-
-            // Methods
-            builder.const_method("length")
-                .returns::<u32>()
-                .native(ScriptArray::len)
-                .done();
-
-            builder.method("resize")
-                .param::<u32>()
-                .returns::<()>()
-                .native(ScriptArray::resize)
-                .done();
-
-            builder.method("insertLast")
-                .param_subtype(0)  // T
-                .returns::<()>()
-                .native_generic(array_insert_last)
-                .done();
-
-            builder.method("removeLast")
-                .returns::<()>()
-                .native(ScriptArray::pop)
-                .done();
-
-            // Operators
-            builder.operator(OperatorBehavior::OpIndex)
-                .param::<i32>()
-                .returns_ref_subtype(0)  // &T
-                .native_generic(array_index)
-                .done();
-        })
-        .build();
-    module
+    module.register_type::<ScriptArray>("array<class T>")
+        .reference_type()
+        .template_callback(|_| TemplateValidation::valid())?
+        .factory("array<T>@ f()", || ScriptArray::new())?
+        .factory("array<T>@ f(uint size)", ScriptArray::with_capacity)?
+        .method("uint length() const", ScriptArray::len)?
+        .method("void resize(uint size)", ScriptArray::resize)?
+        .method("void insertLast(const T &in value)", array_insert_last)?
+        .method("void removeLast()", ScriptArray::pop)?
+        .operator("T& opIndex(int index)", array_index)?
+        .build()?;
+    Ok(module)
 }
 ```
 
@@ -1536,11 +1435,11 @@ pub fn array() -> Module {
 ```rust
 // src/modules/dictionary.rs
 
-pub fn dictionary() -> Module {
+pub fn dictionary() -> Result<Module<'static>, FfiRegistrationError> {
     let mut module = Module::root();
-    module.register_template("dictionary")
-        .params(2)  // K, V
-        .validator(|info| {
+    module.register_type::<ScriptDict>("dictionary<class K, class V>")
+        .reference_type()
+        .template_callback(|info| {
             // Keys must be hashable (primitives, string, handles)
             let key_type = &info.sub_types[0];
             if is_hashable(key_type) {
@@ -1548,46 +1447,16 @@ pub fn dictionary() -> Module {
             } else {
                 TemplateValidation::invalid("Dictionary key must be hashable")
             }
-        })
-        .on_instantiate(|builder, sub_types| {
-            builder.method("set")
-                .param_subtype(0)  // K
-                .param_subtype(1)  // V
-                .returns::<()>()
-                .native_generic(dict_set)
-                .done();
-
-            builder.const_method("get")
-                .param_subtype(0)     // K
-                .param_out_subtype(1) // V &out
-                .returns::<bool>()
-                .native_generic(dict_get)
-                .done();
-
-            builder.const_method("exists")
-                .param_subtype(0)  // K
-                .returns::<bool>()
-                .native_generic(dict_exists)
-                .done();
-
-            builder.method("delete")
-                .param_subtype(0)  // K
-                .returns::<bool>()
-                .native_generic(dict_delete)
-                .done();
-
-            builder.const_method("isEmpty")
-                .returns::<bool>()
-                .native(ScriptDict::is_empty)
-                .done();
-
-            builder.const_method("getSize")
-                .returns::<u32>()
-                .native(ScriptDict::len)
-                .done();
-        })
-        .build();
-    module
+        })?
+        .factory("dictionary<K,V>@ f()", || ScriptDict::new())?
+        .method("void set(const K &in key, const V &in value)", dict_set)?
+        .method("bool get(const K &in key, V &out value) const", dict_get)?
+        .method("bool exists(const K &in key) const", dict_exists)?
+        .method("bool delete(const K &in key)", dict_delete)?
+        .method("bool isEmpty() const", ScriptDict::is_empty)?
+        .method("uint getSize() const", ScriptDict::len)?
+        .build()?;
+    Ok(module)
 }
 ```
 
@@ -1604,14 +1473,13 @@ Detailed task files are in `/claude/tasks/`. Complete in order:
 | 01 | [01_ffi_core_infrastructure.md](tasks/01_ffi_core_infrastructure.md) | Core types, traits (FromScript, ToScript, NativeType, CallContext, NativeFn) |
 | 02 | [02_ffi_module_and_context.md](tasks/02_ffi_module_and_context.md) | Module<'app> and Context API, GlobalPropertyDef |
 
-### Phase 2: Registration Builders
+### Phase 2: Registration API
 
 | Task | File | Description |
 |------|------|-------------|
-| 03 | [03_ffi_function_builder.md](tasks/03_ffi_function_builder.md) | FunctionBuilder with type-safe and raw calling conventions |
-| 04 | [04_ffi_class_builder.md](tasks/04_ffi_class_builder.md) | ClassBuilder for value/reference types, methods, properties, operators |
-| 05 | [05_ffi_enum_interface_funcdef.md](tasks/05_ffi_enum_interface_funcdef.md) | EnumBuilder, InterfaceBuilder, FuncdefBuilder |
-| 06 | [06_ffi_template_builder.md](tasks/06_ffi_template_builder.md) | TemplateBuilder with validation and SubType parameters |
+| 03 | [03_ffi_function_registration.md](tasks/03_ffi_function_registration.md) | Module.register_fn() with declaration string parsing |
+| 04 | [04_ffi_class_builder.md](tasks/04_ffi_class_builder.md) | ClassBuilder for value/ref/template types with declaration string methods |
+| 05 | [05_ffi_enum_interface_funcdef.md](tasks/05_ffi_enum_interface_funcdef.md) | Module.register_enum/interface/funcdef with declaration parsing |
 
 ### Phase 3: Integration
 
@@ -1635,21 +1503,14 @@ Detailed task files are in `/claude/tasks/`. Complete in order:
 **To Create (FFI Core):**
 - `src/context.rs` - Context (owns installed modules)
 - `src/unit.rs` - Unit (compilation unit)
-- `src/ffi/mod.rs` - Public re-exports
-- `src/ffi/module.rs` - Module<'app> (namespaced native registrations)
-- `src/ffi/types.rs` - TypeSpec, ParamDef, TypeKind, Behaviors, etc.
+- `src/ffi/mod.rs` - Public re-exports (Module, ClassBuilder, traits)
+- `src/ffi/module.rs` - Module<'app> with register_fn, register_type, register_enum, etc.
+- `src/ffi/types.rs` - TypeKind, Behaviors, TemplateInstanceInfo, TemplateValidation
 - `src/ffi/traits.rs` - FromScript, ToScript, NativeType, IntoNativeFn
 - `src/ffi/native_fn.rs` - NativeFn, NativeCallable, CallContext
-- `src/ffi/error.rs` - NativeError, ModuleError, ContextError
+- `src/ffi/error.rs` - NativeError, FfiRegistrationError
 - `src/ffi/global_property.rs` - GlobalPropertyDef, GlobalPropertyRef
-
-**To Create (Builders):**
-- `src/ffi/function.rs` - FunctionBuilder
-- `src/ffi/class.rs` - ClassBuilder, MethodBuilder, PropertyBuilder
-- `src/ffi/enum_builder.rs` - EnumBuilder
-- `src/ffi/interface.rs` - InterfaceBuilder
-- `src/ffi/funcdef.rs` - FuncdefBuilder
-- `src/ffi/template.rs` - TemplateBuilder, TemplateInstanceBuilder
+- `src/ffi/class.rs` - ClassBuilder with declaration string methods
 - `src/ffi/any_type.rs` - AnyRef, AnyRefMut
 - `src/ffi/apply.rs` - apply_to_registry() implementation
 
