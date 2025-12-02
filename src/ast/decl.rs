@@ -403,6 +403,65 @@ pub struct ImportDecl<'ast> {
     pub span: Span,
 }
 
+/// A function signature declaration (for FFI registration).
+///
+/// This is used for parsing FFI declaration strings like "int add(int a, int b)".
+/// Unlike `FunctionDecl`, this contains only the signature without body,
+/// modifiers, or visibility.
+///
+/// # Example
+///
+/// ```ignore
+/// use angelscript::parse_ffi_function_decl;
+/// use bumpalo::Bump;
+///
+/// let arena = Bump::new();
+/// let sig = parse_ffi_function_decl("int add(int a, int b)", &arena)?;
+/// assert_eq!(sig.name.name, "add");
+/// assert_eq!(sig.params.len(), 2);
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct FunctionSignatureDecl<'ast> {
+    /// Return type
+    pub return_type: ReturnType<'ast>,
+    /// Function name
+    pub name: Ident<'ast>,
+    /// Parameters
+    pub params: &'ast [FunctionParam<'ast>],
+    /// Whether this is a const method
+    pub is_const: bool,
+    /// Function attributes (property, etc.)
+    pub attrs: FuncAttr,
+    /// Source location
+    pub span: Span,
+}
+
+/// A property declaration (for FFI registration).
+///
+/// This is used for parsing FFI declaration strings like "int score" or "const string name".
+/// Unlike `GlobalVarDecl`, this contains only the type and name without initializer.
+///
+/// # Example
+///
+/// ```ignore
+/// use angelscript::parse_property_decl;
+/// use bumpalo::Bump;
+///
+/// let arena = Bump::new();
+/// let prop = parse_property_decl("const int score", &arena)?;
+/// assert_eq!(prop.name.name, "score");
+/// assert!(prop.ty.is_const);
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PropertyDecl<'ast> {
+    /// Property type (includes const modifier)
+    pub ty: TypeExpr<'ast>,
+    /// Property name
+    pub name: Ident<'ast>,
+    /// Source location
+    pub span: Span,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

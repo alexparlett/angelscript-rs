@@ -171,6 +171,23 @@ impl<'ast> Parser<'ast> {
         }
     }
 
+    /// Expect end of input.
+    ///
+    /// Returns an error if there are remaining tokens (other than EOF).
+    /// This is useful for parsing complete declaration strings in FFI.
+    pub fn expect_eof(&mut self) -> Result<(), ParseError> {
+        if self.is_eof() {
+            Ok(())
+        } else {
+            let token = *self.peek();
+            Err(ParseError::new(
+                ParseErrorKind::InvalidSyntax,
+                token.span,
+                format!("unexpected token '{}' after declaration", token.kind),
+            ))
+        }
+    }
+
     /// Fill the token buffer to have at least `needed` tokens available.
     ///
     /// With eager tokenization, this is now a no-op since all tokens are

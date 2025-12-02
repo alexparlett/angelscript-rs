@@ -336,55 +336,100 @@ pub fn parse_type_expr<'ast>(
     }
 }
 
-/// Parse a property declaration expression (type followed by identifier).
+/// Parse a property declaration from a declaration string.
 ///
-/// This parses strings like "const int score" or "MyClass@ obj" and returns
-/// the type expression and identifier name.
+/// This parses property declarations for native global property registration.
+/// Requires a `bumpalo::Bump` arena allocator for AST node allocation.
 ///
-/// # Example
+/// # Examples
 ///
 /// ```
-/// use angelscript::parse_property_expr;
+/// use angelscript::parse_property_decl;
 /// use bumpalo::Bump;
 ///
 /// let arena = Bump::new();
-/// match parse_property_expr("const int score", &arena) {
-///     Ok((ty, name)) => println!("Property '{}' of type '{}'", name.name, ty),
-///     Err(errors) => eprintln!("Errors: {}", errors),
-/// }
+///
+/// // Simple property
+/// let prop = parse_property_decl("int score", &arena).unwrap();
+/// assert_eq!(prop.name.name, "score");
+///
+/// // Const property
+/// let prop = parse_property_decl("const float PI", &arena).unwrap();
+/// assert!(prop.ty.is_const);
+///
+/// // Handle property
+/// let prop = parse_property_decl("MyClass@ obj", &arena).unwrap();
+/// assert!(prop.ty.has_handle());
 /// ```
-pub fn parse_property_expr<'ast>(
+pub fn parse_property_decl<'ast>(
     source: &str,
     arena: &'ast bumpalo::Bump,
-) -> Result<(TypeExpr<'ast>, Ident<'ast>), ParseErrors> {
-    use crate::lexer::TokenKind;
-
+) -> Result<PropertyDecl<'ast>, ParseErrors> {
     let mut parser = Parser::new(source, arena);
 
-    // Parse the type expression
-    let type_result = parser.parse_type();
-    let type_expr = match type_result {
-        Ok(ty) => ty,
+    let result = parser.parse_property_decl();
+
+    match result {
+        Ok(prop) => {
+            if parser.has_errors() {
+                Err(parser.take_errors())
+            } else {
+                Ok(prop)
+            }
+        }
         Err(err) => {
             parser.errors.push(err);
-            return Err(parser.take_errors());
+            Err(parser.take_errors())
         }
-    };
+    }
+}
 
-    // Parse the identifier name
-    let name_result = parser.expect(TokenKind::Identifier);
-    let name = match name_result {
-        Ok(token) => Ident::new(token.lexeme, token.span),
+/// Parse a function declaration from a declaration string.
+///
+/// This parses function signatures for native function registration.
+/// Requires a `bumpalo::Bump` arena allocator for AST node allocation.
+///
+/// # Examples
+///
+/// ```
+/// use angelscript::parse_function_decl;
+/// use bumpalo::Bump;
+///
+/// let arena = Bump::new();
+///
+/// // Simple function
+/// let sig = parse_function_decl("int add(int a, int b)", &arena).unwrap();
+/// assert_eq!(sig.name.name, "add");
+/// assert_eq!(sig.params.len(), 2);
+///
+/// // Const method
+/// let sig = parse_function_decl("int getValue() const", &arena).unwrap();
+/// assert!(sig.is_const);
+///
+/// // Reference parameter
+/// let sig = parse_function_decl("void print(const string& in msg)", &arena).unwrap();
+/// assert_eq!(sig.params.len(), 1);
+/// ```
+pub fn parse_function_decl<'ast>(
+    source: &str,
+    arena: &'ast bumpalo::Bump,
+) -> Result<FunctionSignatureDecl<'ast>, ParseErrors> {
+    let mut parser = Parser::new(source, arena);
+
+    let result = parser.parse_function_signature();
+
+    match result {
+        Ok(sig) => {
+            if parser.has_errors() {
+                Err(parser.take_errors())
+            } else {
+                Ok(sig)
+            }
+        }
         Err(err) => {
             parser.errors.push(err);
-            return Err(parser.take_errors());
+            Err(parser.take_errors())
         }
-    };
-
-    if parser.has_errors() {
-        Err(parser.take_errors())
-    } else {
-        Ok((type_expr, name))
     }
 }
 
@@ -828,6 +873,165 @@ mod tests {
         let source = "array<";  // Incomplete template
         let result = parse_type_expr(source, &arena);
         // Should fail
+        assert!(result.is_err());
+    }
+
+    // =========================================================================
+    // FFI function declaration parsing tests
+    // =========================================================================
+
+    #[test]
+    fn parse_function_decl_simple() {
+        let arena = bumpalo::Bump::new();
+        let sig = parse_function_decl("int add(int a, int b)", &arena).unwrap();
+
+        assert_eq!(sig.name.name, "add");
+        assert_eq!(sig.params.len(), 2);
+        assert_eq!(sig.params[0].name.unwrap().name, "a");
+        assert_eq!(sig.params[1].name.unwrap().name, "b");
+        assert!(!sig.is_const);
+    }
+
+    #[test]
+    fn parse_function_decl_no_params() {
+        let arena = bumpalo::Bump::new();
+        let sig = parse_function_decl("void main()", &arena).unwrap();
+
+        assert_eq!(sig.name.name, "main");
+        assert_eq!(sig.params.len(), 0);
+    }
+
+    #[test]
+    fn parse_function_decl_const_method() {
+        let arena = bumpalo::Bump::new();
+        let sig = parse_function_decl("int getValue() const", &arena).unwrap();
+
+        assert_eq!(sig.name.name, "getValue");
+        assert!(sig.is_const);
+    }
+
+    #[test]
+    fn parse_function_decl_ref_param() {
+        let arena = bumpalo::Bump::new();
+        let sig = parse_function_decl("void print(const string& in msg)", &arena).unwrap();
+
+        assert_eq!(sig.name.name, "print");
+        assert_eq!(sig.params.len(), 1);
+    }
+
+    #[test]
+    fn parse_function_decl_multiple_params() {
+        let arena = bumpalo::Bump::new();
+        let sig = parse_function_decl("float lerp(float a, float b, float t)", &arena).unwrap();
+
+        assert_eq!(sig.name.name, "lerp");
+        assert_eq!(sig.params.len(), 3);
+    }
+
+    #[test]
+    fn parse_function_decl_error_no_return_type() {
+        let arena = bumpalo::Bump::new();
+        // Missing return type should fail
+        let result = parse_function_decl("add(int a, int b)", &arena);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn parse_function_decl_error_trailing_tokens() {
+        let arena = bumpalo::Bump::new();
+        // Trailing semicolon should fail (we don't want full declarations)
+        let result = parse_function_decl("void foo();", &arena);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn parse_function_decl_error_with_body() {
+        let arena = bumpalo::Bump::new();
+        // Body should fail (we only want signatures)
+        let result = parse_function_decl("void foo() {}", &arena);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn parse_function_decl_property_attr() {
+        let arena = bumpalo::Bump::new();
+        let sig = parse_function_decl("int get_value() property", &arena).unwrap();
+
+        assert_eq!(sig.name.name, "get_value");
+        assert!(sig.attrs.property);
+    }
+
+    #[test]
+    fn parse_function_decl_handle_return() {
+        let arena = bumpalo::Bump::new();
+        let sig = parse_function_decl("MyClass@ create()", &arena).unwrap();
+
+        assert_eq!(sig.name.name, "create");
+        assert!(sig.return_type.ty.has_handle());
+    }
+
+    // =========================================================================
+    // Property declaration parsing tests
+    // =========================================================================
+
+    #[test]
+    fn parse_property_decl_simple() {
+        let arena = bumpalo::Bump::new();
+        let prop = parse_property_decl("int score", &arena).unwrap();
+
+        assert_eq!(prop.name.name, "score");
+        assert!(!prop.ty.is_const);
+    }
+
+    #[test]
+    fn parse_property_decl_const() {
+        let arena = bumpalo::Bump::new();
+        let prop = parse_property_decl("const float PI", &arena).unwrap();
+
+        assert_eq!(prop.name.name, "PI");
+        assert!(prop.ty.is_const);
+    }
+
+    #[test]
+    fn parse_property_decl_handle() {
+        let arena = bumpalo::Bump::new();
+        let prop = parse_property_decl("MyClass@ obj", &arena).unwrap();
+
+        assert_eq!(prop.name.name, "obj");
+        assert!(prop.ty.has_handle());
+    }
+
+    #[test]
+    fn parse_property_decl_const_handle() {
+        let arena = bumpalo::Bump::new();
+        let prop = parse_property_decl("const MyClass@ obj", &arena).unwrap();
+
+        assert_eq!(prop.name.name, "obj");
+        assert!(prop.ty.is_const);
+        assert!(prop.ty.has_handle());
+    }
+
+    #[test]
+    fn parse_property_decl_error_missing_name() {
+        let arena = bumpalo::Bump::new();
+        // Just a type without a name should fail
+        let result = parse_property_decl("int", &arena);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn parse_property_decl_error_trailing_tokens() {
+        let arena = bumpalo::Bump::new();
+        // Trailing tokens should fail
+        let result = parse_property_decl("int score = 0", &arena);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn parse_property_decl_error_with_semicolon() {
+        let arena = bumpalo::Bump::new();
+        // Semicolon should fail (we only want declarations)
+        let result = parse_property_decl("int score;", &arena);
         assert!(result.is_err());
     }
 }

@@ -355,6 +355,85 @@ impl ToScript for &str {
     }
 }
 
+// =============================================================================
+// IntoNativeFn trait for type-safe function registration
+// =============================================================================
+
+use super::native_fn::{CallContext, NativeFn};
+use super::error::NativeError;
+
+/// Trait for converting typed closures into `NativeFn`.
+///
+/// This trait enables ergonomic registration of Rust closures as AngelScript
+/// functions without manually dealing with `CallContext`.
+///
+/// # Supported Signatures
+///
+/// Implementations are provided for closures with 0-8 parameters where:
+/// - All parameters implement `FromScript`
+/// - The return type implements `ToScript` (including `()` for void)
+///
+/// # Example
+///
+/// ```ignore
+/// use angelscript::Module;
+///
+/// let mut module = Module::root();
+///
+/// // The closure is automatically wrapped via IntoNativeFn
+/// module.register_fn("int add(int a, int b)", |a: i32, b: i32| a + b)?;
+/// ```
+pub trait IntoNativeFn<Args, Ret>: Send + Sync + 'static {
+    /// Convert this closure into a `NativeFn`.
+    fn into_native_fn(self) -> NativeFn;
+}
+
+// Implementation for 0-argument functions
+impl<F, Ret> IntoNativeFn<(), Ret> for F
+where
+    F: Fn() -> Ret + Send + Sync + 'static,
+    Ret: ToScript,
+{
+    fn into_native_fn(self) -> NativeFn {
+        NativeFn::new(move |ctx: &mut CallContext| {
+            let result = (self)();
+            ctx.set_return(result).map_err(NativeError::from)
+        })
+    }
+}
+
+// Macro to generate implementations for 1-8 argument functions
+macro_rules! impl_into_native_fn {
+    ($($idx:tt : $T:ident : $var:ident),+) => {
+        impl<F, Ret, $($T),+> IntoNativeFn<($($T,)+), Ret> for F
+        where
+            F: Fn($($T),+) -> Ret + Send + Sync + 'static,
+            Ret: ToScript,
+            $($T: FromScript,)+
+        {
+            fn into_native_fn(self) -> NativeFn {
+                NativeFn::new(move |ctx: &mut CallContext| {
+                    $(
+                        let $var: $T = ctx.arg($idx)?;
+                    )+
+                    let result = (self)($($var),+);
+                    ctx.set_return(result).map_err(NativeError::from)
+                })
+            }
+        }
+    };
+}
+
+// Generate implementations for 1-8 arguments
+impl_into_native_fn!(0: A0: a0);
+impl_into_native_fn!(0: A0: a0, 1: A1: a1);
+impl_into_native_fn!(0: A0: a0, 1: A1: a1, 2: A2: a2);
+impl_into_native_fn!(0: A0: a0, 1: A1: a1, 2: A2: a2, 3: A3: a3);
+impl_into_native_fn!(0: A0: a0, 1: A1: a1, 2: A2: a2, 3: A3: a3, 4: A4: a4);
+impl_into_native_fn!(0: A0: a0, 1: A1: a1, 2: A2: a2, 3: A3: a3, 4: A4: a4, 5: A5: a5);
+impl_into_native_fn!(0: A0: a0, 1: A1: a1, 2: A2: a2, 3: A3: a3, 4: A4: a4, 5: A5: a5, 6: A6: a6);
+impl_into_native_fn!(0: A0: a0, 1: A1: a1, 2: A2: a2, 3: A3: a3, 4: A4: a4, 5: A5: a5, 6: A6: a6, 7: A7: a7);
+
 #[cfg(test)]
 mod tests {
     use super::*;

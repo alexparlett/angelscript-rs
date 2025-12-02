@@ -20,11 +20,12 @@
 use bumpalo::Bump;
 use thiserror::Error;
 
-use crate::ast::parse_property_expr;
+use crate::ast::{parse_function_decl, parse_property_decl, FunctionSignatureDecl, PropertyDecl};
 use crate::ffi::{
-    GlobalPropertyDef, NativeFuncdefDef, NativeFunctionDef, NativeInterfaceDef, NativeTypeDef,
+    GlobalPropertyDef, IntoNativeFn, NativeCallable, NativeFn, NativeFuncdefDef, NativeFunctionDef,
+    NativeInterfaceDef, NativeTypeDef,
 };
-use crate::semantic::types::type_def::TypeId;
+use crate::semantic::types::type_def::{FunctionId, FunctionTraits, TypeId, Visibility};
 
 /// A namespaced collection of native functions, types, and global properties.
 ///
@@ -179,15 +180,192 @@ impl<'app> Module<'app> {
     }
 
     // =========================================================================
-    // Function registration (placeholder - FunctionBuilder in Task 03)
+    // Function registration
     // =========================================================================
 
-    /// Register a native function (placeholder).
+    /// Register a native function using a declaration string and raw callable.
     ///
-    /// The full implementation with type-safe closures will be added in Task 03.
-    /// For now, this stores a raw NativeFunctionDef.
-    pub fn add_function(&mut self, func: NativeFunctionDef<'static>) {
-        self.functions.push(func);
+    /// This is the low-level registration method that works directly with
+    /// `NativeCallable` implementations. For most use cases, prefer `register_fn`
+    /// which provides type-safe closure wrapping.
+    ///
+    /// # Parameters
+    ///
+    /// - `decl`: Declaration string like `"int add(int a, int b)"` or `"void print(const string& in msg)"`
+    /// - `f`: The native function implementation
+    ///
+    /// # Declaration Syntax
+    ///
+    /// ```text
+    /// return_type name(param_type [ref_modifier] [param_name] [= default], ...) [const]
+    /// ```
+    ///
+    /// Examples:
+    /// - `"int add(int a, int b)"` - Two int parameters, returns int
+    /// - `"void print(const string& in msg)"` - String reference parameter
+    /// - `"float getValue() const"` - Const method (for class registration)
+    /// - `"void callback(?& in)"` - Auto-handle parameter
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// use angelscript::{Module, ffi::{NativeFn, CallContext}};
+    ///
+    /// let mut module = Module::root();
+    /// module.register_fn_raw("int add(int a, int b)", |ctx: &mut CallContext| {
+    ///     let a: i32 = ctx.arg(0)?;
+    ///     let b: i32 = ctx.arg(1)?;
+    ///     ctx.set_return(a + b)?;
+    ///     Ok(())
+    /// })?;
+    /// ```
+    pub fn register_fn_raw<F>(
+        &mut self,
+        decl: &str,
+        f: F,
+    ) -> Result<&mut Self, FfiModuleError>
+    where
+        F: NativeCallable + Send + Sync + 'static,
+    {
+        let decl = decl.trim();
+        if decl.is_empty() {
+            return Err(FfiModuleError::InvalidDeclaration(
+                "empty declaration".to_string(),
+            ));
+        }
+
+        // Parse the declaration using the module's arena
+        let sig = parse_function_decl(decl, &self.arena).map_err(|errors| {
+            FfiModuleError::InvalidDeclaration(format!("parse error: {}", errors))
+        })?;
+
+        // Build the function definition
+        let func_def = self.build_function_def(sig, NativeFn::new(f));
+
+        self.functions.push(func_def);
+        Ok(self)
+    }
+
+    /// Register a type-safe native function using a declaration string.
+    ///
+    /// This method wraps typed Rust closures, automatically converting arguments
+    /// from script values and return values to script values.
+    ///
+    /// # Parameters
+    ///
+    /// - `decl`: Declaration string (see `register_fn_raw` for syntax)
+    /// - `f`: A Rust closure or function
+    ///
+    /// # Supported Signatures
+    ///
+    /// The closure can have 0-8 parameters of types that implement `FromScript`,
+    /// and can optionally return a value that implements `ToScript`.
+    ///
+    /// Supported parameter types include:
+    /// - Primitives: `i8`, `i16`, `i32`, `i64`, `u8`, `u16`, `u32`, `u64`, `f32`, `f64`, `bool`
+    /// - Strings: `String`, `&str` (via cloning)
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// use angelscript::Module;
+    ///
+    /// let mut module = Module::root();
+    ///
+    /// // Simple function
+    /// module.register_fn("int add(int a, int b)", |a: i32, b: i32| a + b)?;
+    ///
+    /// // Void return
+    /// module.register_fn("void greet(string name)", |name: String| {
+    ///     println!("Hello, {}!", name);
+    /// })?;
+    ///
+    /// // No parameters
+    /// module.register_fn("float pi()", || std::f64::consts::PI)?;
+    /// ```
+    pub fn register_fn<F, Args, Ret>(
+        &mut self,
+        decl: &str,
+        f: F,
+    ) -> Result<&mut Self, FfiModuleError>
+    where
+        F: IntoNativeFn<Args, Ret>,
+    {
+        let decl = decl.trim();
+        if decl.is_empty() {
+            return Err(FfiModuleError::InvalidDeclaration(
+                "empty declaration".to_string(),
+            ));
+        }
+
+        // Parse the declaration using the module's arena
+        let sig = parse_function_decl(decl, &self.arena).map_err(|errors| {
+            FfiModuleError::InvalidDeclaration(format!("parse error: {}", errors))
+        })?;
+
+        // Convert the closure to NativeFn
+        let native_fn = f.into_native_fn();
+
+        // Build the function definition
+        let func_def = self.build_function_def(sig, native_fn);
+
+        self.functions.push(func_def);
+        Ok(self)
+    }
+
+    /// Internal helper to build a NativeFunctionDef from parsed signature.
+    fn build_function_def(
+        &self,
+        sig: FunctionSignatureDecl<'_>,
+        native_fn: NativeFn,
+    ) -> NativeFunctionDef<'static> {
+        // Build function traits from the parsed signature
+        let mut traits = FunctionTraits::default();
+        if sig.is_const {
+            traits.is_const = true;
+        }
+        // Note: property attribute is stored in FuncAttr but not in FunctionTraits
+        // This will be used during semantic analysis if needed
+
+        // SAFETY: The arena is owned by self and lives as long as self.
+        // We transmute the lifetime to 'static for storage, but the actual
+        // lifetime is tied to the module. This is safe because:
+        // 1. The arena is never moved or replaced
+        // 2. The functions vec is dropped before the arena
+        // 3. We never expose references with incorrect lifetimes
+        let name = unsafe { std::mem::transmute(sig.name) };
+        let params = unsafe { std::mem::transmute(sig.params) };
+        let return_type = unsafe { std::mem::transmute(sig.return_type) };
+
+        NativeFunctionDef {
+            id: FunctionId::next(),
+            name,
+            params,
+            return_type,
+            object_type: None, // Global functions have no object type
+            traits,
+            default_exprs: Vec::new(), // TODO: Parse default expressions in Task 04
+            visibility: Visibility::Public,
+            native_fn,
+        }
+    }
+
+    /// Internal helper to build a GlobalPropertyDef from parsed property.
+    fn build_property_def<T: 'static>(
+        &self,
+        prop: PropertyDecl<'_>,
+        value: &'app mut T,
+    ) -> GlobalPropertyDef<'static, 'app> {
+        // SAFETY: The arena is owned by self and lives as long as self.
+        // We transmute the lifetime to 'static for storage, but the actual
+        // lifetime is tied to the module. This is safe because:
+        // 1. The arena is never moved or replaced
+        // 2. The global_properties vec is dropped before the arena
+        // 3. We never expose references with incorrect lifetimes
+        let ty = unsafe { std::mem::transmute(prop.ty) };
+        let name = unsafe { std::mem::transmute(prop.name) };
+
+        GlobalPropertyDef::new(name, ty, value)
     }
 
     /// Get the registered functions.
@@ -328,21 +506,14 @@ impl<'app> Module<'app> {
         }
 
         // Parse the declaration using the module's arena
-        let (type_expr, name) = parse_property_expr(decl, &self.arena).map_err(|errors| {
+        let prop = parse_property_decl(decl, &self.arena).map_err(|errors| {
             FfiModuleError::InvalidDeclaration(format!("parse error: {}", errors))
         })?;
 
-        // SAFETY: The arena is owned by self and lives as long as self.
-        // We transmute the lifetime to 'static for storage, but the actual
-        // lifetime is tied to the module. This is safe because:
-        // 1. The arena is never moved or replaced
-        // 2. The global_properties vec is dropped before the arena
-        // 3. We never expose references with incorrect lifetimes
-        let type_expr = unsafe { std::mem::transmute(type_expr) };
-        let name = unsafe { std::mem::transmute(name) };
+        // Build the property definition
+        let prop_def = self.build_property_def(prop, value);
 
-        self.global_properties
-            .push(GlobalPropertyDef::new(name, type_expr, value));
+        self.global_properties.push(prop_def);
         Ok(())
     }
 
@@ -755,5 +926,162 @@ mod tests {
         };
         let cloned = enum_def.clone();
         assert_eq!(cloned.name, "Color");
+    }
+
+    // =========================================================================
+    // Function registration tests
+    // =========================================================================
+
+    #[test]
+    fn register_fn_simple() {
+        let mut module = Module::<'static>::root();
+
+        module
+            .register_fn("int add(int a, int b)", |a: i32, b: i32| a + b)
+            .unwrap();
+
+        assert_eq!(module.functions().len(), 1);
+        assert_eq!(module.functions()[0].name.name, "add");
+        assert_eq!(module.functions()[0].params.len(), 2);
+    }
+
+    #[test]
+    fn register_fn_no_params() {
+        let mut module = Module::<'static>::root();
+
+        module
+            .register_fn("float pi()", || std::f64::consts::PI)
+            .unwrap();
+
+        assert_eq!(module.functions().len(), 1);
+        assert_eq!(module.functions()[0].name.name, "pi");
+        assert_eq!(module.functions()[0].params.len(), 0);
+    }
+
+    #[test]
+    fn register_fn_void_return() {
+        let mut module = Module::<'static>::root();
+
+        module
+            .register_fn("void greet(string name)", |_name: String| {
+                // In a real use case, would print or do something
+            })
+            .unwrap();
+
+        assert_eq!(module.functions().len(), 1);
+        assert_eq!(module.functions()[0].name.name, "greet");
+    }
+
+    #[test]
+    fn register_fn_multiple() {
+        let mut module = Module::<'static>::root();
+
+        module
+            .register_fn("int add(int a, int b)", |a: i32, b: i32| a + b)
+            .unwrap()
+            .register_fn("int sub(int a, int b)", |a: i32, b: i32| a - b)
+            .unwrap()
+            .register_fn("int mul(int a, int b)", |a: i32, b: i32| a * b)
+            .unwrap();
+
+        assert_eq!(module.functions().len(), 3);
+    }
+
+    #[test]
+    fn register_fn_const_method() {
+        let mut module = Module::<'static>::root();
+
+        module
+            .register_fn("int getValue() const", || 42i32)
+            .unwrap();
+
+        assert_eq!(module.functions().len(), 1);
+        assert!(module.functions()[0].traits.is_const);
+    }
+
+    #[test]
+    fn register_fn_raw_simple() {
+        use crate::ffi::CallContext;
+
+        let mut module = Module::<'static>::root();
+
+        module
+            .register_fn_raw("int add(int a, int b)", |ctx: &mut CallContext| {
+                let a: i32 = ctx.arg(0)?;
+                let b: i32 = ctx.arg(1)?;
+                ctx.set_return(a + b)?;
+                Ok(())
+            })
+            .unwrap();
+
+        assert_eq!(module.functions().len(), 1);
+        assert_eq!(module.functions()[0].name.name, "add");
+    }
+
+    #[test]
+    fn register_fn_invalid_decl_empty() {
+        let mut module = Module::<'static>::root();
+
+        let result = module.register_fn("", |a: i32, b: i32| a + b);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn register_fn_invalid_decl_syntax() {
+        let mut module = Module::<'static>::root();
+
+        // Missing return type
+        let result = module.register_fn("add(int a, int b)", |a: i32, b: i32| a + b);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn register_fn_raw_invalid_decl_empty() {
+        use crate::ffi::CallContext;
+
+        let mut module = Module::<'static>::root();
+
+        let result = module.register_fn_raw("", |_ctx: &mut CallContext| Ok(()));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn register_fn_with_namespaced_module() {
+        let mut module = Module::<'static>::new(&["math"]);
+
+        module
+            .register_fn("float sqrt(float x)", |x: f64| x.sqrt())
+            .unwrap();
+
+        assert_eq!(module.functions().len(), 1);
+        assert_eq!(module.qualified_name("sqrt"), "math::sqrt");
+    }
+
+    #[test]
+    fn register_fn_many_args() {
+        let mut module = Module::<'static>::root();
+
+        // Test with 4 arguments
+        module
+            .register_fn(
+                "int sum4(int a, int b, int c, int d)",
+                |a: i32, b: i32, c: i32, d: i32| a + b + c + d,
+            )
+            .unwrap();
+
+        assert_eq!(module.functions().len(), 1);
+        assert_eq!(module.functions()[0].params.len(), 4);
+    }
+
+    #[test]
+    fn register_fn_string_param() {
+        let mut module = Module::<'static>::root();
+
+        module
+            .register_fn("int length(string s)", |s: String| s.len() as i32)
+            .unwrap();
+
+        assert_eq!(module.functions().len(), 1);
+        assert_eq!(module.functions()[0].params.len(), 1);
     }
 }

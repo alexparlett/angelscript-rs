@@ -4,7 +4,12 @@
 //! classes, interfaces, enums, and namespaces.
 
 use crate::ast::{DeclModifiers, FuncAttr, Ident, ParseError, ParseErrorKind, PropertyAccessorKind as PropAccessorKind, Visibility};
-use crate::ast::decl::*;
+use crate::ast::decl::{
+    ClassDecl, ClassMember, EnumDecl, Enumerator, FieldDecl, FuncdefDecl, FunctionDecl,
+    FunctionParam, FunctionSignatureDecl, GlobalVarDecl, ImportDecl, InterfaceDecl,
+    InterfaceMember, InterfaceMethod, Item, MixinDecl, NamespaceDecl, PropertyAccessor,
+    PropertyDecl, TypedefDecl, UsingNamespaceDecl, VirtualPropertyDecl,
+};
 use crate::ast::expr::IdentExpr;
 use crate::ast::types::ParamType;
 use crate::lexer::TokenKind;
@@ -425,6 +430,102 @@ impl<'ast> Parser<'ast> {
                 span: start_span.merge(end_span),
             }))
         }
+    }
+
+    // =========================================================================
+    // Declaration Parsing
+    // =========================================================================
+
+    /// Parse an function signature declaration.
+    ///
+    /// This parses a function signature without modifiers, visibility, or body.
+    /// It's designed for registration strings like:
+    /// - `"int add(int a, int b)"`
+    /// - `"void print(const string& in msg)"`
+    /// - `"int getValue() const"`
+    ///
+    /// # Returns
+    ///
+    /// Returns a `FunctionSignatureDecl` containing the parsed signature.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - The declaration string is malformed
+    /// - There are trailing tokens after the signature
+    pub fn parse_function_signature(
+        &mut self,
+    ) -> Result<FunctionSignatureDecl<'ast>, ParseError> {
+        let start_span = self.peek().span;
+
+        // Parse return type
+        let return_type = self.parse_return_type()?;
+
+        // Parse name
+        let name_token = self.expect(TokenKind::Identifier)?;
+        let name = Ident::new(name_token.lexeme, name_token.span);
+
+        // Parse parameters
+        let params = self.parse_function_params()?;
+
+        // Check for const method
+        let is_const = self.eat(TokenKind::Const).is_some();
+
+        // Parse function attributes
+        let attrs = self.parse_func_attrs()?;
+
+        // Expect end of input (no body, no semicolon required)
+        self.expect_eof()?;
+
+        let span = start_span.merge(
+            self.buffer.get(self.position.saturating_sub(1))
+                .map(|t| t.span)
+                .unwrap_or(start_span)
+        );
+
+        Ok(FunctionSignatureDecl {
+            return_type,
+            name,
+            params,
+            is_const,
+            attrs,
+            span,
+        })
+    }
+
+    /// Parse a property declaration.
+    ///
+    /// This parses a property signature without initializer.
+    /// It's designed for registration strings like:
+    /// - `"int score"`
+    /// - `"const string name"`
+    /// - `"MyClass@ obj"`
+    ///
+    /// # Returns
+    ///
+    /// Returns a `PropertyDecl` containing the parsed property.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - The declaration string is malformed
+    /// - There are trailing tokens after the property
+    pub fn parse_property_decl(&mut self) -> Result<PropertyDecl<'ast>, ParseError> {
+        let start_span = self.peek().span;
+
+        // Parse the type expression
+        let ty = self.parse_type()?;
+
+        // Parse the identifier name
+        let name_token = self.expect(TokenKind::Identifier)?;
+        let name = Ident::new(name_token.lexeme, name_token.span);
+
+        // Expect end of input
+        self.expect_eof()?;
+
+        let span = start_span.merge(name_token.span);
+
+        Ok(PropertyDecl { ty, name, span })
     }
 }
 

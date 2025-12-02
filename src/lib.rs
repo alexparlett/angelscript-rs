@@ -69,7 +69,7 @@ pub mod semantic;
 pub mod codegen;
 mod unit;
 
-pub use ast::{parse, parse_expression, parse_lenient, parse_property_expr, parse_statement, parse_type_expr};
+pub use ast::{parse, parse_expression, parse_function_decl, parse_lenient, parse_property_decl, parse_statement, parse_type_expr};
 
 // Re-export visitor for AST traversal
 pub use ast::visitor;
@@ -80,7 +80,7 @@ pub use ast::{
     Script, Item,
 
     // Declarations
-    FunctionDecl, FunctionParam,
+    FunctionDecl, FunctionParam, FunctionSignatureDecl, PropertyDecl,
     ClassDecl, ClassMember, FieldDecl, VirtualPropertyDecl, PropertyAccessor,
     InterfaceDecl, InterfaceMember, InterfaceMethod,
     EnumDecl, Enumerator,
