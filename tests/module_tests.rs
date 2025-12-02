@@ -178,3 +178,24 @@ fn test_many_functions() {
     assert!(module.is_built());
     assert!(module.function_count() >= 20);
 }
+
+#[test]
+fn test_performance_large_500() {
+    let module = build_script("performance/large_500.as");
+    assert!(module.is_built());
+    assert!(module.function_count() >= 10);
+}
+
+#[test]
+fn test_performance_xlarge_1000() {
+    let module = build_script("performance/xlarge_1000.as");
+    assert!(module.is_built());
+    assert!(module.function_count() >= 20);
+}
+
+#[test]
+fn test_performance_xxlarge_5000() {
+    let module = build_script("performance/xxlarge_5000.as");
+    assert!(module.is_built());
+    assert!(module.function_count() >= 50);
+}
