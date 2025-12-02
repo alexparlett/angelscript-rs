@@ -628,4 +628,270 @@ mod tests {
         assert!(spec.is_const);
         assert_eq!(spec.ref_modifier, RefModifier::In);
     }
+
+    // Additional tests for remaining integer types
+    #[test]
+    fn from_script_i8() {
+        let slot = VmSlot::Int(42);
+        let result: i8 = FromScript::from_slot(&slot).unwrap();
+        assert_eq!(result, 42);
+    }
+
+    #[test]
+    fn from_script_i8_overflow() {
+        let slot = VmSlot::Int(200);
+        let result: Result<i8, _> = FromScript::from_slot(&slot);
+        assert!(matches!(result, Err(ConversionError::IntegerOverflow { .. })));
+    }
+
+    #[test]
+    fn from_script_i16() {
+        let slot = VmSlot::Int(1000);
+        let result: i16 = FromScript::from_slot(&slot).unwrap();
+        assert_eq!(result, 1000);
+    }
+
+    #[test]
+    fn from_script_i16_overflow() {
+        let slot = VmSlot::Int(40000);
+        let result: Result<i16, _> = FromScript::from_slot(&slot);
+        assert!(matches!(result, Err(ConversionError::IntegerOverflow { .. })));
+    }
+
+    #[test]
+    fn from_script_u8() {
+        let slot = VmSlot::Int(200);
+        let result: u8 = FromScript::from_slot(&slot).unwrap();
+        assert_eq!(result, 200);
+    }
+
+    #[test]
+    fn from_script_u8_overflow() {
+        let slot = VmSlot::Int(300);
+        let result: Result<u8, _> = FromScript::from_slot(&slot);
+        assert!(matches!(result, Err(ConversionError::IntegerOverflow { .. })));
+    }
+
+    #[test]
+    fn from_script_u16() {
+        let slot = VmSlot::Int(50000);
+        let result: u16 = FromScript::from_slot(&slot).unwrap();
+        assert_eq!(result, 50000);
+    }
+
+    #[test]
+    fn from_script_u16_overflow() {
+        let slot = VmSlot::Int(70000);
+        let result: Result<u16, _> = FromScript::from_slot(&slot);
+        assert!(matches!(result, Err(ConversionError::IntegerOverflow { .. })));
+    }
+
+    #[test]
+    fn from_script_u64() {
+        let slot = VmSlot::Int(100);
+        let result: u64 = FromScript::from_slot(&slot).unwrap();
+        assert_eq!(result, 100);
+    }
+
+    #[test]
+    fn from_script_u64_negative() {
+        let slot = VmSlot::Int(-1);
+        let result: Result<u64, _> = FromScript::from_slot(&slot);
+        assert!(matches!(result, Err(ConversionError::IntegerOverflow { .. })));
+    }
+
+    // ToScript tests for remaining types
+    #[test]
+    fn to_script_i8() {
+        let slot = 42i8.to_slot().unwrap();
+        assert!(matches!(slot, VmSlot::Int(42)));
+    }
+
+    #[test]
+    fn to_script_i16() {
+        let slot = 1000i16.to_slot().unwrap();
+        assert!(matches!(slot, VmSlot::Int(1000)));
+    }
+
+    #[test]
+    fn to_script_i64() {
+        let slot = i64::MAX.to_slot().unwrap();
+        if let VmSlot::Int(v) = slot {
+            assert_eq!(v, i64::MAX);
+        } else {
+            panic!("Expected Int");
+        }
+    }
+
+    #[test]
+    fn to_script_u8() {
+        let slot = 200u8.to_slot().unwrap();
+        assert!(matches!(slot, VmSlot::Int(200)));
+    }
+
+    #[test]
+    fn to_script_u16() {
+        let slot = 50000u16.to_slot().unwrap();
+        assert!(matches!(slot, VmSlot::Int(50000)));
+    }
+
+    #[test]
+    fn to_script_u32() {
+        let slot = 100000u32.to_slot().unwrap();
+        assert!(matches!(slot, VmSlot::Int(100000)));
+    }
+
+    #[test]
+    fn to_script_u64() {
+        let slot = 100u64.to_slot().unwrap();
+        assert!(matches!(slot, VmSlot::Int(100)));
+    }
+
+    #[test]
+    fn to_script_f32() {
+        let slot = 3.14f32.to_slot().unwrap();
+        if let VmSlot::Float(v) = slot {
+            assert!((v - 3.14).abs() < 0.01);
+        } else {
+            panic!("Expected Float");
+        }
+    }
+
+    // Script type tests for remaining types
+    #[test]
+    fn script_type_i8() {
+        let spec = <i8 as FromScript>::script_type();
+        assert_eq!(spec.type_name, "int8");
+    }
+
+    #[test]
+    fn script_type_i16() {
+        let spec = <i16 as FromScript>::script_type();
+        assert_eq!(spec.type_name, "int16");
+    }
+
+    #[test]
+    fn script_type_i64() {
+        let spec = <i64 as FromScript>::script_type();
+        assert_eq!(spec.type_name, "int64");
+    }
+
+    #[test]
+    fn script_type_u8() {
+        let spec = <u8 as FromScript>::script_type();
+        assert_eq!(spec.type_name, "uint8");
+    }
+
+    #[test]
+    fn script_type_u16() {
+        let spec = <u16 as FromScript>::script_type();
+        assert_eq!(spec.type_name, "uint16");
+    }
+
+    #[test]
+    fn script_type_u32() {
+        let spec = <u32 as FromScript>::script_type();
+        assert_eq!(spec.type_name, "uint");
+    }
+
+    #[test]
+    fn script_type_u64() {
+        let spec = <u64 as FromScript>::script_type();
+        assert_eq!(spec.type_name, "uint64");
+    }
+
+    #[test]
+    fn script_type_f32() {
+        let spec = <f32 as FromScript>::script_type();
+        assert_eq!(spec.type_name, "float");
+    }
+
+    #[test]
+    fn script_type_f64() {
+        let spec = <f64 as FromScript>::script_type();
+        assert_eq!(spec.type_name, "double");
+    }
+
+    #[test]
+    fn script_type_bool() {
+        let spec = <bool as FromScript>::script_type();
+        assert_eq!(spec.type_name, "bool");
+    }
+
+    #[test]
+    fn script_type_string() {
+        let spec = <String as FromScript>::script_type();
+        assert_eq!(spec.type_name, "string");
+    }
+
+    // Type mismatch tests for each type
+    #[test]
+    fn from_script_bool_type_mismatch() {
+        let slot = VmSlot::Int(42);
+        let result: Result<bool, _> = FromScript::from_slot(&slot);
+        assert!(matches!(result, Err(ConversionError::TypeMismatch { .. })));
+    }
+
+    #[test]
+    fn from_script_void_type_mismatch() {
+        let slot = VmSlot::Int(42);
+        let result: Result<(), _> = FromScript::from_slot(&slot);
+        assert!(matches!(result, Err(ConversionError::TypeMismatch { .. })));
+    }
+
+    #[test]
+    fn from_script_f32_type_mismatch() {
+        let slot = VmSlot::Int(42);
+        let result: Result<f32, _> = FromScript::from_slot(&slot);
+        assert!(matches!(result, Err(ConversionError::TypeMismatch { .. })));
+    }
+
+    #[test]
+    fn from_script_f64_type_mismatch() {
+        let slot = VmSlot::Int(42);
+        let result: Result<f64, _> = FromScript::from_slot(&slot);
+        assert!(matches!(result, Err(ConversionError::TypeMismatch { .. })));
+    }
+
+    #[test]
+    fn from_script_i8_type_mismatch() {
+        let slot = VmSlot::String("hello".into());
+        let result: Result<i8, _> = FromScript::from_slot(&slot);
+        assert!(matches!(result, Err(ConversionError::TypeMismatch { .. })));
+    }
+
+    #[test]
+    fn from_script_i16_type_mismatch() {
+        let slot = VmSlot::Bool(true);
+        let result: Result<i16, _> = FromScript::from_slot(&slot);
+        assert!(matches!(result, Err(ConversionError::TypeMismatch { .. })));
+    }
+
+    #[test]
+    fn from_script_i64_type_mismatch() {
+        let slot = VmSlot::Float(3.14);
+        let result: Result<i64, _> = FromScript::from_slot(&slot);
+        assert!(matches!(result, Err(ConversionError::TypeMismatch { .. })));
+    }
+
+    #[test]
+    fn from_script_u8_type_mismatch() {
+        let slot = VmSlot::Void;
+        let result: Result<u8, _> = FromScript::from_slot(&slot);
+        assert!(matches!(result, Err(ConversionError::TypeMismatch { .. })));
+    }
+
+    #[test]
+    fn from_script_u16_type_mismatch() {
+        let slot = VmSlot::NullHandle;
+        let result: Result<u16, _> = FromScript::from_slot(&slot);
+        assert!(matches!(result, Err(ConversionError::TypeMismatch { .. })));
+    }
+
+    #[test]
+    fn from_script_u64_type_mismatch() {
+        let slot = VmSlot::String("test".into());
+        let result: Result<u64, _> = FromScript::from_slot(&slot);
+        assert!(matches!(result, Err(ConversionError::TypeMismatch { .. })));
+    }
 }

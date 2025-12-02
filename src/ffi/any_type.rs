@@ -530,5 +530,282 @@ mod tests {
         assert_eq!(any.type_id(), TypeId::of::<i64>());
     }
 
+    // Additional tests for better coverage
+
+    #[test]
+    fn any_ref_type_id_void() {
+        let slot = VmSlot::Void;
+        let heap = ObjectHeap::new();
+        let any = AnyRef::from_slot(&slot, &heap);
+        assert_eq!(any.type_id(), TypeId::of::<()>());
+    }
+
+    #[test]
+    fn any_ref_type_id_null() {
+        let slot = VmSlot::NullHandle;
+        let heap = ObjectHeap::new();
+        let any = AnyRef::from_slot(&slot, &heap);
+        assert_eq!(any.type_id(), TypeId::of::<()>());
+    }
+
+    #[test]
+    fn any_ref_type_id_object() {
+        let mut heap = ObjectHeap::new();
+        let handle = heap.allocate(42i32);
+        let slot = VmSlot::Object(handle);
+        let any = AnyRef::from_slot(&slot, &heap);
+        assert_eq!(any.type_id(), TypeId::of::<i32>());
+    }
+
+    #[test]
+    fn any_ref_type_id_native() {
+        let slot = VmSlot::Native(Box::new(42i32));
+        let heap = ObjectHeap::new();
+        let any = AnyRef::from_slot(&slot, &heap);
+        assert_eq!(any.type_id(), TypeId::of::<i32>());
+    }
+
+    #[test]
+    fn any_ref_as_accessors_wrong_type() {
+        let heap = ObjectHeap::new();
+
+        let int_slot = VmSlot::Int(42);
+        let int_any = AnyRef::from_slot(&int_slot, &heap);
+        assert!(int_any.as_float().is_none());
+        assert!(int_any.as_bool().is_none());
+        assert!(int_any.as_str().is_none());
+
+        let float_slot = VmSlot::Float(3.14);
+        let float_any = AnyRef::from_slot(&float_slot, &heap);
+        assert!(float_any.as_int().is_none());
+        assert!(float_any.as_bool().is_none());
+        assert!(float_any.as_str().is_none());
+
+        let bool_slot = VmSlot::Bool(true);
+        let bool_any = AnyRef::from_slot(&bool_slot, &heap);
+        assert!(bool_any.as_int().is_none());
+        assert!(bool_any.as_float().is_none());
+        assert!(bool_any.as_str().is_none());
+
+        let string_slot = VmSlot::String("test".into());
+        let string_any = AnyRef::from_slot(&string_slot, &heap);
+        assert!(string_any.as_int().is_none());
+        assert!(string_any.as_float().is_none());
+        assert!(string_any.as_bool().is_none());
+    }
+
+    #[test]
+    fn any_ref_downcast_primitives() {
+        let heap = ObjectHeap::new();
+
+        // Primitives should not be downcastable (they're not objects)
+        let int_slot = VmSlot::Int(42);
+        let int_any = AnyRef::from_slot(&int_slot, &heap);
+        assert!(int_any.downcast::<i32>().is_none());
+
+        let float_slot = VmSlot::Float(3.14);
+        let float_any = AnyRef::from_slot(&float_slot, &heap);
+        assert!(float_any.downcast::<f64>().is_none());
+    }
+
+    #[test]
+    fn any_ref_is_predicates_exhaustive() {
+        let heap = ObjectHeap::new();
+
+        let void_slot = VmSlot::Void;
+        let void_any = AnyRef::from_slot(&void_slot, &heap);
+        assert!(void_any.is_void());
+        assert!(!void_any.is_int());
+        assert!(!void_any.is_float());
+        assert!(!void_any.is_bool());
+        assert!(!void_any.is_string());
+        assert!(!void_any.is_object());
+        assert!(!void_any.is_native());
+        assert!(!void_any.is_null());
+    }
+
+    #[test]
+    fn any_ref_mut_type_id_float() {
+        let mut value = 0.0f64;
+        let any = AnyRefMut::Float(&mut value);
+        assert_eq!(any.type_id(), TypeId::of::<f64>());
+    }
+
+    #[test]
+    fn any_ref_mut_type_id_bool() {
+        let mut value = false;
+        let any = AnyRefMut::Bool(&mut value);
+        assert_eq!(any.type_id(), TypeId::of::<bool>());
+    }
+
+    #[test]
+    fn any_ref_mut_type_id_string() {
+        let mut value = String::new();
+        let any = AnyRefMut::String(&mut value);
+        assert_eq!(any.type_id(), TypeId::of::<String>());
+    }
+
+    #[test]
+    fn any_ref_mut_type_id_object() {
+        let mut heap = ObjectHeap::new();
+        let handle = heap.allocate(42i32);
+        let any = AnyRefMut::Object {
+            handle,
+            heap: &mut heap,
+        };
+        assert_eq!(any.type_id(), TypeId::of::<i32>());
+    }
+
+    #[test]
+    fn any_ref_mut_type_id_native() {
+        let mut value: Box<dyn Any> = Box::new(42i32);
+        let any = AnyRefMut::Native(value.as_mut());
+        assert_eq!(any.type_id(), TypeId::of::<i32>());
+    }
+
+    #[test]
+    fn any_ref_mut_is_predicates() {
+        let mut int_val = 0i64;
+        let int_any = AnyRefMut::Int(&mut int_val);
+        assert!(int_any.is_int());
+        assert!(!int_any.is_float());
+        assert!(!int_any.is_bool());
+        assert!(!int_any.is_string());
+        assert!(!int_any.is_object());
+        assert!(!int_any.is_native());
+
+        let mut float_val = 0.0f64;
+        let float_any = AnyRefMut::Float(&mut float_val);
+        assert!(!float_any.is_int());
+        assert!(float_any.is_float());
+
+        let mut bool_val = false;
+        let bool_any = AnyRefMut::Bool(&mut bool_val);
+        assert!(bool_any.is_bool());
+
+        let mut string_val = String::new();
+        let string_any = AnyRefMut::String(&mut string_val);
+        assert!(string_any.is_string());
+    }
+
+    #[test]
+    fn any_ref_mut_as_accessors() {
+        let mut int_val = 42i64;
+        let mut int_any = AnyRefMut::Int(&mut int_val);
+        assert_eq!(*int_any.as_int_mut().unwrap(), 42);
+        assert!(int_any.as_float_mut().is_none());
+        assert!(int_any.as_bool_mut().is_none());
+        assert!(int_any.as_string_mut().is_none());
+
+        let mut float_val = 3.14f64;
+        let mut float_any = AnyRefMut::Float(&mut float_val);
+        assert!(float_any.as_float_mut().is_some());
+        assert!(float_any.as_int_mut().is_none());
+
+        let mut bool_val = true;
+        let mut bool_any = AnyRefMut::Bool(&mut bool_val);
+        assert!(bool_any.as_bool_mut().is_some());
+
+        let mut string_val = "test".to_string();
+        let mut string_any = AnyRefMut::String(&mut string_val);
+        assert!(string_any.as_string_mut().is_some());
+    }
+
+    #[test]
+    fn any_ref_mut_set_wrong_types() {
+        // Test all set_* methods on wrong types
+        let mut int_val = 0i64;
+        let mut int_any = AnyRefMut::Int(&mut int_val);
+        assert!(!int_any.set_bool(true));
+        assert!(!int_any.set_string("test".into()));
+
+        let mut float_val = 0.0f64;
+        let mut float_any = AnyRefMut::Float(&mut float_val);
+        assert!(!float_any.set_int(42));
+        assert!(!float_any.set_bool(true));
+        assert!(!float_any.set_string("test".into()));
+
+        let mut bool_val = false;
+        let mut bool_any = AnyRefMut::Bool(&mut bool_val);
+        assert!(!bool_any.set_int(42));
+        assert!(!bool_any.set_float(3.14));
+        assert!(!bool_any.set_string("test".into()));
+
+        let mut string_val = String::new();
+        let mut string_any = AnyRefMut::String(&mut string_val);
+        assert!(!string_any.set_int(42));
+        assert!(!string_any.set_float(3.14));
+        assert!(!string_any.set_bool(true));
+    }
+
+    #[test]
+    fn any_ref_mut_downcast_native() {
+        let mut value: Box<dyn Any> = Box::new(42i32);
+        let mut any = AnyRefMut::Native(value.as_mut());
+
+        let downcasted = any.downcast_mut::<i32>();
+        assert!(downcasted.is_some());
+        *downcasted.unwrap() = 100;
+
+        // Verify
+        assert_eq!(*value.downcast_ref::<i32>().unwrap(), 100);
+    }
+
+    #[test]
+    fn any_ref_mut_downcast_native_wrong_type() {
+        let mut value: Box<dyn Any> = Box::new(42i32);
+        let mut any = AnyRefMut::Native(value.as_mut());
+
+        let downcasted = any.downcast_mut::<String>();
+        assert!(downcasted.is_none());
+    }
+
+    #[test]
+    fn any_ref_mut_downcast_primitives() {
+        // Primitives should not be downcastable
+        let mut int_val = 42i64;
+        let mut int_any = AnyRefMut::Int(&mut int_val);
+        assert!(int_any.downcast_mut::<i64>().is_none());
+
+        let mut float_val = 3.14f64;
+        let mut float_any = AnyRefMut::Float(&mut float_val);
+        assert!(float_any.downcast_mut::<f64>().is_none());
+    }
+
+    #[test]
+    fn any_ref_mut_is_object_and_native() {
+        let mut heap = ObjectHeap::new();
+        let handle = heap.allocate(42i32);
+        let obj_any = AnyRefMut::Object {
+            handle,
+            heap: &mut heap,
+        };
+        assert!(obj_any.is_object());
+        assert!(!obj_any.is_native());
+
+        let mut value: Box<dyn Any> = Box::new(42i32);
+        let native_any = AnyRefMut::Native(value.as_mut());
+        assert!(native_any.is_native());
+        assert!(!native_any.is_object());
+    }
+
+    #[test]
+    fn any_ref_debug() {
+        let heap = ObjectHeap::new();
+
+        let slot = VmSlot::Int(42);
+        let any = AnyRef::from_slot(&slot, &heap);
+        let debug = format!("{:?}", any);
+        assert!(debug.contains("Int"));
+    }
+
+    #[test]
+    fn any_ref_mut_debug() {
+        let mut value = 42i64;
+        let any = AnyRefMut::Int(&mut value);
+        let debug = format!("{:?}", any);
+        assert!(debug.contains("Int"));
+    }
+
     use super::super::native_fn::ObjectHeap;
 }

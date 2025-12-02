@@ -700,4 +700,410 @@ mod tests {
 
         assert!(matches!(ret, VmSlot::Int(30)));
     }
+
+    // Additional tests for better coverage
+
+    #[test]
+    fn vm_slot_debug() {
+        // Test Debug trait for VmSlot
+        let void = format!("{:?}", VmSlot::Void);
+        assert!(void.contains("Void"));
+
+        let int = format!("{:?}", VmSlot::Int(42));
+        assert!(int.contains("42"));
+
+        let float = format!("{:?}", VmSlot::Float(3.14));
+        assert!(float.contains("3.14"));
+
+        let bool_slot = format!("{:?}", VmSlot::Bool(true));
+        assert!(bool_slot.contains("true"));
+
+        let string = format!("{:?}", VmSlot::String("test".into()));
+        assert!(string.contains("test"));
+
+        let null = format!("{:?}", VmSlot::NullHandle);
+        assert!(null.contains("NullHandle"));
+
+        let native = format!("{:?}", VmSlot::Native(Box::new(42i32)));
+        assert!(native.contains("Native"));
+    }
+
+    #[test]
+    fn vm_slot_object_type_name() {
+        let mut heap = ObjectHeap::new();
+        let handle = heap.allocate(42i32);
+        let slot = VmSlot::Object(handle);
+        assert_eq!(slot.type_name(), "object");
+    }
+
+    #[test]
+    fn vm_slot_native_type_name() {
+        let slot = VmSlot::Native(Box::new(42i32));
+        assert_eq!(slot.type_name(), "native");
+    }
+
+    #[test]
+    fn vm_slot_clone_if_possible() {
+        // Can clone primitives
+        assert!(VmSlot::Void.clone_if_possible().is_some());
+        assert!(VmSlot::Int(42).clone_if_possible().is_some());
+        assert!(VmSlot::Float(3.14).clone_if_possible().is_some());
+        assert!(VmSlot::Bool(true).clone_if_possible().is_some());
+        assert!(VmSlot::String("test".into()).clone_if_possible().is_some());
+        assert!(VmSlot::NullHandle.clone_if_possible().is_some());
+
+        // Cannot clone Native
+        assert!(VmSlot::Native(Box::new(42i32)).clone_if_possible().is_none());
+
+        // Can clone Object handle
+        let mut heap = ObjectHeap::new();
+        let handle = heap.allocate(42i32);
+        assert!(VmSlot::Object(handle).clone_if_possible().is_some());
+    }
+
+    #[test]
+    fn object_handle_new() {
+        let handle = ObjectHandle::new(10, 5, TypeId::of::<i32>());
+        assert_eq!(handle.index, 10);
+        assert_eq!(handle.generation, 5);
+        assert_eq!(handle.type_id, TypeId::of::<i32>());
+    }
+
+    #[test]
+    fn object_heap_default() {
+        let heap = ObjectHeap::default();
+        assert_eq!(format!("{:?}", heap), "ObjectHeap { slot_count: 0, free_count: 0 }");
+    }
+
+    #[test]
+    fn object_heap_add_ref_invalid_handle() {
+        let mut heap = ObjectHeap::new();
+        let fake_handle = ObjectHandle::new(999, 0, TypeId::of::<i32>());
+        assert!(!heap.add_ref(fake_handle));
+    }
+
+    #[test]
+    fn object_heap_release_invalid_handle() {
+        let mut heap = ObjectHeap::new();
+        let fake_handle = ObjectHandle::new(999, 0, TypeId::of::<i32>());
+        assert!(!heap.release(fake_handle));
+    }
+
+    #[test]
+    fn object_heap_ref_count_invalid_handle() {
+        let mut heap = ObjectHeap::new();
+        let fake_handle = ObjectHandle::new(999, 0, TypeId::of::<i32>());
+        assert!(heap.ref_count(fake_handle).is_none());
+    }
+
+    #[test]
+    fn object_heap_stale_add_ref() {
+        let mut heap = ObjectHeap::new();
+        let handle = heap.allocate(42i32);
+        heap.free(handle);
+        assert!(!heap.add_ref(handle));
+    }
+
+    #[test]
+    fn object_heap_stale_release() {
+        let mut heap = ObjectHeap::new();
+        let handle = heap.allocate(42i32);
+        heap.free(handle);
+        assert!(!heap.release(handle));
+    }
+
+    #[test]
+    fn object_heap_free_invalid_handle() {
+        let mut heap = ObjectHeap::new();
+        let fake_handle = ObjectHandle::new(999, 0, TypeId::of::<i32>());
+        // Should not panic
+        heap.free(fake_handle);
+    }
+
+    #[test]
+    fn object_heap_get_mut_wrong_type() {
+        let mut heap = ObjectHeap::new();
+        let handle = heap.allocate(42i32);
+        assert!(heap.get_mut::<String>(handle).is_none());
+    }
+
+    #[test]
+    fn object_heap_get_stale_handle() {
+        let mut heap = ObjectHeap::new();
+        let handle = heap.allocate(42i32);
+        heap.free(handle);
+        assert!(heap.get::<i32>(handle).is_none());
+    }
+
+    #[test]
+    fn object_heap_get_mut_stale_handle() {
+        let mut heap = ObjectHeap::new();
+        let handle = heap.allocate(42i32);
+        heap.free(handle);
+        assert!(heap.get_mut::<i32>(handle).is_none());
+    }
+
+    #[test]
+    fn call_context_debug() {
+        let mut slots = vec![VmSlot::Int(1), VmSlot::Int(2)];
+        let mut ret = VmSlot::Void;
+        let mut heap = ObjectHeap::new();
+
+        let ctx = CallContext::new(&mut slots, 0, &mut ret, &mut heap);
+        let debug = format!("{:?}", ctx);
+        assert!(debug.contains("CallContext"));
+        assert!(debug.contains("arg_count"));
+    }
+
+    #[test]
+    fn call_context_arg_slot() {
+        let mut slots = vec![VmSlot::Int(42), VmSlot::String("test".into())];
+        let mut ret = VmSlot::Void;
+        let mut heap = ObjectHeap::new();
+
+        let ctx = CallContext::new(&mut slots, 0, &mut ret, &mut heap);
+
+        let slot0 = ctx.arg_slot(0).unwrap();
+        assert!(matches!(slot0, VmSlot::Int(42)));
+
+        let slot1 = ctx.arg_slot(1).unwrap();
+        assert!(matches!(slot1, VmSlot::String(_)));
+    }
+
+    #[test]
+    fn call_context_arg_slot_out_of_bounds() {
+        let mut slots = vec![VmSlot::Int(42)];
+        let mut ret = VmSlot::Void;
+        let mut heap = ObjectHeap::new();
+
+        let ctx = CallContext::new(&mut slots, 0, &mut ret, &mut heap);
+        assert!(ctx.arg_slot(5).is_err());
+    }
+
+    #[test]
+    fn call_context_arg_slot_mut() {
+        let mut slots = vec![VmSlot::Int(42)];
+        let mut ret = VmSlot::Void;
+        let mut heap = ObjectHeap::new();
+
+        let mut ctx = CallContext::new(&mut slots, 0, &mut ret, &mut heap);
+        let slot = ctx.arg_slot_mut(0).unwrap();
+        *slot = VmSlot::Int(100);
+
+        assert!(matches!(slots[0], VmSlot::Int(100)));
+    }
+
+    #[test]
+    fn call_context_arg_slot_mut_out_of_bounds() {
+        let mut slots = vec![VmSlot::Int(42)];
+        let mut ret = VmSlot::Void;
+        let mut heap = ObjectHeap::new();
+
+        let mut ctx = CallContext::new(&mut slots, 0, &mut ret, &mut heap);
+        assert!(ctx.arg_slot_mut(5).is_err());
+    }
+
+    #[test]
+    fn call_context_set_return_slot() {
+        let mut slots = vec![];
+        let mut ret = VmSlot::Void;
+        let mut heap = ObjectHeap::new();
+
+        let mut ctx = CallContext::new(&mut slots, 0, &mut ret, &mut heap);
+        ctx.set_return_slot(VmSlot::String("result".into()));
+
+        assert!(matches!(ret, VmSlot::String(_)));
+    }
+
+    #[test]
+    fn call_context_heap_access() {
+        let mut slots = vec![];
+        let mut ret = VmSlot::Void;
+        let mut heap = ObjectHeap::new();
+        let handle = heap.allocate(42i32);
+
+        let ctx = CallContext::new(&mut slots, 0, &mut ret, &mut heap);
+        assert_eq!(ctx.heap().get::<i32>(handle), Some(&42));
+    }
+
+    #[test]
+    fn call_context_heap_mut_access() {
+        let mut slots = vec![];
+        let mut ret = VmSlot::Void;
+        let mut heap = ObjectHeap::new();
+
+        let mut ctx = CallContext::new(&mut slots, 0, &mut ret, &mut heap);
+        let handle = ctx.heap_mut().allocate(42i32);
+
+        assert_eq!(ctx.heap().get::<i32>(handle), Some(&42));
+    }
+
+    #[test]
+    fn call_context_this_from_heap_object() {
+        let mut slots = vec![VmSlot::Void, VmSlot::Int(1)]; // placeholder for this
+        let mut ret = VmSlot::Void;
+        let mut heap = ObjectHeap::new();
+
+        // Allocate object on heap
+        let handle = heap.allocate(TestType { value: 99 });
+        slots[0] = VmSlot::Object(handle);
+
+        let ctx = CallContext::new(&mut slots, 1, &mut ret, &mut heap);
+        let this = ctx.this::<TestType>().unwrap();
+        assert_eq!(this.value, 99);
+    }
+
+    #[test]
+    fn call_context_this_mut_from_heap_object() {
+        let mut slots = vec![VmSlot::Void, VmSlot::Int(1)];
+        let mut ret = VmSlot::Void;
+        let mut heap = ObjectHeap::new();
+
+        let handle = heap.allocate(TestType { value: 99 });
+        slots[0] = VmSlot::Object(handle);
+
+        let mut ctx = CallContext::new(&mut slots, 1, &mut ret, &mut heap);
+        let this = ctx.this_mut::<TestType>().unwrap();
+        this.value = 200;
+
+        // Verify
+        assert_eq!(heap.get::<TestType>(handle).unwrap().value, 200);
+    }
+
+    #[test]
+    fn call_context_this_wrong_slot_type() {
+        let mut slots = vec![VmSlot::Int(42), VmSlot::Int(1)];
+        let mut ret = VmSlot::Void;
+        let mut heap = ObjectHeap::new();
+
+        let ctx = CallContext::new(&mut slots, 1, &mut ret, &mut heap);
+        let result = ctx.this::<TestType>();
+        assert!(matches!(result, Err(NativeError::InvalidThis { .. })));
+    }
+
+    struct OtherType {
+        _data: i32,
+    }
+
+    impl NativeType for OtherType {
+        const NAME: &'static str = "OtherType";
+    }
+
+    #[test]
+    fn call_context_this_type_mismatch_heap() {
+        let mut slots = vec![VmSlot::Void, VmSlot::Int(1)];
+        let mut ret = VmSlot::Void;
+        let mut heap = ObjectHeap::new();
+
+        // Allocate OtherType but try to get TestType
+        let handle = heap.allocate(OtherType { _data: 42 });
+        slots[0] = VmSlot::Object(handle);
+
+        let ctx = CallContext::new(&mut slots, 1, &mut ret, &mut heap);
+        let result = ctx.this::<TestType>();
+        assert!(matches!(result, Err(NativeError::ThisTypeMismatch { .. })));
+    }
+
+    #[test]
+    fn call_context_this_stale_handle() {
+        let mut slots = vec![VmSlot::Void, VmSlot::Int(1)];
+        let mut ret = VmSlot::Void;
+        let mut heap = ObjectHeap::new();
+
+        let handle = heap.allocate(TestType { value: 99 });
+        slots[0] = VmSlot::Object(handle);
+
+        // Free the object
+        heap.free(handle);
+
+        let ctx = CallContext::new(&mut slots, 1, &mut ret, &mut heap);
+        let result = ctx.this::<TestType>();
+        assert!(matches!(result, Err(NativeError::StaleHandle { .. })));
+    }
+
+    #[test]
+    fn call_context_this_mut_stale_handle() {
+        let mut slots = vec![VmSlot::Void, VmSlot::Int(1)];
+        let mut ret = VmSlot::Void;
+        let mut heap = ObjectHeap::new();
+
+        let handle = heap.allocate(TestType { value: 99 });
+        slots[0] = VmSlot::Object(handle);
+        heap.free(handle);
+
+        let mut ctx = CallContext::new(&mut slots, 1, &mut ret, &mut heap);
+        let result = ctx.this_mut::<TestType>();
+        assert!(matches!(result, Err(NativeError::StaleHandle { .. })));
+    }
+
+    #[test]
+    fn call_context_this_native_type_mismatch() {
+        let mut slots = vec![
+            VmSlot::Native(Box::new(OtherType { _data: 42 })),
+            VmSlot::Int(1),
+        ];
+        let mut ret = VmSlot::Void;
+        let mut heap = ObjectHeap::new();
+
+        let ctx = CallContext::new(&mut slots, 1, &mut ret, &mut heap);
+        let result = ctx.this::<TestType>();
+        assert!(matches!(result, Err(NativeError::InvalidThis { .. })));
+    }
+
+    #[test]
+    fn call_context_this_mut_native_type_mismatch() {
+        let mut slots = vec![
+            VmSlot::Native(Box::new(OtherType { _data: 42 })),
+            VmSlot::Int(1),
+        ];
+        let mut ret = VmSlot::Void;
+        let mut heap = ObjectHeap::new();
+
+        let mut ctx = CallContext::new(&mut slots, 1, &mut ret, &mut heap);
+        let result = ctx.this_mut::<TestType>();
+        assert!(matches!(result, Err(NativeError::InvalidThis { .. })));
+    }
+
+    #[test]
+    fn call_context_this_mut_not_method() {
+        let mut slots = vec![VmSlot::Int(42)];
+        let mut ret = VmSlot::Void;
+        let mut heap = ObjectHeap::new();
+
+        let mut ctx = CallContext::new(&mut slots, 0, &mut ret, &mut heap);
+        let result = ctx.this_mut::<TestType>();
+        assert!(matches!(result, Err(NativeError::InvalidThis { .. })));
+    }
+
+    #[test]
+    fn call_context_this_mut_wrong_slot_type() {
+        let mut slots = vec![VmSlot::Int(42), VmSlot::Int(1)];
+        let mut ret = VmSlot::Void;
+        let mut heap = ObjectHeap::new();
+
+        let mut ctx = CallContext::new(&mut slots, 1, &mut ret, &mut heap);
+        let result = ctx.this_mut::<TestType>();
+        assert!(matches!(result, Err(NativeError::InvalidThis { .. })));
+    }
+
+    #[test]
+    fn call_context_this_mut_type_mismatch_heap() {
+        let mut slots = vec![VmSlot::Void, VmSlot::Int(1)];
+        let mut ret = VmSlot::Void;
+        let mut heap = ObjectHeap::new();
+
+        let handle = heap.allocate(OtherType { _data: 42 });
+        slots[0] = VmSlot::Object(handle);
+
+        let mut ctx = CallContext::new(&mut slots, 1, &mut ret, &mut heap);
+        let result = ctx.this_mut::<TestType>();
+        assert!(matches!(result, Err(NativeError::ThisTypeMismatch { .. })));
+    }
+
+    #[test]
+    fn native_fn_debug() {
+        let native = NativeFn::new(|_: &mut CallContext| Ok(()));
+        let debug = format!("{:?}", native);
+        assert!(debug.contains("NativeFn"));
+    }
 }
