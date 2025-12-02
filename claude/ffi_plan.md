@@ -1328,13 +1328,13 @@ module.register_template("array")
 ```
 src/
 ├── context.rs          # Context (owns installed modules)
-├── unit.rs             # Unit (compilation unit)
-├── module.rs           # Module (namespaced native registrations)
-├── native/
-│   ├── mod.rs          # Public re-exports (builders, traits)
+├── unit.rs             # Unit (compilation unit, replaces current module.rs)
+├── ffi/                # FFI registration system
+│   ├── mod.rs          # Public re-exports (Module, builders, traits)
+│   ├── module.rs       # Module<'app> struct (namespaced native registrations)
 │   ├── traits.rs       # FromScript, ToScript, NativeType, IntoNativeFn
-│   ├── native_fn.rs    # NativeFn, NativeCallable, NativeCallContext
-│   ├── error.rs        # NativeError types
+│   ├── native_fn.rs    # NativeFn, NativeCallable, CallContext
+│   ├── error.rs        # NativeError, ModuleError, ContextError
 │   ├── function.rs     # FunctionBuilder
 │   ├── class.rs        # ClassBuilder, MethodBuilder, PropertyBuilder
 │   ├── enum_builder.rs # EnumBuilder
@@ -1343,6 +1343,7 @@ src/
 │   ├── template.rs     # TemplateBuilder, TemplateInstanceBuilder
 │   ├── any_type.rs     # AnyRef, AnyRefMut for ?& parameters
 │   ├── types.rs        # TypeSpec, ParamDef, TypeKind, Behaviors, etc.
+│   ├── global_property.rs # GlobalPropertyDef, GlobalPropertyRef
 │   └── apply.rs        # apply_to_registry() implementation
 ├── modules/            # Built-in modules (re-exported as angelscript::modules)
 │   ├── mod.rs          # default_modules(), individual module exports
@@ -1351,6 +1352,36 @@ src/
 │   ├── array.rs        # array() -> Module
 │   ├── dictionary.rs   # dictionary() -> Module
 │   └── math.rs         # math() -> Module (sin, cos, sqrt, etc.)
+├── benches/
+│   └── module_benchmarks.rs  # Updated to use Context/Unit API
+└── tests/
+    ├── module_tests.rs       # Updated to use Context/Unit API
+    └── test_harness.rs       # Updated to use Context/Unit API
+```
+
+**Test Scripts with FFI Placeholders to Clean Up:**
+```
+test_scripts/
+├── hello_world.as          # void print(const string &in) {}
+├── expressions.as
+├── utilities.as
+├── interface.as
+├── using_namespace.as
+├── enum.as
+├── templates.as
+├── game_logic.as
+├── inheritance.as
+├── data_structures.as
+├── nested.as
+├── functions.as
+├── literals.as
+├── class_basic.as
+├── control_flow.as
+├── types.as
+└── performance/
+    ├── large_500.as
+    ├── xlarge_1000.as
+    └── xxlarge_5000.as
 ```
 
 ---
@@ -1562,83 +1593,67 @@ pub fn dictionary() -> Module {
 
 ---
 
-## Implementation Phases
+## Implementation Tasks
+
+Detailed task files are in `/claude/tasks/`. Complete in order:
 
 ### Phase 1: Core Infrastructure
-1. Create `src/context.rs` - Context struct (owns installed modules)
-2. Create `src/unit.rs` - Unit struct (compilation unit)
-3. Create `src/module.rs` - Module struct (namespaced native registrations)
-4. Create `src/native/mod.rs` - Public re-exports
-5. Create `src/native/types.rs` - TypeSpec, ParamDef, TypeKind, Behaviors, etc.
-6. Create `src/native/traits.rs` - FromScript, ToScript, NativeType, IntoNativeFn
-7. Create `src/native/native_fn.rs` - NativeFn, NativeCallable
-8. Create `src/native/error.rs` - NativeError enum
 
-### Phase 2: Function Registration
-9. Create `src/native/function.rs` - FunctionBuilder
-10. Implement primitive parameter/return type handling
-11. Implement `?&` variable type parameters
-12. Implement default parameter support (string expressions)
-13. Implement FunctionTraits for const, constructor, etc.
+| Task | File | Description |
+|------|------|-------------|
+| 01 | [01_ffi_core_infrastructure.md](tasks/01_ffi_core_infrastructure.md) | Core types, traits (FromScript, ToScript, NativeType, CallContext, NativeFn) |
+| 02 | [02_ffi_module_and_context.md](tasks/02_ffi_module_and_context.md) | Module<'app> and Context API, GlobalPropertyDef |
 
-### Phase 3: Class Registration
-14. Create `src/native/class.rs` - ClassBuilder, MethodBuilder, PropertyBuilder
-15. Implement TypeKind (Value vs Reference)
-16. Implement Behaviors (factory, addref, release, construct, destruct)
-17. Implement constructors, methods, properties, operators
+### Phase 2: Registration Builders
 
-### Phase 4: Other Type Registrations
-18. Create `src/native/enum_builder.rs` - EnumBuilder
-19. Create `src/native/interface.rs` - InterfaceBuilder
-20. Create `src/native/funcdef.rs` - FuncdefBuilder
+| Task | File | Description |
+|------|------|-------------|
+| 03 | [03_ffi_function_builder.md](tasks/03_ffi_function_builder.md) | FunctionBuilder with type-safe and raw calling conventions |
+| 04 | [04_ffi_class_builder.md](tasks/04_ffi_class_builder.md) | ClassBuilder for value/reference types, methods, properties, operators |
+| 05 | [05_ffi_enum_interface_funcdef.md](tasks/05_ffi_enum_interface_funcdef.md) | EnumBuilder, InterfaceBuilder, FuncdefBuilder |
+| 06 | [06_ffi_template_builder.md](tasks/06_ffi_template_builder.md) | TemplateBuilder with validation and SubType parameters |
 
-### Phase 5: Template Support
-21. Create `src/native/template.rs` - TemplateBuilder, TemplateInstanceBuilder
-22. Implement validation callbacks
-23. Implement SubType parameter handling
+### Phase 3: Integration
 
-### Phase 6: Apply to Registry
-24. Create `src/native/apply.rs` - apply_to_registry() implementation
-25. Convert TypeSpec → DataType (resolve type names to TypeId)
-26. Convert NativeFunctionDef → FunctionDef
-27. Parse default parameter expressions into arena
-28. Convert NativeTypeDef → TypeDef
+| Task | File | Description |
+|------|------|-------------|
+| 07 | [07_ffi_apply_to_registry.md](tasks/07_ffi_apply_to_registry.md) | apply_to_registry() - convert FFI registrations to Registry entries |
+| 08 | [08_ffi_builtin_modules.md](tasks/08_ffi_builtin_modules.md) | Implement std, string, array, dictionary, math modules via FFI |
 
-### Phase 7: Built-in Modules
-29. Create `src/modules/mod.rs` - default_modules(), re-exports
-30. Create `src/modules/std.rs` - std() -> Module (print, println, eprint, eprintln)
-31. Create `src/modules/string.rs` - string() -> Module
-32. Create `src/modules/array.rs` - array() -> Module
-33. Create `src/modules/dictionary.rs` - dictionary() -> Module
-34. Create `src/modules/math.rs` - math() -> Module
-35. Modify `src/semantic/types/registry.rs` - remove hardcoded implementations
+### Phase 4: Migration
 
-### Phase 8: Integration
-36. Update `src/lib.rs` - export Context, Unit, Module, builders, traits
-37. Update existing module.rs → unit.rs migration
-38. Comprehensive tests
+| Task | File | Description |
+|------|------|-------------|
+| 09 | [09_ffi_update_entry_points.md](tasks/09_ffi_update_entry_points.md) | Update benches and tests to use Context/Unit API |
+| 10 | [10_ffi_extract_placeholders.md](tasks/10_ffi_extract_placeholders.md) | Remove FFI placeholders from 19 test scripts |
+| 11 | [11_ffi_lib_exports.md](tasks/11_ffi_lib_exports.md) | Library exports and public API organization |
 
 ---
 
 ## Critical Files
 
-**To Create:**
+**To Create (FFI Core):**
 - `src/context.rs` - Context (owns installed modules)
 - `src/unit.rs` - Unit (compilation unit)
-- `src/module.rs` - Module (namespaced native registrations)
-- `src/native/mod.rs` - Public re-exports
-- `src/native/types.rs` - TypeSpec, ParamDef, TypeKind, Behaviors, etc.
-- `src/native/apply.rs` - apply_to_registry() implementation
-- `src/native/traits.rs` - FromScript, ToScript, NativeType, IntoNativeFn
-- `src/native/native_fn.rs` - NativeFn, NativeCallable
-- `src/native/error.rs` - NativeError types
-- `src/native/function.rs` - FunctionBuilder
-- `src/native/class.rs` - ClassBuilder, MethodBuilder, PropertyBuilder
-- `src/native/enum_builder.rs` - EnumBuilder
-- `src/native/interface.rs` - InterfaceBuilder
-- `src/native/funcdef.rs` - FuncdefBuilder
-- `src/native/template.rs` - TemplateBuilder, TemplateInstanceBuilder
-- `src/native/any_type.rs` - AnyRef, AnyRefMut
+- `src/ffi/mod.rs` - Public re-exports
+- `src/ffi/module.rs` - Module<'app> (namespaced native registrations)
+- `src/ffi/types.rs` - TypeSpec, ParamDef, TypeKind, Behaviors, etc.
+- `src/ffi/traits.rs` - FromScript, ToScript, NativeType, IntoNativeFn
+- `src/ffi/native_fn.rs` - NativeFn, NativeCallable, CallContext
+- `src/ffi/error.rs` - NativeError, ModuleError, ContextError
+- `src/ffi/global_property.rs` - GlobalPropertyDef, GlobalPropertyRef
+
+**To Create (Builders):**
+- `src/ffi/function.rs` - FunctionBuilder
+- `src/ffi/class.rs` - ClassBuilder, MethodBuilder, PropertyBuilder
+- `src/ffi/enum_builder.rs` - EnumBuilder
+- `src/ffi/interface.rs` - InterfaceBuilder
+- `src/ffi/funcdef.rs` - FuncdefBuilder
+- `src/ffi/template.rs` - TemplateBuilder, TemplateInstanceBuilder
+- `src/ffi/any_type.rs` - AnyRef, AnyRefMut
+- `src/ffi/apply.rs` - apply_to_registry() implementation
+
+**To Create (Built-in Modules):**
 - `src/modules/mod.rs` - default_modules(), re-exports
 - `src/modules/std.rs` - std() -> Module (print, println, eprint, eprintln)
 - `src/modules/string.rs` - string() -> Module
@@ -1646,10 +1661,37 @@ pub fn dictionary() -> Module {
 - `src/modules/dictionary.rs` - dictionary() -> Module
 - `src/modules/math.rs` - math() -> Module
 
-**To Modify:**
+**To Modify (Integration):**
 - `src/semantic/types/registry.rs` - Remove ~800 lines of hardcoded builtins
-- `src/lib.rs` - Export Context, Unit, Module, add `pub mod native`, `pub mod modules`
+- `src/lib.rs` - Export Context, Unit, add `pub mod ffi`, `pub mod modules`
 - Rename/refactor existing `src/module.rs` → `src/unit.rs`
+
+**To Modify (Migration):**
+- `benches/module_benchmarks.rs` - Update to use Context/Unit API
+- `tests/module_tests.rs` - Update to use Context/Unit API
+- `tests/test_harness.rs` - Update to use Context/Unit API
+
+**To Clean Up (FFI Placeholders):**
+Remove placeholder function stubs from 19 test scripts:
+- `test_scripts/hello_world.as` - Remove `void print(const string &in) {}`
+- `test_scripts/expressions.as`
+- `test_scripts/utilities.as`
+- `test_scripts/interface.as`
+- `test_scripts/using_namespace.as`
+- `test_scripts/enum.as`
+- `test_scripts/templates.as`
+- `test_scripts/game_logic.as`
+- `test_scripts/inheritance.as`
+- `test_scripts/data_structures.as`
+- `test_scripts/nested.as`
+- `test_scripts/functions.as`
+- `test_scripts/literals.as`
+- `test_scripts/class_basic.as`
+- `test_scripts/control_flow.as`
+- `test_scripts/types.as`
+- `test_scripts/performance/large_500.as`
+- `test_scripts/performance/xlarge_1000.as`
+- `test_scripts/performance/xxlarge_5000.as`
 
 ---
 

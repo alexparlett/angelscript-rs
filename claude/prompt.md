@@ -1,6 +1,6 @@
-# Current Task: FFI & Enhanced Bytecode
+# Current Task: FFI Implementation
 
-**Status:** Planning
+**Status:** Ready for Implementation
 **Date:** 2025-12-02
 **Phase:** Post-Semantic Analysis
 
@@ -14,82 +14,65 @@
 
 **Recent Additions:**
 - Enhanced switch: bool, float, string, handle null, type patterns
-- Refactored function_processor.rs into submodules (17,729 → 6 organized files)
+- Refactored function_processor.rs into submodules
 
 ---
 
-## Upcoming Tasks
+## FFI Implementation Tasks
 
-### Task A: FFI (Foreign Function Interface)
+Detailed task files are in `/claude/tasks/`. Complete in order:
 
-Implement the ability to register and call native Rust functions from AngelScript scripts.
+### Phase 1: Core Infrastructure
+| Task | Description | Status |
+|------|-------------|--------|
+| [01](tasks/01_ffi_core_infrastructure.md) | Core types, traits (FromScript, ToScript, NativeType) | ✅ Complete |
+| [02](tasks/02_ffi_module_and_context.md) | Module and Context API | Not Started |
 
-**Requirements:**
-1. Register native functions with type signatures
-2. Call native functions from script code
-3. Pass arguments from script to native
-4. Return values from native to script
-5. Handle reference parameters (`&in`, `&out`, `&inout`)
-6. Register native types/classes with methods and properties
+### Phase 2: Registration Builders
+| Task | Description | Status |
+|------|-------------|--------|
+| [03](tasks/03_ffi_function_builder.md) | FunctionBuilder (type-safe and raw) | Not Started |
+| [04](tasks/04_ffi_class_builder.md) | ClassBuilder (value/reference types) | Not Started |
+| [05](tasks/05_ffi_enum_interface_funcdef.md) | Enum, Interface, Funcdef builders | Not Started |
+| [06](tasks/06_ffi_template_builder.md) | TemplateBuilder (array<T>, etc.) | Not Started |
 
-**Example API:**
-```rust
-let mut engine = ScriptEngine::new();
+### Phase 3: Integration
+| Task | Description | Status |
+|------|-------------|--------|
+| [07](tasks/07_ffi_apply_to_registry.md) | Apply FFI registrations to Registry | Not Started |
+| [08](tasks/08_ffi_builtin_modules.md) | Implement built-in modules via FFI | Not Started |
 
-// Register a native function
-engine.register_fn("print", |s: &str| println!("{}", s));
-engine.register_fn("sqrt", |x: f64| x.sqrt());
-
-// Register a native type
-engine.register_type::<Vec3>("Vec3")
-    .with_constructor(Vec3::new)
-    .with_method("length", Vec3::length)
-    .with_property("x", Vec3::get_x, Vec3::set_x);
-```
-
-**AngelScript usage:**
-```angelscript
-void main() {
-    print("Hello from script!");
-    float x = sqrt(16.0);
-
-    Vec3 v(1, 2, 3);
-    float len = v.length();
-}
-```
+### Phase 4: Migration
+| Task | Description | Status |
+|------|-------------|--------|
+| [09](tasks/09_ffi_update_entry_points.md) | Update benches/tests to Context/Unit API | Not Started |
+| [10](tasks/10_ffi_extract_placeholders.md) | Remove FFI placeholders from test scripts | Not Started |
+| [11](tasks/11_ffi_lib_exports.md) | Library exports and public API | Not Started |
 
 ---
 
-### Task B: Enhanced Bytecode
+## Key Design Decisions
 
-Improve bytecode for better runtime execution:
-
-1. **Constant folding** - Evaluate constant expressions at compile time
-2. **Dead code elimination** - Remove unreachable code
-3. **Register allocation** - Optimize local variable storage
-4. **Instruction optimization** - Combine redundant instructions
-
-**Example optimizations:**
-```angelscript
-// Before optimization:
-int x = 2 + 3;        // LoadConst 2, LoadConst 3, Add
-int y = x * 2;
-
-// After constant folding:
-int x = 5;            // LoadConst 5
-int y = x * 2;
-```
+- **Module has `'app` lifetime** for global property references
+- **Global properties on Module**, not Context (follows same pattern as functions)
+- **Two calling conventions**: type-safe (closure) and raw (CallContext)
+- **Built-ins via FFI**: Replace ~800 lines of hardcoded registry.rs
 
 ---
 
-## Priority Order
+## Quick Reference
 
-1. **Task A: FFI** - Essential for any practical use
-2. **Task B: Enhanced Bytecode** - Performance improvements
+**Full FFI Design:** `/claude/ffi_plan.md`
+**Plan File:** `~/.claude/plans/toasty-soaring-swan.md`
+**Decisions Log:** `/claude/decisions.md`
 
 ---
 
-## References
+## Future Tasks
 
-- **Decisions Log:** `/claude/decisions.md`
-- **Bytecode:** `src/codegen/ir/instruction.rs`
+### Task B: Enhanced Bytecode (After FFI)
+
+1. Constant folding
+2. Dead code elimination
+3. Register allocation
+4. Instruction optimization
