@@ -1,5 +1,8 @@
 // Test various type expressions
 
+// FFI placeholder - will be replaced with proper FFI bindings
+class Object {}
+
 // Primitive types
 int primitiveInt;
 uint primitiveUInt;

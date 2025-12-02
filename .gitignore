@@ -4,3 +4,4 @@
 vendor/angelscript/sdk/samples/
 target/
 .history/
+*profile.json

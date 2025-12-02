@@ -5,13 +5,14 @@
 //! validating parse results, and checking error conditions.
 
 use angelscript::*;
+use bumpalo::Bump;
 use std::fs;
 use std::path::PathBuf;
 
 /// Test result that includes parsed AST and any errors
-#[derive(Debug)]
-pub struct TestResult {
-    pub script: Script,
+pub struct TestResult<'src, 'ast> {
+    pub arena: Bump,
+    pub script: Script<'src, 'ast>,
     pub errors: Vec<ParseError>,
     pub source: String,
 }
@@ -29,14 +30,25 @@ impl TestHarness {
     }
 
     /// Load and parse an AngelScript file
-    pub fn load_and_parse(&self, filename: &str) -> TestResult {
+    pub fn load_and_parse<'src, 'ast>(&self, filename: &str) -> TestResult<'src, 'ast>
+    where
+        'src: 'ast,
+    {
+        let arena = Bump::new();
         let path = self.test_scripts_dir.join(filename);
         let source = fs::read_to_string(&path)
             .unwrap_or_else(|e| panic!("Failed to read {}: {}", path.display(), e));
 
-        let (script, errors) = parse_lenient(&source);
+        // SAFETY: We're transmuting the lifetimes to match TestResult's requirements.
+        // The arena is owned by TestResult, so the script remains valid.
+        let (script, errors) = unsafe {
+            let src_ptr = source.as_str() as *const str;
+            let (s, e) = parse_lenient(&*src_ptr, &arena);
+            (std::mem::transmute(s), e)
+        };
 
         TestResult {
+            arena,
             script,
             errors,
             source,
@@ -44,7 +56,7 @@ impl TestHarness {
     }
 }
 
-impl TestResult {
+impl<'src, 'ast> TestResult<'src, 'ast> {
     /// Assert that parsing succeeded with no errors
     pub fn assert_success(&self) {
         if !self.errors.is_empty() {
@@ -146,6 +158,7 @@ pub struct AstCounter {
     pub for_count: usize,
     pub binary_expr_count: usize,
     pub call_count: usize,
+    pub lambda_expr_count: usize,
 }
 
 impl AstCounter {
@@ -158,6 +171,7 @@ impl AstCounter {
             for_count: 0,
             binary_expr_count: 0,
             call_count: 0,
+            lambda_expr_count: 0,
         }
     }
 
@@ -292,6 +306,13 @@ impl AstCounter {
             Expr::Postfix(p) => self.count_expr(&p.operand),
             Expr::Cast(c) => self.count_expr(&c.expr),
             Expr::Paren(p) => self.count_expr(&p.expr),
+            Expr::Lambda(l) => {
+                self.lambda_expr_count += 1;
+                // Count expressions in lambda body
+                for stmt in l.body.stmts {
+                    self.count_stmt(stmt);
+                }
+            }
             _ => {}
         }
     }

@@ -5,6 +5,7 @@
 
 use crate::ast::{DeclModifiers, FuncAttr, Ident, ParseError, ParseErrorKind, PropertyAccessorKind as PropAccessorKind, Visibility};
 use crate::ast::decl::*;
+use crate::ast::expr::IdentExpr;
 use crate::ast::types::ParamType;
 use crate::lexer::TokenKind;
 use super::parser::Parser;
@@ -64,9 +65,10 @@ impl<'src, 'ast> Parser<'src, 'ast> {
             TokenKind::Enum => self.parse_enum(modifiers),
             TokenKind::FuncDef => self.parse_funcdef(modifiers),
             TokenKind::Namespace => self.parse_namespace(),
+            TokenKind::Using => self.parse_using_namespace(),
             TokenKind::Typedef => self.parse_typedef(),
             TokenKind::Import => self.parse_import(),
-            TokenKind::Mixin => self.parse_mixin(),
+            TokenKind::Mixin => self.parse_mixin(modifiers),
             
             // Function or global variable
             _ => {
@@ -810,7 +812,8 @@ mod tests {
         match item {
             Item::Class(class) => {
                 assert_eq!(class.inheritance.len(), 1);
-                assert_eq!(class.inheritance[0].name, "Base");
+                assert_eq!(class.inheritance[0].ident.name, "Base");
+                assert!(class.inheritance[0].scope.is_none());
             }
             _ => panic!("Expected class"),
         }
@@ -824,6 +827,31 @@ mod tests {
         match item {
             Item::Class(class) => {
                 assert_eq!(class.inheritance.len(), 3);
+                assert_eq!(class.inheritance[0].ident.name, "Base1");
+                assert_eq!(class.inheritance[1].ident.name, "Base2");
+                assert_eq!(class.inheritance[2].ident.name, "Base3");
+            }
+            _ => panic!("Expected class"),
+        }
+    }
+
+    #[test]
+    fn parse_class_scoped_inheritance() {
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("class Entity : BaseEntity, GameEngine::IRenderable { }", &arena);
+        let item = parser.parse_item().unwrap();
+        match item {
+            Item::Class(class) => {
+                assert_eq!(class.inheritance.len(), 2);
+                // First: simple name
+                assert_eq!(class.inheritance[0].ident.name, "BaseEntity");
+                assert!(class.inheritance[0].scope.is_none());
+                // Second: scoped name
+                assert_eq!(class.inheritance[1].ident.name, "IRenderable");
+                let scope = class.inheritance[1].scope.as_ref().expect("Expected scope");
+                assert!(!scope.is_absolute);
+                assert_eq!(scope.segments.len(), 1);
+                assert_eq!(scope.segments[0].name, "GameEngine");
             }
             _ => panic!("Expected class"),
         }
@@ -1255,6 +1283,40 @@ mod tests {
     }
 
     // ========================================================================
+    // Using Namespace Tests
+    // ========================================================================
+
+    #[test]
+    fn parse_using_namespace_simple() {
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("using namespace Foo;", &arena);
+        let item = parser.parse_item().unwrap();
+        match item {
+            Item::UsingNamespace(using) => {
+                assert_eq!(using.path.len(), 1);
+                assert_eq!(using.path[0].name, "Foo");
+            }
+            _ => panic!("Expected using namespace"),
+        }
+    }
+
+    #[test]
+    fn parse_using_namespace_nested() {
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("using namespace A::B::C;", &arena);
+        let item = parser.parse_item().unwrap();
+        match item {
+            Item::UsingNamespace(using) => {
+                assert_eq!(using.path.len(), 3);
+                assert_eq!(using.path[0].name, "A");
+                assert_eq!(using.path[1].name, "B");
+                assert_eq!(using.path[2].name, "C");
+            }
+            _ => panic!("Expected using namespace"),
+        }
+    }
+
+    // ========================================================================
     // Typedef Tests
     // ========================================================================
 
@@ -1413,6 +1475,482 @@ mod tests {
         let (items, _span) = parser.parse_script().unwrap();
         assert_eq!(items.len(), 2);
     }
+
+    // ========================================================================
+    // Additional Coverage Tests - Error Cases
+    // ========================================================================
+
+    #[test]
+    fn parse_duplicate_shared_modifier() {
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("shared shared class Foo { }", &arena);
+        let item = parser.parse_item().unwrap();
+        match item {
+            Item::Class(class) => {
+                assert!(class.modifiers.shared);
+                // Parser logs error but continues
+                assert!(!parser.errors.is_empty());
+            }
+            _ => panic!("Expected class"),
+        }
+    }
+
+    #[test]
+    fn parse_duplicate_external_modifier() {
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("external external void foo();", &arena);
+        let item = parser.parse_item().unwrap();
+        match item {
+            Item::Function(func) => {
+                assert!(func.modifiers.external);
+                // Parser logs error but continues
+                assert!(!parser.errors.is_empty());
+            }
+            _ => panic!("Expected function"),
+        }
+    }
+
+    #[test]
+    fn parse_duplicate_abstract_modifier() {
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("abstract abstract class Foo { }", &arena);
+        let item = parser.parse_item().unwrap();
+        match item {
+            Item::Class(class) => {
+                assert!(class.modifiers.abstract_);
+                // Parser logs error but continues
+                assert!(!parser.errors.is_empty());
+            }
+            _ => panic!("Expected class"),
+        }
+    }
+
+    #[test]
+    fn parse_duplicate_final_modifier() {
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("final final class Foo { }", &arena);
+        let item = parser.parse_item().unwrap();
+        match item {
+            Item::Class(class) => {
+                assert!(class.modifiers.final_);
+                // Parser logs error but continues
+                assert!(!parser.errors.is_empty());
+            }
+            _ => panic!("Expected class"),
+        }
+    }
+
+    #[test]
+    fn parse_duplicate_override_attribute() {
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("void foo() override override { }", &arena);
+        let item = parser.parse_item().unwrap();
+        match item {
+            Item::Function(func) => {
+                assert!(func.attrs.override_);
+                // Parser logs error but continues
+                assert!(!parser.errors.is_empty());
+            }
+            _ => panic!("Expected function"),
+        }
+    }
+
+    #[test]
+    fn parse_duplicate_final_attribute() {
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("void foo() final final { }", &arena);
+        let item = parser.parse_item().unwrap();
+        match item {
+            Item::Function(func) => {
+                assert!(func.attrs.final_);
+                assert!(!parser.errors.is_empty());
+            }
+            _ => panic!("Expected function"),
+        }
+    }
+
+    #[test]
+    fn parse_duplicate_explicit_attribute() {
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("class Foo { Foo(int x) explicit explicit { } }", &arena);
+        let item = parser.parse_item().unwrap();
+        match item {
+            Item::Class(class) => {
+                match &class.members[0] {
+                    ClassMember::Method(method) => {
+                        assert!(method.attrs.explicit);
+                        assert!(!parser.errors.is_empty());
+                    }
+                    _ => panic!("Expected method"),
+                }
+            }
+            _ => panic!("Expected class"),
+        }
+    }
+
+    #[test]
+    fn parse_duplicate_property_attribute() {
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("class Foo { void set_x(int v) property property { } }", &arena);
+        let item = parser.parse_item().unwrap();
+        match item {
+            Item::Class(class) => {
+                match &class.members[0] {
+                    ClassMember::Method(method) => {
+                        assert!(method.attrs.property);
+                        assert!(!parser.errors.is_empty());
+                    }
+                    _ => panic!("Expected method"),
+                }
+            }
+            _ => panic!("Expected class"),
+        }
+    }
+
+    #[test]
+    fn parse_duplicate_delete_attribute() {
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("class Foo { Foo(const Foo& in) delete delete; }", &arena);
+        let item = parser.parse_item().unwrap();
+        match item {
+            Item::Class(class) => {
+                match &class.members[0] {
+                    ClassMember::Method(method) => {
+                        assert!(method.attrs.delete);
+                        assert!(!parser.errors.is_empty());
+                    }
+                    _ => panic!("Expected method"),
+                }
+            }
+            _ => panic!("Expected class"),
+        }
+    }
+
+    #[test]
+    fn parse_destructor_as_global_var_error() {
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("~Invalid;", &arena);
+        let result = parser.parse_item();
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn parse_global_var_without_init() {
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("int x;", &arena);
+        let item = parser.parse_item().unwrap();
+        match item {
+            Item::GlobalVar(var) => {
+                assert_eq!(var.name.name, "x");
+                assert!(var.init.is_none());
+            }
+            _ => panic!("Expected global var"),
+        }
+    }
+
+    #[test]
+    fn parse_class_member_parse_error_recovery() {
+        // Test error recovery within class member parsing
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new(r#"
+            class Foo {
+                this is not valid
+                int x;
+            }
+        "#, &arena);
+        let item = parser.parse_item().unwrap();
+        match item {
+            Item::Class(class) => {
+                // Should have encountered errors during parsing
+                assert!(!parser.errors.is_empty());
+                // Class should be parsed with errors recorded
+                assert_eq!(class.name.name, "Foo");
+            }
+            _ => panic!("Expected class"),
+        }
+    }
+
+    #[test]
+    fn parse_class_with_get_only_property() {
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new(r#"
+            class Foo {
+                int Value {
+                    get const { return 0; }
+                }
+            }
+        "#, &arena);
+        let item = parser.parse_item().unwrap();
+        match item {
+            Item::Class(class) => {
+                match &class.members[0] {
+                    ClassMember::VirtualProperty(prop) => {
+                        assert_eq!(prop.accessors.len(), 1);
+                    }
+                    _ => panic!("Expected virtual property"),
+                }
+            }
+            _ => panic!("Expected class"),
+        }
+    }
+
+    #[test]
+    fn parse_class_with_set_only_property() {
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new(r#"
+            class Foo {
+                int Value {
+                    set { }
+                }
+            }
+        "#, &arena);
+        let item = parser.parse_item().unwrap();
+        match item {
+            Item::Class(class) => {
+                match &class.members[0] {
+                    ClassMember::VirtualProperty(prop) => {
+                        assert_eq!(prop.accessors.len(), 1);
+                    }
+                    _ => panic!("Expected virtual property"),
+                }
+            }
+            _ => panic!("Expected class"),
+        }
+    }
+
+    #[test]
+    fn parse_interface_multiple_bases() {
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("interface IMulti : IBase1, IBase2 { }", &arena);
+        let item = parser.parse_item().unwrap();
+        match item {
+            Item::Interface(iface) => {
+                assert_eq!(iface.bases.len(), 2);
+            }
+            _ => panic!("Expected interface"),
+        }
+    }
+
+    #[test]
+    fn parse_enum_empty() {
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("enum Empty { }", &arena);
+        let item = parser.parse_item().unwrap();
+        match item {
+            Item::Enum(e) => {
+                assert_eq!(e.enumerators.len(), 0);
+            }
+            _ => panic!("Expected enum"),
+        }
+    }
+
+    #[test]
+    fn parse_mixin_with_members() {
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("mixin class Helper { void foo() { } }", &arena);
+        let item = parser.parse_item().unwrap();
+        match item {
+            Item::Mixin(mix) => {
+                assert_eq!(mix.class.members.len(), 1);
+            }
+            _ => panic!("Expected mixin"),
+        }
+    }
+
+    #[test]
+    fn parse_funcdef_shared() {
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("shared funcdef void Handler();", &arena);
+        let item = parser.parse_item().unwrap();
+        match item {
+            Item::Funcdef(fd) => {
+                assert!(fd.modifiers.shared);
+            }
+            _ => panic!("Expected funcdef"),
+        }
+    }
+
+    #[test]
+    fn parse_class_with_templated_method() {
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new(r#"
+            class Container {
+                void set<K>(K key) { }
+            }
+        "#, &arena);
+        let item = parser.parse_item().unwrap();
+        match item {
+            Item::Class(class) => {
+                match &class.members[0] {
+                    ClassMember::Method(method) => {
+                        assert_eq!(method.template_params.len(), 1);
+                    }
+                    _ => panic!("Expected method"),
+                }
+            }
+            _ => panic!("Expected class"),
+        }
+    }
+
+    #[test]
+    fn parse_accessor_abstract_declaration_only() {
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new(r#"
+            interface IFoo {
+                int Value { get const; }
+            }
+        "#, &arena);
+        let item = parser.parse_item().unwrap();
+        match item {
+            Item::Interface(iface) => {
+                match &iface.members[0] {
+                    InterfaceMember::VirtualProperty(prop) => {
+                        assert_eq!(prop.accessors.len(), 1);
+                    }
+                    _ => panic!("Expected virtual property"),
+                }
+            }
+            _ => panic!("Expected interface"),
+        }
+    }
+
+    #[test]
+    fn parse_interface_virtual_property_set() {
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new(r#"
+            interface IFoo {
+                int Value { set; }
+            }
+        "#, &arena);
+        let item = parser.parse_item().unwrap();
+        match item {
+            Item::Interface(iface) => {
+                match &iface.members[0] {
+                    InterfaceMember::VirtualProperty(prop) => {
+                        assert_eq!(prop.accessors.len(), 1);
+                    }
+                    _ => panic!("Expected virtual property"),
+                }
+            }
+            _ => panic!("Expected interface"),
+        }
+    }
+
+    #[test]
+    fn parse_class_field_with_equals_init() {
+        // Test field with = initialization (not constructor syntax)
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new(r#"
+            class Foo {
+                int value = 42;
+            }
+        "#, &arena);
+        let item = parser.parse_item().unwrap();
+        match item {
+            Item::Class(class) => {
+                assert!(!class.members.is_empty());
+                match &class.members[0] {
+                    ClassMember::Field(field) => {
+                        assert!(field.init.is_some());
+                    }
+                    _ => panic!("Expected field"),
+                }
+            }
+            _ => panic!("Expected class"),
+        }
+    }
+
+    #[test]
+    fn parse_separate_field_declarations() {
+        // Multiple fields require separate declarations in this parser
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new(r#"
+            class Foo {
+                int x;
+                int y;
+                int z;
+            }
+        "#, &arena);
+        let item = parser.parse_item().unwrap();
+        match item {
+            Item::Class(class) => {
+                // Should have 3 field members
+                assert_eq!(class.members.len(), 3);
+            }
+            _ => panic!("Expected class"),
+        }
+    }
+
+    #[test]
+    fn parse_enum_negative_value() {
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("enum Neg { MinusOne = -1, Zero = 0, One = 1 }", &arena);
+        let item = parser.parse_item().unwrap();
+        match item {
+            Item::Enum(e) => {
+                assert_eq!(e.enumerators.len(), 3);
+                // First one has value
+                assert!(e.enumerators[0].value.is_some());
+            }
+            _ => panic!("Expected enum"),
+        }
+    }
+
+    #[test]
+    fn parse_function_ref_param() {
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new("void swap(int &inout a, int &inout b) { }", &arena);
+        let item = parser.parse_item().unwrap();
+        match item {
+            Item::Function(func) => {
+                assert_eq!(func.params.len(), 2);
+            }
+            _ => panic!("Expected function"),
+        }
+    }
+
+    #[test]
+    fn parse_class_method_declaration_only() {
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new(r#"
+            class Foo {
+                void abstractMethod();
+            }
+        "#, &arena);
+        let item = parser.parse_item().unwrap();
+        match item {
+            Item::Class(class) => {
+                match &class.members[0] {
+                    ClassMember::Method(method) => {
+                        assert!(method.body.is_none());
+                    }
+                    _ => panic!("Expected method"),
+                }
+            }
+            _ => panic!("Expected class"),
+        }
+    }
+
+    #[test]
+    fn parse_namespace_nested_class() {
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new(r#"
+            namespace A {
+                class Foo { }
+            }
+        "#, &arena);
+        let item = parser.parse_item().unwrap();
+        match item {
+            Item::Namespace(ns) => {
+                assert_eq!(ns.items.len(), 1);
+                match &ns.items[0] {
+                    Item::Class(_) => {}
+                    _ => panic!("Expected class in namespace"),
+                }
+            }
+            _ => panic!("Expected namespace"),
+        }
+    }
 }
 
 impl<'src, 'ast> Parser<'src, 'ast> {
@@ -1440,12 +1978,12 @@ impl<'src, 'ast> Parser<'src, 'ast> {
             Vec::new()
         };
 
-        // Optional inheritance
+        // Optional inheritance (supports scoped names like Namespace::Interface)
         let inheritance_slice = if self.eat(TokenKind::Colon).is_some() {
-            let inheritance_vec = self.parse_ident_list()?;
+            let inheritance_vec = self.parse_scoped_ident_list()?;
             self.arena.alloc_slice_copy(&inheritance_vec)
         } else {
-            self.arena.alloc_slice_copy::<Ident>(&[])
+            self.arena.alloc_slice_copy::<IdentExpr>(&[])
         };
 
         // Check for forward declaration (just semicolon)
@@ -1937,6 +2475,25 @@ impl<'src, 'ast> Parser<'src, 'ast> {
         }))
     }
 
+    /// Parse a using namespace directive.
+    ///
+    /// Syntax: `using namespace A::B::C;`
+    pub fn parse_using_namespace(&mut self) -> Result<Item<'src, 'ast>, ParseError> {
+        let start_span = self.expect(TokenKind::Using)?.span;
+        self.expect(TokenKind::Namespace)?;
+
+        // Parse namespace path (can be nested: A::B::C)
+        let path_vec = self.parse_namespace_path()?;
+        let path_slice = self.arena.alloc_slice_copy(&path_vec);
+
+        let end_span = self.expect(TokenKind::Semicolon)?.span;
+
+        Ok(Item::UsingNamespace(UsingNamespaceDecl {
+            path: path_slice,
+            span: start_span.merge(end_span),
+        }))
+    }
+
     /// Parse a typedef declaration.
     pub fn parse_typedef(&mut self) -> Result<Item<'src, 'ast>, ParseError> {
         let start_span = self.expect(TokenKind::Typedef)?.span;
@@ -1984,7 +2541,7 @@ impl<'src, 'ast> Parser<'src, 'ast> {
     }
 
     /// Parse a mixin declaration.
-    pub fn parse_mixin(&mut self) -> Result<Item<'src, 'ast>, ParseError> {
+    pub fn parse_mixin(&mut self, modifiers: DeclModifiers) -> Result<Item<'src, 'ast>, ParseError> {
         let start_span = self.eat(TokenKind::Mixin)
             .ok_or_else(|| {
                 let span = self.peek().span;
@@ -1996,7 +2553,8 @@ impl<'src, 'ast> Parser<'src, 'ast> {
             })?
             .span;
 
-        let class_item = self.parse_class(DeclModifiers::new(), Visibility::Public)?;
+        // Pass the modifiers to parse_class so they are captured in the ClassDecl
+        let class_item = self.parse_class(modifiers, Visibility::Public)?;
 
         if let Item::Class(class) = class_item {
             let span = start_span.merge(class.span);
@@ -2065,6 +2623,71 @@ impl<'src, 'ast> Parser<'src, 'ast> {
         }
         // Convert tokens to Idents after all parsing is done
         Ok(tokens.into_iter().map(|(name, span)| Ident::new(name, span)).collect())
+    }
+
+    /// Parse a comma-separated list of scoped identifiers (for inheritance lists).
+    /// Supports scoped names like `Namespace::Interface`.
+    fn parse_scoped_ident_list(&mut self) -> Result<Vec<IdentExpr<'src, 'ast>>, ParseError> {
+        let mut idents = Vec::new();
+        loop {
+            let ident_expr = self.parse_scoped_ident()?;
+            idents.push(ident_expr);
+            if !self.check(TokenKind::Comma) {
+                break;
+            }
+            self.eat(TokenKind::Comma);
+        }
+        Ok(idents)
+    }
+
+    /// Parse a scoped identifier like `Namespace::Type` or just `Type`.
+    fn parse_scoped_ident(&mut self) -> Result<IdentExpr<'src, 'ast>, ParseError> {
+        use crate::ast::Scope;
+
+        let start_span = self.peek().span;
+
+        // Check for absolute scope (::)
+        let is_absolute = self.eat(TokenKind::ColonColon).is_some();
+
+        // Parse first identifier
+        let first_token = self.expect(TokenKind::Identifier)?;
+        let mut segments = vec![(first_token.lexeme, first_token.span)];
+
+        // Parse any additional scope segments
+        while self.check(TokenKind::ColonColon) {
+            self.advance(); // consume ::
+            let token = self.expect(TokenKind::Identifier)?;
+            segments.push((token.lexeme, token.span));
+        }
+
+        // Last segment is the identifier, everything before is scope
+        let (ident_name, ident_span) = segments.pop().unwrap();
+        let ident = Ident::new(ident_name, ident_span);
+
+        let scope = if is_absolute || !segments.is_empty() {
+            let scope_idents: Vec<_> = segments.into_iter()
+                .map(|(name, span)| Ident::new(name, span))
+                .collect();
+            let scope_span = if scope_idents.is_empty() {
+                start_span
+            } else {
+                start_span.merge(scope_idents.last().unwrap().span)
+            };
+            Some(Scope {
+                is_absolute,
+                segments: self.arena.alloc_slice_copy(&scope_idents),
+                span: scope_span,
+            })
+        } else {
+            None
+        };
+
+        Ok(IdentExpr {
+            scope,
+            ident,
+            type_args: &[],
+            span: start_span.merge(ident_span),
+        })
     }
 
     /// Parse a ::-separated list of identifiers (namespace path).

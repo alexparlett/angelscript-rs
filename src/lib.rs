@@ -9,23 +9,52 @@
 //! The implementation follows a traditional compiler pipeline:
 //!
 //! 1. **Lexer** - Tokenizes source text ([`lexer`] module)
-//! 2. **Parser** - Builds an AST (planned)
-//! 3. **Type Checker** - Validates types (planned)
-//! 4. **Compiler** - Generates bytecode (planned)
-//! 5. **VM** - Executes bytecode (planned)
+//! 2. **Parser** - Builds an AST ([`parse_lenient`] function)
+//! 3. **Semantic Analysis** - 3-pass compilation ([`semantic::Compiler`])
+//!    - Pass 1: Registration (register all global names)
+//!    - Pass 2a: Type Compilation (resolve types)
+//!    - Pass 2b: Function Compilation (compile to bytecode)
+//! 4. **VM** - Executes bytecode (planned)
 //!
-//! # Example
+//! # Example: Basic Usage (Recommended)
 //!
 //! ```
-//! use angelscript::{parse_lenient, Script};
+//! use angelscript::ScriptModule;
 //!
-//! let source = r#"
-//!     int add(int a, int b) {
-//!         return a + b;
+//! let mut module = ScriptModule::new();
+//!
+//! // Add source files
+//! module.add_source("player.as", r#"
+//!     class Player {
+//!         int health;
+//!         Player(int h) { }
 //!     }
-//! "#;
+//! "#).unwrap();
 //!
-//! let (script, errors) = parse_lenient(source);
+//! module.add_source("main.as", r#"
+//!     void main() {
+//!         Player p = Player(100);
+//!     }
+//! "#).unwrap();
+//!
+//! // Build (parse + compile)
+//! module.build().unwrap();
+//!
+//! // Module is now ready for execution
+//! println!("Compiled {} functions", module.function_count());
+//! println!("Registered {} types", module.type_count());
+//! ```
+//!
+//! # Example: Parse Only
+//!
+//! ```
+//! use angelscript::parse_lenient;
+//! use bumpalo::Bump;
+//!
+//! let arena = Bump::new();
+//! let source = "int add(int a, int b) { return a + b; }";
+//!
+//! let (script, errors) = parse_lenient(source, &arena);
 //! if errors.is_empty() {
 //!     println!("Successfully parsed {} items", script.items().len());
 //! }
@@ -33,6 +62,9 @@
 
 mod ast;
 mod lexer;
+mod module;
+pub mod semantic;
+pub mod codegen;
 
 pub use ast::{parse, parse_expression, parse_lenient, parse_statement, parse_type_expr};
 
@@ -101,3 +133,17 @@ pub use ast::{
     // Errors
     ParseError, ParseErrorKind, ParseErrors,
 };
+
+// Re-export high-level module API (recommended for most users)
+pub use module::{ScriptModule, BuildError, ModuleError};
+
+// Re-export semantic compiler (for advanced use cases)
+pub use semantic::Compiler;
+
+// Re-export semantic types
+pub use semantic::{
+    CompilationResult, CompiledModule, SemanticError, SemanticErrorKind, SemanticErrors,
+};
+
+// Re-export codegen types
+pub use codegen::{BytecodeEmitter, CompiledBytecode, Instruction};

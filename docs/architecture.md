@@ -117,6 +117,20 @@ pub struct Handle {
 }
 ```
 
+#### Handle Reference Counting
+
+**Important:** Reference counting (AddRef/Release) is the **VM's responsibility**, NOT the compiler's.
+
+- **Compiler Role:** The semantic analyzer validates handle types and emits appropriate bytecode for handle operations (assignment, parameter passing, null checks).
+- **VM Role:** The virtual machine tracks reference counts and manages object lifetimes by calling AddRef/Release at runtime.
+
+This separation ensures:
+1. The compiler stays type-safe and focused on validation
+2. The VM handles runtime memory management details
+3. Native types can provide their own AddRef/Release implementations
+
+**Note:** The `@+` auto-handle feature (mentioned in AngelScript docs for FFI) is also a VM-level feature for automatic handle wrapping at native function boundaries, not a compiler-time type modifier.
+
 ### Value
 
 Runtime representation of script values.

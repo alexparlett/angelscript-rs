@@ -110,6 +110,19 @@ After completing a task, update `/claude/prompt.md` with:
 - Next steps or open questions
 - Any context needed for the next session
 </Rule>
+
+<Rule name="CommitAfterTask">
+After completing each task, create a git commit to preserve the work:
+
+1. Verify all tests pass: `cargo test --lib`
+2. Verify the build succeeds: `cargo build --lib`
+3. Stage relevant changes: `git add [files]`
+4. Create a descriptive commit with the standard format (see Committing section below)
+5. DO NOT push unless explicitly requested by the user
+
+This ensures work is saved incrementally and prevents catastrophic loss.
+Never skip this step - commits are cheap, lost work is expensive.
+</Rule>
 </Rules>
 
 <References>

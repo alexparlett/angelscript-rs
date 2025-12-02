@@ -410,95 +410,61 @@ impl<'src> Lexer<'src> {
     // =========================================
 
     /// Scan an operator or punctuation token.
+    ///
+    /// Uses tuple matching on (first_char, peek) to minimize repeated peek() calls.
     fn scan_operator(&mut self, start_line: u32, start_col: u32, start_offset: u32) -> Token<'src> {
         let c = self.cursor.advance().unwrap();
+        let next = self.cursor.peek();
 
-        let kind = match c {
-            // Single character tokens
-            '(' => TokenKind::LeftParen,
-            ')' => TokenKind::RightParen,
-            '[' => TokenKind::LeftBracket,
-            ']' => TokenKind::RightBracket,
-            '{' => TokenKind::LeftBrace,
-            '}' => TokenKind::RightBrace,
-            ';' => TokenKind::Semicolon,
-            ',' => TokenKind::Comma,
-            '~' => TokenKind::Tilde,
-            '?' => TokenKind::Question,
-            '@' => TokenKind::At,
+        let kind = match (c, next) {
+            // Single character tokens (no lookahead needed)
+            ('(', _) => TokenKind::LeftParen,
+            (')', _) => TokenKind::RightParen,
+            ('[', _) => TokenKind::LeftBracket,
+            (']', _) => TokenKind::RightBracket,
+            ('{', _) => TokenKind::LeftBrace,
+            ('}', _) => TokenKind::RightBrace,
+            (';', _) => TokenKind::Semicolon,
+            (',', _) => TokenKind::Comma,
+            ('~', _) => TokenKind::Tilde,
+            ('?', _) => TokenKind::Question,
+            ('@', _) => TokenKind::At,
+            ('.', _) => TokenKind::Dot,
 
-            // Dot (can't be number, we checked earlier)
-            '.' => TokenKind::Dot,
+            // Two-character operators
+            (':', Some(':')) => { self.cursor.advance(); TokenKind::ColonColon }
+            (':', _) => TokenKind::Colon,
 
-            // Colon or ::
-            ':' => {
-                if self.cursor.eat(':') {
-                    TokenKind::ColonColon
-                } else {
-                    TokenKind::Colon
-                }
-            }
+            ('+', Some('+')) => { self.cursor.advance(); TokenKind::PlusPlus }
+            ('+', Some('=')) => { self.cursor.advance(); TokenKind::PlusEqual }
+            ('+', _) => TokenKind::Plus,
 
-            // Plus, ++, +=
-            '+' => {
-                if self.cursor.eat('+') {
-                    TokenKind::PlusPlus
-                } else if self.cursor.eat('=') {
-                    TokenKind::PlusEqual
-                } else {
-                    TokenKind::Plus
-                }
-            }
+            ('-', Some('-')) => { self.cursor.advance(); TokenKind::MinusMinus }
+            ('-', Some('=')) => { self.cursor.advance(); TokenKind::MinusEqual }
+            ('-', _) => TokenKind::Minus,
 
-            // Minus, --, -=
-            '-' => {
-                if self.cursor.eat('-') {
-                    TokenKind::MinusMinus
-                } else if self.cursor.eat('=') {
-                    TokenKind::MinusEqual
-                } else {
-                    TokenKind::Minus
-                }
-            }
-
-            // Star, **, *=, **=
-            '*' => {
-                if self.cursor.eat('*') {
-                    if self.cursor.eat('=') {
-                        TokenKind::StarStarEqual
-                    } else {
-                        TokenKind::StarStar
-                    }
-                } else if self.cursor.eat('=') {
-                    TokenKind::StarEqual
-                } else {
-                    TokenKind::Star
-                }
-            }
-
-            // Percent, %=
-            '%' => {
+            // Star needs 3-char lookahead for **=
+            ('*', Some('*')) => {
+                self.cursor.advance();
                 if self.cursor.eat('=') {
-                    TokenKind::PercentEqual
+                    TokenKind::StarStarEqual
                 } else {
-                    TokenKind::Percent
+                    TokenKind::StarStar
                 }
             }
+            ('*', Some('=')) => { self.cursor.advance(); TokenKind::StarEqual }
+            ('*', _) => TokenKind::Star,
 
-            // Equal, ==
-            '=' => {
-                if self.cursor.eat('=') {
-                    TokenKind::EqualEqual
-                } else {
-                    TokenKind::Equal
-                }
-            }
+            ('%', Some('=')) => { self.cursor.advance(); TokenKind::PercentEqual }
+            ('%', _) => TokenKind::Percent,
 
-            // Bang, !=, !is
-            '!' => {
-                if self.cursor.eat('=') {
-                    TokenKind::BangEqual
-                } else if self.cursor.check_str("is")
+            ('=', Some('=')) => { self.cursor.advance(); TokenKind::EqualEqual }
+            ('=', _) => TokenKind::Equal,
+
+            // Bang needs special handling for !is
+            ('!', Some('=')) => { self.cursor.advance(); TokenKind::BangEqual }
+            ('!', _) => {
+                if self.cursor.check_str("is")
                     && !self.cursor.peek_nth(2).is_some_and(is_ident_continue)
                 {
                     self.cursor.advance_bytes(2);
@@ -508,74 +474,48 @@ impl<'src> Lexer<'src> {
                 }
             }
 
-            // Less, <=, <<, <<=
-            '<' => {
+            // Less needs 3-char lookahead for <<=
+            ('<', Some('=')) => { self.cursor.advance(); TokenKind::LessEqual }
+            ('<', Some('<')) => {
+                self.cursor.advance();
                 if self.cursor.eat('=') {
-                    TokenKind::LessEqual
-                } else if self.cursor.eat('<') {
-                    if self.cursor.eat('=') {
-                        TokenKind::LessLessEqual
-                    } else {
-                        TokenKind::LessLess
-                    }
+                    TokenKind::LessLessEqual
                 } else {
-                    TokenKind::Less
+                    TokenKind::LessLess
                 }
             }
+            ('<', _) => TokenKind::Less,
 
-            // Greater, >=, >>, >>>, >>=, >>>=
-            '>' => {
-                if self.cursor.eat('=') {
-                    TokenKind::GreaterEqual
-                } else if self.cursor.eat('>') {
-                    if self.cursor.eat('>') {
+            // Greater needs 4-char lookahead for >>>=
+            ('>', Some('=')) => { self.cursor.advance(); TokenKind::GreaterEqual }
+            ('>', Some('>')) => {
+                self.cursor.advance();
+                match self.cursor.peek() {
+                    Some('>') => {
+                        self.cursor.advance();
                         if self.cursor.eat('=') {
                             TokenKind::GreaterGreaterGreaterEqual
                         } else {
                             TokenKind::GreaterGreaterGreater
                         }
-                    } else if self.cursor.eat('=') {
-                        TokenKind::GreaterGreaterEqual
-                    } else {
-                        TokenKind::GreaterGreater
                     }
-                } else {
-                    TokenKind::Greater
+                    Some('=') => { self.cursor.advance(); TokenKind::GreaterGreaterEqual }
+                    _ => TokenKind::GreaterGreater,
                 }
             }
+            ('>', _) => TokenKind::Greater,
 
-            // Amp, &=, &&
-            '&' => {
-                if self.cursor.eat('=') {
-                    TokenKind::AmpEqual
-                } else if self.cursor.eat('&') {
-                    TokenKind::AmpAmp
-                } else {
-                    TokenKind::Amp
-                }
-            }
+            ('&', Some('=')) => { self.cursor.advance(); TokenKind::AmpEqual }
+            ('&', Some('&')) => { self.cursor.advance(); TokenKind::AmpAmp }
+            ('&', _) => TokenKind::Amp,
 
-            // Pipe, |=, ||
-            '|' => {
-                if self.cursor.eat('=') {
-                    TokenKind::PipeEqual
-                } else if self.cursor.eat('|') {
-                    TokenKind::PipePipe
-                } else {
-                    TokenKind::Pipe
-                }
-            }
+            ('|', Some('=')) => { self.cursor.advance(); TokenKind::PipeEqual }
+            ('|', Some('|')) => { self.cursor.advance(); TokenKind::PipePipe }
+            ('|', _) => TokenKind::Pipe,
 
-            // Caret, ^=, ^^
-            '^' => {
-                if self.cursor.eat('=') {
-                    TokenKind::CaretEqual
-                } else if self.cursor.eat('^') {
-                    TokenKind::CaretCaret
-                } else {
-                    TokenKind::Caret
-                }
-            }
+            ('^', Some('=')) => { self.cursor.advance(); TokenKind::CaretEqual }
+            ('^', Some('^')) => { self.cursor.advance(); TokenKind::CaretCaret }
+            ('^', _) => TokenKind::Caret,
 
             // Unrecognized character
             _ => {

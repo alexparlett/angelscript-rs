@@ -1,5 +1,11 @@
 // Game logic example - demonstrates real-world AngelScript usage
 
+// FFI placeholder - will be replaced with proper FFI bindings
+float sqrt(float x) { return x; }
+float cos(float x) { return x; }
+float sin(float x) { return x; }
+float random(float min, float max) { return min; }
+
 enum GameState {
     MainMenu,
     Playing,

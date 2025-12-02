@@ -1,5 +1,8 @@
 // Test basic class declaration
 
+// FFI placeholder - will be replaced with proper FFI bindings
+float sqrt(float x) { return x; }
+
 class Point {
     private int x;
     private int y;

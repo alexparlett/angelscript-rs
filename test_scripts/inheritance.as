@@ -1,5 +1,8 @@
 // Test class inheritance
 
+// FFI placeholder - will be replaced with proper FFI bindings
+void print(const string &in msg) {}
+
 class Animal {
     protected string name;
     protected int age;
@@ -74,14 +77,14 @@ class GameObject : IDrawable, IUpdatable {
     }
 }
 
-// Diamond problem (if class-based multiple inheritance supported)
-class Flyable {
+// Mixin-based composition (AngelScript doesn't support true multiple class inheritance)
+mixin class Flyable {
     void fly() {
         print("Flying");
     }
 }
 
-class Swimmable {
+mixin class Swimmable {
     void swim() {
         print("Swimming");
     }

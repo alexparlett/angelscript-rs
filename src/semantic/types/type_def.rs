@@ -1,0 +1,1637 @@
+//! Type definitions and identifiers for the AngelScript type system.
+//!
+//! This module provides the core type system structures including TypeId constants,
+//! TypeDef variants, and all supporting types for representing AngelScript types.
+
+use rustc_hash::FxHashMap;
+
+use super::data_type::DataType;
+use std::fmt;
+use std::sync::atomic::{AtomicU32, Ordering};
+
+/// Global atomic counter for generating unique TypeIds
+static TYPE_ID_COUNTER: AtomicU32 = AtomicU32::new(0);
+
+/// Global atomic counter for generating unique FunctionIds
+static FUNCTION_ID_COUNTER: AtomicU32 = AtomicU32::new(0);
+
+/// A unique identifier for a type in the type system.
+///
+/// TypeIds are assigned sequentially with primitives at fixed indices (0-11),
+/// built-in types at fixed indices (16-18), and user-defined types starting at 32.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct TypeId(pub u32);
+
+impl TypeId {
+    /// Create a new TypeId with the given value.
+    #[inline]
+    pub const fn new(id: u32) -> Self {
+        TypeId(id)
+    }
+
+    /// Generate the next unique TypeId using the global atomic counter.
+    #[inline]
+    pub fn next() -> Self {
+        TypeId(TYPE_ID_COUNTER.fetch_add(1, Ordering::Relaxed))
+    }
+
+    /// Get the underlying u32 value.
+    #[inline]
+    pub const fn as_u32(self) -> u32 {
+        self.0
+    }
+
+    /// Reset the global TypeId counter (useful for testing).
+    ///
+    /// # Safety
+    /// This should only be called when no other threads are generating TypeIds.
+    pub fn reset_counter(start: u32) {
+        TYPE_ID_COUNTER.store(start, Ordering::Relaxed);
+    }
+}
+
+impl fmt::Display for TypeId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "TypeId({})", self.0)
+    }
+}
+
+// Fixed TypeIds for primitive types (0-11)
+pub const VOID_TYPE: TypeId = TypeId(0);
+pub const BOOL_TYPE: TypeId = TypeId(1);
+pub const INT8_TYPE: TypeId = TypeId(2);
+pub const INT16_TYPE: TypeId = TypeId(3);
+pub const INT32_TYPE: TypeId = TypeId(4);   // "int" alias
+pub const INT64_TYPE: TypeId = TypeId(5);
+pub const UINT8_TYPE: TypeId = TypeId(6);
+pub const UINT16_TYPE: TypeId = TypeId(7);
+pub const UINT32_TYPE: TypeId = TypeId(8);  // "uint" alias
+pub const UINT64_TYPE: TypeId = TypeId(9);
+pub const FLOAT_TYPE: TypeId = TypeId(10);
+pub const DOUBLE_TYPE: TypeId = TypeId(11);
+
+// Special types (12-15)
+pub const NULL_TYPE: TypeId = TypeId(12);  // Null literal type (converts to any handle)
+
+// Gap: TypeIds 13-15 reserved for future special types
+
+// Built-in types (16-18)
+pub const STRING_TYPE: TypeId = TypeId(16);
+pub const ARRAY_TEMPLATE: TypeId = TypeId(17);
+pub const DICT_TEMPLATE: TypeId = TypeId(18);
+
+// Gap: TypeIds 19-31 reserved for future built-in types
+
+/// First TypeId available for user-defined types
+pub const FIRST_USER_TYPE_ID: u32 = 32;
+
+/// Primitive type kinds
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum PrimitiveType {
+    Void,
+    Bool,
+    Int8,
+    Int16,
+    Int32,
+    Int64,
+    Uint8,
+    Uint16,
+    Uint32,
+    Uint64,
+    Float,
+    Double,
+}
+
+impl PrimitiveType {
+    /// Get the TypeId for this primitive type.
+    pub const fn type_id(self) -> TypeId {
+        match self {
+            PrimitiveType::Void => VOID_TYPE,
+            PrimitiveType::Bool => BOOL_TYPE,
+            PrimitiveType::Int8 => INT8_TYPE,
+            PrimitiveType::Int16 => INT16_TYPE,
+            PrimitiveType::Int32 => INT32_TYPE,
+            PrimitiveType::Int64 => INT64_TYPE,
+            PrimitiveType::Uint8 => UINT8_TYPE,
+            PrimitiveType::Uint16 => UINT16_TYPE,
+            PrimitiveType::Uint32 => UINT32_TYPE,
+            PrimitiveType::Uint64 => UINT64_TYPE,
+            PrimitiveType::Float => FLOAT_TYPE,
+            PrimitiveType::Double => DOUBLE_TYPE,
+        }
+    }
+
+    /// Get the name of this primitive type.
+    pub const fn name(self) -> &'static str {
+        match self {
+            PrimitiveType::Void => "void",
+            PrimitiveType::Bool => "bool",
+            PrimitiveType::Int8 => "int8",
+            PrimitiveType::Int16 => "int16",
+            PrimitiveType::Int32 => "int",
+            PrimitiveType::Int64 => "int64",
+            PrimitiveType::Uint8 => "uint8",
+            PrimitiveType::Uint16 => "uint16",
+            PrimitiveType::Uint32 => "uint",
+            PrimitiveType::Uint64 => "uint64",
+            PrimitiveType::Float => "float",
+            PrimitiveType::Double => "double",
+        }
+    }
+}
+
+impl fmt::Display for PrimitiveType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.name())
+    }
+}
+
+/// Visibility modifier for class members
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Default)]
+pub enum Visibility {
+    #[default]
+    Public,
+    Protected,
+    Private,
+}
+
+
+impl fmt::Display for Visibility {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Visibility::Public => write!(f, "public"),
+            Visibility::Protected => write!(f, "protected"),
+            Visibility::Private => write!(f, "private"),
+        }
+    }
+}
+
+/// Type of auto-generated method (constructors and operators)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AutoGeneratedMethod {
+    /// Auto-generated default constructor: ClassName()
+    DefaultConstructor,
+    /// Auto-generated copy constructor: ClassName(const ClassName& in)
+    CopyConstructor,
+    /// Auto-generated assignment operator: ClassName& opAssign(const ClassName& in)
+    OpAssign,
+}
+
+/// Legacy alias for backwards compatibility during refactoring
+pub type AutoGeneratedConstructor = AutoGeneratedMethod;
+
+/// Function traits (special function behaviors)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FunctionTraits {
+    /// This is a constructor
+    pub is_constructor: bool,
+    /// This is a destructor
+    pub is_destructor: bool,
+    /// This function is final (cannot be overridden)
+    pub is_final: bool,
+    /// This function is virtual (can be overridden)
+    pub is_virtual: bool,
+    /// This function is abstract (must be overridden)
+    pub is_abstract: bool,
+    /// This function is const (doesn't modify object state)
+    pub is_const: bool,
+    /// This constructor is explicit (cannot be used for implicit conversions)
+    /// Only applies to constructors with single argument
+    pub is_explicit: bool,
+    /// If this is an auto-generated method (constructor or operator), specifies which type
+    /// Used to differentiate between default/copy constructors and opAssign in Pass 2a
+    pub auto_generated: Option<AutoGeneratedMethod>,
+}
+
+impl Default for FunctionTraits {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl FunctionTraits {
+    /// Create default function traits (no special behaviors)
+    pub const fn new() -> Self {
+        Self {
+            is_constructor: false,
+            is_destructor: false,
+            is_final: false,
+            is_virtual: false,
+            is_abstract: false,
+            is_const: false,
+            is_explicit: false,
+            auto_generated: None,
+        }
+    }
+}
+
+/// A unique identifier for a function
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct FunctionId(pub u32);
+
+impl FunctionId {
+    /// Create a new FunctionId
+    #[inline]
+    pub const fn new(id: u32) -> Self {
+        FunctionId(id)
+    }
+
+    /// Generate the next unique FunctionId using the global atomic counter.
+    #[inline]
+    pub fn next() -> Self {
+        FunctionId(FUNCTION_ID_COUNTER.fetch_add(1, Ordering::Relaxed))
+    }
+
+    /// Get the underlying u32 value
+    #[inline]
+    pub const fn as_u32(self) -> u32 {
+        self.0
+    }
+
+    /// Reset the global FunctionId counter (useful for testing).
+    ///
+    /// # Safety
+    /// This should only be called when no other threads are generating FunctionIds.
+    pub fn reset_counter(start: u32) {
+        FUNCTION_ID_COUNTER.store(start, Ordering::Relaxed);
+    }
+}
+
+impl fmt::Display for FunctionId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "FunctionId({})", self.0)
+    }
+}
+
+/// Operator behavior for overloadable operators.
+///
+/// AngelScript allows classes to define special methods for operator overloading
+/// and type conversions. This enum identifies which operator behavior a method provides.
+///
+/// **IMPORTANT**: Operators are MEMBER METHODS ONLY (not global functions)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum OperatorBehavior {
+    // === Type Conversion Operators ===
+    /// Explicit value conversion: `T opConv()`
+    OpConv(TypeId),
+    /// Implicit value conversion: `T opImplConv()`
+    OpImplConv(TypeId),
+    /// Explicit handle cast: `T@ opCast()`
+    OpCast(TypeId),
+    /// Implicit handle cast: `T@ opImplCast()`
+    OpImplCast(TypeId),
+
+    // === Unary Operators (Prefix) ===
+    /// Unary minus: `-obj` → `obj.opNeg()`
+    OpNeg,
+    /// Bitwise complement: `~obj` → `obj.opCom()`
+    OpCom,
+    /// Pre-increment: `++obj` → `obj.opPreInc()`
+    OpPreInc,
+    /// Pre-decrement: `--obj` → `obj.opPreDec()`
+    OpPreDec,
+
+    // === Unary Operators (Postfix) ===
+    /// Post-increment: `obj++` → `obj.opPostInc()`
+    OpPostInc,
+    /// Post-decrement: `obj--` → `obj.opPostDec()`
+    OpPostDec,
+
+    // === Binary Operators ===
+    /// Addition: `a + b` → `a.opAdd(b)` or `b.opAdd_r(a)`
+    OpAdd,
+    /// Addition (reverse): called on right operand when left doesn't have opAdd
+    OpAddR,
+    /// Subtraction: `a - b` → `a.opSub(b)` or `b.opSub_r(a)`
+    OpSub,
+    /// Subtraction (reverse)
+    OpSubR,
+    /// Multiplication: `a * b` → `a.opMul(b)` or `b.opMul_r(a)`
+    OpMul,
+    /// Multiplication (reverse)
+    OpMulR,
+    /// Division: `a / b` → `a.opDiv(b)` or `b.opDiv_r(a)`
+    OpDiv,
+    /// Division (reverse)
+    OpDivR,
+    /// Modulo: `a % b` → `a.opMod(b)` or `b.opMod_r(a)`
+    OpMod,
+    /// Modulo (reverse)
+    OpModR,
+    /// Power: `a ** b` → `a.opPow(b)` or `b.opPow_r(a)`
+    OpPow,
+    /// Power (reverse)
+    OpPowR,
+
+    // === Bitwise Binary Operators ===
+    /// Bitwise AND: `a & b` → `a.opAnd(b)` or `b.opAnd_r(a)`
+    OpAnd,
+    /// Bitwise AND (reverse)
+    OpAndR,
+    /// Bitwise OR: `a | b` → `a.opOr(b)` or `b.opOr_r(a)`
+    OpOr,
+    /// Bitwise OR (reverse)
+    OpOrR,
+    /// Bitwise XOR: `a ^ b` → `a.opXor(b)` or `b.opXor_r(a)`
+    OpXor,
+    /// Bitwise XOR (reverse)
+    OpXorR,
+    /// Left shift: `a << b` → `a.opShl(b)` or `b.opShl_r(a)`
+    OpShl,
+    /// Left shift (reverse)
+    OpShlR,
+    /// Arithmetic right shift: `a >> b` → `a.opShr(b)` or `b.opShr_r(a)`
+    OpShr,
+    /// Arithmetic right shift (reverse)
+    OpShrR,
+    /// Logical right shift: `a >>> b` → `a.opUShr(b)` or `b.opUShr_r(a)`
+    OpUShr,
+    /// Logical right shift (reverse)
+    OpUShrR,
+
+    // === Comparison Operators ===
+    /// Equality: `a == b` → `a.opEquals(b)` returns bool
+    /// Inequality: `a != b` → `!a.opEquals(b)`
+    OpEquals,
+    /// Comparison: `a < b`, `a <= b`, `a > b`, `a >= b` → `a.opCmp(b)` returns int
+    /// Returns: negative if less, 0 if equal, positive if greater
+    OpCmp,
+
+    // === Assignment Operators ===
+    /// Assignment: `a = b` → `a.opAssign(b)`
+    OpAssign,
+    /// Add-assign: `a += b` → `a.opAddAssign(b)`
+    OpAddAssign,
+    /// Subtract-assign: `a -= b` → `a.opSubAssign(b)`
+    OpSubAssign,
+    /// Multiply-assign: `a *= b` → `a.opMulAssign(b)`
+    OpMulAssign,
+    /// Divide-assign: `a /= b` → `a.opDivAssign(b)`
+    OpDivAssign,
+    /// Modulo-assign: `a %= b` → `a.opModAssign(b)`
+    OpModAssign,
+    /// Power-assign: `a **= b` → `a.opPowAssign(b)`
+    OpPowAssign,
+    /// Bitwise AND-assign: `a &= b` → `a.opAndAssign(b)`
+    OpAndAssign,
+    /// Bitwise OR-assign: `a |= b` → `a.opOrAssign(b)`
+    OpOrAssign,
+    /// Bitwise XOR-assign: `a ^= b` → `a.opXorAssign(b)`
+    OpXorAssign,
+    /// Left shift-assign: `a <<= b` → `a.opShlAssign(b)`
+    OpShlAssign,
+    /// Arithmetic right shift-assign: `a >>= b` → `a.opShrAssign(b)`
+    OpShrAssign,
+    /// Logical right shift-assign: `a >>>= b` → `a.opUShrAssign(b)`
+    OpUShrAssign,
+
+    // === Index Operator ===
+    /// Index access: `obj[idx]` → `obj.opIndex(idx)`
+    /// Can have multiple parameters: `obj[i, j]`
+    OpIndex,
+    /// Index getter (property accessor): `x = obj[idx]` → `x = obj.get_opIndex(idx)`
+    OpIndexGet,
+    /// Index setter (property accessor): `obj[idx] = x` → `obj.set_opIndex(idx, x)`
+    OpIndexSet,
+
+    // === Function Call Operator ===
+    /// Function call: `obj(args)` → `obj.opCall(args)`
+    OpCall,
+
+    // === Foreach Loop Operators ===
+    /// Begin foreach: `container.opForBegin()` → returns iterator
+    OpForBegin,
+    /// End foreach check: `container.opForEnd(it)` → returns bool (true if done)
+    OpForEnd,
+    /// Next foreach iteration: `container.opForNext(it)` → returns next iterator
+    OpForNext,
+    /// Foreach value (single): `container.opForValue(it)` → returns element value
+    OpForValue,
+    /// Foreach value 0: `container.opForValue0(it)` → returns first value
+    OpForValue0,
+    /// Foreach value 1: `container.opForValue1(it)` → returns second value
+    OpForValue1,
+    /// Foreach value 2: `container.opForValue2(it)` → returns third value
+    OpForValue2,
+    /// Foreach value 3: `container.opForValue3(it)` → returns fourth value
+    OpForValue3,
+}
+
+impl OperatorBehavior {
+    /// Parse operator method name to determine behavior.
+    ///
+    /// For conversion operators (opConv, opImplConv, opCast, opImplCast),
+    /// requires target_type. For other operators, target_type is ignored.
+    ///
+    /// Returns None if not a recognized operator method name.
+    pub fn from_method_name(name: &str, target_type: Option<TypeId>) -> Option<Self> {
+        match name {
+            // Conversion operators (require target type)
+            "opConv" => target_type.map(OperatorBehavior::OpConv),
+            "opImplConv" => target_type.map(OperatorBehavior::OpImplConv),
+            "opCast" => target_type.map(OperatorBehavior::OpCast),
+            "opImplCast" => target_type.map(OperatorBehavior::OpImplCast),
+
+            // Unary operators (prefix)
+            "opNeg" => Some(OperatorBehavior::OpNeg),
+            "opCom" => Some(OperatorBehavior::OpCom),
+            "opPreInc" => Some(OperatorBehavior::OpPreInc),
+            "opPreDec" => Some(OperatorBehavior::OpPreDec),
+
+            // Unary operators (postfix)
+            "opPostInc" => Some(OperatorBehavior::OpPostInc),
+            "opPostDec" => Some(OperatorBehavior::OpPostDec),
+
+            // Binary operators
+            "opAdd" => Some(OperatorBehavior::OpAdd),
+            "opAdd_r" => Some(OperatorBehavior::OpAddR),
+            "opSub" => Some(OperatorBehavior::OpSub),
+            "opSub_r" => Some(OperatorBehavior::OpSubR),
+            "opMul" => Some(OperatorBehavior::OpMul),
+            "opMul_r" => Some(OperatorBehavior::OpMulR),
+            "opDiv" => Some(OperatorBehavior::OpDiv),
+            "opDiv_r" => Some(OperatorBehavior::OpDivR),
+            "opMod" => Some(OperatorBehavior::OpMod),
+            "opMod_r" => Some(OperatorBehavior::OpModR),
+            "opPow" => Some(OperatorBehavior::OpPow),
+            "opPow_r" => Some(OperatorBehavior::OpPowR),
+
+            // Bitwise operators
+            "opAnd" => Some(OperatorBehavior::OpAnd),
+            "opAnd_r" => Some(OperatorBehavior::OpAndR),
+            "opOr" => Some(OperatorBehavior::OpOr),
+            "opOr_r" => Some(OperatorBehavior::OpOrR),
+            "opXor" => Some(OperatorBehavior::OpXor),
+            "opXor_r" => Some(OperatorBehavior::OpXorR),
+            "opShl" => Some(OperatorBehavior::OpShl),
+            "opShl_r" => Some(OperatorBehavior::OpShlR),
+            "opShr" => Some(OperatorBehavior::OpShr),
+            "opShr_r" => Some(OperatorBehavior::OpShrR),
+            "opUShr" => Some(OperatorBehavior::OpUShr),
+            "opUShr_r" => Some(OperatorBehavior::OpUShrR),
+
+            // Comparison operators
+            "opEquals" => Some(OperatorBehavior::OpEquals),
+            "opCmp" => Some(OperatorBehavior::OpCmp),
+
+            // Assignment operators
+            "opAssign" => Some(OperatorBehavior::OpAssign),
+            "opAddAssign" => Some(OperatorBehavior::OpAddAssign),
+            "opSubAssign" => Some(OperatorBehavior::OpSubAssign),
+            "opMulAssign" => Some(OperatorBehavior::OpMulAssign),
+            "opDivAssign" => Some(OperatorBehavior::OpDivAssign),
+            "opModAssign" => Some(OperatorBehavior::OpModAssign),
+            "opPowAssign" => Some(OperatorBehavior::OpPowAssign),
+            "opAndAssign" => Some(OperatorBehavior::OpAndAssign),
+            "opOrAssign" => Some(OperatorBehavior::OpOrAssign),
+            "opXorAssign" => Some(OperatorBehavior::OpXorAssign),
+            "opShlAssign" => Some(OperatorBehavior::OpShlAssign),
+            "opShrAssign" => Some(OperatorBehavior::OpShrAssign),
+            "opUShrAssign" => Some(OperatorBehavior::OpUShrAssign),
+
+            // Index and call operators
+            "opIndex" => Some(OperatorBehavior::OpIndex),
+            "get_opIndex" => Some(OperatorBehavior::OpIndexGet),
+            "set_opIndex" => Some(OperatorBehavior::OpIndexSet),
+            "opCall" => Some(OperatorBehavior::OpCall),
+
+            // Foreach operators
+            "opForBegin" => Some(OperatorBehavior::OpForBegin),
+            "opForEnd" => Some(OperatorBehavior::OpForEnd),
+            "opForNext" => Some(OperatorBehavior::OpForNext),
+            "opForValue" => Some(OperatorBehavior::OpForValue),
+            "opForValue0" => Some(OperatorBehavior::OpForValue0),
+            "opForValue1" => Some(OperatorBehavior::OpForValue1),
+            "opForValue2" => Some(OperatorBehavior::OpForValue2),
+            "opForValue3" => Some(OperatorBehavior::OpForValue3),
+
+            _ => None,
+        }
+    }
+
+    /// Get the target type for conversion operators.
+    /// Panics if called on non-conversion operators.
+    pub fn target_type(&self) -> TypeId {
+        match self {
+            OperatorBehavior::OpConv(t)
+            | OperatorBehavior::OpImplConv(t)
+            | OperatorBehavior::OpCast(t)
+            | OperatorBehavior::OpImplCast(t) => *t,
+            _ => panic!("target_type() called on non-conversion operator"),
+        }
+    }
+
+    /// Check if this is a conversion operator.
+    pub fn is_conversion(&self) -> bool {
+        matches!(
+            self,
+            OperatorBehavior::OpConv(_)
+                | OperatorBehavior::OpImplConv(_)
+                | OperatorBehavior::OpCast(_)
+                | OperatorBehavior::OpImplCast(_)
+        )
+    }
+
+    /// Check if this is an implicit operator (can happen automatically).
+    pub fn is_implicit(&self) -> bool {
+        matches!(
+            self,
+            OperatorBehavior::OpImplConv(_) | OperatorBehavior::OpImplCast(_)
+        )
+    }
+}
+
+/// A field definition in a class
+#[derive(Debug, Clone, PartialEq)]
+pub struct FieldDef {
+    /// Field name
+    pub name: String,
+    /// Field type
+    pub data_type: DataType,
+    /// Field visibility
+    pub visibility: Visibility,
+}
+
+impl FieldDef {
+    /// Create a new field definition
+    pub fn new(name: String, data_type: DataType, visibility: Visibility) -> Self {
+        Self {
+            name,
+            data_type,
+            visibility,
+        }
+    }
+}
+
+/// A method signature for interfaces
+#[derive(Debug, Clone, PartialEq)]
+pub struct MethodSignature {
+    /// Method name
+    pub name: String,
+    /// Parameter types
+    pub params: Vec<DataType>,
+    /// Return type
+    pub return_type: DataType,
+}
+
+impl MethodSignature {
+    /// Create a new method signature
+    pub fn new(name: String, params: Vec<DataType>, return_type: DataType) -> Self {
+        Self {
+            name,
+            params,
+            return_type,
+        }
+    }
+}
+
+/// Property accessor function IDs for a single property
+///
+/// Properties can have:
+/// - Read-only: getter only
+/// - Write-only: setter only
+/// - Read-write: both getter and setter
+///
+/// Getter must be const, setter receives value parameter
+#[derive(Debug, Clone, PartialEq)]
+pub struct PropertyAccessors {
+    // Note: Default implementation exists for building properties incrementally,
+    // defaulting to Public visibility. Use *_with_visibility methods for explicit control.
+    /// Getter function (must be const)
+    /// For virtual properties: get { } block
+    /// For explicit methods: int get_prop() const property { }
+    pub getter: Option<FunctionId>,
+
+    /// Setter function (receives value parameter)
+    /// For virtual properties: set { } block (implicit 'value' parameter)
+    /// For explicit methods: void set_prop(T value) property { }
+    pub setter: Option<FunctionId>,
+
+    /// Visibility of the property (applies to both getter and setter)
+    pub visibility: Visibility,
+}
+
+impl PropertyAccessors {
+    /// Create read-only property (getter only) with default public visibility
+    pub fn read_only(getter: FunctionId) -> Self {
+        Self {
+            getter: Some(getter),
+            setter: None,
+            visibility: Visibility::Public,
+        }
+    }
+
+    /// Create read-only property (getter only) with specified visibility
+    pub fn read_only_with_visibility(getter: FunctionId, visibility: Visibility) -> Self {
+        Self {
+            getter: Some(getter),
+            setter: None,
+            visibility,
+        }
+    }
+
+    /// Create write-only property (setter only) with default public visibility
+    pub fn write_only(setter: FunctionId) -> Self {
+        Self {
+            getter: None,
+            setter: Some(setter),
+            visibility: Visibility::Public,
+        }
+    }
+
+    /// Create write-only property (setter only) with specified visibility
+    pub fn write_only_with_visibility(setter: FunctionId, visibility: Visibility) -> Self {
+        Self {
+            getter: None,
+            setter: Some(setter),
+            visibility,
+        }
+    }
+
+    /// Create read-write property (both getter and setter) with default public visibility
+    pub fn read_write(getter: FunctionId, setter: FunctionId) -> Self {
+        Self {
+            getter: Some(getter),
+            setter: Some(setter),
+            visibility: Visibility::Public,
+        }
+    }
+
+    /// Create read-write property (both getter and setter) with specified visibility
+    pub fn read_write_with_visibility(getter: FunctionId, setter: FunctionId, visibility: Visibility) -> Self {
+        Self {
+            getter: Some(getter),
+            setter: Some(setter),
+            visibility,
+        }
+    }
+
+    /// Check if this property is read-only
+    pub fn is_read_only(&self) -> bool {
+        self.getter.is_some() && self.setter.is_none()
+    }
+
+    /// Check if this property is write-only
+    pub fn is_write_only(&self) -> bool {
+        self.getter.is_none() && self.setter.is_some()
+    }
+
+    /// Check if this property is read-write
+    pub fn is_read_write(&self) -> bool {
+        self.getter.is_some() && self.setter.is_some()
+    }
+}
+
+impl Default for PropertyAccessors {
+    /// Default PropertyAccessors with no getter/setter and public visibility.
+    /// Used when building properties incrementally.
+    fn default() -> Self {
+        Self {
+            getter: None,
+            setter: None,
+            visibility: Visibility::Public,
+        }
+    }
+}
+
+/// Type definition - represents a complete type in the system
+#[derive(Debug, Clone, PartialEq)]
+pub enum TypeDef {
+    /// Primitive type (int, float, bool, etc.)
+    Primitive {
+        kind: PrimitiveType,
+    },
+
+    /// User-defined class
+    Class {
+        name: String,
+        qualified_name: String,
+        fields: Vec<FieldDef>,
+        methods: Vec<FunctionId>,
+        base_class: Option<TypeId>,
+        interfaces: Vec<TypeId>,
+        /// Operator methods mapped by behavior (opConv, opImplConv, etc.)
+        /// Each operator behavior maps to exactly one function
+        /// (e.g., opConv returning int, opImplConv returning float, etc.)
+        operator_methods: FxHashMap<OperatorBehavior, FunctionId>,
+        /// Property accessors mapped by property name
+        /// Maps property name to (optional getter FunctionId, optional setter FunctionId)
+        /// Both virtual properties (int prop { get { } set { } }) and explicit methods
+        /// (int get_prop() property { }) are stored here for uniform access
+        properties: FxHashMap<String, PropertyAccessors>,
+        /// Class is marked 'final' (cannot be inherited from)
+        is_final: bool,
+        /// Class is marked 'abstract' (cannot be instantiated, can defer interface implementation)
+        is_abstract: bool,
+    },
+
+    /// Interface definition
+    Interface {
+        name: String,
+        qualified_name: String,
+        methods: Vec<MethodSignature>,
+    },
+
+    /// Enumeration type
+    Enum {
+        name: String,
+        qualified_name: String,
+        values: Vec<(String, i64)>,
+    },
+
+    /// Function pointer type (funcdef)
+    Funcdef {
+        name: String,
+        qualified_name: String,
+        params: Vec<DataType>,
+        return_type: DataType,
+    },
+
+    /// Template definition (array, dictionary, etc.)
+    Template {
+        name: String,
+        param_count: usize,
+    },
+
+    /// Template instantiation (array<int>, etc.)
+    TemplateInstance {
+        /// The instance name (e.g., "array<int>")
+        name: String,
+        template: TypeId,
+        sub_types: Vec<DataType>,
+        /// Methods for this template instance (constructors, opIndex, etc.)
+        /// These are typically FFI-registered behaviors
+        methods: Vec<FunctionId>,
+        /// Operator methods mapped by behavior
+        operator_methods: FxHashMap<OperatorBehavior, FunctionId>,
+        /// Property accessors mapped by property name
+        properties: FxHashMap<String, PropertyAccessors>,
+    },
+}
+
+impl TypeDef {
+    /// Get the name of this type (unqualified)
+    pub fn name(&self) -> &str {
+        match self {
+            TypeDef::Primitive { kind } => kind.name(),
+            TypeDef::Class { name, .. } => name,
+            TypeDef::Interface { name, .. } => name,
+            TypeDef::Enum { name, .. } => name,
+            TypeDef::Funcdef { name, .. } => name,
+            TypeDef::Template { name, .. } => name,
+            TypeDef::TemplateInstance { name, .. } => name,
+        }
+    }
+
+    /// Get the qualified name of this type (with namespace)
+    pub fn qualified_name(&self) -> &str {
+        match self {
+            TypeDef::Primitive { kind } => kind.name(),
+            TypeDef::Class { qualified_name, .. } => qualified_name,
+            TypeDef::Interface { qualified_name, .. } => qualified_name,
+            TypeDef::Enum { qualified_name, .. } => qualified_name,
+            TypeDef::Funcdef { qualified_name, .. } => qualified_name,
+            TypeDef::Template { name, .. } => name,
+            TypeDef::TemplateInstance { name, .. } => name,
+        }
+    }
+
+    /// Check if this is a primitive type
+    pub fn is_primitive(&self) -> bool {
+        matches!(self, TypeDef::Primitive { .. })
+    }
+
+    /// Check if this is a class type
+    pub fn is_class(&self) -> bool {
+        matches!(self, TypeDef::Class { .. })
+    }
+
+    /// Check if this is an interface type
+    pub fn is_interface(&self) -> bool {
+        matches!(self, TypeDef::Interface { .. })
+    }
+
+    /// Check if this is an enum type
+    pub fn is_enum(&self) -> bool {
+        matches!(self, TypeDef::Enum { .. })
+    }
+
+    /// Check if this is a funcdef type
+    pub fn is_funcdef(&self) -> bool {
+        matches!(self, TypeDef::Funcdef { .. })
+    }
+
+    /// Check if this is a template
+    pub fn is_template(&self) -> bool {
+        matches!(self, TypeDef::Template { .. })
+    }
+
+    /// Check if this is a template instance
+    pub fn is_template_instance(&self) -> bool {
+        matches!(self, TypeDef::TemplateInstance { .. })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn type_id_creation() {
+        let id = TypeId::new(42);
+        assert_eq!(id.as_u32(), 42);
+    }
+
+    #[test]
+    fn type_id_equality() {
+        let id1 = TypeId::new(10);
+        let id2 = TypeId::new(10);
+        let id3 = TypeId::new(20);
+        assert_eq!(id1, id2);
+        assert_ne!(id1, id3);
+    }
+
+    #[test]
+    fn type_id_ordering() {
+        let id1 = TypeId::new(10);
+        let id2 = TypeId::new(20);
+        assert!(id1 < id2);
+        assert!(id2 > id1);
+    }
+
+    #[test]
+    fn type_id_display() {
+        let id = TypeId::new(42);
+        assert_eq!(format!("{}", id), "TypeId(42)");
+    }
+
+    #[test]
+    fn primitive_type_constants() {
+        assert_eq!(VOID_TYPE, TypeId(0));
+        assert_eq!(BOOL_TYPE, TypeId(1));
+        assert_eq!(INT8_TYPE, TypeId(2));
+        assert_eq!(INT16_TYPE, TypeId(3));
+        assert_eq!(INT32_TYPE, TypeId(4));
+        assert_eq!(INT64_TYPE, TypeId(5));
+        assert_eq!(UINT8_TYPE, TypeId(6));
+        assert_eq!(UINT16_TYPE, TypeId(7));
+        assert_eq!(UINT32_TYPE, TypeId(8));
+        assert_eq!(UINT64_TYPE, TypeId(9));
+        assert_eq!(FLOAT_TYPE, TypeId(10));
+        assert_eq!(DOUBLE_TYPE, TypeId(11));
+    }
+
+    #[test]
+    fn builtin_type_constants() {
+        assert_eq!(STRING_TYPE, TypeId(16));
+        assert_eq!(ARRAY_TEMPLATE, TypeId(17));
+        assert_eq!(DICT_TEMPLATE, TypeId(18));
+    }
+
+    #[test]
+    fn first_user_type_id() {
+        assert_eq!(FIRST_USER_TYPE_ID, 32);
+    }
+
+    #[test]
+    fn primitive_type_ids() {
+        assert_eq!(PrimitiveType::Void.type_id(), VOID_TYPE);
+        assert_eq!(PrimitiveType::Bool.type_id(), BOOL_TYPE);
+        assert_eq!(PrimitiveType::Int8.type_id(), INT8_TYPE);
+        assert_eq!(PrimitiveType::Int16.type_id(), INT16_TYPE);
+        assert_eq!(PrimitiveType::Int32.type_id(), INT32_TYPE);
+        assert_eq!(PrimitiveType::Int64.type_id(), INT64_TYPE);
+        assert_eq!(PrimitiveType::Uint8.type_id(), UINT8_TYPE);
+        assert_eq!(PrimitiveType::Uint16.type_id(), UINT16_TYPE);
+        assert_eq!(PrimitiveType::Uint32.type_id(), UINT32_TYPE);
+        assert_eq!(PrimitiveType::Uint64.type_id(), UINT64_TYPE);
+        assert_eq!(PrimitiveType::Float.type_id(), FLOAT_TYPE);
+        assert_eq!(PrimitiveType::Double.type_id(), DOUBLE_TYPE);
+    }
+
+    #[test]
+    fn primitive_type_names() {
+        assert_eq!(PrimitiveType::Void.name(), "void");
+        assert_eq!(PrimitiveType::Bool.name(), "bool");
+        assert_eq!(PrimitiveType::Int8.name(), "int8");
+        assert_eq!(PrimitiveType::Int16.name(), "int16");
+        assert_eq!(PrimitiveType::Int32.name(), "int");
+        assert_eq!(PrimitiveType::Int64.name(), "int64");
+        assert_eq!(PrimitiveType::Uint8.name(), "uint8");
+        assert_eq!(PrimitiveType::Uint16.name(), "uint16");
+        assert_eq!(PrimitiveType::Uint32.name(), "uint");
+        assert_eq!(PrimitiveType::Uint64.name(), "uint64");
+        assert_eq!(PrimitiveType::Float.name(), "float");
+        assert_eq!(PrimitiveType::Double.name(), "double");
+    }
+
+    #[test]
+    fn primitive_type_display() {
+        assert_eq!(format!("{}", PrimitiveType::Int32), "int");
+        assert_eq!(format!("{}", PrimitiveType::Float), "float");
+        assert_eq!(format!("{}", PrimitiveType::Bool), "bool");
+    }
+
+    #[test]
+    fn visibility_default() {
+        assert_eq!(Visibility::default(), Visibility::Public);
+    }
+
+    #[test]
+    fn visibility_display() {
+        assert_eq!(format!("{}", Visibility::Public), "public");
+        assert_eq!(format!("{}", Visibility::Protected), "protected");
+        assert_eq!(format!("{}", Visibility::Private), "private");
+    }
+
+    #[test]
+    fn function_traits_default() {
+        let traits = FunctionTraits::default();
+        assert!(!traits.is_constructor);
+        assert!(!traits.is_destructor);
+        assert!(!traits.is_final);
+        assert!(!traits.is_virtual);
+        assert!(!traits.is_abstract);
+        assert!(!traits.is_const);
+    }
+
+    #[test]
+    fn function_traits_new() {
+        let traits = FunctionTraits::new();
+        assert!(!traits.is_constructor);
+        assert!(!traits.is_destructor);
+    }
+
+    #[test]
+    fn function_traits_modification() {
+        let mut traits = FunctionTraits::new();
+        traits.is_virtual = true;
+        traits.is_const = true;
+        assert!(traits.is_virtual);
+        assert!(traits.is_const);
+        assert!(!traits.is_final);
+    }
+
+    #[test]
+    fn function_id_creation() {
+        let id = FunctionId::new(100);
+        assert_eq!(id.as_u32(), 100);
+    }
+
+    #[test]
+    fn function_id_equality() {
+        let id1 = FunctionId::new(10);
+        let id2 = FunctionId::new(10);
+        let id3 = FunctionId::new(20);
+        assert_eq!(id1, id2);
+        assert_ne!(id1, id3);
+    }
+
+    #[test]
+    fn function_id_display() {
+        let id = FunctionId::new(42);
+        assert_eq!(format!("{}", id), "FunctionId(42)");
+    }
+
+    #[test]
+    fn field_def_creation() {
+        let field = FieldDef::new(
+            "health".to_string(),
+            DataType::simple(INT32_TYPE),
+            Visibility::Public,
+        );
+        assert_eq!(field.name, "health");
+        assert_eq!(field.data_type, DataType::simple(INT32_TYPE));
+        assert_eq!(field.visibility, Visibility::Public);
+    }
+
+    #[test]
+    fn method_signature_creation() {
+        let sig = MethodSignature::new(
+            "update".to_string(),
+            vec![DataType::simple(FLOAT_TYPE)],
+            DataType::simple(VOID_TYPE),
+        );
+        assert_eq!(sig.name, "update");
+        assert_eq!(sig.params.len(), 1);
+        assert_eq!(sig.return_type, DataType::simple(VOID_TYPE));
+    }
+
+    #[test]
+    fn typedef_primitive() {
+        let typedef = TypeDef::Primitive { kind: PrimitiveType::Int32 };
+        assert_eq!(typedef.name(), "int");
+        assert_eq!(typedef.qualified_name(), "int");
+        assert!(typedef.is_primitive());
+        assert!(!typedef.is_class());
+    }
+
+    #[test]
+    fn typedef_class() {
+        let typedef = TypeDef::Class {
+            name: "Player".to_string(),
+            qualified_name: "Game::Player".to_string(),
+            fields: vec![],
+            methods: vec![],
+            base_class: None,
+            interfaces: vec![],
+            operator_methods: rustc_hash::FxHashMap::default(),
+            properties: rustc_hash::FxHashMap::default(),
+            is_final: false,
+            is_abstract: false,
+        };
+        assert_eq!(typedef.name(), "Player");
+        assert_eq!(typedef.qualified_name(), "Game::Player");
+        assert!(typedef.is_class());
+        assert!(!typedef.is_primitive());
+    }
+
+    #[test]
+    fn typedef_class_with_fields() {
+        let typedef = TypeDef::Class {
+            name: "Player".to_string(),
+            qualified_name: "Player".to_string(),
+            fields: vec![
+                FieldDef::new(
+                    "health".to_string(),
+                    DataType::simple(INT32_TYPE),
+                    Visibility::Public,
+                ),
+            ],
+            methods: vec![FunctionId::new(0)],
+            base_class: Some(TypeId::new(50)),
+            interfaces: vec![TypeId::new(60)],
+            operator_methods: rustc_hash::FxHashMap::default(),
+            properties: rustc_hash::FxHashMap::default(),
+            is_final: false,
+            is_abstract: false,
+        };
+
+        if let TypeDef::Class { fields, methods, base_class, interfaces, .. } = typedef {
+            assert_eq!(fields.len(), 1);
+            assert_eq!(methods.len(), 1);
+            assert_eq!(base_class, Some(TypeId::new(50)));
+            assert_eq!(interfaces.len(), 1);
+        } else {
+            panic!("Expected Class variant");
+        }
+    }
+
+    #[test]
+    fn typedef_interface() {
+        let typedef = TypeDef::Interface {
+            name: "IDrawable".to_string(),
+            qualified_name: "Graphics::IDrawable".to_string(),
+            methods: vec![],
+        };
+        assert_eq!(typedef.name(), "IDrawable");
+        assert_eq!(typedef.qualified_name(), "Graphics::IDrawable");
+        assert!(typedef.is_interface());
+        assert!(!typedef.is_class());
+    }
+
+    #[test]
+    fn typedef_enum() {
+        let typedef = TypeDef::Enum {
+            name: "Color".to_string(),
+            qualified_name: "Color".to_string(),
+            values: vec![
+                ("Red".to_string(), 0),
+                ("Green".to_string(), 1),
+                ("Blue".to_string(), 2),
+            ],
+        };
+        assert_eq!(typedef.name(), "Color");
+        assert!(typedef.is_enum());
+
+        if let TypeDef::Enum { values, .. } = typedef {
+            assert_eq!(values.len(), 3);
+            assert_eq!(values[0].0, "Red");
+            assert_eq!(values[0].1, 0);
+        }
+    }
+
+    #[test]
+    fn typedef_funcdef() {
+        let typedef = TypeDef::Funcdef {
+            name: "Callback".to_string(),
+            qualified_name: "Callback".to_string(),
+            params: vec![DataType::simple(INT32_TYPE)],
+            return_type: DataType::simple(VOID_TYPE),
+        };
+        assert_eq!(typedef.name(), "Callback");
+        assert!(typedef.is_funcdef());
+
+        if let TypeDef::Funcdef { params, return_type, .. } = typedef {
+            assert_eq!(params.len(), 1);
+            assert_eq!(return_type, DataType::simple(VOID_TYPE));
+        }
+    }
+
+    #[test]
+    fn typedef_template() {
+        let typedef = TypeDef::Template {
+            name: "array".to_string(),
+            param_count: 1,
+        };
+        assert_eq!(typedef.name(), "array");
+        assert!(typedef.is_template());
+        assert!(!typedef.is_template_instance());
+    }
+
+    #[test]
+    fn typedef_template_instance() {
+        let typedef = TypeDef::TemplateInstance {
+            name: "array<int>".to_string(),
+            template: ARRAY_TEMPLATE,
+            sub_types: vec![DataType::simple(INT32_TYPE)],
+            methods: Vec::new(),
+            operator_methods: FxHashMap::default(),
+            properties: FxHashMap::default(),
+        };
+        assert!(typedef.is_template_instance());
+        assert!(!typedef.is_template());
+
+        if let TypeDef::TemplateInstance { template, sub_types, .. } = typedef {
+            assert_eq!(template, ARRAY_TEMPLATE);
+            assert_eq!(sub_types.len(), 1);
+        }
+    }
+
+    #[test]
+    fn typedef_all_type_checks() {
+        let primitive = TypeDef::Primitive { kind: PrimitiveType::Int32 };
+        assert!(primitive.is_primitive());
+        assert!(!primitive.is_class());
+        assert!(!primitive.is_interface());
+        assert!(!primitive.is_enum());
+        assert!(!primitive.is_funcdef());
+        assert!(!primitive.is_template());
+        assert!(!primitive.is_template_instance());
+    }
+
+    // OperatorBehavior tests
+    #[test]
+    fn operator_behavior_from_method_name_conversion_ops() {
+        let target = TypeId::new(100);
+        assert_eq!(
+            OperatorBehavior::from_method_name("opConv", Some(target)),
+            Some(OperatorBehavior::OpConv(target))
+        );
+        assert_eq!(
+            OperatorBehavior::from_method_name("opImplConv", Some(target)),
+            Some(OperatorBehavior::OpImplConv(target))
+        );
+        assert_eq!(
+            OperatorBehavior::from_method_name("opCast", Some(target)),
+            Some(OperatorBehavior::OpCast(target))
+        );
+        assert_eq!(
+            OperatorBehavior::from_method_name("opImplCast", Some(target)),
+            Some(OperatorBehavior::OpImplCast(target))
+        );
+        // Without target type, should return None
+        assert_eq!(OperatorBehavior::from_method_name("opConv", None), None);
+        assert_eq!(OperatorBehavior::from_method_name("opImplConv", None), None);
+        assert_eq!(OperatorBehavior::from_method_name("opCast", None), None);
+        assert_eq!(OperatorBehavior::from_method_name("opImplCast", None), None);
+    }
+
+    #[test]
+    fn operator_behavior_from_method_name_unary_prefix() {
+        assert_eq!(
+            OperatorBehavior::from_method_name("opNeg", None),
+            Some(OperatorBehavior::OpNeg)
+        );
+        assert_eq!(
+            OperatorBehavior::from_method_name("opCom", None),
+            Some(OperatorBehavior::OpCom)
+        );
+        assert_eq!(
+            OperatorBehavior::from_method_name("opPreInc", None),
+            Some(OperatorBehavior::OpPreInc)
+        );
+        assert_eq!(
+            OperatorBehavior::from_method_name("opPreDec", None),
+            Some(OperatorBehavior::OpPreDec)
+        );
+    }
+
+    #[test]
+    fn operator_behavior_from_method_name_unary_postfix() {
+        assert_eq!(
+            OperatorBehavior::from_method_name("opPostInc", None),
+            Some(OperatorBehavior::OpPostInc)
+        );
+        assert_eq!(
+            OperatorBehavior::from_method_name("opPostDec", None),
+            Some(OperatorBehavior::OpPostDec)
+        );
+    }
+
+    #[test]
+    fn operator_behavior_from_method_name_binary_arithmetic() {
+        assert_eq!(
+            OperatorBehavior::from_method_name("opAdd", None),
+            Some(OperatorBehavior::OpAdd)
+        );
+        assert_eq!(
+            OperatorBehavior::from_method_name("opAdd_r", None),
+            Some(OperatorBehavior::OpAddR)
+        );
+        assert_eq!(
+            OperatorBehavior::from_method_name("opSub", None),
+            Some(OperatorBehavior::OpSub)
+        );
+        assert_eq!(
+            OperatorBehavior::from_method_name("opSub_r", None),
+            Some(OperatorBehavior::OpSubR)
+        );
+        assert_eq!(
+            OperatorBehavior::from_method_name("opMul", None),
+            Some(OperatorBehavior::OpMul)
+        );
+        assert_eq!(
+            OperatorBehavior::from_method_name("opMul_r", None),
+            Some(OperatorBehavior::OpMulR)
+        );
+        assert_eq!(
+            OperatorBehavior::from_method_name("opDiv", None),
+            Some(OperatorBehavior::OpDiv)
+        );
+        assert_eq!(
+            OperatorBehavior::from_method_name("opDiv_r", None),
+            Some(OperatorBehavior::OpDivR)
+        );
+        assert_eq!(
+            OperatorBehavior::from_method_name("opMod", None),
+            Some(OperatorBehavior::OpMod)
+        );
+        assert_eq!(
+            OperatorBehavior::from_method_name("opMod_r", None),
+            Some(OperatorBehavior::OpModR)
+        );
+        assert_eq!(
+            OperatorBehavior::from_method_name("opPow", None),
+            Some(OperatorBehavior::OpPow)
+        );
+        assert_eq!(
+            OperatorBehavior::from_method_name("opPow_r", None),
+            Some(OperatorBehavior::OpPowR)
+        );
+    }
+
+    #[test]
+    fn operator_behavior_from_method_name_binary_bitwise() {
+        assert_eq!(
+            OperatorBehavior::from_method_name("opAnd", None),
+            Some(OperatorBehavior::OpAnd)
+        );
+        assert_eq!(
+            OperatorBehavior::from_method_name("opAnd_r", None),
+            Some(OperatorBehavior::OpAndR)
+        );
+        assert_eq!(
+            OperatorBehavior::from_method_name("opOr", None),
+            Some(OperatorBehavior::OpOr)
+        );
+        assert_eq!(
+            OperatorBehavior::from_method_name("opOr_r", None),
+            Some(OperatorBehavior::OpOrR)
+        );
+        assert_eq!(
+            OperatorBehavior::from_method_name("opXor", None),
+            Some(OperatorBehavior::OpXor)
+        );
+        assert_eq!(
+            OperatorBehavior::from_method_name("opXor_r", None),
+            Some(OperatorBehavior::OpXorR)
+        );
+        assert_eq!(
+            OperatorBehavior::from_method_name("opShl", None),
+            Some(OperatorBehavior::OpShl)
+        );
+        assert_eq!(
+            OperatorBehavior::from_method_name("opShl_r", None),
+            Some(OperatorBehavior::OpShlR)
+        );
+        assert_eq!(
+            OperatorBehavior::from_method_name("opShr", None),
+            Some(OperatorBehavior::OpShr)
+        );
+        assert_eq!(
+            OperatorBehavior::from_method_name("opShr_r", None),
+            Some(OperatorBehavior::OpShrR)
+        );
+        assert_eq!(
+            OperatorBehavior::from_method_name("opUShr", None),
+            Some(OperatorBehavior::OpUShr)
+        );
+        assert_eq!(
+            OperatorBehavior::from_method_name("opUShr_r", None),
+            Some(OperatorBehavior::OpUShrR)
+        );
+    }
+
+    #[test]
+    fn operator_behavior_from_method_name_comparison() {
+        assert_eq!(
+            OperatorBehavior::from_method_name("opEquals", None),
+            Some(OperatorBehavior::OpEquals)
+        );
+        assert_eq!(
+            OperatorBehavior::from_method_name("opCmp", None),
+            Some(OperatorBehavior::OpCmp)
+        );
+    }
+
+    #[test]
+    fn operator_behavior_from_method_name_assignment() {
+        assert_eq!(
+            OperatorBehavior::from_method_name("opAssign", None),
+            Some(OperatorBehavior::OpAssign)
+        );
+        assert_eq!(
+            OperatorBehavior::from_method_name("opAddAssign", None),
+            Some(OperatorBehavior::OpAddAssign)
+        );
+        assert_eq!(
+            OperatorBehavior::from_method_name("opSubAssign", None),
+            Some(OperatorBehavior::OpSubAssign)
+        );
+        assert_eq!(
+            OperatorBehavior::from_method_name("opMulAssign", None),
+            Some(OperatorBehavior::OpMulAssign)
+        );
+        assert_eq!(
+            OperatorBehavior::from_method_name("opDivAssign", None),
+            Some(OperatorBehavior::OpDivAssign)
+        );
+        assert_eq!(
+            OperatorBehavior::from_method_name("opModAssign", None),
+            Some(OperatorBehavior::OpModAssign)
+        );
+        assert_eq!(
+            OperatorBehavior::from_method_name("opPowAssign", None),
+            Some(OperatorBehavior::OpPowAssign)
+        );
+        assert_eq!(
+            OperatorBehavior::from_method_name("opAndAssign", None),
+            Some(OperatorBehavior::OpAndAssign)
+        );
+        assert_eq!(
+            OperatorBehavior::from_method_name("opOrAssign", None),
+            Some(OperatorBehavior::OpOrAssign)
+        );
+        assert_eq!(
+            OperatorBehavior::from_method_name("opXorAssign", None),
+            Some(OperatorBehavior::OpXorAssign)
+        );
+        assert_eq!(
+            OperatorBehavior::from_method_name("opShlAssign", None),
+            Some(OperatorBehavior::OpShlAssign)
+        );
+        assert_eq!(
+            OperatorBehavior::from_method_name("opShrAssign", None),
+            Some(OperatorBehavior::OpShrAssign)
+        );
+        assert_eq!(
+            OperatorBehavior::from_method_name("opUShrAssign", None),
+            Some(OperatorBehavior::OpUShrAssign)
+        );
+    }
+
+    #[test]
+    fn operator_behavior_from_method_name_index_call() {
+        assert_eq!(
+            OperatorBehavior::from_method_name("opIndex", None),
+            Some(OperatorBehavior::OpIndex)
+        );
+        assert_eq!(
+            OperatorBehavior::from_method_name("get_opIndex", None),
+            Some(OperatorBehavior::OpIndexGet)
+        );
+        assert_eq!(
+            OperatorBehavior::from_method_name("set_opIndex", None),
+            Some(OperatorBehavior::OpIndexSet)
+        );
+        assert_eq!(
+            OperatorBehavior::from_method_name("opCall", None),
+            Some(OperatorBehavior::OpCall)
+        );
+    }
+
+    #[test]
+    fn operator_behavior_from_method_name_foreach() {
+        assert_eq!(
+            OperatorBehavior::from_method_name("opForBegin", None),
+            Some(OperatorBehavior::OpForBegin)
+        );
+        assert_eq!(
+            OperatorBehavior::from_method_name("opForEnd", None),
+            Some(OperatorBehavior::OpForEnd)
+        );
+        assert_eq!(
+            OperatorBehavior::from_method_name("opForNext", None),
+            Some(OperatorBehavior::OpForNext)
+        );
+        assert_eq!(
+            OperatorBehavior::from_method_name("opForValue", None),
+            Some(OperatorBehavior::OpForValue)
+        );
+        assert_eq!(
+            OperatorBehavior::from_method_name("opForValue0", None),
+            Some(OperatorBehavior::OpForValue0)
+        );
+        assert_eq!(
+            OperatorBehavior::from_method_name("opForValue1", None),
+            Some(OperatorBehavior::OpForValue1)
+        );
+        assert_eq!(
+            OperatorBehavior::from_method_name("opForValue2", None),
+            Some(OperatorBehavior::OpForValue2)
+        );
+        assert_eq!(
+            OperatorBehavior::from_method_name("opForValue3", None),
+            Some(OperatorBehavior::OpForValue3)
+        );
+    }
+
+    #[test]
+    fn operator_behavior_from_method_name_unknown() {
+        assert_eq!(OperatorBehavior::from_method_name("unknown", None), None);
+        assert_eq!(OperatorBehavior::from_method_name("", None), None);
+        assert_eq!(OperatorBehavior::from_method_name("op", None), None);
+    }
+
+    #[test]
+    fn operator_behavior_target_type() {
+        let target = TypeId::new(100);
+        assert_eq!(OperatorBehavior::OpConv(target).target_type(), target);
+        assert_eq!(OperatorBehavior::OpImplConv(target).target_type(), target);
+        assert_eq!(OperatorBehavior::OpCast(target).target_type(), target);
+        assert_eq!(OperatorBehavior::OpImplCast(target).target_type(), target);
+    }
+
+    #[test]
+    #[should_panic(expected = "target_type() called on non-conversion operator")]
+    fn operator_behavior_target_type_panic_on_non_conversion() {
+        OperatorBehavior::OpAdd.target_type();
+    }
+
+    #[test]
+    fn operator_behavior_is_conversion() {
+        let target = TypeId::new(100);
+        assert!(OperatorBehavior::OpConv(target).is_conversion());
+        assert!(OperatorBehavior::OpImplConv(target).is_conversion());
+        assert!(OperatorBehavior::OpCast(target).is_conversion());
+        assert!(OperatorBehavior::OpImplCast(target).is_conversion());
+        assert!(!OperatorBehavior::OpAdd.is_conversion());
+        assert!(!OperatorBehavior::OpAssign.is_conversion());
+    }
+
+    #[test]
+    fn operator_behavior_is_implicit() {
+        let target = TypeId::new(100);
+        assert!(OperatorBehavior::OpImplConv(target).is_implicit());
+        assert!(OperatorBehavior::OpImplCast(target).is_implicit());
+        assert!(!OperatorBehavior::OpConv(target).is_implicit());
+        assert!(!OperatorBehavior::OpCast(target).is_implicit());
+        assert!(!OperatorBehavior::OpAdd.is_implicit());
+    }
+
+    // PropertyAccessors tests
+    #[test]
+    fn property_accessors_read_only() {
+        let getter = FunctionId::new(1);
+        let prop = PropertyAccessors::read_only(getter);
+        assert_eq!(prop.getter, Some(getter));
+        assert_eq!(prop.setter, None);
+        assert_eq!(prop.visibility, Visibility::Public);
+        assert!(prop.is_read_only());
+        assert!(!prop.is_write_only());
+        assert!(!prop.is_read_write());
+    }
+
+    #[test]
+    fn property_accessors_read_only_with_visibility() {
+        let getter = FunctionId::new(1);
+        let prop = PropertyAccessors::read_only_with_visibility(getter, Visibility::Private);
+        assert_eq!(prop.getter, Some(getter));
+        assert_eq!(prop.setter, None);
+        assert_eq!(prop.visibility, Visibility::Private);
+    }
+
+    #[test]
+    fn property_accessors_write_only() {
+        let setter = FunctionId::new(2);
+        let prop = PropertyAccessors::write_only(setter);
+        assert_eq!(prop.getter, None);
+        assert_eq!(prop.setter, Some(setter));
+        assert_eq!(prop.visibility, Visibility::Public);
+        assert!(prop.is_write_only());
+        assert!(!prop.is_read_only());
+        assert!(!prop.is_read_write());
+    }
+
+    #[test]
+    fn property_accessors_write_only_with_visibility() {
+        let setter = FunctionId::new(2);
+        let prop = PropertyAccessors::write_only_with_visibility(setter, Visibility::Protected);
+        assert_eq!(prop.getter, None);
+        assert_eq!(prop.setter, Some(setter));
+        assert_eq!(prop.visibility, Visibility::Protected);
+    }
+
+    #[test]
+    fn property_accessors_read_write() {
+        let getter = FunctionId::new(1);
+        let setter = FunctionId::new(2);
+        let prop = PropertyAccessors::read_write(getter, setter);
+        assert_eq!(prop.getter, Some(getter));
+        assert_eq!(prop.setter, Some(setter));
+        assert_eq!(prop.visibility, Visibility::Public);
+        assert!(prop.is_read_write());
+        assert!(!prop.is_read_only());
+        assert!(!prop.is_write_only());
+    }
+
+    #[test]
+    fn property_accessors_read_write_with_visibility() {
+        let getter = FunctionId::new(1);
+        let setter = FunctionId::new(2);
+        let prop = PropertyAccessors::read_write_with_visibility(getter, setter, Visibility::Private);
+        assert_eq!(prop.getter, Some(getter));
+        assert_eq!(prop.setter, Some(setter));
+        assert_eq!(prop.visibility, Visibility::Private);
+    }
+
+    #[test]
+    fn property_accessors_default() {
+        let prop = PropertyAccessors::default();
+        assert_eq!(prop.getter, None);
+        assert_eq!(prop.setter, None);
+        assert_eq!(prop.visibility, Visibility::Public);
+        assert!(!prop.is_read_only());
+        assert!(!prop.is_write_only());
+        assert!(!prop.is_read_write());
+    }
+
+    // TypeDef name and qualified_name tests for template instance
+    #[test]
+    fn typedef_template_instance_name() {
+        let typedef = TypeDef::TemplateInstance {
+            name: "array<int>".to_string(),
+            template: ARRAY_TEMPLATE,
+            sub_types: vec![DataType::simple(INT32_TYPE)],
+            methods: Vec::new(),
+            operator_methods: FxHashMap::default(),
+            properties: FxHashMap::default(),
+        };
+        assert_eq!(typedef.name(), "array<int>");
+        assert_eq!(typedef.qualified_name(), "array<int>");
+    }
+
+    #[test]
+    fn typedef_template_qualified_name() {
+        let typedef = TypeDef::Template {
+            name: "array".to_string(),
+            param_count: 1,
+        };
+        assert_eq!(typedef.qualified_name(), "array");
+    }
+
+    // AutoGeneratedMethod tests
+    #[test]
+    fn auto_generated_method_variants() {
+        let default_ctor = AutoGeneratedMethod::DefaultConstructor;
+        let copy_ctor = AutoGeneratedMethod::CopyConstructor;
+        let op_assign = AutoGeneratedMethod::OpAssign;
+
+        assert_eq!(default_ctor, AutoGeneratedMethod::DefaultConstructor);
+        assert_eq!(copy_ctor, AutoGeneratedMethod::CopyConstructor);
+        assert_eq!(op_assign, AutoGeneratedMethod::OpAssign);
+        assert_ne!(default_ctor, copy_ctor);
+    }
+
+    #[test]
+    fn function_traits_with_auto_generated() {
+        let mut traits = FunctionTraits::new();
+        traits.auto_generated = Some(AutoGeneratedMethod::DefaultConstructor);
+        assert_eq!(traits.auto_generated, Some(AutoGeneratedMethod::DefaultConstructor));
+    }
+
+    #[test]
+    fn function_traits_explicit() {
+        let mut traits = FunctionTraits::new();
+        traits.is_explicit = true;
+        assert!(traits.is_explicit);
+    }
+
+    // NULL_TYPE constant test
+    #[test]
+    fn null_type_constant() {
+        assert_eq!(NULL_TYPE, TypeId(12));
+    }
+}

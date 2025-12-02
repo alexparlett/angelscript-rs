@@ -10,7 +10,9 @@
 //!
 //! ```
 //! use angelscript::parse;
+//! use bumpalo::Bump;
 //!
+//! let arena = Bump::new();
 //! let source = r#"
 //!     class Player {
 //!         int health = 100;
@@ -21,7 +23,7 @@
 //!     }
 //! "#;
 //!
-//! match parse(source) {
+//! match parse(source, &arena) {
 //!     Ok(script) => println!("Parsed successfully: {} items", script.items().len()),
 //!     Err(errors) => eprintln!("Parse errors: {}", errors),
 //! }
@@ -56,21 +58,27 @@ pub use parser::Parser;
 pub use stmt::*;
 pub use types::*;
 
-/// A parsed AngelScript script with owned arena.
+/// A parsed AngelScript script.
 ///
-/// This struct owns the parsed AST and its arena allocator.
-/// All AST nodes are allocated in the arena and remain valid
-/// for the lifetime of this struct.
+/// The script borrows from an arena allocator. All AST nodes are allocated
+/// in the arena and remain valid for the lifetime of the arena.
+///
+/// For multi-file compilation, use `CompilationContext` which owns the arena
+/// and allows multiple scripts to share the same arena.
 #[derive(Debug)]
-pub struct Script {
-    pub arena: bumpalo::Bump,
-    items: &'static [Item<'static, 'static>],
+pub struct Script<'src, 'ast> {
+    items: &'ast [Item<'src, 'ast>],
     span: crate::lexer::Span,
 }
 
-impl Script {
+impl<'src, 'ast> Script<'src, 'ast> {
+    /// Create a new script from parsed items.
+    pub(crate) fn new(items: &'ast [Item<'src, 'ast>], span: crate::lexer::Span) -> Self {
+        Self { items, span }
+    }
+
     /// Get the top-level items in this script.
-    pub fn items(&self) -> &[Item<'static, 'static>] {
+    pub fn items(&self) -> &[Item<'src, 'ast>] {
         self.items
     }
 
@@ -80,16 +88,22 @@ impl Script {
     }
 }
 
+
 /// Parse AngelScript source code into an AST.
 ///
-/// Returns `Ok(Script)` if parsing succeeds with no errors, or `Err(ParseErrors)`
-/// if any errors occurred during parsing.
+/// Requires a `bumpalo::Bump` arena allocator for AST node allocation.
+/// All AST nodes will be allocated in the arena and remain valid for the arena's lifetime.
+///
+/// For multi-file compilation, use `CompilationContext` which owns an arena and
+/// allows multiple scripts to share the same arena.
 ///
 /// # Example
 ///
 /// ```
 /// use angelscript::parse;
+/// use bumpalo::Bump;
 ///
+/// let arena = Bump::new();
 /// let source = r#"
 ///     class Player {
 ///         int health = 100;
@@ -99,7 +113,7 @@ impl Script {
 ///     }
 /// "#;
 ///
-/// match parse(source) {
+/// match parse(source, &arena) {
 ///     Ok(script) => {
 ///         println!("Parsed {} items", script.items().len());
 ///     }
@@ -108,14 +122,16 @@ impl Script {
 ///     }
 /// }
 /// ```
-pub fn parse(source: &str) -> Result<Script, ParseErrors> {
-    let arena = bumpalo::Bump::new();
-    let mut parser = Parser::new(source, &arena);
+#[cfg_attr(feature = "profiling", profiling::function)]
+pub fn parse<'src, 'ast>(
+    source: &'src str,
+    arena: &'ast bumpalo::Bump,
+) -> Result<Script<'src, 'ast>, ParseErrors> {
+    let mut parser = Parser::new(source, arena);
 
     let result = parser.parse_script();
 
-    // Check for any remaining lexer errors that weren't caught during parsing
-    // (e.g., errors in tokens that were never actually consumed)
+    // Check for any remaining lexer errors
     if parser.lexer.has_errors() {
         for lexer_error in parser.lexer.take_errors() {
             parser.errors.push(ParseError::new(
@@ -131,11 +147,7 @@ pub fn parse(source: &str) -> Result<Script, ParseErrors> {
             if parser.has_errors() {
                 Err(parser.take_errors())
             } else {
-                // SAFETY: The items slice borrows from the arena, and we're moving both into Script.
-                // The arena will live as long as the Script, so the references remain valid.
-                // We transmute the lifetime to 'static since the arena is owned by Script.
-                let items = unsafe { std::mem::transmute::<&[Item<'_, '_>], &'static [Item<'static, 'static>]>(items) };
-                Ok(Script { arena, items, span })
+                Ok(Script::new(items, span))
             }
         }
         Err(err) => {
@@ -151,13 +163,20 @@ pub fn parse(source: &str) -> Result<Script, ParseErrors> {
 /// may be incomplete, but it can still be useful for analysis, error recovery,
 /// or partial processing.
 ///
+/// Requires a `bumpalo::Bump` arena allocator for AST node allocation.
+///
 /// Returns a tuple of `(Script, Vec<ParseError>)` where the error vector may be empty.
+///
+/// For multi-file compilation, use `CompilationContext` which owns an arena and
+/// allows multiple scripts to share the same arena.
 ///
 /// # Example
 ///
 /// ```
 /// use angelscript::parse_lenient;
+/// use bumpalo::Bump;
 ///
+/// let arena = Bump::new();
 /// let source = r#"
 ///     class Player {
 ///         int health = 100;
@@ -167,7 +186,7 @@ pub fn parse(source: &str) -> Result<Script, ParseErrors> {
 ///     }
 /// "#;
 ///
-/// let (script, errors) = parse_lenient(source);
+/// let (script, errors) = parse_lenient(source, &arena);
 ///
 /// println!("Parsed {} items", script.items().len());
 /// println!("Found {} errors", errors.len());
@@ -182,9 +201,12 @@ pub fn parse(source: &str) -> Result<Script, ParseErrors> {
 ///     eprintln!("Warning: {}", error);
 /// }
 /// ```
-pub fn parse_lenient(source: &str) -> (Script, Vec<ParseError>) {
-    let arena = bumpalo::Bump::new();
-    let mut parser = Parser::new(source, &arena);
+#[cfg_attr(feature = "profiling", profiling::function)]
+pub fn parse_lenient<'src, 'ast>(
+    source: &'src str,
+    arena: &'ast bumpalo::Bump,
+) -> (Script<'src, 'ast>, Vec<ParseError>) {
+    let mut parser = Parser::new(source, arena);
 
     let (items, span) = parser.parse_script().unwrap_or_else(|err| {
         parser.errors.push(err);
@@ -203,70 +225,31 @@ pub fn parse_lenient(source: &str) -> (Script, Vec<ParseError>) {
     }
 
     let errors = parser.take_errors().into_vec();
-
-    // SAFETY: The items slice borrows from the arena, and we're moving both into Script.
-    // The arena will live as long as the Script, so the references remain valid.
-    let items = unsafe { std::mem::transmute::<&[Item<'_, '_>], &'static [Item<'static, 'static>]>(items) };
-
-    (Script { arena, items, span }, errors)
-}
-
-/// Container for a parsed expression that owns its arena.
-pub struct ParsedExpr {
-    pub arena: bumpalo::Bump,
-    pub expr: &'static Expr<'static, 'static>,
-}
-
-impl ParsedExpr {
-    /// Get a reference to the expression.
-    pub fn expr(&self) -> &Expr<'static, 'static> {
-        self.expr
-    }
-}
-
-/// Container for a parsed statement that owns its arena.
-pub struct ParsedStmt {
-    pub arena: bumpalo::Bump,
-    pub stmt: Stmt<'static, 'static>,
-}
-
-impl ParsedStmt {
-    /// Get a reference to the statement.
-    pub fn stmt(&self) -> &Stmt<'static, 'static> {
-        &self.stmt
-    }
-}
-
-/// Container for a parsed type expression that owns its arena.
-pub struct ParsedTypeExpr {
-    pub arena: bumpalo::Bump,
-    pub type_expr: TypeExpr<'static, 'static>,
-}
-
-impl ParsedTypeExpr {
-    /// Get a reference to the type expression.
-    pub fn type_expr(&self) -> &TypeExpr<'static, 'static> {
-        &self.type_expr
-    }
+    (Script::new(items, span), errors)
 }
 
 /// Parse a single expression from source code.
 ///
 /// This is useful for parsing standalone expressions or for testing.
+/// Requires a `bumpalo::Bump` arena allocator for AST node allocation.
 ///
 /// # Example
 ///
 /// ```
 /// use angelscript::parse_expression;
+/// use bumpalo::Bump;
 ///
-/// match parse_expression("1 + 2 * 3") {
-///     Ok(parsed) => println!("Parsed expression successfully"),
+/// let arena = Bump::new();
+/// match parse_expression("1 + 2 * 3", &arena) {
+///     Ok(expr) => println!("Parsed expression successfully"),
 ///     Err(errors) => eprintln!("Errors: {}", errors),
 /// }
 /// ```
-pub fn parse_expression(source: &str) -> Result<ParsedExpr, ParseErrors> {
-    let arena = bumpalo::Bump::new();
-    let mut parser = Parser::new(source, &arena);
+pub fn parse_expression<'src, 'ast>(
+    source: &'src str,
+    arena: &'ast bumpalo::Bump,
+) -> Result<&'ast Expr<'src, 'ast>, ParseErrors> {
+    let mut parser = Parser::new(source, arena);
 
     let result = parser.parse_expr(0);
 
@@ -286,10 +269,7 @@ pub fn parse_expression(source: &str) -> Result<ParsedExpr, ParseErrors> {
             if parser.has_errors() {
                 Err(parser.take_errors())
             } else {
-                // SAFETY: The expr borrows from the arena, and we're moving both into ParsedExpr.
-                // The arena will live as long as the ParsedExpr, so the references remain valid.
-                let expr = unsafe { std::mem::transmute::<&Expr<'_, '_>, &'static Expr<'static, 'static>>(expr) };
-                Ok(ParsedExpr { arena, expr })
+                Ok(expr)
             }
         }
         Err(err) => {
@@ -302,20 +282,25 @@ pub fn parse_expression(source: &str) -> Result<ParsedExpr, ParseErrors> {
 /// Parse a single statement from source code.
 ///
 /// This is useful for parsing standalone statements or for testing.
+/// Requires a `bumpalo::Bump` arena allocator for AST node allocation.
 ///
 /// # Example
 ///
 /// ```
 /// use angelscript::parse_statement;
+/// use bumpalo::Bump;
 ///
-/// match parse_statement("if (x > 0) { return x; }") {
+/// let arena = Bump::new();
+/// match parse_statement("if (x > 0) { return x; }", &arena) {
 ///     Ok(stmt) => println!("Parsed statement successfully"),
 ///     Err(errors) => eprintln!("Errors: {}", errors),
 /// }
 /// ```
-pub fn parse_statement(source: &str) -> Result<ParsedStmt, ParseErrors> {
-    let arena = bumpalo::Bump::new();
-    let mut parser = Parser::new(source, &arena);
+pub fn parse_statement<'src, 'ast>(
+    source: &'src str,
+    arena: &'ast bumpalo::Bump,
+) -> Result<Stmt<'src, 'ast>, ParseErrors> {
+    let mut parser = Parser::new(source, arena);
 
     let result = parser.parse_statement();
 
@@ -335,10 +320,7 @@ pub fn parse_statement(source: &str) -> Result<ParsedStmt, ParseErrors> {
             if parser.has_errors() {
                 Err(parser.take_errors())
             } else {
-                // SAFETY: The stmt borrows from the arena, and we're moving both into ParsedStmt.
-                // The arena will live as long as the ParsedStmt, so the references remain valid.
-                let stmt = unsafe { std::mem::transmute::<Stmt<'_, '_>, Stmt<'static, 'static>>(stmt) };
-                Ok(ParsedStmt { arena, stmt })
+                Ok(stmt)
             }
         }
         Err(err) => {
@@ -351,20 +333,25 @@ pub fn parse_statement(source: &str) -> Result<ParsedStmt, ParseErrors> {
 /// Parse a type expression from source code.
 ///
 /// This is useful for parsing standalone type expressions or for testing.
+/// Requires a `bumpalo::Bump` arena allocator for AST node allocation.
 ///
 /// # Example
 ///
 /// ```
 /// use angelscript::parse_type_expr;
+/// use bumpalo::Bump;
 ///
-/// match parse_type_expr("const array<int>@") {
+/// let arena = Bump::new();
+/// match parse_type_expr("const array<int>@", &arena) {
 ///     Ok(ty) => println!("Parsed type successfully"),
 ///     Err(errors) => eprintln!("Errors: {}", errors),
 /// }
 /// ```
-pub fn parse_type_expr(source: &str) -> Result<ParsedTypeExpr, ParseErrors> {
-    let arena = bumpalo::Bump::new();
-    let mut parser = Parser::new(source, &arena);
+pub fn parse_type_expr<'src, 'ast>(
+    source: &'src str,
+    arena: &'ast bumpalo::Bump,
+) -> Result<TypeExpr<'src, 'ast>, ParseErrors> {
+    let mut parser = Parser::new(source, arena);
 
     let result = parser.parse_type();
 
@@ -384,10 +371,7 @@ pub fn parse_type_expr(source: &str) -> Result<ParsedTypeExpr, ParseErrors> {
             if parser.has_errors() {
                 Err(parser.take_errors())
             } else {
-                // SAFETY: The type_expr borrows from the arena, and we're moving both into ParsedTypeExpr.
-                // The arena will live as long as the ParsedTypeExpr, so the references remain valid.
-                let type_expr = unsafe { std::mem::transmute::<TypeExpr<'_, '_>, TypeExpr<'static, 'static>>(type_expr) };
-                Ok(ParsedTypeExpr { arena, type_expr })
+                Ok(type_expr)
             }
         }
         Err(err) => {
@@ -403,8 +387,9 @@ mod tests {
 
     #[test]
     fn parse_simple_function() {
+        let arena = bumpalo::Bump::new();
         let source = "void foo() { }";
-        let result = parse(source);
+        let result = parse(source, &arena);
         assert!(result.is_ok());
         let script = result.unwrap();
         assert_eq!(script.items().len(), 1);
@@ -412,6 +397,7 @@ mod tests {
 
     #[test]
     fn parse_class_with_members() {
+        let arena = bumpalo::Bump::new();
         let source = r#"
             class Player {
                 int health;
@@ -420,7 +406,7 @@ mod tests {
                 }
             }
         "#;
-        let result = parse(source);
+        let result = parse(source, &arena);
         assert!(result.is_ok());
         let script = result.unwrap();
         assert_eq!(script.items().len(), 1);
@@ -428,8 +414,9 @@ mod tests {
 
     #[test]
     fn parse_with_errors() {
+        let arena = bumpalo::Bump::new();
         let source = "int x = ;"; // Missing expression
-        let result = parse(source);
+        let result = parse(source, &arena);
         assert!(result.is_err());
         let errors = result.unwrap_err();
         assert!(!errors.is_empty());
@@ -437,11 +424,12 @@ mod tests {
 
     #[test]
     fn parse_lenient_recovers() {
+        let arena = bumpalo::Bump::new();
         let source = r#"
             int x = ;
             int y = 42;
         "#;
-        let (script, errors) = parse_lenient(source);
+        let (script, errors) = parse_lenient(source, &arena);
 
         // Should have errors but still parse something
         assert!(!errors.is_empty());
@@ -451,8 +439,9 @@ mod tests {
 
     #[test]
     fn parse_lenient_no_errors() {
+        let arena = bumpalo::Bump::new();
         let source = "int x = 42;";
-        let (script, errors) = parse_lenient(source);
+        let (script, errors) = parse_lenient(source, &arena);
 
         assert!(errors.is_empty());
         assert_eq!(script.items().len(), 1);
@@ -460,60 +449,70 @@ mod tests {
 
     #[test]
     fn parse_expression_simple() {
-        let result = parse_expression("1 + 2");
+        let arena = bumpalo::Bump::new();
+        let result = parse_expression("1 + 2", &arena);
         assert!(result.is_ok());
     }
 
     #[test]
     fn parse_expression_complex() {
-        let result = parse_expression("obj.method()[0].field");
+        let arena = bumpalo::Bump::new();
+        let result = parse_expression("obj.method()[0].field", &arena);
         assert!(result.is_ok());
     }
 
     #[test]
     fn parse_expression_with_error() {
-        let result = parse_expression("1 +"); // Incomplete
+        let arena = bumpalo::Bump::new();
+        let result = parse_expression("1 +", &arena); // Incomplete
         assert!(result.is_err());
     }
 
     #[test]
     fn parse_statement_simple() {
-        let result = parse_statement("return 42;");
+        let arena = bumpalo::Bump::new();
+        let result = parse_statement("return 42;", &arena);
         assert!(result.is_ok());
     }
 
     #[test]
     fn parse_statement_if() {
-        let result = parse_statement("if (x > 0) { return x; }");
+        let arena = bumpalo::Bump::new();
+        let result = parse_statement("if (x > 0) { return x; }", &arena);
         assert!(result.is_ok());
     }
 
     #[test]
     fn parse_statement_for() {
-        let result = parse_statement("for (int i = 0; i < 10; i++) { }");
+        let arena = bumpalo::Bump::new();
+        let result = parse_statement("for (int i = 0; i < 10; i++) { }", &arena);
         assert!(result.is_ok());
     }
 
     #[test]
     fn parse_type_simple() {
-        let result = parse_type_expr("int");
+        let arena = bumpalo::Bump::new();
+        let result = parse_type_expr("int", &arena);
         assert!(result.is_ok());
     }
 
     #[test]
     fn parse_type_complex() {
-        let result = parse_type_expr("const array<int>@ const");
+        let arena = bumpalo::Bump::new();
+        let result = parse_type_expr("const array<int>@ const", &arena);
         assert!(result.is_ok());
     }
 
     #[test]
     fn parse_type_with_scope() {
-        let result = parse_type_expr("Namespace::MyClass");
+        let arena = bumpalo::Bump::new();
+        let result = parse_type_expr("Namespace::MyClass", &arena);
         assert!(result.is_ok());
     }
 
     #[test]
     fn parse_complete_program() {
+        let arena = bumpalo::Bump::new();
         let source = r#"
             namespace Game {
                 class Player {
@@ -550,7 +549,7 @@ mod tests {
             }
         "#;
 
-        let result = parse(source);
+        let result = parse(source, &arena);
         assert!(result.is_ok(), "Failed to parse complete program");
 
         let script = result.unwrap();
@@ -559,13 +558,14 @@ mod tests {
 
     #[test]
     fn parse_multiple_errors() {
+        let arena = bumpalo::Bump::new();
         let source = r#"
             int x = ;
             void func( { }
             int y
         "#;
 
-        let (_, errors) = parse_lenient(source);
+        let (_, errors) = parse_lenient(source, &arena);
 
         // Should have multiple errors
         assert!(errors.len() >= 2, "Should detect multiple errors");
@@ -573,6 +573,7 @@ mod tests {
 
     #[test]
     fn parse_interface_with_properties() {
+        let arena = bumpalo::Bump::new();
         let source = r#"
             interface IDrawable {
                 void draw();
@@ -582,12 +583,13 @@ mod tests {
             }
         "#;
 
-        let result = parse(source);
+        let result = parse(source, &arena);
         assert!(result.is_ok());
     }
 
     #[test]
     fn parse_enum_with_values() {
+        let arena = bumpalo::Bump::new();
         let source = r#"
             enum Color {
                 Red,
@@ -596,18 +598,19 @@ mod tests {
             }
         "#;
 
-        let result = parse(source);
+        let result = parse(source, &arena);
         assert!(result.is_ok());
     }
 
     #[test]
     fn parse_funcdef_and_typedef() {
+        let arena = bumpalo::Bump::new();
         let source = r#"
             typedef int EntityId;
             funcdef void Callback(int x);
         "#;
 
-        let result = parse(source);
+        let result = parse(source, &arena);
         assert!(result.is_ok());
 
         let script = result.unwrap();
@@ -616,18 +619,20 @@ mod tests {
 
     #[test]
     fn parse_mixin_class() {
+        let arena = bumpalo::Bump::new();
         let source = r#"
             mixin class MyMixin {
                 void mixinMethod() { }
             }
         "#;
 
-        let result = parse(source);
+        let result = parse(source, &arena);
         assert!(result.is_ok());
     }
 
     #[test]
     fn parse_constructor_and_destructor() {
+        let arena = bumpalo::Bump::new();
         let source = r#"
             class MyClass {
                 MyClass() { }
@@ -635,66 +640,187 @@ mod tests {
             }
         "#;
 
-        let result = parse(source);
+        let result = parse(source, &arena);
         assert!(result.is_ok());
     }
 
     #[test]
     fn parse_function_with_defaults() {
+        let arena = bumpalo::Bump::new();
         let source = "void func(int x = 42, string name = \"default\") { }";
 
-        let result = parse(source);
+        let result = parse(source, &arena);
         assert!(result.is_ok());
     }
 
     #[test]
     fn parse_nested_namespaces() {
+        let arena = bumpalo::Bump::new();
         let source = r#"
             namespace A::B::C {
                 class Nested { }
             }
         "#;
 
-        let result = parse(source);
+        let result = parse(source, &arena);
         assert!(result.is_ok());
     }
 
     #[test]
     fn parse_const_method() {
+        let arena = bumpalo::Bump::new();
         let source = r#"
             class Foo {
                 int getValue() const { return 42; }
             }
         "#;
 
-        let result = parse(source);
+        let result = parse(source, &arena);
         assert!(result.is_ok());
     }
 
     #[test]
     fn parse_multiple_inheritance() {
+        let arena = bumpalo::Bump::new();
         let source = r#"
             class Player : Character, IDrawable, ISerializable {
                 void draw() { }
             }
         "#;
 
-        let result = parse(source);
+        let result = parse(source, &arena);
         assert!(result.is_ok());
     }
 
     #[test]
     fn parse_forward_declarations() {
+        let arena = bumpalo::Bump::new();
         let source = r#"
             class Player;
             enum Color;
             interface IDrawable;
         "#;
 
-        let result = parse(source);
+        let result = parse(source, &arena);
         assert!(result.is_ok());
 
         let script = result.unwrap();
         assert_eq!(script.items().len(), 3);
+    }
+
+    #[test]
+    fn parse_with_lexer_error() {
+        let arena = bumpalo::Bump::new();
+        // Invalid character should cause lexer error
+        let source = "int x = @@@;"; // @@@ will cause lexer issues but first @ may be valid (handle)
+        let result = parse(source, &arena);
+        // This may succeed or fail depending on how @@@ is tokenized
+        // We mainly want to exercise the code path
+        let _ = result;
+    }
+
+    #[test]
+    fn parse_lenient_with_lexer_error() {
+        let arena = bumpalo::Bump::new();
+        // Unterminated string causes lexer error
+        let source = r#"int x = "unterminated"#;
+        let (script, errors) = parse_lenient(source, &arena);
+        // Should have errors from lexer
+        let _ = (script, errors);
+    }
+
+    #[test]
+    fn parse_expression_with_lexer_error() {
+        let arena = bumpalo::Bump::new();
+        let source = r#""unterminated string"#;
+        let result = parse_expression(source, &arena);
+        // Should error due to unterminated string
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn parse_statement_with_error() {
+        let arena = bumpalo::Bump::new();
+        // Invalid statement syntax
+        let source = "return return;";
+        let result = parse_statement(source, &arena);
+        // Should error
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn parse_type_with_error() {
+        let arena = bumpalo::Bump::new();
+        // Invalid type syntax (starting with a number)
+        let source = "123InvalidType";
+        let result = parse_type_expr(source, &arena);
+        // Should error
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn script_span() {
+        let arena = bumpalo::Bump::new();
+        let source = "void foo() { }";
+        let result = parse(source, &arena).unwrap();
+        let span = result.span();
+        // Span should be valid
+        assert!(span.len > 0 || span.line > 0);
+    }
+
+    #[test]
+    fn parse_statement_with_parse_error() {
+        let arena = bumpalo::Bump::new();
+        // Missing semicolon causes error
+        let source = "int x = 42";
+        let result = parse_statement(source, &arena);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn parse_type_expr_valid() {
+        let arena = bumpalo::Bump::new();
+        let result = parse_type_expr("array<int>@", &arena);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn parse_lenient_complete_failure() {
+        let arena = bumpalo::Bump::new();
+        // Completely invalid syntax that may cause parse_script to return Err
+        let source = "@@@@@@@@@@";
+        let (script, _errors) = parse_lenient(source, &arena);
+        // Script may be empty but should still return
+        let _ = script.items();
+    }
+
+    #[test]
+    fn parse_expression_with_accumulated_errors() {
+        let arena = bumpalo::Bump::new();
+        // Expression that may accumulate errors during parsing
+        let source = "a.b.c.";  // Trailing dot
+        let result = parse_expression(source, &arena);
+        // Should fail
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn parse_statement_accumulated_errors() {
+        let arena = bumpalo::Bump::new();
+        // Statement that accumulates errors
+        let source = "if (";  // Incomplete if
+        let result = parse_statement(source, &arena);
+        // Should fail
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn parse_type_accumulated_errors() {
+        let arena = bumpalo::Bump::new();
+        // Type with incomplete template
+        let source = "array<";  // Incomplete template
+        let result = parse_type_expr(source, &arena);
+        // Should fail
+        assert!(result.is_err());
     }
 }

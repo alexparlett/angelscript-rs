@@ -162,16 +162,12 @@ impl<'src, 'ast> Parser<'src, 'ast> {
                     let ident = Ident::new(ident_token.lexeme, ident_token.span);
                     last_span = ident_token.span;
 
-                    // Skip template args if present (simplified for now)
-                    // In a full implementation, we'd parse template args here
                     if self.check(TokenKind::Less) {
-                        // TODO: Properly parse template arguments in scope resolution
-                        // For now, report error - not yet implemented
                         let span = self.peek().span;
                         return Err(crate::ast::ParseError::new(
                             crate::ast::ParseErrorKind::NotImplemented,
                             span,
-                            "template arguments in scope resolution are not yet implemented"
+                            "template arguments in scope resolution are not supported"
                         ));
                     }
 
