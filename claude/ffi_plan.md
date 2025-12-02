@@ -89,8 +89,8 @@ Looking at the existing parser (`src/ast/decl_parser.rs`):
 
 | Parser Method | Terminator | FFI Status |
 |---------------|------------|------------|
-| `parse_enum` | `}` | ✅ Usable as-is |
-| `parse_interface` | `}` | ✅ Usable as-is |
+| `parse_enum` | `}` | ❌ Not needed (using builder) |
+| `parse_interface` | `}` | ❌ Not needed (using builder) |
 | `parse_funcdef` | `;` (line 2531) | ⚠️ Needs refactoring |
 | `parse_function_or_global_var` | `;` (lines 372, 418) | ⚠️ Needs refactoring |
 
@@ -143,11 +143,11 @@ impl<'ast> Parser<'ast> {
     }
 
     // ═══════════════════════════════════════════════════════════════════
-    // Enum/Interface - usable as-is (end at `}`)
+    // Enum/Interface - NOT NEEDED (using builder pattern)
     // ═══════════════════════════════════════════════════════════════════
 
-    // parse_enum and parse_interface already end at `}`
-    // FFI code calls them directly, then verifies EOF
+    // EnumBuilder and InterfaceBuilder don't need any parsing - they use
+    // simple string names for values and method signature parsing respectively.
 
     /// Helper: expect end of input for FFI parsing
     fn expect_eof(&mut self) -> Result<(), ParseError> {
@@ -805,13 +805,13 @@ impl<'app> Module<'app> {
     /// For templates: "array<class T>", "dictionary<class K, class V>"
     pub fn register_type<T: NativeType>(&mut self, name: &str) -> ClassBuilder<'_, 'app, T>;
 
-    /// Register a native enum.
-    /// Declaration string format: "enum Name { Value1 = 0, Value2, ... }"
-    pub fn register_enum(&mut self, decl: &str) -> Result<&mut Self, FfiRegistrationError>;
+    /// Register a native enum, returning a builder.
+    /// Use builder methods to add values, then call build().
+    pub fn register_enum(&mut self, name: &str) -> EnumBuilder<'_, 'app>;
 
-    /// Register a native interface.
-    /// Declaration string format: "interface Name { void method() const; ... }"
-    pub fn register_interface(&mut self, decl: &str) -> Result<&mut Self, FfiRegistrationError>;
+    /// Register a native interface, returning a builder.
+    /// Use builder methods to add method signatures, then call build().
+    pub fn register_interface(&mut self, name: &str) -> InterfaceBuilder<'_, 'app>;
 
     /// Register a funcdef (function pointer type).
     /// Declaration string format: "funcdef ReturnType Name(ParamType, ...)"
@@ -1210,24 +1210,42 @@ module.register_type::<ScriptArray>("array<class T>")
 
 ### Enum, Interface, and Funcdef Registration
 
-These are registered directly on Module with declaration strings - no separate builders needed:
+Enums and interfaces use builder patterns (like `ClassBuilder`), while funcdefs use declaration string parsing:
 
 ```rust
-// Enums - full declaration parsed
-module.register_enum("enum Color { Red = 0, Green = 1, Blue = 2 }")?;
-module.register_enum("enum Direction { North, East, South, West }")?;  // auto-numbered
-module.register_enum("enum Flags { None = 0, Read = 1, Write = 2, Execute = 4 }")?;
+// Enums - builder pattern
+module.register_enum("Color")
+    .value("Red", 0)?
+    .value("Green", 1)?
+    .value("Blue", 2)?
+    .build()?;
 
-// Interfaces - full declaration parsed
-module.register_interface("interface IDrawable { void draw() const; void setVisible(bool); }")?;
-module.register_interface("
-    interface ISerializable {
-        string serialize() const;
-        void deserialize(const string &in data);
-    }
-")?;
+module.register_enum("Direction")
+    .auto_value("North")?   // 0
+    .auto_value("East")?    // 1
+    .auto_value("South")?   // 2
+    .auto_value("West")?    // 3
+    .build()?;
 
-// Funcdefs - full declaration parsed
+module.register_enum("Flags")
+    .value("None", 0)?
+    .value("Read", 1)?
+    .value("Write", 2)?
+    .value("Execute", 4)?
+    .build()?;
+
+// Interfaces - builder pattern with method declaration strings
+module.register_interface("IDrawable")
+    .method("void draw() const")?
+    .method("void setVisible(bool)")?
+    .build()?;
+
+module.register_interface("ISerializable")
+    .method("string serialize() const")?
+    .method("void deserialize(const string &in data)")?
+    .build()?;
+
+// Funcdefs - declaration string parsing
 module.register_funcdef("funcdef void Callback()")?;
 module.register_funcdef("funcdef bool Predicate(int value)")?;
 module.register_funcdef("funcdef void EventHandler(const string &in event, ?&in data)")?;
@@ -1306,6 +1324,8 @@ src/
 │   ├── native_fn.rs    # NativeFn, NativeCallable, CallContext
 │   ├── error.rs        # NativeError, FfiRegistrationError
 │   ├── class.rs        # ClassBuilder (value/ref types with declaration string methods)
+│   ├── enum_builder.rs # EnumBuilder for enum registration
+│   ├── interface_builder.rs # InterfaceBuilder for interface registration
 │   ├── any_type.rs     # AnyRef, AnyRefMut for ?& parameters
 │   ├── types.rs        # TypeKind, Behaviors, TemplateInstanceInfo, TemplateValidation
 │   ├── global_property.rs # GlobalPropertyDef, GlobalPropertyRef
@@ -1503,7 +1523,7 @@ Detailed task files are in `/claude/tasks/`. Complete in order:
 **To Create (FFI Core):**
 - `src/context.rs` - Context (owns installed modules)
 - `src/unit.rs` - Unit (compilation unit)
-- `src/ffi/mod.rs` - Public re-exports (Module, ClassBuilder, traits)
+- `src/ffi/mod.rs` - Public re-exports (Module, ClassBuilder, EnumBuilder, InterfaceBuilder, traits)
 - `src/ffi/module.rs` - Module<'app> with register_fn, register_type, register_enum, etc.
 - `src/ffi/types.rs` - TypeKind, Behaviors, TemplateInstanceInfo, TemplateValidation
 - `src/ffi/traits.rs` - FromScript, ToScript, NativeType, IntoNativeFn
@@ -1511,6 +1531,8 @@ Detailed task files are in `/claude/tasks/`. Complete in order:
 - `src/ffi/error.rs` - NativeError, FfiRegistrationError
 - `src/ffi/global_property.rs` - GlobalPropertyDef, GlobalPropertyRef
 - `src/ffi/class.rs` - ClassBuilder with declaration string methods
+- `src/ffi/enum_builder.rs` - EnumBuilder for enum registration
+- `src/ffi/interface_builder.rs` - InterfaceBuilder for interface registration
 - `src/ffi/any_type.rs` - AnyRef, AnyRefMut
 - `src/ffi/apply.rs` - apply_to_registry() implementation
 

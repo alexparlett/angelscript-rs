@@ -2,47 +2,103 @@
 
 **Status:** Not Started
 **Depends On:** Task 01, Task 02
-**Estimated Scope:** Direct registration with declaration string parsing
+**Estimated Scope:** Builder pattern for enum/interface, declaration string for funcdef
 
 ---
 
 ## Objective
 
-Implement `Module.register_enum()`, `Module.register_interface()`, and `Module.register_funcdef()` for registering enums, interfaces, and function pointer types. All use full AngelScript declaration string parsing - no separate builders needed.
+Implement `Module.register_enum()`, `Module.register_interface()`, and `Module.register_funcdef()` for registering enums, interfaces, and function pointer types. Enum and interface use builder patterns (like `ClassBuilder`), while funcdef uses declaration string parsing.
 
 ## Files to Create/Modify
 
 - `src/ffi/module.rs` - Add `register_enum`, `register_interface`, `register_funcdef` methods
+- `src/ffi/enum_builder.rs` - `EnumBuilder` implementation
+- `src/ffi/interface_builder.rs` - `InterfaceBuilder` implementation
 
 ## API Design
 
 ```rust
 impl<'app> Module<'app> {
-    /// Register an enum with full declaration parsing
+    /// Register an enum type, returning a builder
     ///
-    /// Declaration format: "enum Name { Value1 [= N], Value2, ... }"
-    /// Examples:
-    ///   - "enum Color { Red = 0, Green = 1, Blue = 2 }"
-    ///   - "enum Direction { North, East, South, West }"  // auto-numbered 0,1,2,3
-    ///   - "enum Flags { None = 0, Read = 1, Write = 2, Execute = 4 }"
-    pub fn register_enum(&mut self, decl: &str) -> Result<(), FfiRegistrationError>;
+    /// Example:
+    ///   module.register_enum("Color")
+    ///       .value("Red", 0)?
+    ///       .value("Green", 1)?
+    ///       .build()?;
+    pub fn register_enum(&mut self, name: &str) -> EnumBuilder<'_, 'app>;
 
-    /// Register an interface with full declaration parsing
+    /// Register an interface type, returning a builder
     ///
-    /// Declaration format: "interface Name { method1(); method2(); ... }"
-    /// Examples:
-    ///   - "interface IDrawable { void draw() const; void setVisible(bool); }"
-    ///   - "interface ISerializable { string serialize() const; void deserialize(const string &in); }"
-    pub fn register_interface(&mut self, decl: &str) -> Result<(), FfiRegistrationError>;
+    /// Example:
+    ///   module.register_interface("IDrawable")
+    ///       .method("void draw() const")?
+    ///       .build()?;
+    pub fn register_interface(&mut self, name: &str) -> InterfaceBuilder<'_, 'app>;
 
-    /// Register a funcdef (function pointer type) with full declaration parsing
+    /// Register a funcdef (function pointer type) with declaration string
     ///
     /// Declaration format: "funcdef ReturnType Name(params)"
     /// Examples:
     ///   - "funcdef void Callback()"
     ///   - "funcdef bool Predicate(int value)"
     ///   - "funcdef void EventHandler(const string &in event, ?&in data)"
-    pub fn register_funcdef(&mut self, decl: &str) -> Result<(), FfiRegistrationError>;
+    pub fn register_funcdef(&mut self, decl: &str) -> Result<&mut Self, FfiRegistrationError>;
+}
+```
+
+## EnumBuilder
+
+```rust
+pub struct EnumBuilder<'m, 'app> {
+    module: &'m mut Module<'app>,
+    name: String,
+    values: Vec<(String, i64)>,
+    next_value: i64,
+}
+
+impl<'m, 'app> EnumBuilder<'m, 'app> {
+    /// Add an enum value with explicit integer value
+    pub fn value(mut self, name: &str, value: i64) -> Result<Self, FfiRegistrationError> {
+        self.values.push((name.to_string(), value));
+        self.next_value = value + 1;
+        Ok(self)
+    }
+
+    /// Add an enum value with auto-incremented value
+    pub fn auto_value(mut self, name: &str) -> Result<Self, FfiRegistrationError> {
+        self.values.push((name.to_string(), self.next_value));
+        self.next_value += 1;
+        Ok(self)
+    }
+
+    /// Finish building and register the enum
+    pub fn build(self) -> Result<(), FfiRegistrationError>;
+}
+```
+
+## InterfaceBuilder
+
+```rust
+pub struct InterfaceBuilder<'m, 'app> {
+    module: &'m mut Module<'app>,
+    name: String,
+    methods: Vec<NativeMethodDef<'m>>,
+}
+
+impl<'m, 'app> InterfaceBuilder<'m, 'app> {
+    /// Add an interface method using declaration string
+    ///
+    /// Declaration format: "ReturnType name(params) [const]"
+    /// Examples:
+    ///   - "void draw() const"
+    ///   - "string serialize() const"
+    ///   - "void setName(const string &in name)"
+    pub fn method(mut self, decl: &str) -> Result<Self, FfiRegistrationError>;
+
+    /// Finish building and register the interface
+    pub fn build(self) -> Result<(), FfiRegistrationError>;
 }
 ```
 
@@ -52,51 +108,63 @@ impl<'app> Module<'app> {
 
 ```rust
 // Basic enum with explicit values
-module.register_enum("enum Color { Red = 0, Green = 1, Blue = 2 }")?;
+module.register_enum("Color")
+    .value("Red", 0)?
+    .value("Green", 1)?
+    .value("Blue", 2)?
+    .build()?;
 
 // Auto-numbered enum (values: 0, 1, 2, 3)
-module.register_enum("enum Direction { North, East, South, West }")?;
+module.register_enum("Direction")
+    .auto_value("North")?
+    .auto_value("East")?
+    .auto_value("South")?
+    .auto_value("West")?
+    .build()?;
 
 // Flags with power-of-2 values
-module.register_enum("enum FileFlags { None = 0, Read = 1, Write = 2, Execute = 4, All = 7 }")?;
+module.register_enum("FileFlags")
+    .value("None", 0)?
+    .value("Read", 1)?
+    .value("Write", 2)?
+    .value("Execute", 4)?
+    .value("All", 7)?
+    .build()?;
 
-// Multi-line for readability
-module.register_enum("
-    enum Status {
-        Pending = 0,
-        Running = 1,
-        Completed = 2,
-        Failed = 3,
-        Cancelled = 4
-    }
-")?;
+// Mixed explicit and auto values
+module.register_enum("Status")
+    .value("Pending", 0)?
+    .auto_value("Running")?      // 1
+    .auto_value("Completed")?    // 2
+    .value("Failed", -1)?        // explicit
+    .value("Cancelled", -2)?     // explicit
+    .build()?;
 ```
 
 ### Interfaces
 
 ```rust
 // Simple interface
-module.register_interface("interface IDrawable { void draw() const; void setVisible(bool); }")?;
+module.register_interface("IDrawable")
+    .method("void draw() const")?
+    .method("void setVisible(bool visible)")?
+    .build()?;
 
 // Serialization interface
-module.register_interface("
-    interface ISerializable {
-        string serialize() const;
-        void deserialize(const string &in data);
-    }
-")?;
+module.register_interface("ISerializable")
+    .method("string serialize() const")?
+    .method("void deserialize(const string &in data)")?
+    .build()?;
 
 // Complex interface with multiple methods
-module.register_interface("
-    interface IGameEntity {
-        string getName() const;
-        void setName(const string &in name);
-        Vec3 getPosition() const;
-        void setPosition(const Vec3 &in pos);
-        void update(float deltaTime);
-        void render() const;
-    }
-")?;
+module.register_interface("IGameEntity")
+    .method("string getName() const")?
+    .method("void setName(const string &in name)")?
+    .method("Vec3 getPosition() const")?
+    .method("void setPosition(const Vec3 &in pos)")?
+    .method("void update(float deltaTime)")?
+    .method("void render() const")?
+    .build()?;
 ```
 
 ### Funcdefs
@@ -120,19 +188,20 @@ module.register_funcdef("funcdef Entity@ EntityFactory(const string &in name)")?
 
 ## AST Reuse Strategy
 
-**Key Design Decision:** We reuse the existing AST parser infrastructure rather than creating a separate parsing system. All three registration methods leverage the existing parser.
+**Key Design Decision:** We reuse the existing AST parser infrastructure for parsing method signatures (in `InterfaceBuilder`) and funcdef declarations.
 
 ### Parser Analysis
 
 Looking at the existing parser (`src/ast/decl_parser.rs`):
 
-1. **`parse_enum`** - Already ends at `}` without requiring trailing semicolon - **usable as-is**
-2. **`parse_interface`** - Already ends at `}` without requiring trailing semicolon - **usable as-is**
-3. **`parse_funcdef`** - Requires semicolon at line 2531 - **needs refactoring**
+1. **`parse_funcdef`** - Requires semicolon at line 2531 - **needs refactoring**
+2. **`parse_function_or_global_var`** - Requires semicolon - **needs refactoring** (for method signatures)
+3. **`parse_enum`** - NOT needed for FFI (using builder pattern)
+4. **`parse_interface`** - NOT needed for FFI (using builder pattern)
 
 ### Refactoring Required
 
-Only `parse_funcdef` needs internal refactoring to separate signature parsing from the semicolon requirement:
+Only `parse_funcdef` needs refactoring for FFI funcdef registration:
 
 ```rust
 impl<'ast> Parser<'ast> {
@@ -175,82 +244,31 @@ impl<'ast> Parser<'ast> {
 }
 ```
 
-For **enum** and **interface**, the existing `parse_enum` and `parse_interface` methods can be called directly - they already end at `}`. The FFI code just needs to verify EOF after calling them.
-
-### Parsed Result Types
-
-These wrap existing AST types where possible:
-
-```rust
-// Enum declaration - values parsed with existing expression parser
-pub struct EnumDecl<'ast> {
-    pub name: &'ast Ident<'ast>,
-    pub values: Vec<EnumValue<'ast>>,
-}
-
-pub struct EnumValue<'ast> {
-    pub name: &'ast Ident<'ast>,
-    pub value: Option<i64>,  // Parsed from const expr, None = auto-increment
-}
-
-// Interface declaration - methods use existing FunctionParam parsing
-pub struct InterfaceDecl<'ast> {
-    pub name: &'ast Ident<'ast>,
-    pub methods: Vec<InterfaceMethod<'ast>>,
-}
-
-pub struct InterfaceMethod<'ast> {
-    pub name: &'ast Ident<'ast>,
-    pub params: Vec<&'ast FunctionParam<'ast>>,  // Reuses existing type
-    pub return_type: &'ast TypeExpr<'ast>,       // Reuses existing type
-    pub is_const: bool,
-}
-
-// Funcdef declaration - fully reuses existing types
-pub struct FuncdefDecl<'ast> {
-    pub name: &'ast Ident<'ast>,
-    pub params: Vec<&'ast FunctionParam<'ast>>,  // Reuses existing type
-    pub return_type: &'ast TypeExpr<'ast>,       // Reuses existing type
-}
-```
-
-### Module's Parsing Methods
-
-```rust
-impl<'app> Module<'app> {
-    pub fn register_enum(&mut self, decl: &str) -> Result<&mut Self, FfiRegistrationError> {
-        let lexer = Lexer::new(decl, "ffi");
-        let mut parser = Parser::new(lexer, &self.arena);
-        let enum_decl = parser.parse_enum_decl()
-            .map_err(|e| FfiRegistrationError::ParseError { ... })?;
-
-        // Store parsed enum with arena-allocated AST nodes
-        self.enums.push(enum_decl);
-        Ok(self)
-    }
-
-    // Similar for register_interface and register_funcdef
-}
-```
+For **InterfaceBuilder.method()**, we reuse the function signature parsing from Task 03 (`parse_ffi_function_signature`).
 
 ## Internal Storage
 
-Each registration stores parsed AST types:
-
 ```rust
-pub(crate) struct NativeEnumDef<'ast> {
-    pub name: &'ast Ident<'ast>,
-    pub values: Vec<(&'ast Ident<'ast>, i64)>,
+pub(crate) struct NativeEnumDef {
+    pub name: String,
+    pub values: Vec<(String, i64)>,
 }
 
 pub(crate) struct NativeInterfaceDef<'ast> {
-    pub name: &'ast Ident<'ast>,
+    pub name: String,
     pub methods: Vec<InterfaceMethod<'ast>>,
+}
+
+pub(crate) struct InterfaceMethod<'ast> {
+    pub name: &'ast Ident<'ast>,
+    pub params: &'ast [FunctionParam<'ast>],
+    pub return_type: &'ast TypeExpr<'ast>,
+    pub is_const: bool,
 }
 
 pub(crate) struct NativeFuncdefDef<'ast> {
     pub name: &'ast Ident<'ast>,
-    pub params: Vec<&'ast FunctionParam<'ast>>,
+    pub params: &'ast [FunctionParam<'ast>],
     pub return_type: &'ast TypeExpr<'ast>,
 }
 ```
@@ -273,19 +291,22 @@ pub enum FfiRegistrationError {
 
 ## Implementation Notes
 
-1. Enum values without explicit assignment auto-increment from previous value (or 0)
-2. Interface methods are signatures only - no implementations
-3. Funcdefs create named function pointer types
-4. All are stored with arena-allocated AST nodes
+1. EnumBuilder uses simple string names and i64 values (no AST parsing needed)
+2. InterfaceBuilder parses method signatures using existing FFI function signature parser
+3. Funcdefs parse full declaration strings using `parse_ffi_funcdef`
+4. Interface methods are signatures only - no implementations (scripts implement them)
 5. Namespace is inherited from the Module
+6. Enum values can be explicit or auto-incremented
 
 ## Acceptance Criteria
 
-- [ ] Enums can be registered with full declaration strings
-- [ ] Enum values support explicit and auto-incremented values
-- [ ] Interfaces can be registered with method signatures
+- [ ] `register_enum` returns `EnumBuilder`
+- [ ] `EnumBuilder.value()` adds explicit enum values
+- [ ] `EnumBuilder.auto_value()` adds auto-incremented values
+- [ ] `register_interface` returns `InterfaceBuilder`
+- [ ] `InterfaceBuilder.method()` parses method declaration strings
 - [ ] Interface method constness is parsed correctly
-- [ ] Funcdefs create proper function pointer types
-- [ ] Multi-line declarations work correctly
+- [ ] `register_funcdef` parses full funcdef declaration strings
+- [ ] Funcdefs support template parameters
 - [ ] Parse errors return descriptive messages
 - [ ] All work with the namespace system
