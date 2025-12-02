@@ -914,7 +914,7 @@ mod tests {
         // Parse a simple script with two functions
         let source = "void foo() {} int bar() { return 0; }";
         let arena = bumpalo::Bump::new();
-        let script = crate::ast::parse(source, &arena).expect("Failed to parse test script");
+        let script = crate::ast::Parser::parse(source, &arena).expect("Failed to parse test script");
 
         let mut counter = FunctionCounter { count: 0 };
         walk_script(&mut counter, &script);
@@ -1004,7 +1004,7 @@ mod tests {
             }
         "#;
         let arena = bumpalo::Bump::new();
-        let script = crate::ast::parse(source, &arena).expect("Failed to parse");
+        let script = crate::ast::Parser::parse(source, &arena).expect("Failed to parse");
 
         let mut counter = NodeCounter::new();
         walk_script(&mut counter, &script);
@@ -1023,7 +1023,7 @@ mod tests {
             }
         "#;
         let arena = bumpalo::Bump::new();
-        let script = crate::ast::parse(source, &arena).expect("Failed to parse");
+        let script = crate::ast::Parser::parse(source, &arena).expect("Failed to parse");
 
         let mut counter = NodeCounter::new();
         walk_script(&mut counter, &script);
@@ -1041,7 +1041,7 @@ mod tests {
             }
         "#;
         let arena = bumpalo::Bump::new();
-        let script = crate::ast::parse(source, &arena).expect("Failed to parse");
+        let script = crate::ast::Parser::parse(source, &arena).expect("Failed to parse");
 
         let mut counter = NodeCounter::new();
         walk_script(&mut counter, &script);
@@ -1062,7 +1062,7 @@ mod tests {
             }
         "#;
         let arena = bumpalo::Bump::new();
-        let script = crate::ast::parse(source, &arena).expect("Failed to parse");
+        let script = crate::ast::Parser::parse(source, &arena).expect("Failed to parse");
 
         let mut counter = NodeCounter::new();
         walk_script(&mut counter, &script);
@@ -1085,7 +1085,7 @@ mod tests {
             }
         "#;
         let arena = bumpalo::Bump::new();
-        let script = crate::ast::parse(source, &arena).expect("Failed to parse");
+        let script = crate::ast::Parser::parse(source, &arena).expect("Failed to parse");
 
         let mut counter = NodeCounter::new();
         walk_script(&mut counter, &script);
@@ -1104,7 +1104,7 @@ mod tests {
             }
         "#;
         let arena = bumpalo::Bump::new();
-        let script = crate::ast::parse(source, &arena).expect("Failed to parse");
+        let script = crate::ast::Parser::parse(source, &arena).expect("Failed to parse");
 
         let mut counter = NodeCounter::new();
         walk_script(&mut counter, &script);
@@ -1122,7 +1122,7 @@ mod tests {
             }
         "#;
         let arena = bumpalo::Bump::new();
-        let script = crate::ast::parse(source, &arena).expect("Failed to parse");
+        let script = crate::ast::Parser::parse(source, &arena).expect("Failed to parse");
 
         let mut counter = NodeCounter::new();
         walk_script(&mut counter, &script);
@@ -1146,7 +1146,7 @@ mod tests {
             }
         "#;
         let arena = bumpalo::Bump::new();
-        let script = crate::ast::parse(source, &arena).expect("Failed to parse");
+        let script = crate::ast::Parser::parse(source, &arena).expect("Failed to parse");
 
         let mut counter = NodeCounter::new();
         walk_script(&mut counter, &script);
@@ -1174,7 +1174,7 @@ mod tests {
             }
         "#;
         let arena = bumpalo::Bump::new();
-        let script = crate::ast::parse(source, &arena).expect("Failed to parse");
+        let script = crate::ast::Parser::parse(source, &arena).expect("Failed to parse");
 
         let mut counter = DoWhileCounter { count: 0 };
         walk_script(&mut counter, &script);
@@ -1204,7 +1204,7 @@ mod tests {
             }
         "#;
         let arena = bumpalo::Bump::new();
-        let script = crate::ast::parse(source, &arena).expect("Failed to parse");
+        let script = crate::ast::Parser::parse(source, &arena).expect("Failed to parse");
 
         let mut counter = TryCatchCounter { count: 0 };
         walk_script(&mut counter, &script);
@@ -1228,7 +1228,7 @@ mod tests {
 
         let source = "void test() { int x = -5; bool b = !true; }";
         let arena = bumpalo::Bump::new();
-        let script = crate::ast::parse(source, &arena).expect("Failed to parse");
+        let script = crate::ast::Parser::parse(source, &arena).expect("Failed to parse");
 
         let mut counter = UnaryCounter { count: 0 };
         walk_script(&mut counter, &script);
@@ -1250,7 +1250,7 @@ mod tests {
 
         let source = "void test() { int x = true ? 1 : 2; }";
         let arena = bumpalo::Bump::new();
-        let script = crate::ast::parse(source, &arena).expect("Failed to parse");
+        let script = crate::ast::Parser::parse(source, &arena).expect("Failed to parse");
 
         let mut counter = TernaryCounter { count: 0 };
         walk_script(&mut counter, &script);
@@ -1272,7 +1272,7 @@ mod tests {
 
         let source = "void test() { foo(); bar(1, 2); }";
         let arena = bumpalo::Bump::new();
-        let script = crate::ast::parse(source, &arena).expect("Failed to parse");
+        let script = crate::ast::Parser::parse(source, &arena).expect("Failed to parse");
 
         let mut counter = CallCounter { count: 0 };
         walk_script(&mut counter, &script);
@@ -1294,7 +1294,7 @@ mod tests {
 
         let source = "void test() { int x = arr[0]; int y = matrix[1][2]; }";
         let arena = bumpalo::Bump::new();
-        let script = crate::ast::parse(source, &arena).expect("Failed to parse");
+        let script = crate::ast::Parser::parse(source, &arena).expect("Failed to parse");
 
         let mut counter = IndexCounter { count: 0 };
         walk_script(&mut counter, &script);
@@ -1317,7 +1317,7 @@ mod tests {
 
         let source = "void test() { int x = obj.field; obj.method(); }";
         let arena = bumpalo::Bump::new();
-        let script = crate::ast::parse(source, &arena).expect("Failed to parse");
+        let script = crate::ast::Parser::parse(source, &arena).expect("Failed to parse");
 
         let mut counter = MemberCounter { count: 0 };
         walk_script(&mut counter, &script);
@@ -1339,7 +1339,7 @@ mod tests {
 
         let source = "void test() { int x = 0; x++; x--; }";
         let arena = bumpalo::Bump::new();
-        let script = crate::ast::parse(source, &arena).expect("Failed to parse");
+        let script = crate::ast::Parser::parse(source, &arena).expect("Failed to parse");
 
         let mut counter = PostfixCounter { count: 0 };
         walk_script(&mut counter, &script);
@@ -1361,7 +1361,7 @@ mod tests {
 
         let source = "void test() { float x = float(42); }";
         let arena = bumpalo::Bump::new();
-        let script = crate::ast::parse(source, &arena).expect("Failed to parse");
+        let script = crate::ast::Parser::parse(source, &arena).expect("Failed to parse");
 
         let mut counter = CastCounter { count: 0 };
         walk_script(&mut counter, &script);
@@ -1383,7 +1383,7 @@ mod tests {
 
         let source = "void test() { int x; x = 1; x += 2; }";
         let arena = bumpalo::Bump::new();
-        let script = crate::ast::parse(source, &arena).expect("Failed to parse");
+        let script = crate::ast::Parser::parse(source, &arena).expect("Failed to parse");
 
         let mut counter = AssignCounter { count: 0 };
         walk_script(&mut counter, &script);
@@ -1410,7 +1410,7 @@ mod tests {
             }
         "#;
         let arena = bumpalo::Bump::new();
-        let script = crate::ast::parse(source, &arena).expect("Failed to parse");
+        let script = crate::ast::Parser::parse(source, &arena).expect("Failed to parse");
 
         let mut counter = LambdaCounter { count: 0 };
         walk_script(&mut counter, &script);
@@ -1432,7 +1432,7 @@ mod tests {
 
         let source = "void test() { array<int> arr = {1, 2, 3}; }";
         let arena = bumpalo::Bump::new();
-        let script = crate::ast::parse(source, &arena).expect("Failed to parse");
+        let script = crate::ast::Parser::parse(source, &arena).expect("Failed to parse");
 
         let mut counter = InitListCounter { count: 0 };
         walk_script(&mut counter, &script);
@@ -1454,7 +1454,7 @@ mod tests {
 
         let source = "void test() { int x = (1 + 2) * (3 + 4); }";
         let arena = bumpalo::Bump::new();
-        let script = crate::ast::parse(source, &arena).expect("Failed to parse");
+        let script = crate::ast::Parser::parse(source, &arena).expect("Failed to parse");
 
         let mut counter = ParenCounter { count: 0 };
         walk_script(&mut counter, &script);
@@ -1478,7 +1478,7 @@ mod tests {
 
         let source = "void test() { int x; float y; array<int> arr; }";
         let arena = bumpalo::Bump::new();
-        let script = crate::ast::parse(source, &arena).expect("Failed to parse");
+        let script = crate::ast::Parser::parse(source, &arena).expect("Failed to parse");
 
         let mut counter = TypeExprCounter { count: 0 };
         walk_script(&mut counter, &script);
@@ -1503,7 +1503,7 @@ mod tests {
 
         let source = "typedef int MyInt;";
         let arena = bumpalo::Bump::new();
-        let script = crate::ast::parse(source, &arena).expect("Failed to parse");
+        let script = crate::ast::Parser::parse(source, &arena).expect("Failed to parse");
 
         let mut counter = TypedefCounter { count: 0 };
         walk_script(&mut counter, &script);
@@ -1525,7 +1525,7 @@ mod tests {
 
         let source = "funcdef void Callback(int x, int y);";
         let arena = bumpalo::Bump::new();
-        let script = crate::ast::parse(source, &arena).expect("Failed to parse");
+        let script = crate::ast::Parser::parse(source, &arena).expect("Failed to parse");
 
         let mut counter = FuncdefCounter { count: 0 };
         walk_script(&mut counter, &script);
@@ -1547,7 +1547,7 @@ mod tests {
 
         let source = "int globalX = 10; float globalY;";
         let arena = bumpalo::Bump::new();
-        let script = crate::ast::parse(source, &arena).expect("Failed to parse");
+        let script = crate::ast::Parser::parse(source, &arena).expect("Failed to parse");
 
         let mut counter = GlobalVarCounter { count: 0 };
         walk_script(&mut counter, &script);
@@ -1569,7 +1569,7 @@ mod tests {
 
         let source = "mixin class Helper { int value; }";
         let arena = bumpalo::Bump::new();
-        let script = crate::ast::parse(source, &arena).expect("Failed to parse");
+        let script = crate::ast::Parser::parse(source, &arena).expect("Failed to parse");
 
         let mut counter = MixinCounter { count: 0 };
         walk_script(&mut counter, &script);
@@ -1591,7 +1591,7 @@ mod tests {
 
         let source = r#"import void external() from "module";"#;
         let arena = bumpalo::Bump::new();
-        let script = crate::ast::parse(source, &arena).expect("Failed to parse");
+        let script = crate::ast::Parser::parse(source, &arena).expect("Failed to parse");
 
         let mut counter = ImportCounter { count: 0 };
         walk_script(&mut counter, &script);
@@ -1633,7 +1633,7 @@ mod tests {
             }
         "#;
         let arena = bumpalo::Bump::new();
-        let script = crate::ast::parse(source, &arena).expect("Failed to parse");
+        let script = crate::ast::Parser::parse(source, &arena).expect("Failed to parse");
 
         let mut counter = NodeCounter::new();
         walk_script(&mut counter, &script);
@@ -1665,7 +1665,7 @@ mod tests {
             }
         "#;
         let arena = bumpalo::Bump::new();
-        let script = crate::ast::parse(source, &arena).expect("Failed to parse");
+        let script = crate::ast::Parser::parse(source, &arena).expect("Failed to parse");
 
         let mut counter = VirtualPropertyCounter { count: 0 };
         walk_script(&mut counter, &script);
@@ -1694,7 +1694,7 @@ mod tests {
             }
         "#;
         let arena = bumpalo::Bump::new();
-        let script = crate::ast::parse(source, &arena).expect("Failed to parse");
+        let script = crate::ast::Parser::parse(source, &arena).expect("Failed to parse");
 
         let mut counter = ForeachCounter { count: 0 };
         walk_script(&mut counter, &script);
@@ -1729,7 +1729,7 @@ mod tests {
             }
         "#;
         let arena = bumpalo::Bump::new();
-        let script = crate::ast::parse(source, &arena).expect("Failed to parse");
+        let script = crate::ast::Parser::parse(source, &arena).expect("Failed to parse");
 
         let mut counter = BreakContinueCounter { breaks: 0, continues: 0 };
         walk_script(&mut counter, &script);
@@ -1752,7 +1752,7 @@ mod tests {
 
         let source = "void test() { int x = 1, y = 2; float z; }";
         let arena = bumpalo::Bump::new();
-        let script = crate::ast::parse(source, &arena).expect("Failed to parse");
+        let script = crate::ast::Parser::parse(source, &arena).expect("Failed to parse");
 
         let mut counter = VarDeclCounter { count: 0 };
         walk_script(&mut counter, &script);
@@ -1774,7 +1774,7 @@ mod tests {
 
         let source = "int foo() { return 0; } float bar() { return 0.0f; }";
         let arena = bumpalo::Bump::new();
-        let script = crate::ast::parse(source, &arena).expect("Failed to parse");
+        let script = crate::ast::Parser::parse(source, &arena).expect("Failed to parse");
 
         let mut counter = ReturnTypeCounter { count: 0 };
         walk_script(&mut counter, &script);
@@ -1796,7 +1796,7 @@ mod tests {
 
         let source = "void test(int a, float b, bool c) {}";
         let arena = bumpalo::Bump::new();
-        let script = crate::ast::parse(source, &arena).expect("Failed to parse");
+        let script = crate::ast::Parser::parse(source, &arena).expect("Failed to parse");
 
         let mut counter = ParamTypeCounter { count: 0 };
         walk_script(&mut counter, &script);

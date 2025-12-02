@@ -9,7 +9,7 @@
 //! The implementation follows a traditional compiler pipeline:
 //!
 //! 1. **Lexer** - Tokenizes source text ([`lexer`] module)
-//! 2. **Parser** - Builds an AST ([`parse_lenient`] function)
+//! 2. **Parser** - Builds an AST ([`Parser::parse`] function)
 //! 3. **Semantic Analysis** - 3-pass compilation ([`semantic::Compiler`])
 //!    - Pass 1: Registration (register all global names)
 //!    - Pass 2a: Type Compilation (resolve types)
@@ -48,13 +48,13 @@
 //! # Example: Parse Only
 //!
 //! ```
-//! use angelscript::parse_lenient;
+//! use angelscript::Parser;
 //! use bumpalo::Bump;
 //!
 //! let arena = Bump::new();
 //! let source = "int add(int a, int b) { return a + b; }";
 //!
-//! let (script, errors) = parse_lenient(source, &arena);
+//! let (script, errors) = Parser::parse_lenient(source, &arena);
 //! if errors.is_empty() {
 //!     println!("Successfully parsed {} items", script.items().len());
 //! }
@@ -69,7 +69,15 @@ pub mod semantic;
 pub mod codegen;
 mod unit;
 
-pub use ast::{parse, parse_expression, parse_function_decl, parse_lenient, parse_property_decl, parse_statement, parse_type_expr};
+// Re-export Parser as the primary parsing interface
+pub use ast::Parser;
+
+// Re-export deprecated free functions for backwards compatibility
+#[allow(deprecated)]
+pub use ast::{parse, parse_expression, parse_lenient, parse_property_expr, parse_statement, parse_type_expr};
+
+// Re-export FFI parsing functions
+pub use ast::{parse_function_decl, parse_property_decl};
 
 // Re-export visitor for AST traversal
 pub use ast::visitor;

@@ -20,7 +20,7 @@
 use bumpalo::Bump;
 use thiserror::Error;
 
-use crate::ast::{parse_function_decl, parse_property_decl, FunctionSignatureDecl, PropertyDecl};
+use crate::ast::{FunctionSignatureDecl, Parser, PropertyDecl};
 use crate::ffi::{
     GlobalPropertyDef, IntoNativeFn, NativeCallable, NativeFn, NativeFuncdefDef, NativeFunctionDef,
     NativeInterfaceDef, NativeTypeDef,
@@ -235,7 +235,7 @@ impl<'app> Module<'app> {
         }
 
         // Parse the declaration using the module's arena
-        let sig = parse_function_decl(decl, &self.arena).map_err(|errors| {
+        let sig = Parser::function_decl(decl, &self.arena).map_err(|errors| {
             FfiModuleError::InvalidDeclaration(format!("parse error: {}", errors))
         })?;
 
@@ -299,7 +299,7 @@ impl<'app> Module<'app> {
         }
 
         // Parse the declaration using the module's arena
-        let sig = parse_function_decl(decl, &self.arena).map_err(|errors| {
+        let sig = Parser::function_decl(decl, &self.arena).map_err(|errors| {
             FfiModuleError::InvalidDeclaration(format!("parse error: {}", errors))
         })?;
 
@@ -506,7 +506,7 @@ impl<'app> Module<'app> {
         }
 
         // Parse the declaration using the module's arena
-        let prop = parse_property_decl(decl, &self.arena).map_err(|errors| {
+        let prop = Parser::property_decl(decl, &self.arena).map_err(|errors| {
             FfiModuleError::InvalidDeclaration(format!("parse error: {}", errors))
         })?;
 

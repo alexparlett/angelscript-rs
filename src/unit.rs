@@ -32,7 +32,7 @@
 //! ```
 
 use crate::semantic::{Compiler, CompiledModule, SemanticError};
-use crate::{parse_lenient, ParseError};
+use crate::{Parser, ParseError};
 use bumpalo::Bump;
 use std::collections::{HashMap, HashSet};
 
@@ -231,7 +231,7 @@ impl Unit {
             let mut scripts = Vec::new();
 
             for (filename, source) in &self.sources {
-                let (script, parse_errors) = parse_lenient(source, &arena);
+                let (script, parse_errors) = Parser::parse_lenient(source, &arena);
 
                 if !parse_errors.is_empty() {
                     all_parse_errors.push((filename.clone(), parse_errors));

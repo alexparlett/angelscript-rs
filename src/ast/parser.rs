@@ -3,7 +3,7 @@
 //! Provides the main [`Parser`] struct with token navigation and basic
 //! parsing infrastructure.
 
-use crate::ast::{ParseError, ParseErrorKind, ParseErrors};
+use crate::ast::{ParseError, ParseErrorKind, ParseErrors, Expr, Stmt, TypeExpr, Ident, Script, FunctionSignatureDecl, PropertyDecl};
 use crate::lexer::{Lexer, Span, Token, TokenKind};
 use bumpalo::Bump;
 
@@ -453,6 +453,370 @@ impl<'ast> Parser<'ast> {
         }
 
         depth == 0
+    }
+
+    // ========================================================================
+    // Public Parsing Entry Points
+    // ========================================================================
+
+    /// Parse AngelScript source code into an AST.
+    ///
+    /// Requires a `bumpalo::Bump` arena allocator for AST node allocation.
+    /// All AST nodes will be allocated in the arena and remain valid for the arena's lifetime.
+    ///
+    /// For multi-file compilation, use `CompilationContext` which owns an arena and
+    /// allows multiple scripts to share the same arena.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use angelscript::Parser;
+    /// use bumpalo::Bump;
+    ///
+    /// let arena = Bump::new();
+    /// let source = r#"
+    ///     class Player {
+    ///         int health = 100;
+    ///         void takeDamage(int amount) {
+    ///             health -= amount;
+    ///         }
+    ///     }
+    /// "#;
+    ///
+    /// match Parser::parse(source, &arena) {
+    ///     Ok(script) => {
+    ///         println!("Parsed {} items", script.items().len());
+    ///     }
+    ///     Err(errors) => {
+    ///         eprintln!("Parse errors: {}", errors);
+    ///     }
+    /// }
+    /// ```
+    #[cfg_attr(feature = "profiling", profiling::function)]
+    pub fn parse(source: &str, arena: &'ast Bump) -> Result<Script<'ast>, ParseErrors> {
+        let mut parser = Parser::new(source, arena);
+
+        let result = parser.parse_script();
+
+        match result {
+            Ok((items, span)) => {
+                if parser.has_errors() {
+                    Err(parser.take_errors())
+                } else {
+                    Ok(Script::new(items, span))
+                }
+            }
+            Err(err) => {
+                parser.errors.push(err);
+                Err(parser.take_errors())
+            }
+        }
+    }
+
+    /// Parse AngelScript source code leniently, returning both the AST and any errors.
+    ///
+    /// This function always returns a `Script`, even if errors occurred. The script
+    /// may be incomplete, but it can still be useful for analysis, error recovery,
+    /// or partial processing.
+    ///
+    /// Requires a `bumpalo::Bump` arena allocator for AST node allocation.
+    ///
+    /// Returns a tuple of `(Script, Vec<ParseError>)` where the error vector may be empty.
+    ///
+    /// For multi-file compilation, use `CompilationContext` which owns an arena and
+    /// allows multiple scripts to share the same arena.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use angelscript::Parser;
+    /// use bumpalo::Bump;
+    ///
+    /// let arena = Bump::new();
+    /// let source = r#"
+    ///     class Player {
+    ///         int health = 100;
+    ///         void takeDamage(int amount) {
+    ///             health -= amount;
+    ///         }
+    ///     }
+    /// "#;
+    ///
+    /// let (script, errors) = Parser::parse_lenient(source, &arena);
+    ///
+    /// println!("Parsed {} items", script.items().len());
+    /// println!("Found {} errors", errors.len());
+    ///
+    /// // Can still work with the partial AST
+    /// for item in script.items() {
+    ///     // Process items...
+    /// }
+    ///
+    /// // And handle errors
+    /// for error in &errors {
+    ///     eprintln!("Warning: {}", error);
+    /// }
+    /// ```
+    #[cfg_attr(feature = "profiling", profiling::function)]
+    pub fn parse_lenient(source: &str, arena: &'ast Bump) -> (Script<'ast>, Vec<ParseError>) {
+        let mut parser = Parser::new(source, arena);
+
+        let (items, span) = parser.parse_script().unwrap_or_else(|err| {
+            parser.errors.push(err);
+            (&[][..], Span::new(1, 1, 0))
+        });
+
+        let errors = parser.take_errors().into_vec();
+        (Script::new(items, span), errors)
+    }
+
+    /// Parse a single expression from source code.
+    ///
+    /// This is useful for parsing standalone expressions or for testing.
+    /// Requires a `bumpalo::Bump` arena allocator for AST node allocation.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use angelscript::Parser;
+    /// use bumpalo::Bump;
+    ///
+    /// let arena = Bump::new();
+    /// match Parser::parse_expression("1 + 2 * 3", &arena) {
+    ///     Ok(expr) => println!("Parsed expression successfully"),
+    ///     Err(errors) => eprintln!("Errors: {}", errors),
+    /// }
+    /// ```
+    pub fn parse_expression(source: &str, arena: &'ast Bump) -> Result<&'ast Expr<'ast>, ParseErrors> {
+        let mut parser = Parser::new(source, arena);
+
+        let result = parser.parse_expr(0);
+
+        match result {
+            Ok(expr) => {
+                if parser.has_errors() {
+                    Err(parser.take_errors())
+                } else {
+                    Ok(expr)
+                }
+            }
+            Err(err) => {
+                parser.errors.push(err);
+                Err(parser.take_errors())
+            }
+        }
+    }
+
+    /// Parse a single statement from source code.
+    ///
+    /// This is useful for parsing standalone statements or for testing.
+    /// Requires a `bumpalo::Bump` arena allocator for AST node allocation.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use angelscript::Parser;
+    /// use bumpalo::Bump;
+    ///
+    /// let arena = Bump::new();
+    /// match Parser::statement("if (x > 0) { return x; }", &arena) {
+    ///     Ok(stmt) => println!("Parsed statement successfully"),
+    ///     Err(errors) => eprintln!("Errors: {}", errors),
+    /// }
+    /// ```
+    pub fn statement(source: &str, arena: &'ast Bump) -> Result<Stmt<'ast>, ParseErrors> {
+        let mut parser = Parser::new(source, arena);
+
+        let result = parser.parse_statement();
+
+        match result {
+            Ok(stmt) => {
+                if parser.has_errors() {
+                    Err(parser.take_errors())
+                } else {
+                    Ok(stmt)
+                }
+            }
+            Err(err) => {
+                parser.errors.push(err);
+                Err(parser.take_errors())
+            }
+        }
+    }
+
+    /// Parse a type expression from source code.
+    ///
+    /// This is useful for parsing standalone type expressions or for testing.
+    /// Requires a `bumpalo::Bump` arena allocator for AST node allocation.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use angelscript::Parser;
+    /// use bumpalo::Bump;
+    ///
+    /// let arena = Bump::new();
+    /// match Parser::parse_type_expr("const array<int>@", &arena) {
+    ///     Ok(ty) => println!("Parsed type successfully"),
+    ///     Err(errors) => eprintln!("Errors: {}", errors),
+    /// }
+    /// ```
+    pub fn parse_type_expr(source: &str, arena: &'ast Bump) -> Result<TypeExpr<'ast>, ParseErrors> {
+        let mut parser = Parser::new(source, arena);
+
+        let result = parser.parse_type();
+
+        match result {
+            Ok(type_expr) => {
+                if parser.has_errors() {
+                    Err(parser.take_errors())
+                } else {
+                    Ok(type_expr)
+                }
+            }
+            Err(err) => {
+                parser.errors.push(err);
+                Err(parser.take_errors())
+            }
+        }
+    }
+
+    /// Parse a property declaration expression (type followed by identifier).
+    ///
+    /// This parses strings like "const int score" or "MyClass@ obj" and returns
+    /// the type expression and identifier name.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use angelscript::Parser;
+    /// use bumpalo::Bump;
+    ///
+    /// let arena = Bump::new();
+    /// match Parser::parse_property_expr("const int score", &arena) {
+    ///     Ok((ty, name)) => println!("Property '{}' of type '{}'", name.name, ty),
+    ///     Err(errors) => eprintln!("Errors: {}", errors),
+    /// }
+    /// ```
+    pub fn parse_property_expr(source: &str, arena: &'ast Bump) -> Result<(TypeExpr<'ast>, Ident<'ast>), ParseErrors> {
+        let mut parser = Parser::new(source, arena);
+
+        // Parse the type expression
+        let type_result = parser.parse_type();
+        let type_expr = match type_result {
+            Ok(ty) => ty,
+            Err(err) => {
+                parser.errors.push(err);
+                return Err(parser.take_errors());
+            }
+        };
+
+        // Parse the identifier name
+        let name_result = parser.expect(TokenKind::Identifier);
+        let name = match name_result {
+            Ok(token) => Ident::new(token.lexeme, token.span),
+            Err(err) => {
+                parser.errors.push(err);
+                return Err(parser.take_errors());
+            }
+        };
+
+        if parser.has_errors() {
+            Err(parser.take_errors())
+        } else {
+            Ok((type_expr, name))
+        }
+    }
+
+    /// Parse a property declaration from a declaration string.
+    ///
+    /// This parses property declarations for native global property registration.
+    /// Requires a `bumpalo::Bump` arena allocator for AST node allocation.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use angelscript::Parser;
+    /// use bumpalo::Bump;
+    ///
+    /// let arena = Bump::new();
+    ///
+    /// // Simple property
+    /// let prop = Parser::property_decl("int score", &arena).unwrap();
+    /// assert_eq!(prop.name.name, "score");
+    ///
+    /// // Const property
+    /// let prop = Parser::property_decl("const float PI", &arena).unwrap();
+    /// assert!(prop.ty.is_const);
+    ///
+    /// // Handle property
+    /// let prop = Parser::property_decl("MyClass@ obj", &arena).unwrap();
+    /// assert!(prop.ty.has_handle());
+    /// ```
+    pub fn property_decl(source: &str, arena: &'ast Bump) -> Result<PropertyDecl<'ast>, ParseErrors> {
+        let mut parser = Parser::new(source, arena);
+
+        let result = parser.parse_property_decl();
+
+        match result {
+            Ok(prop) => {
+                if parser.has_errors() {
+                    Err(parser.take_errors())
+                } else {
+                    Ok(prop)
+                }
+            }
+            Err(err) => {
+                parser.errors.push(err);
+                Err(parser.take_errors())
+            }
+        }
+    }
+
+    /// Parse a function declaration from a declaration string.
+    ///
+    /// This parses function signatures for native function registration.
+    /// Requires a `bumpalo::Bump` arena allocator for AST node allocation.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use angelscript::Parser;
+    /// use bumpalo::Bump;
+    ///
+    /// let arena = Bump::new();
+    ///
+    /// // Simple function
+    /// let sig = Parser::function_decl("int add(int a, int b)", &arena).unwrap();
+    /// assert_eq!(sig.name.name, "add");
+    /// assert_eq!(sig.params.len(), 2);
+    ///
+    /// // Const method
+    /// let sig = Parser::function_decl("int getValue() const", &arena).unwrap();
+    /// assert!(sig.is_const);
+    ///
+    /// // Reference parameter
+    /// let sig = Parser::function_decl("void print(const string& in msg)", &arena).unwrap();
+    /// assert_eq!(sig.params.len(), 1);
+    /// ```
+    pub fn function_decl(source: &str, arena: &'ast Bump) -> Result<FunctionSignatureDecl<'ast>, ParseErrors> {
+        let mut parser = Parser::new(source, arena);
+
+        let result = parser.parse_function_signature();
+
+        match result {
+            Ok(sig) => {
+                if parser.has_errors() {
+                    Err(parser.take_errors())
+                } else {
+                    Ok(sig)
+                }
+            }
+            Err(err) => {
+                parser.errors.push(err);
+                Err(parser.take_errors())
+            }
+        }
     }
 }
 
