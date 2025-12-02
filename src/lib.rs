@@ -61,6 +61,7 @@
 //! ```
 
 mod ast;
+mod ffi;
 mod lexer;
 mod module;
 pub mod semantic;
