@@ -22,23 +22,25 @@ Implement the Module and Context types that form the public API for FFI registra
 /// A namespaced collection of native functions, types, and global properties.
 pub struct Module<'app> {
     namespace: Vec<String>,
-    functions: Vec<FunctionDef>,
-    types: Vec<TypeDef>,
-    enums: Vec<EnumDef>,
-    templates: Vec<TemplateDef>,
+    arena: Bump,  // Owns parsed AST nodes from declaration strings
+    functions: Vec<NativeFunctionDef<'_>>,
+    types: Vec<NativeTypeDef<'_>>,
+    enums: Vec<NativeEnumDef>,
+    interfaces: Vec<NativeInterfaceDef<'_>>,
+    funcdefs: Vec<NativeFuncdefDef<'_>>,
     global_properties: Vec<GlobalPropertyDef<'app>>,
 }
 
 impl<'app> Module<'app> {
     pub fn new(namespace: &[&str]) -> Self;
     pub fn root() -> Self;
-    pub fn register_fn<F, Args, Ret>(&mut self, name: &str, f: F) -> &mut Self;
-    pub fn register_global_property<T: NativeType>(&mut self, decl: &str, value: &'app mut T) -> Result<(), ModuleError>;
-    pub fn register_type<T: NativeType>(&mut self, name: &str) -> ClassBuilder<'_, T>;
-    pub fn register_enum(&mut self, name: &str) -> EnumBuilder<'_>;
-    pub fn register_interface(&mut self, name: &str) -> InterfaceBuilder<'_>;
-    pub fn register_funcdef(&mut self, name: &str) -> FuncdefBuilder<'_>;
-    pub fn register_template(&mut self, name: &str) -> TemplateBuilder<'_>;
+    pub fn register_fn<F, Args, Ret>(&mut self, decl: &str, f: F) -> Result<&mut Self, FfiRegistrationError>;
+    pub fn register_fn_raw<F>(&mut self, decl: &str, f: F) -> Result<&mut Self, FfiRegistrationError>;
+    pub fn register_global_property<T: 'static>(&mut self, decl: &str, value: &'app mut T) -> Result<&mut Self, FfiRegistrationError>;
+    pub fn register_type<T: NativeType>(&mut self, name: &str) -> ClassBuilder<'_, 'app, T>;
+    pub fn register_enum(&mut self, name: &str) -> EnumBuilder<'_, 'app>;
+    pub fn register_interface(&mut self, name: &str) -> InterfaceBuilder<'_, 'app>;
+    pub fn register_funcdef(&mut self, decl: &str) -> Result<&mut Self, FfiRegistrationError>;
 }
 
 /// The scripting context. Install modules and create compilation units.
@@ -57,9 +59,13 @@ impl Context {
 ## Implementation Notes
 
 - Module has `'app` lifetime for global property references
+- Module owns a `Bump` arena for parsed AST nodes from declaration strings
 - Context owns installed modules
 - Namespaces are immutable per-module
-- `register_fn` should infer signature from closure types
+- `register_fn` takes declaration string (e.g., `"float sqrt(float x)"`)
+- `register_enum` and `register_interface` return builders
+- `register_funcdef` takes full declaration string (e.g., `"funcdef void Callback()"`)
+- Templates are registered via `register_type` with `<class T>` syntax
 
 ## Acceptance Criteria
 

@@ -28,7 +28,7 @@ Detailed task files are in `/claude/tasks/`. Complete in order:
 | Task | Description | Status |
 |------|-------------|--------|
 | [01](tasks/01_ffi_core_infrastructure.md) | Core types, traits (FromScript, ToScript, NativeType) | ✅ Complete |
-| [02](tasks/02_ffi_module_and_context.md) | Module and Context API | Not Started |
+| [02](tasks/02_ffi_module_and_context.md) | Module and Context API | ✅ Complete |
 
 ### Phase 2: Registration Builders
 | Task | Description | Status |
