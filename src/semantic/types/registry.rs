@@ -3037,6 +3037,245 @@ mod tests {
     }
 
     #[test]
+    fn self_type_substitution_in_method() {
+        // Test that SELF_TYPE in method signatures gets replaced with the instance type
+        let mut registry = Registry::new();
+
+        // Reserve IDs - template first, then param
+        let template_id = TypeId::new(registry.types.len() as u32);
+        let template_param_id = TypeId::new(registry.types.len() as u32 + 1);
+
+        // Create a method with SELF_TYPE as return type (simulates `TestTemplate<T> clone()`)
+        let method_id = FunctionId::next();
+        let method = FunctionDef {
+            id: method_id,
+            name: "clone".to_string(),
+            namespace: Vec::new(),
+            params: Vec::new(),
+            return_type: DataType::simple(SELF_TYPE), // SELF_TYPE placeholder
+            object_type: Some(template_id),
+            traits: FunctionTraits::new(),
+            is_native: true,
+            default_args: Vec::new(),
+            visibility: Visibility::Public,
+            signature_filled: true,
+        };
+        registry.register_function(method);
+
+        // Register the template FIRST (at template_id index)
+        registry.types.push(TypeDef::Class {
+            name: "TestTemplate".to_string(),
+            qualified_name: "TestTemplate".to_string(),
+            fields: Vec::new(),
+            methods: vec![method_id],
+            base_class: None,
+            interfaces: Vec::new(),
+            operator_methods: FxHashMap::default(),
+            properties: FxHashMap::default(),
+            is_final: false,
+            is_abstract: false,
+            template_params: vec![template_param_id],
+            template: None,
+            type_args: Vec::new(),
+        });
+        registry.type_by_name.insert("TestTemplate".to_string(), template_id);
+
+        // Register template param SECOND (at template_param_id index)
+        registry.types.push(TypeDef::TemplateParam {
+            name: "T".to_string(),
+            index: 0,
+            owner: template_id,
+        });
+        registry.type_by_name.insert("TestTemplate::$T".to_string(), template_param_id);
+
+        // Instantiate with int
+        let instance_id = registry
+            .instantiate_template(template_id, vec![DataType::simple(INT32_TYPE)])
+            .unwrap();
+
+        // Get the specialized method from the instance
+        let instance_def = registry.get_type(instance_id);
+        if let TypeDef::Class { methods, .. } = instance_def {
+            assert!(!methods.is_empty(), "Instance should have methods");
+            let specialized_method = registry.get_function(methods[0]);
+            // The return type should now be the instance type, not SELF_TYPE
+            assert_eq!(
+                specialized_method.return_type.type_id, instance_id,
+                "SELF_TYPE should be replaced with the instance TypeId"
+            );
+        } else {
+            panic!("Expected Class typedef");
+        }
+    }
+
+    #[test]
+    fn nested_self_type_substitution() {
+        // Test that nested SELF_TYPE like array<array<T>> works correctly
+        // When instantiated with int, should become array<array<int>>
+        use crate::modules::array_module;
+
+        let array_mod = array_module().expect("Failed to create array module");
+        let mut registry = Registry::new();
+        registry.import_modules(&[array_mod]).expect("Failed to import array module");
+
+        // Get the array template
+        let array_id = registry.lookup_type("array").expect("array type not found");
+
+        // First create array<int>
+        let array_int = registry
+            .instantiate_template(array_id, vec![DataType::simple(INT32_TYPE)])
+            .expect("Failed to instantiate array<int>");
+
+        // Then create array<array<int>>
+        let array_array_int = registry
+            .instantiate_template(array_id, vec![DataType::simple(array_int)])
+            .expect("Failed to instantiate array<array<int>>");
+
+        // Verify the nested type is correct
+        let typedef = registry.get_type(array_array_int);
+        assert!(typedef.is_template_instance(), "Should be a template instance");
+        assert_eq!(typedef.name(), "array<array<int>>");
+
+        // Verify the nested instance has methods with correct signatures
+        if let TypeDef::Class { methods, .. } = typedef {
+            // Find a method that returns SELF_TYPE (like opAssign)
+            // After instantiation, it should return array<array<int>>
+            for &method_id in methods {
+                let method = registry.get_function(method_id);
+                if method.name == "opAssign" {
+                    // opAssign returns array<array<int>>&, so type_id should be array_array_int
+                    assert_eq!(
+                        method.return_type.type_id, array_array_int,
+                        "opAssign should return the nested instance type"
+                    );
+                    break;
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn template_callback_rejects_invalid_args() {
+        let mut registry = Registry::new();
+        let template_id = register_test_template(&mut registry, "TestContainer", 1);
+
+        // Register a callback that rejects void type arguments
+        registry.template_callbacks.insert(
+            template_id,
+            std::sync::Arc::new(|info: &crate::ffi::TemplateInstanceInfo| {
+                if info.sub_types.iter().any(|dt| dt.type_id == VOID_TYPE) {
+                    crate::ffi::TemplateValidation::invalid("Cannot instantiate with void type")
+                } else {
+                    crate::ffi::TemplateValidation::valid()
+                }
+            }),
+        );
+
+        // Valid instantiation should work
+        let result = registry.instantiate_template(template_id, vec![DataType::simple(INT32_TYPE)]);
+        assert!(result.is_ok(), "Valid args should succeed");
+
+        // Invalid instantiation (void) should fail
+        let result = registry.instantiate_template(template_id, vec![DataType::simple(VOID_TYPE)]);
+        assert!(result.is_err(), "Void arg should be rejected");
+        assert_eq!(
+            result.unwrap_err().kind,
+            SemanticErrorKind::InvalidTemplateInstantiation
+        );
+    }
+
+    #[test]
+    fn find_operator_method_with_mutability_prefers_non_const() {
+        let mut registry = Registry::new();
+
+        // Create two opIndex methods - one const, one non-const
+        let const_method_id = FunctionId::next();
+        let const_method = FunctionDef {
+            id: const_method_id,
+            name: "opIndex".to_string(),
+            namespace: Vec::new(),
+            params: vec![DataType::simple(INT32_TYPE)],
+            return_type: DataType {
+                type_id: INT32_TYPE,
+                is_const: true, // const return
+                is_handle: false,
+                is_handle_to_const: false,
+                ref_modifier: RefModifier::In,
+            },
+            object_type: None,
+            traits: FunctionTraits { is_const: true, ..FunctionTraits::new() },
+            is_native: true,
+            default_args: Vec::new(),
+            visibility: Visibility::Public,
+            signature_filled: true,
+        };
+        registry.register_function(const_method);
+
+        let mutable_method_id = FunctionId::next();
+        let mutable_method = FunctionDef {
+            id: mutable_method_id,
+            name: "opIndex".to_string(),
+            namespace: Vec::new(),
+            params: vec![DataType::simple(INT32_TYPE)],
+            return_type: DataType {
+                type_id: INT32_TYPE,
+                is_const: false, // non-const return
+                is_handle: false,
+                is_handle_to_const: false,
+                ref_modifier: RefModifier::In,
+            },
+            object_type: None,
+            traits: FunctionTraits::new(),
+            is_native: true,
+            default_args: Vec::new(),
+            visibility: Visibility::Public,
+            signature_filled: true,
+        };
+        registry.register_function(mutable_method);
+
+        // Create a class with both opIndex methods
+        let class_id = TypeId::new(registry.types.len() as u32);
+        let mut operator_methods: FxHashMap<OperatorBehavior, Vec<FunctionId>> = FxHashMap::default();
+        operator_methods.insert(
+            OperatorBehavior::OpIndex,
+            vec![const_method_id, mutable_method_id],
+        );
+
+        registry.types.push(TypeDef::Class {
+            name: "TestClass".to_string(),
+            qualified_name: "TestClass".to_string(),
+            fields: Vec::new(),
+            methods: vec![const_method_id, mutable_method_id],
+            base_class: None,
+            interfaces: Vec::new(),
+            operator_methods,
+            properties: FxHashMap::default(),
+            is_final: false,
+            is_abstract: false,
+            template_params: Vec::new(),
+            template: None,
+            type_args: Vec::new(),
+        });
+        registry.type_by_name.insert("TestClass".to_string(), class_id);
+
+        // When prefer_mutable=true, should return the non-const method
+        let result = registry.find_operator_method_with_mutability(
+            class_id,
+            OperatorBehavior::OpIndex,
+            true,
+        );
+        assert_eq!(result, Some(mutable_method_id), "Should prefer mutable method for assignment");
+
+        // When prefer_mutable=false, should return the const method
+        let result = registry.find_operator_method_with_mutability(
+            class_id,
+            OperatorBehavior::OpIndex,
+            false,
+        );
+        assert_eq!(result, Some(const_method_id), "Should prefer const method for read");
+    }
+
+    #[test]
     fn register_function() {
         let mut registry = Registry::new();
 
