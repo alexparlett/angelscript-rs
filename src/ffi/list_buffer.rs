@@ -155,7 +155,7 @@ impl<'a> TupleListBuffer<'a> {
             "element_types must match tuple_size"
         );
         assert!(
-            data.len() % tuple_size == 0,
+            data.len().is_multiple_of(tuple_size),
             "data length must be divisible by tuple_size"
         );
 
@@ -277,7 +277,7 @@ impl ListPattern {
                 if tuple_types.is_empty() {
                     return value_types.is_empty();
                 }
-                if value_types.len() % tuple_types.len() != 0 {
+                if !value_types.len().is_multiple_of(tuple_types.len()) {
                     return false;
                 }
                 value_types

@@ -231,11 +231,11 @@ impl ScriptDict {
 
     /// Insert only if key is absent. Returns true if inserted.
     pub fn try_insert(&mut self, key: ScriptKey, value: VmSlot) -> bool {
-        if self.entries.contains_key(&key) {
-            false
-        } else {
-            self.entries.insert(key, value);
+        if let std::collections::hash_map::Entry::Vacant(e) = self.entries.entry(key) {
+            e.insert(value);
             true
+        } else {
+            false
         }
     }
 
@@ -500,12 +500,11 @@ pub fn dictionary_module<'app>() -> Result<Module<'app>, FfiModuleError> {
             // Clone values before borrowing dict mutably
             let key_slot = ctx.arg_slot(0)?.clone_if_possible();
             let value_slot = ctx.arg_slot(1)?.clone_if_possible();
-            if let (Some(key_slot), Some(value_slot)) = (key_slot, value_slot) {
-                if let Some(key) = ScriptKey::from_slot(&key_slot) {
+            if let (Some(key_slot), Some(value_slot)) = (key_slot, value_slot)
+                && let Some(key) = ScriptKey::from_slot(&key_slot) {
                     let dict: &mut ScriptDict = ctx.this_mut()?;
                     dict.insert(key, value_slot);
                 }
-            }
             Ok(())
         })?
         .method_raw("bool exists(const K &in key) const", |ctx: &mut CallContext| {
@@ -564,30 +563,26 @@ pub fn dictionary_module<'app>() -> Result<Module<'app>, FfiModuleError> {
         .operator_raw("V &opIndex(const K &in key)", |ctx: &mut CallContext| {
             // Clone key before borrowing dict
             let key_slot = ctx.arg_slot(0)?.clone_if_possible();
-            if let Some(key_slot) = key_slot {
-                if let Some(key) = ScriptKey::from_slot(&key_slot) {
+            if let Some(key_slot) = key_slot
+                && let Some(key) = ScriptKey::from_slot(&key_slot) {
                     let dict: &mut ScriptDict = ctx.this_mut()?;
-                    if let Some(value) = dict.get(&key) {
-                        if let Some(cloned) = value.clone_if_possible() {
+                    if let Some(value) = dict.get(&key)
+                        && let Some(cloned) = value.clone_if_possible() {
                             ctx.set_return_slot(cloned);
                         }
-                    }
                 }
-            }
             Ok(())
         })?
         .operator_raw("const V &opIndex(const K &in key) const", |ctx: &mut CallContext| {
             let key_slot = ctx.arg_slot(0)?.clone_if_possible();
-            if let Some(key_slot) = key_slot {
-                if let Some(key) = ScriptKey::from_slot(&key_slot) {
+            if let Some(key_slot) = key_slot
+                && let Some(key) = ScriptKey::from_slot(&key_slot) {
                     let dict: &ScriptDict = ctx.this()?;
-                    if let Some(value) = dict.get(&key) {
-                        if let Some(cloned) = value.clone_if_possible() {
+                    if let Some(value) = dict.get(&key)
+                        && let Some(cloned) = value.clone_if_possible() {
                             ctx.set_return_slot(cloned);
                         }
-                    }
                 }
-            }
             Ok(())
         })?
         .build()?;

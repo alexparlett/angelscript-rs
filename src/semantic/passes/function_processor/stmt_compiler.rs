@@ -965,8 +965,7 @@ impl<'ast> FunctionCompiler<'ast> {
                                     || self.is_integer(&value_ctx.data_type)
                             }
                             SwitchCategory::String => {
-                                self.registry.lookup_type("string")
-                                    .map_or(false, |s| value_ctx.data_type.type_id == s)
+                                self.registry.lookup_type("string") == Some(value_ctx.data_type.type_id)
                             }
                             SwitchCategory::Handle => {
                                 value_ctx.data_type.type_id == NULL_TYPE

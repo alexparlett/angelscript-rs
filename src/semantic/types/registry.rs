@@ -617,7 +617,7 @@ impl<'ast> Registry<'ast> {
                 is_const: dt.is_const,
                 is_handle: dt.is_handle,
                 is_handle_to_const: dt.is_handle_to_const,
-                ref_modifier: dt.ref_modifier.clone(),
+                ref_modifier: dt.ref_modifier,
             }
         } else if let Some(replacement) = subst_map.get(&dt.type_id) {
             // Found a template parameter to substitute
@@ -626,7 +626,7 @@ impl<'ast> Registry<'ast> {
             result.is_handle = dt.is_handle || result.is_handle;
             result.is_const = dt.is_const || result.is_const;
             if dt.ref_modifier != RefModifier::None {
-                result.ref_modifier = dt.ref_modifier.clone();
+                result.ref_modifier = dt.ref_modifier;
             }
             result
         } else {
@@ -1048,10 +1048,7 @@ impl<'ast> Registry<'ast> {
     /// Works for both regular classes and template instances (which are also Classes)
     pub fn add_method_to_class(&mut self, type_id: TypeId, func_id: FunctionId) {
         let typedef = self.get_type_mut(type_id);
-        match typedef {
-            TypeDef::Class { methods, .. } => methods.push(func_id),
-            _ => {}
-        }
+        if let TypeDef::Class { methods, .. } = typedef { methods.push(func_id) }
     }
 
     /// Find an operator method on a type.
@@ -1870,15 +1867,14 @@ impl<'ast> Registry<'ast> {
         // If type already exists, update its template_params and skip shell registration
         if let Some(existing_type_id) = actual_type_id {
             // Update the existing type's template_params if this is a template
-            if !template_params.is_empty() {
-                if let TypeDef::Class {
+            if !template_params.is_empty()
+                && let TypeDef::Class {
                     template_params: existing_params,
                     ..
                 } = self.get_type_mut(existing_type_id)
                 {
                     *existing_params = template_params;
                 }
-            }
             return Ok(());
         }
 

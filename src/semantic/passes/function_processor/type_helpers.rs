@@ -135,14 +135,12 @@ impl<'ast> FunctionCompiler<'ast> {
         // Check if this is an array template instance - arrays are always reference types (handles)
         // Note: Template instances are Class types with template: Some(...)
         let typedef = self.registry.get_type(type_id);
-        if let TypeDef::Class { template: Some(tmpl), .. } = typedef {
-            if let Some(array_template) = self.registry.lookup_type("array") {
-                if *tmpl == array_template {
+        if let TypeDef::Class { template: Some(tmpl), .. } = typedef
+            && let Some(array_template) = self.registry.lookup_type("array")
+                && *tmpl == array_template {
                     // Arrays are reference types, so they're implicitly handles
                     data_type.is_handle = true;
                 }
-            }
-        }
 
         // Apply leading const
         if type_expr.is_const {
@@ -405,11 +403,10 @@ impl<'ast> FunctionCompiler<'ast> {
         }
 
         // String
-        if let Some(string_type) = self.registry.lookup_type("string") {
-            if ty.type_id == string_type {
+        if let Some(string_type) = self.registry.lookup_type("string")
+            && ty.type_id == string_type {
                 return Some(SwitchCategory::String);
             }
-        }
 
         None
     }

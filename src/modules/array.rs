@@ -382,7 +382,7 @@ impl ScriptArray {
 
     /// Sort elements in ascending order.
     pub fn sort_asc(&mut self) {
-        self.elements.sort_by(|a, b| Self::compare_slots(a, b));
+        self.elements.sort_by(Self::compare_slots);
     }
 
     /// Sort elements in descending order.
