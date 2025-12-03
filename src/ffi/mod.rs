@@ -26,8 +26,10 @@
 
 mod any_type;
 mod class;
+mod enum_builder;
 mod error;
 mod global_property;
+mod interface_builder;
 mod native_fn;
 mod traits;
 mod types;
@@ -35,6 +37,8 @@ mod types;
 // Re-export core types
 pub use any_type::{AnyRef, AnyRefMut};
 pub use class::ClassBuilder;
+pub use enum_builder::EnumBuilder;
+pub use interface_builder::InterfaceBuilder;
 pub use error::{ConversionError, NativeError};
 pub use global_property::GlobalPropertyDef;
 pub use native_fn::{CallContext, NativeCallable, NativeFn, ObjectHandle, ObjectHeap, VmSlot};

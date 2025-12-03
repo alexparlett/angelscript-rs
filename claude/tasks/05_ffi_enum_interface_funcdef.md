@@ -1,6 +1,6 @@
 # Task 05: Enum, Interface, and Funcdef Registration
 
-**Status:** Not Started
+**Status:** Completed
 **Depends On:** Task 01, Task 02
 **Estimated Scope:** Builder pattern for enum/interface, declaration string for funcdef
 
@@ -324,13 +324,13 @@ pub enum FfiRegistrationError {
 
 ## Acceptance Criteria
 
-- [ ] `register_enum` returns `EnumBuilder`
-- [ ] `EnumBuilder.value()` adds explicit enum values
-- [ ] `EnumBuilder.auto_value()` adds auto-incremented values
-- [ ] `register_interface` returns `InterfaceBuilder`
-- [ ] `InterfaceBuilder.method()` parses method declaration strings
-- [ ] Interface method constness is parsed correctly
-- [ ] `register_funcdef` parses full funcdef declaration strings
-- [ ] Funcdefs support template parameters
-- [ ] Parse errors return descriptive messages
-- [ ] All work with the namespace system
+- [x] `register_enum` returns `EnumBuilder`
+- [x] `EnumBuilder.value()` adds explicit enum values
+- [x] `EnumBuilder.auto_value()` adds auto-incremented values
+- [x] `register_interface` returns `InterfaceBuilder`
+- [x] `InterfaceBuilder.method()` parses method declaration strings
+- [x] Interface method constness is parsed correctly
+- [x] `register_funcdef` parses full funcdef declaration strings
+- [x] Funcdefs support template parameters
+- [x] Parse errors return descriptive messages
+- [x] All work with the namespace system

@@ -20,10 +20,10 @@
 use bumpalo::Bump;
 use thiserror::Error;
 
-use crate::ast::{FunctionSignatureDecl, Ident, Parser, PropertyDecl};
+use crate::ast::{FuncdefDecl, FunctionSignatureDecl, Ident, Parser, PropertyDecl};
 use crate::ffi::{
-    ClassBuilder, GlobalPropertyDef, IntoNativeFn, NativeCallable, NativeFn, NativeFuncdefDef,
-    NativeFunctionDef, NativeInterfaceDef, NativeType, NativeTypeDef,
+    ClassBuilder, EnumBuilder, GlobalPropertyDef, InterfaceBuilder, IntoNativeFn, NativeCallable,
+    NativeFn, NativeFuncdefDef, NativeFunctionDef, NativeInterfaceDef, NativeType, NativeTypeDef,
 };
 use crate::semantic::types::type_def::{FunctionId, FunctionTraits, TypeId, Visibility};
 
@@ -468,13 +468,53 @@ impl<'app> Module<'app> {
     }
 
     // =========================================================================
-    // Enum registration (placeholder - EnumBuilder in Task 05)
+    // Enum registration
     // =========================================================================
 
-    /// Register a native enum (placeholder).
+    /// Register a native enum type using the EnumBuilder.
     ///
-    /// The full implementation with EnumBuilder will be added in Task 05.
-    pub fn add_enum(&mut self, enum_def: NativeEnumDef) {
+    /// Returns an `EnumBuilder` that allows adding enum values with explicit
+    /// or auto-incremented integer values.
+    ///
+    /// # Parameters
+    ///
+    /// - `name`: The enum type name (e.g., `"Color"`, `"Direction"`)
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// // Basic enum with explicit values
+    /// module.register_enum("Color")
+    ///     .value("Red", 0)?
+    ///     .value("Green", 1)?
+    ///     .value("Blue", 2)?
+    ///     .build()?;
+    ///
+    /// // Auto-numbered enum (values: 0, 1, 2, 3)
+    /// module.register_enum("Direction")
+    ///     .auto_value("North")?
+    ///     .auto_value("East")?
+    ///     .auto_value("South")?
+    ///     .auto_value("West")?
+    ///     .build()?;
+    ///
+    /// // Flags with power-of-2 values
+    /// module.register_enum("FileFlags")
+    ///     .value("None", 0)?
+    ///     .value("Read", 1)?
+    ///     .value("Write", 2)?
+    ///     .value("Execute", 4)?
+    ///     .value("All", 7)?
+    ///     .build()?;
+    /// ```
+    pub fn register_enum(&mut self, name: &str) -> EnumBuilder<'_, 'app> {
+        EnumBuilder::new(self, name.to_string())
+    }
+
+    /// Internal method to add an enum definition.
+    ///
+    /// Called by EnumBuilder::build().
+    pub(crate) fn add_enum(&mut self, enum_def: NativeEnumDef) {
         self.enums.push(enum_def);
     }
 
@@ -484,14 +524,51 @@ impl<'app> Module<'app> {
     }
 
     // =========================================================================
-    // Interface registration (placeholder - InterfaceBuilder in Task 05)
+    // Interface registration
     // =========================================================================
 
-    /// Register a native interface (placeholder).
+    /// Register a native interface type using the InterfaceBuilder.
     ///
-    /// The full implementation with InterfaceBuilder will be added in Task 05.
-    /// For now, this stores a raw NativeInterfaceDef.
-    pub fn add_interface(&mut self, interface_def: NativeInterfaceDef<'static>) {
+    /// Returns an `InterfaceBuilder` that allows adding abstract method signatures
+    /// that script classes can implement.
+    ///
+    /// # Parameters
+    ///
+    /// - `name`: The interface type name (e.g., `"IDrawable"`, `"ISerializable"`)
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// // Simple interface
+    /// module.register_interface("IDrawable")
+    ///     .method("void draw() const")?
+    ///     .method("void setVisible(bool visible)")?
+    ///     .build()?;
+    ///
+    /// // Serialization interface
+    /// module.register_interface("ISerializable")
+    ///     .method("string serialize() const")?
+    ///     .method("void deserialize(const string &in data)")?
+    ///     .build()?;
+    ///
+    /// // Complex interface with multiple methods
+    /// module.register_interface("IGameEntity")
+    ///     .method("string getName() const")?
+    ///     .method("void setName(const string &in name)")?
+    ///     .method("Vec3 getPosition() const")?
+    ///     .method("void setPosition(const Vec3 &in pos)")?
+    ///     .method("void update(float deltaTime)")?
+    ///     .method("void render() const")?
+    ///     .build()?;
+    /// ```
+    pub fn register_interface(&mut self, name: &str) -> InterfaceBuilder<'_, 'app> {
+        InterfaceBuilder::new(self, name.to_string())
+    }
+
+    /// Internal method to add an interface definition.
+    ///
+    /// Called by InterfaceBuilder::build().
+    pub(crate) fn add_interface(&mut self, interface_def: NativeInterfaceDef<'static>) {
         self.interfaces.push(interface_def);
     }
 
@@ -501,36 +578,92 @@ impl<'app> Module<'app> {
     }
 
     // =========================================================================
-    // Funcdef registration (placeholder - will be implemented in Task 05)
+    // Funcdef registration
     // =========================================================================
 
-    /// Register a native funcdef (placeholder).
+    /// Register a funcdef (function pointer type) with a declaration string.
     ///
-    /// The full implementation will be added in Task 05.
-    /// For now, this stores a raw NativeFuncdefDef.
-    pub fn add_funcdef(&mut self, funcdef_def: NativeFuncdefDef<'static>) {
+    /// Funcdefs define function pointer types that can be used to pass
+    /// callbacks or store function references in scripts.
+    ///
+    /// # Declaration Format
+    ///
+    /// ```text
+    /// funcdef ReturnType Name(params)
+    /// ```
+    ///
+    /// # Parameters
+    ///
+    /// - `decl`: Full funcdef declaration string including the `funcdef` keyword
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// // Simple callback
+    /// module.register_funcdef("funcdef void Callback()")?;
+    ///
+    /// // Predicate function
+    /// module.register_funcdef("funcdef bool Predicate(int value)")?;
+    ///
+    /// // Event handler with multiple parameters
+    /// module.register_funcdef("funcdef void EventHandler(const string &in event, int data)")?;
+    ///
+    /// // Factory function returning a handle
+    /// module.register_funcdef("funcdef Entity@ EntityFactory(const string &in name)")?;
+    ///
+    /// // Comparator function
+    /// module.register_funcdef("funcdef int Comparator(const string &in a, const string &in b)")?;
+    /// ```
+    pub fn register_funcdef(&mut self, decl: &str) -> Result<&mut Self, FfiModuleError> {
+        let decl = decl.trim();
+        if decl.is_empty() {
+            return Err(FfiModuleError::InvalidDeclaration(
+                "empty declaration".to_string(),
+            ));
+        }
+
+        // Parse the funcdef declaration using the module's arena
+        let fd = Parser::funcdef_decl(decl, &self.arena).map_err(|errors| {
+            FfiModuleError::InvalidDeclaration(format!("parse error: {}", errors))
+        })?;
+
+        // Build the funcdef definition
+        let funcdef_def = self.build_funcdef_def(fd);
+
+        self.funcdefs.push(funcdef_def);
+        Ok(self)
+    }
+
+    /// Internal helper to build a NativeFuncdefDef from parsed funcdef declaration.
+    fn build_funcdef_def(&self, fd: FuncdefDecl<'_>) -> NativeFuncdefDef<'static> {
+        // SAFETY: The arena is owned by self and lives as long as self.
+        // We transmute the lifetime to 'static for storage, but the actual
+        // lifetime is tied to the module. This is safe because:
+        // 1. The arena is never moved or replaced
+        // 2. The funcdefs vec is dropped before the arena
+        // 3. We never expose references with incorrect lifetimes
+        let name = unsafe { std::mem::transmute(fd.name) };
+        let params = unsafe { std::mem::transmute(fd.params) };
+        let return_type = unsafe { std::mem::transmute(fd.return_type) };
+
+        NativeFuncdefDef {
+            id: TypeId::next(),
+            name,
+            params,
+            return_type,
+        }
+    }
+
+    /// Internal method to add a funcdef definition.
+    ///
+    /// Called internally by register_funcdef().
+    pub(crate) fn add_funcdef(&mut self, funcdef_def: NativeFuncdefDef<'static>) {
         self.funcdefs.push(funcdef_def);
     }
 
     /// Get the registered funcdefs.
     pub fn funcdefs(&self) -> &[NativeFuncdefDef<'static>] {
         &self.funcdefs
-    }
-
-    // =========================================================================
-    // Template registration (placeholder - TemplateBuilder in Task 06)
-    // =========================================================================
-
-    /// Register a native template (placeholder).
-    ///
-    /// The full implementation with TemplateBuilder will be added in Task 06.
-    pub fn add_template(&mut self, template_def: NativeTemplateDef) {
-        self.templates.push(template_def);
-    }
-
-    /// Get the registered templates.
-    pub fn templates(&self) -> &[NativeTemplateDef] {
-        &self.templates
     }
 
     // =========================================================================
@@ -652,6 +785,10 @@ pub enum FfiModuleError {
     /// Duplicate registration
     #[error("duplicate registration: {name} already registered as {kind}")]
     DuplicateRegistration { name: String, kind: String },
+
+    /// Duplicate enum value name
+    #[error("duplicate enum value: '{value_name}' already exists in enum '{enum_name}'")]
+    DuplicateEnumValue { enum_name: String, value_name: String },
 
     /// Type not found
     #[error("type not found: {0}")]
@@ -1160,5 +1297,100 @@ mod tests {
 
         assert_eq!(module.functions().len(), 1);
         assert_eq!(module.functions()[0].params.len(), 1);
+    }
+
+    // =========================================================================
+    // Funcdef registration tests
+    // =========================================================================
+
+    #[test]
+    fn register_funcdef_simple() {
+        let mut module = Module::<'static>::root();
+
+        module
+            .register_funcdef("funcdef void Callback()")
+            .unwrap();
+
+        assert_eq!(module.funcdefs().len(), 1);
+        assert_eq!(module.funcdefs()[0].name.name, "Callback");
+        assert_eq!(module.funcdefs()[0].params.len(), 0);
+    }
+
+    #[test]
+    fn register_funcdef_with_params() {
+        let mut module = Module::<'static>::root();
+
+        module
+            .register_funcdef("funcdef bool Predicate(int value)")
+            .unwrap();
+
+        assert_eq!(module.funcdefs().len(), 1);
+        assert_eq!(module.funcdefs()[0].name.name, "Predicate");
+        assert_eq!(module.funcdefs()[0].params.len(), 1);
+    }
+
+    #[test]
+    fn register_funcdef_multiple_params() {
+        let mut module = Module::<'static>::root();
+
+        module
+            .register_funcdef("funcdef void EventHandler(const string &in event, int data)")
+            .unwrap();
+
+        assert_eq!(module.funcdefs().len(), 1);
+        assert_eq!(module.funcdefs()[0].name.name, "EventHandler");
+        assert_eq!(module.funcdefs()[0].params.len(), 2);
+    }
+
+    #[test]
+    fn register_funcdef_with_handle_return() {
+        let mut module = Module::<'static>::root();
+
+        module
+            .register_funcdef("funcdef Entity@ EntityFactory(const string &in name)")
+            .unwrap();
+
+        assert_eq!(module.funcdefs().len(), 1);
+        assert_eq!(module.funcdefs()[0].name.name, "EntityFactory");
+    }
+
+    #[test]
+    fn register_funcdef_chained() {
+        let mut module = Module::<'static>::root();
+
+        module
+            .register_funcdef("funcdef void Callback()")
+            .unwrap()
+            .register_funcdef("funcdef bool Predicate(int value)")
+            .unwrap()
+            .register_funcdef("funcdef int Comparator(int a, int b)")
+            .unwrap();
+
+        assert_eq!(module.funcdefs().len(), 3);
+    }
+
+    #[test]
+    fn register_funcdef_empty_decl() {
+        let mut module = Module::<'static>::root();
+
+        let result = module.register_funcdef("");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn register_funcdef_invalid_decl() {
+        let mut module = Module::<'static>::root();
+
+        let result = module.register_funcdef("not a valid funcdef");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn register_funcdef_missing_funcdef_keyword() {
+        let mut module = Module::<'static>::root();
+
+        // Missing "funcdef" keyword
+        let result = module.register_funcdef("void Callback()");
+        assert!(result.is_err());
     }
 }

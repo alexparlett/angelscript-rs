@@ -68,7 +68,7 @@ impl<'ast> Parser<'ast> {
             TokenKind::Class => self.parse_class(modifiers, visibility),
             TokenKind::Interface => self.parse_interface(modifiers),
             TokenKind::Enum => self.parse_enum(modifiers),
-            TokenKind::FuncDef => self.parse_funcdef(modifiers),
+            TokenKind::FuncDef => self.parse_funcdef(modifiers, TokenKind::Semicolon),
             TokenKind::Namespace => self.parse_namespace(),
             TokenKind::Using => self.parse_using_namespace(),
             TokenKind::Typedef => self.parse_typedef(),
@@ -2156,7 +2156,7 @@ impl<'ast> Parser<'ast> {
 
         // Check for funcdef
         if self.check(TokenKind::FuncDef) {
-            let funcdef = self.parse_funcdef(modifiers)?;
+            let funcdef = self.parse_funcdef(modifiers, TokenKind::Semicolon)?;
             if let Item::Funcdef(fd) = funcdef {
                 return Ok(ClassMember::Funcdef(fd));
             } else {
@@ -2612,7 +2612,15 @@ impl<'ast> Parser<'ast> {
     }
 
     /// Parse a funcdef declaration.
-    pub fn parse_funcdef(&mut self, modifiers: DeclModifiers) -> Result<Item<'ast>, ParseError> {
+    ///
+    /// The `end_token` parameter specifies what token terminates the declaration:
+    /// - `TokenKind::Semicolon` for script parsing (e.g., `funcdef void Callback();`)
+    /// - `TokenKind::Eof` for FFI parsing (e.g., `funcdef void Callback()`)
+    pub fn parse_funcdef(
+        &mut self,
+        modifiers: DeclModifiers,
+        end_token: TokenKind,
+    ) -> Result<Item<'ast>, ParseError> {
         let start_span = self.expect(TokenKind::FuncDef)?.span;
 
         let return_type = self.parse_return_type()?;
@@ -2629,7 +2637,7 @@ impl<'ast> Parser<'ast> {
         };
 
         let params = self.parse_function_params()?;
-        let end_span = self.expect(TokenKind::Semicolon)?.span;
+        let end_span = self.expect(end_token)?.span;
 
         Ok(Item::Funcdef(FuncdefDecl {
             modifiers,

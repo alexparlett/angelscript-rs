@@ -3,7 +3,7 @@
 //! Provides the main [`Parser`] struct with token navigation and basic
 //! parsing infrastructure.
 
-use crate::ast::{ParseError, ParseErrorKind, ParseErrors, Expr, Stmt, TypeExpr, Script, FunctionSignatureDecl, PropertyDecl};
+use super::{ParseError, ParseErrorKind, ParseErrors, Expr, Stmt, TypeExpr, Script, FunctionSignatureDecl, PropertyDecl, FuncdefDecl, DeclModifiers, Item};
 use crate::lexer::{Lexer, Span, Token, TokenKind};
 use bumpalo::Bump;
 
@@ -764,6 +764,66 @@ impl<'ast> Parser<'ast> {
                 } else {
                     Ok(sig)
                 }
+            }
+            Err(err) => {
+                parser.errors.push(err);
+                Err(parser.take_errors())
+            }
+        }
+    }
+
+    /// Parse a funcdef declaration string for FFI registration.
+    ///
+    /// This is a convenience method for parsing funcdef declarations from
+    /// registration strings. The input should include the `funcdef` keyword.
+    ///
+    /// # Arguments
+    ///
+    /// * `source` - The funcdef declaration (e.g., `"funcdef void Callback(int value)"`)
+    /// * `arena` - Arena allocator for AST nodes
+    ///
+    /// # Returns
+    ///
+    /// The parsed `FuncdefDecl` on success, or parse errors on failure.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use angelscript::Parser;
+    /// use bumpalo::Bump;
+    ///
+    /// let arena = Bump::new();
+    ///
+    /// // Simple funcdef
+    /// let fd = Parser::funcdef_decl("funcdef void Callback()", &arena).unwrap();
+    /// assert_eq!(fd.name.name, "Callback");
+    ///
+    /// // Funcdef with parameters
+    /// let fd = Parser::funcdef_decl("funcdef bool Predicate(int value)", &arena).unwrap();
+    /// assert_eq!(fd.params.len(), 1);
+    /// ```
+    pub fn funcdef_decl(source: &str, arena: &'ast Bump) -> Result<FuncdefDecl<'ast>, ParseErrors> {
+        let mut parser = Parser::new(source, arena);
+
+        let result = parser.parse_funcdef(DeclModifiers::new(), TokenKind::Eof);
+
+        match result {
+            Ok(Item::Funcdef(fd)) => {
+                if parser.has_errors() {
+                    Err(parser.take_errors())
+                } else {
+                    Ok(fd)
+                }
+            }
+            Ok(_) => {
+                // This shouldn't happen, but handle it gracefully
+                let span = parser.peek().span;
+                parser.errors.push(ParseError::new(
+                    ParseErrorKind::InternalError,
+                    span,
+                    "parse_funcdef returned non-Funcdef item",
+                ));
+                Err(parser.take_errors())
             }
             Err(err) => {
                 parser.errors.push(err);
