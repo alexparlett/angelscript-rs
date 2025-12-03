@@ -18,11 +18,11 @@
 mod array;
 mod dict;
 mod math;
-mod std_io;
+mod std;
 mod string;
 
 pub use array::ScriptArray;
 pub use dict::ScriptDict;
 pub use math::math_module;
-pub use std_io::std_module;
+pub use std::std_module;
 pub use string::{string_module, ScriptString};
