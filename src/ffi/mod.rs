@@ -25,7 +25,7 @@
 //! ```
 
 mod any_type;
-mod class;
+mod class_builder;
 mod enum_builder;
 mod error;
 mod global_property;
@@ -36,7 +36,7 @@ mod types;
 
 // Re-export core types
 pub use any_type::{AnyRef, AnyRefMut};
-pub use class::ClassBuilder;
+pub use class_builder::ClassBuilder;
 pub use enum_builder::EnumBuilder;
 pub use interface_builder::InterfaceBuilder;
 pub use error::{ConversionError, NativeError};

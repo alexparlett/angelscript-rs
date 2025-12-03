@@ -41,7 +41,7 @@ Detailed task files are in `/claude/tasks/`. Complete in order:
 | Task | Description | Status |
 |------|-------------|--------|
 | [07](tasks/07_ffi_apply_to_registry.md) | Apply FFI registrations to Registry | ✅ Complete |
-| [08](tasks/08_ffi_builtin_modules.md) | Implement built-in modules via FFI | Not Started |
+| [08](tasks/08_ffi_builtin_modules.md) | Implement built-in modules via FFI (includes list behaviors) | Not Started |
 
 ### Phase 4: Migration
 | Task | Description | Status |
@@ -49,6 +49,14 @@ Detailed task files are in `/claude/tasks/`. Complete in order:
 | [09](tasks/09_ffi_update_entry_points.md) | Update benches/tests to Context/Unit API | Not Started |
 | [10](tasks/10_ffi_extract_placeholders.md) | Remove FFI placeholders from test scripts | Not Started |
 | [11](tasks/11_ffi_lib_exports.md) | Library exports and public API | Not Started |
+
+### Phase 5: Advanced Features
+| Task | Description | Status |
+|------|-------------|--------|
+| [12](tasks/12_ffi_template_functions.md) | Template functions via register_fn_raw | Not Started |
+| [13](tasks/13_ffi_variadic_args.md) | Variadic function arguments | Not Started |
+| [14](tasks/14_ffi_advanced_templates.md) | Advanced templates (if_handle_then_const, funcdefs, specializations) | Not Started |
+| [16](tasks/16_ffi_gc_weakref_behaviors.md) | GC and weak reference behaviors | Not Started |
 
 ---
 

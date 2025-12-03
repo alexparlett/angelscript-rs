@@ -1622,6 +1622,9 @@ Detailed task files are in `/claude/tasks/`. Complete in order:
 |------|------|-------------|--------|
 | 07 | [07_ffi_apply_to_registry.md](tasks/07_ffi_apply_to_registry.md) | Registry.import_modules() - convert FFI registrations to Registry entries | ✅ Complete |
 | 08 | [08_ffi_builtin_modules.md](tasks/08_ffi_builtin_modules.md) | Implement std, string, array, dictionary, math modules via FFI | Not Started |
+| 15 | [15_ffi_list_behaviors.md](tasks/15_ffi_list_behaviors.md) | List construction behaviors (list_construct, list_factory) | Not Started |
+| 17 | [17_ffi_virtual_property_accessors.md](tasks/17_ffi_virtual_property_accessors.md) | Virtual property accessors (`get_`/`set_` methods exposed as properties) | Not Started |
+| 18 | [18_ffi_ref_handle_addon.md](tasks/18_ffi_ref_handle_addon.md) | Generic handle (`ref`) add-on - type-erased handle container | Not Started |
 
 ### Phase 4: Migration
 
@@ -1630,6 +1633,15 @@ Detailed task files are in `/claude/tasks/`. Complete in order:
 | 09 | [09_ffi_update_entry_points.md](tasks/09_ffi_update_entry_points.md) | Update benches and tests to use Context/Unit API | Not Started |
 | 10 | [10_ffi_extract_placeholders.md](tasks/10_ffi_extract_placeholders.md) | Remove FFI placeholders from 19 test scripts | Not Started |
 | 11 | [11_ffi_lib_exports.md](tasks/11_ffi_lib_exports.md) | Library exports and public API organization | Not Started |
+
+### Phase 5: Advanced Features
+
+| Task | File | Description | Status |
+|------|------|-------------|--------|
+| 12 | [12_ffi_template_functions.md](tasks/12_ffi_template_functions.md) | Template function support via register_fn_raw | Not Started |
+| 13 | [13_ffi_variadic_args.md](tasks/13_ffi_variadic_args.md) | Variadic function arguments | Not Started |
+| 14 | [14_ffi_advanced_templates.md](tasks/14_ffi_advanced_templates.md) | Advanced template features (if_handle_then_const, child funcdefs, specializations) | Not Started |
+| 16 | [16_ffi_gc_weakref_behaviors.md](tasks/16_ffi_gc_weakref_behaviors.md) | GC and weak reference behaviors | Not Started |
 
 ---
 
@@ -1696,6 +1708,8 @@ Remove placeholder function stubs from 19 test scripts:
 ## Sources
 
 - [AngelScript Template Types](https://www.angelcode.com/angelscript/sdk/docs/manual/doc_adv_template.html)
+- [AngelScript Template Functions](https://angelcode.com/angelscript/sdk/docs/manual/doc_adv_template_func.html)
+- [AngelScript Variadic Arguments](https://angelcode.com/angelscript/sdk/docs/manual/doc_adv_variadic.html)
 - [AngelScript Variable Parameter Type](https://angelcode.com/angelscript/sdk/docs/manual/doc_adv_var_type.html)
 - [AngelScript Generic Calling Convention](https://angelcode.com/angelscript/sdk/docs/manual/doc_generic.html)
 - [AngelScript Function Registration](https://www.angelcode.com/angelscript/sdk/docs/manual/doc_register_func.html)
