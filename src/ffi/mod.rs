@@ -8,6 +8,7 @@
 //! - Type kind and behavior definitions (`TypeKind`, `ReferenceKind`, `Behaviors`)
 //! - Variable parameter type support (`AnyRef`, `AnyRefMut`)
 //! - Template support (`TemplateInstanceInfo`, `TemplateValidation`)
+//! - List initialization support (`ListBuffer`, `TupleListBuffer`, `ListPattern`)
 //!
 //! # Architecture
 //!
@@ -30,6 +31,7 @@ mod enum_builder;
 mod error;
 mod global_property;
 mod interface_builder;
+mod list_buffer;
 mod native_fn;
 mod traits;
 mod types;
@@ -38,9 +40,10 @@ mod types;
 pub use any_type::{AnyRef, AnyRefMut};
 pub use class_builder::ClassBuilder;
 pub use enum_builder::EnumBuilder;
-pub use interface_builder::InterfaceBuilder;
 pub use error::{ConversionError, NativeError};
 pub use global_property::GlobalPropertyDef;
+pub use interface_builder::InterfaceBuilder;
+pub use list_buffer::{ListBuffer, ListPattern, TupleListBuffer};
 pub use native_fn::{CallContext, NativeCallable, NativeFn, ObjectHandle, ObjectHeap, VmSlot};
 pub use traits::{FromScript, IntoNativeFn, NativeType, ThisMut, ThisRef, ToScript};
 pub use types::{
