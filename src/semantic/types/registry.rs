@@ -27,7 +27,7 @@ use super::type_def::{
     BOOL_TYPE, DOUBLE_TYPE, FIRST_USER_TYPE_ID, FLOAT_TYPE, FunctionId, FunctionTraits, INT8_TYPE,
     INT16_TYPE, INT32_TYPE, INT64_TYPE, MethodSignature, OperatorBehavior, PrimitiveType,
     PropertyAccessors, SELF_TYPE, TypeDef, TypeId, UINT8_TYPE, UINT16_TYPE, UINT32_TYPE,
-    UINT64_TYPE, VOID_TYPE, Visibility,
+    UINT64_TYPE, VARIABLE_PARAM_TYPE, VOID_TYPE, Visibility,
 };
 use crate::ast::RefKind;
 use crate::ast::expr::Expr;
@@ -398,6 +398,7 @@ impl<'ast> Registry<'ast> {
             template_methods,
             template_operators,
             template_properties,
+            template_type_kind,
         ) = match template_def {
             TypeDef::Class {
                 name,
@@ -405,6 +406,7 @@ impl<'ast> Registry<'ast> {
                 methods,
                 operator_methods,
                 properties,
+                type_kind,
                 ..
             } if !template_params.is_empty() => (
                 name.clone(),
@@ -412,6 +414,7 @@ impl<'ast> Registry<'ast> {
                 methods.clone(),
                 operator_methods.clone(),
                 properties.clone(),
+                type_kind.clone(),
             ),
             _ => {
                 return Err(SemanticError::new(
@@ -509,6 +512,7 @@ impl<'ast> Registry<'ast> {
             template_params: Vec::new(), // Instance is not a template
             template: Some(template_id),
             type_args: args.clone(),
+            type_kind: template_type_kind,  // Inherit type_kind from template
         };
 
         // Actually register the instance
@@ -978,13 +982,23 @@ impl<'ast> Registry<'ast> {
         None
     }
 
-    /// Find all constructors for a given type
+    /// Find all constructors for a given type (value types)
     /// Returns a vector of FunctionIds for all constructors
     pub fn find_constructors(&self, type_id: TypeId) -> Vec<FunctionId> {
         // Look up constructors from behaviors registry
         self.behaviors
             .get(&type_id)
             .map(|b| b.constructors.clone())
+            .unwrap_or_default()
+    }
+
+    /// Find all factories for a given type (reference types)
+    /// Returns a vector of FunctionIds for all factories
+    pub fn find_factories(&self, type_id: TypeId) -> Vec<FunctionId> {
+        // Look up factories from behaviors registry
+        self.behaviors
+            .get(&type_id)
+            .map(|b| b.factories.clone())
             .unwrap_or_default()
     }
 
@@ -1883,6 +1897,7 @@ impl<'ast> Registry<'ast> {
             template_params,
             template: None,
             type_args: Vec::new(),
+            type_kind: type_def.type_kind.clone(),  // Propagate from FFI registration
         };
         self.register_type_at_id(type_def.id, typedef, &qualified_name);
 
@@ -2617,10 +2632,14 @@ impl<'ast> Registry<'ast> {
                 })
             }
 
-            TypeBase::Auto | TypeBase::Unknown => Err(ImportError::TypeResolutionFailed {
-                type_name: "auto/unknown".to_string(),
-                reason: "auto and unknown types not supported in FFI".to_string(),
+            TypeBase::Auto => Err(ImportError::TypeResolutionFailed {
+                type_name: "auto".to_string(),
+                reason: "auto type not supported in FFI".to_string(),
             }),
+
+            // Unknown type (?) is used for variable parameter types in FFI
+            // e.g., `void print(const string &in msg, ?&in val)`
+            TypeBase::Unknown => Ok(VARIABLE_PARAM_TYPE),
         }
     }
 
@@ -2767,7 +2786,8 @@ mod tests {
             template_params: Vec::new(),
             template: None,
             type_args: Vec::new(),
-        };
+        type_kind: crate::types::TypeKind::reference(),
+            };
 
         let type_id = registry.register_type(typedef, Some("Player"));
         assert_eq!(registry.lookup_type("Player"), Some(type_id));
@@ -2792,7 +2812,8 @@ mod tests {
             template_params: Vec::new(),
             template: None,
             type_args: Vec::new(),
-        };
+        type_kind: crate::types::TypeKind::reference(),
+            };
 
         let type_id = registry.register_type(typedef, Some("Game::Player"));
         assert_eq!(registry.lookup_type("Game::Player"), Some(type_id));
@@ -2866,7 +2887,8 @@ mod tests {
             template_params: Vec::new(),
             template: None,
             type_args: Vec::new(),
-        };
+        type_kind: crate::types::TypeKind::reference(),
+            };
 
         let type_id = registry.register_type(typedef, Some("Player"));
 
@@ -2925,7 +2947,8 @@ mod tests {
             template_params,
             template: None,
             type_args: Vec::new(),
-        };
+        type_kind: crate::types::TypeKind::reference(),
+            };
         *registry.get_type_mut(template_id) = typedef;
         template_id
     }
@@ -3077,7 +3100,8 @@ mod tests {
             template_params: vec![template_param_id],
             template: None,
             type_args: Vec::new(),
-        });
+        type_kind: crate::types::TypeKind::reference(),
+            });
         registry.type_by_name.insert("TestTemplate".to_string(), template_id);
 
         // Register template param SECOND (at template_param_id index)
@@ -3210,7 +3234,8 @@ mod tests {
             template_params: Vec::new(),
             template: None,
             type_args: Vec::new(),
-        });
+        type_kind: crate::types::TypeKind::reference(),
+            });
         registry.type_by_name.insert("CustomType".to_string(), custom_type_id);
 
         // Test: array<CustomType> - value type element
@@ -3290,7 +3315,8 @@ mod tests {
             template_params: Vec::new(),
             template: None,
             type_args: Vec::new(),
-        });
+        type_kind: crate::types::TypeKind::reference(),
+            });
         registry.type_by_name.insert("Entity".to_string(), class_id);
 
         // Instantiate with a handle type (simulating @Entity)
@@ -3349,7 +3375,8 @@ mod tests {
             template_params: Vec::new(),
             template: None,
             type_args: Vec::new(),
-        });
+        type_kind: crate::types::TypeKind::reference(),
+            });
         registry.type_by_name.insert("Foo".to_string(), class_id);
 
         // Test handle rejection FIRST (before the value type instantiation caches)
@@ -3405,7 +3432,8 @@ mod tests {
             template_params: Vec::new(),
             template: None,
             type_args: Vec::new(),
-        });
+        type_kind: crate::types::TypeKind::reference(),
+            });
         registry.type_by_name.insert("Bar".to_string(), class_id);
 
         // Instantiate with value type should work
@@ -3484,7 +3512,8 @@ mod tests {
             template_params: Vec::new(),
             template: None,
             type_args: Vec::new(),
-        });
+        type_kind: crate::types::TypeKind::reference(),
+            });
         registry.type_by_name.insert("TestClass".to_string(), class_id);
 
         // When prefer_mutable=true, should return the non-const method
@@ -3746,7 +3775,8 @@ mod tests {
             template_params: Vec::new(),
             template: None,
             type_args: Vec::new(),
-        };
+        type_kind: crate::types::TypeKind::reference(),
+            };
 
         let type_id = registry.register_type(typedef, Some("Player"));
 
@@ -3777,7 +3807,8 @@ mod tests {
             template_params: Vec::new(),
             template: None,
             type_args: Vec::new(),
-        };
+        type_kind: crate::types::TypeKind::reference(),
+            };
         let type_id = registry.register_type(typedef, Some("Vector3"));
 
         // Register a constructor: Vector3(int, int, int)
@@ -3839,7 +3870,8 @@ mod tests {
             template_params: Vec::new(),
             template: None,
             type_args: Vec::new(),
-        };
+        type_kind: crate::types::TypeKind::reference(),
+            };
         let type_id = registry.register_type(typedef, Some("Vector3"));
 
         // Register constructor: Vector3(int, int, int)
@@ -3898,7 +3930,8 @@ mod tests {
             template_params: Vec::new(),
             template: None,
             type_args: Vec::new(),
-        };
+        type_kind: crate::types::TypeKind::reference(),
+            };
         let type_id = registry.register_type(typedef, Some("Vector3"));
 
         // Register explicit constructor: Vector3(int) explicit
@@ -3951,7 +3984,8 @@ mod tests {
             template_params: Vec::new(),
             template: None,
             type_args: Vec::new(),
-        };
+        type_kind: crate::types::TypeKind::reference(),
+            };
         let type_id = registry.register_type(typedef, Some("Vector3"));
 
         let int_type = DataType::simple(INT32_TYPE);
@@ -4042,7 +4076,8 @@ mod tests {
             template_params: Vec::new(),
             template: None,
             type_args: Vec::new(),
-        };
+        type_kind: crate::types::TypeKind::reference(),
+            };
         let type_id = registry.register_type(typedef, Some("Player"));
 
         // Create copy constructor with &in: Player(const Player&in)
@@ -4102,7 +4137,8 @@ mod tests {
             template_params: Vec::new(),
             template: None,
             type_args: Vec::new(),
-        };
+        type_kind: crate::types::TypeKind::reference(),
+            };
         let type_id = registry.register_type(typedef, Some("Player"));
 
         // Create copy constructor with &inout: Player(const Player&inout)
@@ -4162,7 +4198,8 @@ mod tests {
             template_params: Vec::new(),
             template: None,
             type_args: Vec::new(),
-        };
+        type_kind: crate::types::TypeKind::reference(),
+            };
         let type_id = registry.register_type(typedef, Some("Player"));
 
         // Create constructor with two parameters (not a copy constructor)
@@ -4218,7 +4255,8 @@ mod tests {
             template_params: Vec::new(),
             template: None,
             type_args: Vec::new(),
-        };
+        type_kind: crate::types::TypeKind::reference(),
+            };
         let type_id = registry.register_type(typedef, Some("Player"));
 
         // Create constructor with &out (wrong for copy constructor)
@@ -4273,7 +4311,8 @@ mod tests {
             template_params: Vec::new(),
             template: None,
             type_args: Vec::new(),
-        };
+        type_kind: crate::types::TypeKind::reference(),
+            };
         let type_id = registry.register_type(typedef, Some("Player"));
 
         // Create constructor with different type parameter (not same class)
@@ -4328,7 +4367,8 @@ mod tests {
             template_params: Vec::new(),
             template: None,
             type_args: Vec::new(),
-        };
+        type_kind: crate::types::TypeKind::reference(),
+            };
         let type_id = registry.register_type(typedef, Some("Player"));
 
         // Should NOT find a copy constructor
@@ -4355,7 +4395,8 @@ mod tests {
             template_params: Vec::new(),
             template: None,
             type_args: Vec::new(),
-        };
+        type_kind: crate::types::TypeKind::reference(),
+            };
         let base_id = registry.register_type(base_typedef, Some("Base"));
 
         // Create derived class with a method
@@ -4373,7 +4414,8 @@ mod tests {
             template_params: Vec::new(),
             template: None,
             type_args: Vec::new(),
-        };
+        type_kind: crate::types::TypeKind::reference(),
+            };
         let derived_id = registry.register_type(derived_typedef, Some("Derived"));
 
         // Get all methods for derived class
@@ -4410,7 +4452,8 @@ mod tests {
             template_params: Vec::new(),
             template: None,
             type_args: Vec::new(),
-        };
+        type_kind: crate::types::TypeKind::reference(),
+            };
         let base_id = registry.register_type(base_typedef, Some("Base"));
 
         // Create derived class with a property
@@ -4434,7 +4477,8 @@ mod tests {
             template_params: Vec::new(),
             template: None,
             type_args: Vec::new(),
-        };
+        type_kind: crate::types::TypeKind::reference(),
+            };
         let derived_id = registry.register_type(derived_typedef, Some("Derived"));
 
         // Get all properties for derived class
@@ -4481,7 +4525,8 @@ mod tests {
             template_params: Vec::new(),
             template: None,
             type_args: Vec::new(),
-        };
+        type_kind: crate::types::TypeKind::reference(),
+            };
         let base_id = registry.register_type(base_typedef, Some("Base"));
 
         // Create derived class WITHOUT overriding the method
@@ -4499,7 +4544,8 @@ mod tests {
             template_params: Vec::new(),
             template: None,
             type_args: Vec::new(),
-        };
+        type_kind: crate::types::TypeKind::reference(),
+            };
         let derived_id = registry.register_type(derived_typedef, Some("Derived"));
 
         // Should find base class method
@@ -4542,7 +4588,8 @@ mod tests {
             template_params: Vec::new(),
             template: None,
             type_args: Vec::new(),
-        };
+        type_kind: crate::types::TypeKind::reference(),
+            };
         let base_id = registry.register_type(base_typedef, Some("Base"));
 
         // Register the derived method (same name, overrides base)
@@ -4576,7 +4623,8 @@ mod tests {
             template_params: Vec::new(),
             template: None,
             type_args: Vec::new(),
-        };
+        type_kind: crate::types::TypeKind::reference(),
+            };
         let derived_id = registry.register_type(derived_typedef, Some("Derived"));
 
         // Should find derived class method (most derived wins)
@@ -4623,7 +4671,8 @@ mod tests {
             template_params: Vec::new(),
             template: None,
             type_args: Vec::new(),
-        };
+        type_kind: crate::types::TypeKind::reference(),
+            };
         let base_id = registry.register_type(base_typedef, Some("Base"));
 
         // Create middle class (no override)
@@ -4641,7 +4690,8 @@ mod tests {
             template_params: Vec::new(),
             template: None,
             type_args: Vec::new(),
-        };
+        type_kind: crate::types::TypeKind::reference(),
+            };
         let middle_id = registry.register_type(middle_typedef, Some("Middle"));
 
         // Create most derived class (no override)
@@ -4659,7 +4709,8 @@ mod tests {
             template_params: Vec::new(),
             template: None,
             type_args: Vec::new(),
-        };
+        type_kind: crate::types::TypeKind::reference(),
+            };
         let most_derived_id = registry.register_type(most_derived_typedef, Some("MostDerived"));
 
         // Should walk through Middle to Base and find method
@@ -4685,7 +4736,8 @@ mod tests {
             template_params: Vec::new(),
             template: None,
             type_args: Vec::new(),
-        };
+        type_kind: crate::types::TypeKind::reference(),
+            };
         let type_id = registry.register_type(typedef, Some("MyClass"));
 
         // Should return None for non-existent method
@@ -4718,7 +4770,8 @@ mod tests {
             template_params: Vec::new(),
             template: None,
             type_args: Vec::new(),
-        };
+        type_kind: crate::types::TypeKind::reference(),
+            };
         let base_id = registry.register_type(base_typedef, Some("Base"));
 
         // Create derived class without that property
@@ -4736,7 +4789,8 @@ mod tests {
             template_params: Vec::new(),
             template: None,
             type_args: Vec::new(),
-        };
+        type_kind: crate::types::TypeKind::reference(),
+            };
         let derived_id = registry.register_type(derived_typedef, Some("Derived"));
 
         // Should find property from base class

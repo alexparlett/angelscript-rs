@@ -400,22 +400,12 @@ impl fmt::Debug for ScriptDict {
 // =========================================================================
 
 /// Check if a TypeId represents a hashable type (valid for dictionary keys).
+///
+/// For now, we allow all types except void as dictionary keys.
+/// In the future, this should check the type's traits to verify hashability.
 pub fn is_hashable_type(type_id: TypeId) -> bool {
-    match type_id.0 {
-        // Void is not hashable
-        0 => false,
-        // Primitives are hashable (bool, int types, float types)
-        1..=11 => true,
-        // String is hashable
-        16 => true,
-        // Reference types (handles) are hashable by identity
-        // This is a simplification - in practice we'd check if it's a handle type
-        _ => {
-            // For now, assume types > 31 might be handles
-            // Real implementation would check type flags
-            type_id.0 > 31
-        }
-    }
+    // Void is not hashable
+    type_id.0 != 0
 }
 
 // =========================================================================
@@ -531,6 +521,27 @@ pub fn dictionary_module<'app>() -> Result<Module<'app>, FfiModuleError> {
                 false
             };
             ctx.set_return(result)?;
+            Ok(())
+        })?
+        // get with output parameter - returns true if found
+        .method_raw("bool get(const K &in key, V &out value) const", |ctx: &mut CallContext| {
+            let key_slot = ctx.arg_slot(0)?.clone_if_possible();
+            let dict: &ScriptDict = ctx.this()?;
+            let found = if let Some(key_slot) = key_slot {
+                if let Some(key) = ScriptKey::from_slot(&key_slot) {
+                    dict.get(&key).and_then(|v| v.clone_if_possible())
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+            if let Some(value) = found {
+                *ctx.arg_slot_mut(1)? = value;
+                ctx.set_return(true)?;
+            } else {
+                ctx.set_return(false)?;
+            }
             Ok(())
         })?
         .method_raw("bool delete(const K &in key)", |ctx: &mut CallContext| {

@@ -627,6 +627,12 @@ pub fn array_module<'app>() -> Result<Module<'app>, FfiModuleError> {
         .release(|arr: &ScriptArray| {
             arr.release();
         })
+        // Default factory: array<T>@ f()
+        // VM will handle template type instantiation
+        .factory_raw("array<T>@ f()", |_ctx: &mut CallContext| {
+            // Placeholder: VM handles creating the array with correct element type
+            Ok(())
+        })?
         // List factory for initialization lists: array<int> a = {1, 2, 3}
         // The pattern uses a placeholder TypeId(0) since the actual element type
         // comes from template instantiation

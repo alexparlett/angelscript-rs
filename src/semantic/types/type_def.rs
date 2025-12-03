@@ -6,11 +6,14 @@
 use rustc_hash::FxHashMap;
 
 use super::data_type::DataType;
+use crate::types::TypeKind;
 use std::fmt;
 use std::sync::atomic::{AtomicU32, Ordering};
 
-/// Global atomic counter for generating unique TypeIds
-static TYPE_ID_COUNTER: AtomicU32 = AtomicU32::new(0);
+/// Global atomic counter for generating unique TypeIds.
+/// Starts at 32 to avoid conflicting with reserved primitive types (0-13)
+/// and reserved special types (14-31).
+static TYPE_ID_COUNTER: AtomicU32 = AtomicU32::new(32);
 
 /// Global atomic counter for generating unique FunctionIds
 static FUNCTION_ID_COUNTER: AtomicU32 = AtomicU32::new(0);
@@ -72,6 +75,7 @@ pub const DOUBLE_TYPE: TypeId = TypeId(11);
 
 // Special types (12-15)
 pub const NULL_TYPE: TypeId = TypeId(12);  // Null literal type (converts to any handle)
+pub const VARIABLE_PARAM_TYPE: TypeId = TypeId(13);  // ? type - accepts any value (for generic FFI functions)
 
 /// Placeholder for self-referential template types during FFI import.
 /// Used for methods like `array<T> opAssign(const array<T> &in)` where the
@@ -743,6 +747,11 @@ pub enum TypeDef {
         /// Type arguments used to instantiate the template (empty for regular classes and templates)
         /// For `array<int>`, this would be `[int]`
         type_args: Vec<DataType>,
+        /// Type kind - determines memory semantics and instantiation method.
+        /// - Value: stack-allocated, uses constructors
+        /// - Reference: FFI heap-allocated, uses factories
+        /// - ScriptObject: VM-managed, uses constructors (default for script classes)
+        type_kind: TypeKind,
     },
 
     /// Interface definition
@@ -869,6 +878,33 @@ impl TypeDef {
             TypeDef::Class { type_args, .. } => type_args,
             _ => &[],
         }
+    }
+
+    /// Get the type kind for this type.
+    /// Returns Value for primitives, the stored type_kind for classes, and Reference for interfaces.
+    pub fn type_kind(&self) -> &TypeKind {
+        // Static default for non-class types
+        static VALUE_TYPE: TypeKind = TypeKind::Value { size: 0, align: 0, is_pod: true };
+        static REFERENCE_TYPE: TypeKind = TypeKind::Reference { kind: crate::types::ReferenceKind::Standard };
+
+        match self {
+            TypeDef::Primitive { .. } => &VALUE_TYPE,
+            TypeDef::Class { type_kind, .. } => type_kind,
+            TypeDef::Interface { .. } => &REFERENCE_TYPE,
+            TypeDef::Enum { .. } => &VALUE_TYPE,
+            TypeDef::Funcdef { .. } => &REFERENCE_TYPE,
+            TypeDef::TemplateParam { .. } => &REFERENCE_TYPE, // Template params default to reference
+        }
+    }
+
+    /// Check if this type is a value type (uses constructors).
+    pub fn is_value_type(&self) -> bool {
+        self.type_kind().is_value()
+    }
+
+    /// Check if this type is a reference type (uses factories).
+    pub fn is_reference_type(&self) -> bool {
+        self.type_kind().is_reference()
     }
 }
 
@@ -1075,7 +1111,8 @@ mod tests {
             template_params: vec![],
             template: None,
             type_args: vec![],
-        };
+        type_kind: crate::types::TypeKind::reference(),
+            };
         assert_eq!(typedef.name(), "Player");
         assert_eq!(typedef.qualified_name(), "Game::Player");
         assert!(typedef.is_class());
@@ -1105,7 +1142,8 @@ mod tests {
             template_params: vec![],
             template: None,
             type_args: vec![],
-        };
+        type_kind: crate::types::TypeKind::reference(),
+            };
 
         if let TypeDef::Class { fields, methods, base_class, interfaces, .. } = typedef {
             assert_eq!(fields.len(), 1);
@@ -1186,7 +1224,8 @@ mod tests {
             template_params: vec![t_param_id],  // Has template params = is a template
             template: None,
             type_args: vec![],
-        };
+        type_kind: crate::types::TypeKind::reference(),
+            };
         assert_eq!(typedef.name(), "array");
         assert!(typedef.is_template());
         assert!(!typedef.is_template_instance());
@@ -1228,6 +1267,7 @@ mod tests {
             template_params: vec![],  // Instance has empty template_params
             template: Some(test_template),
             type_args: vec![DataType::simple(INT32_TYPE)],
+            type_kind: TypeKind::reference(),
         };
         assert!(typedef.is_template_instance());
         assert!(!typedef.is_template());
@@ -1676,6 +1716,7 @@ mod tests {
             template_params: vec![],
             template: Some(test_template),
             type_args: vec![DataType::simple(INT32_TYPE)],
+            type_kind: TypeKind::reference(),
         };
         assert_eq!(typedef.name(), "Container<int>");
         assert_eq!(typedef.qualified_name(), "Container<int>");
@@ -1699,7 +1740,8 @@ mod tests {
             template_params: vec![t_param_id],
             template: None,
             type_args: vec![],
-        };
+        type_kind: crate::types::TypeKind::reference(),
+            };
         assert_eq!(typedef.qualified_name(), "array");
     }
 

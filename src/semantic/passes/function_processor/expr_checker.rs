@@ -1982,6 +1982,10 @@ impl<'ast> FunctionCompiler<'ast> {
     }
 
     /// Type checks a constructor call (e.g., `Player(100, "Bob")`).
+    ///
+    /// The instantiation method depends on TypeKind:
+    /// - Reference (FFI types like array, dictionary): use factories
+    /// - Value and ScriptObject: use constructors
     pub(super) fn check_constructor_call(
         &mut self,
         type_id: TypeId,
@@ -1994,34 +1998,49 @@ impl<'ast> FunctionCompiler<'ast> {
             arg_types.push(ctx.data_type.clone());
         }
 
-        // Get all constructors for this type
-        let constructors = self.registry.find_constructors(type_id);
+        let typedef = self.registry.get_type(type_id);
+        let type_name = typedef.name().to_string();
+        let use_factory = typedef.type_kind().uses_factories();
 
-        if constructors.is_empty() {
-            let type_name = self.registry.get_type(type_id).name();
+        // Get factories or constructors based on type kind
+        let candidates = if use_factory {
+            self.registry.find_factories(type_id)
+        } else {
+            self.registry.find_constructors(type_id)
+        };
+
+        if candidates.is_empty() {
+            let kind_name = if use_factory { "factories" } else { "constructors" };
             self.error(
                 SemanticErrorKind::UndefinedFunction,
                 span,
-                format!("type '{}' has no constructors", type_name),
+                format!("type '{}' has no {}", type_name, kind_name),
             );
             return None;
         }
 
-        // Find best matching constructor using existing overload resolution
-        let (matching_ctor, conversions) = self.find_best_function_overload(&constructors, &arg_types, span)?;
+        // Find best matching constructor/factory using existing overload resolution
+        let (matching_func, conversions) = self.find_best_function_overload(&candidates, &arg_types, span)?;
 
         // Emit conversion instructions for arguments
         for conv in conversions.into_iter().flatten() {
             self.emit_conversion(&conv);
         }
 
-        // Emit constructor call instruction
-        self.bytecode.emit(Instruction::CallConstructor {
-            type_id: type_id.as_u32(),
-            func_id: matching_ctor.as_u32(),
-        });
+        // Emit constructor or factory call instruction
+        if use_factory {
+            self.bytecode.emit(Instruction::CallFactory {
+                type_id: type_id.as_u32(),
+                func_id: matching_func.as_u32(),
+            });
+        } else {
+            self.bytecode.emit(Instruction::CallConstructor {
+                type_id: type_id.as_u32(),
+                func_id: matching_func.as_u32(),
+            });
+        }
 
-        // Constructor calls produce rvalues (newly constructed objects)
+        // Constructor/factory calls produce rvalues (newly constructed objects)
         Some(ExprContext::rvalue(DataType::simple(type_id)))
     }
 

@@ -886,6 +886,7 @@ mod tests {
                 template_params: vec![t_param],
                 template: None,
                 type_args: Vec::new(),
+            type_kind: crate::types::TypeKind::reference(),
             };
             *registry.get_type_mut(template_id) = typedef;
             template_id

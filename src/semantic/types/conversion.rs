@@ -802,7 +802,8 @@ mod tests {
             template_params: Vec::new(),
             template: None,
             type_args: Vec::new(),
-        };
+        type_kind: crate::types::TypeKind::reference(),
+            };
         let user_type_id = registry.register_type(user_class, Some("UserType"));
 
         let user_type = DataType::simple(user_type_id);
@@ -1378,6 +1379,7 @@ mod tests {
                 template_params: Vec::new(),
                 template: None,
                 type_args: Vec::new(),
+            type_kind: crate::types::TypeKind::reference(),
             },
             Some("Base"),
         );
@@ -1398,6 +1400,7 @@ mod tests {
                 template_params: Vec::new(),
                 template: None,
                 type_args: Vec::new(),
+            type_kind: crate::types::TypeKind::reference(),
             },
             Some("Derived"),
         );
@@ -1457,6 +1460,7 @@ mod tests {
                 template_params: Vec::new(),
                 template: None,
                 type_args: Vec::new(),
+            type_kind: crate::types::TypeKind::reference(),
             },
             Some("Circle"),
         );
@@ -1545,7 +1549,8 @@ mod tests {
             template_params: Vec::new(),
             template: None,
             type_args: Vec::new(),
-        };
+        type_kind: crate::types::TypeKind::reference(),
+            };
         let user_type_id = registry.register_type(user_class, Some("UserType"));
 
         // user_type -> int (no conversion)

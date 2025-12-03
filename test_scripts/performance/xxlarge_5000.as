@@ -4033,11 +4033,11 @@ namespace Testing {
     bool endsWith(const string &in str, const string &in suffix) {
         int pos = int(str.length()) - int(suffix.length());
         if (pos < 0) return false;
-        return str.substr(pos) == suffix;
+        return str.substr(pos, -1) == suffix;
     }
 
     bool contains(const string &in str, const string &in substr) {
-        return str.findFirst(substr) >= 0;
+        return str.findFirst(substr, 0) >= 0;
     }
 
     string toLowerCase(const string &in str) {

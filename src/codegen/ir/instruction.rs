@@ -259,6 +259,21 @@ pub enum Instruction {
     /// - func_id: FunctionId of the constructor to call
     CallConstructor { type_id: u32, func_id: u32 },
 
+    /// Call a factory function for a reference type.
+    /// Similar to CallConstructor but for reference types which use factory
+    /// functions instead of constructors.
+    ///
+    /// Execution:
+    /// 1. Pop arguments from stack (based on factory signature)
+    /// 2. Call factory function
+    /// 3. Factory allocates and initializes the object
+    /// 4. Push object handle onto stack
+    ///
+    /// Fields: (type_id, func_id)
+    /// - type_id: TypeId of the class being created
+    /// - func_id: FunctionId of the factory to call
+    CallFactory { type_id: u32, func_id: u32 },
+
     // Stack management
     /// Pop the top value from the stack
     Pop,

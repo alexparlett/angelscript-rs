@@ -13,106 +13,8 @@ use crate::semantic::types::DataType;
 use super::list_buffer::ListPattern;
 use super::native_fn::NativeFn;
 
-/// Type kind determines memory semantics for registered types.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum TypeKind {
-    /// Value type - stack allocated, copied on assignment.
-    /// Requires: constructor, destructor, copy/assignment behaviors.
-    Value {
-        /// Size in bytes for stack allocation
-        size: usize,
-        /// Alignment requirement
-        align: usize,
-        /// Plain Old Data - no constructor/destructor needed, can memcpy
-        is_pod: bool,
-    },
-
-    /// Reference type - heap allocated via factory, handle semantics.
-    /// The `kind` field specifies the reference semantics.
-    Reference {
-        /// The kind of reference type
-        kind: ReferenceKind,
-    },
-}
-
-impl TypeKind {
-    /// Create a value type kind with size and alignment from a type.
-    pub fn value<T>() -> Self {
-        TypeKind::Value {
-            size: std::mem::size_of::<T>(),
-            align: std::mem::align_of::<T>(),
-            is_pod: false,
-        }
-    }
-
-    /// Create a POD value type kind.
-    pub fn pod<T>() -> Self {
-        TypeKind::Value {
-            size: std::mem::size_of::<T>(),
-            align: std::mem::align_of::<T>(),
-            is_pod: true,
-        }
-    }
-
-    /// Create a standard reference type kind.
-    pub fn reference() -> Self {
-        TypeKind::Reference {
-            kind: ReferenceKind::Standard,
-        }
-    }
-
-    /// Create a scoped reference type kind.
-    pub fn scoped() -> Self {
-        TypeKind::Reference {
-            kind: ReferenceKind::Scoped,
-        }
-    }
-
-    /// Create a single-ref type kind.
-    pub fn single_ref() -> Self {
-        TypeKind::Reference {
-            kind: ReferenceKind::SingleRef,
-        }
-    }
-
-    /// Create a generic handle type kind.
-    pub fn generic_handle() -> Self {
-        TypeKind::Reference {
-            kind: ReferenceKind::GenericHandle,
-        }
-    }
-
-    /// Check if this is a value type.
-    pub fn is_value(&self) -> bool {
-        matches!(self, TypeKind::Value { .. })
-    }
-
-    /// Check if this is a reference type.
-    pub fn is_reference(&self) -> bool {
-        matches!(self, TypeKind::Reference { .. })
-    }
-
-    /// Check if this is a POD type.
-    pub fn is_pod(&self) -> bool {
-        matches!(self, TypeKind::Value { is_pod: true, .. })
-    }
-}
-
-/// Reference type variants for different ownership/lifetime semantics.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ReferenceKind {
-    /// Standard reference type - full handle support with AddRef/Release ref counting.
-    Standard,
-
-    /// Scoped reference type - RAII-style, destroyed at scope exit, no handles.
-    Scoped,
-
-    /// Single-ref type - app-controlled lifetime, no handles in script.
-    SingleRef,
-
-    /// Generic handle - type-erased container that can hold any type.
-    GenericHandle,
-}
+// Re-export TypeKind and ReferenceKind from the common types module
+pub use crate::types::{ReferenceKind, TypeKind};
 
 /// List construction behavior with its pattern.
 ///
@@ -370,93 +272,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn type_kind_value() {
-        let kind = TypeKind::value::<i32>();
-        match kind {
-            TypeKind::Value {
-                size,
-                align,
-                is_pod,
-            } => {
-                assert_eq!(size, 4);
-                assert_eq!(align, 4);
-                assert!(!is_pod);
-            }
-            _ => panic!("Expected Value variant"),
-        }
-        assert!(kind.is_value());
-        assert!(!kind.is_reference());
-        assert!(!kind.is_pod());
-    }
-
-    #[test]
-    fn type_kind_pod() {
-        let kind = TypeKind::pod::<i32>();
-        match kind {
-            TypeKind::Value {
-                size,
-                align,
-                is_pod,
-            } => {
-                assert_eq!(size, 4);
-                assert_eq!(align, 4);
-                assert!(is_pod);
-            }
-            _ => panic!("Expected Value variant"),
-        }
-        assert!(kind.is_pod());
-    }
-
-    #[test]
-    fn type_kind_reference() {
-        let kind = TypeKind::reference();
-        assert!(kind.is_reference());
-        assert!(!kind.is_value());
-        match kind {
-            TypeKind::Reference { kind } => {
-                assert_eq!(kind, ReferenceKind::Standard);
-            }
-            _ => panic!("Expected Reference variant"),
-        }
-    }
-
-    #[test]
-    fn type_kind_scoped() {
-        let kind = TypeKind::scoped();
-        assert!(kind.is_reference());
-        match kind {
-            TypeKind::Reference { kind } => {
-                assert_eq!(kind, ReferenceKind::Scoped);
-            }
-            _ => panic!("Expected Reference variant"),
-        }
-    }
-
-    #[test]
-    fn type_kind_single_ref() {
-        let kind = TypeKind::single_ref();
-        assert!(kind.is_reference());
-        match kind {
-            TypeKind::Reference { kind } => {
-                assert_eq!(kind, ReferenceKind::SingleRef);
-            }
-            _ => panic!("Expected Reference variant"),
-        }
-    }
-
-    #[test]
-    fn type_kind_generic_handle() {
-        let kind = TypeKind::generic_handle();
-        assert!(kind.is_reference());
-        match kind {
-            TypeKind::Reference { kind } => {
-                assert_eq!(kind, ReferenceKind::GenericHandle);
-            }
-            _ => panic!("Expected Reference variant"),
-        }
-    }
-
-    #[test]
     fn template_instance_info_new() {
         let info = TemplateInstanceInfo::new("array", vec![]);
         assert_eq!(info.template_name, "array");
@@ -504,5 +319,4 @@ mod tests {
         assert!(debug.contains("NativeInterfaceDef"));
         assert!(debug.contains("ISerializable"));
     }
-
 }

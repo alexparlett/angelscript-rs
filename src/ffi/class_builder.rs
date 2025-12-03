@@ -287,6 +287,35 @@ impl<'m, 'app, T: NativeType> ClassBuilder<'m, 'app, T> {
         Ok(self)
     }
 
+    /// Register a factory with raw CallContext access.
+    ///
+    /// Use this for factory functions that need full control over argument handling,
+    /// such as template types that need access to type information.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// module.register_type::<ScriptArray>("array<class T>")
+    ///     .reference_type()
+    ///     .factory_raw("array<T>@ f()", |ctx| {
+    ///         // VM pushes element TypeId as first argument
+    ///         let element_type: TypeId = ctx.arg(0)?;
+    ///         let arr = ScriptArray::new(element_type);
+    ///         ctx.set_return(arr)?;
+    ///         Ok(())
+    ///     })?
+    ///     .build()?;
+    /// ```
+    pub fn factory_raw<F>(mut self, decl: &str, f: F) -> Result<Self, FfiModuleError>
+    where
+        F: NativeCallable + Send + Sync + 'static,
+    {
+        let sig = self.parse_method_decl(decl)?;
+        let method_def = self.build_method_def(sig, NativeFn::new(f));
+        self.factories.push(method_def);
+        Ok(self)
+    }
+
     /// Register the AddRef behavior for reference types.
     ///
     /// Called when a new handle reference is created.

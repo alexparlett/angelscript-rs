@@ -68,6 +68,7 @@ mod module;
 pub mod modules;
 pub mod semantic;
 pub mod codegen;
+pub mod types;
 mod unit;
 
 // Re-export Parser as the primary parsing interface
@@ -168,3 +169,6 @@ pub use modules::{ScriptArray, ScriptDict, ScriptString};
 pub use modules::{
     array_module, default_modules, dictionary_module, math_module, std_module, string_module,
 };
+
+// Re-export common types
+pub use types::{ReferenceKind, TypeKind};

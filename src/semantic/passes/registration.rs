@@ -221,6 +221,7 @@ impl<'ast> Registrar<'ast> {
         }
 
         // Register class type (empty shell)
+        // Script-defined classes are ScriptObject type kind (uses constructors, VM manages allocation)
         let typedef = TypeDef::Class {
             name: class.name.name.to_string(),
             qualified_name: qualified_name.clone(),
@@ -235,6 +236,7 @@ impl<'ast> Registrar<'ast> {
             template_params: Vec::new(),  // Script classes don't have template params (yet)
             template: None,  // Not a template instance
             type_args: Vec::new(),
+            type_kind: crate::types::TypeKind::script_object(),
         };
 
         let type_id = self.registry.register_type(typedef, Some(&qualified_name));

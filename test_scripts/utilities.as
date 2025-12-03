@@ -47,7 +47,7 @@ namespace String {
     bool endsWith(const string &in str, const string &in suffix) {
         if (suffix.length() > str.length()) return false;
         int start = str.length() - suffix.length();
-        return str.substr(start) == suffix;
+        return str.substr(start, -1) == suffix;
     }
     
     string trim(const string &in str) {
@@ -83,7 +83,7 @@ namespace String {
         }
         
         if (start < str.length()) {
-            result.insertLast(str.substr(start));
+            result.insertLast(str.substr(start, -1));
         }
         
         return result;
