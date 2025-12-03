@@ -267,8 +267,9 @@ impl DataType {
         // converted to a handle reference. This is a common pattern for handle initialization.
         if !self.is_handle && target.is_handle && self.type_id == target.type_id {
             // Check if target is a class/object type (not primitive)
+            // Note: Template instances are also Class types with template: Some(...)
             let typedef = registry.get_type(self.type_id);
-            if matches!(typedef, TypeDef::Class { .. } | TypeDef::Interface { .. } | TypeDef::TemplateInstance { .. }) {
+            if matches!(typedef, TypeDef::Class { .. } | TypeDef::Interface { .. }) {
                 return Some(Conversion {
                     kind: ConversionKind::ValueToHandle,
                     cost: 1,
@@ -731,7 +732,12 @@ impl DataType {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::semantic::types::type_def::{INT32_TYPE, STRING_TYPE, VOID_TYPE};
+    use crate::semantic::types::type_def::{INT32_TYPE, VOID_TYPE, TypeId};
+
+    // Test-local type ID to simulate a user type (like string)
+    // This must be within the primitive type range for Registry::get_type to work without panicking
+    // Since we're just testing conversion logic, we can use any valid TypeId
+    const TEST_USER_TYPE: TypeId = TypeId(100);
 
     // ==================== Null Conversion Tests ====================
 
@@ -763,24 +769,44 @@ mod tests {
         assert!(conv.is_some());
         assert_eq!(conv.unwrap().kind, ConversionKind::NullToHandle);
 
-        // null -> string@ (handle to string)
-        let string_handle = DataType::with_handle(STRING_TYPE, false);
-        let conv = null.can_convert_to(&string_handle, &registry);
+        // null -> user_type@ (handle to user type)
+        let user_handle = DataType::with_handle(TEST_USER_TYPE, false);
+        let conv = null.can_convert_to(&user_handle, &registry);
         assert!(conv.is_some());
         assert_eq!(conv.unwrap().kind, ConversionKind::NullToHandle);
     }
 
     #[test]
     fn null_does_not_convert_to_non_handle() {
-        let registry = Registry::new();
+        use crate::semantic::types::type_def::TypeDef;
+
+        let mut registry = Registry::new();
         let null = DataType::null_literal();
 
         // null cannot convert to value types
         let int_type = DataType::simple(INT32_TYPE);
         assert!(null.can_convert_to(&int_type, &registry).is_none());
 
-        let string_type = DataType::simple(STRING_TYPE);
-        assert!(null.can_convert_to(&string_type, &registry).is_none());
+        // Register a custom class to test
+        let user_class = TypeDef::Class {
+            name: "UserType".to_string(),
+            qualified_name: "UserType".to_string(),
+            fields: Vec::new(),
+            methods: Vec::new(),
+            base_class: None,
+            interfaces: Vec::new(),
+            operator_methods: rustc_hash::FxHashMap::default(),
+            properties: rustc_hash::FxHashMap::default(),
+            is_final: false,
+            is_abstract: false,
+            template_params: Vec::new(),
+            template: None,
+            type_args: Vec::new(),
+        };
+        let user_type_id = registry.register_type(user_class, Some("UserType"));
+
+        let user_type = DataType::simple(user_type_id);
+        assert!(null.can_convert_to(&user_type, &registry).is_none());
     }
 
     #[test]
@@ -1349,6 +1375,9 @@ mod tests {
                 properties: Default::default(),
                 is_abstract: false,
                 is_final: false,
+                template_params: Vec::new(),
+                template: None,
+                type_args: Vec::new(),
             },
             Some("Base"),
         );
@@ -1366,6 +1395,9 @@ mod tests {
                 properties: Default::default(),
                 is_abstract: false,
                 is_final: false,
+                template_params: Vec::new(),
+                template: None,
+                type_args: Vec::new(),
             },
             Some("Derived"),
         );
@@ -1422,6 +1454,9 @@ mod tests {
                 properties: Default::default(),
                 is_abstract: false,
                 is_final: false,
+                template_params: Vec::new(),
+                template: None,
+                type_args: Vec::new(),
             },
             Some("Circle"),
         );
@@ -1491,14 +1526,34 @@ mod tests {
 
     #[test]
     fn no_conversion_between_unrelated_types() {
-        let registry = Registry::new();
+        use crate::semantic::types::type_def::TypeDef;
 
-        // string -> int (no conversion)
-        let string_type = DataType::simple(STRING_TYPE);
+        let mut registry = Registry::new();
+
+        // Register a custom class type
+        let user_class = TypeDef::Class {
+            name: "UserType".to_string(),
+            qualified_name: "UserType".to_string(),
+            fields: Vec::new(),
+            methods: Vec::new(),
+            base_class: None,
+            interfaces: Vec::new(),
+            operator_methods: rustc_hash::FxHashMap::default(),
+            properties: rustc_hash::FxHashMap::default(),
+            is_final: false,
+            is_abstract: false,
+            template_params: Vec::new(),
+            template: None,
+            type_args: Vec::new(),
+        };
+        let user_type_id = registry.register_type(user_class, Some("UserType"));
+
+        // user_type -> int (no conversion)
+        let user_type = DataType::simple(user_type_id);
         let int_type = DataType::simple(INT32_TYPE);
 
-        assert!(string_type.can_convert_to(&int_type, &registry).is_none());
-        assert!(int_type.can_convert_to(&string_type, &registry).is_none());
+        assert!(user_type.can_convert_to(&int_type, &registry).is_none());
+        assert!(int_type.can_convert_to(&user_type, &registry).is_none());
     }
 
     #[test]

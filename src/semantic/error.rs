@@ -163,6 +163,14 @@ pub enum SemanticErrorKind {
     /// Cannot call a non-function value.
     NotCallable,
 
+    // Behavior errors
+    /// Type is missing a required behavior (e.g., list_factory for init lists).
+    MissingListBehavior,
+
+    // Import errors
+    /// Failed to import an FFI module.
+    ImportError,
+
     // Other
     /// An internal semantic analyzer error (bug in analyzer).
     InternalError,
@@ -199,6 +207,8 @@ impl fmt::Display for SemanticErrorKind {
             AccessViolation => "access violation",
             WrongArgumentCount => "wrong number of arguments",
             NotCallable => "not callable",
+            MissingListBehavior => "missing list initialization behavior",
+            ImportError => "failed to import module",
             InternalError => "internal semantic analyzer error",
         };
         write!(f, "{}", msg)

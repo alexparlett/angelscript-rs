@@ -636,7 +636,49 @@ pub fn array_module<'app>() -> Result<Module<'app>, FfiModuleError> {
             let _ = ctx;
             Ok(())
         })
-        // Basic methods using raw context
+        // === Index operators ===
+        // T &opIndex(uint index)
+        .operator_raw("T &opIndex(uint index)", |ctx: &mut CallContext| {
+            let index: u32 = ctx.arg(0)?;
+            let arr: &ScriptArray = ctx.this()?;
+            if let Some(slot) = arr.get(index) {
+                if let Some(cloned) = slot.clone_if_possible() {
+                    ctx.set_return_slot(cloned);
+                }
+            } else {
+                return Err(crate::ffi::NativeError::other(format!(
+                    "Array index {} out of bounds (length {})",
+                    index,
+                    arr.len()
+                )));
+            }
+            Ok(())
+        })?
+        // const T &opIndex(uint index) const
+        .operator_raw("const T &opIndex(uint index) const", |ctx: &mut CallContext| {
+            let index: u32 = ctx.arg(0)?;
+            let arr: &ScriptArray = ctx.this()?;
+            if let Some(slot) = arr.get(index) {
+                if let Some(cloned) = slot.clone_if_possible() {
+                    ctx.set_return_slot(cloned);
+                }
+            } else {
+                return Err(crate::ffi::NativeError::other(format!(
+                    "Array index {} out of bounds (length {})",
+                    index,
+                    arr.len()
+                )));
+            }
+            Ok(())
+        })?
+        // === Assignment operator ===
+        // array<T> &opAssign(const array<T>&in)
+        .operator_raw("array<T> &opAssign(const array<T> &in)", |ctx: &mut CallContext| {
+            // For now, a placeholder - the VM will need to handle deep copy
+            let _ = ctx;
+            Ok(())
+        })?
+        // === Size methods ===
         .method_raw("uint length() const", |ctx: &mut CallContext| {
             let arr: &ScriptArray = ctx.this()?;
             ctx.set_return(arr.len())?;
@@ -674,9 +716,32 @@ pub fn array_module<'app>() -> Result<Module<'app>, FfiModuleError> {
             arr.shrink_to_fit();
             Ok(())
         })?
-        .method_raw("void reverse()", |ctx: &mut CallContext| {
+        // === Insertion methods ===
+        .method_raw("void insertAt(uint index, const T &in value)", |ctx: &mut CallContext| {
+            let index: u32 = ctx.arg(0)?;
+            let value = ctx.arg_slot(1)?.clone_if_possible().unwrap_or(VmSlot::Void);
             let arr: &mut ScriptArray = ctx.this_mut()?;
-            arr.reverse();
+            arr.insert(index, value);
+            Ok(())
+        })?
+        .method_raw("void insertAt(uint index, const array<T> &in arr)", |ctx: &mut CallContext| {
+            let index: u32 = ctx.arg(0)?;
+            // For inserting another array - placeholder for now
+            let _ = index;
+            let _ = ctx;
+            Ok(())
+        })?
+        .method_raw("void insertLast(const T &in value)", |ctx: &mut CallContext| {
+            let value = ctx.arg_slot(0)?.clone_if_possible().unwrap_or(VmSlot::Void);
+            let arr: &mut ScriptArray = ctx.this_mut()?;
+            arr.push(value);
+            Ok(())
+        })?
+        // === Removal methods ===
+        .method_raw("void removeAt(uint index)", |ctx: &mut CallContext| {
+            let index: u32 = ctx.arg(0)?;
+            let arr: &mut ScriptArray = ctx.this_mut()?;
+            arr.remove_at(index);
             Ok(())
         })?
         .method_raw("void removeLast()", |ctx: &mut CallContext| {
@@ -684,17 +749,69 @@ pub fn array_module<'app>() -> Result<Module<'app>, FfiModuleError> {
             arr.pop();
             Ok(())
         })?
-        .method_raw("void removeAt(uint index)", |ctx: &mut CallContext| {
-            let index: u32 = ctx.arg(0)?;
-            let arr: &mut ScriptArray = ctx.this_mut()?;
-            arr.remove_at(index);
-            Ok(())
-        })?
         .method_raw("void removeRange(uint start, uint count)", |ctx: &mut CallContext| {
             let start: u32 = ctx.arg(0)?;
             let count: u32 = ctx.arg(1)?;
             let arr: &mut ScriptArray = ctx.this_mut()?;
             arr.remove_range(start, count);
+            Ok(())
+        })?
+        // === Ordering methods ===
+        .method_raw("void reverse()", |ctx: &mut CallContext| {
+            let arr: &mut ScriptArray = ctx.this_mut()?;
+            arr.reverse();
+            Ok(())
+        })?
+        .method_raw("void sortAsc()", |ctx: &mut CallContext| {
+            let arr: &mut ScriptArray = ctx.this_mut()?;
+            arr.sort_asc();
+            Ok(())
+        })?
+        .method_raw("void sortDesc()", |ctx: &mut CallContext| {
+            let arr: &mut ScriptArray = ctx.this_mut()?;
+            arr.sort_desc();
+            Ok(())
+        })?
+        // TODO: void sortAsc(uint startAt, uint count)
+        // TODO: void sortDesc(uint startAt, uint count)
+        // TODO: void sort(const less &in compareFunc, uint startAt = 0, uint count = uint(-1))
+        // === Search methods ===
+        .method_raw("int find(const T &in value) const", |ctx: &mut CallContext| {
+            let value = ctx.arg_slot(0)?;
+            let arr: &ScriptArray = ctx.this()?;
+            let result = arr.find(value).map(|i| i as i64).unwrap_or(-1);
+            ctx.set_return(result)?;
+            Ok(())
+        })?
+        .method_raw("int find(uint startAt, const T &in value) const", |ctx: &mut CallContext| {
+            let start_at: u32 = ctx.arg(0)?;
+            let value = ctx.arg_slot(1)?;
+            let arr: &ScriptArray = ctx.this()?;
+            let result = arr.find_from(start_at, value).map(|i| i as i64).unwrap_or(-1);
+            ctx.set_return(result)?;
+            Ok(())
+        })?
+        // findByRef - same implementation as find for now since we compare by value
+        .method_raw("int findByRef(const T &in value) const", |ctx: &mut CallContext| {
+            let value = ctx.arg_slot(0)?;
+            let arr: &ScriptArray = ctx.this()?;
+            let result = arr.find(value).map(|i| i as i64).unwrap_or(-1);
+            ctx.set_return(result)?;
+            Ok(())
+        })?
+        .method_raw("int findByRef(uint startAt, const T &in value) const", |ctx: &mut CallContext| {
+            let start_at: u32 = ctx.arg(0)?;
+            let value = ctx.arg_slot(1)?;
+            let arr: &ScriptArray = ctx.this()?;
+            let result = arr.find_from(start_at, value).map(|i| i as i64).unwrap_or(-1);
+            ctx.set_return(result)?;
+            Ok(())
+        })?
+        // === Comparison ===
+        .operator_raw("bool opEquals(const array<T> &in) const", |ctx: &mut CallContext| {
+            // Placeholder - needs proper implementation comparing element by element
+            let _ = ctx;
+            ctx.set_return(false)?;
             Ok(())
         })?
         .build()?;

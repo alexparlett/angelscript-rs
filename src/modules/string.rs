@@ -596,9 +596,13 @@ impl AsRef<[u8]> for ScriptString {
 // FFI REGISTRATION
 // =========================================================================
 
-/// Creates the string module with parsing and formatting functions.
+/// Creates the string module with the string type and parsing/formatting functions.
 ///
 /// All functions are registered in the root namespace.
+///
+/// # Type
+///
+/// Registers the `string` value type with standard string operations.
 ///
 /// # Functions
 ///
@@ -607,11 +611,6 @@ impl AsRef<[u8]> for ScriptString {
 ///
 /// ## Formatting
 /// - `formatInt`, `formatUInt`, `formatFloat` - Format numbers to strings
-///
-/// # Note
-///
-/// The `string` type itself is handled as a built-in type by the semantic
-/// analysis system. This module provides utility functions.
 ///
 /// # Example
 ///
@@ -623,6 +622,64 @@ impl AsRef<[u8]> for ScriptString {
 /// ```
 pub fn string_module<'app>() -> Result<Module<'app>, FfiModuleError> {
     let mut module = Module::root();
+
+    // =========================================================================
+    // STRING TYPE
+    // =========================================================================
+
+    // Register minimal string type - just enough for semantic analysis
+    // Methods use raw API since ScriptString doesn't implement FromScript/ToScript
+    module
+        .register_type::<ScriptString>("string")
+        .value_type()
+        .method_raw("uint length() const", |ctx: &mut crate::ffi::CallContext| {
+            let s: &ScriptString = ctx.this()?;
+            ctx.set_return(s.len())?;
+            Ok(())
+        })?
+        .method_raw("bool isEmpty() const", |ctx: &mut crate::ffi::CallContext| {
+            let s: &ScriptString = ctx.this()?;
+            ctx.set_return(s.is_empty())?;
+            Ok(())
+        })?
+        .operator_raw(
+            "uint8 opIndex(uint idx) const",
+            |ctx: &mut crate::ffi::CallContext| {
+                let idx: u32 = ctx.arg(0)?;
+                let s: &ScriptString = ctx.this()?;
+                ctx.set_return(s.byte_at(idx))?;
+                Ok(())
+            },
+        )?
+        .operator_raw(
+            "string &opAssign(const string &in other)",
+            |_ctx: &mut crate::ffi::CallContext| {
+                // Placeholder - VM handles assignment
+                Ok(())
+            },
+        )?
+        .operator_raw(
+            "string opAdd(const string &in other) const",
+            |_ctx: &mut crate::ffi::CallContext| {
+                // Placeholder - VM handles concatenation
+                Ok(())
+            },
+        )?
+        .operator_raw(
+            "bool opEquals(const string &in other) const",
+            |_ctx: &mut crate::ffi::CallContext| {
+                // Placeholder - VM handles comparison
+                Ok(())
+            },
+        )?
+        .operator_raw(
+            "int opCmp(const string &in other) const",
+            |_ctx: &mut crate::ffi::CallContext| {
+                // Placeholder - VM handles comparison
+                Ok(())
+            },
+        )?
+        .build()?;
 
     // =========================================================================
     // PARSING FUNCTIONS

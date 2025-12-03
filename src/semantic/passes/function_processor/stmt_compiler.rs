@@ -15,7 +15,7 @@ use crate::codegen::Instruction;
 use crate::semantic::{
     ConstEvaluator, ConstValue, OperatorBehavior,
     SemanticErrorKind, TypeDef, BOOL_TYPE, DOUBLE_TYPE, FLOAT_TYPE,
-    NULL_TYPE, VOID_TYPE, STRING_TYPE,
+    NULL_TYPE, VOID_TYPE,
 };
 use crate::semantic::types::type_def::FunctionId;
 use rustc_hash::FxHashSet;
@@ -140,15 +140,6 @@ impl<'ast> FunctionCompiler<'ast> {
                                 inferred_type.is_const = true;
                             }
                         }
-                        TypeSuffix::Array => {
-                            // auto[] doesn't make sense - the array type should come from initializer
-                            self.error(
-                                SemanticErrorKind::TypeMismatch,
-                                var_decl.ty.span,
-                                "cannot use array suffix with 'auto'; type is inferred from initializer",
-                            );
-                            continue;
-                        }
                     }
                 }
 
@@ -181,25 +172,27 @@ impl<'ast> FunctionCompiler<'ast> {
                     self.expected_funcdef_type = Some(var_type.type_id);
                 }
 
-                // Set expected init list type for empty init lists
-                // If the target is an array<T>, the element type is T
-                if let TypeDef::TemplateInstance { template, sub_types, .. } = self.registry.get_type(var_type.type_id)
-                    && *template == self.registry.array_template && !sub_types.is_empty() {
-                        self.expected_init_list_type = Some(sub_types[0].clone());
-                    }
+                // Set expected init list target type if it has list behaviors
+                // The target type is the type that has list_factory or list_construct behavior
+                // (e.g., array<int>, StringBuffer, or any type with list initialization support)
+                if self.registry.get_behaviors(var_type.type_id)
+                    .is_some_and(|b| b.has_list_init())
+                {
+                    self.expected_init_list_target = Some(var_type.type_id);
+                }
 
                 let init_ctx = match self.check_expr(init) {
                     Some(ctx) => ctx,
                     None => {
                         self.expected_funcdef_type = None;
-                        self.expected_init_list_type = None;
+                        self.expected_init_list_target = None;
                         continue; // Error already recorded
                     }
                 };
 
                 // Clear expected types
                 self.expected_funcdef_type = None;
-                self.expected_init_list_type = None;
+                self.expected_init_list_target = None;
 
                 // Check if initializer can be converted to variable type and emit conversion if needed
                 if let Some(conversion) = init_ctx.data_type.can_convert_to(&var_type, self.registry) {
@@ -971,7 +964,10 @@ impl<'ast> FunctionCompiler<'ast> {
                                     || value_ctx.data_type.type_id == DOUBLE_TYPE
                                     || self.is_integer(&value_ctx.data_type)
                             }
-                            SwitchCategory::String => value_ctx.data_type.type_id == STRING_TYPE,
+                            SwitchCategory::String => {
+                                self.registry.lookup_type("string")
+                                    .map_or(false, |s| value_ctx.data_type.type_id == s)
+                            }
                             SwitchCategory::Handle => {
                                 value_ctx.data_type.type_id == NULL_TYPE
                                     || (value_ctx.data_type.is_handle

@@ -154,8 +154,9 @@ pub struct FunctionCompiler<'ast> {
     /// Expected funcdef type for lambda type inference
     expected_funcdef_type: Option<TypeId>,
 
-    /// Expected init list element type (for empty init lists or context-based inference)
-    expected_init_list_type: Option<DataType>,
+    /// Expected init list target type (the type that has list_factory or list_construct behavior)
+    /// Set when we know the target type for an init list from context (e.g., variable declaration)
+    expected_init_list_target: Option<TypeId>,
 
     /// Errors encountered during compilation
     errors: Vec<SemanticError>,
@@ -195,7 +196,7 @@ impl<'ast> FunctionCompiler<'ast> {
             current_class: None,
             current_function: None,
             expected_funcdef_type: None,
-            expected_init_list_type: None,
+            expected_init_list_target: None,
             errors: Vec::new(),
             _phantom: std::marker::PhantomData,
         }
@@ -220,7 +221,7 @@ impl<'ast> FunctionCompiler<'ast> {
             current_class: None,
             current_function: None,
             expected_funcdef_type: None,
-            expected_init_list_type: None,
+            expected_init_list_target: None,
             errors: Vec::new(),
             _phantom: std::marker::PhantomData,
         }
@@ -844,9 +845,65 @@ impl<'ast> FunctionCompiler<'ast> {
 mod tests {
     use super::*;
     use crate::semantic::{DataType, Registry, INT32_TYPE, DOUBLE_TYPE};
+    use crate::semantic::types::TypeBehaviors;
+    use crate::semantic::types::type_def::PrimitiveType;
+    use crate::semantic::FunctionId;
+
+    /// Creates a test array template and returns (registry, array_template_id)
+    fn create_test_registry_with_array() -> (Registry<'static>, TypeId) {
+        let mut registry = Registry::new();
+
+        // Register a test "array" template with one type parameter
+        let array_template = {
+            // First register the template TypeId placeholder
+            let template_id = registry.register_type(
+                TypeDef::Primitive { kind: PrimitiveType::Void }, // temporary placeholder
+                Some("array"),
+            );
+
+            // Register template param T
+            let t_param = registry.register_type(
+                TypeDef::TemplateParam {
+                    name: "T".to_string(),
+                    index: 0,
+                    owner: template_id,
+                },
+                None,
+            );
+
+            // Update with proper Class typedef
+            let typedef = TypeDef::Class {
+                name: "array".to_string(),
+                qualified_name: "array".to_string(),
+                fields: Vec::new(),
+                methods: Vec::new(),
+                base_class: None,
+                interfaces: Vec::new(),
+                operator_methods: rustc_hash::FxHashMap::default(),
+                properties: rustc_hash::FxHashMap::default(),
+                is_final: false,
+                is_abstract: false,
+                template_params: vec![t_param],
+                template: None,
+                type_args: Vec::new(),
+            };
+            *registry.get_type_mut(template_id) = typedef;
+            template_id
+        };
+
+        // Register a dummy list_factory behavior for array template
+        // so init list tests work. The FunctionId doesn't need to be real
+        // since we're only testing semantic analysis, not bytecode generation.
+        let mut behaviors = TypeBehaviors::default();
+        behaviors.list_factory = Some(FunctionId::new(9999)); // Dummy function ID
+        registry.set_behaviors(array_template, behaviors);
+
+        (registry, array_template)
+    }
 
     fn create_test_registry() -> Registry<'static> {
-        Registry::new()
+        let (registry, _) = create_test_registry_with_array();
+        registry
     }
 
     #[test]
@@ -868,12 +925,12 @@ mod tests {
         let mut parser = Parser::new("{}", &arena);
         let expr = parser.parse_expr(0).unwrap();
 
-        let mut registry = create_test_registry();
+        let (mut registry, array_template) = create_test_registry_with_array();
 
-        // Pre-instantiate array<int32> for testing
+        // Pre-instantiate array<int32> for testing (but don't set as expected target)
         let _array_int = registry
             .instantiate_template(
-                registry.array_template,
+                array_template,
                 vec![DataType::simple(INT32_TYPE)],
             )
             .unwrap();
@@ -881,13 +938,15 @@ mod tests {
         let return_type = DataType::simple(VOID_TYPE);
         let mut compiler = FunctionCompiler::new(&registry, return_type);
 
+        // NOTE: Don't set expected_init_list_target - test that we get an error
         if let Expr::InitList(init_list) = *expr {
             let result = compiler.check_init_list(&init_list);
             assert!(result.is_none());
             assert_eq!(compiler.errors.len(), 1);
+            // Error message changed: now requires explicit target type
             assert!(compiler.errors[0]
                 .message
-                .contains("cannot infer type from empty initializer list"));
+                .contains("initializer list requires explicit target type"));
         } else {
             panic!("Expected InitList expression");
         }
@@ -902,12 +961,12 @@ mod tests {
         let mut parser = Parser::new("{1, 2, 3}", &arena);
         let expr = parser.parse_expr(0).unwrap();
 
-        let mut registry = create_test_registry();
+        let (mut registry, array_template) = create_test_registry_with_array();
 
         // Pre-instantiate array<int32> for testing
         let array_int = registry
             .instantiate_template(
-                registry.array_template,
+                array_template,
                 vec![DataType::simple(INT32_TYPE)],
             )
             .unwrap();
@@ -915,9 +974,12 @@ mod tests {
         let return_type = DataType::simple(VOID_TYPE);
         let mut compiler = FunctionCompiler::new(&registry, return_type);
 
+        // Set expected init list target type (as would be set by var decl)
+        compiler.expected_init_list_target = Some(array_int);
+
         if let Expr::InitList(init_list) = *expr {
             let result = compiler.check_init_list(&init_list);
-            assert!(result.is_some());
+            assert!(result.is_some(), "check_init_list failed: {:?}", compiler.errors);
             let result_ctx = result.unwrap();
 
             // Should return array<int32>@
@@ -944,12 +1006,12 @@ mod tests {
         let mut parser = Parser::new("{{1, 2}, {3, 4}}", &arena);
         let expr = parser.parse_expr(0).unwrap();
 
-        let mut registry = create_test_registry();
+        let (mut registry, array_template) = create_test_registry_with_array();
 
         // Pre-instantiate array<int32>
         let array_int = registry
             .instantiate_template(
-                registry.array_template,
+                array_template,
                 vec![DataType::simple(INT32_TYPE)],
             )
             .unwrap();
@@ -957,7 +1019,7 @@ mod tests {
         // Pre-instantiate array<array<int32>@>
         let array_array_int = registry
             .instantiate_template(
-                registry.array_template,
+                array_template,
                 vec![DataType::with_handle(array_int, false)],
             )
             .unwrap();
@@ -965,9 +1027,12 @@ mod tests {
         let return_type = DataType::simple(VOID_TYPE);
         let mut compiler = FunctionCompiler::new(&registry, return_type);
 
+        // Set expected init list target type for outer array
+        compiler.expected_init_list_target = Some(array_array_int);
+
         if let Expr::InitList(init_list) = *expr {
             let result = compiler.check_init_list(&init_list);
-            assert!(result.is_some());
+            assert!(result.is_some(), "check_init_list failed: {:?}", compiler.errors);
             let result_ctx = result.unwrap();
 
             // Should return array<array<int32>@>@
@@ -988,12 +1053,12 @@ mod tests {
         let mut parser = Parser::new("{1, 2.5, 3}", &arena);
         let expr = parser.parse_expr(0).unwrap();
 
-        let mut registry = create_test_registry();
+        let (mut registry, array_template) = create_test_registry_with_array();
 
         // Pre-instantiate array<double>
         let array_double = registry
             .instantiate_template(
-                registry.array_template,
+                array_template,
                 vec![DataType::simple(DOUBLE_TYPE)],
             )
             .unwrap();
@@ -1001,12 +1066,15 @@ mod tests {
         let return_type = DataType::simple(VOID_TYPE);
         let mut compiler = FunctionCompiler::new(&registry, return_type);
 
+        // Set expected init list target type
+        compiler.expected_init_list_target = Some(array_double);
+
         if let Expr::InitList(init_list) = *expr {
             let result = compiler.check_init_list(&init_list);
-            assert!(result.is_some());
+            assert!(result.is_some(), "check_init_list failed: {:?}", compiler.errors);
             let result_ctx = result.unwrap();
 
-            // Should promote to array<double>@ (int promotes to double)
+            // Should return array<double>@
             assert!(result_ctx.data_type.is_handle);
             assert_eq!(result_ctx.data_type.type_id, array_double);
             assert_eq!(compiler.errors.len(), 0);
@@ -3266,6 +3334,7 @@ mod tests {
     fn string_literal_usage() {
         use crate::Parser;
         use crate::semantic::Compiler;
+        use crate::modules::string_module;
         use bumpalo::Bump;
 
         let arena = Bump::new();
@@ -3277,7 +3346,8 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let string_mod = string_module().expect("Failed to create string module");
+        let result = Compiler::compile_with_modules(&script, &[string_mod]);
 
         assert!(result.is_success(), "String literal usage should work: {:?}", result.errors);
     }
@@ -4513,6 +4583,7 @@ mod tests {
     fn init_list_basic() {
         use crate::Parser;
         use crate::semantic::Compiler;
+        use crate::modules::array_module;
         use bumpalo::Bump;
 
         let arena = Bump::new();
@@ -4523,7 +4594,8 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let array_mod = array_module().expect("Failed to create array module");
+        let result = Compiler::compile_with_modules(&script, &[array_mod]);
 
         assert!(result.is_success(), "Init list should work: {:?}", result.errors);
     }
@@ -5301,6 +5373,7 @@ mod tests {
     fn super_call_in_index_expr() {
         use crate::Parser;
         use crate::semantic::Compiler;
+        use crate::modules::array_module;
         use bumpalo::Bump;
 
         let arena = Bump::new();
@@ -5322,7 +5395,8 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let array_mod = array_module().expect("Failed to create array module");
+        let result = Compiler::compile_with_modules(&script, &[array_mod]);
 
         assert!(result.is_success(), "Super call with array init should work: {:?}", result.errors);
     }
@@ -5809,6 +5883,7 @@ mod tests {
     fn init_list_empty() {
         use crate::Parser;
         use crate::semantic::Compiler;
+        use crate::modules::array_module;
         use bumpalo::Bump;
 
         let arena = Bump::new();
@@ -5819,7 +5894,8 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let array_mod = array_module().expect("Failed to create array module");
+        let result = Compiler::compile_with_modules(&script, &[array_mod]);
 
         assert!(result.is_success(), "Empty init list should work: {:?}", result.errors);
     }
@@ -5828,6 +5904,7 @@ mod tests {
     fn init_list_multidimensional() {
         use crate::Parser;
         use crate::semantic::Compiler;
+        use crate::modules::array_module;
         use bumpalo::Bump;
 
         let arena = Bump::new();
@@ -5838,7 +5915,8 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let array_mod = array_module().expect("Failed to create array module");
+        let result = Compiler::compile_with_modules(&script, &[array_mod]);
 
         assert!(result.is_success(), "Multidimensional init list should work: {:?}", result.errors);
     }
@@ -5848,6 +5926,7 @@ mod tests {
         // Test that template types are instantiated when used in nested blocks
         use crate::Parser;
         use crate::semantic::Compiler;
+        use crate::modules::array_module;
         use bumpalo::Bump;
 
         let arena = Bump::new();
@@ -5860,7 +5939,8 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let array_mod = array_module().expect("Failed to create array module");
+        let result = Compiler::compile_with_modules(&script, &[array_mod]);
 
         assert!(result.is_success(), "Init list in nested block should work: {:?}", result.errors);
     }
@@ -5870,6 +5950,7 @@ mod tests {
         // Test that template types are instantiated when used in for loop body
         use crate::Parser;
         use crate::semantic::Compiler;
+        use crate::modules::array_module;
         use bumpalo::Bump;
 
         let arena = Bump::new();
@@ -5882,7 +5963,8 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let array_mod = array_module().expect("Failed to create array module");
+        let result = Compiler::compile_with_modules(&script, &[array_mod]);
 
         assert!(result.is_success(), "Init list in for loop should work: {:?}", result.errors);
     }
@@ -5892,6 +5974,7 @@ mod tests {
         // Test that template types are instantiated when used in while loop body
         use crate::Parser;
         use crate::semantic::Compiler;
+        use crate::modules::array_module;
         use bumpalo::Bump;
 
         let arena = Bump::new();
@@ -5906,7 +5989,8 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let array_mod = array_module().expect("Failed to create array module");
+        let result = Compiler::compile_with_modules(&script, &[array_mod]);
 
         assert!(result.is_success(), "Init list in while loop should work: {:?}", result.errors);
     }
@@ -5916,6 +6000,7 @@ mod tests {
         // Test template instantiation in deeply nested control structures
         use crate::Parser;
         use crate::semantic::Compiler;
+        use crate::modules::array_module;
         use bumpalo::Bump;
 
         let arena = Bump::new();
@@ -5933,7 +6018,8 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let array_mod = array_module().expect("Failed to create array module");
+        let result = Compiler::compile_with_modules(&script, &[array_mod]);
 
         assert!(result.is_success(), "Init list in deeply nested blocks should work: {:?}", result.errors);
     }
@@ -5943,6 +6029,7 @@ mod tests {
         // Test template instantiation in switch case blocks
         use crate::Parser;
         use crate::semantic::Compiler;
+        use crate::modules::array_module;
         use bumpalo::Bump;
 
         let arena = Bump::new();
@@ -5961,7 +6048,8 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let array_mod = array_module().expect("Failed to create array module");
+        let result = Compiler::compile_with_modules(&script, &[array_mod]);
 
         assert!(result.is_success(), "Template type in switch should work: {:?}", result.errors);
     }
@@ -5971,6 +6059,7 @@ mod tests {
         // Test template instantiation in try/catch blocks
         use crate::Parser;
         use crate::semantic::Compiler;
+        use crate::modules::array_module;
         use bumpalo::Bump;
 
         let arena = Bump::new();
@@ -5986,7 +6075,8 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let array_mod = array_module().expect("Failed to create array module");
+        let result = Compiler::compile_with_modules(&script, &[array_mod]);
 
         assert!(result.is_success(), "Template type in try/catch should work: {:?}", result.errors);
     }
@@ -5996,6 +6086,7 @@ mod tests {
         // Test multiple different template instantiations in same function
         use crate::Parser;
         use crate::semantic::Compiler;
+        use crate::modules::array_module;
         use bumpalo::Bump;
 
         let arena = Bump::new();
@@ -6008,7 +6099,8 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let array_mod = array_module().expect("Failed to create array module");
+        let result = Compiler::compile_with_modules(&script, &[array_mod]);
 
         assert!(result.is_success(), "Multiple template types should work: {:?}", result.errors);
     }
@@ -6051,6 +6143,7 @@ mod tests {
     fn super_detection_in_init_list() {
         use crate::Parser;
         use crate::semantic::Compiler;
+        use crate::modules::array_module;
         use bumpalo::Bump;
 
         let arena = Bump::new();
@@ -6072,7 +6165,8 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let array_mod = array_module().expect("Failed to create array module");
+        let result = Compiler::compile_with_modules(&script, &[array_mod]);
 
         assert!(result.is_success(), "Super detection with init list should work: {:?}", result.errors);
     }
@@ -6233,6 +6327,7 @@ mod tests {
     fn overloaded_function_call_exact_match() {
         use crate::Parser;
         use crate::semantic::Compiler;
+        use crate::modules::string_module;
         use bumpalo::Bump;
 
         let arena = Bump::new();
@@ -6249,7 +6344,8 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let string_mod = string_module().expect("Failed to create string module");
+        let result = Compiler::compile_with_modules(&script, &[string_mod]);
 
         assert!(result.is_success(), "Overloaded function call should work: {:?}", result.errors);
     }
@@ -6324,6 +6420,7 @@ mod tests {
     fn function_with_default_args() {
         use crate::Parser;
         use crate::semantic::Compiler;
+        use crate::modules::string_module;
         use bumpalo::Bump;
 
         let arena = Bump::new();
@@ -6342,7 +6439,8 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let string_mod = string_module().expect("Failed to create string module");
+        let result = Compiler::compile_with_modules(&script, &[string_mod]);
 
         assert!(result.is_success(), "Function with default args should work: {:?}", result.errors);
     }
@@ -6544,6 +6642,7 @@ mod tests {
     fn array_access() {
         use crate::Parser;
         use crate::semantic::Compiler;
+        use crate::modules::array_module;
         use bumpalo::Bump;
 
         let arena = Bump::new();
@@ -6556,7 +6655,8 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let array_mod = array_module().expect("Failed to create array module");
+        let result = Compiler::compile_with_modules(&script, &[array_mod]);
 
         assert!(result.is_success(), "Array access should work: {:?}", result.errors);
     }
@@ -9802,6 +9902,7 @@ mod tests {
     fn string_index_works() {
         use crate::Parser;
         use crate::semantic::Compiler;
+        use crate::modules::string_module;
         use bumpalo::Bump;
 
         let arena = Bump::new();
@@ -9813,7 +9914,8 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let string_mod = string_module().expect("Failed to create string module");
+        let result = Compiler::compile_with_modules(&script, &[string_mod]);
 
         // String indexing should work with built-in opIndex
         assert!(result.is_success(), "String index should work with opIndex: {:?}", result.errors);
@@ -11489,6 +11591,7 @@ mod tests {
     fn string_assignment() {
         use crate::Parser;
         use crate::semantic::Compiler;
+        use crate::modules::string_module;
         use bumpalo::Bump;
 
         let arena = Bump::new();
@@ -11500,7 +11603,8 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let string_mod = string_module().expect("Failed to create string module");
+        let result = Compiler::compile_with_modules(&script, &[string_mod]);
 
         assert!(result.is_success(), "String assignment should work: {:?}", result.errors);
     }
@@ -11958,6 +12062,7 @@ mod tests {
     fn switch_on_string() {
         use crate::Parser;
         use crate::semantic::Compiler;
+        use crate::modules::string_module;
         use bumpalo::Bump;
 
         let arena = Bump::new();
@@ -11976,7 +12081,8 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let string_mod = string_module().expect("Failed to create string module");
+        let result = Compiler::compile_with_modules(&script, &[string_mod]);
 
         assert!(result.is_success(), "String switch should work: {:?}", result.errors);
     }
@@ -11985,6 +12091,7 @@ mod tests {
     fn switch_on_string_duplicate_error() {
         use crate::Parser;
         use crate::semantic::Compiler;
+        use crate::modules::string_module;
         use bumpalo::Bump;
 
         let arena = Bump::new();
@@ -12001,7 +12108,8 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let string_mod = string_module().expect("Failed to create string module");
+        let result = Compiler::compile_with_modules(&script, &[string_mod]);
 
         assert!(!result.errors.is_empty(), "Should detect duplicate string case");
         assert!(result.errors.iter().any(|e| e.message.contains("duplicate")),

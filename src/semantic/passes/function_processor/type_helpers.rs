@@ -10,7 +10,7 @@ use crate::ast::{
 use crate::lexer::Span;
 use crate::semantic::{
     DataType, FieldDef, SemanticErrorKind, TypeDef, TypeId, Visibility,
-    BOOL_TYPE, DOUBLE_TYPE, FLOAT_TYPE, STRING_TYPE, VOID_TYPE,
+    BOOL_TYPE, DOUBLE_TYPE, FLOAT_TYPE, VOID_TYPE,
     INT8_TYPE, INT16_TYPE, INT32_TYPE, INT64_TYPE,
     UINT8_TYPE, UINT16_TYPE, UINT32_TYPE, UINT64_TYPE,
 };
@@ -133,12 +133,16 @@ impl<'ast> FunctionCompiler<'ast> {
         let mut data_type = DataType::simple(type_id);
 
         // Check if this is an array template instance - arrays are always reference types (handles)
+        // Note: Template instances are Class types with template: Some(...)
         let typedef = self.registry.get_type(type_id);
-        if let TypeDef::TemplateInstance { template, .. } = typedef
-            && *template == self.registry.array_template {
-                // Arrays are reference types, so they're implicitly handles
-                data_type.is_handle = true;
+        if let TypeDef::Class { template: Some(tmpl), .. } = typedef {
+            if let Some(array_template) = self.registry.lookup_type("array") {
+                if *tmpl == array_template {
+                    // Arrays are reference types, so they're implicitly handles
+                    data_type.is_handle = true;
+                }
             }
+        }
 
         // Apply leading const
         if type_expr.is_const {
@@ -169,12 +173,6 @@ impl<'ast> FunctionCompiler<'ast> {
                             data_type.is_const = false; // Reset since const applies to target
                         }
                     }
-                }
-                TypeSuffix::Array => {
-                    // Array suffix - the type should be looked up as array<base>
-                    // This is a complex case that would need template instantiation
-                    // For now, we handle it by noting arrays are always handles
-                    data_type.is_handle = true;
                 }
             }
         }
@@ -407,8 +405,10 @@ impl<'ast> FunctionCompiler<'ast> {
         }
 
         // String
-        if ty.type_id == STRING_TYPE {
-            return Some(SwitchCategory::String);
+        if let Some(string_type) = self.registry.lookup_type("string") {
+            if ty.type_id == string_type {
+                return Some(SwitchCategory::String);
+            }
         }
 
         None

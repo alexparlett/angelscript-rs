@@ -433,12 +433,7 @@ impl<'ast> Parser<'ast> {
         let mut suffixes = bumpalo::collections::Vec::new_in(self.arena);
 
         loop {
-            if self.check(TokenKind::LeftBracket) {
-                // Array suffix: []
-                self.advance();
-                self.expect(TokenKind::RightBracket)?;
-                suffixes.push(TypeSuffix::Array);
-            } else if self.check(TokenKind::At) {
+            if self.check(TokenKind::At) {
                 // Handle suffix: @ or @ const
                 self.advance();
                 let is_const = self.eat(TokenKind::Const).is_some();
@@ -503,25 +498,6 @@ mod tests {
     }
 
     #[test]
-    fn parse_array() {
-        let arena = bumpalo::Bump::new();
-        let mut parser = Parser::new("int[]", &arena);
-        let ty = parser.parse_type().unwrap();
-        assert_eq!(ty.suffixes.len(), 1);
-        assert!(matches!(ty.suffixes[0], TypeSuffix::Array));
-    }
-
-    #[test]
-    fn parse_array_handle() {
-        let arena = bumpalo::Bump::new();
-        let mut parser = Parser::new("int[]@", &arena);
-        let ty = parser.parse_type().unwrap();
-        assert_eq!(ty.suffixes.len(), 2);
-        assert!(matches!(ty.suffixes[0], TypeSuffix::Array));
-        assert!(matches!(ty.suffixes[1], TypeSuffix::Handle { is_const: false }));
-    }
-
-    #[test]
     fn parse_template_type() {
         let arena = bumpalo::Bump::new();
         let mut parser = Parser::new("array<int>", &arena);
@@ -533,13 +509,12 @@ mod tests {
     #[test]
     fn parse_complex_type() {
         let arena = bumpalo::Bump::new();
-        let mut parser = Parser::new("const array<int>[]@ const", &arena);
+        let mut parser = Parser::new("const array<int>@ const", &arena);
         let ty = parser.parse_type().unwrap();
         assert!(ty.is_const);
         assert_eq!(ty.template_args.len(), 1);
-        assert_eq!(ty.suffixes.len(), 2);
-        assert!(matches!(ty.suffixes[0], TypeSuffix::Array));
-        assert!(matches!(ty.suffixes[1], TypeSuffix::Handle { is_const: true }));
+        assert_eq!(ty.suffixes.len(), 1);
+        assert!(matches!(ty.suffixes[0], TypeSuffix::Handle { is_const: true }));
     }
 
     #[test]
@@ -810,51 +785,6 @@ mod tests {
     }
 
     // ========================================================================
-    // Suffix Combination Tests
-    // ========================================================================
-
-    #[test]
-    fn parse_multiple_array_suffixes() {
-        let arena = bumpalo::Bump::new();
-        let mut parser = Parser::new("int[][]", &arena);
-        let ty = parser.parse_type().unwrap();
-        assert_eq!(ty.suffixes.len(), 2);
-        assert!(matches!(ty.suffixes[0], TypeSuffix::Array));
-        assert!(matches!(ty.suffixes[1], TypeSuffix::Array));
-    }
-
-    #[test]
-    fn parse_handle_then_array() {
-        let arena = bumpalo::Bump::new();
-        let mut parser = Parser::new("int@[]", &arena);
-        let ty = parser.parse_type().unwrap();
-        assert_eq!(ty.suffixes.len(), 2);
-        assert!(matches!(ty.suffixes[0], TypeSuffix::Handle { .. }));
-        assert!(matches!(ty.suffixes[1], TypeSuffix::Array));
-    }
-
-    #[test]
-    fn parse_const_handle_array() {
-        let arena = bumpalo::Bump::new();
-        let mut parser = Parser::new("int@ const[]", &arena);
-        let ty = parser.parse_type().unwrap();
-        assert_eq!(ty.suffixes.len(), 2);
-        match &ty.suffixes[0] {
-            TypeSuffix::Handle { is_const } => assert!(*is_const),
-            _ => panic!("Expected const handle"),
-        }
-        assert!(matches!(ty.suffixes[1], TypeSuffix::Array));
-    }
-
-    #[test]
-    fn parse_complex_suffix_chain() {
-        let arena = bumpalo::Bump::new();
-        let mut parser = Parser::new("int[]@[]@ const", &arena);
-        let ty = parser.parse_type().unwrap();
-        assert_eq!(ty.suffixes.len(), 4);
-    }
-
-    // ========================================================================
     // Template Tests
     // ========================================================================
 
@@ -895,7 +825,7 @@ mod tests {
     #[test]
     fn parse_template_complex_args() {
         let arena = bumpalo::Bump::new();
-        let mut parser = Parser::new("map<const string@, array<int>[]>", &arena);
+        let mut parser = Parser::new("map<const string@, array<int>>", &arena);
         let ty = parser.parse_type().unwrap();
         assert_eq!(ty.template_args.len(), 2);
     }
@@ -990,9 +920,9 @@ mod tests {
     }
 
     #[test]
-    fn parse_global_scoped_template_array() {
+    fn parse_global_scoped_template() {
         let arena = bumpalo::Bump::new();
-        let mut parser = Parser::new("::std::vector<string>[]", &arena);
+        let mut parser = Parser::new("::std::vector<string>@", &arena);
         let ty = parser.parse_type().unwrap();
         let scope = ty.scope.unwrap();
         assert!(scope.is_absolute);
@@ -1003,12 +933,12 @@ mod tests {
     #[test]
     fn parse_all_features_combined() {
         let arena = bumpalo::Bump::new();
-        let mut parser = Parser::new("const ::A::B::map<string, int>[]@ const", &arena);
+        let mut parser = Parser::new("const ::A::B::map<string, int>@ const", &arena);
         let ty = parser.parse_type().unwrap();
         assert!(ty.is_const);
         assert!(ty.scope.is_some());
         assert_eq!(ty.template_args.len(), 2);
-        assert_eq!(ty.suffixes.len(), 2);
+        assert_eq!(ty.suffixes.len(), 1);
     }
 
     // ========================================================================

@@ -546,6 +546,34 @@ impl<'m, 'app, T: NativeType> ClassBuilder<'m, 'app, T> {
         Ok(self)
     }
 
+    /// Register an operator with raw call context access.
+    ///
+    /// Similar to `operator()`, but uses a raw callback with full `CallContext` access.
+    /// This is useful for template types or complex operators that need direct context access.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// module.register_type::<ScriptArray>("array<class T>")
+    ///     .reference_type()
+    ///     .operator_raw("T &opIndex(uint index)", |ctx: &mut CallContext| {
+    ///         let index: u32 = ctx.arg(0)?;
+    ///         let arr: &ScriptArray = ctx.this()?;
+    ///         // ... access element
+    ///         Ok(())
+    ///     })?
+    ///     .build()?;
+    /// ```
+    pub fn operator_raw<F>(mut self, decl: &str, f: F) -> Result<Self, FfiModuleError>
+    where
+        F: NativeCallable + Send + Sync + 'static,
+    {
+        let sig = self.parse_method_decl(decl)?;
+        let method_def = self.build_method_def(sig, NativeFn::new(f));
+        self.operators.push(method_def);
+        Ok(self)
+    }
+
     /// Finish building and register the type with the module.
     ///
     /// This consumes the builder and adds the type definition to the module.

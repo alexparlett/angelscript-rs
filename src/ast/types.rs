@@ -100,11 +100,6 @@ impl<'ast> TypeExpr<'ast> {
         self.suffixes.iter().any(|s| matches!(s, TypeSuffix::Handle { .. }))
     }
 
-    /// Check if this type has any arrays ([]).
-    pub fn has_array(&self) -> bool {
-        self.suffixes.iter().any(|s| matches!(s, TypeSuffix::Array))
-    }
-
     /// Check if this type is a reference type (has @ handle).
     pub fn is_reference_type(&self) -> bool {
         self.has_handle()
@@ -265,10 +260,8 @@ impl fmt::Display for PrimitiveType {
 /// Type suffixes that modify the base type.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TypeSuffix {
-    /// Array suffix: `[]`
-    Array,
     /// Handle suffix: `@` with optional trailing const
-    /// 
+    ///
     /// Examples:
     /// - `MyClass@` - handle (is_const = false)
     /// - `MyClass@ const` - const handle (is_const = true)
@@ -281,7 +274,6 @@ pub enum TypeSuffix {
 impl fmt::Display for TypeSuffix {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Array => write!(f, "[]"),
             Self::Handle { is_const: false } => write!(f, "@"),
             Self::Handle { is_const: true } => write!(f, "@ const"),
         }
@@ -438,22 +430,6 @@ mod tests {
     }
 
     #[test]
-    fn array_type_display() {
-        use bumpalo::Bump;
-        let arena = Bump::new();
-        let suffixes = arena.alloc_slice_copy(&[TypeSuffix::Array]);
-        let ty = TypeExpr::new(
-            false,
-            None,
-            TypeBase::Primitive(PrimitiveType::Int),
-            &[],
-            suffixes,
-            Span::new(1, 0 + 1, 5 - 0),
-        );
-        assert_eq!(format!("{}", ty), "int[]");
-    }
-
-    #[test]
     fn template_type_display() {
         use bumpalo::Bump;
         let arena = Bump::new();
@@ -479,7 +455,6 @@ mod tests {
             TypeExpr::primitive(PrimitiveType::Int, Span::new(1, 12 + 1, 15 - 12))
         ]);
         let suffixes = arena.alloc_slice_copy(&[
-            TypeSuffix::Array,
             TypeSuffix::Handle { is_const: true }
         ]);
         let ty = TypeExpr::new(
@@ -490,7 +465,7 @@ mod tests {
             suffixes,
             Span::new(1, 6 + 1, 26 - 6),
         );
-        assert_eq!(format!("{}", ty), "const array<int>[]@ const");
+        assert_eq!(format!("{}", ty), "const array<int>@ const");
     }
 
     #[test]
@@ -498,7 +473,7 @@ mod tests {
         use bumpalo::Bump;
         let arena = Bump::new();
 
-        // First test: just handle
+        // Test: just handle
         let suffixes = arena.alloc_slice_copy(&[TypeSuffix::Handle { is_const: false }]);
         let ty = TypeExpr::new(
             false,
@@ -511,22 +486,6 @@ mod tests {
 
         assert!(ty.has_handle());
         assert!(ty.is_reference_type());
-        assert!(!ty.has_array());
-
-        // Second test: handle and array
-        let suffixes2 = arena.alloc_slice_copy(&[
-            TypeSuffix::Handle { is_const: false },
-            TypeSuffix::Array
-        ]);
-        let ty2 = TypeExpr::new(
-            false,
-            None,
-            TypeBase::Named(Ident::new("MyClass", Span::new(1, 0 + 1, 7 - 0))),
-            &[],
-            suffixes2,
-            Span::new(1, 0 + 1, 10 - 0),
-        );
-        assert!(ty2.has_array());
     }
 
     #[test]
@@ -616,7 +575,6 @@ mod tests {
 
     #[test]
     fn type_suffix_display() {
-        assert_eq!(format!("{}", TypeSuffix::Array), "[]");
         assert_eq!(format!("{}", TypeSuffix::Handle { is_const: false }), "@");
         assert_eq!(format!("{}", TypeSuffix::Handle { is_const: true }), "@ const");
     }

@@ -99,7 +99,23 @@ impl<'ast> Registrar<'ast> {
 
     /// Perform Pass 1 registration on a script
     pub fn register(script: &Script<'ast>) -> RegistrationData<'ast> {
-        let mut registrar = Self::new();
+        Self::register_with_registry(script, Registry::new())
+    }
+
+    /// Perform Pass 1 registration on a script using a pre-configured registry.
+    ///
+    /// This allows FFI modules to be imported before registration, so templates
+    /// and other types are already available.
+    pub fn register_with_registry(script: &Script<'ast>, registry: Registry<'ast>) -> RegistrationData<'ast> {
+        let mut registrar = Self {
+            registry,
+            namespace_path: Vec::new(),
+            imported_namespaces: Vec::new(),
+            current_class: None,
+            declared_names: FxHashMap::default(),
+            errors: Vec::new(),
+            _phantom: std::marker::PhantomData,
+        };
         registrar.visit_script(script);
 
         RegistrationData {
@@ -177,6 +193,16 @@ impl<'ast> Registrar<'ast> {
         // If this is a method (has object_type), add it to the class's methods list
         if let Some(type_id) = object_type {
             self.registry.add_method_to_class(type_id, func_id);
+
+            // If this is a constructor, also add to behaviors
+            if func.is_constructor() {
+                self.registry.behaviors_mut(type_id).add_constructor(func_id);
+            }
+
+            // If this is a destructor, also add to behaviors
+            if func.is_destructor {
+                self.registry.behaviors_mut(type_id).destruct = Some(func_id);
+            }
         }
     }
 
@@ -206,6 +232,9 @@ impl<'ast> Registrar<'ast> {
             properties: rustc_hash::FxHashMap::default(),  // Will be filled in Pass 2a
             is_final: class.modifiers.final_,
             is_abstract: class.modifiers.abstract_,
+            template_params: Vec::new(),  // Script classes don't have template params (yet)
+            template: None,  // Not a template instance
+            type_args: Vec::new(),
         };
 
         let type_id = self.registry.register_type(typedef, Some(&qualified_name));
@@ -568,6 +597,7 @@ impl<'ast> Registrar<'ast> {
 
         self.registry.register_function(func_def);
         self.registry.add_method_to_class(type_id, func_id);
+        self.registry.behaviors_mut(type_id).add_constructor(func_id);
     }
 
     /// Generate a copy constructor for a class
@@ -601,6 +631,7 @@ impl<'ast> Registrar<'ast> {
 
         self.registry.register_function(func_def);
         self.registry.add_method_to_class(type_id, func_id);
+        self.registry.behaviors_mut(type_id).add_constructor(func_id);
     }
 
     /// Generate an assignment operator for a class
@@ -1060,15 +1091,17 @@ mod tests {
     fn builtin_types_present() {
         let arena = Bump::new();
         let data = register("", &arena);
+        // Only primitives are builtin - string, array, dictionary are FFI types
         assert!(data.registry.lookup_type("void").is_some());
         assert!(data.registry.lookup_type("bool").is_some());
         assert!(data.registry.lookup_type("int").is_some());
         assert!(data.registry.lookup_type("uint").is_some());
         assert!(data.registry.lookup_type("float").is_some());
         assert!(data.registry.lookup_type("double").is_some());
-        assert!(data.registry.lookup_type("string").is_some());
-        assert!(data.registry.lookup_type("array").is_some());
-        assert!(data.registry.lookup_type("dictionary").is_some());
+        // FFI types are not registered by default
+        assert!(data.registry.lookup_type("string").is_none());
+        assert!(data.registry.lookup_type("array").is_none());
+        assert!(data.registry.lookup_type("dictionary").is_none());
     }
 
     // ============================================================================
@@ -1478,5 +1511,131 @@ mod tests {
         "#, &arena);
         assert!(!data.errors.is_empty(), "Duplicate mixin should produce an error");
         assert!(data.errors[0].kind == SemanticErrorKind::DuplicateDeclaration);
+    }
+
+    // ========================================================================
+    // Behaviors Tests - Script Class Constructors in Behaviors
+    // ========================================================================
+
+    #[test]
+    fn script_class_constructors_in_behaviors() {
+        let arena = Bump::new();
+        // Class with no explicit constructors gets 2 auto-generated: default + copy
+        let data = register("class Player { int health; }", &arena);
+        assert!(data.errors.is_empty());
+
+        let type_id = data.registry.lookup_type("Player").unwrap();
+        let behaviors = data.registry.get_behaviors(type_id).expect("Player should have behaviors");
+
+        // Should have 2 constructors in behaviors (default + copy)
+        assert_eq!(behaviors.constructors.len(), 2, "Auto-generated constructors should be in behaviors");
+        assert!(behaviors.has_constructors(), "has_constructors() should return true");
+    }
+
+    #[test]
+    fn script_class_explicit_constructor_in_behaviors() {
+        let arena = Bump::new();
+        // Class with explicit 1-param constructor (treated as copy constructor by current logic)
+        // No default constructor auto-generated because explicit constructors exist
+        // No copy constructor auto-generated because 1-param constructor counts as copy
+        let data = register("class Player { Player(int h) { } }", &arena);
+        assert!(data.errors.is_empty());
+
+        let type_id = data.registry.lookup_type("Player").unwrap();
+        let behaviors = data.registry.get_behaviors(type_id).expect("Player should have behaviors");
+
+        // Should have 1 constructor: explicit only (1-param blocks auto-generated copy)
+        assert_eq!(behaviors.constructors.len(), 1, "Explicit constructor should be in behaviors");
+
+        // All constructors should also be in the methods list
+        let constructors = data.registry.find_constructors(type_id);
+        assert_eq!(behaviors.constructors.len(), constructors.len(), "Behaviors and methods should have same constructor count");
+    }
+
+    #[test]
+    fn script_class_multiple_constructors_in_behaviors() {
+        let arena = Bump::new();
+        // Class with multiple explicit constructors
+        // - 0-param constructor: blocks auto-generation of default
+        // - 1-param constructor: blocks auto-generation of copy
+        // - 2-param constructor: normal
+        let data = register(r#"
+            class Player {
+                Player() { }
+                Player(int health) { }
+                Player(int health, int mana) { }
+            }
+        "#, &arena);
+        assert!(data.errors.is_empty());
+
+        let type_id = data.registry.lookup_type("Player").unwrap();
+        let behaviors = data.registry.get_behaviors(type_id).expect("Player should have behaviors");
+
+        // Should have 3 constructors: all explicit (1-param blocks auto-generated copy)
+        assert_eq!(behaviors.constructors.len(), 3, "All explicit constructors should be in behaviors");
+    }
+
+    #[test]
+    fn script_class_explicit_2param_constructor_with_auto_copy() {
+        let arena = Bump::new();
+        // Class with explicit 2-param constructor only
+        // Copy constructor should be auto-generated (no 1-param constructor to block it)
+        let data = register("class Player { Player(int h, int m) { } }", &arena);
+        assert!(data.errors.is_empty());
+
+        let type_id = data.registry.lookup_type("Player").unwrap();
+        let behaviors = data.registry.get_behaviors(type_id).expect("Player should have behaviors");
+
+        // Should have 2 constructors: explicit + auto-generated copy
+        assert_eq!(behaviors.constructors.len(), 2, "Explicit + auto-generated copy constructor should be in behaviors");
+    }
+
+    #[test]
+    fn script_class_deleted_constructor_not_in_behaviors() {
+        let arena = Bump::new();
+        // Class with deleted default constructor should not have it in behaviors
+        let data = register("class NonDefault { NonDefault() delete; }", &arena);
+        assert!(data.errors.is_empty());
+
+        let type_id = data.registry.lookup_type("NonDefault").unwrap();
+        let behaviors = data.registry.get_behaviors(type_id).expect("NonDefault should have behaviors");
+
+        // Should only have the auto-generated copy constructor (deleted default not registered)
+        assert_eq!(behaviors.constructors.len(), 1, "Only auto-generated copy constructor should be in behaviors (deleted default not registered)");
+    }
+
+    #[test]
+    fn script_class_destructor_in_behaviors() {
+        let arena = Bump::new();
+        // Class with explicit destructor
+        let data = register("class Player { ~Player() { } }", &arena);
+        assert!(data.errors.is_empty());
+
+        let type_id = data.registry.lookup_type("Player").unwrap();
+        let behaviors = data.registry.get_behaviors(type_id).expect("Player should have behaviors");
+
+        // Should have destructor in behaviors
+        assert!(behaviors.destruct.is_some(), "Destructor should be in behaviors");
+
+        // Verify the destructor FunctionId is correctly marked
+        let destructor_id = behaviors.destruct.unwrap();
+        let func = data.registry.get_function(destructor_id);
+        assert!(func.traits.is_destructor, "Function should be marked as destructor");
+        // Name is stored as the class name (Player), not ~Player
+        assert_eq!(func.name, "Player", "Destructor name is the class name");
+    }
+
+    #[test]
+    fn script_class_no_destructor_if_not_defined() {
+        let arena = Bump::new();
+        // Class with no destructor
+        let data = register("class Player { int health; }", &arena);
+        assert!(data.errors.is_empty());
+
+        let type_id = data.registry.lookup_type("Player").unwrap();
+        let behaviors = data.registry.get_behaviors(type_id).expect("Player should have behaviors");
+
+        // Should NOT have destructor in behaviors (none defined)
+        assert!(behaviors.destruct.is_none(), "No destructor should be in behaviors if not defined");
     }
 }

@@ -32,7 +32,7 @@
 //! ```
 
 use super::{
-    CompiledModule, FunctionCompiler, Registrar, Registry, SemanticError,
+    CompiledModule, FunctionCompiler, Registrar, Registry, SemanticError, SemanticErrorKind,
     TypeCompiler,
 };
 use crate::ast::Script;
@@ -87,10 +87,45 @@ impl Compiler {
     /// 3. Pass 2b: Function Compilation - Compile all function bodies to bytecode
     ///
     /// Returns a `CompilationResult` containing all compiled artifacts and any errors.
+    ///
+    /// # Deprecated
+    /// Use `compile_with_modules` instead to ensure FFI modules (like array, string)
+    /// are imported and templates have their methods/operators populated.
+    #[deprecated(since = "0.2.0", note = "Use compile_with_modules instead")]
     #[cfg_attr(feature = "profiling", profiling::function)]
     pub fn compile<'ast>(script: &'ast Script<'ast>) -> CompilationResult<'ast> {
-        // Pass 1: Registration
-        let registration = Registrar::register(script);
+        Self::compile_with_modules(script, &[])
+    }
+
+    /// Compile a script with FFI modules imported first.
+    ///
+    /// This imports the provided modules before compilation, so templates
+    /// have their methods/operators populated.
+    #[cfg_attr(feature = "profiling", profiling::function)]
+    pub fn compile_with_modules<'ast>(
+        script: &'ast Script<'ast>,
+        modules: &[crate::Module<'_>],
+    ) -> CompilationResult<'ast> {
+        // Create registry and import modules
+        let mut registry = Registry::new();
+        if let Err(e) = registry.import_modules(modules) {
+            return CompilationResult {
+                module: CompiledModule {
+                    functions: Default::default(),
+                    errors: vec![],
+                },
+                registry,
+                type_map: Default::default(),
+                errors: vec![SemanticError::new(
+                    SemanticErrorKind::ImportError,
+                    crate::lexer::Span::default(),
+                    format!("Failed to import modules: {:?}", e),
+                )],
+            };
+        }
+
+        // Pass 1: Registration (using registry with imported modules)
+        let registration = Registrar::register_with_registry(script, registry);
 
         // Collect Pass 1 errors
         let mut all_errors = registration.errors;

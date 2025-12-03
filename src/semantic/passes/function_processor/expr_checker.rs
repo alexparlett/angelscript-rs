@@ -16,7 +16,7 @@ use crate::lexer::Span;
 use crate::semantic::{
     Conversion, DataType, MethodSignature, OperatorBehavior,
     SemanticErrorKind, TypeDef, TypeId, BOOL_TYPE, DOUBLE_TYPE, FLOAT_TYPE,
-    INT32_TYPE, NULL_TYPE, VOID_TYPE, STRING_TYPE,
+    INT32_TYPE, NULL_TYPE, VOID_TYPE,
 };
 use crate::semantic::types::type_def::FunctionId;
 
@@ -56,8 +56,9 @@ impl<'ast> FunctionCompiler<'ast> {
             LiteralKind::String(s) => {
                 let idx = self.bytecode.add_string_constant(s.clone());
                 self.bytecode.emit(Instruction::PushString(idx));
-                // STRING_TYPE is TypeId(16)
-                return Some(ExprContext::rvalue(DataType::simple(STRING_TYPE)));
+                // String type is an FFI type, look up by name
+                let string_type = self.registry.lookup_type("string").unwrap_or(VOID_TYPE);
+                return Some(ExprContext::rvalue(DataType::simple(string_type)));
             }
             LiteralKind::Null => {
                 self.bytecode.emit(Instruction::PushNull);
@@ -2734,9 +2735,9 @@ impl<'ast> FunctionCompiler<'ast> {
                 }
             }
             MemberAccess::Method { name, args } => {
-                // Verify the object is a class type or template instance (e.g., array<T>)
+                // Verify the object is a class type (includes template instances like array<T>)
                 match typedef {
-                    TypeDef::Class { .. } | TypeDef::TemplateInstance { .. } => {
+                    TypeDef::Class { .. } => {
                         // Look up methods with this name on the type
                         let candidates = self.registry.find_methods_by_name(object_ctx.data_type.type_id, name.name);
 
@@ -3250,24 +3251,66 @@ impl<'ast> FunctionCompiler<'ast> {
 
     /// Type checks an initializer list.
     /// Initializer lists produce rvalues (newly constructed arrays/objects).
+    ///
+    /// Init lists require an explicit target type from context (e.g., variable declaration).
+    /// The target type must have `list_factory` (for reference types) or `list_construct`
+    /// (for value types) behavior registered.
+    ///
+    /// Examples:
+    /// - `array<int> arr = {1, 2, 3}` - target is array<int>, uses list_factory
+    /// - `StringBuffer sb = {"hello", "world"}` - target is StringBuffer, uses list behavior
+    /// - `MyVec3 v = {1.0, 2.0, 3.0}` - target is MyVec3 (value type), uses list_construct
     pub(super) fn check_init_list(&mut self, init_list: &InitListExpr<'ast>) -> Option<ExprContext> {
         use crate::ast::InitElement;
 
-        // Handle empty initializer list - use expected type if available
-        if init_list.elements.is_empty() {
-            if let Some(expected_element_type) = self.expected_init_list_type.clone() {
-                // We have an expected type from context (e.g., array<int> arr = {})
-                // Create an empty array of the expected element type
-                return self.create_empty_array(init_list.span, expected_element_type);
-            } else {
+        // Init lists require an explicit target type from context
+        let target_type_id = match self.expected_init_list_target {
+            Some(id) => id,
+            None => {
                 self.error(
                     SemanticErrorKind::TypeMismatch,
                     init_list.span,
-                    "cannot infer type from empty initializer list".to_string(),
+                    "initializer list requires explicit target type (e.g., 'array<int> arr = {...}')".to_string(),
                 );
                 return None;
             }
-        }
+        };
+
+        // Look up behaviors for the target type
+        let behaviors = match self.registry.get_behaviors(target_type_id) {
+            Some(b) => b.clone(),
+            None => {
+                let type_name = self.registry.get_type(target_type_id).name();
+                self.error(
+                    SemanticErrorKind::MissingListBehavior,
+                    init_list.span,
+                    format!(
+                        "Type '{}' does not support initialization list syntax (no behaviors registered)",
+                        type_name
+                    ),
+                );
+                return None;
+            }
+        };
+
+        // Check for list_factory (reference types) or list_construct (value types)
+        // The presence of a behavior determines which one to use
+        let (list_func_id, is_reference_type) = if let Some(factory) = behaviors.list_factory {
+            (factory, true)
+        } else if let Some(construct) = behaviors.list_construct {
+            (construct, false)
+        } else {
+            let type_name = self.registry.get_type(target_type_id).name();
+            self.error(
+                SemanticErrorKind::MissingListBehavior,
+                init_list.span,
+                format!(
+                    "Type '{}' does not have list_factory or list_construct behavior for initialization list syntax",
+                    type_name
+                ),
+            );
+            return None;
+        };
 
         // Type check all elements and collect their types
         let mut element_types = Vec::with_capacity(init_list.elements.len());
@@ -3280,232 +3323,24 @@ impl<'ast> FunctionCompiler<'ast> {
             element_types.push(elem_ctx.data_type);
         }
 
-        // Infer the common element type
-        // Start with the first element's type
-        let mut common_type = element_types[0].clone();
+        // Elements are on the stack from check_expr calls above.
+        // Push the count and call the list factory/constructor.
+        //
+        // Stack before: [elem0] [elem1] ... [elemN-1]
+        // Stack after:  [elem0] [elem1] ... [elemN-1] [count]
+        // List factory/constructor pops count + elements and pushes result.
+        self.bytecode.emit(Instruction::PushInt(element_types.len() as i64));
+        self.bytecode.emit(Instruction::CallConstructor {
+            type_id: target_type_id.as_u32(),
+            func_id: list_func_id.as_u32(),
+        });
 
-        // For all subsequent elements, find the common promoted type
-        for elem_type in &element_types[1..] {
-            // If types are identical, continue
-            if common_type == *elem_type {
-                continue;
-            }
-
-            // Check if we can promote to a common type
-            // For numeric types, promote to the wider type
-            if self.is_numeric(&common_type) && self.is_numeric(elem_type) {
-                common_type = self.promote_numeric(&common_type, elem_type);
-            } else if let Some(conversion) = elem_type.can_convert_to(&common_type, self.registry) {
-                // Element can be implicitly converted to common type
-                if !conversion.is_implicit {
-                    self.error(
-                        SemanticErrorKind::TypeMismatch,
-                        init_list.span,
-                        format!(
-                            "cannot implicitly convert '{}' to '{}' in initializer list",
-                            self.type_name(elem_type),
-                            self.type_name(&common_type)
-                        ),
-                    );
-                    return None;
-                }
-            } else if let Some(conversion) = common_type.can_convert_to(elem_type, self.registry) {
-                // Common type can be converted to element type, use element type as new common
-                if conversion.is_implicit {
-                    common_type = elem_type.clone();
-                } else {
-                    self.error(
-                        SemanticErrorKind::TypeMismatch,
-                        init_list.span,
-                        format!(
-                            "incompatible types in initializer list: '{}' and '{}'",
-                            self.type_name(&common_type),
-                            self.type_name(elem_type)
-                        ),
-                    );
-                    return None;
-                }
-            } else {
-                self.error(
-                    SemanticErrorKind::TypeMismatch,
-                    init_list.span,
-                    format!(
-                        "incompatible types in initializer list: '{}' and '{}'",
-                        self.type_name(&common_type),
-                        self.type_name(elem_type)
-                    ),
-                );
-                return None;
-            }
-        }
-
-        // Now emit conversion instructions for each element if needed
-        // We need to go back through the elements and emit conversions
-        // Note: The elements are already on the stack from check_expr calls above
-        for (i, elem_type) in element_types.iter().enumerate() {
-            if elem_type != &common_type {
-                // Need to emit conversion
-                if let Some(conversion) = elem_type.can_convert_to(&common_type, self.registry) {
-                    self.emit_conversion(&conversion);
-                } else {
-                    // This shouldn't happen as we already validated above
-                    self.error(
-                        SemanticErrorKind::InternalError,
-                        init_list.span,
-                        format!(
-                            "internal error: failed to convert element {} from '{}' to '{}'",
-                            i,
-                            self.type_name(elem_type),
-                            self.type_name(&common_type)
-                        ),
-                    );
-                    return None;
-                }
-            }
-        }
-
-        // Look up if array<common_type> already exists in the registry
-        // Search through all types to find a matching TemplateInstance
-        // We compare only type_id because common_type may have handle=true (arrays are handles)
-        // but sub_types stores the element type without handle modifiers
-        let mut array_type_id = None;
-        for i in 0..self.registry.type_count() {
-            let type_id = TypeId(i as u32);
-            let typedef = self.registry.get_type(type_id);
-            if let TypeDef::TemplateInstance { template, sub_types, .. } = typedef
-                && *template == self.registry.array_template
-                    && sub_types.len() == 1
-                    && sub_types[0].type_id == common_type.type_id
-                {
-                    array_type_id = Some(type_id);
-                    break;
-                }
-        }
-
-        if let Some(array_id) = array_type_id {
-            // Find the array initializer constructor
-            let constructors = self.registry.find_constructors(array_id);
-            let init_ctor = constructors.iter().find(|&&ctor_id| {
-                let func = self.registry.get_function(ctor_id);
-                func.name == "$array_init"
-            });
-
-            if let Some(&ctor_id) = init_ctor {
-                // Current approach: Stack-based for simple homogeneous arrays
-                // Elements are already on the stack from check_expr calls above.
-                // We push the count and call the constructor.
-                //
-                // Stack before: [elem0] [elem1] ... [elemN-1]
-                // Stack after:  [elem0] [elem1] ... [elemN-1] [count]
-                // Constructor pops count + elements and pushes array handle.
-                //
-                // NOTE: For heterogeneous init lists (dictionaries), we'll need to use
-                // the buffer-based instructions: AllocListBuffer, SetListSize,
-                // PushListElement, SetListType, FreeListBuffer.
-                // See vm_plan.md for details on the buffer approach.
-                self.bytecode.emit(Instruction::PushInt(element_types.len() as i64));
-                self.bytecode.emit(Instruction::CallConstructor {
-                    type_id: array_id.as_u32(),
-                    func_id: ctor_id.as_u32(),
-                });
-
-                // Return the array type as a handle (arrays are reference types)
-                Some(ExprContext::rvalue(DataType::with_handle(array_id, false)))
-            } else {
-                self.error(
-                    SemanticErrorKind::InternalError,
-                    init_list.span,
-                    format!(
-                        "array<{}> initializer constructor not found",
-                        self.type_name(&common_type)
-                    ),
-                );
-                None
-            }
+        // Return the appropriate type
+        // Reference types return a handle, value types return the value directly
+        if is_reference_type {
+            Some(ExprContext::rvalue(DataType::with_handle(target_type_id, false)))
         } else {
-            // Array type doesn't exist yet
-            // This happens when:
-            // 1. No explicit array<T> declaration exists in the source
-            // 2. Pass 2a hasn't instantiated this array type
-            //
-            // Workaround: Declare a variable of the array type first, e.g.:
-            //   array<int> temp; // This causes array<int> to be instantiated
-            //   return {1, 2, 3}; // Now this works
-            //
-            // Proper fix: Add a pre-pass in Pass 2a that scans all initializer lists
-            // and instantiates the needed array template types.
-            self.error(
-                SemanticErrorKind::InternalError,
-                init_list.span,
-                format!(
-                    "array<{}> type not found - declare 'array<{}>' variable first to instantiate type",
-                    self.type_name(&common_type),
-                    self.type_name(&common_type)
-                ),
-            );
-            None
-        }
-    }
-
-    /// Creates an empty array of the given element type.
-    /// Used for empty init lists like `array<int> arr = {}`.
-    pub(super) fn create_empty_array(&mut self, span: Span, element_type: DataType) -> Option<ExprContext> {
-        // Look up the array<element_type> in the registry
-        // We compare only type_id because element_type may have handle=true
-        // but sub_types stores the element type without handle modifiers
-        let mut array_type_id = None;
-        for i in 0..self.registry.type_count() {
-            let type_id = TypeId(i as u32);
-            let typedef = self.registry.get_type(type_id);
-            if let TypeDef::TemplateInstance { template, sub_types, .. } = typedef
-                && *template == self.registry.array_template
-                    && sub_types.len() == 1
-                    && sub_types[0].type_id == element_type.type_id
-                {
-                    array_type_id = Some(type_id);
-                    break;
-                }
-        }
-
-        if let Some(array_id) = array_type_id {
-            // Find the array initializer constructor
-            let constructors = self.registry.find_constructors(array_id);
-            let init_ctor = constructors.iter().find(|&&ctor_id| {
-                let func = self.registry.get_function(ctor_id);
-                func.name == "$array_init"
-            });
-
-            if let Some(&ctor_id) = init_ctor {
-                // Push 0 as count (empty array)
-                self.bytecode.emit(Instruction::PushInt(0));
-                self.bytecode.emit(Instruction::CallConstructor {
-                    type_id: array_id.as_u32(),
-                    func_id: ctor_id.as_u32(),
-                });
-
-                // Return the array type as a handle
-                Some(ExprContext::rvalue(DataType::with_handle(array_id, false)))
-            } else {
-                self.error(
-                    SemanticErrorKind::InternalError,
-                    span,
-                    format!(
-                        "array<{}> initializer constructor not found",
-                        self.type_name(&element_type)
-                    ),
-                );
-                None
-            }
-        } else {
-            self.error(
-                SemanticErrorKind::InternalError,
-                span,
-                format!(
-                    "array<{}> type not found for empty initializer list",
-                    self.type_name(&element_type)
-                ),
-            );
-            None
+            Some(ExprContext::rvalue(DataType::simple(target_type_id)))
         }
     }
 

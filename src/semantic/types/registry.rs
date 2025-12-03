@@ -28,8 +28,9 @@ use super::type_def::{
     Visibility, MethodSignature,
     VOID_TYPE, BOOL_TYPE, INT8_TYPE, INT16_TYPE, INT32_TYPE, INT64_TYPE,
     UINT8_TYPE, UINT16_TYPE, UINT32_TYPE, UINT64_TYPE, FLOAT_TYPE, DOUBLE_TYPE,
-    STRING_TYPE, ARRAY_TEMPLATE, DICT_TEMPLATE, FIRST_USER_TYPE_ID,
+    FIRST_USER_TYPE_ID,
 };
+use super::behaviors::TypeBehaviors;
 use crate::semantic::error::{SemanticError, SemanticErrorKind};
 use crate::lexer::Span;
 use crate::ast::expr::Expr;
@@ -157,12 +158,17 @@ impl<'ast> MixinDef<'ast> {
     }
 }
 
+
 /// Global registry for all types, functions, and variables
 #[derive(Debug, Clone)]
 pub struct Registry<'ast> {
     // Type storage
     types: Vec<TypeDef>,
     type_by_name: FxHashMap<String, TypeId>,
+
+    // Type behaviors (lifecycle, initialization) - stored separately from TypeDef
+    // This follows the C++ AngelScript pattern where behaviors are registered separately
+    behaviors: FxHashMap<TypeId, super::behaviors::TypeBehaviors>,
 
     // Function storage
     functions: FxHashMap<FunctionId, FunctionDef<'ast>>,
@@ -178,7 +184,7 @@ pub struct Registry<'ast> {
     // Note: Uses TypeId not DataType so array<int> and array<const int> share the same instance
     template_cache: FxHashMap<(TypeId, Vec<TypeId>), TypeId>,
 
-    // Fixed TypeIds for quick access
+    // Fixed TypeIds for quick access (primitives only - FFI types use name lookup)
     pub void_type: TypeId,
     pub bool_type: TypeId,
     pub int8_type: TypeId,
@@ -191,9 +197,6 @@ pub struct Registry<'ast> {
     pub uint64_type: TypeId,
     pub float_type: TypeId,
     pub double_type: TypeId,
-    pub string_type: TypeId,
-    pub array_template: TypeId,
-    pub dict_template: TypeId,
 }
 
 impl<'ast> Registry<'ast> {
@@ -202,6 +205,7 @@ impl<'ast> Registry<'ast> {
         let mut registry = Self {
             types: Vec::with_capacity(32),
             type_by_name: FxHashMap::default(),
+            behaviors: FxHashMap::default(),
             functions: FxHashMap::default(),
             func_by_name: FxHashMap::default(),
             global_vars: FxHashMap::default(),
@@ -219,9 +223,6 @@ impl<'ast> Registry<'ast> {
             uint64_type: UINT64_TYPE,
             float_type: FLOAT_TYPE,
             double_type: DOUBLE_TYPE,
-            string_type: STRING_TYPE,
-            array_template: ARRAY_TEMPLATE,
-            dict_template: DICT_TEMPLATE,
         };
 
         // Pre-register primitives at fixed indices (0-11)
@@ -243,13 +244,6 @@ impl<'ast> Registry<'ast> {
             registry.types.push(TypeDef::Primitive { kind: PrimitiveType::Void });
         }
 
-        // Pre-register built-in types (16-18)
-        // TODO: String methods should eventually come from FFI modules via import_modules()
-        // For now, keep hardcoded methods for backwards compatibility
-        registry.register_builtin_string(STRING_TYPE);
-        registry.register_builtin_template("array", 1, ARRAY_TEMPLATE);
-        registry.register_builtin_template("dictionary", 2, DICT_TEMPLATE);
-
         // Fill gap 19-31 with placeholders
         while registry.types.len() < FIRST_USER_TYPE_ID as usize {
             registry.types.push(TypeDef::Primitive { kind: PrimitiveType::Void });
@@ -269,352 +263,6 @@ impl<'ast> Registry<'ast> {
 
         self.types[index] = TypeDef::Primitive { kind };
         self.type_by_name.insert(kind.name().to_string(), type_id);
-    }
-
-    /// Register built-in string type with methods and operators.
-    /// TODO: String methods should eventually come from FFI modules via import_modules().
-    /// For now, keep hardcoded methods for backwards compatibility.
-    fn register_builtin_string(&mut self, type_id: TypeId) {
-        let index = type_id.as_u32() as usize;
-
-        while self.types.len() <= index {
-            self.types.push(TypeDef::Primitive { kind: PrimitiveType::Void });
-        }
-
-        let default_traits = FunctionTraits {
-            is_constructor: false,
-            is_destructor: false,
-            is_final: false,
-            is_virtual: false,
-            is_abstract: false,
-            is_const: false,
-            is_explicit: false,
-            auto_generated: None,
-        };
-
-        let mut method_ids = Vec::new();
-        let mut operator_methods = FxHashMap::default();
-
-        // String parameter type (const string &in)
-        let string_param = DataType {
-            type_id,
-            is_handle: false,
-            is_handle_to_const: false,
-            is_const: true,
-            ref_modifier: RefModifier::In,
-        };
-
-        // 1. Register length(): uint
-        let length_func_id = FunctionId::next();
-        let length_func_def = FunctionDef {
-            id: length_func_id,
-            name: "length".to_string(),
-            namespace: Vec::new(),
-            params: vec![],
-            return_type: DataType::simple(self.uint32_type),
-            object_type: Some(type_id),
-            traits: FunctionTraits {
-                is_const: true,
-                ..default_traits
-            },
-            is_native: true,
-            default_args: Vec::new(),
-            visibility: Visibility::Public,
-            signature_filled: true,
-        };
-        self.functions.insert(length_func_id, length_func_def);
-        method_ids.push(length_func_id);
-
-        // 2. Register substr(uint start, int count = -1): string
-        let substr_func_id = FunctionId::next();
-        let substr_func_def = FunctionDef {
-            id: substr_func_id,
-            name: "substr".to_string(),
-            namespace: Vec::new(),
-            params: vec![
-                DataType::simple(self.uint32_type),
-                DataType::simple(self.int32_type),
-            ],
-            return_type: DataType::simple(type_id),
-            object_type: Some(type_id),
-            traits: FunctionTraits {
-                is_const: true,
-                ..default_traits
-            },
-            is_native: true,
-            default_args: Vec::new(),
-            visibility: Visibility::Public,
-            signature_filled: true,
-        };
-        self.functions.insert(substr_func_id, substr_func_def);
-        method_ids.push(substr_func_id);
-
-        // 2b. Register substr(uint start): string (single-arg overload)
-        let substr1_func_id = FunctionId::next();
-        let substr1_func_def = FunctionDef {
-            id: substr1_func_id,
-            name: "substr".to_string(),
-            namespace: Vec::new(),
-            params: vec![DataType::simple(self.uint32_type)],
-            return_type: DataType::simple(type_id),
-            object_type: Some(type_id),
-            traits: FunctionTraits {
-                is_const: true,
-                ..default_traits
-            },
-            is_native: true,
-            default_args: Vec::new(),
-            visibility: Visibility::Public,
-            signature_filled: true,
-        };
-        self.functions.insert(substr1_func_id, substr1_func_def);
-        method_ids.push(substr1_func_id);
-
-        // 3a. Register findFirst(const string &in): int - searches from start
-        let find_first_func_id = FunctionId::next();
-        let find_first_func_def = FunctionDef {
-            id: find_first_func_id,
-            name: "findFirst".to_string(),
-            namespace: Vec::new(),
-            params: vec![string_param.clone()],
-            return_type: DataType::simple(self.int32_type),
-            object_type: Some(type_id),
-            traits: FunctionTraits {
-                is_const: true,
-                ..default_traits
-            },
-            is_native: true,
-            default_args: Vec::new(),
-            visibility: Visibility::Public,
-            signature_filled: true,
-        };
-        self.functions.insert(find_first_func_id, find_first_func_def);
-        method_ids.push(find_first_func_id);
-
-        // 3b. Register findFirst(const string &in, uint start): int - searches from position
-        let find_first2_func_id = FunctionId::next();
-        let find_first2_func_def = FunctionDef {
-            id: find_first2_func_id,
-            name: "findFirst".to_string(),
-            namespace: Vec::new(),
-            params: vec![string_param.clone(), DataType::simple(self.uint32_type)],
-            return_type: DataType::simple(self.int32_type),
-            object_type: Some(type_id),
-            traits: FunctionTraits {
-                is_const: true,
-                ..default_traits
-            },
-            is_native: true,
-            default_args: Vec::new(),
-            visibility: Visibility::Public,
-            signature_filled: true,
-        };
-        self.functions.insert(find_first2_func_id, find_first2_func_def);
-        method_ids.push(find_first2_func_id);
-
-        // 4. Register findLast(const string &in, int start = -1): int
-        let find_last_func_id = FunctionId::next();
-        let find_last_func_def = FunctionDef {
-            id: find_last_func_id,
-            name: "findLast".to_string(),
-            namespace: Vec::new(),
-            params: vec![string_param.clone(), DataType::simple(self.int32_type)],
-            return_type: DataType::simple(self.int32_type),
-            object_type: Some(type_id),
-            traits: FunctionTraits {
-                is_const: true,
-                ..default_traits
-            },
-            is_native: true,
-            default_args: Vec::new(),
-            visibility: Visibility::Public,
-            signature_filled: true,
-        };
-        self.functions.insert(find_last_func_id, find_last_func_def);
-        method_ids.push(find_last_func_id);
-
-        // 5. Register isEmpty(): bool
-        let is_empty_func_id = FunctionId::next();
-        let is_empty_func_def = FunctionDef {
-            id: is_empty_func_id,
-            name: "isEmpty".to_string(),
-            namespace: Vec::new(),
-            params: vec![],
-            return_type: DataType::simple(self.bool_type),
-            object_type: Some(type_id),
-            traits: FunctionTraits {
-                is_const: true,
-                ..default_traits
-            },
-            is_native: true,
-            default_args: Vec::new(),
-            visibility: Visibility::Public,
-            signature_filled: true,
-        };
-        self.functions.insert(is_empty_func_id, is_empty_func_def);
-        method_ids.push(is_empty_func_id);
-
-        // 6. Register opAdd(const string &in): string - for string concatenation
-        let op_add_func_id = FunctionId::next();
-        let op_add_func_def = FunctionDef {
-            id: op_add_func_id,
-            name: "opAdd".to_string(),
-            namespace: Vec::new(),
-            params: vec![string_param.clone()],
-            return_type: DataType::simple(type_id),
-            object_type: Some(type_id),
-            traits: FunctionTraits {
-                is_const: true,
-                ..default_traits
-            },
-            is_native: true,
-            default_args: Vec::new(),
-            visibility: Visibility::Public,
-            signature_filled: true,
-        };
-        self.functions.insert(op_add_func_id, op_add_func_def);
-        method_ids.push(op_add_func_id);
-        operator_methods.insert(OperatorBehavior::OpAdd, op_add_func_id);
-
-        // 7. Register opAdd(int): string - for string + int
-        let op_add_int_func_id = FunctionId::next();
-        let op_add_int_func_def = FunctionDef {
-            id: op_add_int_func_id,
-            name: "opAdd".to_string(),
-            namespace: Vec::new(),
-            params: vec![DataType::simple(self.int32_type)],
-            return_type: DataType::simple(type_id),
-            object_type: Some(type_id),
-            traits: FunctionTraits {
-                is_const: true,
-                ..default_traits
-            },
-            is_native: true,
-            default_args: Vec::new(),
-            visibility: Visibility::Public,
-            signature_filled: true,
-        };
-        self.functions.insert(op_add_int_func_id, op_add_int_func_def);
-        method_ids.push(op_add_int_func_id);
-
-        // 8. Register opAdd(float): string - for string + float
-        let op_add_float_func_id = FunctionId::next();
-        let op_add_float_func_def = FunctionDef {
-            id: op_add_float_func_id,
-            name: "opAdd".to_string(),
-            namespace: Vec::new(),
-            params: vec![DataType::simple(self.float_type)],
-            return_type: DataType::simple(type_id),
-            object_type: Some(type_id),
-            traits: FunctionTraits {
-                is_const: true,
-                ..default_traits
-            },
-            is_native: true,
-            default_args: Vec::new(),
-            visibility: Visibility::Public,
-            signature_filled: true,
-        };
-        self.functions.insert(op_add_float_func_id, op_add_float_func_def);
-        method_ids.push(op_add_float_func_id);
-
-        // 9. Register opAddAssign(const string &in): string& - for string +=
-        let op_add_assign_func_id = FunctionId::next();
-        let op_add_assign_func_def = FunctionDef {
-            id: op_add_assign_func_id,
-            name: "opAddAssign".to_string(),
-            namespace: Vec::new(),
-            params: vec![string_param.clone()],
-            return_type: DataType {
-                type_id,
-                is_handle: false,
-                is_handle_to_const: false,
-                is_const: false,
-                ref_modifier: RefModifier::InOut,
-            },
-            object_type: Some(type_id),
-            traits: default_traits,
-            is_native: true,
-            default_args: Vec::new(),
-            visibility: Visibility::Public,
-            signature_filled: true,
-        };
-        self.functions.insert(op_add_assign_func_id, op_add_assign_func_def);
-        method_ids.push(op_add_assign_func_id);
-        operator_methods.insert(OperatorBehavior::OpAddAssign, op_add_assign_func_id);
-
-        // 10. Register opEquals(const string &in): bool - for string comparison
-        let op_equals_func_id = FunctionId::next();
-        let op_equals_func_def = FunctionDef {
-            id: op_equals_func_id,
-            name: "opEquals".to_string(),
-            namespace: Vec::new(),
-            params: vec![string_param.clone()],
-            return_type: DataType::simple(self.bool_type),
-            object_type: Some(type_id),
-            traits: FunctionTraits {
-                is_const: true,
-                ..default_traits
-            },
-            is_native: true,
-            default_args: Vec::new(),
-            visibility: Visibility::Public,
-            signature_filled: true,
-        };
-        self.functions.insert(op_equals_func_id, op_equals_func_def);
-        method_ids.push(op_equals_func_id);
-        operator_methods.insert(OperatorBehavior::OpEquals, op_equals_func_id);
-
-        // 11. Register opIndex(uint): uint8 - for character access
-        let op_index_func_id = FunctionId::next();
-        let op_index_func_def = FunctionDef {
-            id: op_index_func_id,
-            name: "opIndex".to_string(),
-            namespace: Vec::new(),
-            params: vec![DataType::simple(self.uint32_type)],
-            return_type: DataType::simple(self.uint8_type),
-            object_type: Some(type_id),
-            traits: FunctionTraits {
-                is_const: true,
-                ..default_traits
-            },
-            is_native: true,
-            default_args: Vec::new(),
-            visibility: Visibility::Public,
-            signature_filled: true,
-        };
-        self.functions.insert(op_index_func_id, op_index_func_def);
-        method_ids.push(op_index_func_id);
-        operator_methods.insert(OperatorBehavior::OpIndex, op_index_func_id);
-
-        self.types[index] = TypeDef::Class {
-            name: "string".to_string(),
-            qualified_name: "string".to_string(),
-            fields: Vec::new(),
-            methods: method_ids,
-            base_class: None,
-            interfaces: Vec::new(),
-            operator_methods,
-            properties: FxHashMap::default(),
-            is_final: false,
-            is_abstract: false,
-        };
-        self.type_by_name.insert("string".to_string(), type_id);
-    }
-
-    /// Register a built-in template
-    fn register_builtin_template(&mut self, name: &str, param_count: usize, type_id: TypeId) {
-        let index = type_id.as_u32() as usize;
-
-        while self.types.len() <= index {
-            self.types.push(TypeDef::Primitive { kind: PrimitiveType::Void });
-        }
-
-        self.types[index] = TypeDef::Template {
-            name: name.to_string(),
-            param_count,
-        };
-        self.type_by_name.insert(name.to_string(), type_id);
     }
 
     /// Register a new type and return its TypeId
@@ -657,6 +305,26 @@ impl<'ast> Registry<'ast> {
         &mut self.types[type_id.as_u32() as usize]
     }
 
+    /// Get the behaviors for a type, if any are registered.
+    pub fn get_behaviors(&self, type_id: TypeId) -> Option<&super::behaviors::TypeBehaviors> {
+        self.behaviors.get(&type_id)
+    }
+
+    /// Get mutable behaviors for a type, if any are registered.
+    pub fn get_behaviors_mut(&mut self, type_id: TypeId) -> Option<&mut super::behaviors::TypeBehaviors> {
+        self.behaviors.get_mut(&type_id)
+    }
+
+    /// Set behaviors for a type. Overwrites any existing behaviors.
+    pub fn set_behaviors(&mut self, type_id: TypeId, behaviors: super::behaviors::TypeBehaviors) {
+        self.behaviors.insert(type_id, behaviors);
+    }
+
+    /// Get or create behaviors for a type (for incremental registration).
+    pub fn behaviors_mut(&mut self, type_id: TypeId) -> &mut super::behaviors::TypeBehaviors {
+        self.behaviors.entry(type_id).or_default()
+    }
+
     /// Look up an enum value by enum type ID and value name
     /// Returns the numeric value if found, None otherwise
     pub fn lookup_enum_value(&self, type_id: TypeId, value_name: &str) -> Option<i64> {
@@ -676,10 +344,12 @@ impl<'ast> Registry<'ast> {
         template_id: TypeId,
         args: Vec<DataType>,
     ) -> Result<TypeId, SemanticError> {
-        // Check if this is actually a template
+        // Check if this is actually a template (a Class with non-empty template_params)
         let template_def = self.get_type(template_id);
-        let (template_name, param_count) = match template_def {
-            TypeDef::Template { name, param_count } => (name.clone(), *param_count),
+        let (template_name, template_params, template_methods, template_operators, template_properties) = match template_def {
+            TypeDef::Class { name, template_params, methods, operator_methods, properties, .. } if !template_params.is_empty() => {
+                (name.clone(), template_params.clone(), methods.clone(), operator_methods.clone(), properties.clone())
+            }
             _ => {
                 return Err(SemanticError::new(
                     SemanticErrorKind::NotATemplate,
@@ -690,13 +360,13 @@ impl<'ast> Registry<'ast> {
         };
 
         // Check argument count
-        if args.len() != param_count {
+        if args.len() != template_params.len() {
             return Err(SemanticError::new(
                 SemanticErrorKind::WrongTemplateArgCount,
                 Span::default(),
                 format!(
                     "Template expects {} arguments, got {}",
-                    param_count,
+                    template_params.len(),
                     args.len()
                 ),
             ));
@@ -704,7 +374,7 @@ impl<'ast> Registry<'ast> {
 
         // Check cache - use only TypeIds for cache key so const qualifiers don't cause misses
         let cache_key_type_ids: Vec<TypeId> = args.iter().map(|dt| dt.type_id).collect();
-        let cache_key = (template_id, cache_key_type_ids);
+        let cache_key = (template_id, cache_key_type_ids.clone());
         if let Some(&cached_id) = self.template_cache.get(&cache_key) {
             return Ok(cached_id);
         }
@@ -716,490 +386,145 @@ impl<'ast> Registry<'ast> {
             .collect();
         let instance_name = format!("{}<{}>", template_name, arg_names.join(", "));
 
-        // Create new instance
-        let instance = TypeDef::TemplateInstance {
+        // Build substitution map: template_param_type_id -> actual_type
+        let subst_map: FxHashMap<TypeId, DataType> = template_params
+            .iter()
+            .zip(args.iter())
+            .map(|(&param_id, arg)| (param_id, arg.clone()))
+            .collect();
+
+        // Reserve instance ID before specializing methods (they need to reference the new object type)
+        let instance_id = TypeId::new(self.types.len() as u32);
+
+        // Specialize methods
+        let mut instance_methods = Vec::new();
+        for &method_id in &template_methods {
+            let specialized_id = self.specialize_function(method_id, &subst_map, instance_id);
+            instance_methods.push(specialized_id);
+        }
+
+        // Specialize operators
+        let mut instance_operators = FxHashMap::default();
+        for (&behavior, &op_id) in &template_operators {
+            let specialized_id = self.specialize_function(op_id, &subst_map, instance_id);
+            instance_operators.insert(behavior, specialized_id);
+        }
+
+        // Create new instance as a Class with specialized methods
+        let instance = TypeDef::Class {
             name: instance_name.clone(),
-            template: template_id,
-            sub_types: args.clone(),
-            methods: Vec::new(),
-            operator_methods: FxHashMap::default(),
-            properties: FxHashMap::default(),
+            qualified_name: instance_name.clone(),
+            fields: Vec::new(),
+            methods: instance_methods,
+            base_class: None,
+            interfaces: Vec::new(),
+            operator_methods: instance_operators,
+            properties: template_properties,  // TODO: specialize property functions
+            is_final: false,
+            is_abstract: false,
+            template_params: Vec::new(),  // Instance is not a template
+            template: Some(template_id),
+            type_args: args.clone(),
         };
 
-        let instance_id = self.register_type(instance, Some(&instance_name));
-        // Use the same cache key type as when checking
-        let insert_cache_key: Vec<TypeId> = args.iter().map(|dt| dt.type_id).collect();
-        self.template_cache.insert((template_id, insert_cache_key), instance_id);
+        // Actually register the instance
+        self.types.push(instance);
+        self.type_by_name.insert(instance_name.clone(), instance_id);
 
-        // TODO: These method registrations should eventually be removed once
-        // FFI modules provide complete method sets. For now, keep them for
-        // backwards compatibility until all consumers use import_modules().
-        if template_id == self.array_template {
-            self.register_array_methods(instance_id, args.clone());
+        // Copy and specialize behaviors from template to instance
+        if let Some(template_behaviors) = self.behaviors.get(&template_id).cloned() {
+            let mut instance_behaviors = template_behaviors.clone();
+
+            // Specialize constructors
+            instance_behaviors.constructors = template_behaviors.constructors
+                .iter()
+                .map(|&func_id| self.specialize_function(func_id, &subst_map, instance_id))
+                .collect();
+
+            // Specialize factories
+            instance_behaviors.factories = template_behaviors.factories
+                .iter()
+                .map(|&func_id| self.specialize_function(func_id, &subst_map, instance_id))
+                .collect();
+
+            // Specialize single behaviors that involve template params
+            if let Some(func_id) = template_behaviors.list_factory {
+                instance_behaviors.list_factory = Some(self.specialize_function(func_id, &subst_map, instance_id));
+            }
+            if let Some(func_id) = template_behaviors.list_construct {
+                instance_behaviors.list_construct = Some(self.specialize_function(func_id, &subst_map, instance_id));
+            }
+
+            self.behaviors.insert(instance_id, instance_behaviors);
         }
-        if template_id == self.dict_template {
-            self.register_dictionary_methods(instance_id, args);
-        }
+
+        // Cache the instance
+        self.template_cache.insert((template_id, cache_key_type_ids), instance_id);
 
         Ok(instance_id)
     }
 
-    /// Register placeholder methods for an array<T> type.
-    /// TODO: Remove once FFI modules provide complete method coverage.
-    fn register_array_methods(&mut self, array_type_id: TypeId, sub_types: Vec<DataType>) {
-        // Get the element type (T in array<T>)
-        let element_type = sub_types.first().cloned().unwrap_or_else(|| DataType::simple(self.void_type));
+    /// Specialize a function by substituting template parameters with actual types.
+    /// Returns a new FunctionId for the specialized function.
+    /// If the function doesn't exist (e.g., a placeholder), returns the original ID unchanged.
+    fn specialize_function(
+        &mut self,
+        orig_func_id: FunctionId,
+        subst_map: &FxHashMap<TypeId, DataType>,
+        new_object_type: TypeId,
+    ) -> FunctionId {
+        // If the function doesn't exist (placeholder ID), return it unchanged
+        let Some(orig) = self.functions.get(&orig_func_id).cloned() else {
+            return orig_func_id;
+        };
+        let new_id = FunctionId::next();
 
-        let default_traits = FunctionTraits {
-            is_constructor: false,
-            is_destructor: false,
-            is_final: false,
-            is_virtual: false,
-            is_abstract: false,
-            is_const: false,
-            is_explicit: false,
-            auto_generated: None,
+        // Substitute types in parameters
+        let new_params: Vec<DataType> = orig.params
+            .iter()
+            .map(|p| self.substitute_type(p, subst_map))
+            .collect();
+
+        // Substitute return type
+        let new_return = self.substitute_type(&orig.return_type, subst_map);
+
+        // Create specialized function
+        let new_func = FunctionDef {
+            id: new_id,
+            name: orig.name.clone(),
+            namespace: orig.namespace.clone(),
+            params: new_params,
+            return_type: new_return,
+            object_type: Some(new_object_type),
+            traits: orig.traits,
+            is_native: orig.is_native,
+            default_args: orig.default_args.clone(),
+            visibility: orig.visibility,
+            signature_filled: true,  // Specialized functions are always complete
         };
 
-        let mut method_ids = Vec::new();
+        self.functions.insert(new_id, new_func);
+        new_id
+    }
 
-        // 1. Register default constructor (no args)
-        let default_ctor_id = FunctionId::next();
-        let default_ctor_def = FunctionDef {
-            id: default_ctor_id,
-            name: "$array_default".to_string(),
-            namespace: Vec::new(),
-            params: vec![],
-            return_type: DataType::simple(self.void_type),
-            object_type: Some(array_type_id),
-            traits: FunctionTraits {
-                is_constructor: true,
-                ..default_traits
-            },
-            is_native: true,
-            default_args: Vec::new(),
-            visibility: Visibility::Public,
-            signature_filled: true,
-        };
-        self.functions.insert(default_ctor_id, default_ctor_def);
-        method_ids.push(default_ctor_id);
-
-        // 2. Register $array_init constructor (with count)
-        let init_func_id = FunctionId::next();
-        let init_func_def = FunctionDef {
-            id: init_func_id,
-            name: "$array_init".to_string(),
-            namespace: Vec::new(),
-            params: vec![DataType::simple(self.int32_type)], // count parameter
-            return_type: DataType::simple(self.void_type),
-            object_type: Some(array_type_id),
-            traits: FunctionTraits {
-                is_constructor: true,
-                ..default_traits
-            },
-            is_native: true,
-            default_args: Vec::new(),
-            visibility: Visibility::Public,
-            signature_filled: true,
-        };
-        self.functions.insert(init_func_id, init_func_def);
-        method_ids.push(init_func_id);
-
-        // 2. Register opIndex: T& opIndex(int index)
-        // Returns a reference to the element, allowing both read and write
-        let opindex_func_id = FunctionId::next();
-        let opindex_return_type = DataType {
-            type_id: element_type.type_id,
-            is_handle: element_type.is_handle,
-            is_handle_to_const: false,
-            is_const: false,
-            ref_modifier: RefModifier::InOut, // Returns a reference
-        };
-        let opindex_func_def = FunctionDef {
-            id: opindex_func_id,
-            name: "opIndex".to_string(),
-            namespace: Vec::new(),
-            params: vec![DataType::simple(self.int32_type)], // index parameter
-            return_type: opindex_return_type,
-            object_type: Some(array_type_id),
-            traits: default_traits,
-            is_native: true,
-            default_args: Vec::new(),
-            visibility: Visibility::Public,
-            signature_filled: true,
-        };
-        self.functions.insert(opindex_func_id, opindex_func_def);
-        method_ids.push(opindex_func_id);
-
-        // 3. Register opIndex with uint: T& opIndex(uint index)
-        let opindex_uint_func_id = FunctionId::next();
-        let opindex_uint_return_type = DataType {
-            type_id: element_type.type_id,
-            is_handle: element_type.is_handle,
-            is_handle_to_const: false,
-            is_const: false,
-            ref_modifier: RefModifier::InOut,
-        };
-        let opindex_uint_func_def = FunctionDef {
-            id: opindex_uint_func_id,
-            name: "opIndex".to_string(),
-            namespace: Vec::new(),
-            params: vec![DataType::simple(self.uint32_type)], // uint index parameter
-            return_type: opindex_uint_return_type,
-            object_type: Some(array_type_id),
-            traits: default_traits,
-            is_native: true,
-            default_args: Vec::new(),
-            visibility: Visibility::Public,
-            signature_filled: true,
-        };
-        self.functions.insert(opindex_uint_func_id, opindex_uint_func_def);
-        method_ids.push(opindex_uint_func_id);
-
-        // 4. Register length(): uint
-        let length_func_id = FunctionId::next();
-        let length_func_def = FunctionDef {
-            id: length_func_id,
-            name: "length".to_string(),
-            namespace: Vec::new(),
-            params: vec![],
-            return_type: DataType::simple(self.uint32_type),
-            object_type: Some(array_type_id),
-            traits: FunctionTraits {
-                is_const: true,
-                ..default_traits
-            },
-            is_native: true,
-            default_args: Vec::new(),
-            visibility: Visibility::Public,
-            signature_filled: true,
-        };
-        self.functions.insert(length_func_id, length_func_def);
-        method_ids.push(length_func_id);
-
-        // 5. Register resize(uint): void
-        let resize_func_id = FunctionId::next();
-        let resize_func_def = FunctionDef {
-            id: resize_func_id,
-            name: "resize".to_string(),
-            namespace: Vec::new(),
-            params: vec![DataType::simple(self.uint32_type)],
-            return_type: DataType::simple(self.void_type),
-            object_type: Some(array_type_id),
-            traits: default_traits,
-            is_native: true,
-            default_args: Vec::new(),
-            visibility: Visibility::Public,
-            signature_filled: true,
-        };
-        self.functions.insert(resize_func_id, resize_func_def);
-        method_ids.push(resize_func_id);
-
-        // 6. Register insertLast(const T &in): void
-        let insert_last_func_id = FunctionId::next();
-        let insert_param = DataType {
-            type_id: element_type.type_id,
-            is_handle: element_type.is_handle,
-            is_handle_to_const: false,
-            is_const: true,
-            ref_modifier: RefModifier::In,
-        };
-        let insert_last_func_def = FunctionDef {
-            id: insert_last_func_id,
-            name: "insertLast".to_string(),
-            namespace: Vec::new(),
-            params: vec![insert_param],
-            return_type: DataType::simple(self.void_type),
-            object_type: Some(array_type_id),
-            traits: default_traits,
-            is_native: true,
-            default_args: Vec::new(),
-            visibility: Visibility::Public,
-            signature_filled: true,
-        };
-        self.functions.insert(insert_last_func_id, insert_last_func_def);
-        method_ids.push(insert_last_func_id);
-
-        // 7. Register removeLast(): void
-        let remove_last_func_id = FunctionId::next();
-        let remove_last_func_def = FunctionDef {
-            id: remove_last_func_id,
-            name: "removeLast".to_string(),
-            namespace: Vec::new(),
-            params: vec![],
-            return_type: DataType::simple(self.void_type),
-            object_type: Some(array_type_id),
-            traits: default_traits,
-            is_native: true,
-            default_args: Vec::new(),
-            visibility: Visibility::Public,
-            signature_filled: true,
-        };
-        self.functions.insert(remove_last_func_id, remove_last_func_def);
-        method_ids.push(remove_last_func_id);
-
-        // 8. Register insertAt(uint, const T &in): void
-        let insert_at_func_id = FunctionId::next();
-        let insert_at_param = DataType {
-            type_id: element_type.type_id,
-            is_handle: element_type.is_handle,
-            is_handle_to_const: false,
-            is_const: true,
-            ref_modifier: RefModifier::In,
-        };
-        let insert_at_func_def = FunctionDef {
-            id: insert_at_func_id,
-            name: "insertAt".to_string(),
-            namespace: Vec::new(),
-            params: vec![DataType::simple(self.uint32_type), insert_at_param],
-            return_type: DataType::simple(self.void_type),
-            object_type: Some(array_type_id),
-            traits: default_traits,
-            is_native: true,
-            default_args: Vec::new(),
-            visibility: Visibility::Public,
-            signature_filled: true,
-        };
-        self.functions.insert(insert_at_func_id, insert_at_func_def);
-        method_ids.push(insert_at_func_id);
-
-        // 9. Register removeAt(uint): void
-        let remove_at_func_id = FunctionId::next();
-        let remove_at_func_def = FunctionDef {
-            id: remove_at_func_id,
-            name: "removeAt".to_string(),
-            namespace: Vec::new(),
-            params: vec![DataType::simple(self.uint32_type)],
-            return_type: DataType::simple(self.void_type),
-            object_type: Some(array_type_id),
-            traits: default_traits,
-            is_native: true,
-            default_args: Vec::new(),
-            visibility: Visibility::Public,
-            signature_filled: true,
-        };
-        self.functions.insert(remove_at_func_id, remove_at_func_def);
-        method_ids.push(remove_at_func_id);
-
-        // Add to the template instance's methods and operator_methods
-        let typedef = self.get_type_mut(array_type_id);
-        if let TypeDef::TemplateInstance { methods, operator_methods, .. } = typedef {
-            methods.extend(method_ids);
-            operator_methods.insert(OperatorBehavior::OpIndex, opindex_func_id);
+    /// Substitute template parameters in a DataType with actual types.
+    fn substitute_type(&self, dt: &DataType, subst_map: &FxHashMap<TypeId, DataType>) -> DataType {
+        if let Some(replacement) = subst_map.get(&dt.type_id) {
+            // Found a template parameter to substitute
+            let mut result = replacement.clone();
+            // Merge qualifiers from original
+            result.is_handle = dt.is_handle || result.is_handle;
+            result.is_const = dt.is_const || result.is_const;
+            if dt.ref_modifier != RefModifier::None {
+                result.ref_modifier = dt.ref_modifier.clone();
+            }
+            result
+        } else {
+            // Not a template parameter, return as-is
+            dt.clone()
         }
     }
 
-    /// Register placeholder methods for a dictionary<K, V> type.
-    /// TODO: Remove once FFI modules provide complete method coverage.
-    fn register_dictionary_methods(&mut self, dict_type_id: TypeId, sub_types: Vec<DataType>) {
-        // Get the key type (K) and value type (V) from dictionary<K, V>
-        let key_type = sub_types.first().cloned().unwrap_or_else(|| DataType::simple(self.void_type));
-        let value_type = sub_types.get(1).cloned().unwrap_or_else(|| DataType::simple(self.void_type));
-
-        let default_traits = FunctionTraits {
-            is_constructor: false,
-            is_destructor: false,
-            is_final: false,
-            is_virtual: false,
-            is_abstract: false,
-            is_const: false,
-            is_explicit: false,
-            auto_generated: None,
-        };
-
-        let mut method_ids = Vec::new();
-
-        // 1. Register set(const K &in, const V &in): void
-        let set_func_id = FunctionId::next();
-        let key_param = DataType {
-            type_id: key_type.type_id,
-            is_handle: key_type.is_handle,
-            is_handle_to_const: false,
-            is_const: true,
-            ref_modifier: RefModifier::In,
-        };
-        let value_param = DataType {
-            type_id: value_type.type_id,
-            is_handle: value_type.is_handle,
-            is_handle_to_const: false,
-            is_const: true,
-            ref_modifier: RefModifier::In,
-        };
-        let set_func_def = FunctionDef {
-            id: set_func_id,
-            name: "set".to_string(),
-            namespace: Vec::new(),
-            params: vec![key_param.clone(), value_param.clone()],
-            return_type: DataType::simple(self.void_type),
-            object_type: Some(dict_type_id),
-            traits: default_traits,
-            is_native: true,
-            default_args: Vec::new(),
-            visibility: Visibility::Public,
-            signature_filled: true,
-        };
-        self.functions.insert(set_func_id, set_func_def);
-        method_ids.push(set_func_id);
-
-        // 2. Register get(const K &in, V &out): bool
-        let get_func_id = FunctionId::next();
-        let value_out_param = DataType {
-            type_id: value_type.type_id,
-            is_handle: value_type.is_handle,
-            is_handle_to_const: false,
-            is_const: false,
-            ref_modifier: RefModifier::Out,
-        };
-        let get_func_def = FunctionDef {
-            id: get_func_id,
-            name: "get".to_string(),
-            namespace: Vec::new(),
-            params: vec![key_param.clone(), value_out_param],
-            return_type: DataType::simple(self.bool_type),
-            object_type: Some(dict_type_id),
-            traits: FunctionTraits {
-                is_const: true,
-                ..default_traits
-            },
-            is_native: true,
-            default_args: Vec::new(),
-            visibility: Visibility::Public,
-            signature_filled: true,
-        };
-        self.functions.insert(get_func_id, get_func_def);
-        method_ids.push(get_func_id);
-
-        // 3. Register exists(const K &in): bool
-        let exists_func_id = FunctionId::next();
-        let exists_func_def = FunctionDef {
-            id: exists_func_id,
-            name: "exists".to_string(),
-            namespace: Vec::new(),
-            params: vec![key_param.clone()],
-            return_type: DataType::simple(self.bool_type),
-            object_type: Some(dict_type_id),
-            traits: FunctionTraits {
-                is_const: true,
-                ..default_traits
-            },
-            is_native: true,
-            default_args: Vec::new(),
-            visibility: Visibility::Public,
-            signature_filled: true,
-        };
-        self.functions.insert(exists_func_id, exists_func_def);
-        method_ids.push(exists_func_id);
-
-        // 4. Register delete(const K &in): bool
-        let delete_func_id = FunctionId::next();
-        let delete_func_def = FunctionDef {
-            id: delete_func_id,
-            name: "delete".to_string(),
-            namespace: Vec::new(),
-            params: vec![key_param.clone()],
-            return_type: DataType::simple(self.bool_type),
-            object_type: Some(dict_type_id),
-            traits: default_traits,
-            is_native: true,
-            default_args: Vec::new(),
-            visibility: Visibility::Public,
-            signature_filled: true,
-        };
-        self.functions.insert(delete_func_id, delete_func_def);
-        method_ids.push(delete_func_id);
-
-        // 5. Register isEmpty(): bool
-        let is_empty_func_id = FunctionId::next();
-        let is_empty_func_def = FunctionDef {
-            id: is_empty_func_id,
-            name: "isEmpty".to_string(),
-            namespace: Vec::new(),
-            params: vec![],
-            return_type: DataType::simple(self.bool_type),
-            object_type: Some(dict_type_id),
-            traits: FunctionTraits {
-                is_const: true,
-                ..default_traits
-            },
-            is_native: true,
-            default_args: Vec::new(),
-            visibility: Visibility::Public,
-            signature_filled: true,
-        };
-        self.functions.insert(is_empty_func_id, is_empty_func_def);
-        method_ids.push(is_empty_func_id);
-
-        // 6. Register getSize(): uint
-        let get_size_func_id = FunctionId::next();
-        let get_size_func_def = FunctionDef {
-            id: get_size_func_id,
-            name: "getSize".to_string(),
-            namespace: Vec::new(),
-            params: vec![],
-            return_type: DataType::simple(self.uint32_type),
-            object_type: Some(dict_type_id),
-            traits: FunctionTraits {
-                is_const: true,
-                ..default_traits
-            },
-            is_native: true,
-            default_args: Vec::new(),
-            visibility: Visibility::Public,
-            signature_filled: true,
-        };
-        self.functions.insert(get_size_func_id, get_size_func_def);
-        method_ids.push(get_size_func_id);
-
-        // 7. Register deleteAll(): void
-        let delete_all_func_id = FunctionId::next();
-        let delete_all_func_def = FunctionDef {
-            id: delete_all_func_id,
-            name: "deleteAll".to_string(),
-            namespace: Vec::new(),
-            params: vec![],
-            return_type: DataType::simple(self.void_type),
-            object_type: Some(dict_type_id),
-            traits: default_traits,
-            is_native: true,
-            default_args: Vec::new(),
-            visibility: Visibility::Public,
-            signature_filled: true,
-        };
-        self.functions.insert(delete_all_func_id, delete_all_func_def);
-        method_ids.push(delete_all_func_id);
-
-        // 8. Register opIndex(const K &in): V& - for dictionary[key] access
-        let opindex_func_id = FunctionId::next();
-        let opindex_return_type = DataType {
-            type_id: value_type.type_id,
-            is_handle: value_type.is_handle,
-            is_handle_to_const: false,
-            is_const: false,
-            ref_modifier: RefModifier::InOut,
-        };
-        let opindex_func_def = FunctionDef {
-            id: opindex_func_id,
-            name: "opIndex".to_string(),
-            namespace: Vec::new(),
-            params: vec![key_param],
-            return_type: opindex_return_type,
-            object_type: Some(dict_type_id),
-            traits: default_traits,
-            is_native: true,
-            default_args: Vec::new(),
-            visibility: Visibility::Public,
-            signature_filled: true,
-        };
-        self.functions.insert(opindex_func_id, opindex_func_def);
-        method_ids.push(opindex_func_id);
-
-        // Add to the template instance's methods and operator_methods
-        let typedef = self.get_type_mut(dict_type_id);
-        if let TypeDef::TemplateInstance { methods, operator_methods, .. } = typedef {
-            methods.extend(method_ids);
-            operator_methods.insert(OperatorBehavior::OpIndex, opindex_func_id);
-        }
-    }
 
     /// Register a function and return its FunctionId
     pub fn register_function(&mut self, def: FunctionDef<'ast>) -> FunctionId {
@@ -1530,25 +855,11 @@ impl<'ast> Registry<'ast> {
     /// Find all constructors for a given type
     /// Returns a vector of FunctionIds for all constructors
     pub fn find_constructors(&self, type_id: TypeId) -> Vec<FunctionId> {
-        // Get the type definition
-        let typedef = self.get_type(type_id);
-
-        // Classes and template instances have constructors - get the methods list
-        let method_ids = match typedef {
-            TypeDef::Class { methods, .. } => methods,
-            TypeDef::TemplateInstance { methods, .. } => methods,
-            _ => return Vec::new(),
-        };
-
-        // Filter to only constructors
-        method_ids
-            .iter()
-            .copied()
-            .filter(|&id| {
-                let func = self.get_function(id);
-                func.traits.is_constructor
-            })
-            .collect()
+        // Look up constructors from behaviors registry
+        self.behaviors
+            .get(&type_id)
+            .map(|b| b.constructors.clone())
+            .unwrap_or_default()
     }
 
     /// Check if a constructor is marked as explicit
@@ -1589,13 +900,13 @@ impl<'ast> Registry<'ast> {
         None
     }
 
-    /// Add a method to a class or template instance's methods list
+    /// Add a method to a class's methods list
     /// This is used when auto-generating constructors in Pass 1
+    /// Works for both regular classes and template instances (which are also Classes)
     pub fn add_method_to_class(&mut self, type_id: TypeId, func_id: FunctionId) {
         let typedef = self.get_type_mut(type_id);
         match typedef {
             TypeDef::Class { methods, .. } => methods.push(func_id),
-            TypeDef::TemplateInstance { methods, .. } => methods.push(func_id),
             _ => {}
         }
     }
@@ -1624,9 +935,6 @@ impl<'ast> Registry<'ast> {
         let typedef = self.get_type(type_id);
         match typedef {
             TypeDef::Class {
-                operator_methods, ..
-            } => operator_methods.get(&operator).copied(),
-            TypeDef::TemplateInstance {
                 operator_methods, ..
             } => operator_methods.get(&operator).copied(),
             _ => None,
@@ -1758,7 +1066,7 @@ impl<'ast> Registry<'ast> {
 
         match typedef {
             TypeDef::Class { methods, base_class, .. } => {
-                // Get all methods with matching name from this class
+                // Get all methods with matching name from this class (or template instance)
                 let mut matching_methods: Vec<FunctionId> = methods.iter()
                     .copied()
                     .filter(|&id| self.get_function(id).name == name)
@@ -1771,13 +1079,6 @@ impl<'ast> Registry<'ast> {
                 }
 
                 matching_methods
-            }
-            TypeDef::TemplateInstance { methods, .. } => {
-                // Get all methods with matching name from this template instance
-                methods.iter()
-                    .copied()
-                    .filter(|&id| self.get_function(id).name == name)
-                    .collect()
             }
             _ => Vec::new(),
         }
@@ -2273,77 +1574,254 @@ impl<'ast> Registry<'ast> {
     ) -> Result<(), ImportError> {
         let qualified_name = self.build_qualified_name(&type_def.name, namespace);
 
-        // Check for duplicates
-        if self.type_by_name.contains_key(&qualified_name) {
-            return Err(ImportError::DuplicateType(qualified_name));
+        // Get the actual type_id - either existing or new
+        let actual_type_id = self.type_by_name.get(&qualified_name).copied();
+
+        // Register template parameter types first (if this is a template)
+        // This must happen even for pre-existing types (like builtin array)
+        let template_params = if let Some(params) = &type_def.template_params {
+            params
+                .iter()
+                .enumerate()
+                .map(|(i, name)| {
+                    let param_id = TypeId::next();
+                    // Use the actual type_id as owner (if pre-existing) or the def's id
+                    let owner_id = actual_type_id.unwrap_or(type_def.id);
+                    let param_def = TypeDef::TemplateParam {
+                        name: name.to_string(),
+                        index: i,
+                        owner: owner_id,
+                    };
+                    // Register at the specific index matching param_id
+                    // (using register_type_at_id logic to ensure alignment)
+                    let index = param_id.as_u32() as usize;
+                    while self.types.len() <= index {
+                        self.types.push(TypeDef::Primitive {
+                            kind: PrimitiveType::Void,
+                        });
+                    }
+                    self.types[index] = param_def;
+                    // Register with a special internal name for lookup
+                    self.type_by_name
+                        .insert(format!("{}::${}", qualified_name, name), param_id);
+                    param_id
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
+
+        // If type already exists, update its template_params and skip shell registration
+        if let Some(existing_type_id) = actual_type_id {
+            // Update the existing type's template_params if this is a template
+            if !template_params.is_empty() {
+                if let TypeDef::Class { template_params: existing_params, .. } = self.get_type_mut(existing_type_id) {
+                    *existing_params = template_params;
+                }
+            }
+            return Ok(());
         }
 
-        // Check if this is a template
-        if type_def.template_params.is_some() {
-            // Register as Template type
-            let param_count = type_def.template_params.map(|p| p.len()).unwrap_or(0);
-            let typedef = TypeDef::Template {
-                name: type_def.name.clone(),
-                param_count,
+        // Register as Class type (shell with empty methods, populated in import_type_details)
+        let typedef = TypeDef::Class {
+            name: type_def.name.clone(),
+            qualified_name: qualified_name.clone(),
+            fields: Vec::new(),
+            methods: Vec::new(),
+            base_class: None,
+            interfaces: Vec::new(),
+            operator_methods: FxHashMap::default(),
+            properties: FxHashMap::default(),
+            is_final: false,
+            is_abstract: false,
+            template_params,
+            template: None,
+            type_args: Vec::new(),
+        };
+        self.register_type_at_id(type_def.id, typedef, &qualified_name);
+
+        // Register behaviors for the class/template
+        self.import_behaviors(type_def.id, &type_def.behaviors, namespace)?;
+
+        Ok(())
+    }
+
+    /// Import behaviors for a type and store them in Registry::behaviors.
+    fn import_behaviors(
+        &mut self,
+        type_id: TypeId,
+        ffi_behaviors: &crate::ffi::Behaviors,
+        namespace: &[String],
+    ) -> Result<(), ImportError> {
+        let mut type_behaviors = super::behaviors::TypeBehaviors::new();
+
+        // Import list_factory behavior
+        if ffi_behaviors.has_list_factory() {
+            let func_id = FunctionId::next();
+            let func_def = FunctionDef {
+                id: func_id,
+                name: "$list_factory".to_string(),
+                namespace: namespace.to_vec(),
+                params: vec![], // List factory takes list buffer via special mechanism
+                return_type: DataType::simple(type_id),
+                object_type: Some(type_id),
+                traits: FunctionTraits {
+                    is_constructor: true,
+                    ..FunctionTraits::default()
+                },
+                is_native: true,
+                default_args: Vec::new(),
+                visibility: Visibility::Public,
+                signature_filled: true,
             };
-            self.register_type_at_id(type_def.id, typedef, &qualified_name);
-        } else {
-            // Register as Class type (shell with empty methods)
-            let typedef = TypeDef::Class {
-                name: type_def.name.clone(),
-                qualified_name: qualified_name.clone(),
-                fields: Vec::new(),
-                methods: Vec::new(),
-                base_class: None,
-                interfaces: Vec::new(),
-                operator_methods: FxHashMap::default(),
-                properties: FxHashMap::default(),
-                is_final: false,
-                is_abstract: false,
-            };
-            self.register_type_at_id(type_def.id, typedef, &qualified_name);
+            self.functions.insert(func_id, func_def);
+            type_behaviors.list_factory = Some(func_id);
         }
+
+        // Import list_construct behavior
+        if ffi_behaviors.has_list_construct() {
+            let func_id = FunctionId::next();
+            let func_def = FunctionDef {
+                id: func_id,
+                name: "$list_construct".to_string(),
+                namespace: namespace.to_vec(),
+                params: vec![], // List construct takes list buffer via special mechanism
+                return_type: DataType::simple(VOID_TYPE),
+                object_type: Some(type_id),
+                traits: FunctionTraits {
+                    is_constructor: true,
+                    ..FunctionTraits::default()
+                },
+                is_native: true,
+                default_args: Vec::new(),
+                visibility: Visibility::Public,
+                signature_filled: true,
+            };
+            self.functions.insert(func_id, func_def);
+            type_behaviors.list_construct = Some(func_id);
+        }
+
+        // Import addref behavior
+        if ffi_behaviors.has_addref() {
+            let func_id = FunctionId::next();
+            let func_def = FunctionDef {
+                id: func_id,
+                name: "$addref".to_string(),
+                namespace: namespace.to_vec(),
+                params: vec![],
+                return_type: DataType::simple(VOID_TYPE),
+                object_type: Some(type_id),
+                traits: FunctionTraits::default(),
+                is_native: true,
+                default_args: Vec::new(),
+                visibility: Visibility::Public,
+                signature_filled: true,
+            };
+            self.functions.insert(func_id, func_def);
+            type_behaviors.addref = Some(func_id);
+        }
+
+        // Import release behavior
+        if ffi_behaviors.has_release() {
+            let func_id = FunctionId::next();
+            let func_def = FunctionDef {
+                id: func_id,
+                name: "$release".to_string(),
+                namespace: namespace.to_vec(),
+                params: vec![],
+                return_type: DataType::simple(VOID_TYPE),
+                object_type: Some(type_id),
+                traits: FunctionTraits::default(),
+                is_native: true,
+                default_args: Vec::new(),
+                visibility: Visibility::Public,
+                signature_filled: true,
+            };
+            self.functions.insert(func_id, func_def);
+            type_behaviors.release = Some(func_id);
+        }
+
+        // Import destruct behavior (if has_destruct method exists on ffi_behaviors)
+        if ffi_behaviors.destruct.is_some() {
+            let func_id = FunctionId::next();
+            let func_def = FunctionDef {
+                id: func_id,
+                name: "$destruct".to_string(),
+                namespace: namespace.to_vec(),
+                params: vec![],
+                return_type: DataType::simple(VOID_TYPE),
+                object_type: Some(type_id),
+                traits: FunctionTraits {
+                    is_destructor: true,
+                    ..FunctionTraits::default()
+                },
+                is_native: true,
+                default_args: Vec::new(),
+                visibility: Visibility::Public,
+                signature_filled: true,
+            };
+            self.functions.insert(func_id, func_def);
+            type_behaviors.destruct = Some(func_id);
+        }
+
+        // Only store if we have any behaviors (or always store to allow adding constructors later)
+        // Always store so import_type_details can add constructors/factories
+        self.behaviors.insert(type_id, type_behaviors);
 
         Ok(())
     }
 
     /// Import type details (methods, operators, properties).
+    /// For templates, methods are imported with template param TypeIds which get
+    /// substituted during instantiation.
     fn import_type_details(
         &mut self,
         type_def: &NativeTypeDef<'_>,
         namespace: &[String],
     ) -> Result<(), ImportError> {
-        // Skip templates - they get filled in during instantiation
-        if type_def.template_params.is_some() {
-            return Ok(());
-        }
-
-        let type_id = type_def.id;
+        // Look up the type ID by name - this handles builtin types (like array)
+        // which have pre-assigned IDs different from the NativeTypeDef's ID
+        let qualified_name = self.build_qualified_name(&type_def.name, namespace);
+        let type_id = self.type_by_name.get(&qualified_name)
+            .copied()
+            .unwrap_or(type_def.id);
         let mut method_ids = Vec::new();
+        let mut constructor_ids = Vec::new();
+        let mut factory_ids = Vec::new();
         let mut operator_methods = FxHashMap::default();
         let mut properties = FxHashMap::default();
 
+        // Determine template context for resolving template parameters like T
+        // If this type has template_params, use qualified_name as the context
+        let template_context: Option<&str> = if type_def.template_params.is_some() {
+            Some(&qualified_name)
+        } else {
+            None
+        };
+
         // Import constructors
         for ctor in &type_def.constructors {
-            let func_id = self.import_method(ctor, type_id, namespace, true, false)?;
+            let func_id = self.import_method(ctor, type_id, namespace, true, false, template_context)?;
             method_ids.push(func_id);
+            constructor_ids.push(func_id);
         }
 
         // Import factories (treated as constructors for reference types)
         for factory in &type_def.factories {
-            let func_id = self.import_method(factory, type_id, namespace, true, false)?;
+            let func_id = self.import_method(factory, type_id, namespace, true, false, template_context)?;
             method_ids.push(func_id);
+            factory_ids.push(func_id);
         }
 
         // Import regular methods
         for method in &type_def.methods {
-            let func_id = self.import_method(method, type_id, namespace, false, false)?;
+            let func_id = self.import_method(method, type_id, namespace, false, false, template_context)?;
             method_ids.push(func_id);
         }
 
         // Import operators
         for operator in &type_def.operators {
-            let func_id = self.import_method(operator, type_id, namespace, false, true)?;
+            let func_id = self.import_method(operator, type_id, namespace, false, true, template_context)?;
             method_ids.push(func_id);
 
             // Map operator name to OperatorBehavior
@@ -2352,7 +1830,7 @@ impl<'ast> Registry<'ast> {
             let target_type = if method_name.starts_with("opConv") || method_name.starts_with("opImplConv")
                 || method_name.starts_with("opCast") || method_name.starts_with("opImplCast")
             {
-                let return_dt = self.resolve_ffi_return_type(&operator.return_type, namespace)?;
+                let return_dt = self.resolve_ffi_return_type_with_template(&operator.return_type, namespace, template_context)?;
                 Some(return_dt.type_id)
             } else {
                 None
@@ -2365,7 +1843,7 @@ impl<'ast> Registry<'ast> {
 
         // Import properties
         for prop in &type_def.properties {
-            let prop_accessors = self.import_property(prop, type_id, namespace)?;
+            let prop_accessors = self.import_property_with_template(prop, type_id, namespace, template_context)?;
             properties.insert(prop.name.name.to_string(), prop_accessors);
         }
 
@@ -2383,10 +1861,25 @@ impl<'ast> Registry<'ast> {
             *class_properties = properties;
         }
 
+        // Update TypeBehaviors with constructors and factories
+        // TypeBehaviors was created in import_behaviors, now add constructors/factories
+        if let Some(behaviors) = self.behaviors.get_mut(&type_id) {
+            behaviors.constructors = constructor_ids;
+            behaviors.factories = factory_ids;
+        } else if !constructor_ids.is_empty() || !factory_ids.is_empty() {
+            // If behaviors didn't exist (shouldn't happen), create one
+            let mut behaviors = super::behaviors::TypeBehaviors::new();
+            behaviors.constructors = constructor_ids;
+            behaviors.factories = factory_ids;
+            self.behaviors.insert(type_id, behaviors);
+        }
+
         Ok(())
     }
 
     /// Import a method and return its FunctionId.
+    /// `template_context` is the qualified name of the owning template type (e.g., "array")
+    /// so that template parameters like `T` can be resolved correctly.
     fn import_method(
         &mut self,
         method: &NativeMethodDef<'_>,
@@ -2394,6 +1887,7 @@ impl<'ast> Registry<'ast> {
         namespace: &[String],
         is_constructor: bool,
         is_operator: bool,
+        template_context: Option<&str>,
     ) -> Result<FunctionId, ImportError> {
         let func_id = FunctionId::next();
         let name = method.name.name.to_string();
@@ -2401,12 +1895,12 @@ impl<'ast> Registry<'ast> {
         // Resolve parameter types
         let mut params = Vec::with_capacity(method.params.len());
         for param in method.params {
-            let data_type = self.resolve_ffi_param_type(&param.ty, namespace)?;
+            let data_type = self.resolve_ffi_param_type_with_template(&param.ty, namespace, template_context)?;
             params.push(data_type);
         }
 
         // Resolve return type
-        let return_type = self.resolve_ffi_return_type(&method.return_type, namespace)?;
+        let return_type = self.resolve_ffi_return_type_with_template(&method.return_type, namespace, template_context)?;
 
         // Build function traits
         let traits = FunctionTraits {
@@ -2446,8 +1940,19 @@ impl<'ast> Registry<'ast> {
         object_type: TypeId,
         namespace: &[String],
     ) -> Result<PropertyAccessors, ImportError> {
+        self.import_property_with_template(prop, object_type, namespace, None)
+    }
+
+    /// Import a property with optional template context and return its PropertyAccessors.
+    fn import_property_with_template(
+        &mut self,
+        prop: &NativePropertyDef<'_>,
+        object_type: TypeId,
+        namespace: &[String],
+        template_context: Option<&str>,
+    ) -> Result<PropertyAccessors, ImportError> {
         let prop_name = prop.name.name.to_string();
-        let prop_type = self.resolve_ffi_type_expr(prop.ty, namespace)?;
+        let prop_type = self.resolve_ffi_type_expr_with_template(prop.ty, namespace, template_context)?;
 
         // Create getter function
         let getter_id = FunctionId::next();
@@ -2588,7 +2093,17 @@ impl<'ast> Registry<'ast> {
         param_type: &ParamType<'_>,
         namespace: &[String],
     ) -> Result<DataType, ImportError> {
-        let mut data_type = self.resolve_ffi_type_expr(&param_type.ty, namespace)?;
+        self.resolve_ffi_param_type_with_template(param_type, namespace, None)
+    }
+
+    /// Resolve an FFI ParamType to a DataType with optional template context.
+    fn resolve_ffi_param_type_with_template(
+        &self,
+        param_type: &ParamType<'_>,
+        namespace: &[String],
+        template_context: Option<&str>,
+    ) -> Result<DataType, ImportError> {
+        let mut data_type = self.resolve_ffi_type_expr_with_template(&param_type.ty, namespace, template_context)?;
 
         // Apply reference modifier from ParamType
         data_type.ref_modifier = match param_type.ref_kind {
@@ -2608,6 +2123,16 @@ impl<'ast> Registry<'ast> {
         return_type: &crate::ast::ReturnType<'_>,
         namespace: &[String],
     ) -> Result<DataType, ImportError> {
+        self.resolve_ffi_return_type_with_template(return_type, namespace, None)
+    }
+
+    /// Resolve an FFI ReturnType to a DataType with optional template context.
+    fn resolve_ffi_return_type_with_template(
+        &self,
+        return_type: &crate::ast::ReturnType<'_>,
+        namespace: &[String],
+        template_context: Option<&str>,
+    ) -> Result<DataType, ImportError> {
         // ReturnType has a TypeExpr directly, check if it's void
         let type_expr = &return_type.ty;
         if matches!(type_expr.base, TypeBase::Primitive(AstPrimitiveType::Void)) {
@@ -2619,7 +2144,7 @@ impl<'ast> Registry<'ast> {
                 ref_kind: if return_type.is_ref { RefKind::Ref } else { RefKind::None },
                 span: return_type.span,
             };
-            self.resolve_ffi_param_type(&param_type, namespace)
+            self.resolve_ffi_param_type_with_template(&param_type, namespace, template_context)
         }
     }
 
@@ -2629,15 +2154,27 @@ impl<'ast> Registry<'ast> {
         type_expr: &TypeExpr<'_>,
         namespace: &[String],
     ) -> Result<DataType, ImportError> {
+        self.resolve_ffi_type_expr_with_template(type_expr, namespace, None)
+    }
+
+    /// Resolve an FFI TypeExpr to a DataType with optional template context.
+    /// If `template_context` is provided (e.g., "array"), template parameters
+    /// like `T` will be looked up as `array::$T`.
+    fn resolve_ffi_type_expr_with_template(
+        &self,
+        type_expr: &TypeExpr<'_>,
+        namespace: &[String],
+        template_context: Option<&str>,
+    ) -> Result<DataType, ImportError> {
         // Step 1: Resolve the base type
-        let base_type_id = self.resolve_ffi_base_type(&type_expr.base, namespace)?;
+        let base_type_id = self.resolve_ffi_base_type_with_template(&type_expr.base, namespace, template_context)?;
 
         // Step 2: Handle template arguments
         let type_id = if !type_expr.template_args.is_empty() {
-            // Resolve all template argument types
+            // Resolve all template argument types, passing through template_context
             let mut arg_types = Vec::with_capacity(type_expr.template_args.len());
             for arg in type_expr.template_args {
-                let dt = self.resolve_ffi_type_expr(arg, namespace)?;
+                let dt = self.resolve_ffi_type_expr_with_template(arg, namespace, template_context)?;
                 arg_types.push(dt);
             }
 
@@ -2678,16 +2215,6 @@ impl<'ast> Registry<'ast> {
                     }
                     break; // Only first @ matters
                 }
-                TypeSuffix::Array => {
-                    // Array suffix T[] - look up array<T> instance
-                    if let Some(&array_id) = self.template_cache.get(&(ARRAY_TEMPLATE, vec![type_id])) {
-                        data_type = DataType::with_handle(array_id, false);
-                    } else {
-                        return Err(ImportError::TemplateInstantiationFailed(
-                            "array template instance not found".to_string()
-                        ));
-                    }
-                }
             }
         }
 
@@ -2700,19 +2227,44 @@ impl<'ast> Registry<'ast> {
         base: &TypeBase<'_>,
         namespace: &[String],
     ) -> Result<TypeId, ImportError> {
+        self.resolve_ffi_base_type_with_template(base, namespace, None)
+    }
+
+    /// Resolve a base type from a TypeBase with optional template context.
+    /// If `template_context` is provided (e.g., "array"), template parameter names
+    /// like `T` will be looked up as `array::$T`.
+    fn resolve_ffi_base_type_with_template(
+        &self,
+        base: &TypeBase<'_>,
+        namespace: &[String],
+        template_context: Option<&str>,
+    ) -> Result<TypeId, ImportError> {
         match base {
             TypeBase::Primitive(prim) => Ok(self.primitive_to_type_id(*prim)),
 
             TypeBase::Named(ident) => {
                 let type_name = ident.name;
 
+                // If we have a template context, check if this is a template parameter
+                // Template parameters are registered as "<template_name>::$<param_name>"
+                if let Some(template_name) = template_context {
+                    let param_lookup = format!("{}::${}", template_name, type_name);
+                    eprintln!("DEBUG: Looking up template param '{}' with context '{}' -> key '{}'", type_name, template_name, param_lookup);
+                    eprintln!("DEBUG: Available types: {:?}", self.type_by_name.keys().filter(|k| k.contains("$")).collect::<Vec<_>>());
+                    if let Some(type_id) = self.lookup_type(&param_lookup) {
+                        return Ok(type_id);
+                    }
+                }
+
                 // Try qualified name first
                 let qualified = self.build_qualified_name(type_name, namespace);
+                eprintln!("DEBUG: Fallback lookup for '{}' - qualified='{}', exists={}", type_name, qualified, self.lookup_type(&qualified).is_some());
                 if let Some(type_id) = self.lookup_type(&qualified) {
                     return Ok(type_id);
                 }
 
                 // Try unqualified (global)
+                eprintln!("DEBUG: Unqualified lookup for '{}' exists={}", type_name, self.lookup_type(type_name).is_some());
                 if let Some(type_id) = self.lookup_type(type_name) {
                     return Ok(type_id);
                 }
@@ -2845,30 +2397,6 @@ mod tests {
     }
 
     #[test]
-    fn registry_string_type() {
-        let registry = Registry::new();
-        let typedef = registry.get_type(STRING_TYPE);
-        assert!(typedef.is_class());
-        assert_eq!(typedef.name(), "string");
-    }
-
-    #[test]
-    fn registry_array_template() {
-        let registry = Registry::new();
-        let typedef = registry.get_type(ARRAY_TEMPLATE);
-        assert!(typedef.is_template());
-        assert_eq!(typedef.name(), "array");
-    }
-
-    #[test]
-    fn registry_dict_template() {
-        let registry = Registry::new();
-        let typedef = registry.get_type(DICT_TEMPLATE);
-        assert!(typedef.is_template());
-        assert_eq!(typedef.name(), "dictionary");
-    }
-
-    #[test]
     fn lookup_primitive_by_name() {
         let registry = Registry::new();
 
@@ -2878,19 +2406,6 @@ mod tests {
         assert_eq!(registry.lookup_type("uint"), Some(UINT32_TYPE));
         assert_eq!(registry.lookup_type("float"), Some(FLOAT_TYPE));
         assert_eq!(registry.lookup_type("double"), Some(DOUBLE_TYPE));
-    }
-
-    #[test]
-    fn lookup_string_by_name() {
-        let registry = Registry::new();
-        assert_eq!(registry.lookup_type("string"), Some(STRING_TYPE));
-    }
-
-    #[test]
-    fn lookup_template_by_name() {
-        let registry = Registry::new();
-        assert_eq!(registry.lookup_type("array"), Some(ARRAY_TEMPLATE));
-        assert_eq!(registry.lookup_type("dictionary"), Some(DICT_TEMPLATE));
     }
 
     #[test]
@@ -2914,6 +2429,9 @@ mod tests {
             properties: rustc_hash::FxHashMap::default(),
             is_final: false,
             is_abstract: false,
+            template_params: Vec::new(),
+            template: None,
+            type_args: Vec::new(),
         };
 
         let type_id = registry.register_type(typedef, Some("Player"));
@@ -2936,6 +2454,9 @@ mod tests {
             properties: rustc_hash::FxHashMap::default(),
             is_final: false,
             is_abstract: false,
+            template_params: Vec::new(),
+            template: None,
+            type_args: Vec::new(),
         };
 
         let type_id = registry.register_type(typedef, Some("Game::Player"));
@@ -3007,6 +2528,9 @@ mod tests {
             properties: rustc_hash::FxHashMap::default(),
             is_final: false,
             is_abstract: false,
+            template_params: Vec::new(),
+            template: None,
+            type_args: Vec::new(),
         };
 
         let type_id = registry.register_type(typedef, Some("Player"));
@@ -3028,12 +2552,54 @@ mod tests {
         }
     }
 
+    /// Helper to register a test template for template tests
+    fn register_test_template(registry: &mut Registry, name: &str, param_count: usize) -> TypeId {
+        // First register the template TypeId placeholder
+        let template_id = registry.register_type(
+            TypeDef::Primitive { kind: PrimitiveType::Void }, // temporary placeholder
+            Some(name),
+        );
+
+        // Register template param types and collect their TypeIds
+        let template_params: Vec<TypeId> = (0..param_count)
+            .map(|i| {
+                let param_name = format!("T{}", i);
+                let param_typedef = TypeDef::TemplateParam {
+                    name: param_name.clone(),
+                    index: i,
+                    owner: template_id,
+                };
+                registry.register_type(param_typedef, None)
+            })
+            .collect();
+
+        // Now update with the proper Class typedef
+        let typedef = TypeDef::Class {
+            name: name.to_string(),
+            qualified_name: name.to_string(),
+            fields: Vec::new(),
+            methods: Vec::new(),
+            base_class: None,
+            interfaces: Vec::new(),
+            operator_methods: rustc_hash::FxHashMap::default(),
+            properties: rustc_hash::FxHashMap::default(),
+            is_final: false,
+            is_abstract: false,
+            template_params,
+            template: None,
+            type_args: Vec::new(),
+        };
+        *registry.get_type_mut(template_id) = typedef;
+        template_id
+    }
+
     #[test]
-    fn instantiate_array_template() {
+    fn instantiate_template() {
         let mut registry = Registry::new();
+        let template_id = register_test_template(&mut registry, "TestContainer", 1);
 
         let instance_id = registry
-            .instantiate_template(ARRAY_TEMPLATE, vec![DataType::simple(INT32_TYPE)])
+            .instantiate_template(template_id, vec![DataType::simple(INT32_TYPE)])
             .unwrap();
 
         let typedef = registry.get_type(instance_id);
@@ -3043,13 +2609,14 @@ mod tests {
     #[test]
     fn instantiate_template_caching() {
         let mut registry = Registry::new();
+        let template_id = register_test_template(&mut registry, "TestContainer", 1);
 
         let instance1 = registry
-            .instantiate_template(ARRAY_TEMPLATE, vec![DataType::simple(INT32_TYPE)])
+            .instantiate_template(template_id, vec![DataType::simple(INT32_TYPE)])
             .unwrap();
 
         let instance2 = registry
-            .instantiate_template(ARRAY_TEMPLATE, vec![DataType::simple(INT32_TYPE)])
+            .instantiate_template(template_id, vec![DataType::simple(INT32_TYPE)])
             .unwrap();
 
         assert_eq!(instance1, instance2);
@@ -3058,26 +2625,28 @@ mod tests {
     #[test]
     fn instantiate_template_different_args() {
         let mut registry = Registry::new();
+        let template_id = register_test_template(&mut registry, "TestContainer", 1);
 
         let instance1 = registry
-            .instantiate_template(ARRAY_TEMPLATE, vec![DataType::simple(INT32_TYPE)])
+            .instantiate_template(template_id, vec![DataType::simple(INT32_TYPE)])
             .unwrap();
 
         let instance2 = registry
-            .instantiate_template(ARRAY_TEMPLATE, vec![DataType::simple(FLOAT_TYPE)])
+            .instantiate_template(template_id, vec![DataType::simple(FLOAT_TYPE)])
             .unwrap();
 
         assert_ne!(instance1, instance2);
     }
 
     #[test]
-    fn instantiate_dict_template() {
+    fn instantiate_dict_like_template() {
         let mut registry = Registry::new();
+        let template_id = register_test_template(&mut registry, "TestMap", 2);
 
         let instance_id = registry
             .instantiate_template(
-                DICT_TEMPLATE,
-                vec![DataType::simple(STRING_TYPE), DataType::simple(INT32_TYPE)],
+                template_id,
+                vec![DataType::simple(INT32_TYPE), DataType::simple(FLOAT_TYPE)],
             )
             .unwrap();
 
@@ -3088,15 +2657,16 @@ mod tests {
     #[test]
     fn instantiate_nested_template() {
         let mut registry = Registry::new();
+        let template_id = register_test_template(&mut registry, "TestContainer", 1);
 
-        // array<int>
+        // TestContainer<int>
         let inner = registry
-            .instantiate_template(ARRAY_TEMPLATE, vec![DataType::simple(INT32_TYPE)])
+            .instantiate_template(template_id, vec![DataType::simple(INT32_TYPE)])
             .unwrap();
 
-        // array<array<int>>
+        // TestContainer<TestContainer<int>>
         let outer = registry
-            .instantiate_template(ARRAY_TEMPLATE, vec![DataType::simple(inner)])
+            .instantiate_template(template_id, vec![DataType::simple(inner)])
             .unwrap();
 
         let typedef = registry.get_type(outer);
@@ -3115,10 +2685,11 @@ mod tests {
     #[test]
     fn instantiate_wrong_arg_count_fails() {
         let mut registry = Registry::new();
+        let template_id = register_test_template(&mut registry, "TestContainer", 1);
 
-        // array expects 1 arg, give it 2
+        // template expects 1 arg, give it 2
         let result = registry.instantiate_template(
-            ARRAY_TEMPLATE,
+            template_id,
             vec![DataType::simple(INT32_TYPE), DataType::simple(FLOAT_TYPE)],
         );
         assert!(result.is_err());
@@ -3364,6 +2935,9 @@ mod tests {
             properties: rustc_hash::FxHashMap::default(),
             is_final: false,
             is_abstract: false,
+            template_params: Vec::new(),
+            template: None,
+            type_args: Vec::new(),
         };
 
         let type_id = registry.register_type(typedef, Some("Player"));
@@ -3392,6 +2966,9 @@ mod tests {
             properties: rustc_hash::FxHashMap::default(),
             is_final: false,
             is_abstract: false,
+            template_params: Vec::new(),
+            template: None,
+            type_args: Vec::new(),
         };
         let type_id = registry.register_type(typedef, Some("Vector3"));
 
@@ -3451,6 +3028,9 @@ mod tests {
             properties: rustc_hash::FxHashMap::default(),
             is_final: false,
             is_abstract: false,
+            template_params: Vec::new(),
+            template: None,
+            type_args: Vec::new(),
         };
         let type_id = registry.register_type(typedef, Some("Vector3"));
 
@@ -3507,6 +3087,9 @@ mod tests {
             properties: rustc_hash::FxHashMap::default(),
             is_final: false,
             is_abstract: false,
+            template_params: Vec::new(),
+            template: None,
+            type_args: Vec::new(),
         };
         let type_id = registry.register_type(typedef, Some("Vector3"));
 
@@ -3557,6 +3140,9 @@ mod tests {
             properties: rustc_hash::FxHashMap::default(),
             is_final: false,
             is_abstract: false,
+            template_params: Vec::new(),
+            template: None,
+            type_args: Vec::new(),
         };
         let type_id = registry.register_type(typedef, Some("Vector3"));
 
@@ -3617,6 +3203,10 @@ mod tests {
         registry.add_method_to_class(type_id, func_id1);
         registry.add_method_to_class(type_id, func_id2);
 
+        // Add constructors to behaviors
+        registry.behaviors_mut(type_id).add_constructor(func_id1);
+        registry.behaviors_mut(type_id).add_constructor(func_id2);
+
         // Find all constructors
         let constructors = registry.find_constructors(type_id);
 
@@ -3641,6 +3231,9 @@ mod tests {
             properties: rustc_hash::FxHashMap::default(),
             is_final: false,
             is_abstract: false,
+            template_params: Vec::new(),
+            template: None,
+            type_args: Vec::new(),
         };
         let type_id = registry.register_type(typedef, Some("Player"));
 
@@ -3671,6 +3264,7 @@ mod tests {
 
         let copy_ctor_id = registry.register_function(copy_ctor);
         registry.add_method_to_class(type_id, copy_ctor_id);
+        registry.behaviors_mut(type_id).add_constructor(copy_ctor_id);
 
         // Should find the copy constructor
         let found = registry.find_copy_constructor(type_id);
@@ -3693,6 +3287,9 @@ mod tests {
             properties: rustc_hash::FxHashMap::default(),
             is_final: false,
             is_abstract: false,
+            template_params: Vec::new(),
+            template: None,
+            type_args: Vec::new(),
         };
         let type_id = registry.register_type(typedef, Some("Player"));
 
@@ -3723,6 +3320,7 @@ mod tests {
 
         let copy_ctor_id = registry.register_function(copy_ctor);
         registry.add_method_to_class(type_id, copy_ctor_id);
+        registry.behaviors_mut(type_id).add_constructor(copy_ctor_id);
 
         // Should find the copy constructor
         let found = registry.find_copy_constructor(type_id);
@@ -3745,6 +3343,9 @@ mod tests {
             properties: rustc_hash::FxHashMap::default(),
             is_final: false,
             is_abstract: false,
+            template_params: Vec::new(),
+            template: None,
+            type_args: Vec::new(),
         };
         let type_id = registry.register_type(typedef, Some("Player"));
 
@@ -3798,6 +3399,9 @@ mod tests {
             properties: rustc_hash::FxHashMap::default(),
             is_final: false,
             is_abstract: false,
+            template_params: Vec::new(),
+            template: None,
+            type_args: Vec::new(),
         };
         let type_id = registry.register_type(typedef, Some("Player"));
 
@@ -3850,6 +3454,9 @@ mod tests {
             properties: rustc_hash::FxHashMap::default(),
             is_final: false,
             is_abstract: false,
+            template_params: Vec::new(),
+            template: None,
+            type_args: Vec::new(),
         };
         let type_id = registry.register_type(typedef, Some("Player"));
 
@@ -3902,6 +3509,9 @@ mod tests {
             properties: rustc_hash::FxHashMap::default(),
             is_final: false,
             is_abstract: false,
+            template_params: Vec::new(),
+            template: None,
+            type_args: Vec::new(),
         };
         let type_id = registry.register_type(typedef, Some("Player"));
 
@@ -3926,6 +3536,9 @@ mod tests {
             properties: rustc_hash::FxHashMap::default(),
             is_final: false,
             is_abstract: false,
+            template_params: Vec::new(),
+            template: None,
+            type_args: Vec::new(),
         };
         let base_id = registry.register_type(base_typedef, Some("Base"));
 
@@ -3941,6 +3554,9 @@ mod tests {
             properties: rustc_hash::FxHashMap::default(),
             is_final: false,
             is_abstract: false,
+            template_params: Vec::new(),
+            template: None,
+            type_args: Vec::new(),
         };
         let derived_id = registry.register_type(derived_typedef, Some("Derived"));
 
@@ -3975,6 +3591,9 @@ mod tests {
             properties: base_props,
             is_final: false,
             is_abstract: false,
+            template_params: Vec::new(),
+            template: None,
+            type_args: Vec::new(),
         };
         let base_id = registry.register_type(base_typedef, Some("Base"));
 
@@ -3996,6 +3615,9 @@ mod tests {
             properties: derived_props,
             is_final: false,
             is_abstract: false,
+            template_params: Vec::new(),
+            template: None,
+            type_args: Vec::new(),
         };
         let derived_id = registry.register_type(derived_typedef, Some("Derived"));
 
@@ -4040,6 +3662,9 @@ mod tests {
             properties: rustc_hash::FxHashMap::default(),
             is_final: false,
             is_abstract: false,
+            template_params: Vec::new(),
+            template: None,
+            type_args: Vec::new(),
         };
         let base_id = registry.register_type(base_typedef, Some("Base"));
 
@@ -4055,6 +3680,9 @@ mod tests {
             properties: rustc_hash::FxHashMap::default(),
             is_final: false,
             is_abstract: false,
+            template_params: Vec::new(),
+            template: None,
+            type_args: Vec::new(),
         };
         let derived_id = registry.register_type(derived_typedef, Some("Derived"));
 
@@ -4095,6 +3723,9 @@ mod tests {
             properties: rustc_hash::FxHashMap::default(),
             is_final: false,
             is_abstract: false,
+            template_params: Vec::new(),
+            template: None,
+            type_args: Vec::new(),
         };
         let base_id = registry.register_type(base_typedef, Some("Base"));
 
@@ -4126,6 +3757,9 @@ mod tests {
             properties: rustc_hash::FxHashMap::default(),
             is_final: false,
             is_abstract: false,
+            template_params: Vec::new(),
+            template: None,
+            type_args: Vec::new(),
         };
         let derived_id = registry.register_type(derived_typedef, Some("Derived"));
 
@@ -4170,6 +3804,9 @@ mod tests {
             properties: rustc_hash::FxHashMap::default(),
             is_final: false,
             is_abstract: false,
+            template_params: Vec::new(),
+            template: None,
+            type_args: Vec::new(),
         };
         let base_id = registry.register_type(base_typedef, Some("Base"));
 
@@ -4185,6 +3822,9 @@ mod tests {
             properties: rustc_hash::FxHashMap::default(),
             is_final: false,
             is_abstract: false,
+            template_params: Vec::new(),
+            template: None,
+            type_args: Vec::new(),
         };
         let middle_id = registry.register_type(middle_typedef, Some("Middle"));
 
@@ -4200,6 +3840,9 @@ mod tests {
             properties: rustc_hash::FxHashMap::default(),
             is_final: false,
             is_abstract: false,
+            template_params: Vec::new(),
+            template: None,
+            type_args: Vec::new(),
         };
         let most_derived_id = registry.register_type(most_derived_typedef, Some("MostDerived"));
 
@@ -4223,6 +3866,9 @@ mod tests {
             properties: rustc_hash::FxHashMap::default(),
             is_final: false,
             is_abstract: false,
+            template_params: Vec::new(),
+            template: None,
+            type_args: Vec::new(),
         };
         let type_id = registry.register_type(typedef, Some("MyClass"));
 
@@ -4253,6 +3899,9 @@ mod tests {
             properties: base_props,
             is_final: false,
             is_abstract: false,
+            template_params: Vec::new(),
+            template: None,
+            type_args: Vec::new(),
         };
         let base_id = registry.register_type(base_typedef, Some("Base"));
 
@@ -4268,6 +3917,9 @@ mod tests {
             properties: rustc_hash::FxHashMap::default(),
             is_final: false,
             is_abstract: false,
+            template_params: Vec::new(),
+            template: None,
+            type_args: Vec::new(),
         };
         let derived_id = registry.register_type(derived_typedef, Some("Derived"));
 
