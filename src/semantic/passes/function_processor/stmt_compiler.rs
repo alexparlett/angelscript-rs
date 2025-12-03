@@ -856,8 +856,8 @@ impl<'ast> FunctionCompiler<'ast> {
             } else {
                 for value_expr in case.values {
                     // Check for type pattern (only valid for Handle category)
-                    if switch_category == SwitchCategory::Handle {
-                        if let Some(type_id) = self.try_resolve_type_pattern(value_expr) {
+                    if switch_category == SwitchCategory::Handle
+                        && let Some(type_id) = self.try_resolve_type_pattern(value_expr) {
                             let key = SwitchCaseKey::Type(type_id);
                             if !case_values.insert(key) {
                                 let type_name = self.registry.get_type(type_id).name();
@@ -869,11 +869,10 @@ impl<'ast> FunctionCompiler<'ast> {
                             }
                             continue;
                         }
-                    }
 
                     // Check for null literal
-                    if let Expr::Literal(lit) = value_expr {
-                        if matches!(lit.kind, LiteralKind::Null) {
+                    if let Expr::Literal(lit) = value_expr
+                        && matches!(lit.kind, LiteralKind::Null) {
                             if switch_category != SwitchCategory::Handle {
                                 self.error(
                                     SemanticErrorKind::TypeMismatch,
@@ -889,7 +888,6 @@ impl<'ast> FunctionCompiler<'ast> {
                             }
                             continue;
                         }
-                    }
 
                     // Evaluate constant value for duplicate detection
                     let evaluator = ConstEvaluator::new(self.registry);
@@ -934,8 +932,8 @@ impl<'ast> FunctionCompiler<'ast> {
                 // For each case value (handles case 1: case 2: ... syntax)
                 for value_expr in case.values {
                     // Check for type pattern (only valid for Handle category)
-                    if switch_category == SwitchCategory::Handle {
-                        if let Some(type_id) = self.try_resolve_type_pattern(value_expr) {
+                    if switch_category == SwitchCategory::Handle
+                        && let Some(type_id) = self.try_resolve_type_pattern(value_expr) {
                             // Emit: LoadLocal(switch_offset), IsInstanceOf(type_id), JumpIfTrue
                             self.bytecode.emit(Instruction::LoadLocal(switch_offset));
                             self.bytecode.emit(Instruction::IsInstanceOf(type_id));
@@ -943,11 +941,10 @@ impl<'ast> FunctionCompiler<'ast> {
                             case_jumps.push((case_idx, jump_pos));
                             continue;
                         }
-                    }
 
                     // Check for null literal
-                    if let Expr::Literal(lit) = value_expr {
-                        if matches!(lit.kind, LiteralKind::Null) {
+                    if let Expr::Literal(lit) = value_expr
+                        && matches!(lit.kind, LiteralKind::Null) {
                             // Emit: LoadLocal(switch_offset), PushNull, Equal, JumpIfTrue
                             self.bytecode.emit(Instruction::LoadLocal(switch_offset));
                             self.bytecode.emit(Instruction::PushNull);
@@ -956,7 +953,6 @@ impl<'ast> FunctionCompiler<'ast> {
                             case_jumps.push((case_idx, jump_pos));
                             continue;
                         }
-                    }
 
                     // Load switch value
                     self.bytecode.emit(Instruction::LoadLocal(switch_offset));

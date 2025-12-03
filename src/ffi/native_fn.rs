@@ -238,12 +238,11 @@ impl ObjectHeap {
 
     /// Increment reference count.
     pub fn add_ref(&mut self, handle: ObjectHandle) -> bool {
-        if let Some(slot) = self.slots.get_mut(handle.index as usize) {
-            if slot.generation == handle.generation && slot.value.is_some() {
+        if let Some(slot) = self.slots.get_mut(handle.index as usize)
+            && slot.generation == handle.generation && slot.value.is_some() {
                 slot.ref_count = slot.ref_count.saturating_add(1);
                 return true;
             }
-        }
         false
     }
 
@@ -251,8 +250,8 @@ impl ObjectHeap {
     ///
     /// Returns true if the object was freed.
     pub fn release(&mut self, handle: ObjectHandle) -> bool {
-        if let Some(slot) = self.slots.get_mut(handle.index as usize) {
-            if slot.generation == handle.generation && slot.value.is_some() {
+        if let Some(slot) = self.slots.get_mut(handle.index as usize)
+            && slot.generation == handle.generation && slot.value.is_some() {
                 slot.ref_count = slot.ref_count.saturating_sub(1);
                 if slot.ref_count == 0 {
                     slot.value = None;
@@ -261,19 +260,17 @@ impl ObjectHeap {
                     return true;
                 }
             }
-        }
         false
     }
 
     /// Free object immediately (for scoped types).
     pub fn free(&mut self, handle: ObjectHandle) {
-        if let Some(slot) = self.slots.get_mut(handle.index as usize) {
-            if slot.generation == handle.generation {
+        if let Some(slot) = self.slots.get_mut(handle.index as usize)
+            && slot.generation == handle.generation {
                 slot.value = None;
                 slot.generation = slot.generation.wrapping_add(1);
                 self.free_list.push(handle.index);
             }
-        }
     }
 
     /// Get the reference count for an object.
@@ -394,7 +391,7 @@ impl<'vm> CallContext<'vm> {
                 }
                 self.heap
                     .get::<T>(*handle)
-                    .ok_or_else(|| NativeError::StaleHandle { index: handle.index })
+                    .ok_or(NativeError::StaleHandle { index: handle.index })
             }
             VmSlot::Native(boxed) => boxed
                 .downcast_ref::<T>()
@@ -420,7 +417,7 @@ impl<'vm> CallContext<'vm> {
                 let handle_copy = *handle;
                 self.heap
                     .get_mut::<T>(handle_copy)
-                    .ok_or_else(|| NativeError::StaleHandle {
+                    .ok_or(NativeError::StaleHandle {
                         index: handle_copy.index,
                     })
             }

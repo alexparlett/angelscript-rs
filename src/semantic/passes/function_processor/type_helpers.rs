@@ -323,7 +323,7 @@ impl<'ast> FunctionCompiler<'ast> {
 
     /// Build a scoped name from a Scope and a name (no intermediate Vec allocation)
     pub(super) fn build_scoped_name(&self, scope: &crate::ast::Scope<'ast>, name: &str) -> String {
-        let scope_name = Self::build_scope_name(&scope);
+        let scope_name = Self::build_scope_name(scope);
         let mut result = String::with_capacity(scope_name.len() + 2 + name.len());
         result.push_str(&scope_name);
         result.push_str("::");
@@ -541,8 +541,8 @@ impl<'ast> FunctionCompiler<'ast> {
 
     pub(super) fn get_base_class_by_name(&self, class_id: TypeId, name: &str) -> Option<TypeId> {
         let class_def = self.registry.get_type(class_id);
-        if let TypeDef::Class { base_class, .. } = class_def {
-            if let Some(base_id) = base_class {
+        if let TypeDef::Class { base_class, .. } = class_def
+            && let Some(base_id) = base_class {
                 let base_def = self.registry.get_type(*base_id);
                 // Check if the base class name matches (short name only)
                 if base_def.name() == name {
@@ -551,7 +551,6 @@ impl<'ast> FunctionCompiler<'ast> {
                 // Recursively check further up the chain
                 return self.get_base_class_by_name(*base_id, name);
             }
-        }
         None
     }
 }

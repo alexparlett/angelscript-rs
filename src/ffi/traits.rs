@@ -397,8 +397,7 @@ where
     fn into_native_fn(self) -> NativeFn {
         NativeFn::new(move |ctx: &mut CallContext| {
             let result = (self)();
-            ctx.set_return(result).map_err(NativeError::from)
-        })
+            ctx.set_return(result)})
     }
 }
 
@@ -456,8 +455,7 @@ where
         NativeFn::new(move |ctx: &mut CallContext| {
             let this: &T = ctx.this()?;
             let result = (self)(this);
-            ctx.set_return(result).map_err(NativeError::from)
-        })
+            ctx.set_return(result)})
     }
 }
 
@@ -472,8 +470,7 @@ where
         NativeFn::new(move |ctx: &mut CallContext| {
             let this: &mut T = ctx.this_mut()?;
             let result = (self)(this);
-            ctx.set_return(result).map_err(NativeError::from)
-        })
+            ctx.set_return(result)})
     }
 }
 

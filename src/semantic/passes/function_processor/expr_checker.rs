@@ -224,12 +224,11 @@ impl<'ast> FunctionCompiler<'ast> {
             for (type_name, &type_id) in self.registry.type_by_name() {
                 if type_name.starts_with(ns) && type_name.starts_with(&format!("{}::", ns)) {
                     let typedef = self.registry.get_type(type_id);
-                    if typedef.is_enum() {
-                        if let Some(value) = self.registry.lookup_enum_value(type_id, name) {
+                    if typedef.is_enum()
+                        && let Some(value) = self.registry.lookup_enum_value(type_id, name) {
                             self.bytecode.emit(Instruction::PushInt(value));
                             return Some(ExprContext::rvalue(DataType::simple(type_id)));
                         }
-                    }
                 }
             }
         }
@@ -1401,14 +1400,14 @@ impl<'ast> FunctionCompiler<'ast> {
 
                 // Check for base class method call pattern: BaseClass::method(args)
                 // This is when inside a derived class and calling the parent's implementation directly
-                if let Some(scope) = ident_expr.scope {
-                    if !scope.is_absolute && scope.segments.len() == 1 {
+                if let Some(scope) = ident_expr.scope
+                    && !scope.is_absolute && scope.segments.len() == 1 {
                         let scope_name = scope.segments[0].name;
                         let method_name = ident_expr.ident.name;
 
                         // Check if we're in a class method and the scope refers to a base class
-                        if let Some(current_class_id) = self.current_class {
-                            if let Some(base_class_id) = self.get_base_class_by_name(current_class_id, scope_name) {
+                        if let Some(current_class_id) = self.current_class
+                            && let Some(base_class_id) = self.get_base_class_by_name(current_class_id, scope_name) {
                                 // This is a base class method call - load 'this' and call the base method
                                 // Look up the method in the base class (pre-allocate)
                                 let all_methods = self.registry.get_methods(base_class_id);
@@ -1448,10 +1447,8 @@ impl<'ast> FunctionCompiler<'ast> {
                                     self.validate_reference_parameters(func_def, &arg_contexts, call.args, call.span)?;
 
                                     // Emit any needed conversions
-                                    for conv in conversions {
-                                        if let Some(c) = conv {
-                                            self.emit_conversion(&c);
-                                        }
+                                    for c in conversions.into_iter().flatten() {
+                                        self.emit_conversion(&c);
                                     }
 
                                     // Emit call instruction
@@ -1460,9 +1457,7 @@ impl<'ast> FunctionCompiler<'ast> {
                                     return Some(ExprContext::rvalue(func_def.return_type.clone()));
                                 }
                             }
-                        }
                     }
-                }
 
                 // Check if this is a local variable (could be funcdef handle or class with opCall)
                 if ident_expr.scope.is_none() {  // Only check locals for unqualified names
