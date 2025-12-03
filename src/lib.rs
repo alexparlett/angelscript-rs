@@ -72,13 +72,6 @@ mod unit;
 // Re-export Parser as the primary parsing interface
 pub use ast::Parser;
 
-// Re-export deprecated free functions for backwards compatibility
-#[allow(deprecated)]
-pub use ast::{parse, parse_expression, parse_lenient, parse_property_expr, parse_statement, parse_type_expr};
-
-// Re-export FFI parsing functions
-pub use ast::{parse_function_decl, parse_property_decl};
-
 // Re-export visitor for AST traversal
 pub use ast::visitor;
 

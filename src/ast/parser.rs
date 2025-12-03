@@ -3,7 +3,7 @@
 //! Provides the main [`Parser`] struct with token navigation and basic
 //! parsing infrastructure.
 
-use crate::ast::{ParseError, ParseErrorKind, ParseErrors, Expr, Stmt, TypeExpr, Ident, Script, FunctionSignatureDecl, PropertyDecl};
+use crate::ast::{ParseError, ParseErrorKind, ParseErrors, Expr, Stmt, TypeExpr, Script, FunctionSignatureDecl, PropertyDecl};
 use crate::lexer::{Lexer, Span, Token, TokenKind};
 use bumpalo::Bump;
 
@@ -587,7 +587,7 @@ impl<'ast> Parser<'ast> {
     ///     Err(errors) => eprintln!("Errors: {}", errors),
     /// }
     /// ```
-    pub fn parse_expression(source: &str, arena: &'ast Bump) -> Result<&'ast Expr<'ast>, ParseErrors> {
+    pub fn expression(source: &str, arena: &'ast Bump) -> Result<&'ast Expr<'ast>, ParseErrors> {
         let mut parser = Parser::new(source, arena);
 
         let result = parser.parse_expr(0);
@@ -661,7 +661,7 @@ impl<'ast> Parser<'ast> {
     ///     Err(errors) => eprintln!("Errors: {}", errors),
     /// }
     /// ```
-    pub fn parse_type_expr(source: &str, arena: &'ast Bump) -> Result<TypeExpr<'ast>, ParseErrors> {
+    pub fn type_expr(source: &str, arena: &'ast Bump) -> Result<TypeExpr<'ast>, ParseErrors> {
         let mut parser = Parser::new(source, arena);
 
         let result = parser.parse_type();
@@ -678,53 +678,6 @@ impl<'ast> Parser<'ast> {
                 parser.errors.push(err);
                 Err(parser.take_errors())
             }
-        }
-    }
-
-    /// Parse a property declaration expression (type followed by identifier).
-    ///
-    /// This parses strings like "const int score" or "MyClass@ obj" and returns
-    /// the type expression and identifier name.
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// use angelscript::Parser;
-    /// use bumpalo::Bump;
-    ///
-    /// let arena = Bump::new();
-    /// match Parser::parse_property_expr("const int score", &arena) {
-    ///     Ok((ty, name)) => println!("Property '{}' of type '{}'", name.name, ty),
-    ///     Err(errors) => eprintln!("Errors: {}", errors),
-    /// }
-    /// ```
-    pub fn parse_property_expr(source: &str, arena: &'ast Bump) -> Result<(TypeExpr<'ast>, Ident<'ast>), ParseErrors> {
-        let mut parser = Parser::new(source, arena);
-
-        // Parse the type expression
-        let type_result = parser.parse_type();
-        let type_expr = match type_result {
-            Ok(ty) => ty,
-            Err(err) => {
-                parser.errors.push(err);
-                return Err(parser.take_errors());
-            }
-        };
-
-        // Parse the identifier name
-        let name_result = parser.expect(TokenKind::Identifier);
-        let name = match name_result {
-            Ok(token) => Ident::new(token.lexeme, token.span),
-            Err(err) => {
-                parser.errors.push(err);
-                return Err(parser.take_errors());
-            }
-        };
-
-        if parser.has_errors() {
-            Err(parser.take_errors())
-        } else {
-            Ok((type_expr, name))
         }
     }
 
@@ -818,6 +771,7 @@ impl<'ast> Parser<'ast> {
             }
         }
     }
+
 }
 
 #[cfg(test)]

@@ -23,7 +23,7 @@
 //!     }
 //! "#;
 //!
-//! match Parser::parse(source, &arena) {
+//! match Parser::Parser::parse(source, &arena) {
 //!     Ok(script) => println!("Parsed successfully: {} items", script.items().len()),
 //!     Err(errors) => eprintln!("Parse errors: {}", errors),
 //! }
@@ -88,143 +88,6 @@ impl<'ast> Script<'ast> {
     }
 }
 
-// ============================================================================
-// Deprecated free-function wrappers for backwards compatibility
-// ============================================================================
-
-/// Parse AngelScript source code into an AST.
-///
-/// **Deprecated:** Use `Parser::parse()` instead.
-#[deprecated(since = "0.3.0", note = "Use `Parser::parse()` instead")]
-#[cfg_attr(feature = "profiling", profiling::function)]
-pub fn parse<'ast>(
-    source: &str,
-    arena: &'ast bumpalo::Bump,
-) -> Result<Script<'ast>, ParseErrors> {
-    Parser::parse(source, arena)
-}
-
-/// Parse AngelScript source code leniently, returning both the AST and any errors.
-///
-/// **Deprecated:** Use `Parser::parse_lenient()` instead.
-#[deprecated(since = "0.3.0", note = "Use `Parser::parse_lenient()` instead")]
-#[cfg_attr(feature = "profiling", profiling::function)]
-pub fn parse_lenient<'ast>(
-    source: &str,
-    arena: &'ast bumpalo::Bump,
-) -> (Script<'ast>, Vec<ParseError>) {
-    Parser::parse_lenient(source, arena)
-}
-
-/// Parse a single expression from source code.
-///
-/// **Deprecated:** Use `Parser::parse_expression()` instead.
-#[deprecated(since = "0.3.0", note = "Use `Parser::parse_expression()` instead")]
-pub fn parse_expression<'ast>(
-    source: &str,
-    arena: &'ast bumpalo::Bump,
-) -> Result<&'ast Expr<'ast>, ParseErrors> {
-    Parser::parse_expression(source, arena)
-}
-
-/// Parse a single statement from source code.
-///
-/// **Deprecated:** Use `Parser::statement()` instead.
-#[deprecated(since = "0.3.0", note = "Use `Parser::statement()` instead")]
-pub fn parse_statement<'ast>(
-    source: &str,
-    arena: &'ast bumpalo::Bump,
-) -> Result<Stmt<'ast>, ParseErrors> {
-    Parser::statement(source, arena)
-}
-
-/// Parse a type expression from source code.
-///
-/// **Deprecated:** Use `Parser::parse_type_expr()` instead.
-#[deprecated(since = "0.3.0", note = "Use `Parser::parse_type_expr()` instead")]
-pub fn parse_type_expr<'ast>(
-    source: &str,
-    arena: &'ast bumpalo::Bump,
-) -> Result<TypeExpr<'ast>, ParseErrors> {
-    Parser::parse_type_expr(source, arena)
-}
-
-/// Parse a property declaration expression (type followed by identifier).
-///
-/// **Deprecated:** Use `Parser::parse_property_expr()` instead.
-#[deprecated(since = "0.3.0", note = "Use `Parser::parse_property_expr()` instead")]
-pub fn parse_property_expr<'ast>(
-    source: &str,
-    arena: &'ast bumpalo::Bump,
-) -> Result<(TypeExpr<'ast>, Ident<'ast>), ParseErrors> {
-    Parser::parse_property_expr(source, arena)
-}
-
-/// Parse a property declaration from a declaration string.
-///
-/// This parses property declarations for native global property registration.
-/// Requires a `bumpalo::Bump` arena allocator for AST node allocation.
-///
-/// # Examples
-///
-/// ```
-/// use angelscript::parse_property_decl;
-/// use bumpalo::Bump;
-///
-/// let arena = Bump::new();
-///
-/// // Simple property
-/// let prop = parse_property_decl("int score", &arena).unwrap();
-/// assert_eq!(prop.name.name, "score");
-///
-/// // Const property
-/// let prop = parse_property_decl("const float PI", &arena).unwrap();
-/// assert!(prop.ty.is_const);
-///
-/// // Handle property
-/// let prop = parse_property_decl("MyClass@ obj", &arena).unwrap();
-/// assert!(prop.ty.has_handle());
-/// ```
-pub fn parse_property_decl<'ast>(
-    source: &str,
-    arena: &'ast bumpalo::Bump,
-) -> Result<PropertyDecl<'ast>, ParseErrors> {
-    Parser::property_decl(source, arena)
-}
-
-/// Parse a function declaration from a declaration string.
-///
-/// This parses function signatures for native function registration.
-/// Requires a `bumpalo::Bump` arena allocator for AST node allocation.
-///
-/// # Examples
-///
-/// ```
-/// use angelscript::parse_function_decl;
-/// use bumpalo::Bump;
-///
-/// let arena = Bump::new();
-///
-/// // Simple function
-/// let sig = parse_function_decl("int add(int a, int b)", &arena).unwrap();
-/// assert_eq!(sig.name.name, "add");
-/// assert_eq!(sig.params.len(), 2);
-///
-/// // Const method
-/// let sig = parse_function_decl("int getValue() const", &arena).unwrap();
-/// assert!(sig.is_const);
-///
-/// // Reference parameter
-/// let sig = parse_function_decl("void print(const string& in msg)", &arena).unwrap();
-/// assert_eq!(sig.params.len(), 1);
-/// ```
-pub fn parse_function_decl<'ast>(
-    source: &str,
-    arena: &'ast bumpalo::Bump,
-) -> Result<FunctionSignatureDecl<'ast>, ParseErrors> {
-    Parser::function_decl(source, arena)
-}
-
 
 #[cfg(test)]
 mod tests {
@@ -234,7 +97,7 @@ mod tests {
     fn parse_simple_function() {
         let arena = bumpalo::Bump::new();
         let source = "void foo() { }";
-        let result = parse(source, &arena);
+        let result = Parser::parse(source, &arena);
         assert!(result.is_ok());
         let script = result.unwrap();
         assert_eq!(script.items().len(), 1);
@@ -251,7 +114,7 @@ mod tests {
                 }
             }
         "#;
-        let result = parse(source, &arena);
+        let result = Parser::parse(source, &arena);
         assert!(result.is_ok());
         let script = result.unwrap();
         assert_eq!(script.items().len(), 1);
@@ -261,7 +124,7 @@ mod tests {
     fn parse_with_errors() {
         let arena = bumpalo::Bump::new();
         let source = "int x = ;"; // Missing expression
-        let result = parse(source, &arena);
+        let result = Parser::parse(source, &arena);
         assert!(result.is_err());
         let errors = result.unwrap_err();
         assert!(!errors.is_empty());
@@ -274,7 +137,7 @@ mod tests {
             int x = ;
             int y = 42;
         "#;
-        let (script, errors) = parse_lenient(source, &arena);
+        let (script, errors) = Parser::parse_lenient(source, &arena);
 
         // Should have errors but still parse something
         assert!(!errors.is_empty());
@@ -286,7 +149,7 @@ mod tests {
     fn parse_lenient_no_errors() {
         let arena = bumpalo::Bump::new();
         let source = "int x = 42;";
-        let (script, errors) = parse_lenient(source, &arena);
+        let (script, errors) = Parser::parse_lenient(source, &arena);
 
         assert!(errors.is_empty());
         assert_eq!(script.items().len(), 1);
@@ -295,63 +158,63 @@ mod tests {
     #[test]
     fn parse_expression_simple() {
         let arena = bumpalo::Bump::new();
-        let result = parse_expression("1 + 2", &arena);
+        let result = Parser::expression("1 + 2", &arena);
         assert!(result.is_ok());
     }
 
     #[test]
     fn parse_expression_complex() {
         let arena = bumpalo::Bump::new();
-        let result = parse_expression("obj.method()[0].field", &arena);
+        let result = Parser::expression("obj.method()[0].field", &arena);
         assert!(result.is_ok());
     }
 
     #[test]
     fn parse_expression_with_error() {
         let arena = bumpalo::Bump::new();
-        let result = parse_expression("1 +", &arena); // Incomplete
+        let result = Parser::expression("1 +", &arena); // Incomplete
         assert!(result.is_err());
     }
 
     #[test]
     fn parse_statement_simple() {
         let arena = bumpalo::Bump::new();
-        let result = parse_statement("return 42;", &arena);
+        let result = Parser::statement("return 42;", &arena);
         assert!(result.is_ok());
     }
 
     #[test]
     fn parse_statement_if() {
         let arena = bumpalo::Bump::new();
-        let result = parse_statement("if (x > 0) { return x; }", &arena);
+        let result = Parser::statement("if (x > 0) { return x; }", &arena);
         assert!(result.is_ok());
     }
 
     #[test]
     fn parse_statement_for() {
         let arena = bumpalo::Bump::new();
-        let result = parse_statement("for (int i = 0; i < 10; i++) { }", &arena);
+        let result = Parser::statement("for (int i = 0; i < 10; i++) { }", &arena);
         assert!(result.is_ok());
     }
 
     #[test]
     fn parse_type_simple() {
         let arena = bumpalo::Bump::new();
-        let result = parse_type_expr("int", &arena);
+        let result = Parser::type_expr("int", &arena);
         assert!(result.is_ok());
     }
 
     #[test]
     fn parse_type_complex() {
         let arena = bumpalo::Bump::new();
-        let result = parse_type_expr("const array<int>@ const", &arena);
+        let result = Parser::type_expr("const array<int>@ const", &arena);
         assert!(result.is_ok());
     }
 
     #[test]
     fn parse_type_with_scope() {
         let arena = bumpalo::Bump::new();
-        let result = parse_type_expr("Namespace::MyClass", &arena);
+        let result = Parser::type_expr("Namespace::MyClass", &arena);
         assert!(result.is_ok());
     }
 
@@ -394,7 +257,7 @@ mod tests {
             }
         "#;
 
-        let result = parse(source, &arena);
+        let result = Parser::parse(source, &arena);
         assert!(result.is_ok(), "Failed to parse complete program");
 
         let script = result.unwrap();
@@ -410,7 +273,7 @@ mod tests {
             int y
         "#;
 
-        let (_, errors) = parse_lenient(source, &arena);
+        let (_, errors) = Parser::parse_lenient(source, &arena);
 
         // Should have multiple errors
         assert!(errors.len() >= 2, "Should detect multiple errors");
@@ -428,7 +291,7 @@ mod tests {
             }
         "#;
 
-        let result = parse(source, &arena);
+        let result = Parser::parse(source, &arena);
         assert!(result.is_ok());
     }
 
@@ -443,7 +306,7 @@ mod tests {
             }
         "#;
 
-        let result = parse(source, &arena);
+        let result = Parser::parse(source, &arena);
         assert!(result.is_ok());
     }
 
@@ -455,7 +318,7 @@ mod tests {
             funcdef void Callback(int x);
         "#;
 
-        let result = parse(source, &arena);
+        let result = Parser::parse(source, &arena);
         assert!(result.is_ok());
 
         let script = result.unwrap();
@@ -471,7 +334,7 @@ mod tests {
             }
         "#;
 
-        let result = parse(source, &arena);
+        let result = Parser::parse(source, &arena);
         assert!(result.is_ok());
     }
 
@@ -485,7 +348,7 @@ mod tests {
             }
         "#;
 
-        let result = parse(source, &arena);
+        let result = Parser::parse(source, &arena);
         assert!(result.is_ok());
     }
 
@@ -494,7 +357,7 @@ mod tests {
         let arena = bumpalo::Bump::new();
         let source = "void func(int x = 42, string name = \"default\") { }";
 
-        let result = parse(source, &arena);
+        let result = Parser::parse(source, &arena);
         assert!(result.is_ok());
     }
 
@@ -507,7 +370,7 @@ mod tests {
             }
         "#;
 
-        let result = parse(source, &arena);
+        let result = Parser::parse(source, &arena);
         assert!(result.is_ok());
     }
 
@@ -520,7 +383,7 @@ mod tests {
             }
         "#;
 
-        let result = parse(source, &arena);
+        let result = Parser::parse(source, &arena);
         assert!(result.is_ok());
     }
 
@@ -533,7 +396,7 @@ mod tests {
             }
         "#;
 
-        let result = parse(source, &arena);
+        let result = Parser::parse(source, &arena);
         assert!(result.is_ok());
     }
 
@@ -546,7 +409,7 @@ mod tests {
             interface IDrawable;
         "#;
 
-        let result = parse(source, &arena);
+        let result = Parser::parse(source, &arena);
         assert!(result.is_ok());
 
         let script = result.unwrap();
@@ -558,7 +421,7 @@ mod tests {
         let arena = bumpalo::Bump::new();
         // Invalid character should cause lexer error
         let source = "int x = @@@;"; // @@@ will cause lexer issues but first @ may be valid (handle)
-        let result = parse(source, &arena);
+        let result = Parser::parse(source, &arena);
         // This may succeed or fail depending on how @@@ is tokenized
         // We mainly want to exercise the code path
         let _ = result;
@@ -569,7 +432,7 @@ mod tests {
         let arena = bumpalo::Bump::new();
         // Unterminated string causes lexer error
         let source = r#"int x = "unterminated"#;
-        let (script, errors) = parse_lenient(source, &arena);
+        let (script, errors) = Parser::parse_lenient(source, &arena);
         // Should have errors from lexer
         let _ = (script, errors);
     }
@@ -578,7 +441,7 @@ mod tests {
     fn parse_expression_with_lexer_error() {
         let arena = bumpalo::Bump::new();
         let source = r#""unterminated string"#;
-        let result = parse_expression(source, &arena);
+        let result = Parser::expression(source, &arena);
         // Should error due to unterminated string
         assert!(result.is_err());
     }
@@ -588,7 +451,7 @@ mod tests {
         let arena = bumpalo::Bump::new();
         // Invalid statement syntax
         let source = "return return;";
-        let result = parse_statement(source, &arena);
+        let result = Parser::statement(source, &arena);
         // Should error
         assert!(result.is_err());
     }
@@ -598,7 +461,7 @@ mod tests {
         let arena = bumpalo::Bump::new();
         // Invalid type syntax (starting with a number)
         let source = "123InvalidType";
-        let result = parse_type_expr(source, &arena);
+        let result = Parser::type_expr(source, &arena);
         // Should error
         assert!(result.is_err());
     }
@@ -607,7 +470,7 @@ mod tests {
     fn script_span() {
         let arena = bumpalo::Bump::new();
         let source = "void foo() { }";
-        let result = parse(source, &arena).unwrap();
+        let result = Parser::parse(source, &arena).unwrap();
         let span = result.span();
         // Span should be valid
         assert!(span.len > 0 || span.line > 0);
@@ -618,14 +481,14 @@ mod tests {
         let arena = bumpalo::Bump::new();
         // Missing semicolon causes error
         let source = "int x = 42";
-        let result = parse_statement(source, &arena);
+        let result = Parser::statement(source, &arena);
         assert!(result.is_err());
     }
 
     #[test]
     fn parse_type_expr_valid() {
         let arena = bumpalo::Bump::new();
-        let result = parse_type_expr("array<int>@", &arena);
+        let result = Parser::type_expr("array<int>@", &arena);
         assert!(result.is_ok());
     }
 
@@ -634,7 +497,7 @@ mod tests {
         let arena = bumpalo::Bump::new();
         // Completely invalid syntax that may cause parse_script to return Err
         let source = "@@@@@@@@@@";
-        let (script, _errors) = parse_lenient(source, &arena);
+        let (script, _errors) = Parser::parse_lenient(source, &arena);
         // Script may be empty but should still return
         let _ = script.items();
     }
@@ -644,7 +507,7 @@ mod tests {
         let arena = bumpalo::Bump::new();
         // Expression that may accumulate errors during parsing
         let source = "a.b.c.";  // Trailing dot
-        let result = parse_expression(source, &arena);
+        let result = Parser::expression(source, &arena);
         // Should fail
         assert!(result.is_err());
     }
@@ -654,7 +517,7 @@ mod tests {
         let arena = bumpalo::Bump::new();
         // Statement that accumulates errors
         let source = "if (";  // Incomplete if
-        let result = parse_statement(source, &arena);
+        let result = Parser::statement(source, &arena);
         // Should fail
         assert!(result.is_err());
     }
@@ -664,7 +527,7 @@ mod tests {
         let arena = bumpalo::Bump::new();
         // Type with incomplete template
         let source = "array<";  // Incomplete template
-        let result = parse_type_expr(source, &arena);
+        let result = Parser::type_expr(source, &arena);
         // Should fail
         assert!(result.is_err());
     }
@@ -676,7 +539,7 @@ mod tests {
     #[test]
     fn parse_function_decl_simple() {
         let arena = bumpalo::Bump::new();
-        let sig = parse_function_decl("int add(int a, int b)", &arena).unwrap();
+        let sig = Parser::function_decl("int add(int a, int b)", &arena).unwrap();
 
         assert_eq!(sig.name.name, "add");
         assert_eq!(sig.params.len(), 2);
@@ -688,7 +551,7 @@ mod tests {
     #[test]
     fn parse_function_decl_no_params() {
         let arena = bumpalo::Bump::new();
-        let sig = parse_function_decl("void main()", &arena).unwrap();
+        let sig = Parser::function_decl("void main()", &arena).unwrap();
 
         assert_eq!(sig.name.name, "main");
         assert_eq!(sig.params.len(), 0);
@@ -697,7 +560,7 @@ mod tests {
     #[test]
     fn parse_function_decl_const_method() {
         let arena = bumpalo::Bump::new();
-        let sig = parse_function_decl("int getValue() const", &arena).unwrap();
+        let sig = Parser::function_decl("int getValue() const", &arena).unwrap();
 
         assert_eq!(sig.name.name, "getValue");
         assert!(sig.is_const);
@@ -706,7 +569,7 @@ mod tests {
     #[test]
     fn parse_function_decl_ref_param() {
         let arena = bumpalo::Bump::new();
-        let sig = parse_function_decl("void print(const string& in msg)", &arena).unwrap();
+        let sig = Parser::function_decl("void print(const string& in msg)", &arena).unwrap();
 
         assert_eq!(sig.name.name, "print");
         assert_eq!(sig.params.len(), 1);
@@ -715,7 +578,7 @@ mod tests {
     #[test]
     fn parse_function_decl_multiple_params() {
         let arena = bumpalo::Bump::new();
-        let sig = parse_function_decl("float lerp(float a, float b, float t)", &arena).unwrap();
+        let sig = Parser::function_decl("float lerp(float a, float b, float t)", &arena).unwrap();
 
         assert_eq!(sig.name.name, "lerp");
         assert_eq!(sig.params.len(), 3);
@@ -725,7 +588,7 @@ mod tests {
     fn parse_function_decl_error_no_return_type() {
         let arena = bumpalo::Bump::new();
         // Missing return type should fail
-        let result = parse_function_decl("add(int a, int b)", &arena);
+        let result = Parser::function_decl("add(int a, int b)", &arena);
         assert!(result.is_err());
     }
 
@@ -733,7 +596,7 @@ mod tests {
     fn parse_function_decl_error_trailing_tokens() {
         let arena = bumpalo::Bump::new();
         // Trailing semicolon should fail (we don't want full declarations)
-        let result = parse_function_decl("void foo();", &arena);
+        let result = Parser::function_decl("void foo();", &arena);
         assert!(result.is_err());
     }
 
@@ -741,14 +604,14 @@ mod tests {
     fn parse_function_decl_error_with_body() {
         let arena = bumpalo::Bump::new();
         // Body should fail (we only want signatures)
-        let result = parse_function_decl("void foo() {}", &arena);
+        let result = Parser::function_decl("void foo() {}", &arena);
         assert!(result.is_err());
     }
 
     #[test]
     fn parse_function_decl_property_attr() {
         let arena = bumpalo::Bump::new();
-        let sig = parse_function_decl("int get_value() property", &arena).unwrap();
+        let sig = Parser::function_decl("int get_value() property", &arena).unwrap();
 
         assert_eq!(sig.name.name, "get_value");
         assert!(sig.attrs.property);
@@ -757,7 +620,7 @@ mod tests {
     #[test]
     fn parse_function_decl_handle_return() {
         let arena = bumpalo::Bump::new();
-        let sig = parse_function_decl("MyClass@ create()", &arena).unwrap();
+        let sig = Parser::function_decl("MyClass@ create()", &arena).unwrap();
 
         assert_eq!(sig.name.name, "create");
         assert!(sig.return_type.ty.has_handle());
@@ -770,7 +633,7 @@ mod tests {
     #[test]
     fn parse_property_decl_simple() {
         let arena = bumpalo::Bump::new();
-        let prop = parse_property_decl("int score", &arena).unwrap();
+        let prop = Parser::property_decl("int score", &arena).unwrap();
 
         assert_eq!(prop.name.name, "score");
         assert!(!prop.ty.is_const);
@@ -779,7 +642,7 @@ mod tests {
     #[test]
     fn parse_property_decl_const() {
         let arena = bumpalo::Bump::new();
-        let prop = parse_property_decl("const float PI", &arena).unwrap();
+        let prop = Parser::property_decl("const float PI", &arena).unwrap();
 
         assert_eq!(prop.name.name, "PI");
         assert!(prop.ty.is_const);
@@ -788,7 +651,7 @@ mod tests {
     #[test]
     fn parse_property_decl_handle() {
         let arena = bumpalo::Bump::new();
-        let prop = parse_property_decl("MyClass@ obj", &arena).unwrap();
+        let prop = Parser::property_decl("MyClass@ obj", &arena).unwrap();
 
         assert_eq!(prop.name.name, "obj");
         assert!(prop.ty.has_handle());
@@ -797,7 +660,7 @@ mod tests {
     #[test]
     fn parse_property_decl_const_handle() {
         let arena = bumpalo::Bump::new();
-        let prop = parse_property_decl("const MyClass@ obj", &arena).unwrap();
+        let prop = Parser::property_decl("const MyClass@ obj", &arena).unwrap();
 
         assert_eq!(prop.name.name, "obj");
         assert!(prop.ty.is_const);
@@ -808,7 +671,7 @@ mod tests {
     fn parse_property_decl_error_missing_name() {
         let arena = bumpalo::Bump::new();
         // Just a type without a name should fail
-        let result = parse_property_decl("int", &arena);
+        let result = Parser::property_decl("int", &arena);
         assert!(result.is_err());
     }
 
@@ -816,7 +679,7 @@ mod tests {
     fn parse_property_decl_error_trailing_tokens() {
         let arena = bumpalo::Bump::new();
         // Trailing tokens should fail
-        let result = parse_property_decl("int score = 0", &arena);
+        let result = Parser::property_decl("int score = 0", &arena);
         assert!(result.is_err());
     }
 
@@ -824,7 +687,7 @@ mod tests {
     fn parse_property_decl_error_with_semicolon() {
         let arena = bumpalo::Bump::new();
         // Semicolon should fail (we only want declarations)
-        let result = parse_property_decl("int score;", &arena);
+        let result = Parser::property_decl("int score;", &arena);
         assert!(result.is_err());
     }
 }

@@ -80,6 +80,41 @@ fn test_hello_world() {
 - Or ScriptModule becomes an alias/wrapper around Unit
 - Existing test assertions should still pass
 
+## Additional Integration Tests
+
+Add test scripts and integration tests for FFI template types with mixed concrete and template parameters:
+
+### test_scripts/ffi_templates.as
+```angelscript
+// Test FFI template types with mixed concrete/template params
+void testStringMap() {
+    // stringmap<string, class T> - key is always string, value is template param
+    stringmap<int> intMap;
+    stringmap<float> floatMap;
+
+    intMap.set("count", 42);
+    floatMap.set("pi", 3.14);
+}
+```
+
+### tests/module_tests.rs
+```rust
+#[test]
+fn test_ffi_mixed_template_params() {
+    // Register stringmap<string, class T> where string is concrete, T is template param
+    let ctx = Context::new();
+    ctx.register_type::<StringMap>("stringmap<string, class T>")
+        .reference_type()
+        .template_callback(|_| TemplateValidation::valid())
+        .build()
+        .unwrap();
+
+    let mut unit = ctx.create_unit();
+    unit.add_source("test.as", "void main() { stringmap<int> m; }").unwrap();
+    unit.build().expect("Mixed template params should compile");
+}
+```
+
 ## Acceptance Criteria
 
 - [ ] All benchmarks use Context/Unit API
@@ -87,3 +122,4 @@ fn test_hello_world() {
 - [ ] Benchmarks still measure the same operations
 - [ ] Performance is not regressed significantly
 - [ ] Test coverage remains the same
+- [ ] Integration test validates FFI templates with mixed concrete/template parameters

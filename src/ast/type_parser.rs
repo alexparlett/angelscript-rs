@@ -203,7 +203,10 @@ impl<'ast> Parser<'ast> {
 
     /// Parse the base type (primitive, identifier, auto, or ?).
     ///
-    /// Grammar: `IDENTIFIER | PRIMTYPE | '?' | 'auto'`
+    /// Grammar: `'class'? IDENTIFIER | PRIMTYPE | '?' | 'auto'`
+    ///
+    /// The optional `class` keyword is used in FFI template parameter declarations
+    /// like `array<class T>` where `class T` declares a type parameter named `T`.
     fn parse_type_base(&mut self) -> Result<TypeBase<'ast>, ParseError> {
         let token = *self.peek();
 
@@ -268,6 +271,14 @@ impl<'ast> Parser<'ast> {
             TokenKind::Question => {
                 self.advance();
                 Ok(TypeBase::Unknown)
+            }
+
+            // Optional 'class' keyword before identifier (for FFI template params)
+            // e.g., `array<class T>` where `class T` is a type parameter declaration
+            TokenKind::Class => {
+                self.advance();
+                let ident_token = self.expect(TokenKind::Identifier)?;
+                Ok(TypeBase::TemplateParam(Ident::new(ident_token.lexeme, ident_token.span)))
             }
 
             // User-defined type (identifier)

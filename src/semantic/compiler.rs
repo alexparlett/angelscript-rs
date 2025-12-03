@@ -8,7 +8,7 @@
 //! # Example
 //!
 //! ```ignore
-//! use angelscript::{parse_lenient, Compiler};
+//! use angelscript::{Parser::parse_lenient, Compiler};
 //! use bumpalo::Bump;
 //!
 //! let arena = Bump::new();
@@ -23,7 +23,7 @@
 //!     }
 //! "#;
 //!
-//! let (script, _) = parse_lenient(source, &arena);
+//! let (script, _) = Parser::parse_lenient(source, &arena);
 //! let compiled = Compiler::compile(&script);
 //!
 //! if compiled.errors.is_empty() {
@@ -164,13 +164,13 @@ impl<'ast> TypeCompilationResult<'ast> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::parse_lenient;
+    use crate::Parser;
     use bumpalo::Bump;
 
     #[test]
     fn compile_empty_script() {
         let arena = Bump::new();
-        let (script, _) = parse_lenient("", &arena);
+        let (script, _) = Parser::parse_lenient("", &arena);
 
         let result = Compiler::compile(&script);
         assert!(result.is_success());
@@ -181,7 +181,7 @@ mod tests {
     fn compile_simple_function() {
         let arena = Bump::new();
         let source = "void main() { }";
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
 
         let result = Compiler::compile(&script);
         assert!(result.is_success(), "Errors: {:?}", result.errors);
@@ -197,7 +197,7 @@ mod tests {
                 Player(int h) { }
             }
         "#;
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
 
         let result = Compiler::compile(&script);
 
@@ -223,7 +223,7 @@ mod tests {
                 Player p = Player(100);
             }
         "#;
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
 
         let result = Compiler::compile(&script);
         assert!(result.is_success(), "Errors: {:?}", result.errors);
@@ -241,7 +241,7 @@ mod tests {
                 Player(int h) { }
             }
         "#;
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
 
         let result = Compiler::compile_types(&script);
         assert!(result.is_success(), "Errors: {:?}", result.errors);
@@ -270,7 +270,7 @@ mod tests {
                 }
             }
         "#;
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
 
         let result = Compiler::compile(&script);
         assert!(result.is_success(), "Expected success, got errors: {:?}", result.errors);
@@ -289,7 +289,7 @@ mod tests {
                 int h = p.health;  // ERROR: private access
             }
         "#;
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
 
         let result = Compiler::compile(&script);
         assert!(!result.is_success(), "Expected error for private field access");
@@ -310,7 +310,7 @@ mod tests {
                 }
             }
         "#;
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
 
         let result = Compiler::compile(&script);
         assert!(result.is_success(), "Expected success, got errors: {:?}", result.errors);
@@ -329,7 +329,7 @@ mod tests {
                 p.secretMethod();  // ERROR: private access
             }
         "#;
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
 
         let result = Compiler::compile(&script);
         assert!(!result.is_success(), "Expected error for private method access");
@@ -352,7 +352,7 @@ mod tests {
                 }
             }
         "#;
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
 
         let result = Compiler::compile(&script);
         assert!(result.is_success(), "Expected success, got errors: {:?}", result.errors);
@@ -371,7 +371,7 @@ mod tests {
                 int h = p.health;  // ERROR: protected access from outside
             }
         "#;
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
 
         let result = Compiler::compile(&script);
         assert!(!result.is_success(), "Expected error for protected field access");
@@ -393,7 +393,7 @@ mod tests {
                 int h = p.health;  // OK: public access
             }
         "#;
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
 
         let result = Compiler::compile(&script);
         assert!(result.is_success(), "Expected success, got errors: {:?}", result.errors);
@@ -412,7 +412,7 @@ mod tests {
                 p.update();  // OK: public access
             }
         "#;
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
 
         let result = Compiler::compile(&script);
         assert!(result.is_success(), "Expected success, got errors: {:?}", result.errors);
@@ -432,7 +432,7 @@ mod tests {
                 }
             }
         "#;
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
 
         let result = Compiler::compile(&script);
         assert!(result.is_success(), "Expected success, got errors: {:?}", result.errors);
@@ -458,7 +458,7 @@ mod tests {
                 }
             }
         "#;
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
 
         let result = Compiler::compile(&script);
         assert!(result.is_success(), "Expected success, got errors: {:?}", result.errors);
@@ -480,7 +480,7 @@ mod tests {
                 }
             }
         "#;
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
 
         let result = Compiler::compile(&script);
         assert!(result.is_success(), "Expected success, got errors: {:?}", result.errors);
@@ -498,7 +498,7 @@ mod tests {
                 }
             }
         "#;
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
 
         let result = Compiler::compile(&script);
         assert!(result.is_success(), "Expected success, got errors: {:?}", result.errors);
@@ -512,7 +512,7 @@ mod tests {
                 int x = this;  // ERROR: not in a class method
             }
         "#;
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
 
         let result = Compiler::compile(&script);
         assert!(!result.is_success(), "Expected error for 'this' outside class");
@@ -533,7 +533,7 @@ mod tests {
                 }
             }
         "#;
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
 
         let result = Compiler::compile(&script);
         assert!(result.is_success(), "Expected success, got errors: {:?}", result.errors);
@@ -553,7 +553,7 @@ mod tests {
                 }
             }
         "#;
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
 
         let result = Compiler::compile(&script);
         assert!(result.is_success(), "Expected success, got errors: {:?}", result.errors);
@@ -571,7 +571,7 @@ mod tests {
                 }
             }
         "#;
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
 
         let result = Compiler::compile(&script);
         assert!(result.is_success(), "Expected success, got errors: {:?}", result.errors);
@@ -590,7 +590,7 @@ mod tests {
                 }
             }
         "#;
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
 
         let result = Compiler::compile(&script);
         assert!(result.is_success(), "Expected success, got errors: {:?}", result.errors);
@@ -618,7 +618,7 @@ mod tests {
                 }
             }
         "#;
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
 
         let result = Compiler::compile(&script);
         assert!(result.is_success(), "Expected success, got errors: {:?}", result.errors);
@@ -644,7 +644,7 @@ mod tests {
                 }
             }
         "#;
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
 
         let result = Compiler::compile(&script);
         assert!(result.is_success(), "Expected success, got errors: {:?}", result.errors);
@@ -669,7 +669,7 @@ mod tests {
                 }
             }
         "#;
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
 
         let result = Compiler::compile(&script);
         assert!(result.is_success(), "Expected success, got errors: {:?}", result.errors);
@@ -692,7 +692,7 @@ mod tests {
                 }
             }
         "#;
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
 
         let result = Compiler::compile(&script);
         assert!(result.is_success(), "Expected success, got errors: {:?}", result.errors);
@@ -723,7 +723,7 @@ mod tests {
                 }
             }
         "#;
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
 
         let result = Compiler::compile(&script);
         assert!(result.is_success(), "Expected success, got errors: {:?}", result.errors);
@@ -751,7 +751,7 @@ mod tests {
                 }
             }
         "#;
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
 
         let result = Compiler::compile(&script);
         assert!(result.is_success(), "Expected success, got errors: {:?}", result.errors);
@@ -771,7 +771,7 @@ mod tests {
                 }
             }
         "#;
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
 
         let result = Compiler::compile(&script);
         assert!(!result.is_success(), "Expected error for duplicate case values");
@@ -796,7 +796,7 @@ mod tests {
                 }
             }
         "#;
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
 
         let result = Compiler::compile(&script);
         assert!(!result.is_success(), "Expected error for duplicate default");
@@ -821,7 +821,7 @@ mod tests {
                 }
             }
         "#;
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
 
         let result = Compiler::compile(&script);
         assert!(!result.is_success(), "Expected error for unsupported switch type");
@@ -839,7 +839,7 @@ mod tests {
                 }
             }
         "#;
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
 
         let result = Compiler::compile(&script);
         assert!(!result.is_success(), "Expected error for type mismatch");
@@ -866,7 +866,7 @@ mod tests {
                 // After switch, result should be 10 (not 30 from fallthrough)
             }
         "#;
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
 
         let result = Compiler::compile(&script);
         assert!(result.is_success(), "Expected success, got errors: {:?}", result.errors);

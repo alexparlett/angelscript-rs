@@ -149,6 +149,9 @@ pub enum TypeBase<'ast> {
     Primitive(PrimitiveType),
     /// Named user-defined type or identifier
     Named(Ident<'ast>),
+    /// Template parameter declaration (e.g., `class T` in `array<class T>`)
+    /// Used in FFI type registration to declare type parameters.
+    TemplateParam(Ident<'ast>),
     /// Auto type (compiler infers)
     Auto,
     /// Unknown/placeholder type (?)
@@ -160,6 +163,7 @@ impl<'ast> fmt::Display for TypeBase<'ast> {
         match self {
             Self::Primitive(p) => write!(f, "{}", p),
             Self::Named(name) => write!(f, "{}", name),
+            Self::TemplateParam(name) => write!(f, "class {}", name),
             Self::Auto => write!(f, "auto"),
             Self::Unknown => write!(f, "?"),
         }

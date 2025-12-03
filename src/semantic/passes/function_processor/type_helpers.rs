@@ -289,6 +289,15 @@ impl<'ast> FunctionCompiler<'ast> {
                 );
                 None
             }
+
+            TypeBase::TemplateParam(_) => {
+                // Template parameters (e.g., "class T" in "array<class T>") are placeholders
+                // used in FFI template type declarations. They are not resolved to a TypeId;
+                // instead, they are captured separately as template parameter names.
+                // Returning None here allows concrete types in mixed declarations like
+                // "stringmap<string, class T>" to be resolved normally.
+                None
+            }
         }
     }
 

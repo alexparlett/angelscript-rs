@@ -20,7 +20,7 @@
 //! # Example
 //!
 //! ```ignore
-//! use angelscript::{parse_lenient, Registrar, TypeCompiler};
+//! use angelscript::{Parser::parse_lenient, Registrar, TypeCompiler};
 //! use bumpalo::Bump;
 //!
 //! let arena = Bump::new();
@@ -30,7 +30,7 @@
 //!         array<string> items;
 //!     }
 //! "#;
-//! let (script, _) = parse_lenient(source, &arena);
+//! let (script, _) = Parser::parse_lenient(source, &arena);
 //!
 //! // Pass 1: Registration
 //! let registration = Registrar::register(&script);
@@ -1151,6 +1151,15 @@ impl<'ast> TypeCompiler<'ast> {
                 ));
                 None
             }
+
+            TypeBase::TemplateParam(_) => {
+                // Template parameters (e.g., "class T" in "array<class T>") are placeholders
+                // used in FFI template type declarations. They are not resolved to a TypeId;
+                // instead, they are captured separately as template parameter names.
+                // Returning None here allows concrete types in mixed declarations like
+                // "stringmap<string, class T>" to be resolved normally.
+                None
+            }
         }
     }
 
@@ -1695,12 +1704,12 @@ impl<'ast> TypeCompiler<'ast> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::parse_lenient;
+    use crate::Parser;
     use crate::semantic::{Registrar, OperatorBehavior, TypeDef};
     use bumpalo::Bump;
 
     fn compile<'ast>(source: &str, arena: &'ast Bump) -> TypeCompilationData<'ast> {
-        let (script, parse_errors) = parse_lenient(source, arena);
+        let (script, parse_errors) = Parser::parse_lenient(source, arena);
         assert!(parse_errors.is_empty(), "Parse errors: {:?}", parse_errors);
 
         // Pass 1: Registration

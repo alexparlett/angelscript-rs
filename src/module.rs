@@ -20,10 +20,10 @@
 use bumpalo::Bump;
 use thiserror::Error;
 
-use crate::ast::{FunctionSignatureDecl, Parser, PropertyDecl};
+use crate::ast::{FunctionSignatureDecl, Ident, Parser, PropertyDecl};
 use crate::ffi::{
-    GlobalPropertyDef, IntoNativeFn, NativeCallable, NativeFn, NativeFuncdefDef, NativeFunctionDef,
-    NativeInterfaceDef, NativeTypeDef,
+    ClassBuilder, GlobalPropertyDef, IntoNativeFn, NativeCallable, NativeFn, NativeFuncdefDef,
+    NativeFunctionDef, NativeInterfaceDef, NativeType, NativeTypeDef,
 };
 use crate::semantic::types::type_def::{FunctionId, FunctionTraits, TypeId, Visibility};
 
@@ -374,20 +374,97 @@ impl<'app> Module<'app> {
     }
 
     // =========================================================================
-    // Type registration (placeholder - ClassBuilder in Task 04)
+    // Type registration
     // =========================================================================
 
-    /// Register a native type (placeholder).
+    /// Register a native type using the ClassBuilder.
     ///
-    /// The full implementation with ClassBuilder will be added in Task 04.
-    /// For now, this stores a raw NativeTypeDef.
-    pub fn add_type(&mut self, type_def: NativeTypeDef<'static>) {
+    /// The type declaration can be a simple name like `"Vec3"` or a template
+    /// declaration like `"array<class T>"` or `"dictionary<class K, class V>"`.
+    ///
+    /// # Parameters
+    ///
+    /// - `decl`: Type declaration (e.g., `"Vec3"`, `"array<class T>"`)
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// // Simple value type
+    /// module.register_type::<Vec3>("Vec3")
+    ///     .value_type()
+    ///     .constructor("void f()", || Vec3::default())?
+    ///     .method("float length() const", |v: &Vec3| v.length())?
+    ///     .build()?;
+    ///
+    /// // Template type
+    /// module.register_type::<ScriptArray>("array<class T>")
+    ///     .reference_type()
+    ///     .template_callback(|_| TemplateValidation::valid())?
+    ///     .build()?;
+    /// ```
+    pub fn register_type<T: NativeType>(&mut self, decl: &str) -> ClassBuilder<'_, 'app, T> {
+        use crate::ast::types::TypeBase;
+
+        // Parse the type declaration as a TypeExpr (e.g., "array<class T>")
+        let type_expr = Parser::type_expr(decl, &self.arena)
+            .expect("Invalid type declaration"); // TODO: Return Result in future
+
+        // Extract the type name from the base
+        let name = match type_expr.base {
+            TypeBase::Named(ident) => ident.name.to_string(),
+            TypeBase::Primitive(p) => format!("{:?}", p).to_lowercase(),
+            _ => panic!("Invalid type declaration: expected named type"),
+        };
+
+        // Extract template param names from template_args
+        // Only TemplateParam types (e.g., "class T") are template parameters.
+        // Named types (e.g., "string") are concrete type constraints, not parameters.
+        let template_params = if type_expr.template_args.is_empty() {
+            None
+        } else {
+            let idents: Vec<Ident> = type_expr
+                .template_args
+                .iter()
+                .filter_map(|ty| {
+                    if let TypeBase::TemplateParam(ident) = ty.base {
+                        Some(ident)
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+
+            if idents.is_empty() {
+                None
+            } else {
+                let params_slice = self.arena.alloc_slice_copy(&idents);
+                // SAFETY: The arena is owned by self and lives as long as self.
+                let static_params: &'static [Ident<'static>] =
+                    unsafe { std::mem::transmute(params_slice) };
+                Some(static_params)
+            }
+        };
+
+        ClassBuilder::new(self, name, template_params)
+    }
+
+    /// Internal method to add a type definition.
+    ///
+    /// Called by ClassBuilder::build().
+    pub(crate) fn add_type(&mut self, type_def: NativeTypeDef<'static>) {
         self.types.push(type_def);
     }
 
     /// Get the registered types.
     pub fn types(&self) -> &[NativeTypeDef<'static>] {
         &self.types
+    }
+
+    /// Get access to the module's arena for parsing.
+    ///
+    /// This is used internally by ClassBuilder.
+    pub(crate) fn arena(&self) -> &Bump {
+        &self.arena
     }
 
     // =========================================================================

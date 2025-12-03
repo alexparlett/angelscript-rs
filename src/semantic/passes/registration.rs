@@ -21,12 +21,12 @@
 //! # Example
 //!
 //! ```ignore
-//! use angelscript::{parse_lenient, Registrar};
+//! use angelscript::{Parser::parse_lenient, Registrar};
 //! use bumpalo::Bump;
 //!
 //! let arena = Bump::new();
 //! let source = "class Player { void update() { } }";
-//! let (script, _) = parse_lenient(source, &arena);
+//! let (script, _) = Parser::parse_lenient(source, &arena);
 //!
 //! let data = Registrar::register(&script);
 //! assert!(data.registry.lookup_type("Player").is_some());
@@ -769,12 +769,12 @@ impl<'ast> Registrar<'ast> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::parse_lenient;
+    use crate::Parser;
     use crate::semantic::types::type_def::OperatorBehavior;
     use bumpalo::Bump;
 
     fn register<'ast>(source: &str, arena: &'ast Bump) -> RegistrationData<'ast> {
-        let (script, parse_errors) = parse_lenient(source, arena);
+        let (script, parse_errors) = Parser::parse_lenient(source, arena);
         assert!(parse_errors.is_empty(), "Parse errors: {:?}", parse_errors);
         Registrar::register(&script)
     }

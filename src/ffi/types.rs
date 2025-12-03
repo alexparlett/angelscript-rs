@@ -248,7 +248,6 @@ pub struct NativeFunctionDef<'ast> {
 
 /// Native type registration (value types, reference types).
 /// Uses AST primitives: Ident for template params.
-#[derive(Debug)]
 pub struct NativeTypeDef<'ast> {
     /// Unique type ID (assigned at registration via TypeId::next())
     pub id: TypeId,
@@ -270,8 +269,30 @@ pub struct NativeTypeDef<'ast> {
     pub properties: Vec<NativePropertyDef<'ast>>,
     /// Operators
     pub operators: Vec<NativeMethodDef<'ast>>,
+    /// Template callback for validation (if this is a template type)
+    pub template_callback:
+        Option<Box<dyn Fn(&TemplateInstanceInfo) -> TemplateValidation + Send + Sync>>,
     /// Rust TypeId for runtime type checking
     pub rust_type_id: std::any::TypeId,
+}
+
+impl<'ast> std::fmt::Debug for NativeTypeDef<'ast> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("NativeTypeDef")
+            .field("id", &self.id)
+            .field("name", &self.name)
+            .field("template_params", &self.template_params)
+            .field("type_kind", &self.type_kind)
+            .field("behaviors", &self.behaviors)
+            .field("constructors", &self.constructors)
+            .field("factories", &self.factories)
+            .field("methods", &self.methods)
+            .field("properties", &self.properties)
+            .field("operators", &self.operators)
+            .field("template_callback", &self.template_callback.as_ref().map(|_| "..."))
+            .field("rust_type_id", &self.rust_type_id)
+            .finish()
+    }
 }
 
 /// Native method - same structure as NativeFunctionDef but for class methods.

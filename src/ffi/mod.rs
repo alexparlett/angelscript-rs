@@ -25,6 +25,7 @@
 //! ```
 
 mod any_type;
+mod class;
 mod error;
 mod global_property;
 mod native_fn;
@@ -33,10 +34,11 @@ mod types;
 
 // Re-export core types
 pub use any_type::{AnyRef, AnyRefMut};
+pub use class::ClassBuilder;
 pub use error::{ConversionError, NativeError};
 pub use global_property::GlobalPropertyDef;
 pub use native_fn::{CallContext, NativeCallable, NativeFn, ObjectHandle, ObjectHeap, VmSlot};
-pub use traits::{FromScript, IntoNativeFn, NativeType, ToScript};
+pub use traits::{FromScript, IntoNativeFn, NativeType, ThisMut, ThisRef, ToScript};
 pub use types::{
     Behaviors, NativeFuncdefDef, NativeFunctionDef, NativeInterfaceDef, NativeInterfaceMethod,
     NativeMethodDef, NativePropertyDef, NativeTypeDef, ReferenceKind, TemplateInstanceInfo,

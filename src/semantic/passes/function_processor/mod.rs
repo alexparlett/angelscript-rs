@@ -1026,7 +1026,7 @@ mod tests {
     #[test]
     fn lambda_compilation_basic() {
         // Test that lambda expressions compile to bytecode with immediate compilation
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -1043,7 +1043,7 @@ mod tests {
             }
         "#;
 
-        let (script, parse_errors) = parse_lenient(source, &arena);
+        let (script, parse_errors) = Parser::parse_lenient(source, &arena);
         assert!(parse_errors.is_empty(), "Parse errors: {:?}", parse_errors);
 
         let result = Compiler::compile(&script);
@@ -1096,7 +1096,7 @@ mod tests {
     #[test]
     fn lambda_type_inference() {
         // Test that lambda parameters are inferred from funcdef context
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -1114,7 +1114,7 @@ mod tests {
             }
         "#;
 
-        let (script, parse_errors) = parse_lenient(source, &arena);
+        let (script, parse_errors) = Parser::parse_lenient(source, &arena);
         if !parse_errors.is_empty() {
             eprintln!("Parse errors: {:?}", parse_errors);
         }
@@ -1133,7 +1133,7 @@ mod tests {
     #[test]
     fn lambda_variable_capture() {
         // Test that lambda captures variables from enclosing scope
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -1153,7 +1153,7 @@ mod tests {
             }
         "#;
 
-        let (script, _errors) = parse_lenient(source, &arena);
+        let (script, _errors) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         // Should compile successfully with variable capture
@@ -1179,7 +1179,7 @@ mod tests {
 
     #[test]
     fn duplicate_switch_case_error() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -1196,7 +1196,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         // Should have an error about duplicate case value
@@ -1207,7 +1207,7 @@ mod tests {
 
     #[test]
     fn switch_no_duplicate_different_values() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -1226,7 +1226,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         // Should compile without errors
@@ -1242,7 +1242,7 @@ mod tests {
 
     #[test]
     fn method_signature_matching_basic() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -1261,7 +1261,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         // Should compile without errors - correct overload selected
@@ -1270,7 +1270,7 @@ mod tests {
 
     #[test]
     fn method_signature_matching_with_defaults() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -1286,7 +1286,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         // Should compile without errors - default params handled
@@ -1295,7 +1295,7 @@ mod tests {
 
     #[test]
     fn field_initializer_compilation() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -1307,7 +1307,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         // Field initializers should compile without errors
@@ -1316,7 +1316,7 @@ mod tests {
 
     #[test]
     fn switch_with_break_statements() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -1337,7 +1337,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         // Break statements in switch should be allowed
@@ -1346,7 +1346,7 @@ mod tests {
 
     #[test]
     fn switch_inside_loop_with_continue() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -1366,7 +1366,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         // Continue in switch inside loop should target the loop
@@ -1375,7 +1375,7 @@ mod tests {
 
     #[test]
     fn namespace_qualified_function_call() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -1392,7 +1392,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Namespace-qualified function call should work: {:?}", result.errors);
@@ -1400,7 +1400,7 @@ mod tests {
 
     #[test]
     fn nested_namespace_function_call() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -1419,7 +1419,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Nested namespace function call should work: {:?}", result.errors);
@@ -1427,7 +1427,7 @@ mod tests {
 
     #[test]
     fn namespace_function_with_arguments() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -1444,7 +1444,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Namespace function with arguments should work: {:?}", result.errors);
@@ -1452,7 +1452,7 @@ mod tests {
 
     #[test]
     fn namespace_function_overloading() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -1473,7 +1473,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Namespace function overloading should work: {:?}", result.errors);
@@ -1481,7 +1481,7 @@ mod tests {
 
     #[test]
     fn call_from_within_namespace() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -1499,7 +1499,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Calls from within namespace should work: {:?}", result.errors);
@@ -1507,7 +1507,7 @@ mod tests {
 
     #[test]
     fn namespace_constant_access_from_within() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -1537,7 +1537,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Namespace constants should be visible within namespace: {:?}", result.errors);
@@ -1545,7 +1545,7 @@ mod tests {
 
     #[test]
     fn global_function_call_from_namespace() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -1572,7 +1572,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Global functions should be callable from within namespace: {:?}", result.errors);
@@ -1580,7 +1580,7 @@ mod tests {
 
     #[test]
     fn namespace_type_constructor_call_from_within() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -1606,7 +1606,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Namespace types should be constructible from within namespace: {:?}", result.errors);
@@ -1614,7 +1614,7 @@ mod tests {
 
     #[test]
     fn using_namespace_function_call() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -1631,7 +1631,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Using namespace should allow unqualified function calls: {:?}", result.errors);
@@ -1639,7 +1639,7 @@ mod tests {
 
     #[test]
     fn base_class_method_call() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -1674,7 +1674,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Base class method call should work: {:?}", result.errors);
@@ -1682,7 +1682,7 @@ mod tests {
 
     #[test]
     fn absolute_scope_function_call() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -1699,7 +1699,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Absolute scope function call should work: {:?}", result.errors);
@@ -1707,7 +1707,7 @@ mod tests {
 
     #[test]
     fn cross_namespace_function_call() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -1726,7 +1726,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Cross-namespace function call should work: {:?}", result.errors);
@@ -1734,7 +1734,7 @@ mod tests {
 
     #[test]
     fn enum_value_resolution_basic() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -1753,7 +1753,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Basic enum value resolution should work: {:?}", result.errors);
@@ -1761,7 +1761,7 @@ mod tests {
 
     #[test]
     fn enum_value_resolution_with_explicit_values() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -1780,7 +1780,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Enum value resolution with explicit values should work: {:?}", result.errors);
@@ -1788,7 +1788,7 @@ mod tests {
 
     #[test]
     fn enum_value_in_expression() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -1806,7 +1806,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Enum values in expressions should work: {:?}", result.errors);
@@ -1814,7 +1814,7 @@ mod tests {
 
     #[test]
     fn namespaced_enum_value_resolution() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -1834,7 +1834,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Namespaced enum value resolution should work: {:?}", result.errors);
@@ -1842,7 +1842,7 @@ mod tests {
 
     #[test]
     fn enum_value_undefined_error() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -1859,7 +1859,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(!result.is_success(), "Should fail for undefined enum value");
@@ -1869,7 +1869,7 @@ mod tests {
 
     #[test]
     fn enum_value_as_function_argument() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -1891,7 +1891,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Enum values as function arguments should work: {:?}", result.errors);
@@ -1899,7 +1899,7 @@ mod tests {
 
     #[test]
     fn enum_value_in_switch() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -1924,7 +1924,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Enum values in switch cases should work: {:?}", result.errors);
@@ -1934,7 +1934,7 @@ mod tests {
 
     #[test]
     fn funcdef_variable_declaration_with_function_reference() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -1950,7 +1950,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Funcdef variable with function reference should work: {:?}", result.errors);
@@ -1958,7 +1958,7 @@ mod tests {
 
     #[test]
     fn funcdef_assignment_with_function_reference() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -1978,7 +1978,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Funcdef assignment should work: {:?}", result.errors);
@@ -1986,7 +1986,7 @@ mod tests {
 
     #[test]
     fn funcdef_incompatible_signature_error() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -2002,7 +2002,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(!result.is_success(), "Incompatible function signature should error");
@@ -2011,7 +2011,7 @@ mod tests {
 
     #[test]
     fn funcdef_with_return_type() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -2028,7 +2028,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Funcdef with return type should work: {:?}", result.errors);
@@ -2036,7 +2036,7 @@ mod tests {
 
     #[test]
     fn funcdef_call_through_variable() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -2054,7 +2054,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Calling through funcdef variable should work: {:?}", result.errors);
@@ -2062,7 +2062,7 @@ mod tests {
 
     #[test]
     fn funcdef_without_context_error() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -2077,7 +2077,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         // This should error because there's no funcdef context for inference
@@ -2086,7 +2086,7 @@ mod tests {
 
     #[test]
     fn funcdef_as_function_parameter() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -2106,7 +2106,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Funcdef as function parameter should work: {:?}", result.errors);
@@ -2114,7 +2114,7 @@ mod tests {
 
     #[test]
     fn funcdef_with_lambda() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -2128,7 +2128,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Lambda assigned to funcdef should work: {:?}", result.errors);
@@ -2136,7 +2136,7 @@ mod tests {
 
     #[test]
     fn funcdef_wrong_param_count_error() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -2152,7 +2152,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(!result.is_success(), "Wrong parameter count should error");
@@ -2160,7 +2160,7 @@ mod tests {
 
     #[test]
     fn funcdef_wrong_return_type_error() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -2176,7 +2176,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(!result.is_success(), "Wrong return type should error");
@@ -2186,7 +2186,7 @@ mod tests {
 
     #[test]
     fn bitwise_assignment_operators() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -2203,7 +2203,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Bitwise assignment operators should work: {:?}", result.errors);
@@ -2213,7 +2213,7 @@ mod tests {
 
     #[test]
     fn void_variable_declaration_error() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -2224,7 +2224,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(!result.is_success(), "Should fail for void variable declaration");
@@ -2236,7 +2236,7 @@ mod tests {
 
     #[test]
     fn void_return_in_non_void_function_error() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -2249,7 +2249,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(!result.is_success(), "Should fail for returning void expression");
@@ -2261,7 +2261,7 @@ mod tests {
 
     #[test]
     fn void_assignment_error() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -2275,7 +2275,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(!result.is_success(), "Should fail for assigning void expression");
@@ -2287,7 +2287,7 @@ mod tests {
 
     #[test]
     fn void_binary_operand_error() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -2300,7 +2300,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(!result.is_success(), "Should fail for void in binary operation");
@@ -2312,7 +2312,7 @@ mod tests {
 
     #[test]
     fn void_unary_operand_error() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -2325,7 +2325,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(!result.is_success(), "Should fail for void in unary operation");
@@ -2337,7 +2337,7 @@ mod tests {
 
     #[test]
     fn void_ternary_branch_error() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -2351,7 +2351,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(!result.is_success(), "Should fail for void in ternary branch");
@@ -2363,7 +2363,7 @@ mod tests {
 
     #[test]
     fn void_return_type_allowed() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -2378,7 +2378,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Void return type should be allowed: {:?}", result.errors);
@@ -2386,7 +2386,7 @@ mod tests {
 
     #[test]
     fn void_function_call_as_statement() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -2399,7 +2399,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Void function call as statement should be allowed: {:?}", result.errors);
@@ -2409,7 +2409,7 @@ mod tests {
 
     #[test]
     fn implicit_int_to_float_conversion() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -2421,7 +2421,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Implicit int to float conversion should work: {:?}", result.errors);
@@ -2429,7 +2429,7 @@ mod tests {
 
     #[test]
     fn implicit_float_to_double_conversion() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -2440,7 +2440,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Implicit float to double conversion should work: {:?}", result.errors);
@@ -2448,7 +2448,7 @@ mod tests {
 
     #[test]
     fn explicit_cast_int_to_float() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -2461,7 +2461,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Explicit cast int to float should work: {:?}", result.errors);
@@ -2469,7 +2469,7 @@ mod tests {
 
     #[test]
     fn explicit_cast_double_to_int() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -2482,7 +2482,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Explicit cast double to int should work: {:?}", result.errors);
@@ -2490,7 +2490,7 @@ mod tests {
 
     #[test]
     fn conversion_in_function_argument() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -2506,7 +2506,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Implicit conversion in function arguments should work: {:?}", result.errors);
@@ -2514,7 +2514,7 @@ mod tests {
 
     #[test]
     fn conversion_in_binary_expression() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -2527,7 +2527,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Type promotion in binary expressions should work: {:?}", result.errors);
@@ -2535,7 +2535,7 @@ mod tests {
 
     #[test]
     fn conversion_in_comparison() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -2548,7 +2548,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Type promotion in comparisons should work: {:?}", result.errors);
@@ -2556,7 +2556,7 @@ mod tests {
 
     #[test]
     fn integer_widening_conversions() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -2570,7 +2570,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Integer widening conversions should work: {:?}", result.errors);
@@ -2579,7 +2579,7 @@ mod tests {
     #[test]
     fn uint_literal_operations() {
         // Test uint literal in expressions
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -2591,7 +2591,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Literal operations should work: {:?}", result.errors);
@@ -2601,7 +2601,7 @@ mod tests {
 
     #[test]
     fn null_to_handle_conversion() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -2614,7 +2614,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Null to handle conversion should work: {:?}", result.errors);
@@ -2622,7 +2622,7 @@ mod tests {
 
     #[test]
     fn handle_to_const_handle_conversion() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -2638,7 +2638,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Handle to const handle conversion should work: {:?}", result.errors);
@@ -2648,7 +2648,7 @@ mod tests {
 
     #[test]
     fn overload_exact_match_preferred() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -2663,7 +2663,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Exact match in overloading should work: {:?}", result.errors);
@@ -2671,7 +2671,7 @@ mod tests {
 
     #[test]
     fn overload_with_implicit_conversion() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -2685,7 +2685,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Overload with implicit conversion should work: {:?}", result.errors);
@@ -2693,7 +2693,7 @@ mod tests {
 
     #[test]
     fn overload_multiple_parameters() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -2710,7 +2710,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Multiple parameter overloading should work: {:?}", result.errors);
@@ -2722,7 +2722,7 @@ mod tests {
     #[test]
     fn init_list_array_creation() {
         // This test uses init_list which auto-infers the array type
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -2733,7 +2733,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Init list array creation should work: {:?}", result.errors);
@@ -2743,7 +2743,7 @@ mod tests {
 
     #[test]
     fn ternary_type_promotion() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -2756,7 +2756,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Ternary type promotion should work: {:?}", result.errors);
@@ -2764,7 +2764,7 @@ mod tests {
 
     #[test]
     fn ternary_with_handles() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -2780,7 +2780,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Ternary with handles should work: {:?}", result.errors);
@@ -2789,7 +2789,7 @@ mod tests {
     #[test]
     fn ternary_both_handles() {
         // Note: null in ternary branches currently isn't supported - both branches need same handle type
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -2805,7 +2805,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Ternary with both handle branches should work: {:?}", result.errors);
@@ -2815,7 +2815,7 @@ mod tests {
 
     #[test]
     fn class_method_overloading() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -2833,7 +2833,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Class method overloading should work: {:?}", result.errors);
@@ -2841,7 +2841,7 @@ mod tests {
 
     #[test]
     fn class_constructor_with_conversion() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -2861,7 +2861,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Constructor with conversion should work: {:?}", result.errors);
@@ -2869,7 +2869,7 @@ mod tests {
 
     #[test]
     fn derived_to_base_handle_conversion() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -2886,7 +2886,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Derived to base handle conversion should work: {:?}", result.errors);
@@ -2895,7 +2895,7 @@ mod tests {
     #[test]
     fn class_implements_interface() {
         // Test that a class can implement an interface
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -2915,7 +2915,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Class implementing interface should work: {:?}", result.errors);
@@ -2925,7 +2925,7 @@ mod tests {
 
     #[test]
     fn compound_assignment_with_conversion() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -2940,7 +2940,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Compound assignment with conversion should work: {:?}", result.errors);
@@ -2950,7 +2950,7 @@ mod tests {
 
     #[test]
     fn return_with_conversion() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -2965,7 +2965,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Return with conversion should work: {:?}", result.errors);
@@ -2975,7 +2975,7 @@ mod tests {
 
     #[test]
     fn postfix_increment_decrement() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -2990,7 +2990,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Postfix increment/decrement should work: {:?}", result.errors);
@@ -2998,7 +2998,7 @@ mod tests {
 
     #[test]
     fn prefix_increment_decrement() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -3013,7 +3013,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Prefix increment/decrement should work: {:?}", result.errors);
@@ -3023,7 +3023,7 @@ mod tests {
 
     #[test]
     fn unary_negation_all_types() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -3038,7 +3038,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Unary negation should work for all numeric types: {:?}", result.errors);
@@ -3046,7 +3046,7 @@ mod tests {
 
     #[test]
     fn bitwise_not_operator() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -3059,7 +3059,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Bitwise not should work: {:?}", result.errors);
@@ -3069,7 +3069,7 @@ mod tests {
 
     #[test]
     fn nested_loops_with_break_continue() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -3085,7 +3085,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Nested loops with break/continue should work: {:?}", result.errors);
@@ -3093,7 +3093,7 @@ mod tests {
 
     #[test]
     fn switch_with_fallthrough() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -3116,7 +3116,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Switch with fallthrough should work: {:?}", result.errors);
@@ -3126,7 +3126,7 @@ mod tests {
 
     #[test]
     fn logical_and_or_operators() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -3142,7 +3142,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Logical operators should work: {:?}", result.errors);
@@ -3152,7 +3152,7 @@ mod tests {
 
     #[test]
     fn bitwise_operators() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -3169,7 +3169,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Bitwise operators should work: {:?}", result.errors);
@@ -3177,7 +3177,7 @@ mod tests {
 
     #[test]
     fn comparison_operators() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -3195,7 +3195,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Comparison operators should work: {:?}", result.errors);
@@ -3205,7 +3205,7 @@ mod tests {
 
     #[test]
     fn chained_member_access() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -3226,7 +3226,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Chained member access should work: {:?}", result.errors);
@@ -3235,7 +3235,7 @@ mod tests {
     #[test]
     fn simple_method_chaining() {
         // Simpler method call chaining without "return this" pattern
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -3254,7 +3254,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Simple method calls should work: {:?}", result.errors);
@@ -3264,7 +3264,7 @@ mod tests {
 
     #[test]
     fn string_literal_usage() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -3276,7 +3276,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "String literal usage should work: {:?}", result.errors);
@@ -3286,7 +3286,7 @@ mod tests {
 
     #[test]
     fn complex_expression_evaluation() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -3300,7 +3300,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Complex expressions should work: {:?}", result.errors);
@@ -3310,7 +3310,7 @@ mod tests {
 
     #[test]
     fn class_constructor_with_field_initialization() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -3330,7 +3330,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Constructor with field initialization should work: {:?}", result.errors);
@@ -3338,7 +3338,7 @@ mod tests {
 
     #[test]
     fn derived_class_constructor_with_base_call() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -3363,7 +3363,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Derived constructor with super() should work: {:?}", result.errors);
@@ -3371,7 +3371,7 @@ mod tests {
 
     #[test]
     fn derived_class_constructor_without_explicit_super() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -3396,7 +3396,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Derived constructor without super() should auto-call base: {:?}", result.errors);
@@ -3404,7 +3404,7 @@ mod tests {
 
     #[test]
     fn super_call_in_nested_statement() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -3427,7 +3427,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Super call in nested if should be detected: {:?}", result.errors);
@@ -3437,7 +3437,7 @@ mod tests {
 
     #[test]
     fn do_while_basic() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -3451,7 +3451,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Do-while loop should work: {:?}", result.errors);
@@ -3459,7 +3459,7 @@ mod tests {
 
     #[test]
     fn do_while_with_break() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -3476,7 +3476,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Do-while with break should work: {:?}", result.errors);
@@ -3484,7 +3484,7 @@ mod tests {
 
     #[test]
     fn do_while_with_continue() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -3503,7 +3503,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Do-while with continue should work: {:?}", result.errors);
@@ -3511,7 +3511,7 @@ mod tests {
 
     #[test]
     fn do_while_non_bool_condition_error() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -3525,7 +3525,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(!result.errors.is_empty(), "Do-while with non-bool condition should error");
@@ -3535,7 +3535,7 @@ mod tests {
 
     #[test]
     fn try_catch_basic() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -3551,7 +3551,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Try-catch should work: {:?}", result.errors);
@@ -3559,7 +3559,7 @@ mod tests {
 
     #[test]
     fn try_catch_with_return() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -3575,7 +3575,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Try-catch with return should work: {:?}", result.errors);
@@ -3585,7 +3585,7 @@ mod tests {
 
     #[test]
     fn break_outside_loop_error() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -3596,7 +3596,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(!result.errors.is_empty(), "Break outside loop should error");
@@ -3604,7 +3604,7 @@ mod tests {
 
     #[test]
     fn continue_outside_loop_error() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -3615,7 +3615,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(!result.errors.is_empty(), "Continue outside loop should error");
@@ -3623,7 +3623,7 @@ mod tests {
 
     #[test]
     fn void_variable_error() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -3634,7 +3634,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(!result.errors.is_empty(), "Void variable should error");
@@ -3642,7 +3642,7 @@ mod tests {
 
     #[test]
     fn return_void_from_non_void_function_error() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -3653,7 +3653,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(!result.errors.is_empty(), "Return void from non-void function should error");
@@ -3661,7 +3661,7 @@ mod tests {
 
     #[test]
     fn return_value_type_mismatch_error() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -3672,7 +3672,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(!result.errors.is_empty(), "Return value type mismatch should error");
@@ -3680,7 +3680,7 @@ mod tests {
 
     #[test]
     fn undefined_variable_error() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -3691,7 +3691,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(!result.errors.is_empty(), "Undefined variable should error");
@@ -3699,7 +3699,7 @@ mod tests {
 
     #[test]
     fn this_outside_class_error() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -3710,7 +3710,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(!result.errors.is_empty(), "'this' outside class method should error");
@@ -3720,7 +3720,7 @@ mod tests {
 
     #[test]
     fn enum_value_access() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -3737,7 +3737,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Enum value access should work: {:?}", result.errors);
@@ -3745,7 +3745,7 @@ mod tests {
 
     #[test]
     fn undefined_enum_value_error() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -3762,7 +3762,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(!result.errors.is_empty(), "Undefined enum value should error");
@@ -3772,7 +3772,7 @@ mod tests {
 
     #[test]
     fn const_variable_assignment_error() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -3784,7 +3784,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(!result.errors.is_empty(), "Assignment to const variable should error");
@@ -3794,7 +3794,7 @@ mod tests {
 
     #[test]
     fn switch_with_default() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -3816,7 +3816,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Switch with default should work: {:?}", result.errors);
@@ -3824,7 +3824,7 @@ mod tests {
 
     #[test]
     fn switch_duplicate_default_error() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -3841,7 +3841,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(!result.errors.is_empty(), "Duplicate default should error");
@@ -3849,7 +3849,7 @@ mod tests {
 
     #[test]
     fn switch_duplicate_case_value_error() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -3866,7 +3866,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(!result.errors.is_empty(), "Duplicate case value should error");
@@ -3874,7 +3874,7 @@ mod tests {
 
     #[test]
     fn switch_unsupported_value_type_error() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -3892,7 +3892,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(!result.errors.is_empty(), "Switch on value type should error");
@@ -3902,7 +3902,7 @@ mod tests {
 
     #[test]
     fn for_loop_with_init_expr() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -3916,7 +3916,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "For loop with init expression should work: {:?}", result.errors);
@@ -3924,7 +3924,7 @@ mod tests {
 
     #[test]
     fn for_loop_no_condition() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -3939,7 +3939,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "For loop without condition should work: {:?}", result.errors);
@@ -3947,7 +3947,7 @@ mod tests {
 
     #[test]
     fn for_loop_non_bool_condition_error() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -3960,7 +3960,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(!result.errors.is_empty(), "For loop with non-bool condition should error");
@@ -3970,7 +3970,7 @@ mod tests {
 
     #[test]
     fn if_non_bool_condition_error() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -3984,7 +3984,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(!result.errors.is_empty(), "If with non-bool condition should error");
@@ -3992,7 +3992,7 @@ mod tests {
 
     #[test]
     fn while_non_bool_condition_error() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -4006,7 +4006,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(!result.errors.is_empty(), "While with non-bool condition should error");
@@ -4016,7 +4016,7 @@ mod tests {
 
     #[test]
     fn global_variable_access() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -4030,7 +4030,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Global variable access should work: {:?}", result.errors);
@@ -4040,7 +4040,7 @@ mod tests {
 
     #[test]
     fn implicit_this_field_access() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -4065,7 +4065,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Implicit this field access should work: {:?}", result.errors);
@@ -4073,7 +4073,7 @@ mod tests {
 
     #[test]
     fn implicit_this_shadows_local() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -4095,7 +4095,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Local shadowing field should work: {:?}", result.errors);
@@ -4105,7 +4105,7 @@ mod tests {
 
     #[test]
     fn namespaced_function() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -4122,7 +4122,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Namespaced function should work: {:?}", result.errors);
@@ -4130,7 +4130,7 @@ mod tests {
 
     #[test]
     fn nested_namespace_function() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -4147,7 +4147,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Nested namespace function should work: {:?}", result.errors);
@@ -4157,7 +4157,7 @@ mod tests {
 
     #[test]
     fn super_call_in_while_loop() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -4181,7 +4181,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Super call in while should be detected: {:?}", result.errors);
@@ -4189,7 +4189,7 @@ mod tests {
 
     #[test]
     fn super_call_in_do_while() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -4212,7 +4212,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Super call in do-while should be detected: {:?}", result.errors);
@@ -4220,7 +4220,7 @@ mod tests {
 
     #[test]
     fn super_call_in_for_loop_init() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -4243,7 +4243,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Super call in for loop should be detected: {:?}", result.errors);
@@ -4251,7 +4251,7 @@ mod tests {
 
     #[test]
     fn super_call_in_nested_block() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -4276,7 +4276,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Super call in nested block should be detected: {:?}", result.errors);
@@ -4284,7 +4284,7 @@ mod tests {
 
     #[test]
     fn super_call_in_switch() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -4311,7 +4311,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Super call in switch should be detected: {:?}", result.errors);
@@ -4319,7 +4319,7 @@ mod tests {
 
     #[test]
     fn super_call_in_try_catch() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -4344,7 +4344,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Super call in try-catch should be detected: {:?}", result.errors);
@@ -4354,7 +4354,7 @@ mod tests {
 
     #[test]
     fn super_call_in_binary_expr() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -4378,7 +4378,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Super call in expression should be detected: {:?}", result.errors);
@@ -4386,7 +4386,7 @@ mod tests {
 
     #[test]
     fn super_call_in_return_value() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -4408,7 +4408,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Super call with return should work: {:?}", result.errors);
@@ -4418,7 +4418,7 @@ mod tests {
 
     #[test]
     fn overloaded_methods() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -4438,7 +4438,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Overloaded methods should work: {:?}", result.errors);
@@ -4448,7 +4448,7 @@ mod tests {
 
     #[test]
     fn ternary_type_mismatch_error() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -4460,7 +4460,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(!result.errors.is_empty(), "Ternary with mismatched types should error");
@@ -4468,7 +4468,7 @@ mod tests {
 
     #[test]
     fn ternary_non_bool_condition_error() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -4480,7 +4480,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(!result.errors.is_empty(), "Ternary with non-bool condition should error");
@@ -4490,7 +4490,7 @@ mod tests {
 
     #[test]
     fn postfix_on_rvalue_error() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -4501,7 +4501,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(!result.errors.is_empty(), "Postfix on rvalue should error");
@@ -4511,7 +4511,7 @@ mod tests {
 
     #[test]
     fn init_list_basic() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -4522,7 +4522,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Init list should work: {:?}", result.errors);
@@ -4532,7 +4532,7 @@ mod tests {
 
     #[test]
     fn null_literal_usage() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -4545,7 +4545,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Null literal should work: {:?}", result.errors);
@@ -4555,7 +4555,7 @@ mod tests {
 
     #[test]
     fn explicit_cast_to_same_type() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -4567,7 +4567,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Cast to same type should work: {:?}", result.errors);
@@ -4575,7 +4575,7 @@ mod tests {
 
     #[test]
     fn explicit_cast_numeric() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -4587,7 +4587,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Numeric cast should work: {:?}", result.errors);
@@ -4595,7 +4595,7 @@ mod tests {
 
     #[test]
     fn invalid_cast_error() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -4607,7 +4607,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(!result.errors.is_empty(), "Invalid cast should error");
@@ -4617,7 +4617,7 @@ mod tests {
 
     #[test]
     fn property_getter_access() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -4638,7 +4638,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Property getter access should work: {:?}", result.errors);
@@ -4648,7 +4648,7 @@ mod tests {
 
     #[test]
     fn funcdef_variable() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -4663,7 +4663,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Funcdef variable should work: {:?}", result.errors);
@@ -4673,7 +4673,7 @@ mod tests {
 
     #[test]
     fn compound_assignment_operators() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -4689,7 +4689,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Compound assignment should work: {:?}", result.errors);
@@ -4697,7 +4697,7 @@ mod tests {
 
     #[test]
     fn compound_assignment_on_const_error() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -4709,7 +4709,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(!result.errors.is_empty(), "Compound assignment on const should error");
@@ -4719,7 +4719,7 @@ mod tests {
 
     #[test]
     fn lambda_basic() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -4732,7 +4732,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Lambda should work: {:?}", result.errors);
@@ -4740,7 +4740,7 @@ mod tests {
 
     #[test]
     fn lambda_with_captures() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -4754,7 +4754,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Lambda with captures should work: {:?}", result.errors);
@@ -4764,7 +4764,7 @@ mod tests {
 
     #[test]
     fn unary_not_operator() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -4777,7 +4777,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Unary not should work: {:?}", result.errors);
@@ -4785,7 +4785,7 @@ mod tests {
 
     #[test]
     fn unary_bitwise_not() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -4797,7 +4797,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Unary bitwise not should work: {:?}", result.errors);
@@ -4805,7 +4805,7 @@ mod tests {
 
     #[test]
     fn unary_pre_increment() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -4817,7 +4817,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Pre-increment should work: {:?}", result.errors);
@@ -4825,7 +4825,7 @@ mod tests {
 
     #[test]
     fn unary_pre_decrement() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -4837,7 +4837,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Pre-decrement should work: {:?}", result.errors);
@@ -4845,7 +4845,7 @@ mod tests {
 
     #[test]
     fn postfix_increment() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -4857,7 +4857,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Post-increment should work: {:?}", result.errors);
@@ -4865,7 +4865,7 @@ mod tests {
 
     #[test]
     fn postfix_decrement() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -4877,7 +4877,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Post-decrement should work: {:?}", result.errors);
@@ -4887,7 +4887,7 @@ mod tests {
 
     #[test]
     fn bitwise_operators_all() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -4905,7 +4905,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Bitwise operators should work: {:?}", result.errors);
@@ -4915,7 +4915,7 @@ mod tests {
 
     #[test]
     fn handle_assignment() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -4931,7 +4931,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Handle assignment should work: {:?}", result.errors);
@@ -4939,7 +4939,7 @@ mod tests {
 
     #[test]
     fn handle_comparison() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -4955,7 +4955,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Handle comparison with is/!is should work: {:?}", result.errors);
@@ -4963,7 +4963,7 @@ mod tests {
 
     #[test]
     fn handle_comparison_with_null() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -4980,7 +4980,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Handle comparison with null should work: {:?}", result.errors);
@@ -4988,7 +4988,7 @@ mod tests {
 
     #[test]
     fn is_operator_non_handle_error() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -5001,7 +5001,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(!result.errors.is_empty(), "is operator with non-handles should error");
@@ -5011,7 +5011,7 @@ mod tests {
 
     #[test]
     fn is_operator_mixed_types_error() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -5026,7 +5026,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(!result.errors.is_empty(), "is operator with mixed handle/non-handle should error");
@@ -5036,7 +5036,7 @@ mod tests {
 
     #[test]
     fn logical_and_short_circuit() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -5050,7 +5050,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Logical AND should work: {:?}", result.errors);
@@ -5058,7 +5058,7 @@ mod tests {
 
     #[test]
     fn logical_or_short_circuit() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -5072,7 +5072,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Logical OR should work: {:?}", result.errors);
@@ -5080,7 +5080,7 @@ mod tests {
 
     #[test]
     fn logical_xor() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -5093,7 +5093,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Logical XOR should work: {:?}", result.errors);
@@ -5103,7 +5103,7 @@ mod tests {
 
     #[test]
     fn power_operator() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -5115,7 +5115,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Power operator should work: {:?}", result.errors);
@@ -5125,7 +5125,7 @@ mod tests {
 
     #[test]
     fn double_literal() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -5138,7 +5138,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Double literals should work: {:?}", result.errors);
@@ -5148,7 +5148,7 @@ mod tests {
 
     #[test]
     fn multiple_variables_same_type() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -5162,7 +5162,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Multiple variables should work: {:?}", result.errors);
@@ -5172,7 +5172,7 @@ mod tests {
 
     #[test]
     fn super_call_in_ternary() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -5194,7 +5194,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Super call with ternary should work: {:?}", result.errors);
@@ -5202,7 +5202,7 @@ mod tests {
 
     #[test]
     fn super_call_in_unary() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -5224,7 +5224,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Super call with unary should work: {:?}", result.errors);
@@ -5232,7 +5232,7 @@ mod tests {
 
     #[test]
     fn super_call_in_assign() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -5256,7 +5256,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Super call with assign should work: {:?}", result.errors);
@@ -5264,7 +5264,7 @@ mod tests {
 
     #[test]
     fn super_call_in_member_expr() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -5291,7 +5291,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Super call with member access should work: {:?}", result.errors);
@@ -5299,7 +5299,7 @@ mod tests {
 
     #[test]
     fn super_call_in_index_expr() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -5321,7 +5321,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Super call with array init should work: {:?}", result.errors);
@@ -5329,7 +5329,7 @@ mod tests {
 
     #[test]
     fn super_call_in_postfix_expr() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -5353,7 +5353,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Super call with postfix should work: {:?}", result.errors);
@@ -5361,7 +5361,7 @@ mod tests {
 
     #[test]
     fn super_call_in_cast_expr() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -5383,7 +5383,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Super call with cast should work: {:?}", result.errors);
@@ -5391,7 +5391,7 @@ mod tests {
 
     #[test]
     fn super_call_in_paren_expr() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -5413,7 +5413,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Super call with paren should work: {:?}", result.errors);
@@ -5423,7 +5423,7 @@ mod tests {
 
     #[test]
     fn foreach_on_non_iterable_error() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -5437,7 +5437,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         // Should error because int doesn't have foreach operators
@@ -5448,7 +5448,7 @@ mod tests {
 
     #[test]
     fn if_else_basic() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -5465,7 +5465,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "If-else should work: {:?}", result.errors);
@@ -5473,7 +5473,7 @@ mod tests {
 
     #[test]
     fn if_else_if_chain() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -5494,7 +5494,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "If-else-if chain should work: {:?}", result.errors);
@@ -5504,7 +5504,7 @@ mod tests {
 
     #[test]
     fn empty_expression_statement() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -5517,7 +5517,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Expression statement should work: {:?}", result.errors);
@@ -5527,7 +5527,7 @@ mod tests {
 
     #[test]
     fn method_call_with_args() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -5545,7 +5545,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Method call with args should work: {:?}", result.errors);
@@ -5555,7 +5555,7 @@ mod tests {
 
     #[test]
     fn return_implicit_conversion() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -5567,7 +5567,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Return implicit conversion should work: {:?}", result.errors);
@@ -5577,7 +5577,7 @@ mod tests {
 
     #[test]
     fn binary_void_left_operand_error() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -5590,7 +5590,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(!result.errors.is_empty(), "Binary with void left operand should error");
@@ -5598,7 +5598,7 @@ mod tests {
 
     #[test]
     fn binary_void_right_operand_error() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -5611,7 +5611,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(!result.errors.is_empty(), "Binary with void right operand should error");
@@ -5621,7 +5621,7 @@ mod tests {
 
     #[test]
     fn inherited_field_access() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -5643,7 +5643,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Inherited field access should work: {:?}", result.errors);
@@ -5653,7 +5653,7 @@ mod tests {
 
     #[test]
     fn class_with_opAdd() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -5684,7 +5684,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "opAdd operator overload should work: {:?}", result.errors);
@@ -5694,7 +5694,7 @@ mod tests {
 
     #[test]
     fn abstract_method_no_body() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -5719,7 +5719,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Abstract class should work: {:?}", result.errors);
@@ -5729,7 +5729,7 @@ mod tests {
 
     #[test]
     fn index_expression_multi() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -5745,7 +5745,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Multi-index opIndex should work: {:?}", result.errors);
@@ -5755,7 +5755,7 @@ mod tests {
 
     #[test]
     fn funcdef_call() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -5771,7 +5771,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Funcdef call should work: {:?}", result.errors);
@@ -5781,7 +5781,7 @@ mod tests {
 
     #[test]
     fn assignment_incompatible_types_error() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -5797,7 +5797,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(!result.errors.is_empty(), "Incompatible assignment should error");
@@ -5807,7 +5807,7 @@ mod tests {
 
     #[test]
     fn init_list_empty() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -5818,7 +5818,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Empty init list should work: {:?}", result.errors);
@@ -5826,7 +5826,7 @@ mod tests {
 
     #[test]
     fn init_list_multidimensional() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -5837,7 +5837,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Multidimensional init list should work: {:?}", result.errors);
@@ -5846,7 +5846,7 @@ mod tests {
     #[test]
     fn init_list_in_nested_block() {
         // Test that template types are instantiated when used in nested blocks
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -5859,7 +5859,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Init list in nested block should work: {:?}", result.errors);
@@ -5868,7 +5868,7 @@ mod tests {
     #[test]
     fn init_list_in_for_loop() {
         // Test that template types are instantiated when used in for loop body
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -5881,7 +5881,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Init list in for loop should work: {:?}", result.errors);
@@ -5890,7 +5890,7 @@ mod tests {
     #[test]
     fn init_list_in_while_loop() {
         // Test that template types are instantiated when used in while loop body
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -5905,7 +5905,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Init list in while loop should work: {:?}", result.errors);
@@ -5914,7 +5914,7 @@ mod tests {
     #[test]
     fn init_list_deeply_nested_blocks() {
         // Test template instantiation in deeply nested control structures
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -5932,7 +5932,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Init list in deeply nested blocks should work: {:?}", result.errors);
@@ -5941,7 +5941,7 @@ mod tests {
     #[test]
     fn template_type_in_switch() {
         // Test template instantiation in switch case blocks
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -5960,7 +5960,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Template type in switch should work: {:?}", result.errors);
@@ -5969,7 +5969,7 @@ mod tests {
     #[test]
     fn template_type_in_try_catch() {
         // Test template instantiation in try/catch blocks
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -5985,7 +5985,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Template type in try/catch should work: {:?}", result.errors);
@@ -5994,7 +5994,7 @@ mod tests {
     #[test]
     fn multiple_template_types_same_function() {
         // Test multiple different template instantiations in same function
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -6007,7 +6007,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Multiple template types should work: {:?}", result.errors);
@@ -6017,7 +6017,7 @@ mod tests {
 
     #[test]
     fn super_detection_in_call_args() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -6041,7 +6041,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Super call with function args should work: {:?}", result.errors);
@@ -6049,7 +6049,7 @@ mod tests {
 
     #[test]
     fn super_detection_in_init_list() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -6071,7 +6071,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Super detection with init list should work: {:?}", result.errors);
@@ -6081,7 +6081,7 @@ mod tests {
 
     #[test]
     fn interface_method_no_body() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -6105,7 +6105,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Interface with implementation should work: {:?}", result.errors);
@@ -6115,7 +6115,7 @@ mod tests {
 
     #[test]
     fn foreach_missing_opForEnd() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -6134,7 +6134,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         // Should error about missing opForEnd
@@ -6143,7 +6143,7 @@ mod tests {
 
     #[test]
     fn foreach_missing_opForNext() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -6163,7 +6163,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         // Should error about missing opForNext
@@ -6172,7 +6172,7 @@ mod tests {
 
     #[test]
     fn foreach_missing_opForValue() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -6193,7 +6193,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         // Should error about missing opForValue
@@ -6204,7 +6204,7 @@ mod tests {
 
     #[test]
     fn lambda_in_function_call() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -6221,7 +6221,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Lambda in function call should work: {:?}", result.errors);
@@ -6231,7 +6231,7 @@ mod tests {
 
     #[test]
     fn overloaded_function_call_exact_match() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -6248,7 +6248,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Overloaded function call should work: {:?}", result.errors);
@@ -6256,7 +6256,7 @@ mod tests {
 
     #[test]
     fn overloaded_function_call_with_conversion() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -6270,7 +6270,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Overloaded function with conversion should work: {:?}", result.errors);
@@ -6278,7 +6278,7 @@ mod tests {
 
     #[test]
     fn function_call_wrong_arg_count_error() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -6291,7 +6291,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(!result.errors.is_empty(), "Wrong argument count should error");
@@ -6299,7 +6299,7 @@ mod tests {
 
     #[test]
     fn function_call_too_many_args_error() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -6312,7 +6312,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(!result.errors.is_empty(), "Too many arguments should error");
@@ -6322,7 +6322,7 @@ mod tests {
 
     #[test]
     fn function_with_default_args() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -6341,7 +6341,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Function with default args should work: {:?}", result.errors);
@@ -6351,7 +6351,7 @@ mod tests {
 
     #[test]
     fn member_access_on_primitive_error() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -6363,7 +6363,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(!result.errors.is_empty(), "Member access on primitive should error");
@@ -6373,7 +6373,7 @@ mod tests {
 
     #[test]
     fn method_call_on_primitive_error() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -6385,7 +6385,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(!result.errors.is_empty(), "Method call on primitive should error");
@@ -6395,7 +6395,7 @@ mod tests {
 
     #[test]
     fn undefined_function_call_error() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -6406,7 +6406,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(!result.errors.is_empty(), "Undefined function should error");
@@ -6416,7 +6416,7 @@ mod tests {
 
     #[test]
     fn undefined_method_call_error() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -6430,7 +6430,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(!result.errors.is_empty(), "Undefined method should error");
@@ -6440,7 +6440,7 @@ mod tests {
 
     #[test]
     fn ternary_int_float_promotion() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -6452,7 +6452,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Ternary with type promotion should work: {:?}", result.errors);
@@ -6462,7 +6462,7 @@ mod tests {
 
     #[test]
     fn break_in_nested_loops() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -6482,7 +6482,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Break in nested loops should work: {:?}", result.errors);
@@ -6490,7 +6490,7 @@ mod tests {
 
     #[test]
     fn continue_in_nested_loops() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -6510,7 +6510,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Continue in nested loops should work: {:?}", result.errors);
@@ -6520,7 +6520,7 @@ mod tests {
 
     #[test]
     fn compound_assignment_type_mismatch_error() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -6532,7 +6532,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(!result.errors.is_empty(), "Compound assignment type mismatch should error");
@@ -6542,7 +6542,7 @@ mod tests {
 
     #[test]
     fn array_access() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -6555,7 +6555,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Array access should work: {:?}", result.errors);
@@ -6565,7 +6565,7 @@ mod tests {
 
     #[test]
     fn various_int_types() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -6581,7 +6581,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Various int types including unsigned should work: {:?}", result.errors);
@@ -6591,7 +6591,7 @@ mod tests {
 
     #[test]
     fn static_method_call() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -6607,7 +6607,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Method call should work: {:?}", result.errors);
@@ -6617,7 +6617,7 @@ mod tests {
 
     #[test]
     fn complex_expression_chain() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -6631,7 +6631,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Complex expression chain should work: {:?}", result.errors);
@@ -6641,7 +6641,7 @@ mod tests {
 
     #[test]
     fn class_with_opindex() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -6657,7 +6657,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         // Exercises opIndex code path
@@ -6666,7 +6666,7 @@ mod tests {
 
     #[test]
     fn type_without_indexing_error() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -6680,7 +6680,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(!result.errors.is_empty(), "Indexing type without opIndex should error");
@@ -6690,7 +6690,7 @@ mod tests {
 
     #[test]
     fn super_outside_class_error() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -6701,7 +6701,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(!result.errors.is_empty(), "Super outside class should error");
@@ -6709,7 +6709,7 @@ mod tests {
 
     #[test]
     fn super_without_base_class_error() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -6726,7 +6726,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(!result.errors.is_empty(), "Super without base class should error");
@@ -6736,7 +6736,7 @@ mod tests {
 
     #[test]
     fn constructor_wrong_args_error() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -6751,7 +6751,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(!result.errors.is_empty(), "Constructor with wrong arg type should error");
@@ -6761,7 +6761,7 @@ mod tests {
 
     #[test]
     fn void_ternary_both_branches_error() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -6775,7 +6775,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(!result.errors.is_empty(), "Void in ternary branches should error");
@@ -6783,7 +6783,7 @@ mod tests {
 
     #[test]
     fn void_ternary_else_branch_error() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -6797,7 +6797,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(!result.errors.is_empty(), "Void in ternary else branch should error");
@@ -6807,7 +6807,7 @@ mod tests {
 
     #[test]
     fn unsigned_right_shift() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -6819,7 +6819,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Unsigned right shift should work: {:?}", result.errors);
@@ -6829,7 +6829,7 @@ mod tests {
 
     #[test]
     fn prefix_minus_on_various_types() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -6842,7 +6842,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Prefix minus on various types should work: {:?}", result.errors);
@@ -6850,7 +6850,7 @@ mod tests {
 
     #[test]
     fn prefix_plus_on_numeric() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -6862,7 +6862,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Prefix plus should work: {:?}", result.errors);
@@ -6872,7 +6872,7 @@ mod tests {
 
     #[test]
     fn all_comparison_operators() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -6890,7 +6890,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "All comparison operators should work: {:?}", result.errors);
@@ -6900,7 +6900,7 @@ mod tests {
 
     #[test]
     fn handle_to_object_access() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -6917,7 +6917,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         // Test handle-to-handle assignment
@@ -6928,7 +6928,7 @@ mod tests {
 
     #[test]
     fn const_reference_parameter() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -6944,7 +6944,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Const reference parameter should work: {:?}", result.errors);
@@ -6954,7 +6954,7 @@ mod tests {
 
     #[test]
     fn multiple_return_paths() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -6974,7 +6974,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Multiple return paths should work: {:?}", result.errors);
@@ -6984,7 +6984,7 @@ mod tests {
 
     #[test]
     fn deeply_nested_member_access() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -7008,7 +7008,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Deeply nested member access should work: {:?}", result.errors);
@@ -7018,7 +7018,7 @@ mod tests {
 
     #[test]
     fn modulo_operation() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -7031,7 +7031,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Modulo operation should work: {:?}", result.errors);
@@ -7041,7 +7041,7 @@ mod tests {
 
     #[test]
     fn global_const_variable() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -7054,7 +7054,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Global const variable should work: {:?}", result.errors);
@@ -7064,7 +7064,7 @@ mod tests {
 
     #[test]
     fn private_field_access_from_outside_error() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -7080,7 +7080,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(!result.errors.is_empty(), "Private field access from outside should error");
@@ -7090,7 +7090,7 @@ mod tests {
 
     #[test]
     fn unary_not_on_int_error() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -7102,7 +7102,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(!result.errors.is_empty(), "Unary not on int should error");
@@ -7110,7 +7110,7 @@ mod tests {
 
     #[test]
     fn unary_minus_on_bool_error() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -7122,7 +7122,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(!result.errors.is_empty(), "Unary minus on bool should error");
@@ -7132,7 +7132,7 @@ mod tests {
 
     #[test]
     fn reference_out_param_with_literal_error() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -7147,7 +7147,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(!result.errors.is_empty(), "Reference out param with literal should error");
@@ -7157,7 +7157,7 @@ mod tests {
 
     #[test]
     fn empty_block_statement() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -7170,7 +7170,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Empty block should work: {:?}", result.errors);
@@ -7180,7 +7180,7 @@ mod tests {
 
     #[test]
     fn division_operators() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -7193,7 +7193,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Division operators should work: {:?}", result.errors);
@@ -7203,7 +7203,7 @@ mod tests {
 
     #[test]
     fn string_concatenation() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -7216,7 +7216,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         // Exercises string + operator path
@@ -7227,7 +7227,7 @@ mod tests {
 
     #[test]
     fn assignment_to_rvalue_error() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -7240,7 +7240,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(!result.errors.is_empty(), "Assignment to rvalue should error");
@@ -7250,7 +7250,7 @@ mod tests {
 
     #[test]
     fn class_implicit_default_constructor() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -7266,7 +7266,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Implicit default constructor should work: {:?}", result.errors);
@@ -7276,7 +7276,7 @@ mod tests {
 
     #[test]
     fn binary_arithmetic_on_non_numeric_error() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -7289,7 +7289,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(!result.errors.is_empty(), "Arithmetic on non-numeric types should error");
@@ -7297,7 +7297,7 @@ mod tests {
 
     #[test]
     fn binary_bitwise_on_float_error() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -7310,7 +7310,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(!result.errors.is_empty(), "Bitwise on float types should error");
@@ -7318,7 +7318,7 @@ mod tests {
 
     #[test]
     fn logical_operator_on_int_error() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -7331,7 +7331,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(!result.errors.is_empty(), "Logical operators on int should error");
@@ -7341,7 +7341,7 @@ mod tests {
 
     #[test]
     fn protected_field_access_from_derived() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -7358,7 +7358,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Protected access from derived should work: {:?}", result.errors);
@@ -7368,7 +7368,7 @@ mod tests {
 
     #[test]
     fn funcdef_handle_null_assignment() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -7381,7 +7381,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Funcdef handle null assignment should work: {:?}", result.errors);
@@ -7391,7 +7391,7 @@ mod tests {
 
     #[test]
     fn ternary_type_promotion_int_double() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -7403,7 +7403,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Ternary type promotion should work: {:?}", result.errors);
@@ -7413,7 +7413,7 @@ mod tests {
 
     #[test]
     fn compound_modulo_assignment() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -7425,7 +7425,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Compound modulo assignment should work: {:?}", result.errors);
@@ -7433,7 +7433,7 @@ mod tests {
 
     #[test]
     fn compound_power_assignment() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -7445,7 +7445,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Compound power assignment should work: {:?}", result.errors);
@@ -7455,7 +7455,7 @@ mod tests {
 
     #[test]
     fn method_call_on_handle() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -7473,7 +7473,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         // Exercises method call on handle
@@ -7484,7 +7484,7 @@ mod tests {
 
     #[test]
     fn bitwise_not_on_uint64() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -7496,7 +7496,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Bitwise not on int64 should work: {:?}", result.errors);
@@ -7504,7 +7504,7 @@ mod tests {
 
     #[test]
     fn prefix_increment_on_field() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -7519,7 +7519,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Prefix increment on field should work: {:?}", result.errors);
@@ -7529,7 +7529,7 @@ mod tests {
 
     #[test]
     fn break_in_do_while() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -7544,7 +7544,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Break in do-while should work: {:?}", result.errors);
@@ -7552,7 +7552,7 @@ mod tests {
 
     #[test]
     fn continue_in_for() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -7567,7 +7567,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Continue in for should work: {:?}", result.errors);
@@ -7577,7 +7577,7 @@ mod tests {
 
     #[test]
     fn return_int_from_float_function() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -7588,7 +7588,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Return int from float function should work: {:?}", result.errors);
@@ -7598,7 +7598,7 @@ mod tests {
 
     #[test]
     fn deeply_nested_if() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -7616,7 +7616,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Deeply nested if should work: {:?}", result.errors);
@@ -7626,7 +7626,7 @@ mod tests {
 
     #[test]
     fn switch_on_enum() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -7651,7 +7651,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Switch on enum should work: {:?}", result.errors);
@@ -7661,7 +7661,7 @@ mod tests {
 
     #[test]
     fn multiple_variable_init_same_statement() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -7673,7 +7673,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Multiple variable init should work: {:?}", result.errors);
@@ -7683,7 +7683,7 @@ mod tests {
 
     #[test]
     fn class_method_this_member_access() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -7702,7 +7702,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Explicit this member access should work: {:?}", result.errors);
@@ -7712,7 +7712,7 @@ mod tests {
 
     #[test]
     fn super_call_in_foreach() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -7729,7 +7729,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Super call should work: {:?}", result.errors);
@@ -7737,7 +7737,7 @@ mod tests {
 
     #[test]
     fn super_call_in_for_update() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -7756,7 +7756,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "For loop with super should work: {:?}", result.errors);
@@ -7764,7 +7764,7 @@ mod tests {
 
     #[test]
     fn super_call_in_lambda_body() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -7781,7 +7781,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Super in derived constructor should work: {:?}", result.errors);
@@ -7791,7 +7791,7 @@ mod tests {
 
     #[test]
     fn local_variable_shadowing() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -7805,7 +7805,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Local variable shadowing should work: {:?}", result.errors);
@@ -7813,7 +7813,7 @@ mod tests {
 
     #[test]
     fn nested_block_scoping() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -7829,7 +7829,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Nested block scoping should work: {:?}", result.errors);
@@ -7839,7 +7839,7 @@ mod tests {
 
     #[test]
     fn method_override_in_derived() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -7854,7 +7854,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Method override should work: {:?}", result.errors);
@@ -7864,7 +7864,7 @@ mod tests {
 
     #[test]
     fn function_early_return() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -7878,7 +7878,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Early return should work: {:?}", result.errors);
@@ -7886,7 +7886,7 @@ mod tests {
 
     #[test]
     fn void_function_explicit_return() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -7900,7 +7900,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Void function with explicit return should work: {:?}", result.errors);
@@ -7910,7 +7910,7 @@ mod tests {
 
     #[test]
     fn postfix_on_member() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -7926,7 +7926,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Postfix on member should work: {:?}", result.errors);
@@ -7936,7 +7936,7 @@ mod tests {
 
     #[test]
     fn field_initializer_with_expression() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -7948,7 +7948,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Field initializers with expressions should work: {:?}", result.errors);
@@ -7958,7 +7958,7 @@ mod tests {
 
     #[test]
     fn while_complex_condition() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -7974,7 +7974,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "While with complex condition should work: {:?}", result.errors);
@@ -7984,7 +7984,7 @@ mod tests {
 
     #[test]
     fn explicit_cast_expression() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -7996,7 +7996,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Explicit cast should work: {:?}", result.errors);
@@ -8004,7 +8004,7 @@ mod tests {
 
     #[test]
     fn cast_between_numeric_types() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -8018,7 +8018,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Cast between numeric types should work: {:?}", result.errors);
@@ -8028,7 +8028,7 @@ mod tests {
 
     #[test]
     fn expression_statement_call() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -8041,7 +8041,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Expression statement call should work: {:?}", result.errors);
@@ -8051,7 +8051,7 @@ mod tests {
 
     #[test]
     fn multiple_arguments_function_call() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -8066,7 +8066,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Multiple arguments should work: {:?}", result.errors);
@@ -8076,7 +8076,7 @@ mod tests {
 
     #[test]
     fn class_implements_multiple_interfaces() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -8096,7 +8096,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Multiple interface implementation should work: {:?}", result.errors);
@@ -8106,7 +8106,7 @@ mod tests {
 
     #[test]
     fn negative_literal_in_expression() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -8119,7 +8119,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Negative literals should work: {:?}", result.errors);
@@ -8129,7 +8129,7 @@ mod tests {
 
     #[test]
     fn chained_method_calls() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -8147,7 +8147,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         // Exercises chained method call path
@@ -8158,7 +8158,7 @@ mod tests {
 
     #[test]
     fn shift_operations_all_directions() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -8172,7 +8172,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "All shift operations should work: {:?}", result.errors);
@@ -8182,7 +8182,7 @@ mod tests {
 
     #[test]
     fn for_loop_no_init() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -8196,7 +8196,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "For loop with no init should work: {:?}", result.errors);
@@ -8204,7 +8204,7 @@ mod tests {
 
     #[test]
     fn for_loop_no_update() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -8217,7 +8217,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "For loop with no update should work: {:?}", result.errors);
@@ -8227,7 +8227,7 @@ mod tests {
 
     #[test]
     fn ternary_incompatible_types_error() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -8244,7 +8244,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         // This just exercises the compilation, not testing specific error
@@ -8255,7 +8255,7 @@ mod tests {
 
     #[test]
     fn nested_loop_control_flow() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -8272,7 +8272,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Nested loop control flow should work: {:?}", result.errors);
@@ -8282,7 +8282,7 @@ mod tests {
 
     #[test]
     fn static_method_in_class() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -8293,7 +8293,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Class with methods should work: {:?}", result.errors);
@@ -8303,7 +8303,7 @@ mod tests {
 
     #[test]
     fn complex_boolean_expression() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -8317,7 +8317,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Complex boolean expression should work: {:?}", result.errors);
@@ -8327,7 +8327,7 @@ mod tests {
 
     #[test]
     fn deeply_parenthesized() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -8338,7 +8338,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Deeply parenthesized expression should work: {:?}", result.errors);
@@ -8348,7 +8348,7 @@ mod tests {
 
     #[test]
     fn handle_null_equality() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -8362,7 +8362,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         // Exercises handle null comparison
@@ -8373,7 +8373,7 @@ mod tests {
 
     #[test]
     fn mixed_type_arithmetic() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -8387,7 +8387,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Mixed type arithmetic should work: {:?}", result.errors);
@@ -8397,7 +8397,7 @@ mod tests {
 
     #[test]
     fn try_catch_with_function_call() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -8416,7 +8416,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Try-catch with function call should work: {:?}", result.errors);
@@ -8424,7 +8424,7 @@ mod tests {
 
     #[test]
     fn try_catch_with_loop() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -8442,7 +8442,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Try-catch with loop should work: {:?}", result.errors);
@@ -8452,7 +8452,7 @@ mod tests {
 
     #[test]
     fn do_while_nested_loops() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -8470,7 +8470,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Nested do-while should work: {:?}", result.errors);
@@ -8478,7 +8478,7 @@ mod tests {
 
     #[test]
     fn do_while_complex_condition() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -8494,7 +8494,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Do-while with complex condition should work: {:?}", result.errors);
@@ -8502,7 +8502,7 @@ mod tests {
 
     #[test]
     fn do_while_expression_body() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -8518,7 +8518,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Do-while with expression body should work: {:?}", result.errors);
@@ -8528,7 +8528,7 @@ mod tests {
 
     #[test]
     fn lambda_capture_local_variable() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -8542,7 +8542,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Lambda capturing local variable should work: {:?}", result.errors);
@@ -8550,7 +8550,7 @@ mod tests {
 
     #[test]
     fn lambda_multiple_captures() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -8565,7 +8565,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Lambda with multiple captures should work: {:?}", result.errors);
@@ -8575,7 +8575,7 @@ mod tests {
 
     #[test]
     fn class_with_op_call() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -8597,7 +8597,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Class with opCall should work: {:?}", result.errors);
@@ -8605,7 +8605,7 @@ mod tests {
 
     #[test]
     fn op_call_wrong_arg_count_error() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -8623,7 +8623,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(!result.is_success(), "opCall with wrong arg count should fail");
@@ -8633,7 +8633,7 @@ mod tests {
 
     #[test]
     fn constructor_with_field_initializers() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -8652,7 +8652,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Constructor with field initializers should work: {:?}", result.errors);
@@ -8660,7 +8660,7 @@ mod tests {
 
     #[test]
     fn constructor_with_complex_field_initializers() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -8678,7 +8678,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Constructor with complex field initializers should work: {:?}", result.errors);
@@ -8688,7 +8688,7 @@ mod tests {
 
     #[test]
     fn function_with_default_params() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -8704,7 +8704,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Function with default params should work: {:?}", result.errors);
@@ -8712,7 +8712,7 @@ mod tests {
 
     #[test]
     fn function_multiple_default_params() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -8729,7 +8729,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Function with multiple default params should work: {:?}", result.errors);
@@ -8739,7 +8739,7 @@ mod tests {
 
     #[test]
     fn overload_resolution_exact_match() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -8756,7 +8756,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Overload resolution with exact match should work: {:?}", result.errors);
@@ -8764,7 +8764,7 @@ mod tests {
 
     #[test]
     fn overload_resolution_with_conversion() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -8779,7 +8779,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Overload resolution with conversion should work: {:?}", result.errors);
@@ -8789,7 +8789,7 @@ mod tests {
 
     #[test]
     fn protected_member_from_non_derived_error() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -8807,7 +8807,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(!result.is_success(), "Protected access from non-derived class should fail");
@@ -8817,7 +8817,7 @@ mod tests {
 
     #[test]
     fn absolute_scope_type_reference() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -8832,7 +8832,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Absolute scope type reference should work: {:?}", result.errors);
@@ -8842,7 +8842,7 @@ mod tests {
 
     #[test]
     fn void_in_binary_operation_error() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -8855,7 +8855,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(!result.is_success(), "Void in binary operation should fail");
@@ -8863,7 +8863,7 @@ mod tests {
 
     #[test]
     fn void_as_function_argument_error() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -8877,7 +8877,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(!result.is_success(), "Void as function argument should fail");
@@ -8887,7 +8887,7 @@ mod tests {
 
     #[test]
     fn index_type_mismatch_error() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -8903,7 +8903,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(!result.is_success(), "Index with wrong type should fail");
@@ -8913,7 +8913,7 @@ mod tests {
 
     #[test]
     fn derived_to_base_handle_assignment() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -8928,7 +8928,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Derived to base handle assignment should work: {:?}", result.errors);
@@ -8938,7 +8938,7 @@ mod tests {
 
     #[test]
     fn out_param_requires_lvalue_error() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -8953,7 +8953,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(!result.is_success(), "Passing rvalue to &out parameter should fail");
@@ -8961,7 +8961,7 @@ mod tests {
 
     #[test]
     fn inout_param_requires_mutable_lvalue_error() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -8977,7 +8977,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(!result.is_success(), "Passing const lvalue to &inout parameter should fail");
@@ -8985,7 +8985,7 @@ mod tests {
 
     #[test]
     fn ref_in_param_accepts_rvalue() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -9001,7 +9001,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "&in should accept rvalue: {:?}", result.errors);
@@ -9009,7 +9009,7 @@ mod tests {
 
     #[test]
     fn ref_in_param_accepts_lvalue() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -9025,7 +9025,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "&in should accept lvalue: {:?}", result.errors);
@@ -9033,7 +9033,7 @@ mod tests {
 
     #[test]
     fn ref_out_param_accepts_mutable_lvalue() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -9049,7 +9049,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "&out should accept mutable lvalue: {:?}", result.errors);
@@ -9057,7 +9057,7 @@ mod tests {
 
     #[test]
     fn ref_out_param_rejects_const_lvalue() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -9073,7 +9073,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(!result.is_success(), "&out should reject const lvalue");
@@ -9081,7 +9081,7 @@ mod tests {
 
     #[test]
     fn ref_inout_param_accepts_mutable_lvalue() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -9097,7 +9097,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "&inout should accept mutable lvalue: {:?}", result.errors);
@@ -9105,7 +9105,7 @@ mod tests {
 
     #[test]
     fn ref_inout_param_rejects_rvalue() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -9120,7 +9120,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(!result.is_success(), "&inout should reject rvalue");
@@ -9128,7 +9128,7 @@ mod tests {
 
     #[test]
     fn bare_ref_param_treated_as_inout() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -9144,7 +9144,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "bare & should accept mutable lvalue (like &inout): {:?}", result.errors);
@@ -9152,7 +9152,7 @@ mod tests {
 
     #[test]
     fn bare_ref_param_rejects_rvalue() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -9167,7 +9167,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(!result.is_success(), "bare & should reject rvalue (like &inout)");
@@ -9177,7 +9177,7 @@ mod tests {
 
     #[test]
     fn init_list_with_floats() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -9188,7 +9188,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         // Exercise float init list type inference
@@ -9197,7 +9197,7 @@ mod tests {
 
     #[test]
     fn init_list_mixed_numeric_types() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -9208,7 +9208,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         // Exercise mixed numeric init list type inference - should promote
@@ -9219,7 +9219,7 @@ mod tests {
 
     #[test]
     fn handle_reference_operator() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -9235,7 +9235,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Handle reference operator should work: {:?}", result.errors);
@@ -9245,7 +9245,7 @@ mod tests {
 
     #[test]
     fn int8_operations() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -9258,7 +9258,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         // Exercise int8 operations
@@ -9267,7 +9267,7 @@ mod tests {
 
     #[test]
     fn uint64_operations() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -9280,7 +9280,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         // Exercise uint64 operations
@@ -9291,7 +9291,7 @@ mod tests {
 
     #[test]
     fn lambda_explicit_param_type_mismatch_error() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -9304,7 +9304,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(!result.is_success(), "Lambda with wrong param type should fail");
@@ -9312,7 +9312,7 @@ mod tests {
 
     #[test]
     fn lambda_param_count_mismatch_error() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -9325,7 +9325,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(!result.is_success(), "Lambda with wrong param count should fail");
@@ -9335,7 +9335,7 @@ mod tests {
 
     #[test]
     fn method_call_on_handle_member() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -9355,7 +9355,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         // This exercises chained member access on handles
@@ -9366,7 +9366,7 @@ mod tests {
 
     #[test]
     fn namespace_function_and_enum() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -9383,7 +9383,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Namespace with function and enum should work: {:?}", result.errors);
@@ -9393,7 +9393,7 @@ mod tests {
 
     #[test]
     fn reverse_binary_operator() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -9423,7 +9423,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         // This exercises reverse operator lookup
@@ -9434,7 +9434,7 @@ mod tests {
 
     #[test]
     fn not_callable_error() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -9448,7 +9448,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(!result.is_success(), "Calling non-callable should fail");
@@ -9458,7 +9458,7 @@ mod tests {
 
     #[test]
     fn undefined_function_error() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -9469,7 +9469,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(!result.is_success(), "Calling undefined function should fail");
@@ -9480,7 +9480,7 @@ mod tests {
 
     #[test]
     fn constructor_no_constructors_error() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -9495,7 +9495,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         // This tests constructor overload resolution failure
@@ -9506,7 +9506,7 @@ mod tests {
 
     #[test]
     fn class_with_get_op_index() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -9524,7 +9524,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Class with get_opIndex should work: {:?}", result.errors);
@@ -9534,7 +9534,7 @@ mod tests {
 
     #[test]
     fn while_non_boolean_condition_error() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -9547,7 +9547,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(!result.is_success(), "While with non-boolean condition should fail");
@@ -9557,7 +9557,7 @@ mod tests {
 
     #[test]
     fn if_non_boolean_condition_error() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -9570,7 +9570,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(!result.is_success(), "If with non-boolean condition should fail");
@@ -9580,7 +9580,7 @@ mod tests {
 
     #[test]
     fn funcdef_call_through_field() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -9601,7 +9601,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         // This exercises funcdef call through member expression
@@ -9612,7 +9612,7 @@ mod tests {
 
     #[test]
     fn super_not_class_type_error() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -9623,7 +9623,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(!result.is_success(), "Super outside class should fail");
@@ -9633,7 +9633,7 @@ mod tests {
 
     #[test]
     fn funcdef_return_void_to_int_error() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -9648,7 +9648,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(!result.is_success(), "Funcdef with wrong return type should fail");
@@ -9658,7 +9658,7 @@ mod tests {
 
     #[test]
     fn class_with_destructor() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -9676,7 +9676,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Class with destructor should work: {:?}", result.errors);
@@ -9686,7 +9686,7 @@ mod tests {
 
     #[test]
     fn short_circuit_and() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -9699,7 +9699,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Short-circuit AND should work: {:?}", result.errors);
@@ -9707,7 +9707,7 @@ mod tests {
 
     #[test]
     fn short_circuit_or() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -9720,7 +9720,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Short-circuit OR should work: {:?}", result.errors);
@@ -9730,7 +9730,7 @@ mod tests {
 
     #[test]
     fn double_float_promotion() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -9743,7 +9743,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Float to double promotion should work: {:?}", result.errors);
@@ -9753,7 +9753,7 @@ mod tests {
 
     #[test]
     fn property_set_without_setter_error() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -9769,7 +9769,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(!result.is_success(), "Setting property without setter should fail");
@@ -9779,7 +9779,7 @@ mod tests {
 
     #[test]
     fn return_wrong_type_error() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -9790,7 +9790,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(!result.is_success(), "Return wrong type should fail");
@@ -9800,7 +9800,7 @@ mod tests {
 
     #[test]
     fn string_index_works() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -9812,7 +9812,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         // String indexing should work with built-in opIndex
@@ -9823,7 +9823,7 @@ mod tests {
 
     #[test]
     fn nested_init_list() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -9834,7 +9834,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         // This exercises nested init list handling
@@ -9845,7 +9845,7 @@ mod tests {
 
     #[test]
     fn double_negation() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -9858,7 +9858,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Double negation should work: {:?}", result.errors);
@@ -9868,7 +9868,7 @@ mod tests {
 
     #[test]
     fn absolute_scope_enum_value() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -9883,7 +9883,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Absolute scope enum value should work: {:?}", result.errors);
@@ -9893,7 +9893,7 @@ mod tests {
 
     #[test]
     fn switch_duplicate_case_error() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -9909,7 +9909,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(!result.is_success(), "Duplicate case values should fail");
@@ -9917,7 +9917,7 @@ mod tests {
 
     #[test]
     fn switch_multiple_defaults_error() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -9933,7 +9933,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(!result.is_success(), "Duplicate default cases should fail");
@@ -9941,7 +9941,7 @@ mod tests {
 
     #[test]
     fn switch_case_type_mismatch_error() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -9955,7 +9955,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(!result.is_success(), "Switch case type mismatch should fail");
@@ -9963,7 +9963,7 @@ mod tests {
 
     #[test]
     fn switch_fallthrough_cases() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -9984,7 +9984,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Switch fallthrough should work: {:?}", result.errors);
@@ -9994,7 +9994,7 @@ mod tests {
 
     #[test]
     fn int8_to_float_conversion() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -10006,7 +10006,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "int8 to float conversion should work: {:?}", result.errors);
@@ -10014,7 +10014,7 @@ mod tests {
 
     #[test]
     fn uint8_to_double_conversion() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -10026,7 +10026,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "uint8 to double conversion should work: {:?}", result.errors);
@@ -10034,7 +10034,7 @@ mod tests {
 
     #[test]
     fn int16_to_int32_widening() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -10046,7 +10046,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "int16 to int32 widening should work: {:?}", result.errors);
@@ -10054,7 +10054,7 @@ mod tests {
 
     #[test]
     fn uint16_to_uint32_widening() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -10066,7 +10066,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "uint16 to uint32 widening should work: {:?}", result.errors);
@@ -10076,7 +10076,7 @@ mod tests {
 
     #[test]
     fn foreach_over_array() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -10090,7 +10090,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         // May or may not work depending on array implementation
@@ -10101,7 +10101,7 @@ mod tests {
 
     #[test]
     fn compound_bitwise_and_assignment() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -10113,7 +10113,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Bitwise AND assignment should work: {:?}", result.errors);
@@ -10121,7 +10121,7 @@ mod tests {
 
     #[test]
     fn compound_bitwise_or_assignment() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -10133,7 +10133,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Bitwise OR assignment should work: {:?}", result.errors);
@@ -10141,7 +10141,7 @@ mod tests {
 
     #[test]
     fn compound_bitwise_xor_assignment() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -10153,7 +10153,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Bitwise XOR assignment should work: {:?}", result.errors);
@@ -10161,7 +10161,7 @@ mod tests {
 
     #[test]
     fn compound_left_shift_assignment() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -10173,7 +10173,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Left shift assignment should work: {:?}", result.errors);
@@ -10181,7 +10181,7 @@ mod tests {
 
     #[test]
     fn compound_right_shift_assignment() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -10193,7 +10193,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Right shift assignment should work: {:?}", result.errors);
@@ -10203,7 +10203,7 @@ mod tests {
 
     #[test]
     fn member_access_chain_three_levels() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -10227,7 +10227,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Three-level member access should work: {:?}", result.errors);
@@ -10235,7 +10235,7 @@ mod tests {
 
     #[test]
     fn member_assignment_chain() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -10255,7 +10255,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Chained member assignment should work: {:?}", result.errors);
@@ -10265,7 +10265,7 @@ mod tests {
 
     #[test]
     fn this_in_constructor() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -10284,7 +10284,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "This in constructor should work: {:?}", result.errors);
@@ -10292,7 +10292,7 @@ mod tests {
 
     #[test]
     fn this_outside_class_context_error() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -10303,7 +10303,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(!result.is_success(), "This outside class should fail");
@@ -10313,7 +10313,7 @@ mod tests {
 
     #[test]
     fn explicit_cast_float_to_int() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -10325,7 +10325,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Explicit cast float to int should work: {:?}", result.errors);
@@ -10333,7 +10333,7 @@ mod tests {
 
     #[test]
     fn explicit_cast_int_to_int8() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -10345,7 +10345,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Explicit narrowing cast should work: {:?}", result.errors);
@@ -10355,7 +10355,7 @@ mod tests {
 
     #[test]
     fn array_constructor() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -10366,7 +10366,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         // May or may not work depending on array implementation
@@ -10377,7 +10377,7 @@ mod tests {
 
     #[test]
     fn class_with_mixin() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -10397,7 +10397,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         // May or may not work depending on mixin implementation
@@ -10408,7 +10408,7 @@ mod tests {
 
     #[test]
     fn auto_with_function_call() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -10421,7 +10421,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Auto with function call should work: {:?}", result.errors);
@@ -10429,7 +10429,7 @@ mod tests {
 
     #[test]
     fn auto_with_complex_expression() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -10442,7 +10442,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Auto with complex expression should work: {:?}", result.errors);
@@ -10450,7 +10450,7 @@ mod tests {
 
     #[test]
     fn auto_with_const() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -10461,7 +10461,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Const auto should work: {:?}", result.errors);
@@ -10469,7 +10469,7 @@ mod tests {
 
     #[test]
     fn auto_with_handle() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -10483,7 +10483,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Auto with handle should work: {:?}", result.errors);
@@ -10491,7 +10491,7 @@ mod tests {
 
     #[test]
     fn auto_without_initializer_error() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -10502,7 +10502,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(!result.is_success(), "Auto without initializer should fail");
@@ -10512,7 +10512,7 @@ mod tests {
 
     #[test]
     fn auto_with_void_error() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -10525,7 +10525,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(!result.is_success(), "Auto with void expression should fail");
@@ -10537,7 +10537,7 @@ mod tests {
 
     #[test]
     fn not_on_bool_expression() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -10550,7 +10550,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Not on comparison expression should work: {:?}", result.errors);
@@ -10558,7 +10558,7 @@ mod tests {
 
     #[test]
     fn multiple_unary_operators() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -10570,7 +10570,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Double not operator should work: {:?}", result.errors);
@@ -10581,7 +10581,7 @@ mod tests {
     // Property accessor using explicit method syntax with 'property' keyword
     #[test]
     fn property_getter_only() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -10599,7 +10599,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Property getter should work: {:?}", result.errors);
@@ -10608,7 +10608,7 @@ mod tests {
     // Property accessor using explicit method syntax with 'property' keyword
     #[test]
     fn property_getter_and_setter() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -10628,7 +10628,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Property getter and setter should work: {:?}", result.errors);
@@ -10637,7 +10637,7 @@ mod tests {
     // Property accessor using virtual property block syntax
     #[test]
     fn property_virtual_block_syntax() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -10659,7 +10659,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Virtual property block syntax should work: {:?}", result.errors);
@@ -10668,7 +10668,7 @@ mod tests {
     // Property accessor - read-only virtual property
     #[test]
     fn property_read_only_virtual() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -10688,7 +10688,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Read-only virtual property should work: {:?}", result.errors);
@@ -10698,7 +10698,7 @@ mod tests {
 
     #[test]
     fn int32_to_int8_narrowing() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -10710,7 +10710,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "int32 to int8 narrowing should work: {:?}", result.errors);
@@ -10718,7 +10718,7 @@ mod tests {
 
     #[test]
     fn int64_to_int16_narrowing() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -10730,7 +10730,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "int64 to int16 narrowing should work: {:?}", result.errors);
@@ -10738,7 +10738,7 @@ mod tests {
 
     #[test]
     fn uint32_to_uint8_narrowing() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -10750,7 +10750,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "uint32 to uint8 narrowing should work: {:?}", result.errors);
@@ -10760,7 +10760,7 @@ mod tests {
 
     #[test]
     fn interface_implementation() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -10780,7 +10780,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Interface implementation should work: {:?}", result.errors);
@@ -10790,7 +10790,7 @@ mod tests {
 
     #[test]
     fn static_method_invocation() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -10808,7 +10808,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         // May or may not work depending on static method implementation
@@ -10819,7 +10819,7 @@ mod tests {
 
     #[test]
     fn class_with_const_field() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -10837,7 +10837,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         // May or may not work depending on const field implementation
@@ -10848,7 +10848,7 @@ mod tests {
 
     #[test]
     fn final_class() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -10864,7 +10864,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Final class should work: {:?}", result.errors);
@@ -10874,7 +10874,7 @@ mod tests {
 
     #[test]
     fn implicit_this_member_access() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -10894,7 +10894,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Implicit this member access should work: {:?}", result.errors);
@@ -10904,7 +10904,7 @@ mod tests {
 
     #[test]
     fn empty_void_function() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -10917,7 +10917,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Empty void function should work: {:?}", result.errors);
@@ -10927,7 +10927,7 @@ mod tests {
 
     #[test]
     fn nested_ternary() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -10939,7 +10939,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Nested ternary should work: {:?}", result.errors);
@@ -10949,7 +10949,7 @@ mod tests {
 
     #[test]
     fn for_loop_multiple_init_vars() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -10962,7 +10962,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         // May or may not work depending on comma expression support
@@ -10973,7 +10973,7 @@ mod tests {
 
     #[test]
     fn complex_boolean_and_or() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -10987,7 +10987,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Complex boolean logic should work: {:?}", result.errors);
@@ -10997,7 +10997,7 @@ mod tests {
 
     #[test]
     fn global_variable_read_and_write() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -11011,7 +11011,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Global variable access should work: {:?}", result.errors);
@@ -11021,7 +11021,7 @@ mod tests {
 
     #[test]
     fn double_to_float_conversion() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -11033,7 +11033,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "double to float conversion should work: {:?}", result.errors);
@@ -11041,7 +11041,7 @@ mod tests {
 
     #[test]
     fn float_to_double_conversion() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -11053,7 +11053,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "float to double conversion should work: {:?}", result.errors);
@@ -11063,7 +11063,7 @@ mod tests {
 
     #[test]
     fn const_handle_assignment() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -11079,7 +11079,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         // May or may not work depending on const handle implementation
@@ -11090,7 +11090,7 @@ mod tests {
 
     #[test]
     fn int8_to_int32_widening() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -11102,7 +11102,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "int8 to int32 widening should work: {:?}", result.errors);
@@ -11110,7 +11110,7 @@ mod tests {
 
     #[test]
     fn int8_to_int64_widening() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -11122,7 +11122,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "int8 to int64 widening should work: {:?}", result.errors);
@@ -11130,7 +11130,7 @@ mod tests {
 
     #[test]
     fn int16_to_int64_widening() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -11142,7 +11142,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "int16 to int64 widening should work: {:?}", result.errors);
@@ -11150,7 +11150,7 @@ mod tests {
 
     #[test]
     fn int64_to_int32_explicit_narrowing() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -11162,7 +11162,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "int64 to int32 explicit narrowing should work: {:?}", result.errors);
@@ -11170,7 +11170,7 @@ mod tests {
 
     #[test]
     fn int32_to_int16_explicit_narrowing() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -11182,7 +11182,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "int32 to int16 explicit narrowing should work: {:?}", result.errors);
@@ -11190,7 +11190,7 @@ mod tests {
 
     #[test]
     fn int16_to_int8_explicit_narrowing() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -11202,7 +11202,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "int16 to int8 explicit narrowing should work: {:?}", result.errors);
@@ -11212,7 +11212,7 @@ mod tests {
 
     #[test]
     fn int32_to_double_conversion() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -11224,7 +11224,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "int32 to double conversion should work: {:?}", result.errors);
@@ -11232,7 +11232,7 @@ mod tests {
 
     #[test]
     fn int64_to_double_conversion() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -11244,7 +11244,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "int64 to double conversion should work: {:?}", result.errors);
@@ -11252,7 +11252,7 @@ mod tests {
 
     #[test]
     fn float_to_int32_explicit_conversion() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -11264,7 +11264,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "float to int32 explicit conversion should work: {:?}", result.errors);
@@ -11272,7 +11272,7 @@ mod tests {
 
     #[test]
     fn double_to_int64_explicit_conversion() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -11284,7 +11284,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "double to int64 explicit conversion should work: {:?}", result.errors);
@@ -11294,7 +11294,7 @@ mod tests {
 
     #[test]
     fn less_than_with_conversion() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -11307,7 +11307,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Less than with conversion should work: {:?}", result.errors);
@@ -11315,7 +11315,7 @@ mod tests {
 
     #[test]
     fn greater_than_or_equal_with_conversion() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -11328,7 +11328,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Greater than or equal with conversion should work: {:?}", result.errors);
@@ -11338,7 +11338,7 @@ mod tests {
 
     #[test]
     fn method_returning_self() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -11363,7 +11363,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         // This tests method chaining with handle return
@@ -11374,7 +11374,7 @@ mod tests {
 
     #[test]
     fn deeply_nested_if_else() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -11397,7 +11397,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Deeply nested if-else should work: {:?}", result.errors);
@@ -11407,7 +11407,7 @@ mod tests {
 
     #[test]
     fn compound_assignment_on_field() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -11424,7 +11424,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Compound assignment on field should work: {:?}", result.errors);
@@ -11432,7 +11432,7 @@ mod tests {
 
     #[test]
     fn compound_subtraction_on_field() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -11449,7 +11449,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Compound subtraction on field should work: {:?}", result.errors);
@@ -11459,7 +11459,7 @@ mod tests {
 
     #[test]
     fn postfix_increment_in_array_index() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -11476,7 +11476,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         // This exercises postfix increment in index expression
@@ -11487,7 +11487,7 @@ mod tests {
 
     #[test]
     fn string_assignment() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -11499,7 +11499,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "String assignment should work: {:?}", result.errors);
@@ -11507,7 +11507,7 @@ mod tests {
 
     #[test]
     fn string_comparison() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -11520,7 +11520,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         // String comparison - may or may not work depending on string implementation
@@ -11531,7 +11531,7 @@ mod tests {
 
     #[test]
     fn function_with_multiple_returns() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -11550,7 +11550,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Function with multiple returns should work: {:?}", result.errors);
@@ -11560,7 +11560,7 @@ mod tests {
 
     #[test]
     fn virtual_method_override() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -11580,7 +11580,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Virtual method override should work: {:?}", result.errors);
@@ -11590,7 +11590,7 @@ mod tests {
 
     #[test]
     fn class_with_private_constructor_external_error() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -11605,7 +11605,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         // This tests private constructor access - may or may not fail
@@ -11616,7 +11616,7 @@ mod tests {
 
     #[test]
     fn compound_multiply_assignment() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -11628,7 +11628,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Compound multiply assignment should work: {:?}", result.errors);
@@ -11636,7 +11636,7 @@ mod tests {
 
     #[test]
     fn compound_divide_assignment() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -11648,7 +11648,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Compound divide assignment should work: {:?}", result.errors);
@@ -11658,7 +11658,7 @@ mod tests {
 
     #[test]
     fn float_arithmetic_operations() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -11674,7 +11674,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Float arithmetic operations should work: {:?}", result.errors);
@@ -11682,7 +11682,7 @@ mod tests {
 
     #[test]
     fn double_arithmetic_operations() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -11698,7 +11698,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Double arithmetic operations should work: {:?}", result.errors);
@@ -11708,7 +11708,7 @@ mod tests {
 
     #[test]
     fn arithmetic_expression_precedence() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -11723,7 +11723,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Arithmetic precedence should work: {:?}", result.errors);
@@ -11733,7 +11733,7 @@ mod tests {
 
     #[test]
     fn enum_with_explicit_values() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -11747,7 +11747,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Enum with explicit values should work: {:?}", result.errors);
@@ -11757,7 +11757,7 @@ mod tests {
 
     #[test]
     fn return_with_complex_expression() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -11772,7 +11772,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Return with complex expression should work: {:?}", result.errors);
@@ -11782,7 +11782,7 @@ mod tests {
 
     #[test]
     fn local_shadows_global() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -11796,7 +11796,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Local shadowing global should work: {:?}", result.errors);
@@ -11806,7 +11806,7 @@ mod tests {
 
     #[test]
     fn for_loop_complex_update() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -11820,7 +11820,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "For loop with complex update should work: {:?}", result.errors);
@@ -11830,7 +11830,7 @@ mod tests {
 
     #[test]
     fn prefix_decrement_in_loop() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -11844,7 +11844,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Prefix decrement in while loop should work: {:?}", result.errors);
@@ -11854,7 +11854,7 @@ mod tests {
 
     #[test]
     fn switch_on_bool() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -11871,7 +11871,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Bool switch should work: {:?}", result.errors);
@@ -11879,7 +11879,7 @@ mod tests {
 
     #[test]
     fn switch_on_bool_duplicate_error() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -11896,7 +11896,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(!result.errors.is_empty(), "Should detect duplicate bool case");
@@ -11906,7 +11906,7 @@ mod tests {
 
     #[test]
     fn switch_on_float() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -11923,7 +11923,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Float switch should work: {:?}", result.errors);
@@ -11931,7 +11931,7 @@ mod tests {
 
     #[test]
     fn switch_on_double() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -11948,7 +11948,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Double switch should work: {:?}", result.errors);
@@ -11956,7 +11956,7 @@ mod tests {
 
     #[test]
     fn switch_on_string() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -11975,7 +11975,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "String switch should work: {:?}", result.errors);
@@ -11983,7 +11983,7 @@ mod tests {
 
     #[test]
     fn switch_on_string_duplicate_error() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -12000,7 +12000,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(!result.errors.is_empty(), "Should detect duplicate string case");
@@ -12010,7 +12010,7 @@ mod tests {
 
     #[test]
     fn switch_on_handle_with_null() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -12028,7 +12028,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Handle switch with null case should work: {:?}", result.errors);
@@ -12036,7 +12036,7 @@ mod tests {
 
     #[test]
     fn switch_null_on_non_handle_error() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -12051,7 +12051,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(!result.errors.is_empty(), "Should error on null case for non-handle");
@@ -12061,7 +12061,7 @@ mod tests {
 
     #[test]
     fn switch_duplicate_null_error() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -12079,7 +12079,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(!result.errors.is_empty(), "Should detect duplicate null case");
@@ -12089,7 +12089,7 @@ mod tests {
 
     #[test]
     fn switch_type_pattern_matching() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -12119,7 +12119,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Type pattern matching in switch should work: {:?}", result.errors);
@@ -12127,7 +12127,7 @@ mod tests {
 
     #[test]
     fn switch_type_pattern_duplicate_error() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -12152,7 +12152,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(!result.errors.is_empty(), "Should detect duplicate type pattern");
@@ -12162,7 +12162,7 @@ mod tests {
 
     #[test]
     fn switch_type_pattern_with_null() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -12184,7 +12184,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Type pattern with null case should work: {:?}", result.errors);
@@ -12192,7 +12192,7 @@ mod tests {
 
     #[test]
     fn switch_interface_pattern() {
-        use crate::parse_lenient;
+        use crate::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -12218,7 +12218,7 @@ mod tests {
             }
         "#;
 
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
         let result = Compiler::compile(&script);
 
         assert!(result.is_success(), "Interface type pattern should work: {:?}", result.errors);

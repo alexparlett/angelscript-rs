@@ -434,6 +434,115 @@ impl_into_native_fn!(0: A0: a0, 1: A1: a1, 2: A2: a2, 3: A3: a3, 4: A4: a4, 5: A
 impl_into_native_fn!(0: A0: a0, 1: A1: a1, 2: A2: a2, 3: A3: a3, 4: A4: a4, 5: A5: a5, 6: A6: a6);
 impl_into_native_fn!(0: A0: a0, 1: A1: a1, 2: A2: a2, 3: A3: a3, 4: A4: a4, 5: A5: a5, 6: A6: a6, 7: A7: a7);
 
+// =============================================================================
+// Method-style trait (uses ThisRef<T> marker for disambiguation)
+// =============================================================================
+
+/// Marker type to indicate a method takes `&T` as self.
+/// This avoids impl conflicts with the regular IntoNativeFn implementations.
+pub struct ThisRef<T>(std::marker::PhantomData<T>);
+
+/// Marker type to indicate a method takes `&mut T` as self.
+pub struct ThisMut<T>(std::marker::PhantomData<T>);
+
+/// Implementation for methods taking `&T` (const self) with no other arguments.
+impl<F, T, Ret> IntoNativeFn<ThisRef<T>, Ret> for F
+where
+    F: Fn(&T) -> Ret + Send + Sync + 'static,
+    T: NativeType,
+    Ret: ToScript,
+{
+    fn into_native_fn(self) -> NativeFn {
+        NativeFn::new(move |ctx: &mut CallContext| {
+            let this: &T = ctx.this()?;
+            let result = (self)(this);
+            ctx.set_return(result).map_err(NativeError::from)
+        })
+    }
+}
+
+/// Implementation for methods taking `&mut T` (mutable self) with no other arguments.
+impl<F, T, Ret> IntoNativeFn<ThisMut<T>, Ret> for F
+where
+    F: Fn(&mut T) -> Ret + Send + Sync + 'static,
+    T: NativeType,
+    Ret: ToScript,
+{
+    fn into_native_fn(self) -> NativeFn {
+        NativeFn::new(move |ctx: &mut CallContext| {
+            let this: &mut T = ctx.this_mut()?;
+            let result = (self)(this);
+            ctx.set_return(result).map_err(NativeError::from)
+        })
+    }
+}
+
+// Macro for method-style implementations with additional arguments (const self)
+macro_rules! impl_method_into_native_fn {
+    ($($idx:tt : $T:ident : $var:ident),+) => {
+        impl<F, This, Ret, $($T),+> IntoNativeFn<(ThisRef<This>, $($T,)+), Ret> for F
+        where
+            F: Fn(&This, $($T),+) -> Ret + Send + Sync + 'static,
+            This: NativeType,
+            Ret: ToScript,
+            $($T: FromScript,)+
+        {
+            fn into_native_fn(self) -> NativeFn {
+                NativeFn::new(move |ctx: &mut CallContext| {
+                    $(
+                        let $var: $T = ctx.arg($idx)?;
+                    )+
+                    let this: &This = ctx.this()?;
+                    let result = (self)(this, $($var),+);
+                    ctx.set_return(result).map_err(NativeError::from)
+                })
+            }
+        }
+    };
+}
+
+// Macro for method-style implementations with additional arguments (mutable self)
+macro_rules! impl_method_mut_into_native_fn {
+    ($($idx:tt : $T:ident : $var:ident),+) => {
+        impl<F, This, Ret, $($T),+> IntoNativeFn<(ThisMut<This>, $($T,)+), Ret> for F
+        where
+            F: Fn(&mut This, $($T),+) -> Ret + Send + Sync + 'static,
+            This: NativeType,
+            Ret: ToScript,
+            $($T: FromScript,)+
+        {
+            fn into_native_fn(self) -> NativeFn {
+                NativeFn::new(move |ctx: &mut CallContext| {
+                    $(
+                        let $var: $T = ctx.arg($idx)?;
+                    )+
+                    let this: &mut This = ctx.this_mut()?;
+                    let result = (self)(this, $($var),+);
+                    ctx.set_return(result).map_err(NativeError::from)
+                })
+            }
+        }
+    };
+}
+
+// Generate method-style implementations for 1-7 additional arguments (const self)
+impl_method_into_native_fn!(0: A0: a0);
+impl_method_into_native_fn!(0: A0: a0, 1: A1: a1);
+impl_method_into_native_fn!(0: A0: a0, 1: A1: a1, 2: A2: a2);
+impl_method_into_native_fn!(0: A0: a0, 1: A1: a1, 2: A2: a2, 3: A3: a3);
+impl_method_into_native_fn!(0: A0: a0, 1: A1: a1, 2: A2: a2, 3: A3: a3, 4: A4: a4);
+impl_method_into_native_fn!(0: A0: a0, 1: A1: a1, 2: A2: a2, 3: A3: a3, 4: A4: a4, 5: A5: a5);
+impl_method_into_native_fn!(0: A0: a0, 1: A1: a1, 2: A2: a2, 3: A3: a3, 4: A4: a4, 5: A5: a5, 6: A6: a6);
+
+// Generate method-style implementations for 1-7 additional arguments (mutable self)
+impl_method_mut_into_native_fn!(0: A0: a0);
+impl_method_mut_into_native_fn!(0: A0: a0, 1: A1: a1);
+impl_method_mut_into_native_fn!(0: A0: a0, 1: A1: a1, 2: A2: a2);
+impl_method_mut_into_native_fn!(0: A0: a0, 1: A1: a1, 2: A2: a2, 3: A3: a3);
+impl_method_mut_into_native_fn!(0: A0: a0, 1: A1: a1, 2: A2: a2, 3: A3: a3, 4: A4: a4);
+impl_method_mut_into_native_fn!(0: A0: a0, 1: A1: a1, 2: A2: a2, 3: A3: a3, 4: A4: a4, 5: A5: a5);
+impl_method_mut_into_native_fn!(0: A0: a0, 1: A1: a1, 2: A2: a2, 3: A3: a3, 4: A4: a4, 5: A5: a5, 6: A6: a6);
+
 #[cfg(test)]
 mod tests {
     use super::*;
