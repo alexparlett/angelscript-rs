@@ -65,6 +65,7 @@ mod context;
 pub mod ffi;
 mod lexer;
 mod module;
+pub mod modules;
 pub mod semantic;
 pub mod codegen;
 mod unit;
@@ -159,3 +160,6 @@ pub use semantic::{
 
 // Re-export codegen types
 pub use codegen::{BytecodeEmitter, CompiledBytecode, Instruction};
+
+// Re-export built-in module types
+pub use modules::ScriptString;
