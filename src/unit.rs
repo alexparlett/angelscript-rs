@@ -6,9 +6,14 @@
 //! # Example
 //!
 //! ```ignore
-//! use angelscript::Unit;
+//! use angelscript::{Context, Unit};
+//! use std::sync::Arc;
 //!
-//! let mut unit = Unit::new();
+//! // Create a context with default modules
+//! let ctx = Arc::new(Context::with_default_modules().unwrap());
+//!
+//! // Create a unit from the context
+//! let mut unit = ctx.create_unit();
 //!
 //! // Add source files
 //! unit.add_source("player.as", r#"
@@ -31,22 +36,26 @@
 //! unit.call("main", &[])?;
 //! ```
 
+use crate::context::Context;
 use crate::semantic::{Compiler, CompiledModule, SemanticError};
 use crate::{Parser, ParseError};
 use bumpalo::Bump;
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 
 /// A compilation unit ready for execution.
 ///
 /// This is the main entry point for working with AngelScript. Users:
-/// 1. Create a unit with `Unit::new()`
+/// 1. Create a unit with `Context::create_unit()` or `Unit::new()`
 /// 2. Add source files with `add_source()`
 /// 3. Build the unit with `build()`
 /// 4. Execute functions with `call()`
 ///
 /// All parsing and compilation happens internally during `build()`.
-#[derive(Default)]
-pub struct Unit {
+pub struct Unit<'app> {
+    /// Reference to the context (if created via Context::create_unit)
+    context: Option<Arc<Context<'app>>>,
+
     /// Source files to compile (filename → source code)
     sources: HashMap<String, String>,
 
@@ -70,10 +79,38 @@ pub struct Unit {
     is_built: bool,
 }
 
-impl Unit {
-    /// Create a new empty compilation unit.
+impl Default for Unit<'_> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<'app> Unit<'app> {
+    /// Create a new empty compilation unit without a context.
+    ///
+    /// This unit will not have access to FFI modules. For access to
+    /// built-in types like string, array, and dictionary, use
+    /// `Context::create_unit()` instead.
     pub fn new() -> Self {
         Self {
+            context: None,
+            sources: HashMap::new(),
+            source_hashes: HashMap::new(),
+            dirty_files: HashSet::new(),
+            arena: None,
+            compiled: None,
+            // registry: None,
+            is_built: false,
+        }
+    }
+
+    /// Create a compilation unit with a context.
+    ///
+    /// The unit will have access to all modules installed in the context.
+    /// This is typically called via `Context::create_unit()`.
+    pub fn with_context(context: Arc<Context<'app>>) -> Self {
+        Self {
+            context: Some(context),
             sources: HashMap::new(),
             source_hashes: HashMap::new(),
             dirty_files: HashSet::new(),
@@ -254,11 +291,20 @@ impl Unit {
             return Err(BuildError::MultiFileNotSupported);
         }
 
-        // Compile the script(s)
+        // Get modules from context (if available)
+        let empty_modules: &[crate::Module<'_>] = &[];
+        let modules = self
+            .context
+            .as_ref()
+            .map(|ctx| ctx.modules())
+            .unwrap_or(empty_modules);
+
+        // Compile the script(s) with FFI modules
+        #[allow(deprecated)]
         let compilation_result = {
             if scripts.len() == 1 {
-                // Single file - use existing Compiler
-                Compiler::compile(&scripts[0].1)
+                // Single file - compile with modules from context
+                Compiler::compile_with_modules(&scripts[0].1, modules)
             } else {
                 // Multi-file - TODO: implement
                 todo!("Multi-file compilation not yet implemented")

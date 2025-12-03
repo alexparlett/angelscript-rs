@@ -148,7 +148,7 @@ pub use context::{Context, ContextError};
 
 // Backwards compatibility alias (deprecated)
 #[deprecated(since = "0.2.0", note = "Use `Unit` instead")]
-pub type ScriptModule = Unit;
+pub type ScriptModule<'app> = Unit<'app>;
 
 // Re-export semantic compiler (for advanced use cases)
 pub use semantic::Compiler;

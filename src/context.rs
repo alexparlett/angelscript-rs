@@ -7,22 +7,22 @@
 //!
 //! ```ignore
 //! use angelscript::{Context, Module};
+//! use std::sync::Arc;
 //!
-//! // Create a context
-//! let mut ctx = Context::new();
-//!
-//! // Create and install modules
-//! let mut math = Module::new(&["math"]);
-//! // ... register functions/types ...
-//! ctx.install(math);
+//! // Create a context with default modules (string, array, dict, math, std)
+//! let ctx = Arc::new(Context::with_default_modules().unwrap());
 //!
 //! // Create a compilation unit from the context
-//! let unit = ctx.create_unit();
+//! let mut unit = ctx.create_unit();
+//! unit.add_source("main.as", "void main() { print(\"hello\"); }").unwrap();
+//! unit.build().unwrap();
 //! ```
 
+use std::sync::Arc;
 use thiserror::Error;
 
-use crate::module::Module;
+use crate::module::{FfiModuleError, Module};
+use crate::modules::default_modules;
 use crate::unit::Unit;
 
 /// Execution context that owns installed modules.
@@ -53,10 +53,21 @@ impl<'app> Context<'app> {
     /// Create a context with default modules pre-installed.
     ///
     /// Default modules include:
-    /// - (none yet - will add built-in types like string, array in future tasks)
-    pub fn with_default_modules() -> Self {
-        // For now, same as new() - will add default modules in future tasks
-        Self::new()
+    /// - `std` - I/O functions (print, println, eprint, eprintln)
+    /// - `string` - String type and parsing/formatting functions
+    /// - `math` - Math constants and functions (sin, cos, sqrt, PI, etc.)
+    /// - `array` - Array template type (array<T>)
+    /// - `dictionary` - Dictionary template type (dictionary)
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if any default module fails to build.
+    pub fn with_default_modules() -> Result<Self, ContextError> {
+        let mut ctx = Self::new();
+        for module in default_modules().map_err(ContextError::ModuleBuildFailed)? {
+            ctx.install(module)?;
+        }
+        Ok(ctx)
     }
 
     /// Install a module into the context.
@@ -75,16 +86,8 @@ impl<'app> Context<'app> {
     /// ctx.install(math);
     /// ```
     pub fn install(&mut self, module: Module<'app>) -> Result<(), ContextError> {
-        // Check for namespace conflicts
-        let new_namespace = module.namespace();
-        for existing in &self.modules {
-            if existing.namespace() == new_namespace {
-                return Err(ContextError::DuplicateNamespace(
-                    new_namespace.join("::"),
-                ));
-            }
-        }
-
+        // Multiple modules can share the same namespace - they just contribute
+        // different items (functions, types, etc.) to that namespace
         self.modules.push(module);
         Ok(())
     }
@@ -108,16 +111,16 @@ impl<'app> Context<'app> {
     /// # Example
     ///
     /// ```ignore
-    /// let ctx = Context::with_default_modules();
+    /// use std::sync::Arc;
+    ///
+    /// let ctx = Arc::new(Context::with_default_modules()?);
     /// let mut unit = ctx.create_unit();
     ///
     /// unit.add_source("main.as", "void main() { }")?;
     /// unit.build()?;
     /// ```
-    pub fn create_unit(&self) -> Unit {
-        // For now, just create a basic unit
-        // In future tasks, we'll apply modules to the unit's registry
-        Unit::new()
+    pub fn create_unit(self: &Arc<Self>) -> Unit<'app> {
+        Unit::with_context(Arc::clone(self))
     }
 
     /// Get the total number of installed modules.
@@ -138,12 +141,8 @@ impl Default for Context<'_> {
 }
 
 /// Errors that can occur during context operations.
-#[derive(Debug, Clone, Error)]
+#[derive(Debug, Error)]
 pub enum ContextError {
-    /// Duplicate namespace
-    #[error("duplicate namespace: '{0}' is already installed")]
-    DuplicateNamespace(String),
-
     /// Module not found
     #[error("module not found: '{0}'")]
     ModuleNotFound(String),
@@ -151,6 +150,10 @@ pub enum ContextError {
     /// Failed to apply module to registry
     #[error("failed to apply module: {0}")]
     ApplyFailed(String),
+
+    /// Failed to build a default module
+    #[error("failed to build module: {0}")]
+    ModuleBuildFailed(#[from] FfiModuleError),
 }
 
 #[cfg(test)]
@@ -171,9 +174,9 @@ mod tests {
 
     #[test]
     fn context_with_default_modules() {
-        let ctx = Context::<'static>::with_default_modules();
-        // Currently no default modules
-        assert_eq!(ctx.module_count(), 0);
+        let ctx = Context::<'static>::with_default_modules().unwrap();
+        // Should have 5 default modules: std, string, math, array, dictionary
+        assert_eq!(ctx.module_count(), 5);
     }
 
     #[test]
@@ -198,13 +201,14 @@ mod tests {
     }
 
     #[test]
-    fn context_install_duplicate_namespace() {
+    fn context_install_same_namespace_allowed() {
+        // Multiple modules can contribute to the same namespace
         let mut ctx = Context::new();
 
         ctx.install(Module::new(&["math"])).unwrap();
-        let result = ctx.install(Module::new(&["math"]));
+        ctx.install(Module::new(&["math"])).unwrap();
 
-        assert!(matches!(result, Err(ContextError::DuplicateNamespace(_))));
+        assert_eq!(ctx.module_count(), 2);
     }
 
     #[test]
@@ -246,7 +250,7 @@ mod tests {
 
     #[test]
     fn context_create_unit() {
-        let ctx = Context::<'static>::new();
+        let ctx = Arc::new(Context::<'static>::new());
         let unit = ctx.create_unit();
 
         assert!(!unit.is_built());
@@ -280,10 +284,6 @@ mod tests {
 
     #[test]
     fn context_error_display() {
-        let err = ContextError::DuplicateNamespace("math".to_string());
-        assert!(err.to_string().contains("duplicate namespace"));
-        assert!(err.to_string().contains("math"));
-
         let err = ContextError::ModuleNotFound("foo".to_string());
         assert!(err.to_string().contains("module not found"));
 
