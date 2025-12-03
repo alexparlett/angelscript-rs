@@ -12,19 +12,17 @@
 //! # Built-in Modules
 //!
 //! - [`std_module`] - I/O functions (print, println, eprint, eprintln)
+//! - [`string_module`] - Parse and format functions (parseInt, formatInt, etc.)
 //! - [`math_module`] - Math constants and functions (sin, cos, sqrt, etc.)
-//! - [`string_module`] - String type and parse/format functions
 
 mod array;
 mod dict;
 mod math;
 mod std_io;
 mod string;
-mod string_ffi;
 
 pub use array::ScriptArray;
 pub use dict::ScriptDict;
 pub use math::math_module;
 pub use std_io::std_module;
-pub use string::ScriptString;
-pub use string_ffi::string_module;
+pub use string::{string_module, ScriptString};
