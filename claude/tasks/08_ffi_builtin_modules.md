@@ -1,8 +1,90 @@
 # Task 08: Built-in Modules
 
-**Status:** Not Started
+**Status:** In Progress (FFI Registration Complete)
 **Depends On:** Tasks 01-05, 07
 **Estimated Scope:** Implement standard library modules using FFI registration API
+
+---
+
+## Implementation Status
+
+### Completed ✅
+
+#### String Module (`src/modules/string.rs`)
+- **Type Registration**: ScriptString with value type semantics
+- **Operators**: opIndex, opAssign, opAdd, opEquals, opCmp, opAddAssign
+- **Methods (High Priority - All Complete)**:
+  - `length`, `isEmpty` (core size methods)
+  - `clear`, `substr`, `findFirst`, `findLast` (manipulation)
+  - `insert`, `erase` (modification)
+  - `startsWith`, `endsWith`, `contains` (predicates)
+- **Global Functions**: 15 parse/format functions (parseInt, parseUInt, parseFloat, formatInt, formatUInt, formatFloat, etc.)
+- **Calling Convention**: Native (`method_raw`, `operator_raw`) ✅
+
+#### Array Module (`src/modules/array.rs`)
+- **Type Registration**: ScriptArray with reference type semantics
+- **Behaviors**: addref, release, list_factory, template_callback
+- **Operators**: opIndex, opAssign, opEquals
+- **Methods (All Complete)**:
+  - Size: `length`, `isEmpty`, `capacity`, `clear`, `resize`, `reserve`, `shrinkToFit`
+  - Access: `first`, `last`
+  - Insertion: `insertAt`, `insertLast`, `insertFirst`
+  - Removal: `removeAt`, `removeLast`, `removeFirst`, `removeRange`, `popLast`
+  - Search: `find`, `findByRef`, `contains` ✅
+  - Ordering: `reverse`, `sortAsc`, `sortDesc`
+- **Calling Convention**: Native (`method_raw`, `operator_raw`) ✅
+
+#### Dictionary Module (`src/modules/dict.rs`)
+- **Type Registration**: ScriptDict with reference type semantics
+- **Behaviors**: addref, release, list_factory, template_callback
+- **Operators**: opIndex (mutable), opIndex (const) ✅
+- **Methods (All Complete)**:
+  - Size: `getSize`, `isEmpty`, `capacity`, `reserve`, `shrinkToFit`, `clear`
+  - Access: `set`, `exists`, `delete` ✅
+- **Calling Convention**: Native (`method_raw`, `operator_raw`) ✅
+
+### Remaining Work (Medium Priority)
+
+#### String Module - Medium Priority Methods
+| Method | Signature | Status |
+|--------|-----------|--------|
+| `capacity` | `uint capacity() const` | Not registered |
+| `reserve` | `void reserve(uint)` | Not registered |
+| `resize` | `void resize(uint)` | Not registered |
+| `findFirstOf` | `int findFirstOf(const string &in, uint start = 0) const` | Not registered |
+| `findLastOf` | `int findLastOf(const string &in, int start = -1) const` | Not registered |
+| `toLower` | `string toLower() const` | Not registered |
+| `toUpper` | `string toUpper() const` | Not registered |
+| `trim` | `string trim() const` | Not registered |
+| `replace` | `string replace(const string &in, const string &in) const` | Not registered |
+
+#### Array Module - Medium Priority Methods
+| Method | Signature | Status |
+|--------|-----------|--------|
+| `pop` | `T pop()` | Not registered (popLast exists but returns void) |
+| `count` | `uint count(const T &in) const` | Not registered |
+| `rfind` | `int rfind(const T &in) const` | Not registered |
+| `slice` | `array<T>@ slice(uint start, uint end) const` | Not registered |
+
+#### Dictionary Module - Medium Priority Methods
+| Method | Signature | Status |
+|--------|-----------|--------|
+| `get` | `bool get(const K &in, V &out) const` | Not registered (needs out parameter support) |
+| `getKeys` | `array<K>@ getKeys() const` | Not registered (needs template array creation) |
+| `getValues` | `array<V>@ getValues() const` | Not registered (needs template array creation) |
+
+### Not Started
+
+#### Math Module (`src/modules/math.rs`)
+- Specification complete in this document
+- Implementation not started
+- Lower priority - can be added when needed
+
+#### Std Module (`src/modules/std.rs`)
+- print, println, eprint, eprintln functions
+- Lower priority - test infrastructure may not need these
+
+---
 
 ---
 

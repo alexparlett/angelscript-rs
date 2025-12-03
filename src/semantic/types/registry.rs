@@ -30,7 +30,6 @@ use super::type_def::{
     UINT8_TYPE, UINT16_TYPE, UINT32_TYPE, UINT64_TYPE, FLOAT_TYPE, DOUBLE_TYPE,
     FIRST_USER_TYPE_ID,
 };
-use super::behaviors::TypeBehaviors;
 use crate::semantic::error::{SemanticError, SemanticErrorKind};
 use crate::lexer::Span;
 use crate::ast::expr::Expr;
@@ -1641,23 +1640,25 @@ impl<'ast> Registry<'ast> {
         self.register_type_at_id(type_def.id, typedef, &qualified_name);
 
         // Register behaviors for the class/template
-        self.import_behaviors(type_def.id, &type_def.behaviors, namespace)?;
+        self.import_behaviors(type_def, namespace)?;
 
         Ok(())
     }
 
     /// Import behaviors for a type and store them in Registry::behaviors.
+    /// Behaviors are stored directly on NativeTypeDef.
+    /// FunctionIds are taken from the NativeFn (assigned at FFI registration time).
     fn import_behaviors(
         &mut self,
-        type_id: TypeId,
-        ffi_behaviors: &crate::ffi::Behaviors,
+        type_def: &NativeTypeDef<'_>,
         namespace: &[String],
     ) -> Result<(), ImportError> {
+        let type_id = type_def.id;
         let mut type_behaviors = super::behaviors::TypeBehaviors::new();
 
         // Import list_factory behavior
-        if ffi_behaviors.has_list_factory() {
-            let func_id = FunctionId::next();
+        if let Some(ref list_factory) = type_def.list_factory {
+            let func_id = list_factory.native_fn.id;
             let func_def = FunctionDef {
                 id: func_id,
                 name: "$list_factory".to_string(),
@@ -1679,8 +1680,8 @@ impl<'ast> Registry<'ast> {
         }
 
         // Import list_construct behavior
-        if ffi_behaviors.has_list_construct() {
-            let func_id = FunctionId::next();
+        if let Some(ref list_construct) = type_def.list_construct {
+            let func_id = list_construct.native_fn.id;
             let func_def = FunctionDef {
                 id: func_id,
                 name: "$list_construct".to_string(),
@@ -1702,8 +1703,8 @@ impl<'ast> Registry<'ast> {
         }
 
         // Import addref behavior
-        if ffi_behaviors.has_addref() {
-            let func_id = FunctionId::next();
+        if let Some(ref addref) = type_def.addref {
+            let func_id = addref.id;
             let func_def = FunctionDef {
                 id: func_id,
                 name: "$addref".to_string(),
@@ -1722,8 +1723,8 @@ impl<'ast> Registry<'ast> {
         }
 
         // Import release behavior
-        if ffi_behaviors.has_release() {
-            let func_id = FunctionId::next();
+        if let Some(ref release) = type_def.release {
+            let func_id = release.id;
             let func_def = FunctionDef {
                 id: func_id,
                 name: "$release".to_string(),
@@ -1741,9 +1742,9 @@ impl<'ast> Registry<'ast> {
             type_behaviors.release = Some(func_id);
         }
 
-        // Import destruct behavior (if has_destruct method exists on ffi_behaviors)
-        if ffi_behaviors.destruct.is_some() {
-            let func_id = FunctionId::next();
+        // Import destruct behavior
+        if let Some(ref destruct) = type_def.destruct {
+            let func_id = destruct.id;
             let func_def = FunctionDef {
                 id: func_id,
                 name: "$destruct".to_string(),
@@ -1762,6 +1763,26 @@ impl<'ast> Registry<'ast> {
             };
             self.functions.insert(func_id, func_def);
             type_behaviors.destruct = Some(func_id);
+        }
+
+        // Import get_weakref_flag behavior
+        if let Some(ref get_weakref_flag) = type_def.get_weakref_flag {
+            let func_id = get_weakref_flag.id;
+            let func_def = FunctionDef {
+                id: func_id,
+                name: "$get_weakref_flag".to_string(),
+                namespace: namespace.to_vec(),
+                params: vec![],
+                return_type: DataType::simple(VOID_TYPE), // Actually returns weak ref flag, but we use void placeholder
+                object_type: Some(type_id),
+                traits: FunctionTraits::default(),
+                is_native: true,
+                default_args: Vec::new(),
+                visibility: Visibility::Public,
+                signature_filled: true,
+            };
+            self.functions.insert(func_id, func_def);
+            type_behaviors.get_weakref_flag = Some(func_id);
         }
 
         // Only store if we have any behaviors (or always store to allow adding constructors later)
@@ -1880,6 +1901,7 @@ impl<'ast> Registry<'ast> {
     /// Import a method and return its FunctionId.
     /// `template_context` is the qualified name of the owning template type (e.g., "array")
     /// so that template parameters like `T` can be resolved correctly.
+    /// FunctionId is taken from the NativeFn (assigned at FFI registration time).
     fn import_method(
         &mut self,
         method: &NativeMethodDef<'_>,
@@ -1889,7 +1911,7 @@ impl<'ast> Registry<'ast> {
         is_operator: bool,
         template_context: Option<&str>,
     ) -> Result<FunctionId, ImportError> {
-        let func_id = FunctionId::next();
+        let func_id = method.native_fn.id;
         let name = method.name.name.to_string();
 
         // Resolve parameter types
@@ -1944,6 +1966,7 @@ impl<'ast> Registry<'ast> {
     }
 
     /// Import a property with optional template context and return its PropertyAccessors.
+    /// FunctionIds are taken from the NativeFn (assigned at FFI registration time).
     fn import_property_with_template(
         &mut self,
         prop: &NativePropertyDef<'_>,
@@ -1954,8 +1977,8 @@ impl<'ast> Registry<'ast> {
         let prop_name = prop.name.name.to_string();
         let prop_type = self.resolve_ffi_type_expr_with_template(prop.ty, namespace, template_context)?;
 
-        // Create getter function
-        let getter_id = FunctionId::next();
+        // Create getter function (FunctionId from NativeFn)
+        let getter_id = prop.getter.id;
         let getter_name = format!("get_{}", prop_name);
         let getter_def = FunctionDef {
             id: getter_id,
@@ -1975,25 +1998,29 @@ impl<'ast> Registry<'ast> {
         };
         self.functions.insert(getter_id, getter_def);
 
-        // Create setter function if property is not const
-        let setter_id = if !prop.is_const && prop.setter.is_some() {
-            let setter_id = FunctionId::next();
-            let setter_name = format!("set_{}", prop_name);
-            let setter_def = FunctionDef {
-                id: setter_id,
-                name: setter_name,
-                namespace: namespace.to_vec(),
-                params: vec![prop_type],
-                return_type: DataType::simple(self.void_type),
-                object_type: Some(object_type),
-                traits: FunctionTraits::new(),
-                is_native: true,
-                default_args: Vec::new(),
-                visibility: Visibility::Public,
-                signature_filled: true,
-            };
-            self.functions.insert(setter_id, setter_def);
-            Some(setter_id)
+        // Create setter function if property is not const (FunctionId from NativeFn)
+        let setter_id = if !prop.is_const {
+            if let Some(ref setter) = prop.setter {
+                let setter_id = setter.id;
+                let setter_name = format!("set_{}", prop_name);
+                let setter_def = FunctionDef {
+                    id: setter_id,
+                    name: setter_name,
+                    namespace: namespace.to_vec(),
+                    params: vec![prop_type],
+                    return_type: DataType::simple(self.void_type),
+                    object_type: Some(object_type),
+                    traits: FunctionTraits::new(),
+                    is_native: true,
+                    default_args: Vec::new(),
+                    visibility: Visibility::Public,
+                    signature_filled: true,
+                };
+                self.functions.insert(setter_id, setter_def);
+                Some(setter_id)
+            } else {
+                None
+            }
         } else {
             None
         };
@@ -2006,11 +2033,13 @@ impl<'ast> Registry<'ast> {
     }
 
     /// Import a global function.
+    /// FunctionId is taken from the NativeFn (assigned at FFI registration time).
     fn import_function(
         &mut self,
         func_def: &NativeFunctionDef<'_>,
         namespace: &[String],
     ) -> Result<(), ImportError> {
+        let func_id = func_def.native_fn.id;
         let name = func_def.name.name.to_string();
         let qualified_name = self.build_qualified_name(&name, namespace);
 
@@ -2026,7 +2055,7 @@ impl<'ast> Registry<'ast> {
 
         // Create the FunctionDef
         let function_def = FunctionDef {
-            id: func_def.id,
+            id: func_id,
             name,
             namespace: namespace.to_vec(),
             params,
@@ -2040,11 +2069,11 @@ impl<'ast> Registry<'ast> {
         };
 
         // Register the function
-        self.functions.insert(func_def.id, function_def);
+        self.functions.insert(func_id, function_def);
         self.func_by_name
             .entry(qualified_name)
             .or_default()
-            .push(func_def.id);
+            .push(func_id);
 
         Ok(())
     }

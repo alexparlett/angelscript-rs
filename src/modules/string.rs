@@ -679,6 +679,81 @@ pub fn string_module<'app>() -> Result<Module<'app>, FfiModuleError> {
                 Ok(())
             },
         )?
+        .operator_raw(
+            "string &opAddAssign(const string &in other)",
+            |ctx: &mut crate::ffi::CallContext| {
+                // Get the other string argument
+                let other: String = ctx.arg(0)?;
+                let s: &mut ScriptString = ctx.this_mut()?;
+                s.push_str(&ScriptString::from(other));
+                Ok(())
+            },
+        )?
+        // === Modification methods ===
+        .method_raw("void clear()", |ctx: &mut crate::ffi::CallContext| {
+            let s: &mut ScriptString = ctx.this_mut()?;
+            s.clear();
+            Ok(())
+        })?
+        .method_raw("void insert(uint pos, const string &in str)", |ctx: &mut crate::ffi::CallContext| {
+            let pos: u32 = ctx.arg(0)?;
+            let str_val: String = ctx.arg(1)?;
+            let s: &mut ScriptString = ctx.this_mut()?;
+            s.insert(pos, &ScriptString::from(str_val));
+            Ok(())
+        })?
+        .method_raw("void erase(uint pos, int count = -1)", |ctx: &mut crate::ffi::CallContext| {
+            let pos: u32 = ctx.arg(0)?;
+            let count: i32 = ctx.arg(1)?;
+            let s: &mut ScriptString = ctx.this_mut()?;
+            s.erase(pos, count);
+            Ok(())
+        })?
+        // === Substring methods ===
+        .method_raw("string substr(uint start, int count = -1) const", |ctx: &mut crate::ffi::CallContext| {
+            let start: u32 = ctx.arg(0)?;
+            let count: i32 = ctx.arg(1)?;
+            let s: &ScriptString = ctx.this()?;
+            let result = s.substr(start, count);
+            ctx.set_return(result.into_inner())?;
+            Ok(())
+        })?
+        // === Search methods ===
+        .method_raw("int findFirst(const string &in str, uint start = 0) const", |ctx: &mut crate::ffi::CallContext| {
+            let str_val: String = ctx.arg(0)?;
+            let start: u32 = ctx.arg(1)?;
+            let s: &ScriptString = ctx.this()?;
+            let result = s.find_first(&ScriptString::from(str_val), start);
+            ctx.set_return(result as i64)?;
+            Ok(())
+        })?
+        .method_raw("int findLast(const string &in str, int start = -1) const", |ctx: &mut crate::ffi::CallContext| {
+            let str_val: String = ctx.arg(0)?;
+            let start: i32 = ctx.arg(1)?;
+            let s: &ScriptString = ctx.this()?;
+            let result = s.find_last(&ScriptString::from(str_val), start);
+            ctx.set_return(result as i64)?;
+            Ok(())
+        })?
+        // === Predicate methods ===
+        .method_raw("bool startsWith(const string &in str) const", |ctx: &mut crate::ffi::CallContext| {
+            let str_val: String = ctx.arg(0)?;
+            let s: &ScriptString = ctx.this()?;
+            ctx.set_return(s.starts_with(&ScriptString::from(str_val)))?;
+            Ok(())
+        })?
+        .method_raw("bool endsWith(const string &in str) const", |ctx: &mut crate::ffi::CallContext| {
+            let str_val: String = ctx.arg(0)?;
+            let s: &ScriptString = ctx.this()?;
+            ctx.set_return(s.ends_with(&ScriptString::from(str_val)))?;
+            Ok(())
+        })?
+        .method_raw("bool contains(const string &in str) const", |ctx: &mut crate::ffi::CallContext| {
+            let str_val: String = ctx.arg(0)?;
+            let s: &ScriptString = ctx.this()?;
+            ctx.set_return(s.contains(&ScriptString::from(str_val)))?;
+            Ok(())
+        })?
         .build()?;
 
     // =========================================================================

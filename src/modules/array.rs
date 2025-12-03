@@ -807,6 +807,12 @@ pub fn array_module<'app>() -> Result<Module<'app>, FfiModuleError> {
             ctx.set_return(result)?;
             Ok(())
         })?
+        .method_raw("bool contains(const T &in value) const", |ctx: &mut CallContext| {
+            let value = ctx.arg_slot(0)?;
+            let arr: &ScriptArray = ctx.this()?;
+            ctx.set_return(arr.contains(value))?;
+            Ok(())
+        })?
         // === Comparison ===
         .operator_raw("bool opEquals(const array<T> &in) const", |ctx: &mut CallContext| {
             // Placeholder - needs proper implementation comparing element by element
@@ -1680,9 +1686,9 @@ mod tests {
         let module = array_module().expect("array module should build");
         let ty = &module.types()[0];
 
-        assert!(ty.behaviors.has_addref(), "should have addref behavior");
-        assert!(ty.behaviors.has_release(), "should have release behavior");
-        assert!(ty.behaviors.has_list_factory(), "should have list_factory behavior");
+        assert!(ty.addref.is_some(), "should have addref behavior");
+        assert!(ty.release.is_some(), "should have release behavior");
+        assert!(ty.list_factory.is_some(), "should have list_factory behavior");
     }
 
     #[test]

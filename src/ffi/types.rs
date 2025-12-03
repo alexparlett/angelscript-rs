@@ -7,7 +7,7 @@
 //! (`TypeId::next()` and `FunctionId::next()`).
 
 use crate::ast::{FunctionParam, Ident, ReturnType, TypeExpr};
-use crate::semantic::types::type_def::{FunctionId, FunctionTraits, TypeId, Visibility};
+use crate::semantic::types::type_def::{FunctionTraits, TypeId, Visibility};
 use crate::semantic::types::DataType;
 
 use super::list_buffer::ListPattern;
@@ -126,66 +126,6 @@ pub struct ListBehavior {
     pub pattern: ListPattern,
 }
 
-/// Object behaviors for lifecycle management.
-///
-/// These are registered but executed by the VM. The FFI layer stores
-/// the function pointers; the VM calls them at appropriate times.
-#[derive(Debug, Default)]
-pub struct Behaviors {
-    /// Factory function - creates new instance (reference types)
-    pub factory: Option<NativeFn>,
-    /// AddRef - increment reference count (reference types)
-    pub addref: Option<NativeFn>,
-    /// Release - decrement reference count, delete if zero (reference types)
-    pub release: Option<NativeFn>,
-    /// Constructor - initialize value in pre-allocated memory (value types)
-    pub construct: Option<NativeFn>,
-    /// Destructor - cleanup before deallocation (value types)
-    pub destruct: Option<NativeFn>,
-    /// Copy constructor - initialize from another instance (value types)
-    pub copy_construct: Option<NativeFn>,
-    /// Assignment - copy contents from another instance
-    pub assign: Option<NativeFn>,
-    /// List constructor - construct from initialization list (value types)
-    /// Used for syntax like: `MyStruct s = {1, 2, 3};`
-    pub list_construct: Option<ListBehavior>,
-    /// List factory - create from initialization list (reference types)
-    /// Used for syntax like: `array<int> a = {1, 2, 3};`
-    pub list_factory: Option<ListBehavior>,
-}
-
-impl Behaviors {
-    /// Create empty behaviors.
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Check if has addref behavior.
-    pub fn has_addref(&self) -> bool {
-        self.addref.is_some()
-    }
-
-    /// Check if has release behavior.
-    pub fn has_release(&self) -> bool {
-        self.release.is_some()
-    }
-
-    /// Check if has destruct behavior.
-    pub fn has_destruct(&self) -> bool {
-        self.destruct.is_some()
-    }
-
-    /// Check if has list_construct behavior.
-    pub fn has_list_construct(&self) -> bool {
-        self.list_construct.is_some()
-    }
-
-    /// Check if has list_factory behavior.
-    pub fn has_list_factory(&self) -> bool {
-        self.list_factory.is_some()
-    }
-}
-
 /// Information about a template instantiation for validation callback.
 #[derive(Debug, Clone)]
 pub struct TemplateInstanceInfo {
@@ -253,10 +193,9 @@ impl Default for TemplateValidation {
 
 /// Native function registration (global functions).
 /// Uses AST primitives: Ident, FunctionParam, ReturnType.
+/// The FunctionId is stored on the NativeFn itself.
 #[derive(Debug)]
 pub struct NativeFunctionDef<'ast> {
-    /// Unique function ID (assigned at registration via FunctionId::next())
-    pub id: FunctionId,
     /// Function name
     pub name: Ident<'ast>,
     /// Parameter definitions (parsed from declaration string)
@@ -271,12 +210,16 @@ pub struct NativeFunctionDef<'ast> {
     pub default_exprs: Vec<Option<String>>,
     /// Function visibility
     pub visibility: Visibility,
-    /// The native function implementation
+    /// The native function implementation (includes FunctionId)
     pub native_fn: NativeFn,
 }
 
 /// Native type registration (value types, reference types).
 /// Uses AST primitives: Ident for template params.
+///
+/// All behavior fields are stored directly here rather than in a separate
+/// `Behaviors` struct. During import to the semantic layer, these are
+/// converted to `TypeBehaviors` with registered `FunctionId`s.
 pub struct NativeTypeDef<'ast> {
     /// Unique type ID (assigned at registration via TypeId::next())
     pub id: TypeId,
@@ -286,21 +229,40 @@ pub struct NativeTypeDef<'ast> {
     pub template_params: Option<&'ast [Ident<'ast>]>,
     /// Type kind (value or reference)
     pub type_kind: TypeKind,
-    /// Object behaviors
-    pub behaviors: Behaviors,
-    /// Constructors
+
+    // === Behaviors (map to TypeBehaviors during import) ===
+
+    /// Constructors - initialize value in pre-allocated memory (value types)
+    /// Multiple overloads supported. Maps to TypeBehaviors.constructors
     pub constructors: Vec<NativeMethodDef<'ast>>,
-    /// Factory functions (for reference types)
+    /// Factory functions - create new instance (reference types)
+    /// Multiple overloads supported. Maps to TypeBehaviors.factories
     pub factories: Vec<NativeMethodDef<'ast>>,
+    /// AddRef - increment reference count (reference types)
+    pub addref: Option<NativeFn>,
+    /// Release - decrement reference count, delete if zero (reference types)
+    pub release: Option<NativeFn>,
+    /// Destructor - cleanup before deallocation (value types)
+    pub destruct: Option<NativeFn>,
+    /// List constructor - construct from initialization list (value types)
+    pub list_construct: Option<ListBehavior>,
+    /// List factory - create from initialization list (reference types)
+    pub list_factory: Option<ListBehavior>,
+    /// Get weak reference flag - returns a shared weak ref flag object
+    pub get_weakref_flag: Option<NativeFn>,
+    /// Template callback - validates template instantiation
+    pub template_callback:
+        Option<Box<dyn Fn(&TemplateInstanceInfo) -> TemplateValidation + Send + Sync>>,
+
+    // === Type members ===
+
     /// Methods
     pub methods: Vec<NativeMethodDef<'ast>>,
     /// Properties
     pub properties: Vec<NativePropertyDef<'ast>>,
     /// Operators
     pub operators: Vec<NativeMethodDef<'ast>>,
-    /// Template callback for validation (if this is a template type)
-    pub template_callback:
-        Option<Box<dyn Fn(&TemplateInstanceInfo) -> TemplateValidation + Send + Sync>>,
+
     /// Rust TypeId for runtime type checking
     pub rust_type_id: std::any::TypeId,
 }
@@ -312,19 +274,25 @@ impl<'ast> std::fmt::Debug for NativeTypeDef<'ast> {
             .field("name", &self.name)
             .field("template_params", &self.template_params)
             .field("type_kind", &self.type_kind)
-            .field("behaviors", &self.behaviors)
             .field("constructors", &self.constructors)
             .field("factories", &self.factories)
+            .field("addref", &self.addref.as_ref().map(|_| "..."))
+            .field("release", &self.release.as_ref().map(|_| "..."))
+            .field("destruct", &self.destruct.as_ref().map(|_| "..."))
+            .field("list_construct", &self.list_construct)
+            .field("list_factory", &self.list_factory)
+            .field("get_weakref_flag", &self.get_weakref_flag.as_ref().map(|_| "..."))
+            .field("template_callback", &self.template_callback.as_ref().map(|_| "..."))
             .field("methods", &self.methods)
             .field("properties", &self.properties)
             .field("operators", &self.operators)
-            .field("template_callback", &self.template_callback.as_ref().map(|_| "..."))
             .field("rust_type_id", &self.rust_type_id)
             .finish()
     }
 }
 
 /// Native method - same structure as NativeFunctionDef but for class methods.
+/// The FunctionId is stored on the NativeFn itself.
 #[derive(Debug)]
 pub struct NativeMethodDef<'ast> {
     /// Method name
@@ -335,7 +303,7 @@ pub struct NativeMethodDef<'ast> {
     pub return_type: ReturnType<'ast>,
     /// Whether this is a const method
     pub is_const: bool,
-    /// The native function implementation
+    /// The native function implementation (includes FunctionId)
     pub native_fn: NativeFn,
 }
 
@@ -485,33 +453,6 @@ mod tests {
             }
             _ => panic!("Expected Reference variant"),
         }
-    }
-
-    #[test]
-    fn behaviors_default() {
-        let behaviors = Behaviors::new();
-        assert!(!behaviors.has_addref());
-        assert!(!behaviors.has_release());
-        assert!(!behaviors.has_destruct());
-    }
-
-    #[test]
-    fn behaviors_with_addref() {
-        use super::super::native_fn::CallContext;
-        let behaviors = Behaviors {
-            addref: Some(NativeFn::new(|_: &mut CallContext| Ok(()))),
-            ..Default::default()
-        };
-        assert!(behaviors.has_addref());
-        assert!(!behaviors.has_release());
-    }
-
-    #[test]
-    fn behaviors_debug() {
-        let behaviors = Behaviors::new();
-        let debug = format!("{:?}", behaviors);
-        assert!(debug.contains("Behaviors"));
-        assert!(debug.contains("addref"));
     }
 
     #[test]

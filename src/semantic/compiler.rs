@@ -102,7 +102,7 @@ impl Compiler {
     /// This imports the provided modules before compilation, so templates
     /// have their methods/operators populated.
     #[cfg_attr(feature = "profiling", profiling::function)]
-    pub fn compile_with_modules<'ast>(
+            pub fn compile_with_modules<'ast>(
         script: &'ast Script<'ast>,
         modules: &[crate::Module<'_>],
     ) -> CompilationResult<'ast> {

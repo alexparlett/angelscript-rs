@@ -8,22 +8,32 @@ use std::fmt;
 
 use super::error::NativeError;
 use super::traits::{FromScript, NativeType, ToScript};
+use crate::semantic::types::type_def::FunctionId;
 
 /// Type-erased native function.
 ///
 /// This wraps any callable that implements `NativeCallable`, allowing
 /// functions of different signatures to be stored uniformly.
+///
+/// Each NativeFn has a unique FunctionId assigned at creation time,
+/// ensuring consistent IDs across all Units.
 pub struct NativeFn {
+    /// Unique function ID (assigned at creation via FunctionId::next())
+    pub id: FunctionId,
     inner: Box<dyn NativeCallable + Send + Sync>,
 }
 
 impl NativeFn {
     /// Create a new NativeFn from a callable.
+    /// Automatically assigns a unique FunctionId.
     pub fn new<F>(f: F) -> Self
     where
         F: NativeCallable + Send + Sync + 'static,
     {
-        Self { inner: Box::new(f) }
+        Self {
+            id: FunctionId::next(),
+            inner: Box::new(f),
+        }
     }
 
     /// Call this native function with the given context.

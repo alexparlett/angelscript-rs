@@ -19,7 +19,7 @@
 //! declaration strings, not FFI-specific types. This module provides only:
 //! - Runtime value conversion (FromScript/ToScript)
 //! - Type memory semantics (TypeKind, ReferenceKind)
-//! - Lifecycle behaviors (Behaviors)
+//! - Lifecycle behaviors (stored directly on NativeTypeDef)
 //!
 //! ```text
 //! Module (registration) -> apply_to_registry() -> Registry (semantic analysis)
@@ -47,7 +47,7 @@ pub use list_buffer::{ListBuffer, ListPattern, TupleListBuffer};
 pub use native_fn::{CallContext, NativeCallable, NativeFn, ObjectHandle, ObjectHeap, VmSlot};
 pub use traits::{FromScript, IntoNativeFn, NativeType, ThisMut, ThisRef, ToScript};
 pub use types::{
-    Behaviors, ListBehavior, NativeFuncdefDef, NativeFunctionDef, NativeInterfaceDef,
+    ListBehavior, NativeFuncdefDef, NativeFunctionDef, NativeInterfaceDef,
     NativeInterfaceMethod, NativeMethodDef, NativePropertyDef, NativeTypeDef, ReferenceKind,
     TemplateInstanceInfo, TemplateValidation, TypeKind,
 };

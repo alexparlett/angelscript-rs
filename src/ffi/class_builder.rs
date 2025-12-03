@@ -45,7 +45,7 @@ use super::list_buffer::ListPattern;
 use super::native_fn::{CallContext, NativeCallable, NativeFn};
 use super::traits::{FromScript, IntoNativeFn, NativeType, ToScript};
 use super::types::{
-    Behaviors, ListBehavior, NativeMethodDef, NativePropertyDef, NativeTypeDef, ReferenceKind,
+    ListBehavior, NativeMethodDef, NativePropertyDef, NativeTypeDef, ReferenceKind,
     TemplateInstanceInfo, TemplateValidation, TypeKind,
 };
 use crate::semantic::types::type_def::TypeId;
@@ -69,21 +69,37 @@ pub struct ClassBuilder<'m, 'app, T: NativeType> {
     template_params: Option<&'static [Ident<'static>]>,
     /// Type kind (value or reference)
     type_kind: TypeKind,
+
+    // === Behaviors ===
+
     /// Constructors (for value types)
     constructors: Vec<NativeMethodDef<'static>>,
     /// Factory functions (for reference types)
     factories: Vec<NativeMethodDef<'static>>,
+    /// AddRef behavior
+    addref: Option<NativeFn>,
+    /// Release behavior
+    release: Option<NativeFn>,
+    /// Destructor behavior
+    destruct: Option<NativeFn>,
+    /// List constructor behavior
+    list_construct: Option<ListBehavior>,
+    /// List factory behavior
+    list_factory: Option<ListBehavior>,
+    /// Get weak ref flag behavior
+    get_weakref_flag: Option<NativeFn>,
+    /// Template callback
+    template_callback:
+        Option<Box<dyn Fn(&TemplateInstanceInfo) -> TemplateValidation + Send + Sync>>,
+
+    // === Type members ===
+
     /// Methods
     methods: Vec<NativeMethodDef<'static>>,
     /// Properties
     properties: Vec<NativePropertyDef<'static>>,
     /// Operators
     operators: Vec<NativeMethodDef<'static>>,
-    /// Object behaviors
-    behaviors: Behaviors,
-    /// Template validation callback (for template types)
-    template_callback:
-        Option<Box<dyn Fn(&TemplateInstanceInfo) -> TemplateValidation + Send + Sync>>,
     /// Marker for the type parameter
     _marker: PhantomData<T>,
 }
@@ -104,11 +120,16 @@ impl<'m, 'app, T: NativeType> ClassBuilder<'m, 'app, T> {
             type_kind: TypeKind::value::<T>(), // Default to value type
             constructors: Vec::new(),
             factories: Vec::new(),
+            addref: None,
+            release: None,
+            destruct: None,
+            list_construct: None,
+            list_factory: None,
+            get_weakref_flag: None,
+            template_callback: None,
             methods: Vec::new(),
             properties: Vec::new(),
             operators: Vec::new(),
-            behaviors: Behaviors::default(),
-            template_callback: None,
             _marker: PhantomData,
         }
     }
@@ -273,7 +294,7 @@ impl<'m, 'app, T: NativeType> ClassBuilder<'m, 'app, T> {
     where
         F: Fn(&T) + Send + Sync + 'static,
     {
-        self.behaviors.addref = Some(NativeFn::new(move |ctx: &mut CallContext| {
+        self.addref = Some(NativeFn::new(move |ctx: &mut CallContext| {
             let this: &T = ctx.this()?;
             f(this);
             Ok(())
@@ -288,7 +309,7 @@ impl<'m, 'app, T: NativeType> ClassBuilder<'m, 'app, T> {
     where
         F: Fn(&T) + Send + Sync + 'static,
     {
-        self.behaviors.release = Some(NativeFn::new(move |ctx: &mut CallContext| {
+        self.release = Some(NativeFn::new(move |ctx: &mut CallContext| {
             let this: &T = ctx.this()?;
             f(this);
             Ok(())
@@ -303,7 +324,7 @@ impl<'m, 'app, T: NativeType> ClassBuilder<'m, 'app, T> {
     where
         F: Fn(&mut T) + Send + Sync + 'static,
     {
-        self.behaviors.destruct = Some(NativeFn::new(move |ctx: &mut CallContext| {
+        self.destruct = Some(NativeFn::new(move |ctx: &mut CallContext| {
             let this: &mut T = ctx.this_mut()?;
             f(this);
             Ok(())
@@ -337,7 +358,7 @@ impl<'m, 'app, T: NativeType> ClassBuilder<'m, 'app, T> {
     where
         F: Fn(&mut CallContext) -> Result<(), super::error::NativeError> + Send + Sync + 'static,
     {
-        self.behaviors.list_construct = Some(ListBehavior {
+        self.list_construct = Some(ListBehavior {
             native_fn: NativeFn::new(f),
             pattern,
         });
@@ -369,7 +390,7 @@ impl<'m, 'app, T: NativeType> ClassBuilder<'m, 'app, T> {
     where
         F: Fn(&mut CallContext) -> Result<(), super::error::NativeError> + Send + Sync + 'static,
     {
-        self.behaviors.list_factory = Some(ListBehavior {
+        self.list_factory = Some(ListBehavior {
             native_fn: NativeFn::new(f),
             pattern,
         });
@@ -589,13 +610,20 @@ impl<'m, 'app, T: NativeType> ClassBuilder<'m, 'app, T> {
             name: self.name,
             template_params: self.template_params,
             type_kind: self.type_kind,
-            behaviors: self.behaviors,
+            // Behaviors
             constructors: self.constructors,
             factories: self.factories,
+            addref: self.addref,
+            release: self.release,
+            destruct: self.destruct,
+            list_construct: self.list_construct,
+            list_factory: self.list_factory,
+            get_weakref_flag: self.get_weakref_flag,
+            template_callback: self.template_callback,
+            // Type members
             methods: self.methods,
             properties: self.properties,
             operators: self.operators,
-            template_callback: self.template_callback,
             rust_type_id: std::any::TypeId::of::<T>(),
         };
 
@@ -1031,7 +1059,7 @@ mod tests {
             .build()
             .unwrap();
 
-        assert!(module.types()[0].behaviors.addref.is_some());
+        assert!(module.types()[0].addref.is_some());
     }
 
     #[test]
@@ -1049,7 +1077,7 @@ mod tests {
             .build()
             .unwrap();
 
-        assert!(module.types()[0].behaviors.release.is_some());
+        assert!(module.types()[0].release.is_some());
     }
 
     #[test]
@@ -1064,7 +1092,7 @@ mod tests {
             .build()
             .unwrap();
 
-        assert!(module.types()[0].behaviors.destruct.is_some());
+        assert!(module.types()[0].destruct.is_some());
     }
 
     #[test]
@@ -1177,8 +1205,8 @@ mod tests {
         let ty = &module.types()[0];
         assert!(ty.type_kind.is_reference());
         assert_eq!(ty.factories.len(), 1);
-        assert!(ty.behaviors.addref.is_some());
-        assert!(ty.behaviors.release.is_some());
+        assert!(ty.addref.is_some());
+        assert!(ty.release.is_some());
         assert_eq!(ty.methods.len(), 1);
     }
 
@@ -1212,7 +1240,7 @@ mod tests {
         let ty = &module.types()[0];
         assert!(ty.type_kind.is_value());
         assert_eq!(ty.constructors.len(), 2);
-        assert!(ty.behaviors.destruct.is_some());
+        assert!(ty.destruct.is_some());
         assert_eq!(ty.methods.len(), 2);
         assert_eq!(ty.properties.len(), 2);
     }
@@ -1462,10 +1490,10 @@ mod tests {
             .unwrap();
 
         let ty = &module.types()[0];
-        assert!(ty.behaviors.list_construct.is_some());
-        assert!(ty.behaviors.has_list_construct());
+        assert!(ty.list_construct.is_some());
+        assert!(ty.list_construct.is_some());
 
-        let list_behavior = ty.behaviors.list_construct.as_ref().unwrap();
+        let list_behavior = ty.list_construct.as_ref().unwrap();
         assert!(matches!(list_behavior.pattern, ListPattern::Fixed(_)));
     }
 
@@ -1485,10 +1513,10 @@ mod tests {
             .unwrap();
 
         let ty = &module.types()[0];
-        assert!(ty.behaviors.list_factory.is_some());
-        assert!(ty.behaviors.has_list_factory());
+        assert!(ty.list_factory.is_some());
+        assert!(ty.list_factory.is_some());
 
-        let list_behavior = ty.behaviors.list_factory.as_ref().unwrap();
+        let list_behavior = ty.list_factory.as_ref().unwrap();
         assert!(matches!(list_behavior.pattern, ListPattern::Repeat(_)));
     }
 
@@ -1508,9 +1536,9 @@ mod tests {
             .unwrap();
 
         let ty = &module.types()[0];
-        assert!(ty.behaviors.list_factory.is_some());
+        assert!(ty.list_factory.is_some());
 
-        let list_behavior = ty.behaviors.list_factory.as_ref().unwrap();
+        let list_behavior = ty.list_factory.as_ref().unwrap();
         assert!(matches!(list_behavior.pattern, ListPattern::RepeatTuple(_)));
     }
 }

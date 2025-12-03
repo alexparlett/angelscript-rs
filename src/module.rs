@@ -25,7 +25,7 @@ use crate::ffi::{
     ClassBuilder, EnumBuilder, GlobalPropertyDef, InterfaceBuilder, IntoNativeFn, NativeCallable,
     NativeFn, NativeFuncdefDef, NativeFunctionDef, NativeInterfaceDef, NativeType, NativeTypeDef,
 };
-use crate::semantic::types::type_def::{FunctionId, FunctionTraits, TypeId, Visibility};
+use crate::semantic::types::type_def::{FunctionTraits, TypeId, Visibility};
 
 /// A namespaced collection of native functions, types, and global properties.
 ///
@@ -324,7 +324,6 @@ impl<'app> Module<'app> {
         let return_type = unsafe { std::mem::transmute(sig.return_type) };
 
         NativeFunctionDef {
-            id: FunctionId::next(),
             name,
             params,
             return_type,
@@ -332,7 +331,7 @@ impl<'app> Module<'app> {
             traits,
             default_exprs: Vec::new(), // TODO: Parse default expressions in Task 04
             visibility: Visibility::Public,
-            native_fn,
+            native_fn, // FunctionId is stored on NativeFn
         }
     }
 

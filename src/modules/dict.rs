@@ -505,6 +505,80 @@ pub fn dictionary_module<'app>() -> Result<Module<'app>, FfiModuleError> {
             dict.clear();
             Ok(())
         })?
+        // === Access methods ===
+        .method_raw("void set(const K &in key, const V &in value)", |ctx: &mut CallContext| {
+            // Clone values before borrowing dict mutably
+            let key_slot = ctx.arg_slot(0)?.clone_if_possible();
+            let value_slot = ctx.arg_slot(1)?.clone_if_possible();
+            if let (Some(key_slot), Some(value_slot)) = (key_slot, value_slot) {
+                if let Some(key) = ScriptKey::from_slot(&key_slot) {
+                    let dict: &mut ScriptDict = ctx.this_mut()?;
+                    dict.insert(key, value_slot);
+                }
+            }
+            Ok(())
+        })?
+        .method_raw("bool exists(const K &in key) const", |ctx: &mut CallContext| {
+            let key_slot = ctx.arg_slot(0)?.clone_if_possible();
+            let dict: &ScriptDict = ctx.this()?;
+            let result = if let Some(key_slot) = key_slot {
+                if let Some(key) = ScriptKey::from_slot(&key_slot) {
+                    dict.contains_key(&key)
+                } else {
+                    false
+                }
+            } else {
+                false
+            };
+            ctx.set_return(result)?;
+            Ok(())
+        })?
+        .method_raw("bool delete(const K &in key)", |ctx: &mut CallContext| {
+            // Clone key before borrowing dict mutably
+            let key_slot = ctx.arg_slot(0)?.clone_if_possible();
+            let result = if let Some(key_slot) = key_slot {
+                if let Some(key) = ScriptKey::from_slot(&key_slot) {
+                    let dict: &mut ScriptDict = ctx.this_mut()?;
+                    dict.remove(&key).is_some()
+                } else {
+                    false
+                }
+            } else {
+                false
+            };
+            ctx.set_return(result)?;
+            Ok(())
+        })?
+        // === Index operators ===
+        .operator_raw("V &opIndex(const K &in key)", |ctx: &mut CallContext| {
+            // Clone key before borrowing dict
+            let key_slot = ctx.arg_slot(0)?.clone_if_possible();
+            if let Some(key_slot) = key_slot {
+                if let Some(key) = ScriptKey::from_slot(&key_slot) {
+                    let dict: &mut ScriptDict = ctx.this_mut()?;
+                    if let Some(value) = dict.get(&key) {
+                        if let Some(cloned) = value.clone_if_possible() {
+                            ctx.set_return_slot(cloned);
+                        }
+                    }
+                }
+            }
+            Ok(())
+        })?
+        .operator_raw("const V &opIndex(const K &in key) const", |ctx: &mut CallContext| {
+            let key_slot = ctx.arg_slot(0)?.clone_if_possible();
+            if let Some(key_slot) = key_slot {
+                if let Some(key) = ScriptKey::from_slot(&key_slot) {
+                    let dict: &ScriptDict = ctx.this()?;
+                    if let Some(value) = dict.get(&key) {
+                        if let Some(cloned) = value.clone_if_possible() {
+                            ctx.set_return_slot(cloned);
+                        }
+                    }
+                }
+            }
+            Ok(())
+        })?
         .build()?;
 
     Ok(module)
@@ -1168,9 +1242,9 @@ mod tests {
         let module = dictionary_module().expect("dictionary module should build");
         let ty = &module.types()[0];
 
-        assert!(ty.behaviors.has_addref(), "should have addref behavior");
-        assert!(ty.behaviors.has_release(), "should have release behavior");
-        assert!(ty.behaviors.has_list_factory(), "should have list_factory behavior");
+        assert!(ty.addref.is_some(), "should have addref behavior");
+        assert!(ty.release.is_some(), "should have release behavior");
+        assert!(ty.list_factory.is_some(), "should have list_factory behavior");
     }
 
     #[test]
