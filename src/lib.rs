@@ -162,4 +162,4 @@ pub use semantic::{
 pub use codegen::{BytecodeEmitter, CompiledBytecode, Instruction};
 
 // Re-export built-in module types
-pub use modules::{ScriptArray, ScriptString};
+pub use modules::{ScriptArray, ScriptDict, ScriptString};
