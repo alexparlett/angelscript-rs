@@ -3,8 +3,9 @@
 //! These tests validate the full build pipeline (parsing + compilation)
 //! against complete AngelScript programs.
 
-use angelscript::Unit;
+use angelscript::{Context, Unit};
 use std::path::PathBuf;
+use std::sync::Arc;
 
 /// Load a test script from the test_scripts directory.
 fn load_script(filename: &str) -> String {
@@ -16,8 +17,9 @@ fn load_script(filename: &str) -> String {
 }
 
 /// Helper to build a module from a single test script.
-fn build_script(filename: &str) -> Unit {
-    let mut module = Unit::new();
+fn build_script(filename: &str) -> Unit<'static> {
+    let ctx = Arc::new(Context::with_default_modules().unwrap());
+    let mut module = ctx.create_unit();
     module
         .add_source(filename, load_script(filename))
         .expect("Failed to add source");
