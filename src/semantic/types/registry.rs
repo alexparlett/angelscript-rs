@@ -24,23 +24,24 @@
 
 use super::data_type::{DataType, RefModifier};
 use super::type_def::{
-    TypeId, TypeDef, FunctionId, OperatorBehavior, PrimitiveType, FunctionTraits, PropertyAccessors,
-    Visibility, MethodSignature,
-    VOID_TYPE, BOOL_TYPE, INT8_TYPE, INT16_TYPE, INT32_TYPE, INT64_TYPE,
-    UINT8_TYPE, UINT16_TYPE, UINT32_TYPE, UINT64_TYPE, FLOAT_TYPE, DOUBLE_TYPE,
-    FIRST_USER_TYPE_ID,
+    BOOL_TYPE, DOUBLE_TYPE, FIRST_USER_TYPE_ID, FLOAT_TYPE, FunctionId, FunctionTraits, INT8_TYPE,
+    INT16_TYPE, INT32_TYPE, INT64_TYPE, MethodSignature, OperatorBehavior, PrimitiveType,
+    PropertyAccessors, SELF_TYPE, TypeDef, TypeId, UINT8_TYPE, UINT16_TYPE, UINT32_TYPE,
+    UINT64_TYPE, VOID_TYPE, Visibility,
 };
-use crate::semantic::error::{SemanticError, SemanticErrorKind};
-use crate::lexer::Span;
-use crate::ast::expr::Expr;
-use crate::ast::types::{TypeExpr, TypeBase, TypeSuffix, ParamType, PrimitiveType as AstPrimitiveType};
 use crate::ast::RefKind;
-use crate::module::Module;
-use crate::ffi::{
-    NativeTypeDef, NativeFunctionDef, NativeInterfaceDef, NativeFuncdefDef,
-    NativeMethodDef, NativePropertyDef, NativeInterfaceMethod,
+use crate::ast::expr::Expr;
+use crate::ast::types::{
+    ParamType, PrimitiveType as AstPrimitiveType, TypeBase, TypeExpr, TypeSuffix,
 };
+use crate::ffi::{
+    NativeFuncdefDef, NativeFunctionDef, NativeInterfaceDef, NativeInterfaceMethod,
+    NativeMethodDef, NativePropertyDef, NativeTypeDef,
+};
+use crate::lexer::Span;
+use crate::module::Module;
 use crate::module::NativeEnumDef;
+use crate::semantic::error::{SemanticError, SemanticErrorKind};
 use rustc_hash::FxHashMap;
 use thiserror::Error;
 
@@ -157,9 +158,8 @@ impl<'ast> MixinDef<'ast> {
     }
 }
 
-
 /// Global registry for all types, functions, and variables
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct Registry<'ast> {
     // Type storage
     types: Vec<TypeDef>,
@@ -183,6 +183,13 @@ pub struct Registry<'ast> {
     // Note: Uses TypeId not DataType so array<int> and array<const int> share the same instance
     template_cache: FxHashMap<(TypeId, Vec<TypeId>), TypeId>,
 
+    // Template callbacks for validating template instantiation
+    // Stored separately because these are native Rust closures, not script functions
+    template_callbacks: FxHashMap<
+        TypeId,
+        std::sync::Arc<dyn Fn(&crate::ffi::TemplateInstanceInfo) -> crate::ffi::TemplateValidation + Send + Sync>,
+    >,
+
     // Fixed TypeIds for quick access (primitives only - FFI types use name lookup)
     pub void_type: TypeId,
     pub bool_type: TypeId,
@@ -198,6 +205,34 @@ pub struct Registry<'ast> {
     pub double_type: TypeId,
 }
 
+impl<'ast> std::fmt::Debug for Registry<'ast> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Registry")
+            .field("types", &self.types)
+            .field("type_by_name", &self.type_by_name)
+            .field("behaviors", &self.behaviors)
+            .field("functions", &self.functions)
+            .field("func_by_name", &self.func_by_name)
+            .field("global_vars", &self.global_vars)
+            .field("mixins", &self.mixins)
+            .field("template_cache", &self.template_cache)
+            .field("template_callbacks", &format!("<{} callbacks>", self.template_callbacks.len()))
+            .field("void_type", &self.void_type)
+            .field("bool_type", &self.bool_type)
+            .field("int8_type", &self.int8_type)
+            .field("int16_type", &self.int16_type)
+            .field("int32_type", &self.int32_type)
+            .field("int64_type", &self.int64_type)
+            .field("uint8_type", &self.uint8_type)
+            .field("uint16_type", &self.uint16_type)
+            .field("uint32_type", &self.uint32_type)
+            .field("uint64_type", &self.uint64_type)
+            .field("float_type", &self.float_type)
+            .field("double_type", &self.double_type)
+            .finish()
+    }
+}
+
 impl<'ast> Registry<'ast> {
     /// Create a new registry with all built-in types pre-registered
     pub fn new() -> Self {
@@ -210,6 +245,7 @@ impl<'ast> Registry<'ast> {
             global_vars: FxHashMap::default(),
             mixins: FxHashMap::default(),
             template_cache: FxHashMap::default(),
+            template_callbacks: FxHashMap::default(),
             void_type: VOID_TYPE,
             bool_type: BOOL_TYPE,
             int8_type: INT8_TYPE,
@@ -240,12 +276,16 @@ impl<'ast> Registry<'ast> {
 
         // Fill gap 12-15 with placeholders
         while registry.types.len() < 16 {
-            registry.types.push(TypeDef::Primitive { kind: PrimitiveType::Void });
+            registry.types.push(TypeDef::Primitive {
+                kind: PrimitiveType::Void,
+            });
         }
 
         // Fill gap 19-31 with placeholders
         while registry.types.len() < FIRST_USER_TYPE_ID as usize {
-            registry.types.push(TypeDef::Primitive { kind: PrimitiveType::Void });
+            registry.types.push(TypeDef::Primitive {
+                kind: PrimitiveType::Void,
+            });
         }
 
         registry
@@ -257,7 +297,9 @@ impl<'ast> Registry<'ast> {
 
         // Ensure vector is large enough
         while self.types.len() <= index {
-            self.types.push(TypeDef::Primitive { kind: PrimitiveType::Void });
+            self.types.push(TypeDef::Primitive {
+                kind: PrimitiveType::Void,
+            });
         }
 
         self.types[index] = TypeDef::Primitive { kind };
@@ -281,7 +323,8 @@ impl<'ast> Registry<'ast> {
     /// This creates an alias name that points to an existing type.
     /// For example, `typedef float real;` would call `register_type_alias("real", FLOAT_TYPE)`.
     pub fn register_type_alias(&mut self, alias_name: &str, target_type: TypeId) {
-        self.type_by_name.insert(alias_name.to_string(), target_type);
+        self.type_by_name
+            .insert(alias_name.to_string(), target_type);
     }
 
     /// Look up a type by name (returns None if not found)
@@ -310,7 +353,10 @@ impl<'ast> Registry<'ast> {
     }
 
     /// Get mutable behaviors for a type, if any are registered.
-    pub fn get_behaviors_mut(&mut self, type_id: TypeId) -> Option<&mut super::behaviors::TypeBehaviors> {
+    pub fn get_behaviors_mut(
+        &mut self,
+        type_id: TypeId,
+    ) -> Option<&mut super::behaviors::TypeBehaviors> {
         self.behaviors.get_mut(&type_id)
     }
 
@@ -329,7 +375,8 @@ impl<'ast> Registry<'ast> {
     pub fn lookup_enum_value(&self, type_id: TypeId, value_name: &str) -> Option<i64> {
         let typedef = self.get_type(type_id);
         if let TypeDef::Enum { values, .. } = typedef {
-            values.iter()
+            values
+                .iter()
                 .find(|(name, _)| name == value_name)
                 .map(|(_, val)| *val)
         } else {
@@ -345,10 +392,27 @@ impl<'ast> Registry<'ast> {
     ) -> Result<TypeId, SemanticError> {
         // Check if this is actually a template (a Class with non-empty template_params)
         let template_def = self.get_type(template_id);
-        let (template_name, template_params, template_methods, template_operators, template_properties) = match template_def {
-            TypeDef::Class { name, template_params, methods, operator_methods, properties, .. } if !template_params.is_empty() => {
-                (name.clone(), template_params.clone(), methods.clone(), operator_methods.clone(), properties.clone())
-            }
+        let (
+            template_name,
+            template_params,
+            template_methods,
+            template_operators,
+            template_properties,
+        ) = match template_def {
+            TypeDef::Class {
+                name,
+                template_params,
+                methods,
+                operator_methods,
+                properties,
+                ..
+            } if !template_params.is_empty() => (
+                name.clone(),
+                template_params.clone(),
+                methods.clone(),
+                operator_methods.clone(),
+                properties.clone(),
+            ),
             _ => {
                 return Err(SemanticError::new(
                     SemanticErrorKind::NotATemplate,
@@ -378,6 +442,24 @@ impl<'ast> Registry<'ast> {
             return Ok(cached_id);
         }
 
+        // Invoke template_callback to validate type arguments (if registered)
+        if let Some(callback) = self.template_callbacks.get(&template_id) {
+            let info = crate::ffi::TemplateInstanceInfo {
+                template_name: template_name.clone(),
+                sub_types: args.clone(),
+            };
+            let validation = callback(&info);
+            if !validation.is_valid {
+                return Err(SemanticError::new(
+                    SemanticErrorKind::InvalidTemplateInstantiation,
+                    Span::default(),
+                    validation
+                        .error
+                        .unwrap_or_else(|| "Template instantiation rejected by callback".to_string()),
+                ));
+            }
+        }
+
         // Build instance name like "array<int32>" or "dict<string, int32>"
         let arg_names: Vec<String> = args
             .iter()
@@ -403,10 +485,13 @@ impl<'ast> Registry<'ast> {
         }
 
         // Specialize operators
-        let mut instance_operators = FxHashMap::default();
-        for (&behavior, &op_id) in &template_operators {
-            let specialized_id = self.specialize_function(op_id, &subst_map, instance_id);
-            instance_operators.insert(behavior, specialized_id);
+        let mut instance_operators: FxHashMap<OperatorBehavior, Vec<FunctionId>> = FxHashMap::default();
+        for (&behavior, op_ids) in &template_operators {
+            let specialized_ids: Vec<FunctionId> = op_ids
+                .iter()
+                .map(|&op_id| self.specialize_function(op_id, &subst_map, instance_id))
+                .collect();
+            instance_operators.insert(behavior, specialized_ids);
         }
 
         // Create new instance as a Class with specialized methods
@@ -418,10 +503,10 @@ impl<'ast> Registry<'ast> {
             base_class: None,
             interfaces: Vec::new(),
             operator_methods: instance_operators,
-            properties: template_properties,  // TODO: specialize property functions
+            properties: template_properties, // TODO: specialize property functions
             is_final: false,
             is_abstract: false,
-            template_params: Vec::new(),  // Instance is not a template
+            template_params: Vec::new(), // Instance is not a template
             template: Some(template_id),
             type_args: args.clone(),
         };
@@ -435,30 +520,35 @@ impl<'ast> Registry<'ast> {
             let mut instance_behaviors = template_behaviors.clone();
 
             // Specialize constructors
-            instance_behaviors.constructors = template_behaviors.constructors
+            instance_behaviors.constructors = template_behaviors
+                .constructors
                 .iter()
                 .map(|&func_id| self.specialize_function(func_id, &subst_map, instance_id))
                 .collect();
 
             // Specialize factories
-            instance_behaviors.factories = template_behaviors.factories
+            instance_behaviors.factories = template_behaviors
+                .factories
                 .iter()
                 .map(|&func_id| self.specialize_function(func_id, &subst_map, instance_id))
                 .collect();
 
             // Specialize single behaviors that involve template params
             if let Some(func_id) = template_behaviors.list_factory {
-                instance_behaviors.list_factory = Some(self.specialize_function(func_id, &subst_map, instance_id));
+                instance_behaviors.list_factory =
+                    Some(self.specialize_function(func_id, &subst_map, instance_id));
             }
             if let Some(func_id) = template_behaviors.list_construct {
-                instance_behaviors.list_construct = Some(self.specialize_function(func_id, &subst_map, instance_id));
+                instance_behaviors.list_construct =
+                    Some(self.specialize_function(func_id, &subst_map, instance_id));
             }
 
             self.behaviors.insert(instance_id, instance_behaviors);
         }
 
         // Cache the instance
-        self.template_cache.insert((template_id, cache_key_type_ids), instance_id);
+        self.template_cache
+            .insert((template_id, cache_key_type_ids), instance_id);
 
         Ok(instance_id)
     }
@@ -479,13 +569,15 @@ impl<'ast> Registry<'ast> {
         let new_id = FunctionId::next();
 
         // Substitute types in parameters
-        let new_params: Vec<DataType> = orig.params
+        // Pass new_object_type as self_type to replace SELF_TYPE placeholders
+        let new_params: Vec<DataType> = orig
+            .params
             .iter()
-            .map(|p| self.substitute_type(p, subst_map))
+            .map(|p| self.substitute_type(p, subst_map, new_object_type))
             .collect();
 
         // Substitute return type
-        let new_return = self.substitute_type(&orig.return_type, subst_map);
+        let new_return = self.substitute_type(&orig.return_type, subst_map, new_object_type);
 
         // Create specialized function
         let new_func = FunctionDef {
@@ -499,7 +591,7 @@ impl<'ast> Registry<'ast> {
             is_native: orig.is_native,
             default_args: orig.default_args.clone(),
             visibility: orig.visibility,
-            signature_filled: true,  // Specialized functions are always complete
+            signature_filled: true, // Specialized functions are always complete
         };
 
         self.functions.insert(new_id, new_func);
@@ -507,8 +599,23 @@ impl<'ast> Registry<'ast> {
     }
 
     /// Substitute template parameters in a DataType with actual types.
-    fn substitute_type(&self, dt: &DataType, subst_map: &FxHashMap<TypeId, DataType>) -> DataType {
-        if let Some(replacement) = subst_map.get(&dt.type_id) {
+    /// `self_type` is the TypeId of the template instance being created, used to replace SELF_TYPE.
+    fn substitute_type(
+        &self,
+        dt: &DataType,
+        subst_map: &FxHashMap<TypeId, DataType>,
+        self_type: TypeId,
+    ) -> DataType {
+        if dt.type_id == SELF_TYPE {
+            // SELF_TYPE: replace with the instantiated type (e.g., array<int>)
+            DataType {
+                type_id: self_type,
+                is_const: dt.is_const,
+                is_handle: dt.is_handle,
+                is_handle_to_const: dt.is_handle_to_const,
+                ref_modifier: dt.ref_modifier.clone(),
+            }
+        } else if let Some(replacement) = subst_map.get(&dt.type_id) {
             // Found a template parameter to substitute
             let mut result = replacement.clone();
             // Merge qualifiers from original
@@ -523,7 +630,6 @@ impl<'ast> Registry<'ast> {
             dt.clone()
         }
     }
-
 
     /// Register a function and return its FunctionId
     pub fn register_function(&mut self, def: FunctionDef<'ast>) -> FunctionId {
@@ -551,12 +657,16 @@ impl<'ast> Registry<'ast> {
 
     /// Get a function definition by FunctionId
     pub fn get_function(&self, func_id: FunctionId) -> &FunctionDef<'ast> {
-        self.functions.get(&func_id).expect("FunctionId not found in registry")
+        self.functions
+            .get(&func_id)
+            .expect("FunctionId not found in registry")
     }
 
     /// Get a mutable function definition by FunctionId
     pub fn get_function_mut(&mut self, func_id: FunctionId) -> &mut FunctionDef<'ast> {
-        self.functions.get_mut(&func_id).expect("FunctionId not found in registry")
+        self.functions
+            .get_mut(&func_id)
+            .expect("FunctionId not found in registry")
     }
 
     /// Get the count of registered functions
@@ -584,7 +694,12 @@ impl<'ast> Registry<'ast> {
     }
 
     /// Register a global variable
-    pub fn register_global_var(&mut self, name: String, namespace: Vec<String>, data_type: DataType) {
+    pub fn register_global_var(
+        &mut self,
+        name: String,
+        namespace: Vec<String>,
+        data_type: DataType,
+    ) {
         let qualified_name = if namespace.is_empty() {
             name.clone()
         } else {
@@ -630,7 +745,7 @@ impl<'ast> Registry<'ast> {
         methods: Vec<FunctionId>,
         base_class: Option<TypeId>,
         interfaces: Vec<TypeId>,
-        operator_methods: FxHashMap<super::type_def::OperatorBehavior, FunctionId>,
+        operator_methods: FxHashMap<super::type_def::OperatorBehavior, Vec<FunctionId>>,
         properties: FxHashMap<String, super::type_def::PropertyAccessors>,
     ) {
         let typedef = self.get_type_mut(type_id);
@@ -692,7 +807,12 @@ impl<'ast> Registry<'ast> {
     /// Returns (params, return_type) or None if not a funcdef
     pub fn get_funcdef_signature(&self, type_id: TypeId) -> Option<(&[DataType], &DataType)> {
         let typedef = self.get_type(type_id);
-        if let TypeDef::Funcdef { params, return_type, .. } = typedef {
+        if let TypeDef::Funcdef {
+            params,
+            return_type,
+            ..
+        } = typedef
+        {
             Some((params.as_slice(), return_type))
         } else {
             None
@@ -749,11 +869,18 @@ impl<'ast> Registry<'ast> {
 
     /// Find a function by name that is compatible with a funcdef type
     /// Returns the FunctionId if found and compatible, None otherwise
-    pub fn find_compatible_function(&self, name: &str, funcdef_type_id: TypeId) -> Option<FunctionId> {
+    pub fn find_compatible_function(
+        &self,
+        name: &str,
+        funcdef_type_id: TypeId,
+    ) -> Option<FunctionId> {
         let func_ids = self.func_by_name.get(name)?;
 
         // Find the first function that matches the funcdef signature
-        func_ids.iter().find(|&&func_id| self.is_function_compatible_with_funcdef(func_id, funcdef_type_id)).copied()
+        func_ids
+            .iter()
+            .find(|&&func_id| self.is_function_compatible_with_funcdef(func_id, funcdef_type_id))
+            .copied()
     }
 
     /// Update a function's signature
@@ -886,7 +1013,10 @@ impl<'ast> Registry<'ast> {
             let param = &func.params[0];
 
             // Parameter must be a reference (&in or &inout)
-            if !matches!(param.ref_modifier, crate::semantic::RefModifier::In | crate::semantic::RefModifier::InOut) {
+            if !matches!(
+                param.ref_modifier,
+                crate::semantic::RefModifier::In | crate::semantic::RefModifier::InOut
+            ) {
                 continue;
             }
 
@@ -931,12 +1061,68 @@ impl<'ast> Registry<'ast> {
         type_id: TypeId,
         operator: OperatorBehavior,
     ) -> Option<FunctionId> {
+        self.find_operator_methods(type_id, operator).first().copied()
+    }
+
+    /// Find all overloads of an operator method for a type.
+    ///
+    /// Returns all registered operator methods for the given behavior.
+    /// Use this when you need to do overload resolution based on const-ness
+    /// or parameter types.
+    pub fn find_operator_methods(
+        &self,
+        type_id: TypeId,
+        operator: OperatorBehavior,
+    ) -> &[FunctionId] {
         let typedef = self.get_type(type_id);
         match typedef {
             TypeDef::Class {
                 operator_methods, ..
-            } => operator_methods.get(&operator).copied(),
-            _ => None,
+            } => operator_methods.get(&operator).map(|v| v.as_slice()).unwrap_or(&[]),
+            _ => &[],
+        }
+    }
+
+    /// Find the best operator method for a type based on desired mutability.
+    ///
+    /// When `prefer_mutable` is true, prefers non-const methods (for assignment targets).
+    /// When `prefer_mutable` is false, prefers const methods (for read-only access).
+    /// Falls back to any available method if the preferred type isn't available.
+    pub fn find_operator_method_with_mutability(
+        &self,
+        type_id: TypeId,
+        operator: OperatorBehavior,
+        prefer_mutable: bool,
+    ) -> Option<FunctionId> {
+        let overloads = self.find_operator_methods(type_id, operator);
+        if overloads.is_empty() {
+            return None;
+        }
+
+        // If only one overload, return it
+        if overloads.len() == 1 {
+            return Some(overloads[0]);
+        }
+
+        // Multiple overloads - find the one matching our preference
+        // For mutable access, we want the one with non-const return type
+        // For const access, we want the const one
+        let mut mutable_method = None;
+        let mut const_method = None;
+
+        for &func_id in overloads {
+            let func = self.get_function(func_id);
+            if func.return_type.is_const {
+                const_method = Some(func_id);
+            } else {
+                mutable_method = Some(func_id);
+            }
+        }
+
+        if prefer_mutable {
+            mutable_method.or(const_method)
+        } else {
+            const_method.or(mutable_method)
         }
     }
 
@@ -996,7 +1182,8 @@ impl<'ast> Registry<'ast> {
     fn find_direct_method(&self, type_id: TypeId, name: &str) -> Option<FunctionId> {
         let typedef = self.get_type(type_id);
         if let TypeDef::Class { methods, .. } = typedef {
-            methods.iter()
+            methods
+                .iter()
                 .copied()
                 .find(|&id| self.get_function(id).name == name)
         } else {
@@ -1025,7 +1212,12 @@ impl<'ast> Registry<'ast> {
         self.find_method_impl(type_id, name, &mut visited)
     }
 
-    fn find_method_impl(&self, type_id: TypeId, name: &str, visited: &mut rustc_hash::FxHashSet<TypeId>) -> Option<FunctionId> {
+    fn find_method_impl(
+        &self,
+        type_id: TypeId,
+        name: &str,
+        visited: &mut rustc_hash::FxHashSet<TypeId>,
+    ) -> Option<FunctionId> {
         // Cycle protection
         if self.has_visited_in_chain(type_id, visited) {
             return None;
@@ -1055,7 +1247,12 @@ impl<'ast> Registry<'ast> {
         self.find_methods_by_name_impl(type_id, name, &mut visited)
     }
 
-    fn find_methods_by_name_impl(&self, type_id: TypeId, name: &str, visited: &mut rustc_hash::FxHashSet<TypeId>) -> Vec<FunctionId> {
+    fn find_methods_by_name_impl(
+        &self,
+        type_id: TypeId,
+        name: &str,
+        visited: &mut rustc_hash::FxHashSet<TypeId>,
+    ) -> Vec<FunctionId> {
         // Cycle protection
         if self.has_visited_in_chain(type_id, visited) {
             return Vec::new();
@@ -1064,9 +1261,14 @@ impl<'ast> Registry<'ast> {
         let typedef = self.get_type(type_id);
 
         match typedef {
-            TypeDef::Class { methods, base_class, .. } => {
+            TypeDef::Class {
+                methods,
+                base_class,
+                ..
+            } => {
                 // Get all methods with matching name from this class (or template instance)
-                let mut matching_methods: Vec<FunctionId> = methods.iter()
+                let mut matching_methods: Vec<FunctionId> = methods
+                    .iter()
                     .copied()
                     .filter(|&id| self.get_function(id).name == name)
                     .collect();
@@ -1095,7 +1297,11 @@ impl<'ast> Registry<'ast> {
         self.get_all_methods_impl(type_id, &mut visited)
     }
 
-    fn get_all_methods_impl(&self, type_id: TypeId, visited: &mut rustc_hash::FxHashSet<TypeId>) -> Vec<FunctionId> {
+    fn get_all_methods_impl(
+        &self,
+        type_id: TypeId,
+        visited: &mut rustc_hash::FxHashSet<TypeId>,
+    ) -> Vec<FunctionId> {
         // Cycle protection
         if self.has_visited_in_chain(type_id, visited) {
             return Vec::new();
@@ -1104,7 +1310,11 @@ impl<'ast> Registry<'ast> {
         let typedef = self.get_type(type_id);
 
         match typedef {
-            TypeDef::Class { methods, base_class, .. } => {
+            TypeDef::Class {
+                methods,
+                base_class,
+                ..
+            } => {
                 let mut all_methods = methods.clone();
 
                 // Recursively add base class methods
@@ -1128,7 +1338,11 @@ impl<'ast> Registry<'ast> {
         self.get_all_properties_impl(type_id, &mut visited)
     }
 
-    fn get_all_properties_impl(&self, type_id: TypeId, visited: &mut rustc_hash::FxHashSet<TypeId>) -> FxHashMap<String, PropertyAccessors> {
+    fn get_all_properties_impl(
+        &self,
+        type_id: TypeId,
+        visited: &mut rustc_hash::FxHashSet<TypeId>,
+    ) -> FxHashMap<String, PropertyAccessors> {
         // Cycle protection
         if self.has_visited_in_chain(type_id, visited) {
             return FxHashMap::default();
@@ -1137,7 +1351,11 @@ impl<'ast> Registry<'ast> {
         let typedef = self.get_type(type_id);
 
         match typedef {
-            TypeDef::Class { properties, base_class, .. } => {
+            TypeDef::Class {
+                properties,
+                base_class,
+                ..
+            } => {
                 let mut all_properties = FxHashMap::default();
 
                 // First, add base class properties (if any)
@@ -1178,7 +1396,10 @@ impl<'ast> Registry<'ast> {
     ///
     /// Returns the list of MethodSignature for an interface, or None if not an interface.
     /// Used for validating that classes implement all interface methods.
-    pub fn get_interface_methods(&self, type_id: TypeId) -> Option<&[super::type_def::MethodSignature]> {
+    pub fn get_interface_methods(
+        &self,
+        type_id: TypeId,
+    ) -> Option<&[super::type_def::MethodSignature]> {
         let typedef = self.get_type(type_id);
         if let TypeDef::Interface { methods, .. } = typedef {
             Some(methods.as_slice())
@@ -1195,7 +1416,11 @@ impl<'ast> Registry<'ast> {
         self.get_all_interfaces_impl(type_id, &mut visited)
     }
 
-    fn get_all_interfaces_impl(&self, type_id: TypeId, visited: &mut rustc_hash::FxHashSet<TypeId>) -> Vec<TypeId> {
+    fn get_all_interfaces_impl(
+        &self,
+        type_id: TypeId,
+        visited: &mut rustc_hash::FxHashSet<TypeId>,
+    ) -> Vec<TypeId> {
         // Cycle protection
         if self.has_visited_in_chain(type_id, visited) {
             return Vec::new();
@@ -1204,7 +1429,11 @@ impl<'ast> Registry<'ast> {
         let typedef = self.get_type(type_id);
 
         match typedef {
-            TypeDef::Class { interfaces, base_class, .. } => {
+            TypeDef::Class {
+                interfaces,
+                base_class,
+                ..
+            } => {
                 let mut all_interfaces = interfaces.clone();
 
                 // Add interfaces from base class
@@ -1270,7 +1499,9 @@ impl<'ast> Registry<'ast> {
             }
 
             // Check parameter types
-            let params_match = func.params.iter()
+            let params_match = func
+                .params
+                .iter()
                 .zip(params.iter())
                 .all(|(a, b)| a.type_id == b.type_id && a.ref_modifier == b.ref_modifier);
 
@@ -1308,13 +1539,13 @@ impl<'ast> Registry<'ast> {
             }
 
             // Check parameter types match
-            let params_match = func.params.iter()
-                .zip(interface_method.params.iter())
-                .all(|(func_param, iface_param)| {
+            let params_match = func.params.iter().zip(interface_method.params.iter()).all(
+                |(func_param, iface_param)| {
                     func_param.type_id == iface_param.type_id
                         && func_param.ref_modifier == iface_param.ref_modifier
                         && func_param.is_handle == iface_param.is_handle
-                });
+                },
+            );
 
             if params_match {
                 return true;
@@ -1353,7 +1584,11 @@ impl<'ast> Registry<'ast> {
     /// // When processing class A and B already exists with base class A:
     /// registry.would_create_circular_inheritance(type_a, type_b) // true
     /// ```
-    pub fn would_create_circular_inheritance(&self, type_id: TypeId, proposed_base_id: TypeId) -> bool {
+    pub fn would_create_circular_inheritance(
+        &self,
+        type_id: TypeId,
+        proposed_base_id: TypeId,
+    ) -> bool {
         // Direct self-inheritance
         if type_id == proposed_base_id {
             return true;
@@ -1386,7 +1621,11 @@ impl<'ast> Registry<'ast> {
     ///
     /// This is used by recursive methods to protect against infinite loops
     /// if circular inheritance somehow exists in the registry.
-    fn has_visited_in_chain(&self, type_id: TypeId, visited: &mut rustc_hash::FxHashSet<TypeId>) -> bool {
+    fn has_visited_in_chain(
+        &self,
+        type_id: TypeId,
+        visited: &mut rustc_hash::FxHashSet<TypeId>,
+    ) -> bool {
         if visited.contains(&type_id) {
             return true;
         }
@@ -1473,7 +1712,11 @@ impl<'ast> Registry<'ast> {
     }
 
     /// Import a native enum definition.
-    fn import_enum(&mut self, enum_def: &NativeEnumDef, namespace: &[String]) -> Result<(), ImportError> {
+    fn import_enum(
+        &mut self,
+        enum_def: &NativeEnumDef,
+        namespace: &[String],
+    ) -> Result<(), ImportError> {
         let qualified_name = self.build_qualified_name(&enum_def.name, namespace);
 
         // Check for duplicates
@@ -1614,7 +1857,11 @@ impl<'ast> Registry<'ast> {
         if let Some(existing_type_id) = actual_type_id {
             // Update the existing type's template_params if this is a template
             if !template_params.is_empty() {
-                if let TypeDef::Class { template_params: existing_params, .. } = self.get_type_mut(existing_type_id) {
+                if let TypeDef::Class {
+                    template_params: existing_params,
+                    ..
+                } = self.get_type_mut(existing_type_id)
+                {
                     *existing_params = template_params;
                 }
             }
@@ -1785,6 +2032,11 @@ impl<'ast> Registry<'ast> {
             type_behaviors.get_weakref_flag = Some(func_id);
         }
 
+        // Import template_callback - stored separately since it's a native closure, not a script function
+        if let Some(ref callback) = type_def.template_callback {
+            self.template_callbacks.insert(type_id, callback.clone());
+        }
+
         // Only store if we have any behaviors (or always store to allow adding constructors later)
         // Always store so import_type_details can add constructors/factories
         self.behaviors.insert(type_id, type_behaviors);
@@ -1803,13 +2055,15 @@ impl<'ast> Registry<'ast> {
         // Look up the type ID by name - this handles builtin types (like array)
         // which have pre-assigned IDs different from the NativeTypeDef's ID
         let qualified_name = self.build_qualified_name(&type_def.name, namespace);
-        let type_id = self.type_by_name.get(&qualified_name)
+        let type_id = self
+            .type_by_name
+            .get(&qualified_name)
             .copied()
             .unwrap_or(type_def.id);
         let mut method_ids = Vec::new();
         let mut constructor_ids = Vec::new();
         let mut factory_ids = Vec::new();
-        let mut operator_methods = FxHashMap::default();
+        let mut operator_methods: FxHashMap<OperatorBehavior, Vec<FunctionId>> = FxHashMap::default();
         let mut properties = FxHashMap::default();
 
         // Determine template context for resolving template parameters like T
@@ -1822,49 +2076,60 @@ impl<'ast> Registry<'ast> {
 
         // Import constructors
         for ctor in &type_def.constructors {
-            let func_id = self.import_method(ctor, type_id, namespace, true, false, template_context)?;
+            let func_id =
+                self.import_method(ctor, type_id, namespace, true, false, template_context)?;
             method_ids.push(func_id);
             constructor_ids.push(func_id);
         }
 
         // Import factories (treated as constructors for reference types)
         for factory in &type_def.factories {
-            let func_id = self.import_method(factory, type_id, namespace, true, false, template_context)?;
+            let func_id =
+                self.import_method(factory, type_id, namespace, true, false, template_context)?;
             method_ids.push(func_id);
             factory_ids.push(func_id);
         }
 
         // Import regular methods
         for method in &type_def.methods {
-            let func_id = self.import_method(method, type_id, namespace, false, false, template_context)?;
+            let func_id =
+                self.import_method(method, type_id, namespace, false, false, template_context)?;
             method_ids.push(func_id);
         }
 
         // Import operators
         for operator in &type_def.operators {
-            let func_id = self.import_method(operator, type_id, namespace, false, true, template_context)?;
+            let func_id =
+                self.import_method(operator, type_id, namespace, false, true, template_context)?;
             method_ids.push(func_id);
 
             // Map operator name to OperatorBehavior
             let method_name = operator.name.name;
             // For conversion operators, we need the return type to get the target TypeId
-            let target_type = if method_name.starts_with("opConv") || method_name.starts_with("opImplConv")
-                || method_name.starts_with("opCast") || method_name.starts_with("opImplCast")
+            let target_type = if method_name.starts_with("opConv")
+                || method_name.starts_with("opImplConv")
+                || method_name.starts_with("opCast")
+                || method_name.starts_with("opImplCast")
             {
-                let return_dt = self.resolve_ffi_return_type_with_template(&operator.return_type, namespace, template_context)?;
+                let return_dt = self.resolve_ffi_return_type_with_template(
+                    &operator.return_type,
+                    namespace,
+                    template_context,
+                )?;
                 Some(return_dt.type_id)
             } else {
                 None
             };
 
             if let Some(behavior) = OperatorBehavior::from_method_name(method_name, target_type) {
-                operator_methods.insert(behavior, func_id);
+                operator_methods.entry(behavior).or_default().push(func_id);
             }
         }
 
         // Import properties
         for prop in &type_def.properties {
-            let prop_accessors = self.import_property_with_template(prop, type_id, namespace, template_context)?;
+            let prop_accessors =
+                self.import_property_with_template(prop, type_id, namespace, template_context)?;
             properties.insert(prop.name.name.to_string(), prop_accessors);
         }
 
@@ -1917,12 +2182,17 @@ impl<'ast> Registry<'ast> {
         // Resolve parameter types
         let mut params = Vec::with_capacity(method.params.len());
         for param in method.params {
-            let data_type = self.resolve_ffi_param_type_with_template(&param.ty, namespace, template_context)?;
+            let data_type =
+                self.resolve_ffi_param_type_with_template(&param.ty, namespace, template_context)?;
             params.push(data_type);
         }
 
         // Resolve return type
-        let return_type = self.resolve_ffi_return_type_with_template(&method.return_type, namespace, template_context)?;
+        let return_type = self.resolve_ffi_return_type_with_template(
+            &method.return_type,
+            namespace,
+            template_context,
+        )?;
 
         // Build function traits
         let traits = FunctionTraits {
@@ -1975,7 +2245,8 @@ impl<'ast> Registry<'ast> {
         template_context: Option<&str>,
     ) -> Result<PropertyAccessors, ImportError> {
         let prop_name = prop.name.name.to_string();
-        let prop_type = self.resolve_ffi_type_expr_with_template(prop.ty, namespace, template_context)?;
+        let prop_type =
+            self.resolve_ffi_type_expr_with_template(prop.ty, namespace, template_context)?;
 
         // Create getter function (FunctionId from NativeFn)
         let getter_id = prop.getter.id;
@@ -2132,7 +2403,8 @@ impl<'ast> Registry<'ast> {
         namespace: &[String],
         template_context: Option<&str>,
     ) -> Result<DataType, ImportError> {
-        let mut data_type = self.resolve_ffi_type_expr_with_template(&param_type.ty, namespace, template_context)?;
+        let mut data_type =
+            self.resolve_ffi_type_expr_with_template(&param_type.ty, namespace, template_context)?;
 
         // Apply reference modifier from ParamType
         data_type.ref_modifier = match param_type.ref_kind {
@@ -2170,7 +2442,11 @@ impl<'ast> Registry<'ast> {
             // Build a ParamType from the TypeExpr for consistent resolution
             let param_type = ParamType {
                 ty: *type_expr,
-                ref_kind: if return_type.is_ref { RefKind::Ref } else { RefKind::None },
+                ref_kind: if return_type.is_ref {
+                    RefKind::Ref
+                } else {
+                    RefKind::None
+                },
                 span: return_type.span,
             };
             self.resolve_ffi_param_type_with_template(&param_type, namespace, template_context)
@@ -2196,28 +2472,64 @@ impl<'ast> Registry<'ast> {
         template_context: Option<&str>,
     ) -> Result<DataType, ImportError> {
         // Step 1: Resolve the base type
-        let base_type_id = self.resolve_ffi_base_type_with_template(&type_expr.base, namespace, template_context)?;
+        let base_type_id =
+            self.resolve_ffi_base_type_with_template(&type_expr.base, namespace, template_context)?;
 
         // Step 2: Handle template arguments
         let type_id = if !type_expr.template_args.is_empty() {
             // Resolve all template argument types, passing through template_context
             let mut arg_types = Vec::with_capacity(type_expr.template_args.len());
             for arg in type_expr.template_args {
-                let dt = self.resolve_ffi_type_expr_with_template(arg, namespace, template_context)?;
+                let dt =
+                    self.resolve_ffi_type_expr_with_template(arg, namespace, template_context)?;
                 arg_types.push(dt);
             }
 
-            // Instantiate the template (need mutable self - use a workaround)
-            // For now, we'll look up if the instance already exists
-            let cache_key_ids: Vec<TypeId> = arg_types.iter().map(|dt| dt.type_id).collect();
-            if let Some(&cached_id) = self.template_cache.get(&(base_type_id, cache_key_ids)) {
-                cached_id
+            // Check for self-referential template pattern (e.g., array<T> within array template)
+            // If the base type matches the template context AND all args are template params
+            // of that template, use SELF_TYPE placeholder
+            if let Some(template_name) = template_context {
+                // Check if base type is the template we're importing
+                let base_is_template_context =
+                    self.lookup_type(template_name) == Some(base_type_id);
+
+                // Check if all args are template params belonging to this template
+                let all_args_are_template_params = arg_types.iter().all(|dt| {
+                    if let TypeDef::TemplateParam { owner, .. } = self.get_type(dt.type_id) {
+                        *owner == base_type_id
+                    } else {
+                        false
+                    }
+                });
+
+                if base_is_template_context && all_args_are_template_params {
+                    // This is a self-referential template type like array<T>
+                    // Use SELF_TYPE which will be replaced at instantiation time
+                    SELF_TYPE
+                } else {
+                    // Not self-referential, try cache lookup
+                    let cache_key_ids: Vec<TypeId> =
+                        arg_types.iter().map(|dt| dt.type_id).collect();
+                    if let Some(&cached_id) =
+                        self.template_cache.get(&(base_type_id, cache_key_ids))
+                    {
+                        cached_id
+                    } else {
+                        return Err(ImportError::TemplateInstantiationFailed(
+                            "template instantiation not supported during FFI import; use concrete types or pre-register instances".to_string()
+                        ));
+                    }
+                }
             } else {
-                // Template not instantiated yet - this is an error in FFI import
-                // Templates should be instantiated on-demand, not during import
-                return Err(ImportError::TemplateInstantiationFailed(
-                    "template instantiation not supported during FFI import; use concrete types or pre-register instances".to_string()
-                ));
+                // No template context, try cache lookup
+                let cache_key_ids: Vec<TypeId> = arg_types.iter().map(|dt| dt.type_id).collect();
+                if let Some(&cached_id) = self.template_cache.get(&(base_type_id, cache_key_ids)) {
+                    cached_id
+                } else {
+                    return Err(ImportError::TemplateInstantiationFailed(
+                        "template instantiation not supported during FFI import; use concrete types or pre-register instances".to_string()
+                    ));
+                }
             }
         } else {
             base_type_id
@@ -2278,8 +2590,6 @@ impl<'ast> Registry<'ast> {
                 // Template parameters are registered as "<template_name>::$<param_name>"
                 if let Some(template_name) = template_context {
                     let param_lookup = format!("{}::${}", template_name, type_name);
-                    eprintln!("DEBUG: Looking up template param '{}' with context '{}' -> key '{}'", type_name, template_name, param_lookup);
-                    eprintln!("DEBUG: Available types: {:?}", self.type_by_name.keys().filter(|k| k.contains("$")).collect::<Vec<_>>());
                     if let Some(type_id) = self.lookup_type(&param_lookup) {
                         return Ok(type_id);
                     }
@@ -2287,13 +2597,11 @@ impl<'ast> Registry<'ast> {
 
                 // Try qualified name first
                 let qualified = self.build_qualified_name(type_name, namespace);
-                eprintln!("DEBUG: Fallback lookup for '{}' - qualified='{}', exists={}", type_name, qualified, self.lookup_type(&qualified).is_some());
                 if let Some(type_id) = self.lookup_type(&qualified) {
                     return Ok(type_id);
                 }
 
                 // Try unqualified (global)
-                eprintln!("DEBUG: Unqualified lookup for '{}' exists={}", type_name, self.lookup_type(type_name).is_some());
                 if let Some(type_id) = self.lookup_type(type_name) {
                     return Ok(type_id);
                 }
@@ -2309,12 +2617,10 @@ impl<'ast> Registry<'ast> {
                 })
             }
 
-            TypeBase::Auto | TypeBase::Unknown => {
-                Err(ImportError::TypeResolutionFailed {
-                    type_name: "auto/unknown".to_string(),
-                    reason: "auto and unknown types not supported in FFI".to_string(),
-                })
-            }
+            TypeBase::Auto | TypeBase::Unknown => Err(ImportError::TypeResolutionFailed {
+                type_name: "auto/unknown".to_string(),
+                reason: "auto and unknown types not supported in FFI".to_string(),
+            }),
         }
     }
 
@@ -2585,7 +2891,9 @@ mod tests {
     fn register_test_template(registry: &mut Registry, name: &str, param_count: usize) -> TypeId {
         // First register the template TypeId placeholder
         let template_id = registry.register_type(
-            TypeDef::Primitive { kind: PrimitiveType::Void }, // temporary placeholder
+            TypeDef::Primitive {
+                kind: PrimitiveType::Void,
+            }, // temporary placeholder
             Some(name),
         );
 
@@ -2722,7 +3030,10 @@ mod tests {
             vec![DataType::simple(INT32_TYPE), DataType::simple(FLOAT_TYPE)],
         );
         assert!(result.is_err());
-        assert_eq!(result.unwrap_err().kind, SemanticErrorKind::WrongTemplateArgCount);
+        assert_eq!(
+            result.unwrap_err().kind,
+            SemanticErrorKind::WrongTemplateArgCount
+        );
     }
 
     #[test]
@@ -2740,7 +3051,7 @@ mod tests {
             is_native: false,
             default_args: Vec::new(),
             visibility: Visibility::Public,
-        signature_filled: true,
+            signature_filled: true,
         };
 
         let func_id = registry.register_function(func);
@@ -2762,7 +3073,7 @@ mod tests {
             is_native: false,
             default_args: Vec::new(),
             visibility: Visibility::Public,
-        signature_filled: true,
+            signature_filled: true,
         };
 
         registry.register_function(func);
@@ -2795,7 +3106,7 @@ mod tests {
             is_native: false,
             default_args: Vec::new(),
             visibility: Visibility::Public,
-        signature_filled: true,
+            signature_filled: true,
         };
 
         // foo(float)
@@ -2810,7 +3121,7 @@ mod tests {
             is_native: false,
             default_args: Vec::new(),
             visibility: Visibility::Public,
-        signature_filled: true,
+            signature_filled: true,
         };
 
         registry.register_function(func1);
@@ -2833,7 +3144,7 @@ mod tests {
             is_native: false,
             default_args: Vec::new(),
             visibility: Visibility::Public,
-        signature_filled: true,
+            signature_filled: true,
         };
 
         assert_eq!(func.qualified_name(), "Game::Player::update");
@@ -2852,7 +3163,7 @@ mod tests {
             is_native: false,
             default_args: Vec::new(),
             visibility: Visibility::Public,
-        signature_filled: true,
+            signature_filled: true,
         };
 
         assert_eq!(func.qualified_name(), "foo");
@@ -2873,7 +3184,7 @@ mod tests {
             is_native: false,
             default_args: Vec::new(),
             visibility: Visibility::Public,
-        signature_filled: true,
+            signature_filled: true,
         };
 
         let func_id = registry.register_function(func.clone());
@@ -2899,7 +3210,7 @@ mod tests {
             is_native: false,
             default_args: Vec::new(),
             visibility: Visibility::Public,
-        signature_filled: true,
+            signature_filled: true,
         };
 
         // Another method for Player
@@ -2914,7 +3225,7 @@ mod tests {
             is_native: false,
             default_args: Vec::new(),
             visibility: Visibility::Public,
-        signature_filled: true,
+            signature_filled: true,
         };
 
         // Global function (not a method)
@@ -2929,7 +3240,7 @@ mod tests {
             is_native: false,
             default_args: Vec::new(),
             visibility: Visibility::Public,
-        signature_filled: true,
+            signature_filled: true,
         };
 
         registry.register_function(method1);
@@ -3023,7 +3334,7 @@ mod tests {
             is_native: false,
             default_args: Vec::new(),
             visibility: Visibility::Public,
-        signature_filled: true,
+            signature_filled: true,
         };
 
         let func_id = registry.register_function(func_def);
@@ -3085,7 +3396,7 @@ mod tests {
             is_native: false,
             default_args: Vec::new(),
             visibility: Visibility::Public,
-        signature_filled: true,
+            signature_filled: true,
         };
 
         registry.register_function(func_def);
@@ -3144,7 +3455,7 @@ mod tests {
             is_native: false,
             default_args: Vec::new(),
             visibility: Visibility::Public,
-        signature_filled: true,
+            signature_filled: true,
         };
 
         let func_id = registry.register_function(func_def);
@@ -3198,7 +3509,7 @@ mod tests {
             is_native: false,
             default_args: Vec::new(),
             visibility: Visibility::Public,
-        signature_filled: true,
+            signature_filled: true,
         };
 
         // Register single-param constructor
@@ -3222,7 +3533,7 @@ mod tests {
             is_native: false,
             default_args: Vec::new(),
             visibility: Visibility::Public,
-        signature_filled: true,
+            signature_filled: true,
         };
 
         let func_id1 = registry.register_function(func_def1);
@@ -3283,17 +3594,21 @@ mod tests {
                 is_abstract: false,
                 is_const: false,
                 is_explicit: false,
-                auto_generated: Some(crate::semantic::types::type_def::AutoGeneratedMethod::CopyConstructor),
+                auto_generated: Some(
+                    crate::semantic::types::type_def::AutoGeneratedMethod::CopyConstructor,
+                ),
             },
             is_native: false,
             default_args: Vec::new(),
             visibility: Visibility::Public,
-        signature_filled: true,
+            signature_filled: true,
         };
 
         let copy_ctor_id = registry.register_function(copy_ctor);
         registry.add_method_to_class(type_id, copy_ctor_id);
-        registry.behaviors_mut(type_id).add_constructor(copy_ctor_id);
+        registry
+            .behaviors_mut(type_id)
+            .add_constructor(copy_ctor_id);
 
         // Should find the copy constructor
         let found = registry.find_copy_constructor(type_id);
@@ -3339,17 +3654,21 @@ mod tests {
                 is_abstract: false,
                 is_const: false,
                 is_explicit: false,
-                auto_generated: Some(crate::semantic::types::type_def::AutoGeneratedMethod::CopyConstructor),
+                auto_generated: Some(
+                    crate::semantic::types::type_def::AutoGeneratedMethod::CopyConstructor,
+                ),
             },
             is_native: false,
             default_args: Vec::new(),
             visibility: Visibility::Public,
-        signature_filled: true,
+            signature_filled: true,
         };
 
         let copy_ctor_id = registry.register_function(copy_ctor);
         registry.add_method_to_class(type_id, copy_ctor_id);
-        registry.behaviors_mut(type_id).add_constructor(copy_ctor_id);
+        registry
+            .behaviors_mut(type_id)
+            .add_constructor(copy_ctor_id);
 
         // Should find the copy constructor
         let found = registry.find_copy_constructor(type_id);
@@ -3401,7 +3720,7 @@ mod tests {
             is_native: false,
             default_args: Vec::new(),
             visibility: Visibility::Public,
-        signature_filled: true,
+            signature_filled: true,
         };
 
         let ctor_id = registry.register_function(ctor);
@@ -3456,7 +3775,7 @@ mod tests {
             is_native: false,
             default_args: Vec::new(),
             visibility: Visibility::Public,
-        signature_filled: true,
+            signature_filled: true,
         };
 
         let ctor_id = registry.register_function(ctor);
@@ -3511,7 +3830,7 @@ mod tests {
             is_native: false,
             default_args: Vec::new(),
             visibility: Visibility::Public,
-        signature_filled: true,
+            signature_filled: true,
         };
 
         let ctor_id = registry.register_function(ctor);
@@ -3656,7 +3975,7 @@ mod tests {
         // Should have both derived and base properties
         assert_eq!(all_props.len(), 2);
         assert!(all_props.contains_key("health")); // base
-        assert!(all_props.contains_key("score"));  // derived
+        assert!(all_props.contains_key("score")); // derived
     }
 
     #[test]
@@ -3670,7 +3989,7 @@ mod tests {
             namespace: vec!["Base".to_string()],
             params: Vec::new(),
             return_type: DataType::simple(VOID_TYPE),
-            object_type: None,  // Set later
+            object_type: None, // Set later
             traits: FunctionTraits::new(),
             is_native: false,
             default_args: Vec::new(),
@@ -3704,7 +4023,7 @@ mod tests {
             base_class: Some(base_id),
             interfaces: Vec::new(),
             fields: Vec::new(),
-            methods: Vec::new(),  // No methods in derived
+            methods: Vec::new(), // No methods in derived
             operator_methods: rustc_hash::FxHashMap::default(),
             properties: rustc_hash::FxHashMap::default(),
             is_final: false,
@@ -3781,7 +4100,7 @@ mod tests {
             base_class: Some(base_id),
             interfaces: Vec::new(),
             fields: Vec::new(),
-            methods: vec![derived_method_id],  // Override
+            methods: vec![derived_method_id], // Override
             operator_methods: rustc_hash::FxHashMap::default(),
             properties: rustc_hash::FxHashMap::default(),
             is_final: false,
@@ -3976,11 +4295,16 @@ mod tests {
         let mut registry = Registry::new();
         let mut module = Module::root();
 
-        module.register_enum("Color")
-            .value("Red", 0).unwrap()
-            .value("Green", 1).unwrap()
-            .value("Blue", 2).unwrap()
-            .build().unwrap();
+        module
+            .register_enum("Color")
+            .value("Red", 0)
+            .unwrap()
+            .value("Green", 1)
+            .unwrap()
+            .value("Blue", 2)
+            .unwrap()
+            .build()
+            .unwrap();
 
         let result = registry.import_modules(&[module]);
         assert!(result.is_ok());
@@ -4006,10 +4330,14 @@ mod tests {
         let mut registry = Registry::new();
         let mut module = Module::new(&["game"]);
 
-        module.register_enum("Direction")
-            .auto_value("North").unwrap()
-            .auto_value("South").unwrap()
-            .build().unwrap();
+        module
+            .register_enum("Direction")
+            .auto_value("North")
+            .unwrap()
+            .auto_value("South")
+            .unwrap()
+            .build()
+            .unwrap();
 
         let result = registry.import_modules(&[module]);
         assert!(result.is_ok());
@@ -4028,10 +4356,14 @@ mod tests {
         let mut registry = Registry::new();
         let mut module = Module::root();
 
-        module.register_interface("IDrawable")
-            .method("void draw()").unwrap()
-            .method("int getWidth() const").unwrap()
-            .build().unwrap();
+        module
+            .register_interface("IDrawable")
+            .method("void draw()")
+            .unwrap()
+            .method("int getWidth() const")
+            .unwrap()
+            .build()
+            .unwrap();
 
         let result = registry.import_modules(&[module]);
         assert!(result.is_ok());
@@ -4055,7 +4387,9 @@ mod tests {
         let mut module = Module::root();
 
         module.register_funcdef("funcdef void Callback()").unwrap();
-        module.register_funcdef("funcdef int Predicate(int value)").unwrap();
+        module
+            .register_funcdef("funcdef int Predicate(int value)")
+            .unwrap();
 
         let result = registry.import_modules(&[module]);
         assert!(result.is_ok());
@@ -4064,7 +4398,13 @@ mod tests {
         assert!(callback_id.is_some());
 
         let typedef = registry.get_type(callback_id.unwrap());
-        if let TypeDef::Funcdef { name, params, return_type, .. } = typedef {
+        if let TypeDef::Funcdef {
+            name,
+            params,
+            return_type,
+            ..
+        } = typedef
+        {
             assert_eq!(name, "Callback");
             assert!(params.is_empty());
             assert_eq!(return_type.type_id, VOID_TYPE);
@@ -4076,7 +4416,13 @@ mod tests {
         assert!(predicate_id.is_some());
 
         let typedef = registry.get_type(predicate_id.unwrap());
-        if let TypeDef::Funcdef { name, params, return_type, .. } = typedef {
+        if let TypeDef::Funcdef {
+            name,
+            params,
+            return_type,
+            ..
+        } = typedef
+        {
             assert_eq!(name, "Predicate");
             assert_eq!(params.len(), 1);
             assert_eq!(params[0].type_id, INT32_TYPE);
@@ -4091,7 +4437,9 @@ mod tests {
         let mut registry = Registry::new();
         let mut module = Module::root();
 
-        module.register_fn("int add(int a, int b)", |a: i32, b: i32| a + b).unwrap();
+        module
+            .register_fn("int add(int a, int b)", |a: i32, b: i32| a + b)
+            .unwrap();
 
         let result = registry.import_modules(&[module]);
         assert!(result.is_ok());
@@ -4112,7 +4460,9 @@ mod tests {
         let mut module = Module::root();
 
         let mut score: i32 = 0;
-        module.register_global_property("int g_score", &mut score).unwrap();
+        module
+            .register_global_property("int g_score", &mut score)
+            .unwrap();
 
         let result = registry.import_modules(&[module]);
         assert!(result.is_ok());
@@ -4131,15 +4481,21 @@ mod tests {
 
         let mut math = Module::new(&["math"]);
         math.register_enum("MathConst")
-            .value("PI", 314).unwrap()
-            .value("E", 271).unwrap()
-            .build().unwrap();
+            .value("PI", 314)
+            .unwrap()
+            .value("E", 271)
+            .unwrap()
+            .build()
+            .unwrap();
 
         let mut io = Module::new(&["io"]);
         io.register_enum("FileMode")
-            .value("Read", 1).unwrap()
-            .value("Write", 2).unwrap()
-            .build().unwrap();
+            .value("Read", 1)
+            .unwrap()
+            .value("Write", 2)
+            .unwrap()
+            .build()
+            .unwrap();
 
         let result = registry.import_modules(&[math, io]);
         assert!(result.is_ok());
@@ -4153,9 +4509,12 @@ mod tests {
         let mut registry = Registry::new();
 
         let mut module1 = Module::root();
-        module1.register_enum("Color")
-            .value("Red", 0).unwrap()
-            .build().unwrap();
+        module1
+            .register_enum("Color")
+            .value("Red", 0)
+            .unwrap()
+            .build()
+            .unwrap();
 
         // First import should succeed
         let result1 = registry.import_modules(&[module1]);
@@ -4163,9 +4522,12 @@ mod tests {
 
         // Second import of same type should fail
         let mut module2 = Module::root();
-        module2.register_enum("Color")
-            .value("Blue", 1).unwrap()
-            .build().unwrap();
+        module2
+            .register_enum("Color")
+            .value("Blue", 1)
+            .unwrap()
+            .build()
+            .unwrap();
 
         let result2 = registry.import_modules(&[module2]);
         assert!(result2.is_err());

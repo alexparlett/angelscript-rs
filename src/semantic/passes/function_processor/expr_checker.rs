@@ -2305,7 +2305,8 @@ impl<'ast> FunctionCompiler<'ast> {
                 }
             } else {
                 // Final index - try opIndex first (returns reference), then set_opIndex
-                if let Some(func_id) = self.registry.find_operator_method(current_ctx.data_type.type_id, OperatorBehavior::OpIndex) {
+                // For assignment, we prefer the non-const opIndex if available
+                if let Some(func_id) = self.registry.find_operator_method_with_mutability(current_ctx.data_type.type_id, OperatorBehavior::OpIndex, true) {
                     // opIndex exists - use regular assignment through reference
                     let func = self.registry.get_function(func_id);
 

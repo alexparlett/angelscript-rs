@@ -391,7 +391,7 @@ impl<'ast> TypeCompiler<'ast> {
 
         // Collect method IDs and operator methods
         let mut method_ids = Vec::new();
-        let mut operator_methods: FxHashMap<OperatorBehavior, FunctionId> = FxHashMap::default();
+        let mut operator_methods: FxHashMap<OperatorBehavior, Vec<FunctionId>> = FxHashMap::default();
         let mut explicit_properties: FxHashMap<String, crate::semantic::types::PropertyAccessors> = FxHashMap::default();
 
         // First, process methods from mixins (they take precedence over inherited methods,
@@ -446,9 +446,9 @@ impl<'ast> TypeCompiler<'ast> {
                 if let Some(ret_ty_expr) = method.return_type
                     && let Some(return_type) = self.resolve_type_expr(&ret_ty_expr.ty)
                         && let Some(op_behavior) = self.parse_operator_method(method.name.name, &return_type) {
-                            // Each operator behavior should have exactly one function
-                            if let Some(&func_id) = func_ids.first() {
-                                operator_methods.insert(op_behavior, func_id);
+                            // Add all overloads for this operator behavior
+                            for &func_id in &func_ids {
+                                operator_methods.entry(op_behavior).or_default().push(func_id);
                             }
                         }
 
@@ -1259,7 +1259,7 @@ impl<'ast> TypeCompiler<'ast> {
         method: &FunctionDecl<'ast>,
         type_id: TypeId,
         method_ids: &mut Vec<FunctionId>,
-        operator_methods: &mut FxHashMap<OperatorBehavior, FunctionId>,
+        operator_methods: &mut FxHashMap<OperatorBehavior, Vec<FunctionId>>,
         explicit_properties: &mut FxHashMap<String, crate::semantic::types::PropertyAccessors>,
     ) {
         // Resolve parameter types
@@ -1342,7 +1342,7 @@ impl<'ast> TypeCompiler<'ast> {
 
         // Check if this is an operator method
         if let Some(op_behavior) = self.parse_operator_method(method.name.name, &return_type) {
-            operator_methods.insert(op_behavior, func_id);
+            operator_methods.entry(op_behavior).or_default().push(func_id);
         }
 
         // Check if this is an explicit property accessor method

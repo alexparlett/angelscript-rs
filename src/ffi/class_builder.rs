@@ -619,7 +619,7 @@ impl<'m, 'app, T: NativeType> ClassBuilder<'m, 'app, T> {
             list_construct: self.list_construct,
             list_factory: self.list_factory,
             get_weakref_flag: self.get_weakref_flag,
-            template_callback: self.template_callback,
+            template_callback: self.template_callback.map(|cb| std::sync::Arc::from(cb)),
             // Type members
             methods: self.methods,
             properties: self.properties,

@@ -73,6 +73,12 @@ pub const DOUBLE_TYPE: TypeId = TypeId(11);
 // Special types (12-15)
 pub const NULL_TYPE: TypeId = TypeId(12);  // Null literal type (converts to any handle)
 
+/// Placeholder for self-referential template types during FFI import.
+/// Used for methods like `array<T> opAssign(const array<T> &in)` where the
+/// return/param type is the template itself with its own params.
+/// At instantiation time, this is replaced with the actual instance TypeId.
+pub const SELF_TYPE: TypeId = TypeId(u32::MAX - 1);
+
 // Gap: TypeIds 13-31 reserved for future special types
 
 /// First TypeId available for user-defined types (including FFI types like array, string)
@@ -715,9 +721,9 @@ pub enum TypeDef {
         base_class: Option<TypeId>,
         interfaces: Vec<TypeId>,
         /// Operator methods mapped by behavior (opConv, opImplConv, etc.)
-        /// Each operator behavior maps to exactly one function
-        /// (e.g., opConv returning int, opImplConv returning float, etc.)
-        operator_methods: FxHashMap<OperatorBehavior, FunctionId>,
+        /// Each operator behavior can have multiple overloads (e.g., const and non-const opIndex)
+        /// Overload resolution picks the best match based on const-ness and parameter types
+        operator_methods: FxHashMap<OperatorBehavior, Vec<FunctionId>>,
         /// Property accessors mapped by property name
         /// Maps property name to (optional getter FunctionId, optional setter FunctionId)
         /// Both virtual properties (int prop { get { } set { } }) and explicit methods

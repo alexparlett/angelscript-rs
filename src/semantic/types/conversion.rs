@@ -687,14 +687,14 @@ impl DataType {
 
         // Try opImplConv first (implicit conversion, cost 10)
         let implicit_behavior = OperatorBehavior::OpImplConv(target.type_id);
-        if let Some(&function_id) = operator_methods.get(&implicit_behavior) {
+        if let Some(function_id) = operator_methods.get(&implicit_behavior).and_then(|v| v.first().copied()) {
             // Found implicit conversion operator
             return Some(Conversion::implicit_conv_method(function_id));
         }
 
         // Try opConv (explicit conversion, cost 100)
         let explicit_behavior = OperatorBehavior::OpConv(target.type_id);
-        if let Some(&function_id) = operator_methods.get(&explicit_behavior) {
+        if let Some(function_id) = operator_methods.get(&explicit_behavior).and_then(|v| v.first().copied()) {
             return Some(Conversion::explicit_cast_method(function_id));
         }
 
@@ -714,13 +714,13 @@ impl DataType {
 
         // Try opImplCast first (implicit cast, cost 10)
         let implicit_behavior = OperatorBehavior::OpImplCast(target.type_id);
-        if let Some(&function_id) = operator_methods.get(&implicit_behavior) {
+        if let Some(function_id) = operator_methods.get(&implicit_behavior).and_then(|v| v.first().copied()) {
             return Some(Conversion::implicit_conv_method(function_id));
         }
 
         // Try opCast (explicit cast, cost 100)
         let explicit_behavior = OperatorBehavior::OpCast(target.type_id);
-        if let Some(&function_id) = operator_methods.get(&explicit_behavior) {
+        if let Some(function_id) = operator_methods.get(&explicit_behavior).and_then(|v| v.first().copied()) {
             return Some(Conversion::explicit_cast_method(function_id));
         }
 

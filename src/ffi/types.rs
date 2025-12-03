@@ -251,8 +251,9 @@ pub struct NativeTypeDef<'ast> {
     /// Get weak reference flag - returns a shared weak ref flag object
     pub get_weakref_flag: Option<NativeFn>,
     /// Template callback - validates template instantiation
+    /// Uses Arc so it can be shared/cloned during import without ownership transfer
     pub template_callback:
-        Option<Box<dyn Fn(&TemplateInstanceInfo) -> TemplateValidation + Send + Sync>>,
+        Option<std::sync::Arc<dyn Fn(&TemplateInstanceInfo) -> TemplateValidation + Send + Sync>>,
 
     // === Type members ===
 

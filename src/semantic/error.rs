@@ -128,6 +128,8 @@ pub enum SemanticErrorKind {
     NotATemplate,
     /// Wrong number of template arguments.
     WrongTemplateArgCount,
+    /// Template instantiation rejected by validation callback.
+    InvalidTemplateInstantiation,
 
     // Inheritance errors
     /// Class inherits from itself (directly or indirectly).
@@ -195,6 +197,7 @@ impl fmt::Display for SemanticErrorKind {
             InvalidCast => "invalid cast",
             NotATemplate => "not a template",
             WrongTemplateArgCount => "wrong number of template arguments",
+            InvalidTemplateInstantiation => "invalid template instantiation",
             CircularInheritance => "circular inheritance",
             CannotInheritFromFinal => "cannot inherit from final class",
             MissingInterfaceMethod => "missing interface method",
