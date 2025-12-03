@@ -419,6 +419,115 @@ pub fn is_hashable_type(type_id: TypeId) -> bool {
 }
 
 // =========================================================================
+// FFI REGISTRATION
+// =========================================================================
+
+use crate::ffi::{CallContext, ListPattern, NativeType, TemplateInstanceInfo, TemplateValidation};
+use crate::module::FfiModuleError;
+use crate::Module;
+
+impl NativeType for ScriptDict {
+    const NAME: &'static str = "dictionary";
+}
+
+/// Creates the dictionary module with the `dictionary<K,V>` template type.
+///
+/// Registers the built-in dictionary template with:
+/// - Reference counting behaviors (addref/release)
+/// - Template validation (K must be hashable)
+/// - List factory for initialization lists: `dictionary@ d = {{"a", 1}, {"b", 2}}`
+/// - Basic size/capacity methods
+///
+/// # Template
+///
+/// `dictionary<K,V>` requires K to be a hashable type (primitive, string, or handle).
+///
+/// # Example
+///
+/// ```ignore
+/// use angelscript::modules::dictionary_module;
+///
+/// let module = dictionary_module().expect("failed to create dictionary module");
+/// // Register with engine...
+/// ```
+pub fn dictionary_module<'app>() -> Result<Module<'app>, FfiModuleError> {
+    let mut module = Module::root();
+
+    module
+        .register_type::<ScriptDict>("dictionary<class K, class V>")
+        .reference_type()
+        // Template validation - K must be hashable
+        .template_callback(validate_dictionary_template)
+        // Reference counting
+        .addref(ScriptDict::add_ref)
+        .release(|dict: &ScriptDict| {
+            dict.release();
+        })
+        // List factory for initialization lists
+        // Uses RepeatTuple pattern for {K, V} pairs
+        .list_factory(
+            ListPattern::repeat_tuple(vec![TypeId(0), TypeId(0)]),
+            |ctx: &mut CallContext| {
+                // Placeholder - VM will provide list buffer access
+                let _ = ctx;
+                Ok(())
+            },
+        )
+        // Basic methods
+        .method_raw("uint getSize() const", |ctx: &mut CallContext| {
+            let dict: &ScriptDict = ctx.this()?;
+            ctx.set_return(dict.len())?;
+            Ok(())
+        })?
+        .method_raw("bool isEmpty() const", |ctx: &mut CallContext| {
+            let dict: &ScriptDict = ctx.this()?;
+            ctx.set_return(dict.is_empty())?;
+            Ok(())
+        })?
+        .method_raw("uint capacity() const", |ctx: &mut CallContext| {
+            let dict: &ScriptDict = ctx.this()?;
+            ctx.set_return(dict.capacity())?;
+            Ok(())
+        })?
+        .method_raw("void reserve(uint additional)", |ctx: &mut CallContext| {
+            let additional: u32 = ctx.arg(0)?;
+            let dict: &mut ScriptDict = ctx.this_mut()?;
+            dict.reserve(additional);
+            Ok(())
+        })?
+        .method_raw("void shrinkToFit()", |ctx: &mut CallContext| {
+            let dict: &mut ScriptDict = ctx.this_mut()?;
+            dict.shrink_to_fit();
+            Ok(())
+        })?
+        .method_raw("void clear()", |ctx: &mut CallContext| {
+            let dict: &mut ScriptDict = ctx.this_mut()?;
+            dict.clear();
+            Ok(())
+        })?
+        .build()?;
+
+    Ok(module)
+}
+
+/// Validate that dictionary template has a hashable key type.
+fn validate_dictionary_template(info: &TemplateInstanceInfo) -> TemplateValidation {
+    // K (first type argument) must be hashable
+    if info.sub_types.is_empty() {
+        return TemplateValidation::invalid("Dictionary requires two type parameters");
+    }
+
+    let key_type = &info.sub_types[0];
+    if is_hashable_type(key_type.type_id) {
+        TemplateValidation::valid()
+    } else {
+        TemplateValidation::invalid(
+            "Dictionary key must be hashable (primitive, string, or handle)",
+        )
+    }
+}
+
+// =========================================================================
 // TESTS
 // =========================================================================
 
@@ -1005,5 +1114,86 @@ mod tests {
             dict.get(&ScriptKey::bool(true)),
             Some(VmSlot::String(s)) if s == "yes"
         ));
+    }
+
+    // =========================================================================
+    // FFI MODULE TESTS
+    // =========================================================================
+
+    #[test]
+    fn test_dictionary_module_creates_successfully() {
+        let result = dictionary_module();
+        assert!(result.is_ok(), "dictionary module should be created successfully");
+    }
+
+    #[test]
+    fn test_dictionary_module_is_root_namespace() {
+        let module = dictionary_module().expect("dictionary module should build");
+        assert!(module.is_root(), "dictionary module should be in root namespace");
+    }
+
+    #[test]
+    fn test_dictionary_module_has_template() {
+        let module = dictionary_module().expect("dictionary module should build");
+        let types = module.types();
+        assert_eq!(types.len(), 1, "should have exactly one type registered");
+        assert_eq!(types[0].name, "dictionary", "type should be named 'dictionary'");
+    }
+
+    #[test]
+    fn test_dictionary_module_has_methods() {
+        let module = dictionary_module().expect("dictionary module should build");
+        let ty = &module.types()[0];
+        // Should have: getSize, isEmpty, capacity, reserve, shrinkToFit, clear
+        assert!(
+            ty.methods.len() >= 5,
+            "dictionary should have at least 5 methods, got {}",
+            ty.methods.len()
+        );
+    }
+
+    #[test]
+    fn test_dictionary_module_method_names() {
+        let module = dictionary_module().expect("dictionary module should build");
+        let ty = &module.types()[0];
+        let method_names: Vec<_> = ty.methods.iter().map(|m| m.name.name).collect();
+
+        assert!(method_names.contains(&"getSize"), "should have getSize method");
+        assert!(method_names.contains(&"isEmpty"), "should have isEmpty method");
+        assert!(method_names.contains(&"clear"), "should have clear method");
+    }
+
+    #[test]
+    fn test_dictionary_module_has_behaviors() {
+        let module = dictionary_module().expect("dictionary module should build");
+        let ty = &module.types()[0];
+
+        assert!(ty.behaviors.has_addref(), "should have addref behavior");
+        assert!(ty.behaviors.has_release(), "should have release behavior");
+        assert!(ty.behaviors.has_list_factory(), "should have list_factory behavior");
+    }
+
+    #[test]
+    fn test_native_type_name() {
+        assert_eq!(ScriptDict::NAME, "dictionary");
+    }
+
+    #[test]
+    fn test_is_hashable_type_primitives() {
+        // bool is hashable
+        assert!(is_hashable_type(BOOL_TYPE));
+        // int types are hashable
+        assert!(is_hashable_type(INT_TYPE));
+        // float types are hashable
+        assert!(is_hashable_type(FLOAT_TYPE));
+        assert!(is_hashable_type(DOUBLE_TYPE));
+        // string is hashable
+        assert!(is_hashable_type(STRING_TYPE));
+    }
+
+    #[test]
+    fn test_is_hashable_type_void_not_hashable() {
+        const VOID_TYPE: TypeId = TypeId(0);
+        assert!(!is_hashable_type(VOID_TYPE));
     }
 }

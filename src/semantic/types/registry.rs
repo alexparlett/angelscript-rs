@@ -244,6 +244,8 @@ impl<'ast> Registry<'ast> {
         }
 
         // Pre-register built-in types (16-18)
+        // TODO: String methods should eventually come from FFI modules via import_modules()
+        // For now, keep hardcoded methods for backwards compatibility
         registry.register_builtin_string(STRING_TYPE);
         registry.register_builtin_template("array", 1, ARRAY_TEMPLATE);
         registry.register_builtin_template("dictionary", 2, DICT_TEMPLATE);
@@ -269,7 +271,9 @@ impl<'ast> Registry<'ast> {
         self.type_by_name.insert(kind.name().to_string(), type_id);
     }
 
-    /// Register built-in string type with methods and operators
+    /// Register built-in string type with methods and operators.
+    /// TODO: String methods should eventually come from FFI modules via import_modules().
+    /// For now, keep hardcoded methods for backwards compatibility.
     fn register_builtin_string(&mut self, type_id: TypeId) {
         let index = type_id.as_u32() as usize;
 
@@ -727,13 +731,12 @@ impl<'ast> Registry<'ast> {
         let insert_cache_key: Vec<TypeId> = args.iter().map(|dt| dt.type_id).collect();
         self.template_cache.insert((template_id, insert_cache_key), instance_id);
 
-        // For array templates, register placeholder methods
-        // This will be implemented via FFI - the compiler just needs a FunctionId to emit
+        // TODO: These method registrations should eventually be removed once
+        // FFI modules provide complete method sets. For now, keep them for
+        // backwards compatibility until all consumers use import_modules().
         if template_id == self.array_template {
             self.register_array_methods(instance_id, args.clone());
         }
-
-        // For dictionary templates, register placeholder methods
         if template_id == self.dict_template {
             self.register_dictionary_methods(instance_id, args);
         }
@@ -741,8 +744,8 @@ impl<'ast> Registry<'ast> {
         Ok(instance_id)
     }
 
-    /// Register placeholder methods for an array<T> type
-    /// The actual implementations will be provided via FFI
+    /// Register placeholder methods for an array<T> type.
+    /// TODO: Remove once FFI modules provide complete method coverage.
     fn register_array_methods(&mut self, array_type_id: TypeId, sub_types: Vec<DataType>) {
         // Get the element type (T in array<T>)
         let element_type = sub_types.first().cloned().unwrap_or_else(|| DataType::simple(self.void_type));
@@ -986,8 +989,8 @@ impl<'ast> Registry<'ast> {
         }
     }
 
-    /// Register placeholder methods for a dictionary<K, V> type
-    /// The actual implementations will be provided via FFI
+    /// Register placeholder methods for a dictionary<K, V> type.
+    /// TODO: Remove once FFI modules provide complete method coverage.
     fn register_dictionary_methods(&mut self, dict_type_id: TypeId, sub_types: Vec<DataType>) {
         // Get the key type (K) and value type (V) from dictionary<K, V>
         let key_type = sub_types.first().cloned().unwrap_or_else(|| DataType::simple(self.void_type));

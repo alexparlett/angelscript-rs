@@ -165,4 +165,6 @@ pub use codegen::{BytecodeEmitter, CompiledBytecode, Instruction};
 pub use modules::{ScriptArray, ScriptDict, ScriptString};
 
 // Re-export built-in module constructors
-pub use modules::{math_module, std_module, string_module};
+pub use modules::{
+    array_module, default_modules, dictionary_module, math_module, std_module, string_module,
+};

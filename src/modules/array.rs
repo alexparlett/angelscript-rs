@@ -583,6 +583,126 @@ impl fmt::Debug for ScriptArray {
 // Use clone_array() to create a deep copy with ref_count = 1.
 
 // =========================================================================
+// FFI REGISTRATION
+// =========================================================================
+
+use crate::ffi::{CallContext, ListPattern, NativeType, TemplateValidation};
+use crate::module::FfiModuleError;
+use crate::Module;
+
+impl NativeType for ScriptArray {
+    const NAME: &'static str = "array";
+}
+
+/// Creates the array module with the `array<T>` template type.
+///
+/// Registers the built-in array template with:
+/// - Factory functions
+/// - Reference counting behaviors (addref/release)
+/// - List factory for initialization lists: `array<int> a = {1, 2, 3}`
+/// - Basic size/capacity methods
+///
+/// # Template
+///
+/// `array<T>` accepts any element type T.
+///
+/// # Example
+///
+/// ```ignore
+/// use angelscript::modules::array_module;
+///
+/// let module = array_module().expect("failed to create array module");
+/// // Register with engine...
+/// ```
+pub fn array_module<'app>() -> Result<Module<'app>, FfiModuleError> {
+    let mut module = Module::root();
+
+    module
+        .register_type::<ScriptArray>("array<class T>")
+        .reference_type()
+        // Template validation - arrays can contain any type
+        .template_callback(|_info| TemplateValidation::valid())
+        // Reference counting
+        .addref(ScriptArray::add_ref)
+        .release(|arr: &ScriptArray| {
+            arr.release();
+        })
+        // List factory for initialization lists: array<int> a = {1, 2, 3}
+        // The pattern uses a placeholder TypeId(0) since the actual element type
+        // comes from template instantiation
+        .list_factory(ListPattern::repeat(TypeId(0)), |ctx: &mut CallContext| {
+            // This is a placeholder implementation
+            // The VM will need to provide list buffer access
+            let _ = ctx;
+            Ok(())
+        })
+        // Basic methods using raw context
+        .method_raw("uint length() const", |ctx: &mut CallContext| {
+            let arr: &ScriptArray = ctx.this()?;
+            ctx.set_return(arr.len())?;
+            Ok(())
+        })?
+        .method_raw("bool isEmpty() const", |ctx: &mut CallContext| {
+            let arr: &ScriptArray = ctx.this()?;
+            ctx.set_return(arr.is_empty())?;
+            Ok(())
+        })?
+        .method_raw("uint capacity() const", |ctx: &mut CallContext| {
+            let arr: &ScriptArray = ctx.this()?;
+            ctx.set_return(arr.capacity())?;
+            Ok(())
+        })?
+        .method_raw("void clear()", |ctx: &mut CallContext| {
+            let arr: &mut ScriptArray = ctx.this_mut()?;
+            arr.clear();
+            Ok(())
+        })?
+        .method_raw("void resize(uint length)", |ctx: &mut CallContext| {
+            let length: u32 = ctx.arg(0)?;
+            let arr: &mut ScriptArray = ctx.this_mut()?;
+            arr.resize(length);
+            Ok(())
+        })?
+        .method_raw("void reserve(uint length)", |ctx: &mut CallContext| {
+            let length: u32 = ctx.arg(0)?;
+            let arr: &mut ScriptArray = ctx.this_mut()?;
+            arr.reserve(length);
+            Ok(())
+        })?
+        .method_raw("void shrinkToFit()", |ctx: &mut CallContext| {
+            let arr: &mut ScriptArray = ctx.this_mut()?;
+            arr.shrink_to_fit();
+            Ok(())
+        })?
+        .method_raw("void reverse()", |ctx: &mut CallContext| {
+            let arr: &mut ScriptArray = ctx.this_mut()?;
+            arr.reverse();
+            Ok(())
+        })?
+        .method_raw("void removeLast()", |ctx: &mut CallContext| {
+            let arr: &mut ScriptArray = ctx.this_mut()?;
+            arr.pop();
+            Ok(())
+        })?
+        .method_raw("void removeAt(uint index)", |ctx: &mut CallContext| {
+            let index: u32 = ctx.arg(0)?;
+            let arr: &mut ScriptArray = ctx.this_mut()?;
+            arr.remove_at(index);
+            Ok(())
+        })?
+        .method_raw("void removeRange(uint start, uint count)", |ctx: &mut CallContext| {
+            let start: u32 = ctx.arg(0)?;
+            let count: u32 = ctx.arg(1)?;
+            let arr: &mut ScriptArray = ctx.this_mut()?;
+            arr.remove_range(start, count);
+            Ok(())
+        })?
+        .build()?;
+
+    Ok(module)
+}
+
+// =========================================================================
 // TESTS
 // =========================================================================
 
@@ -1386,5 +1506,70 @@ mod tests {
         let cmp1 = ScriptArray::compare_slots(&int_slot, &float_slot);
         let cmp2 = ScriptArray::compare_slots(&float_slot, &int_slot);
         assert_eq!(cmp1.reverse(), cmp2);
+    }
+
+    // =========================================================================
+    // FFI MODULE TESTS
+    // =========================================================================
+
+    #[test]
+    fn test_array_module_creates_successfully() {
+        let result = array_module();
+        assert!(result.is_ok(), "array module should be created successfully");
+    }
+
+    #[test]
+    fn test_array_module_is_root_namespace() {
+        let module = array_module().expect("array module should build");
+        assert!(module.is_root(), "array module should be in root namespace");
+    }
+
+    #[test]
+    fn test_array_module_has_template() {
+        let module = array_module().expect("array module should build");
+        let types = module.types();
+        assert_eq!(types.len(), 1, "should have exactly one type registered");
+        assert_eq!(types[0].name, "array", "type should be named 'array'");
+    }
+
+    #[test]
+    fn test_array_module_has_methods() {
+        let module = array_module().expect("array module should build");
+        let ty = &module.types()[0];
+        // Should have: length, isEmpty, capacity, clear, resize, reserve,
+        // shrinkToFit, reverse, removeLast, removeAt, removeRange
+        assert!(
+            ty.methods.len() >= 10,
+            "array should have at least 10 methods, got {}",
+            ty.methods.len()
+        );
+    }
+
+    #[test]
+    fn test_array_module_method_names() {
+        let module = array_module().expect("array module should build");
+        let ty = &module.types()[0];
+        let method_names: Vec<_> = ty.methods.iter().map(|m| m.name.name).collect();
+
+        assert!(method_names.contains(&"length"), "should have length method");
+        assert!(method_names.contains(&"isEmpty"), "should have isEmpty method");
+        assert!(method_names.contains(&"clear"), "should have clear method");
+        assert!(method_names.contains(&"resize"), "should have resize method");
+        assert!(method_names.contains(&"reverse"), "should have reverse method");
+    }
+
+    #[test]
+    fn test_array_module_has_behaviors() {
+        let module = array_module().expect("array module should build");
+        let ty = &module.types()[0];
+
+        assert!(ty.behaviors.has_addref(), "should have addref behavior");
+        assert!(ty.behaviors.has_release(), "should have release behavior");
+        assert!(ty.behaviors.has_list_factory(), "should have list_factory behavior");
+    }
+
+    #[test]
+    fn test_native_type_name() {
+        assert_eq!(ScriptArray::NAME, "array");
     }
 }

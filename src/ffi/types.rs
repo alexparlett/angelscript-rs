@@ -10,6 +10,7 @@ use crate::ast::{FunctionParam, Ident, ReturnType, TypeExpr};
 use crate::semantic::types::type_def::{FunctionId, FunctionTraits, TypeId, Visibility};
 use crate::semantic::types::DataType;
 
+use super::list_buffer::ListPattern;
 use super::native_fn::NativeFn;
 
 /// Type kind determines memory semantics for registered types.
@@ -113,6 +114,18 @@ pub enum ReferenceKind {
     GenericHandle,
 }
 
+/// List construction behavior with its pattern.
+///
+/// Used by `list_construct` and `list_factory` to define how initialization
+/// lists are processed.
+#[derive(Debug)]
+pub struct ListBehavior {
+    /// Native function to call with the list data
+    pub native_fn: NativeFn,
+    /// Expected list pattern (repeat, fixed, or repeat-tuple)
+    pub pattern: ListPattern,
+}
+
 /// Object behaviors for lifecycle management.
 ///
 /// These are registered but executed by the VM. The FFI layer stores
@@ -133,6 +146,12 @@ pub struct Behaviors {
     pub copy_construct: Option<NativeFn>,
     /// Assignment - copy contents from another instance
     pub assign: Option<NativeFn>,
+    /// List constructor - construct from initialization list (value types)
+    /// Used for syntax like: `MyStruct s = {1, 2, 3};`
+    pub list_construct: Option<ListBehavior>,
+    /// List factory - create from initialization list (reference types)
+    /// Used for syntax like: `array<int> a = {1, 2, 3};`
+    pub list_factory: Option<ListBehavior>,
 }
 
 impl Behaviors {
@@ -154,6 +173,16 @@ impl Behaviors {
     /// Check if has destruct behavior.
     pub fn has_destruct(&self) -> bool {
         self.destruct.is_some()
+    }
+
+    /// Check if has list_construct behavior.
+    pub fn has_list_construct(&self) -> bool {
+        self.list_construct.is_some()
+    }
+
+    /// Check if has list_factory behavior.
+    pub fn has_list_factory(&self) -> bool {
+        self.list_factory.is_some()
     }
 }
 

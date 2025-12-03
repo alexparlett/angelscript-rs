@@ -41,10 +41,11 @@ use crate::ast::{FunctionSignatureDecl, Ident, Parser, PropertyDecl};
 use crate::module::FfiModuleError;
 use crate::Module;
 
+use super::list_buffer::ListPattern;
 use super::native_fn::{CallContext, NativeCallable, NativeFn};
 use super::traits::{FromScript, IntoNativeFn, NativeType, ToScript};
 use super::types::{
-    Behaviors, NativeMethodDef, NativePropertyDef, NativeTypeDef, ReferenceKind,
+    Behaviors, ListBehavior, NativeMethodDef, NativePropertyDef, NativeTypeDef, ReferenceKind,
     TemplateInstanceInfo, TemplateValidation, TypeKind,
 };
 use crate::semantic::types::type_def::TypeId;
@@ -307,6 +308,71 @@ impl<'m, 'app, T: NativeType> ClassBuilder<'m, 'app, T> {
             f(this);
             Ok(())
         }));
+        self
+    }
+
+    /// Register a list constructor for value types.
+    ///
+    /// Enables initialization list syntax: `MyStruct s = {1, 2, 3};`
+    ///
+    /// # Parameters
+    ///
+    /// - `pattern`: The expected list pattern (e.g., `ListPattern::repeat(INT_TYPE)`)
+    /// - `f`: Native function that receives the list data via `CallContext`
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// module.register_type::<MyStruct>("MyStruct")
+    ///     .value_type()
+    ///     .list_construct(ListPattern::fixed(vec![INT_TYPE, STRING_TYPE]), |ctx| {
+    ///         let int_val: i32 = ctx.arg(0)?;
+    ///         let str_val: String = ctx.arg(1)?;
+    ///         // Construct the value...
+    ///         Ok(())
+    ///     })?
+    ///     .build()?;
+    /// ```
+    pub fn list_construct<F>(mut self, pattern: ListPattern, f: F) -> Self
+    where
+        F: Fn(&mut CallContext) -> Result<(), super::error::NativeError> + Send + Sync + 'static,
+    {
+        self.behaviors.list_construct = Some(ListBehavior {
+            native_fn: NativeFn::new(f),
+            pattern,
+        });
+        self
+    }
+
+    /// Register a list factory for reference types.
+    ///
+    /// Enables initialization list syntax: `array<int> a = {1, 2, 3};`
+    ///
+    /// # Parameters
+    ///
+    /// - `pattern`: The expected list pattern (e.g., `ListPattern::repeat(TYPE_ID)`)
+    /// - `f`: Native function that receives the list data via `CallContext`
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// module.register_type::<ScriptArray>("array<class T>")
+    ///     .reference_type()
+    ///     .list_factory(ListPattern::repeat(TypeId(0)), |ctx| {
+    ///         // 0 is a placeholder - actual type comes from template instantiation
+    ///         // Build array from list buffer...
+    ///         Ok(())
+    ///     })?
+    ///     .build()?;
+    /// ```
+    pub fn list_factory<F>(mut self, pattern: ListPattern, f: F) -> Self
+    where
+        F: Fn(&mut CallContext) -> Result<(), super::error::NativeError> + Send + Sync + 'static,
+    {
+        self.behaviors.list_factory = Some(ListBehavior {
+            native_fn: NativeFn::new(f),
+            pattern,
+        });
         self
     }
 
@@ -1350,5 +1416,73 @@ mod tests {
             .method_raw("", |_ctx: &mut CallContext| Ok(()));
 
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn class_builder_with_list_construct() {
+        use crate::semantic::types::type_def::TypeId;
+
+        let mut module = Module::root();
+        module
+            .register_type::<TestVec3>("TestVec3")
+            .value_type()
+            .list_construct(
+                ListPattern::fixed(vec![TypeId(10), TypeId(10), TypeId(10)]), // float, float, float
+                |_ctx: &mut CallContext| Ok(()),
+            )
+            .build()
+            .unwrap();
+
+        let ty = &module.types()[0];
+        assert!(ty.behaviors.list_construct.is_some());
+        assert!(ty.behaviors.has_list_construct());
+
+        let list_behavior = ty.behaviors.list_construct.as_ref().unwrap();
+        assert!(matches!(list_behavior.pattern, ListPattern::Fixed(_)));
+    }
+
+    #[test]
+    fn class_builder_with_list_factory() {
+        use crate::semantic::types::type_def::TypeId;
+
+        let mut module = Module::root();
+        module
+            .register_type::<TestVec3>("TestVec3")
+            .reference_type()
+            .list_factory(
+                ListPattern::repeat(TypeId(3)), // int
+                |_ctx: &mut CallContext| Ok(()),
+            )
+            .build()
+            .unwrap();
+
+        let ty = &module.types()[0];
+        assert!(ty.behaviors.list_factory.is_some());
+        assert!(ty.behaviors.has_list_factory());
+
+        let list_behavior = ty.behaviors.list_factory.as_ref().unwrap();
+        assert!(matches!(list_behavior.pattern, ListPattern::Repeat(_)));
+    }
+
+    #[test]
+    fn class_builder_with_list_factory_repeat_tuple() {
+        use crate::semantic::types::type_def::TypeId;
+
+        let mut module = Module::root();
+        module
+            .register_type::<TestVec3>("TestVec3")
+            .reference_type()
+            .list_factory(
+                ListPattern::repeat_tuple(vec![TypeId(14), TypeId(3)]), // string, int
+                |_ctx: &mut CallContext| Ok(()),
+            )
+            .build()
+            .unwrap();
+
+        let ty = &module.types()[0];
+        assert!(ty.behaviors.list_factory.is_some());
+
+        let list_behavior = ty.behaviors.list_factory.as_ref().unwrap();
+        assert!(matches!(list_behavior.pattern, ListPattern::RepeatTuple(_)));
     }
 }

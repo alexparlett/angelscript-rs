@@ -1,47 +1,65 @@
 //! Standard I/O functions.
 //!
-//! Provides print and println functions with overloads for common types.
+//! Provides print and println functions using the generic calling convention.
 //! Functions are registered in the global namespace.
 //!
 //! # Functions
 //!
-//! Each print function has overloads for: string, int, uint, float, double, bool
-//!
 //! | Function | Description |
 //! |----------|-------------|
-//! | `print(...)` | Print to stdout without newline |
-//! | `println(...)` | Print to stdout with newline |
-//! | `eprint(...)` | Print to stderr without newline |
-//! | `eprintln(...)` | Print to stderr with newline |
+//! | `print(msg, val)` | Print formatted message with value to stdout (no newline) |
+//! | `println(msg, val)` | Print formatted message with value to stdout (with newline) |
+//! | `println()` | Print empty line to stdout |
+//! | `eprint(msg, val)` | Print formatted message with value to stderr (no newline) |
+//! | `eprintln(msg, val)` | Print formatted message with value to stderr (with newline) |
+//! | `eprintln()` | Print empty line to stderr |
+//!
+//! The `?&in` parameter type accepts any value type (int, float, bool, string, etc.)
+//! and formats it appropriately.
 //!
 //! # Example
 //!
 //! ```angelscript
 //! void main() {
-//!     print("Value: ");
-//!     println(42);
-//!     println(3.14159);
-//!     println(true);
+//!     println("Value: ", 42);
+//!     println("Pi: ", 3.14159);
+//!     println("Enabled: ", true);
+//!     println();  // empty line
 //! }
 //! ```
 
 use std::io::{self, Write};
 
+use crate::ffi::{CallContext, VmSlot};
 use crate::module::FfiModuleError;
 use crate::Module;
+
+/// Format a VmSlot value as a string.
+fn format_slot(slot: &VmSlot) -> String {
+    match slot {
+        VmSlot::Void => String::new(),
+        VmSlot::Int(v) => v.to_string(),
+        VmSlot::Float(v) => v.to_string(),
+        VmSlot::Bool(v) => v.to_string(),
+        VmSlot::String(s) => s.clone(),
+        VmSlot::Object(_) => "[object]".to_string(),
+        VmSlot::Native(_) => "[native]".to_string(),
+        VmSlot::NullHandle => "null".to_string(),
+    }
+}
 
 /// Creates the std module with I/O functions.
 ///
 /// Functions are registered in the global (root) namespace, so scripts
 /// can call them directly without a namespace prefix.
 ///
-/// Each print function has overloads for common types:
-/// - string, int, uint, int64, uint64, float, double, bool
+/// Print functions use the generic calling convention with `?&in` to accept
+/// any value type. When variadics are implemented, these can be extended
+/// to accept multiple parameters.
 ///
 /// # Returns
 ///
-/// A `Module` containing print, println, eprint, and eprintln functions
-/// with overloads for multiple types.
+/// A `Module` containing print, println, eprint, and eprintln functions.
 ///
 /// # Example
 ///
@@ -58,83 +76,34 @@ pub fn std_module<'app>() -> Result<Module<'app>, FfiModuleError> {
     // PRINT - stdout without newline
     // =========================================================================
 
-    module.register_fn("void print(const string &in s)", |s: String| {
-        print!("{}", s);
-        let _ = io::stdout().flush();
-    })?;
-
-    module.register_fn("void print(int val)", |v: i32| {
-        print!("{}", v);
-        let _ = io::stdout().flush();
-    })?;
-
-    module.register_fn("void print(uint val)", |v: u32| {
-        print!("{}", v);
-        let _ = io::stdout().flush();
-    })?;
-
-    module.register_fn("void print(int64 val)", |v: i64| {
-        print!("{}", v);
-        let _ = io::stdout().flush();
-    })?;
-
-    module.register_fn("void print(uint64 val)", |v: u64| {
-        print!("{}", v);
-        let _ = io::stdout().flush();
-    })?;
-
-    module.register_fn("void print(float val)", |v: f32| {
-        print!("{}", v);
-        let _ = io::stdout().flush();
-    })?;
-
-    module.register_fn("void print(double val)", |v: f64| {
-        print!("{}", v);
-        let _ = io::stdout().flush();
-    })?;
-
-    module.register_fn("void print(bool val)", |v: bool| {
-        print!("{}", v);
-        let _ = io::stdout().flush();
-    })?;
+    // print(msg, val) - print message followed by any value
+    module.register_fn_raw(
+        "void print(const string &in msg, ?&in val)",
+        |ctx: &mut CallContext| {
+            let msg: String = ctx.arg(0)?;
+            let val = ctx.arg_slot(1)?;
+            print!("{}{}", msg, format_slot(val));
+            let _ = io::stdout().flush();
+            Ok(())
+        },
+    )?;
 
     // =========================================================================
     // PRINTLN - stdout with newline
     // =========================================================================
 
-    module.register_fn("void println(const string &in s)", |s: String| {
-        println!("{}", s);
-    })?;
+    // println(msg, val) - print message followed by any value, with newline
+    module.register_fn_raw(
+        "void println(const string &in msg, ?&in val)",
+        |ctx: &mut CallContext| {
+            let msg: String = ctx.arg(0)?;
+            let val = ctx.arg_slot(1)?;
+            println!("{}{}", msg, format_slot(val));
+            Ok(())
+        },
+    )?;
 
-    module.register_fn("void println(int val)", |v: i32| {
-        println!("{}", v);
-    })?;
-
-    module.register_fn("void println(uint val)", |v: u32| {
-        println!("{}", v);
-    })?;
-
-    module.register_fn("void println(int64 val)", |v: i64| {
-        println!("{}", v);
-    })?;
-
-    module.register_fn("void println(uint64 val)", |v: u64| {
-        println!("{}", v);
-    })?;
-
-    module.register_fn("void println(float val)", |v: f32| {
-        println!("{}", v);
-    })?;
-
-    module.register_fn("void println(double val)", |v: f64| {
-        println!("{}", v);
-    })?;
-
-    module.register_fn("void println(bool val)", |v: bool| {
-        println!("{}", v);
-    })?;
-
-    // No-argument println for empty line
+    // println() - empty line
     module.register_fn("void println()", || {
         println!();
     })?;
@@ -143,83 +112,34 @@ pub fn std_module<'app>() -> Result<Module<'app>, FfiModuleError> {
     // EPRINT - stderr without newline
     // =========================================================================
 
-    module.register_fn("void eprint(const string &in s)", |s: String| {
-        eprint!("{}", s);
-        let _ = io::stderr().flush();
-    })?;
-
-    module.register_fn("void eprint(int val)", |v: i32| {
-        eprint!("{}", v);
-        let _ = io::stderr().flush();
-    })?;
-
-    module.register_fn("void eprint(uint val)", |v: u32| {
-        eprint!("{}", v);
-        let _ = io::stderr().flush();
-    })?;
-
-    module.register_fn("void eprint(int64 val)", |v: i64| {
-        eprint!("{}", v);
-        let _ = io::stderr().flush();
-    })?;
-
-    module.register_fn("void eprint(uint64 val)", |v: u64| {
-        eprint!("{}", v);
-        let _ = io::stderr().flush();
-    })?;
-
-    module.register_fn("void eprint(float val)", |v: f32| {
-        eprint!("{}", v);
-        let _ = io::stderr().flush();
-    })?;
-
-    module.register_fn("void eprint(double val)", |v: f64| {
-        eprint!("{}", v);
-        let _ = io::stderr().flush();
-    })?;
-
-    module.register_fn("void eprint(bool val)", |v: bool| {
-        eprint!("{}", v);
-        let _ = io::stderr().flush();
-    })?;
+    // eprint(msg, val) - print message followed by any value to stderr
+    module.register_fn_raw(
+        "void eprint(const string &in msg, ?&in val)",
+        |ctx: &mut CallContext| {
+            let msg: String = ctx.arg(0)?;
+            let val = ctx.arg_slot(1)?;
+            eprint!("{}{}", msg, format_slot(val));
+            let _ = io::stderr().flush();
+            Ok(())
+        },
+    )?;
 
     // =========================================================================
     // EPRINTLN - stderr with newline
     // =========================================================================
 
-    module.register_fn("void eprintln(const string &in s)", |s: String| {
-        eprintln!("{}", s);
-    })?;
+    // eprintln(msg, val) - print message followed by any value to stderr, with newline
+    module.register_fn_raw(
+        "void eprintln(const string &in msg, ?&in val)",
+        |ctx: &mut CallContext| {
+            let msg: String = ctx.arg(0)?;
+            let val = ctx.arg_slot(1)?;
+            eprintln!("{}{}", msg, format_slot(val));
+            Ok(())
+        },
+    )?;
 
-    module.register_fn("void eprintln(int val)", |v: i32| {
-        eprintln!("{}", v);
-    })?;
-
-    module.register_fn("void eprintln(uint val)", |v: u32| {
-        eprintln!("{}", v);
-    })?;
-
-    module.register_fn("void eprintln(int64 val)", |v: i64| {
-        eprintln!("{}", v);
-    })?;
-
-    module.register_fn("void eprintln(uint64 val)", |v: u64| {
-        eprintln!("{}", v);
-    })?;
-
-    module.register_fn("void eprintln(float val)", |v: f32| {
-        eprintln!("{}", v);
-    })?;
-
-    module.register_fn("void eprintln(double val)", |v: f64| {
-        eprintln!("{}", v);
-    })?;
-
-    module.register_fn("void eprintln(bool val)", |v: bool| {
-        eprintln!("{}", v);
-    })?;
-
-    // No-argument eprintln for empty line
+    // eprintln() - empty line to stderr
     module.register_fn("void eprintln()", || {
         eprintln!();
     })?;
@@ -240,11 +160,11 @@ mod tests {
     #[test]
     fn test_std_module_function_count() {
         let module = std_module().expect("std module should build");
-        // 8 print + 9 println + 8 eprint + 9 eprintln = 34
+        // print(msg, val) + println(msg, val) + println() + eprint(msg, val) + eprintln(msg, val) + eprintln() = 6
         assert_eq!(
             module.functions().len(),
-            34,
-            "std module should have 34 functions"
+            6,
+            "std module should have 6 functions"
         );
     }
 
@@ -266,26 +186,27 @@ mod tests {
     }
 
     #[test]
-    fn test_print_overload_count() {
+    fn test_print_function_count() {
         let module = std_module().expect("std module should build");
         let print_count = module
             .functions()
             .iter()
             .filter(|f| f.name.name == "print")
             .count();
-        assert_eq!(print_count, 8, "should have 8 print overloads");
+        // Just one print(msg, val) using generic calling convention
+        assert_eq!(print_count, 1, "should have 1 print function");
     }
 
     #[test]
-    fn test_println_overload_count() {
+    fn test_println_function_count() {
         let module = std_module().expect("std module should build");
         let println_count = module
             .functions()
             .iter()
             .filter(|f| f.name.name == "println")
             .count();
-        // 8 typed + 1 no-arg = 9
-        assert_eq!(println_count, 9, "should have 9 println overloads");
+        // println(msg, val) + println() = 2
+        assert_eq!(println_count, 2, "should have 2 println functions");
     }
 
     #[test]
@@ -308,5 +229,15 @@ mod tests {
         // Root namespace means no prefix
         assert_eq!(module.qualified_name("print"), "print");
         assert_eq!(module.qualified_name("println"), "println");
+    }
+
+    #[test]
+    fn test_format_slot() {
+        assert_eq!(format_slot(&VmSlot::Void), "");
+        assert_eq!(format_slot(&VmSlot::Int(42)), "42");
+        assert_eq!(format_slot(&VmSlot::Float(3.14)), "3.14");
+        assert_eq!(format_slot(&VmSlot::Bool(true)), "true");
+        assert_eq!(format_slot(&VmSlot::String("hello".to_string())), "hello");
+        assert_eq!(format_slot(&VmSlot::NullHandle), "null");
     }
 }

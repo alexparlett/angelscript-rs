@@ -47,7 +47,7 @@ pub use list_buffer::{ListBuffer, ListPattern, TupleListBuffer};
 pub use native_fn::{CallContext, NativeCallable, NativeFn, ObjectHandle, ObjectHeap, VmSlot};
 pub use traits::{FromScript, IntoNativeFn, NativeType, ThisMut, ThisRef, ToScript};
 pub use types::{
-    Behaviors, NativeFuncdefDef, NativeFunctionDef, NativeInterfaceDef, NativeInterfaceMethod,
-    NativeMethodDef, NativePropertyDef, NativeTypeDef, ReferenceKind, TemplateInstanceInfo,
-    TemplateValidation, TypeKind,
+    Behaviors, ListBehavior, NativeFuncdefDef, NativeFunctionDef, NativeInterfaceDef,
+    NativeInterfaceMethod, NativeMethodDef, NativePropertyDef, NativeTypeDef, ReferenceKind,
+    TemplateInstanceInfo, TemplateValidation, TypeKind,
 };
