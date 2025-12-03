@@ -1,6 +1,6 @@
 # FFI Registration System Plan
 
-**Status:** In Progress (Task 07 Complete)
+**Status:** In Progress (Task 19 Complete, Task 20 Investigation)
 **Date:** 2025-12-03
 
 ## Overview
@@ -1621,7 +1621,8 @@ Detailed task files are in `/claude/tasks/`. Complete in order:
 | Task | File | Description | Status |
 |------|------|-------------|--------|
 | 07 | [07_ffi_apply_to_registry.md](tasks/07_ffi_apply_to_registry.md) | Registry.import_modules() - convert FFI registrations to Registry entries | ✅ Complete |
-| 08 | [08_ffi_builtin_modules.md](tasks/08_ffi_builtin_modules.md) | Implement std, string, array, dictionary, math modules via FFI | Not Started |
+| 08 | [08_ffi_builtin_modules.md](tasks/08_ffi_builtin_modules.md) | Implement std, string, array, dictionary, math modules via FFI | ✅ Complete |
+| 19 | [19_ffi_import_review.md](tasks/19_ffi_import_review.md) | FFI import system review & test migration | ✅ Complete |
 | 15 | [15_ffi_list_behaviors.md](tasks/15_ffi_list_behaviors.md) | List construction behaviors (list_construct, list_factory) | Not Started |
 | 17 | [17_ffi_virtual_property_accessors.md](tasks/17_ffi_virtual_property_accessors.md) | Virtual property accessors (`get_`/`set_` methods exposed as properties) | Not Started |
 | 18 | [18_ffi_ref_handle_addon.md](tasks/18_ffi_ref_handle_addon.md) | Generic handle (`ref`) add-on - type-erased handle container | Not Started |
@@ -1630,14 +1631,15 @@ Detailed task files are in `/claude/tasks/`. Complete in order:
 
 | Task | File | Description | Status |
 |------|------|-------------|--------|
-| 09 | [09_ffi_update_entry_points.md](tasks/09_ffi_update_entry_points.md) | Update benches and tests to use Context/Unit API | Not Started |
+| 09 | [09_ffi_update_entry_points.md](tasks/09_ffi_update_entry_points.md) | Update benches and tests to use Context/Unit API | ✅ Complete |
 | 10 | [10_ffi_extract_placeholders.md](tasks/10_ffi_extract_placeholders.md) | Remove FFI placeholders from 19 test scripts | Not Started |
 | 11 | [11_ffi_lib_exports.md](tasks/11_ffi_lib_exports.md) | Library exports and public API organization | Not Started |
 
-### Phase 5: Advanced Features
+### Phase 5: Performance & Advanced Features
 
 | Task | File | Description | Status |
 |------|------|-------------|--------|
+| 20 | [20_ffi_import_performance.md](tasks/20_ffi_import_performance.md) | FFI import performance optimization | 🔄 Investigation |
 | 12 | [12_ffi_template_functions.md](tasks/12_ffi_template_functions.md) | Template function support via register_fn_raw | Not Started |
 | 13 | [13_ffi_variadic_args.md](tasks/13_ffi_variadic_args.md) | Variadic function arguments | Not Started |
 | 14 | [14_ffi_advanced_templates.md](tasks/14_ffi_advanced_templates.md) | Advanced template features (if_handle_then_const, child funcdefs, specializations) | Not Started |

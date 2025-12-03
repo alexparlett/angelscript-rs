@@ -2,7 +2,7 @@
 
 **Status:** In Progress
 **Date:** 2025-12-03
-**Phase:** Post-Semantic Analysis
+**Phase:** FFI Performance Optimization
 
 ---
 
@@ -10,13 +10,14 @@
 
 **Parser:** 100% Complete
 **Semantic Analysis:** 100% Complete
-**Test Status:** 1987 tests passing, 0 ignored
+**Test Status:** 2326 library tests + 24 integration tests passing
 
 **Recent Additions:**
-- Implemented `Registry::import_modules()` for converting FFI registrations to Registry entries
-- Added `ImportError` type for import failure handling
-- Two-pass type import for handling circular references within modules
-- Type resolution helper for converting AST types to semantic DataType
+- All FFI built-in modules implemented (std, string, math, array, dictionary)
+- Integration tests and benchmarks using Context/Unit API
+- SELF_TYPE placeholder for template self-references
+- Template callback support for validation
+- Multiple operator overload support (const/non-const)
 
 ---
 
@@ -41,18 +42,20 @@ Detailed task files are in `/claude/tasks/`. Complete in order:
 | Task | Description | Status |
 |------|-------------|--------|
 | [07](tasks/07_ffi_apply_to_registry.md) | Apply FFI registrations to Registry | ✅ Complete |
-| [08](tasks/08_ffi_builtin_modules.md) | Implement built-in modules via FFI (includes list behaviors) | Not Started |
+| [08](tasks/08_ffi_builtin_modules.md) | Implement built-in modules via FFI (includes list behaviors) | ✅ Complete |
+| [19](tasks/19_ffi_import_review.md) | FFI import system review & test migration | ✅ Complete |
 
 ### Phase 4: Migration
 | Task | Description | Status |
 |------|-------------|--------|
-| [09](tasks/09_ffi_update_entry_points.md) | Update benches/tests to Context/Unit API | Not Started |
+| [09](tasks/09_ffi_update_entry_points.md) | Update benches/tests to Context/Unit API | ✅ Complete |
 | [10](tasks/10_ffi_extract_placeholders.md) | Remove FFI placeholders from test scripts | Not Started |
 | [11](tasks/11_ffi_lib_exports.md) | Library exports and public API | Not Started |
 
-### Phase 5: Advanced Features
+### Phase 5: Performance & Advanced Features
 | Task | Description | Status |
 |------|-------------|--------|
+| [20](tasks/20_ffi_import_performance.md) | FFI import performance optimization | 🔄 Investigation |
 | [12](tasks/12_ffi_template_functions.md) | Template functions via register_fn_raw | Not Started |
 | [13](tasks/13_ffi_variadic_args.md) | Variadic function arguments | Not Started |
 | [14](tasks/14_ffi_advanced_templates.md) | Advanced templates (if_handle_then_const, funcdefs, specializations) | Not Started |
@@ -70,6 +73,8 @@ Detailed task files are in `/claude/tasks/`. Complete in order:
 - **Built-ins via FFI**: Replace ~800 lines of hardcoded registry.rs
 - **`import_modules()` on Registry** - processes all modules in one call
 - **Two-pass type import** - handles circular references between types in same module
+- **SELF_TYPE (TypeId(u32::MAX - 1))** - placeholder for self-referential template types
+- **Vec<FunctionId> for operator_methods** - supports const/non-const overloads
 
 ---
 
@@ -82,7 +87,7 @@ Detailed task files are in `/claude/tasks/`. Complete in order:
 
 ## Next Steps
 
-**Task 08: Built-in Modules** - Implement std, string, array, dictionary, math modules via FFI
+**Task 20: FFI Import Performance** - Investigate and fix ~20x performance regression in benchmarks (~100μs → ~2.2ms) caused by FFI module import happening on every compilation
 
 ---
 
