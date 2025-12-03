@@ -1,7 +1,7 @@
 # Current Task: FFI Implementation
 
-**Status:** Ready for Implementation
-**Date:** 2025-12-02
+**Status:** In Progress
+**Date:** 2025-12-03
 **Phase:** Post-Semantic Analysis
 
 ---
@@ -10,13 +10,13 @@
 
 **Parser:** 100% Complete
 **Semantic Analysis:** 100% Complete
-**Test Status:** 1894 tests passing, 0 ignored
+**Test Status:** 1987 tests passing, 0 ignored
 
 **Recent Additions:**
-- Refactored lexer to copy strings into arena (single `'ast` lifetime)
-- Updated GlobalPropertyDef to use parsed AST types (Ident, TypeExpr)
-- Module now owns arena for parsed FFI declarations
-- Added parse_property_expr function for parsing property declarations
+- Implemented `Registry::import_modules()` for converting FFI registrations to Registry entries
+- Added `ImportError` type for import failure handling
+- Two-pass type import for handling circular references within modules
+- Type resolution helper for converting AST types to semantic DataType
 
 ---
 
@@ -33,15 +33,14 @@ Detailed task files are in `/claude/tasks/`. Complete in order:
 ### Phase 2: Registration Builders
 | Task | Description | Status |
 |------|-------------|--------|
-| [03](tasks/03_ffi_function_builder.md) | FunctionBuilder (type-safe and raw) | Not Started |
-| [04](tasks/04_ffi_class_builder.md) | ClassBuilder (value/reference types) | Not Started |
-| [05](tasks/05_ffi_enum_interface_funcdef.md) | Enum, Interface, Funcdef builders | Not Started |
-| [06](tasks/06_ffi_template_builder.md) | TemplateBuilder (array<T>, etc.) | Not Started |
+| [03](tasks/03_ffi_function_registration.md) | Function registration with declaration parsing | ✅ Complete |
+| [04](tasks/04_ffi_class_builder.md) | ClassBuilder (value/reference types) | ✅ Complete |
+| [05](tasks/05_ffi_enum_interface_funcdef.md) | Enum, Interface, Funcdef builders | ✅ Complete |
 
 ### Phase 3: Integration
 | Task | Description | Status |
 |------|-------------|--------|
-| [07](tasks/07_ffi_apply_to_registry.md) | Apply FFI registrations to Registry | Not Started |
+| [07](tasks/07_ffi_apply_to_registry.md) | Apply FFI registrations to Registry | ✅ Complete |
 | [08](tasks/08_ffi_builtin_modules.md) | Implement built-in modules via FFI | Not Started |
 
 ### Phase 4: Migration
@@ -61,14 +60,21 @@ Detailed task files are in `/claude/tasks/`. Complete in order:
 - **Global properties on Module**, not Context (follows same pattern as functions)
 - **Two calling conventions**: type-safe (closure) and raw (CallContext)
 - **Built-ins via FFI**: Replace ~800 lines of hardcoded registry.rs
+- **`import_modules()` on Registry** - processes all modules in one call
+- **Two-pass type import** - handles circular references between types in same module
 
 ---
 
 ## Quick Reference
 
 **Full FFI Design:** `/claude/ffi_plan.md`
-**Plan File:** `~/.claude/plans/toasty-soaring-swan.md`
 **Decisions Log:** `/claude/decisions.md`
+
+---
+
+## Next Steps
+
+**Task 08: Built-in Modules** - Implement std, string, array, dictionary, math modules via FFI
 
 ---
 

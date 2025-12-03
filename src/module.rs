@@ -85,9 +85,6 @@ pub struct Module<'app> {
     /// The 'static lifetime is transmuted - actual lifetime is tied to arena
     funcdefs: Vec<NativeFuncdefDef<'static>>,
 
-    /// Registered templates
-    templates: Vec<NativeTemplateDef>,
-
     /// Global properties (app-owned references)
     /// The lifetime is tied to the module's arena via a transmute in register_global_property
     global_properties: Vec<GlobalPropertyDef<'static, 'app>>,
@@ -102,16 +99,6 @@ pub struct NativeEnumDef {
     pub name: String,
     /// Enum values (name -> value)
     pub values: Vec<(String, i64)>,
-}
-
-/// A native template definition (placeholder for Task 06).
-#[derive(Debug)]
-pub struct NativeTemplateDef {
-    /// Template name
-    pub name: String,
-    /// Number of type parameters
-    pub param_count: usize,
-    // Validator and instance builder will be added in Task 06
 }
 
 impl<'app> Module<'app> {
@@ -137,7 +124,6 @@ impl<'app> Module<'app> {
             enums: Vec::new(),
             interfaces: Vec::new(),
             funcdefs: Vec::new(),
-            templates: Vec::new(),
             global_properties: Vec::new(),
         }
     }
@@ -748,7 +734,6 @@ impl<'app> Module<'app> {
             + self.enums.len()
             + self.interfaces.len()
             + self.funcdefs.len()
-            + self.templates.len()
             + self.global_properties.len()
     }
 }
@@ -769,7 +754,6 @@ impl std::fmt::Debug for Module<'_> {
             .field("enums", &self.enums)
             .field("interfaces", &self.interfaces)
             .field("funcdefs", &self.funcdefs)
-            .field("templates", &self.templates)
             .field("global_properties", &self.global_properties)
             .finish()
     }
@@ -1087,20 +1071,6 @@ mod tests {
         assert_eq!(module.enums().len(), 1);
         assert_eq!(module.enums()[0].name, "Color");
         assert_eq!(module.enums()[0].values.len(), 3);
-    }
-
-    #[test]
-    fn module_add_template() {
-        let mut module = Module::<'static>::root();
-
-        module.add_template(NativeTemplateDef {
-            name: "array".to_string(),
-            param_count: 1,
-        });
-
-        assert_eq!(module.templates().len(), 1);
-        assert_eq!(module.templates()[0].name, "array");
-        assert_eq!(module.templates()[0].param_count, 1);
     }
 
     #[test]

@@ -1,80 +1,91 @@
 # Task 07: Apply to Registry
 
-**Status:** Not Started
+**Status:** ✅ Complete
 **Depends On:** Tasks 01-06
-**Estimated Scope:** Integration with semantic analysis
+**Completed:** 2025-12-03
 
 ---
 
 ## Objective
 
-Implement the `apply_to_registry()` function that converts FFI registrations into Registry entries for semantic analysis.
+Implement `Registry::import_modules()` method that converts FFI registrations from multiple `Module`s into Registry entries for semantic analysis.
 
-## Files to Create/Modify
+## Implementation
 
-- `src/ffi/apply.rs` - apply_to_registry() implementation
-- Modify `src/semantic/types/registry.rs` - add method to accept FFI definitions
+Added `import_modules(&mut self, modules: &[Module])` method to `Registry` in `src/semantic/types/registry.rs`.
 
-## Key Function
+### Method Signature
 
 ```rust
-/// Apply all registered items from a Module to the Registry
-pub fn apply_to_registry<'src, 'ast>(
-    module: &Module,
-    registry: &mut Registry<'src, 'ast>,
-    arena: &'ast Bump,
-) -> Result<(), ApplyError> {
-    // 1. Register types first (so functions can reference them)
-    for type_def in &module.types {
-        let type_id = registry.register_native_type(type_def)?;
-        // Store mapping from type name to TypeId
-    }
-
-    // 2. Register enums
-    for enum_def in &module.enums {
-        registry.register_native_enum(enum_def)?;
-    }
-
-    // 3. Register templates
-    for template_def in &module.templates {
-        registry.register_native_template(template_def)?;
-    }
-
-    // 4. Register functions (global and methods)
-    for func_def in &module.functions {
-        let func_id = registry.register_native_function(func_def)?;
-    }
-
-    // 5. Register global properties
-    for prop_def in &module.global_properties {
-        registry.register_native_global_property(prop_def)?;
-    }
-
-    Ok(())
+impl<'ast> Registry<'ast> {
+    pub fn import_modules(&mut self, modules: &[Module<'_>]) -> Result<(), ImportError>
 }
 ```
 
-## Conversions
+### Error Type
 
-FFI storage types already use AST primitives, so conversion is straightforward:
+```rust
+#[derive(Debug, Clone, Error)]
+pub enum ImportError {
+    #[error("type not found: {0}")]
+    TypeNotFound(String),
 
-- `TypeExpr<'ast>` → `DataType` (resolve type names to TypeId using Registry)
-- `NativeFunctionDef<'ast>` → `FunctionDef` (set `is_native: true`, convert `FunctionParam` to params)
-- `NativeTypeDef<'ast>` → `TypeDef::Class` or `TypeDef::Interface`
-- Default expressions are already parsed and stored in `FunctionParam.default_value`
+    #[error("duplicate type: {0}")]
+    DuplicateType(String),
 
-## Implementation Notes
+    #[error("type resolution failed for '{type_name}': {reason}")]
+    TypeResolutionFailed { type_name: String, reason: String },
+}
+```
 
-- Type resolution must handle namespaces
-- Handle dependencies (method types must exist before methods)
-- Parse default argument expressions using the parser
-- Validate type references exist
+### Processing Order
+
+Uses correct dependency ordering with two-pass type import:
+
+1. **Enums** - No dependencies, register first
+2. **Interfaces** - Abstract method signatures only
+3. **Funcdefs** - Function pointer types
+4. **Types (shell)** - Register type name so it can be looked up
+5. **Types (details)** - Fill in methods, operators, properties (may reference other types)
+6. **Functions** - Global functions, may reference any type
+7. **Global Properties** - May reference any type
+
+The two-pass type import handles circular references between types in the same module.
+
+### Type Resolution
+
+Added `resolve_ffi_type_expr()` helper to convert AST `TypeExpr` to semantic `DataType`:
+- Primitives → Fixed TypeIds (int → INT32_TYPE, etc.)
+- Named types → Registry lookup
+- Template types → Registry instantiation
+- Type modifiers (const, @, &in/out/inout)
+
+## Files Modified
+
+- `src/semantic/types/registry.rs` - Added `import_modules()` and supporting code (~300 lines)
+- `src/semantic/types/mod.rs` - Re-export `ImportError`
+- `src/semantic/mod.rs` - Re-export `ImportError`
+
+## Tests Added
+
+13 new tests covering:
+- Import empty module
+- Import module with enum
+- Import module with interface
+- Import module with funcdef
+- Import module with class (methods, operators, properties)
+- Import module with global function
+- Import module with global property
+- Type resolution for various type expressions
+- Error cases (duplicate types, unknown types)
+- Multiple module imports
+- Namespace handling
 
 ## Acceptance Criteria
 
-- [ ] FFI types appear in Registry.types
-- [ ] FFI functions appear in Registry.functions
-- [ ] FFI global properties are accessible
-- [ ] Type resolution works across namespaces
-- [ ] Default arguments are parsed correctly
-- [ ] Error messages are helpful for invalid registrations
+- [x] FFI types appear in Registry.types
+- [x] FFI functions appear in Registry.functions
+- [x] FFI global properties are accessible
+- [x] Type resolution works across namespaces
+- [x] Default arguments are parsed correctly
+- [x] Error messages are helpful for invalid registrations

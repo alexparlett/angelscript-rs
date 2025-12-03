@@ -14,7 +14,7 @@ pub mod type_def;
 // Re-export key types for ergonomic use
 pub use conversion::{Conversion, ConversionKind};
 pub use data_type::{DataType, RefModifier};
-pub use registry::{FunctionDef, GlobalVarDef, Registry};
+pub use registry::{FunctionDef, GlobalVarDef, ImportError, Registry};
 pub use type_def::{
     FieldDef, FunctionId, FunctionTraits, MethodSignature, OperatorBehavior, PrimitiveType,
     PropertyAccessors, TypeDef, TypeId, Visibility, ARRAY_TEMPLATE, BOOL_TYPE, DICT_TEMPLATE,

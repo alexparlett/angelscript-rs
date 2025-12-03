@@ -25,14 +25,24 @@
 use super::data_type::{DataType, RefModifier};
 use super::type_def::{
     TypeId, TypeDef, FunctionId, OperatorBehavior, PrimitiveType, FunctionTraits, PropertyAccessors,
-    Visibility, VOID_TYPE, BOOL_TYPE, INT8_TYPE, INT16_TYPE, INT32_TYPE, INT64_TYPE,
+    Visibility, MethodSignature,
+    VOID_TYPE, BOOL_TYPE, INT8_TYPE, INT16_TYPE, INT32_TYPE, INT64_TYPE,
     UINT8_TYPE, UINT16_TYPE, UINT32_TYPE, UINT64_TYPE, FLOAT_TYPE, DOUBLE_TYPE,
     STRING_TYPE, ARRAY_TEMPLATE, DICT_TEMPLATE, FIRST_USER_TYPE_ID,
 };
 use crate::semantic::error::{SemanticError, SemanticErrorKind};
 use crate::lexer::Span;
 use crate::ast::expr::Expr;
+use crate::ast::types::{TypeExpr, TypeBase, TypeSuffix, ParamType, PrimitiveType as AstPrimitiveType};
+use crate::ast::RefKind;
+use crate::module::Module;
+use crate::ffi::{
+    NativeTypeDef, NativeFunctionDef, NativeInterfaceDef, NativeFuncdefDef,
+    NativeMethodDef, NativePropertyDef, NativeInterfaceMethod,
+};
+use crate::module::NativeEnumDef;
 use rustc_hash::FxHashMap;
+use thiserror::Error;
 
 /// Function definition with complete signature
 #[derive(Debug, Clone, PartialEq)]
@@ -93,6 +103,31 @@ impl GlobalVarDef {
             format!("{}::{}", self.namespace.join("::"), self.name)
         }
     }
+}
+
+/// Errors that can occur when importing FFI modules into the registry.
+#[derive(Debug, Clone, Error)]
+pub enum ImportError {
+    /// A referenced type was not found in the registry
+    #[error("type not found: {0}")]
+    TypeNotFound(String),
+
+    /// A type with this name already exists
+    #[error("duplicate type: {0}")]
+    DuplicateType(String),
+
+    /// Failed to resolve a type expression
+    #[error("type resolution failed for '{type_name}': {reason}")]
+    TypeResolutionFailed {
+        /// The type name that failed to resolve
+        type_name: String,
+        /// The reason for the failure
+        reason: String,
+    },
+
+    /// Template instantiation failed
+    #[error("template instantiation failed: {0}")]
+    TemplateInstantiationFailed(String),
 }
 
 /// A mixin class definition
@@ -2055,6 +2090,694 @@ impl<'ast> Registry<'ast> {
         visited.insert(type_id);
         false
     }
+
+    // =========================================================================
+    // FFI Module Import
+    // =========================================================================
+
+    /// Import native FFI modules into the registry.
+    ///
+    /// Converts all FFI registrations (types, functions, enums, interfaces,
+    /// funcdefs, global properties) into Registry entries.
+    ///
+    /// # Processing Order
+    ///
+    /// Items are processed in dependency order:
+    /// 1. Enums - No dependencies
+    /// 2. Interfaces - Abstract method signatures only
+    /// 3. Funcdefs - Function pointer types
+    /// 4. Types/Classes - May reference enums, interfaces; includes methods
+    /// 5. Functions - Global functions, may reference any type
+    /// 6. Global Properties - May reference any type
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let mut registry = Registry::new();
+    /// registry.import_modules(context.modules())?;
+    /// ```
+    pub fn import_modules(&mut self, modules: &[Module<'_>]) -> Result<(), ImportError> {
+        // Phase 1: Register all enums (no dependencies)
+        for module in modules {
+            for enum_def in module.enums() {
+                self.import_enum(enum_def, module.namespace())?;
+            }
+        }
+
+        // Phase 2: Register all interfaces (no dependencies on other user types)
+        for module in modules {
+            for interface_def in module.interfaces() {
+                self.import_interface(interface_def, module.namespace())?;
+            }
+        }
+
+        // Phase 3: Register all funcdefs
+        for module in modules {
+            for funcdef_def in module.funcdefs() {
+                self.import_funcdef(funcdef_def, module.namespace())?;
+            }
+        }
+
+        // Phase 4: Register all types/classes (register type shells first)
+        for module in modules {
+            for type_def in module.types() {
+                self.import_type_shell(type_def, module.namespace())?;
+            }
+        }
+
+        // Phase 5: Fill in type details (methods, operators, properties)
+        for module in modules {
+            for type_def in module.types() {
+                self.import_type_details(type_def, module.namespace())?;
+            }
+        }
+
+        // Phase 6: Register all global functions
+        for module in modules {
+            for func_def in module.functions() {
+                self.import_function(func_def, module.namespace())?;
+            }
+        }
+
+        // Phase 7: Register all global properties
+        for module in modules {
+            for prop_def in module.global_properties() {
+                self.import_global_property(prop_def, module.namespace())?;
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Import a native enum definition.
+    fn import_enum(&mut self, enum_def: &NativeEnumDef, namespace: &[String]) -> Result<(), ImportError> {
+        let qualified_name = self.build_qualified_name(&enum_def.name, namespace);
+
+        // Check for duplicates
+        if self.type_by_name.contains_key(&qualified_name) {
+            return Err(ImportError::DuplicateType(qualified_name));
+        }
+
+        // Create the TypeDef::Enum
+        let typedef = TypeDef::Enum {
+            name: enum_def.name.clone(),
+            qualified_name: qualified_name.clone(),
+            values: enum_def.values.clone(),
+        };
+
+        // Register at the pre-assigned TypeId
+        self.register_type_at_id(enum_def.id, typedef, &qualified_name);
+
+        Ok(())
+    }
+
+    /// Import a native interface definition.
+    fn import_interface(
+        &mut self,
+        interface_def: &NativeInterfaceDef<'_>,
+        namespace: &[String],
+    ) -> Result<(), ImportError> {
+        let qualified_name = self.build_qualified_name(&interface_def.name, namespace);
+
+        // Check for duplicates
+        if self.type_by_name.contains_key(&qualified_name) {
+            return Err(ImportError::DuplicateType(qualified_name));
+        }
+
+        // Convert method signatures
+        let mut methods = Vec::with_capacity(interface_def.methods.len());
+        for method in &interface_def.methods {
+            let method_sig = self.convert_interface_method(method, namespace)?;
+            methods.push(method_sig);
+        }
+
+        // Create the TypeDef::Interface
+        let typedef = TypeDef::Interface {
+            name: interface_def.name.clone(),
+            qualified_name: qualified_name.clone(),
+            methods,
+        };
+
+        // Register at the pre-assigned TypeId
+        self.register_type_at_id(interface_def.id, typedef, &qualified_name);
+
+        Ok(())
+    }
+
+    /// Import a native funcdef definition.
+    fn import_funcdef(
+        &mut self,
+        funcdef_def: &NativeFuncdefDef<'_>,
+        namespace: &[String],
+    ) -> Result<(), ImportError> {
+        let name = funcdef_def.name.name.to_string();
+        let qualified_name = self.build_qualified_name(&name, namespace);
+
+        // Check for duplicates
+        if self.type_by_name.contains_key(&qualified_name) {
+            return Err(ImportError::DuplicateType(qualified_name));
+        }
+
+        // Resolve parameter types
+        let mut params = Vec::with_capacity(funcdef_def.params.len());
+        for param in funcdef_def.params {
+            let data_type = self.resolve_ffi_param_type(&param.ty, namespace)?;
+            params.push(data_type);
+        }
+
+        // Resolve return type
+        let return_type = self.resolve_ffi_return_type(&funcdef_def.return_type, namespace)?;
+
+        // Create the TypeDef::Funcdef
+        let typedef = TypeDef::Funcdef {
+            name: name.clone(),
+            qualified_name: qualified_name.clone(),
+            params,
+            return_type,
+        };
+
+        // Register at the pre-assigned TypeId
+        self.register_type_at_id(funcdef_def.id, typedef, &qualified_name);
+
+        Ok(())
+    }
+
+    /// Import a native type definition (shell only - no methods yet).
+    fn import_type_shell(
+        &mut self,
+        type_def: &NativeTypeDef<'_>,
+        namespace: &[String],
+    ) -> Result<(), ImportError> {
+        let qualified_name = self.build_qualified_name(&type_def.name, namespace);
+
+        // Check for duplicates
+        if self.type_by_name.contains_key(&qualified_name) {
+            return Err(ImportError::DuplicateType(qualified_name));
+        }
+
+        // Check if this is a template
+        if type_def.template_params.is_some() {
+            // Register as Template type
+            let param_count = type_def.template_params.map(|p| p.len()).unwrap_or(0);
+            let typedef = TypeDef::Template {
+                name: type_def.name.clone(),
+                param_count,
+            };
+            self.register_type_at_id(type_def.id, typedef, &qualified_name);
+        } else {
+            // Register as Class type (shell with empty methods)
+            let typedef = TypeDef::Class {
+                name: type_def.name.clone(),
+                qualified_name: qualified_name.clone(),
+                fields: Vec::new(),
+                methods: Vec::new(),
+                base_class: None,
+                interfaces: Vec::new(),
+                operator_methods: FxHashMap::default(),
+                properties: FxHashMap::default(),
+                is_final: false,
+                is_abstract: false,
+            };
+            self.register_type_at_id(type_def.id, typedef, &qualified_name);
+        }
+
+        Ok(())
+    }
+
+    /// Import type details (methods, operators, properties).
+    fn import_type_details(
+        &mut self,
+        type_def: &NativeTypeDef<'_>,
+        namespace: &[String],
+    ) -> Result<(), ImportError> {
+        // Skip templates - they get filled in during instantiation
+        if type_def.template_params.is_some() {
+            return Ok(());
+        }
+
+        let type_id = type_def.id;
+        let mut method_ids = Vec::new();
+        let mut operator_methods = FxHashMap::default();
+        let mut properties = FxHashMap::default();
+
+        // Import constructors
+        for ctor in &type_def.constructors {
+            let func_id = self.import_method(ctor, type_id, namespace, true, false)?;
+            method_ids.push(func_id);
+        }
+
+        // Import factories (treated as constructors for reference types)
+        for factory in &type_def.factories {
+            let func_id = self.import_method(factory, type_id, namespace, true, false)?;
+            method_ids.push(func_id);
+        }
+
+        // Import regular methods
+        for method in &type_def.methods {
+            let func_id = self.import_method(method, type_id, namespace, false, false)?;
+            method_ids.push(func_id);
+        }
+
+        // Import operators
+        for operator in &type_def.operators {
+            let func_id = self.import_method(operator, type_id, namespace, false, true)?;
+            method_ids.push(func_id);
+
+            // Map operator name to OperatorBehavior
+            let method_name = operator.name.name;
+            // For conversion operators, we need the return type to get the target TypeId
+            let target_type = if method_name.starts_with("opConv") || method_name.starts_with("opImplConv")
+                || method_name.starts_with("opCast") || method_name.starts_with("opImplCast")
+            {
+                let return_dt = self.resolve_ffi_return_type(&operator.return_type, namespace)?;
+                Some(return_dt.type_id)
+            } else {
+                None
+            };
+
+            if let Some(behavior) = OperatorBehavior::from_method_name(method_name, target_type) {
+                operator_methods.insert(behavior, func_id);
+            }
+        }
+
+        // Import properties
+        for prop in &type_def.properties {
+            let prop_accessors = self.import_property(prop, type_id, namespace)?;
+            properties.insert(prop.name.name.to_string(), prop_accessors);
+        }
+
+        // Update the TypeDef::Class with the collected data
+        let typedef = self.get_type_mut(type_id);
+        if let TypeDef::Class {
+            methods: class_methods,
+            operator_methods: class_operators,
+            properties: class_properties,
+            ..
+        } = typedef
+        {
+            *class_methods = method_ids;
+            *class_operators = operator_methods;
+            *class_properties = properties;
+        }
+
+        Ok(())
+    }
+
+    /// Import a method and return its FunctionId.
+    fn import_method(
+        &mut self,
+        method: &NativeMethodDef<'_>,
+        object_type: TypeId,
+        namespace: &[String],
+        is_constructor: bool,
+        is_operator: bool,
+    ) -> Result<FunctionId, ImportError> {
+        let func_id = FunctionId::next();
+        let name = method.name.name.to_string();
+
+        // Resolve parameter types
+        let mut params = Vec::with_capacity(method.params.len());
+        for param in method.params {
+            let data_type = self.resolve_ffi_param_type(&param.ty, namespace)?;
+            params.push(data_type);
+        }
+
+        // Resolve return type
+        let return_type = self.resolve_ffi_return_type(&method.return_type, namespace)?;
+
+        // Build function traits
+        let traits = FunctionTraits {
+            is_constructor,
+            is_destructor: name == "~" || name.starts_with('~'),
+            is_final: false,
+            is_virtual: !is_constructor && !is_operator,
+            is_abstract: false,
+            is_const: method.is_const,
+            is_explicit: false,
+            auto_generated: None,
+        };
+
+        // Create the FunctionDef
+        let func_def = FunctionDef {
+            id: func_id,
+            name,
+            namespace: namespace.to_vec(),
+            params,
+            return_type,
+            object_type: Some(object_type),
+            traits,
+            is_native: true,
+            default_args: Vec::new(), // TODO: Handle default args if needed
+            visibility: Visibility::Public,
+            signature_filled: true,
+        };
+
+        self.functions.insert(func_id, func_def);
+        Ok(func_id)
+    }
+
+    /// Import a property and return its PropertyAccessors.
+    fn import_property(
+        &mut self,
+        prop: &NativePropertyDef<'_>,
+        object_type: TypeId,
+        namespace: &[String],
+    ) -> Result<PropertyAccessors, ImportError> {
+        let prop_name = prop.name.name.to_string();
+        let prop_type = self.resolve_ffi_type_expr(prop.ty, namespace)?;
+
+        // Create getter function
+        let getter_id = FunctionId::next();
+        let getter_name = format!("get_{}", prop_name);
+        let getter_def = FunctionDef {
+            id: getter_id,
+            name: getter_name,
+            namespace: namespace.to_vec(),
+            params: Vec::new(),
+            return_type: prop_type.clone(),
+            object_type: Some(object_type),
+            traits: FunctionTraits {
+                is_const: true,
+                ..FunctionTraits::new()
+            },
+            is_native: true,
+            default_args: Vec::new(),
+            visibility: Visibility::Public,
+            signature_filled: true,
+        };
+        self.functions.insert(getter_id, getter_def);
+
+        // Create setter function if property is not const
+        let setter_id = if !prop.is_const && prop.setter.is_some() {
+            let setter_id = FunctionId::next();
+            let setter_name = format!("set_{}", prop_name);
+            let setter_def = FunctionDef {
+                id: setter_id,
+                name: setter_name,
+                namespace: namespace.to_vec(),
+                params: vec![prop_type],
+                return_type: DataType::simple(self.void_type),
+                object_type: Some(object_type),
+                traits: FunctionTraits::new(),
+                is_native: true,
+                default_args: Vec::new(),
+                visibility: Visibility::Public,
+                signature_filled: true,
+            };
+            self.functions.insert(setter_id, setter_def);
+            Some(setter_id)
+        } else {
+            None
+        };
+
+        Ok(PropertyAccessors {
+            getter: Some(getter_id),
+            setter: setter_id,
+            visibility: Visibility::Public,
+        })
+    }
+
+    /// Import a global function.
+    fn import_function(
+        &mut self,
+        func_def: &NativeFunctionDef<'_>,
+        namespace: &[String],
+    ) -> Result<(), ImportError> {
+        let name = func_def.name.name.to_string();
+        let qualified_name = self.build_qualified_name(&name, namespace);
+
+        // Resolve parameter types
+        let mut params = Vec::with_capacity(func_def.params.len());
+        for param in func_def.params {
+            let data_type = self.resolve_ffi_param_type(&param.ty, namespace)?;
+            params.push(data_type);
+        }
+
+        // Resolve return type
+        let return_type = self.resolve_ffi_return_type(&func_def.return_type, namespace)?;
+
+        // Create the FunctionDef
+        let function_def = FunctionDef {
+            id: func_def.id,
+            name,
+            namespace: namespace.to_vec(),
+            params,
+            return_type,
+            object_type: None,
+            traits: func_def.traits,
+            is_native: true,
+            default_args: Vec::new(), // TODO: Handle default args
+            visibility: func_def.visibility,
+            signature_filled: true,
+        };
+
+        // Register the function
+        self.functions.insert(func_def.id, function_def);
+        self.func_by_name
+            .entry(qualified_name)
+            .or_default()
+            .push(func_def.id);
+
+        Ok(())
+    }
+
+    /// Import a global property.
+    fn import_global_property(
+        &mut self,
+        prop_def: &crate::ffi::GlobalPropertyDef<'_, '_>,
+        namespace: &[String],
+    ) -> Result<(), ImportError> {
+        let name = prop_def.name.name.to_string();
+        let data_type = self.resolve_ffi_type_expr(&prop_def.ty, namespace)?;
+
+        self.register_global_var(name, namespace.to_vec(), data_type);
+        Ok(())
+    }
+
+    /// Convert an interface method to a MethodSignature.
+    fn convert_interface_method(
+        &self,
+        method: &NativeInterfaceMethod<'_>,
+        namespace: &[String],
+    ) -> Result<MethodSignature, ImportError> {
+        let name = method.name.name.to_string();
+
+        // Resolve parameter types
+        let mut params = Vec::with_capacity(method.params.len());
+        for param in method.params {
+            let data_type = self.resolve_ffi_param_type(&param.ty, namespace)?;
+            params.push(data_type);
+        }
+
+        // Resolve return type
+        let return_type = self.resolve_ffi_return_type(&method.return_type, namespace)?;
+
+        Ok(MethodSignature {
+            name,
+            params,
+            return_type,
+        })
+    }
+
+    /// Resolve an FFI ParamType to a DataType.
+    fn resolve_ffi_param_type(
+        &self,
+        param_type: &ParamType<'_>,
+        namespace: &[String],
+    ) -> Result<DataType, ImportError> {
+        let mut data_type = self.resolve_ffi_type_expr(&param_type.ty, namespace)?;
+
+        // Apply reference modifier from ParamType
+        data_type.ref_modifier = match param_type.ref_kind {
+            RefKind::None => RefModifier::None,
+            RefKind::Ref => RefModifier::InOut,
+            RefKind::RefIn => RefModifier::In,
+            RefKind::RefOut => RefModifier::Out,
+            RefKind::RefInOut => RefModifier::InOut,
+        };
+
+        Ok(data_type)
+    }
+
+    /// Resolve an FFI ReturnType to a DataType.
+    fn resolve_ffi_return_type(
+        &self,
+        return_type: &crate::ast::ReturnType<'_>,
+        namespace: &[String],
+    ) -> Result<DataType, ImportError> {
+        // ReturnType has a TypeExpr directly, check if it's void
+        let type_expr = &return_type.ty;
+        if matches!(type_expr.base, TypeBase::Primitive(AstPrimitiveType::Void)) {
+            Ok(DataType::simple(self.void_type))
+        } else {
+            // Build a ParamType from the TypeExpr for consistent resolution
+            let param_type = ParamType {
+                ty: *type_expr,
+                ref_kind: if return_type.is_ref { RefKind::Ref } else { RefKind::None },
+                span: return_type.span,
+            };
+            self.resolve_ffi_param_type(&param_type, namespace)
+        }
+    }
+
+    /// Resolve an FFI TypeExpr to a DataType.
+    fn resolve_ffi_type_expr(
+        &self,
+        type_expr: &TypeExpr<'_>,
+        namespace: &[String],
+    ) -> Result<DataType, ImportError> {
+        // Step 1: Resolve the base type
+        let base_type_id = self.resolve_ffi_base_type(&type_expr.base, namespace)?;
+
+        // Step 2: Handle template arguments
+        let type_id = if !type_expr.template_args.is_empty() {
+            // Resolve all template argument types
+            let mut arg_types = Vec::with_capacity(type_expr.template_args.len());
+            for arg in type_expr.template_args {
+                let dt = self.resolve_ffi_type_expr(arg, namespace)?;
+                arg_types.push(dt);
+            }
+
+            // Instantiate the template (need mutable self - use a workaround)
+            // For now, we'll look up if the instance already exists
+            let cache_key_ids: Vec<TypeId> = arg_types.iter().map(|dt| dt.type_id).collect();
+            if let Some(&cached_id) = self.template_cache.get(&(base_type_id, cache_key_ids)) {
+                cached_id
+            } else {
+                // Template not instantiated yet - this is an error in FFI import
+                // Templates should be instantiated on-demand, not during import
+                return Err(ImportError::TemplateInstantiationFailed(
+                    "template instantiation not supported during FFI import; use concrete types or pre-register instances".to_string()
+                ));
+            }
+        } else {
+            base_type_id
+        };
+
+        // Step 3: Build DataType with modifiers
+        let mut data_type = DataType::simple(type_id);
+
+        // Apply const modifier
+        if type_expr.is_const {
+            data_type.is_const = true;
+        }
+
+        // Apply suffixes (handle, array)
+        for suffix in type_expr.suffixes {
+            match suffix {
+                TypeSuffix::Handle { is_const } => {
+                    data_type.is_handle = true;
+                    data_type.is_handle_to_const = *is_const;
+                    // Leading const + @ means handle to const
+                    if type_expr.is_const && data_type.is_handle {
+                        data_type.is_handle_to_const = true;
+                        data_type.is_const = false;
+                    }
+                    break; // Only first @ matters
+                }
+                TypeSuffix::Array => {
+                    // Array suffix T[] - look up array<T> instance
+                    if let Some(&array_id) = self.template_cache.get(&(ARRAY_TEMPLATE, vec![type_id])) {
+                        data_type = DataType::with_handle(array_id, false);
+                    } else {
+                        return Err(ImportError::TemplateInstantiationFailed(
+                            "array template instance not found".to_string()
+                        ));
+                    }
+                }
+            }
+        }
+
+        Ok(data_type)
+    }
+
+    /// Resolve a base type from a TypeBase.
+    fn resolve_ffi_base_type(
+        &self,
+        base: &TypeBase<'_>,
+        namespace: &[String],
+    ) -> Result<TypeId, ImportError> {
+        match base {
+            TypeBase::Primitive(prim) => Ok(self.primitive_to_type_id(*prim)),
+
+            TypeBase::Named(ident) => {
+                let type_name = ident.name;
+
+                // Try qualified name first
+                let qualified = self.build_qualified_name(type_name, namespace);
+                if let Some(type_id) = self.lookup_type(&qualified) {
+                    return Ok(type_id);
+                }
+
+                // Try unqualified (global)
+                if let Some(type_id) = self.lookup_type(type_name) {
+                    return Ok(type_id);
+                }
+
+                Err(ImportError::TypeNotFound(type_name.to_string()))
+            }
+
+            TypeBase::TemplateParam(_) => {
+                // Template parameters shouldn't appear in FFI type resolution
+                Err(ImportError::TypeResolutionFailed {
+                    type_name: "template parameter".to_string(),
+                    reason: "template parameters not supported in FFI".to_string(),
+                })
+            }
+
+            TypeBase::Auto | TypeBase::Unknown => {
+                Err(ImportError::TypeResolutionFailed {
+                    type_name: "auto/unknown".to_string(),
+                    reason: "auto and unknown types not supported in FFI".to_string(),
+                })
+            }
+        }
+    }
+
+    /// Convert AST PrimitiveType to TypeId.
+    fn primitive_to_type_id(&self, prim: AstPrimitiveType) -> TypeId {
+        match prim {
+            AstPrimitiveType::Void => VOID_TYPE,
+            AstPrimitiveType::Bool => BOOL_TYPE,
+            AstPrimitiveType::Int8 => INT8_TYPE,
+            AstPrimitiveType::Int16 => INT16_TYPE,
+            AstPrimitiveType::Int => INT32_TYPE,
+            AstPrimitiveType::Int64 => INT64_TYPE,
+            AstPrimitiveType::UInt8 => UINT8_TYPE,
+            AstPrimitiveType::UInt16 => UINT16_TYPE,
+            AstPrimitiveType::UInt => UINT32_TYPE,
+            AstPrimitiveType::UInt64 => UINT64_TYPE,
+            AstPrimitiveType::Float => FLOAT_TYPE,
+            AstPrimitiveType::Double => DOUBLE_TYPE,
+        }
+    }
+
+    /// Build a qualified name from a simple name and namespace.
+    fn build_qualified_name(&self, name: &str, namespace: &[String]) -> String {
+        if namespace.is_empty() {
+            name.to_string()
+        } else {
+            format!("{}::{}", namespace.join("::"), name)
+        }
+    }
+
+    /// Register a type at a specific pre-assigned TypeId.
+    ///
+    /// This is used for FFI types where the TypeId was assigned during registration.
+    fn register_type_at_id(&mut self, type_id: TypeId, typedef: TypeDef, name: &str) {
+        let index = type_id.as_u32() as usize;
+
+        // Ensure the types vec is large enough
+        while self.types.len() <= index {
+            // Add placeholder types
+            self.types.push(TypeDef::Primitive {
+                kind: PrimitiveType::Void,
+            });
+        }
+
+        self.types[index] = typedef;
+        self.type_by_name.insert(name.to_string(), type_id);
+    }
 }
 
 impl<'ast> Default for Registry<'ast> {
@@ -3549,5 +4272,237 @@ mod tests {
         let found = registry.find_property(derived_id, "health");
         assert!(found.is_some());
         assert!(found.unwrap().is_read_only());
+    }
+
+    // =========================================================================
+    // FFI Import Tests
+    // =========================================================================
+
+    #[test]
+    fn import_empty_modules() {
+        let mut registry = Registry::new();
+        let modules: Vec<Module<'_>> = Vec::new();
+
+        let result = registry.import_modules(&modules);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn import_module_with_enum() {
+        let mut registry = Registry::new();
+        let mut module = Module::root();
+
+        module.register_enum("Color")
+            .value("Red", 0).unwrap()
+            .value("Green", 1).unwrap()
+            .value("Blue", 2).unwrap()
+            .build().unwrap();
+
+        let result = registry.import_modules(&[module]);
+        assert!(result.is_ok());
+
+        // Verify the enum was registered
+        let type_id = registry.lookup_type("Color");
+        assert!(type_id.is_some());
+
+        let typedef = registry.get_type(type_id.unwrap());
+        assert!(matches!(typedef, TypeDef::Enum { .. }));
+
+        if let TypeDef::Enum { name, values, .. } = typedef {
+            assert_eq!(name, "Color");
+            assert_eq!(values.len(), 3);
+            assert_eq!(values[0], ("Red".to_string(), 0));
+            assert_eq!(values[1], ("Green".to_string(), 1));
+            assert_eq!(values[2], ("Blue".to_string(), 2));
+        }
+    }
+
+    #[test]
+    fn import_module_with_namespace() {
+        let mut registry = Registry::new();
+        let mut module = Module::new(&["game"]);
+
+        module.register_enum("Direction")
+            .auto_value("North").unwrap()
+            .auto_value("South").unwrap()
+            .build().unwrap();
+
+        let result = registry.import_modules(&[module]);
+        assert!(result.is_ok());
+
+        // Should be registered with qualified name
+        let type_id = registry.lookup_type("game::Direction");
+        assert!(type_id.is_some());
+
+        // Unqualified lookup should not find it
+        let unqualified = registry.lookup_type("Direction");
+        assert!(unqualified.is_none());
+    }
+
+    #[test]
+    fn import_module_with_interface() {
+        let mut registry = Registry::new();
+        let mut module = Module::root();
+
+        module.register_interface("IDrawable")
+            .method("void draw()").unwrap()
+            .method("int getWidth() const").unwrap()
+            .build().unwrap();
+
+        let result = registry.import_modules(&[module]);
+        assert!(result.is_ok());
+
+        let type_id = registry.lookup_type("IDrawable");
+        assert!(type_id.is_some());
+
+        let typedef = registry.get_type(type_id.unwrap());
+        assert!(matches!(typedef, TypeDef::Interface { .. }));
+
+        if let TypeDef::Interface { methods, .. } = typedef {
+            assert_eq!(methods.len(), 2);
+            assert_eq!(methods[0].name, "draw");
+            assert_eq!(methods[1].name, "getWidth");
+        }
+    }
+
+    #[test]
+    fn import_module_with_funcdef() {
+        let mut registry = Registry::new();
+        let mut module = Module::root();
+
+        module.register_funcdef("funcdef void Callback()").unwrap();
+        module.register_funcdef("funcdef int Predicate(int value)").unwrap();
+
+        let result = registry.import_modules(&[module]);
+        assert!(result.is_ok());
+
+        let callback_id = registry.lookup_type("Callback");
+        assert!(callback_id.is_some());
+
+        let typedef = registry.get_type(callback_id.unwrap());
+        if let TypeDef::Funcdef { name, params, return_type, .. } = typedef {
+            assert_eq!(name, "Callback");
+            assert!(params.is_empty());
+            assert_eq!(return_type.type_id, VOID_TYPE);
+        } else {
+            panic!("Expected Funcdef");
+        }
+
+        let predicate_id = registry.lookup_type("Predicate");
+        assert!(predicate_id.is_some());
+
+        let typedef = registry.get_type(predicate_id.unwrap());
+        if let TypeDef::Funcdef { name, params, return_type, .. } = typedef {
+            assert_eq!(name, "Predicate");
+            assert_eq!(params.len(), 1);
+            assert_eq!(params[0].type_id, INT32_TYPE);
+            assert_eq!(return_type.type_id, INT32_TYPE);
+        } else {
+            panic!("Expected Funcdef");
+        }
+    }
+
+    #[test]
+    fn import_module_with_global_function() {
+        let mut registry = Registry::new();
+        let mut module = Module::root();
+
+        module.register_fn("int add(int a, int b)", |a: i32, b: i32| a + b).unwrap();
+
+        let result = registry.import_modules(&[module]);
+        assert!(result.is_ok());
+
+        let func_ids = registry.lookup_functions("add");
+        assert_eq!(func_ids.len(), 1);
+
+        let func = registry.get_function(func_ids[0]);
+        assert_eq!(func.name, "add");
+        assert!(func.is_native);
+        assert_eq!(func.params.len(), 2);
+        assert_eq!(func.return_type.type_id, INT32_TYPE);
+    }
+
+    #[test]
+    fn import_module_with_global_property() {
+        let mut registry = Registry::new();
+        let mut module = Module::root();
+
+        let mut score: i32 = 0;
+        module.register_global_property("int g_score", &mut score).unwrap();
+
+        let result = registry.import_modules(&[module]);
+        assert!(result.is_ok());
+
+        let var = registry.lookup_global_var("g_score");
+        assert!(var.is_some());
+
+        let var_def = var.unwrap();
+        assert_eq!(var_def.name, "g_score");
+        assert_eq!(var_def.data_type.type_id, INT32_TYPE);
+    }
+
+    #[test]
+    fn import_multiple_modules() {
+        let mut registry = Registry::new();
+
+        let mut math = Module::new(&["math"]);
+        math.register_enum("MathConst")
+            .value("PI", 314).unwrap()
+            .value("E", 271).unwrap()
+            .build().unwrap();
+
+        let mut io = Module::new(&["io"]);
+        io.register_enum("FileMode")
+            .value("Read", 1).unwrap()
+            .value("Write", 2).unwrap()
+            .build().unwrap();
+
+        let result = registry.import_modules(&[math, io]);
+        assert!(result.is_ok());
+
+        assert!(registry.lookup_type("math::MathConst").is_some());
+        assert!(registry.lookup_type("io::FileMode").is_some());
+    }
+
+    #[test]
+    fn import_duplicate_type_error() {
+        let mut registry = Registry::new();
+
+        let mut module1 = Module::root();
+        module1.register_enum("Color")
+            .value("Red", 0).unwrap()
+            .build().unwrap();
+
+        // First import should succeed
+        let result1 = registry.import_modules(&[module1]);
+        assert!(result1.is_ok());
+
+        // Second import of same type should fail
+        let mut module2 = Module::root();
+        module2.register_enum("Color")
+            .value("Blue", 1).unwrap()
+            .build().unwrap();
+
+        let result2 = registry.import_modules(&[module2]);
+        assert!(result2.is_err());
+        assert!(matches!(result2, Err(ImportError::DuplicateType(_))));
+    }
+
+    #[test]
+    fn import_error_display() {
+        let err = ImportError::TypeNotFound("MyType".to_string());
+        assert!(err.to_string().contains("type not found"));
+        assert!(err.to_string().contains("MyType"));
+
+        let err = ImportError::DuplicateType("Color".to_string());
+        assert!(err.to_string().contains("duplicate type"));
+        assert!(err.to_string().contains("Color"));
+
+        let err = ImportError::TypeResolutionFailed {
+            type_name: "Foo".to_string(),
+            reason: "not found".to_string(),
+        };
+        assert!(err.to_string().contains("type resolution failed"));
+        assert!(err.to_string().contains("Foo"));
     }
 }

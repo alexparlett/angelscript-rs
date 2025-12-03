@@ -1,7 +1,7 @@
 # FFI Registration System Plan
 
-**Status:** Ready for Review
-**Date:** 2025-12-02
+**Status:** In Progress (Task 07 Complete)
+**Date:** 2025-12-03
 
 ## Overview
 
@@ -422,9 +422,9 @@ ctx.install(globals)?;
 │  Module (public, namespaced collection)                         │
 │  ├── namespace: Vec<String>  (empty = root, ["math"], ["std", "collections"])  │
 │  ├── functions: Vec<FunctionDef>                            │
-│  ├── types: Vec<TypeDef>                                    │
+│  ├── types: Vec<TypeDef>  (includes templates)              │
 │  ├── enums: Vec<EnumDef>                                    │
-│  └── templates: Vec<TemplateDef>                            │
+│  └── funcdefs: Vec<FuncdefDef>                              │
 │                                                             │
 │  Methods:                                                   │
 │  ├── new(namespace) → Module                                │
@@ -1603,33 +1603,33 @@ Detailed task files are in `/claude/tasks/`. Complete in order:
 
 ### Phase 1: Core Infrastructure
 
-| Task | File | Description |
-|------|------|-------------|
-| 01 | [01_ffi_core_infrastructure.md](tasks/01_ffi_core_infrastructure.md) | Core types, traits (FromScript, ToScript, NativeType, CallContext, NativeFn) |
-| 02 | [02_ffi_module_and_context.md](tasks/02_ffi_module_and_context.md) | Module<'app> and Context API, GlobalPropertyDef |
+| Task | File | Description | Status |
+|------|------|-------------|--------|
+| 01 | [01_ffi_core_infrastructure.md](tasks/01_ffi_core_infrastructure.md) | Core types, traits (FromScript, ToScript, NativeType, CallContext, NativeFn) | ✅ Complete |
+| 02 | [02_ffi_module_and_context.md](tasks/02_ffi_module_and_context.md) | Module<'app> and Context API, GlobalPropertyDef | ✅ Complete |
 
 ### Phase 2: Registration API
 
-| Task | File | Description |
-|------|------|-------------|
-| 03 | [03_ffi_function_registration.md](tasks/03_ffi_function_registration.md) | Module.register_fn() with declaration string parsing |
-| 04 | [04_ffi_class_builder.md](tasks/04_ffi_class_builder.md) | ClassBuilder for value/ref/template types with declaration string methods |
-| 05 | [05_ffi_enum_interface_funcdef.md](tasks/05_ffi_enum_interface_funcdef.md) | Module.register_enum/interface/funcdef with declaration parsing |
+| Task | File | Description | Status |
+|------|------|-------------|--------|
+| 03 | [03_ffi_function_registration.md](tasks/03_ffi_function_registration.md) | Module.register_fn() with declaration string parsing | ✅ Complete |
+| 04 | [04_ffi_class_builder.md](tasks/04_ffi_class_builder.md) | ClassBuilder for value/ref/template types with declaration string methods | ✅ Complete |
+| 05 | [05_ffi_enum_interface_funcdef.md](tasks/05_ffi_enum_interface_funcdef.md) | Module.register_enum/interface/funcdef with declaration parsing | ✅ Complete |
 
 ### Phase 3: Integration
 
-| Task | File | Description |
-|------|------|-------------|
-| 07 | [07_ffi_apply_to_registry.md](tasks/07_ffi_apply_to_registry.md) | apply_to_registry() - convert FFI registrations to Registry entries |
-| 08 | [08_ffi_builtin_modules.md](tasks/08_ffi_builtin_modules.md) | Implement std, string, array, dictionary, math modules via FFI |
+| Task | File | Description | Status |
+|------|------|-------------|--------|
+| 07 | [07_ffi_apply_to_registry.md](tasks/07_ffi_apply_to_registry.md) | Registry.import_modules() - convert FFI registrations to Registry entries | ✅ Complete |
+| 08 | [08_ffi_builtin_modules.md](tasks/08_ffi_builtin_modules.md) | Implement std, string, array, dictionary, math modules via FFI | Not Started |
 
 ### Phase 4: Migration
 
-| Task | File | Description |
-|------|------|-------------|
-| 09 | [09_ffi_update_entry_points.md](tasks/09_ffi_update_entry_points.md) | Update benches and tests to use Context/Unit API |
-| 10 | [10_ffi_extract_placeholders.md](tasks/10_ffi_extract_placeholders.md) | Remove FFI placeholders from 19 test scripts |
-| 11 | [11_ffi_lib_exports.md](tasks/11_ffi_lib_exports.md) | Library exports and public API organization |
+| Task | File | Description | Status |
+|------|------|-------------|--------|
+| 09 | [09_ffi_update_entry_points.md](tasks/09_ffi_update_entry_points.md) | Update benches and tests to use Context/Unit API | Not Started |
+| 10 | [10_ffi_extract_placeholders.md](tasks/10_ffi_extract_placeholders.md) | Remove FFI placeholders from 19 test scripts | Not Started |
+| 11 | [11_ffi_lib_exports.md](tasks/11_ffi_lib_exports.md) | Library exports and public API organization | Not Started |
 
 ---
 

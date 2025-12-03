@@ -48,8 +48,8 @@ pub use error::{SemanticError, SemanticErrorKind, SemanticErrors};
 pub use local_scope::{CapturedVar, LocalScope, LocalVar};
 pub use types::{
     Conversion, ConversionKind, DataType, FieldDef, FunctionDef, FunctionId, FunctionTraits,
-    GlobalVarDef, MethodSignature, OperatorBehavior, PrimitiveType, PropertyAccessors, RefModifier,
-    Registry, TypeDef, TypeId, Visibility, ARRAY_TEMPLATE, BOOL_TYPE, DICT_TEMPLATE, DOUBLE_TYPE,
-    FIRST_USER_TYPE_ID, FLOAT_TYPE, INT16_TYPE, INT32_TYPE, INT64_TYPE, INT8_TYPE, NULL_TYPE,
-    STRING_TYPE, UINT16_TYPE, UINT32_TYPE, UINT64_TYPE, UINT8_TYPE, VOID_TYPE,
+    GlobalVarDef, ImportError, MethodSignature, OperatorBehavior, PrimitiveType, PropertyAccessors,
+    RefModifier, Registry, TypeDef, TypeId, Visibility, ARRAY_TEMPLATE, BOOL_TYPE, DICT_TEMPLATE,
+    DOUBLE_TYPE, FIRST_USER_TYPE_ID, FLOAT_TYPE, INT16_TYPE, INT32_TYPE, INT64_TYPE, INT8_TYPE,
+    NULL_TYPE, STRING_TYPE, UINT16_TYPE, UINT32_TYPE, UINT64_TYPE, UINT8_TYPE, VOID_TYPE,
 };
