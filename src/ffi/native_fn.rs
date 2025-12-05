@@ -17,10 +17,12 @@ use crate::semantic::types::type_def::FunctionId;
 ///
 /// Each NativeFn has a unique FunctionId assigned at creation time,
 /// ensuring consistent IDs across all Units.
+///
+/// The inner callable is wrapped in Arc to support cloning for FFI registration.
 pub struct NativeFn {
     /// Unique function ID (assigned at creation via FunctionId::next())
     pub id: FunctionId,
-    inner: Box<dyn NativeCallable + Send + Sync>,
+    inner: std::sync::Arc<dyn NativeCallable + Send + Sync>,
 }
 
 impl NativeFn {
@@ -32,13 +34,24 @@ impl NativeFn {
     {
         Self {
             id: FunctionId::next(),
-            inner: Box::new(f),
+            inner: std::sync::Arc::new(f),
         }
     }
 
     /// Call this native function with the given context.
     pub fn call(&self, ctx: &mut CallContext) -> Result<(), NativeError> {
         self.inner.call(ctx)
+    }
+
+    /// Clone this NativeFn, sharing the same underlying callable.
+    ///
+    /// This creates a new NativeFn with the same FunctionId and callable,
+    /// using Arc to share the underlying implementation.
+    pub fn clone_arc(&self) -> Self {
+        Self {
+            id: self.id,
+            inner: std::sync::Arc::clone(&self.inner),
+        }
     }
 }
 

@@ -27,8 +27,8 @@ use crate::ffi::{
 };
 use crate::semantic::types::type_def::TypeId;
 use crate::types::{
-    function_param_to_ffi, return_type_to_ffi, FfiEnumDef, FfiFuncdefDef, FfiFunctionDef,
-    FfiInterfaceDef, FfiParam, FfiTypeDef,
+    function_param_to_ffi, return_type_to_ffi, FfiDataType, FfiEnumDef, FfiFuncdefDef,
+    FfiFunctionDef, FfiInterfaceDef, FfiParam, FfiRegistryBuilder, FfiTypeDef,
 };
 
 /// A namespaced collection of native functions, types, and global properties.
@@ -674,6 +674,420 @@ impl<'app> Module<'app> {
             + self.interfaces.len()
             + self.funcdefs.len()
             + self.global_properties.len()
+    }
+
+    // =========================================================================
+    // Installation into FfiRegistryBuilder
+    // =========================================================================
+
+    /// Install all registered FFI data from this module into an FfiRegistryBuilder.
+    ///
+    /// This transfers all types, functions, enums, interfaces, and funcdefs to the
+    /// builder. The builder will resolve types and build an immutable FfiRegistry
+    /// when `build()` is called.
+    ///
+    /// # Parameters
+    ///
+    /// - `builder`: The FfiRegistryBuilder to install into
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if any registration fails.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let mut module = Module::root();
+    /// module.register_fn("int add(int a, int b)", |a: i32, b: i32| a + b)?;
+    ///
+    /// let mut builder = FfiRegistryBuilder::new();
+    /// module.install_into(&mut builder)?;
+    ///
+    /// let registry = builder.build()?;
+    /// ```
+    pub fn install_into(&self, builder: &mut FfiRegistryBuilder) -> Result<(), FfiModuleError> {
+        // Register namespace if not root
+        if !self.namespace.is_empty() {
+            builder.register_namespace(&self.namespace.join("::"));
+        }
+
+        // Install types first (so functions can reference them)
+        for type_def in &self.types {
+            self.install_type(builder, type_def)?;
+        }
+
+        // Install enums
+        for enum_def in &self.enums {
+            self.install_enum(builder, enum_def);
+        }
+
+        // Install interfaces
+        for interface_def in &self.interfaces {
+            self.install_interface(builder, interface_def);
+        }
+
+        // Install funcdefs
+        for funcdef_def in &self.funcdefs {
+            self.install_funcdef(builder, funcdef_def);
+        }
+
+        // Install functions last (they may reference types)
+        for func_def in &self.functions {
+            self.install_function(builder, func_def);
+        }
+
+        Ok(())
+    }
+
+    /// Install a type definition into the builder.
+    fn install_type(
+        &self,
+        builder: &mut FfiRegistryBuilder,
+        type_def: &FfiTypeDef,
+    ) -> Result<(), FfiModuleError> {
+        use crate::semantic::types::type_def::TypeDef;
+        use crate::types::TypeKind;
+        use rustc_hash::FxHashMap;
+
+        let qualified_name = self.qualified_name(&type_def.name);
+
+        // Convert template param names to placeholder TypeIds
+        // These will be resolved properly during actual template instantiation
+        let template_param_ids: Vec<TypeId> = type_def
+            .template_params
+            .iter()
+            .map(|_| TypeId::next()) // Create unique TypeIds for each template param
+            .collect();
+
+        // Build the TypeDef
+        let typedef = TypeDef::Class {
+            name: type_def.name.clone(),
+            qualified_name: qualified_name.clone(),
+            fields: Vec::new(), // FFI types don't have script-visible fields
+            methods: Vec::new(), // Will be populated when methods are installed
+            base_class: None, // TODO: Support base class in FfiTypeDef
+            interfaces: Vec::new(), // TODO: Support interfaces in FfiTypeDef
+            operator_methods: FxHashMap::default(), // Will be populated when operators are installed
+            properties: FxHashMap::default(), // Will be populated when properties are installed
+            is_final: false, // FFI types are not final by default
+            is_abstract: false, // FFI types are not abstract by default
+            template_params: template_param_ids,
+            template: None,
+            type_args: Vec::new(),
+            type_kind: type_def.type_kind.clone(),
+        };
+
+        // Register the type with its pre-assigned ID
+        builder.register_type_with_id(type_def.id, typedef, Some(&qualified_name));
+
+        // Register template callback if present
+        if let Some(callback) = &type_def.template_callback {
+            builder.register_template_callback_arc(type_def.id, callback.clone());
+        }
+
+        // Install behaviors
+        if matches!(type_def.type_kind, TypeKind::Value { .. }) {
+            // For value types, register constructors
+            self.install_type_constructors(builder, type_def);
+        } else {
+            // For reference types, register factories
+            self.install_type_factories(builder, type_def);
+        }
+
+        // Install methods
+        self.install_type_methods(builder, type_def);
+
+        // Install properties
+        self.install_type_properties(builder, type_def);
+
+        // Install operators
+        self.install_type_operators(builder, type_def);
+
+        Ok(())
+    }
+
+    /// Install constructors for a value type.
+    fn install_type_constructors(&self, builder: &mut FfiRegistryBuilder, type_def: &FfiTypeDef) {
+        for ctor in &type_def.constructors {
+            // Add to behaviors
+            let behaviors = builder.behaviors_mut(type_def.id);
+            behaviors.constructors.push(ctor.id);
+
+            // Build a new FfiFunctionDef for registration
+            let ctor_func = self.clone_function_def(ctor);
+            let native_fn = ctor.native_fn.as_ref().map(|nf| nf.clone_arc());
+            builder.register_function(ctor_func, native_fn);
+        }
+    }
+
+    /// Install factories for a reference type.
+    fn install_type_factories(&self, builder: &mut FfiRegistryBuilder, type_def: &FfiTypeDef) {
+        for factory in &type_def.factories {
+            // Add to behaviors
+            let behaviors = builder.behaviors_mut(type_def.id);
+            behaviors.factories.push(factory.id);
+
+            // Build a new FfiFunctionDef for registration
+            let factory_func = self.clone_function_def(factory);
+            let native_fn = factory.native_fn.as_ref().map(|nf| nf.clone_arc());
+            builder.register_function(factory_func, native_fn);
+        }
+    }
+
+    /// Install methods for a type.
+    fn install_type_methods(&self, builder: &mut FfiRegistryBuilder, type_def: &FfiTypeDef) {
+        use crate::semantic::types::type_def::TypeDef;
+
+        // Collect method IDs
+        let method_ids: Vec<_> = type_def.methods.iter().map(|m| m.id).collect();
+
+        // Update the TypeDef with method IDs
+        if let Some(TypeDef::Class { methods, .. }) = builder.get_type_mut(type_def.id) {
+            *methods = method_ids;
+        }
+
+        // Register each method function
+        for method in &type_def.methods {
+            let mut method_func = self.clone_function_def(method);
+            method_func.owner_type = Some(type_def.id);
+            let native_fn = method.native_fn.as_ref().map(|nf| nf.clone_arc());
+            builder.register_function(method_func, native_fn);
+        }
+    }
+
+    /// Install properties for a type.
+    fn install_type_properties(&self, builder: &mut FfiRegistryBuilder, type_def: &FfiTypeDef) {
+        use crate::semantic::types::type_def::{FunctionId, PropertyAccessors, TypeDef, Visibility};
+
+        if type_def.properties.is_empty() {
+            return;
+        }
+
+        // Build properties map
+        let mut properties_map = rustc_hash::FxHashMap::default();
+
+        for prop in &type_def.properties {
+            // Create getter function
+            let getter_id = FunctionId::next();
+            let getter_func = FfiFunctionDef::new(getter_id, format!("get_{}", prop.name))
+                .with_return_type(prop.data_type.clone())
+                .with_const(true)
+                .with_native_fn(prop.getter.clone_arc());
+
+            builder.register_function(getter_func, Some(prop.getter.clone_arc()));
+
+            // Create setter function if writable
+            let setter_id = if let Some(setter) = &prop.setter {
+                let setter_id = FunctionId::next();
+                let setter_func = FfiFunctionDef::new(setter_id, format!("set_{}", prop.name))
+                    .with_params(vec![FfiParam::new("value", prop.data_type.clone())])
+                    .with_return_type(FfiDataType::void())
+                    .with_native_fn(setter.clone_arc());
+
+                builder.register_function(setter_func, Some(setter.clone_arc()));
+                Some(setter_id)
+            } else {
+                None
+            };
+
+            properties_map.insert(
+                prop.name.clone(),
+                PropertyAccessors {
+                    getter: Some(getter_id),
+                    setter: setter_id,
+                    visibility: Visibility::Public,
+                },
+            );
+        }
+
+        // Update the TypeDef with properties
+        if let Some(TypeDef::Class { properties, .. }) = builder.get_type_mut(type_def.id) {
+            *properties = properties_map;
+        }
+    }
+
+    /// Install operators for a type.
+    fn install_type_operators(&self, builder: &mut FfiRegistryBuilder, type_def: &FfiTypeDef) {
+        use crate::semantic::types::type_def::TypeDef;
+
+        if type_def.operators.is_empty() {
+            return;
+        }
+
+        // Build operator methods map
+        let mut operator_map: rustc_hash::FxHashMap<_, Vec<_>> = rustc_hash::FxHashMap::default();
+
+        for func in &type_def.operators {
+            // Operators should have their operator field set
+            if let Some(operator) = func.operator {
+                let mut op_func = self.clone_function_def(func);
+                op_func.owner_type = Some(type_def.id);
+                op_func.operator = Some(operator);
+
+                operator_map.entry(operator).or_default().push(func.id);
+
+                let native_fn = func.native_fn.as_ref().map(|nf| nf.clone_arc());
+                builder.register_function(op_func, native_fn);
+            }
+        }
+
+        // Update the TypeDef with operators
+        if let Some(TypeDef::Class { operator_methods, .. }) = builder.get_type_mut(type_def.id) {
+            *operator_methods = operator_map;
+        }
+    }
+
+    /// Install an enum definition into the builder.
+    fn install_enum(&self, builder: &mut FfiRegistryBuilder, enum_def: &FfiEnumDef) {
+        use crate::semantic::types::type_def::TypeDef;
+
+        let qualified_name = self.qualified_name(&enum_def.name);
+
+        let typedef = TypeDef::Enum {
+            name: enum_def.name.clone(),
+            qualified_name: qualified_name.clone(),
+            values: enum_def.values.clone(),
+        };
+
+        builder.register_type_with_id(enum_def.id, typedef, Some(&qualified_name));
+    }
+
+    /// Install an interface definition into the builder.
+    fn install_interface(&self, builder: &mut FfiRegistryBuilder, interface_def: &FfiInterfaceDef) {
+        use crate::semantic::types::type_def::{MethodSignature, TypeDef};
+        use crate::semantic::types::RefModifier;
+
+        let qualified_name = self.qualified_name(interface_def.name());
+
+        // Convert FfiInterfaceMethod to MethodSignature
+        let methods: Vec<MethodSignature> = interface_def
+            .methods()
+            .iter()
+            .map(|m| {
+                // Resolve params - for interfaces, we need to handle unresolved types
+                // At this point, we just store the type names; resolution happens in build()
+                let params: Vec<_> = m
+                    .params
+                    .iter()
+                    .map(|p| {
+                        // For interface methods, params are typically primitives or known types
+                        // If unresolved, use a placeholder DataType
+                        match &p.data_type {
+                            FfiDataType::Resolved(dt) => dt.clone(),
+                            FfiDataType::Unresolved { .. } => {
+                                // Create a placeholder - will be resolved later
+                                crate::semantic::types::DataType {
+                                    type_id: TypeId::placeholder(),
+                                    is_const: false,
+                                    is_handle: false,
+                                    is_handle_to_const: false,
+                                    ref_modifier: RefModifier::None,
+                                }
+                            }
+                        }
+                    })
+                    .collect();
+
+                let return_type = match &m.return_type {
+                    FfiDataType::Resolved(dt) => dt.clone(),
+                    FfiDataType::Unresolved { .. } => crate::semantic::types::DataType {
+                        type_id: TypeId::placeholder(),
+                        is_const: false,
+                        is_handle: false,
+                        is_handle_to_const: false,
+                        ref_modifier: RefModifier::None,
+                    },
+                };
+
+                MethodSignature {
+                    name: m.name.clone(),
+                    params,
+                    return_type,
+                    is_const: m.is_const,
+                }
+            })
+            .collect();
+
+        let typedef = TypeDef::Interface {
+            name: interface_def.name().to_string(),
+            qualified_name: qualified_name.clone(),
+            methods,
+        };
+
+        builder.register_type_with_id(interface_def.id, typedef, Some(&qualified_name));
+    }
+
+    /// Install a funcdef definition into the builder.
+    fn install_funcdef(&self, builder: &mut FfiRegistryBuilder, funcdef_def: &FfiFuncdefDef) {
+        use crate::semantic::types::type_def::TypeDef;
+        use crate::semantic::types::RefModifier;
+
+        let qualified_name = self.qualified_name(&funcdef_def.name);
+
+        // Resolve params
+        let params: Vec<_> = funcdef_def
+            .params
+            .iter()
+            .map(|p| match &p.data_type {
+                FfiDataType::Resolved(dt) => dt.clone(),
+                FfiDataType::Unresolved { .. } => crate::semantic::types::DataType {
+                    type_id: TypeId::placeholder(),
+                    is_const: false,
+                    is_handle: false,
+                    is_handle_to_const: false,
+                    ref_modifier: RefModifier::None,
+                },
+            })
+            .collect();
+
+        let return_type = match &funcdef_def.return_type {
+            FfiDataType::Resolved(dt) => dt.clone(),
+            FfiDataType::Unresolved { .. } => crate::semantic::types::DataType {
+                type_id: TypeId::placeholder(),
+                is_const: false,
+                is_handle: false,
+                is_handle_to_const: false,
+                ref_modifier: RefModifier::None,
+            },
+        };
+
+        let typedef = TypeDef::Funcdef {
+            name: funcdef_def.name.clone(),
+            qualified_name: qualified_name.clone(),
+            params,
+            return_type,
+        };
+
+        builder.register_type_with_id(funcdef_def.id, typedef, Some(&qualified_name));
+    }
+
+    /// Install a function definition into the builder.
+    fn install_function(&self, builder: &mut FfiRegistryBuilder, func_def: &FfiFunctionDef) {
+        let mut func = self.clone_function_def(func_def);
+
+        // Set namespace based on module namespace
+        if !self.namespace.is_empty() {
+            func.namespace = self.namespace.clone();
+        }
+
+        let native_fn = func_def.native_fn.as_ref().map(|nf| nf.clone_arc());
+        builder.register_function(func, native_fn);
+    }
+
+    /// Clone a FfiFunctionDef (helper to work around non-Clone NativeFn).
+    fn clone_function_def(&self, func: &FfiFunctionDef) -> FfiFunctionDef {
+        FfiFunctionDef {
+            id: func.id,
+            name: func.name.clone(),
+            namespace: func.namespace.clone(),
+            params: func.params.clone(),
+            return_type: func.return_type.clone(),
+            traits: func.traits.clone(),
+            owner_type: func.owner_type,
+            operator: func.operator,
+            visibility: func.visibility,
+            native_fn: None, // Native fn handled separately
+        }
     }
 }
 

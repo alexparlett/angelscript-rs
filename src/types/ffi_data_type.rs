@@ -108,6 +108,12 @@ impl FfiDataType {
         FfiDataType::Resolved(data_type)
     }
 
+    /// Create a void type.
+    #[inline]
+    pub fn void() -> Self {
+        FfiDataType::Resolved(DataType::simple(VOID_TYPE))
+    }
+
     /// Create an unresolved simple type with all modifiers.
     pub fn unresolved(
         name: impl Into<String>,

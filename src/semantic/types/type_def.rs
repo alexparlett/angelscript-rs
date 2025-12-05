@@ -51,6 +51,21 @@ impl TypeId {
     pub fn reset_counter(start: u32) {
         TYPE_ID_COUNTER.store(start, Ordering::Relaxed);
     }
+
+    /// Create a placeholder TypeId for unresolved types.
+    ///
+    /// This is used during FFI registration when a type reference cannot be resolved yet.
+    /// The placeholder will be resolved to an actual TypeId during the build phase.
+    #[inline]
+    pub const fn placeholder() -> Self {
+        TypeId(u32::MAX)
+    }
+
+    /// Check if this is a placeholder TypeId.
+    #[inline]
+    pub const fn is_placeholder(self) -> bool {
+        self.0 == u32::MAX
+    }
 }
 
 impl fmt::Display for TypeId {
