@@ -485,7 +485,7 @@ impl FfiRegistryBuilder {
             namespaces: FxHashSet::default(),
         };
 
-        // Pre-register primitive types
+        // Pre-register primitive types (both TypeDef and name lookup)
         builder.register_primitive(PrimitiveType::Void, VOID_TYPE);
         builder.register_primitive(PrimitiveType::Bool, BOOL_TYPE);
         builder.register_primitive(PrimitiveType::Int8, INT8_TYPE);
@@ -499,6 +499,10 @@ impl FfiRegistryBuilder {
         builder.register_primitive(PrimitiveType::Float, FLOAT_TYPE);
         builder.register_primitive(PrimitiveType::Double, DOUBLE_TYPE);
 
+        // Register type aliases for primitives
+        builder.type_names.insert("int".to_string(), INT32_TYPE);
+        builder.type_names.insert("uint".to_string(), UINT32_TYPE);
+
         // Register special types
         // "auto" and "?" are used for variable parameter types in FFI
         builder.type_names.insert("auto".to_string(), VARIABLE_PARAM_TYPE);
@@ -507,11 +511,9 @@ impl FfiRegistryBuilder {
         builder
     }
 
-    /// Register a primitive type name for lookup.
-    ///
-    /// Only inserts into `type_names` for name resolution during `build()`.
-    /// The actual `TypeDef::Primitive` definitions are handled by `Registry`.
+    /// Register a primitive type with its TypeDef and name lookup.
     fn register_primitive(&mut self, kind: PrimitiveType, type_id: TypeId) {
+        self.types.insert(type_id, TypeDef::Primitive { kind });
         self.type_names.insert(kind.name().to_string(), type_id);
     }
 
@@ -522,8 +524,9 @@ impl FfiRegistryBuilder {
     /// Register a type and return its TypeId.
     ///
     /// If `name` is provided, the type will be registered in the name lookup map.
+    /// Uses `TypeId::next_ffi()` to ensure the FFI bit is set.
     pub fn register_type(&mut self, type_def: TypeDef, name: Option<&str>) -> TypeId {
-        let type_id = TypeId::next();
+        let type_id = TypeId::next_ffi();
         self.types.insert(type_id, type_def);
 
         if let Some(name) = name {
@@ -988,7 +991,7 @@ mod tests {
     fn builder_build_with_resolved_function() {
         let mut builder = FfiRegistryBuilder::new();
 
-        let func = FfiFunctionDef::new(FunctionId::next(), "add")
+        let func = FfiFunctionDef::new(FunctionId::next_ffi(), "add")
             .with_params(vec![
                 FfiParam::new("a", FfiDataType::resolved(DataType::simple(INT32_TYPE))),
                 FfiParam::new("b", FfiDataType::resolved(DataType::simple(INT32_TYPE))),
@@ -1035,7 +1038,7 @@ mod tests {
         );
 
         // Register function with unresolved type
-        let func = FfiFunctionDef::new(FunctionId::next(), "process")
+        let func = FfiFunctionDef::new(FunctionId::next_ffi(), "process")
             .with_params(vec![FfiParam::new(
                 "obj",
                 FfiDataType::unresolved_handle("MyClass", false),
@@ -1059,7 +1062,7 @@ mod tests {
         let mut builder = FfiRegistryBuilder::new();
 
         // Register function referencing unknown type
-        let func_id = FunctionId::next();
+        let func_id = FunctionId::next_ffi();
         let func = FfiFunctionDef::new(func_id, "process")
             .with_params(vec![FfiParam::new(
                 "obj",
@@ -1127,7 +1130,7 @@ mod tests {
             Some("MyClass"),
         );
 
-        let ctor_id = FunctionId::next();
+        let ctor_id = FunctionId::next_ffi();
         let mut behaviors = TypeBehaviors::default();
         behaviors.constructors.push(ctor_id);
         builder.set_behaviors(type_id, behaviors);
@@ -1225,7 +1228,7 @@ mod tests {
                 properties: FxHashMap::default(),
                 is_final: false,
                 is_abstract: false,
-                template_params: vec![TypeId::next()], // One template param
+                template_params: vec![TypeId::next_ffi()], // One template param
                 template: None,
                 type_args: Vec::new(),
                 type_kind: crate::types::TypeKind::reference(),

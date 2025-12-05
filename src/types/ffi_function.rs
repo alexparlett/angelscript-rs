@@ -22,7 +22,7 @@
 //! ```ignore
 //! // Create an FFI function definition
 //! let func = FfiFunctionDef {
-//!     id: FunctionId::next(),
+//!     id: FunctionId::next_ffi(),
 //!     name: "process".to_string(),
 //!     params: vec![
 //!         FfiParam {

@@ -14,7 +14,7 @@ use crate::semantic::types::type_def::TypeId;
 ///
 /// ```ignore
 /// let enum_def = FfiEnumDef::new(
-///     TypeId::next(),
+///     TypeId::next_ffi(),
 ///     "Color",
 ///     vec![
 ///         ("Red".to_string(), 0),
@@ -25,7 +25,7 @@ use crate::semantic::types::type_def::TypeId;
 /// ```
 #[derive(Debug, Clone)]
 pub struct FfiEnumDef {
-    /// Unique type ID (assigned at registration via TypeId::next())
+    /// Unique FFI type ID (assigned at registration via TypeId::next_ffi())
     pub id: TypeId,
 
     /// Enum name
@@ -84,7 +84,7 @@ mod tests {
     #[test]
     fn enum_creation() {
         let enum_def = FfiEnumDef::new(
-            TypeId::next(),
+            TypeId::next_ffi(),
             "Color",
             vec![
                 ("Red".to_string(), 0),
@@ -100,7 +100,7 @@ mod tests {
     #[test]
     fn get_value() {
         let enum_def = FfiEnumDef::new(
-            TypeId::next(),
+            TypeId::next_ffi(),
             "Color",
             vec![
                 ("Red".to_string(), 0),
@@ -118,7 +118,7 @@ mod tests {
     #[test]
     fn get_name() {
         let enum_def = FfiEnumDef::new(
-            TypeId::next(),
+            TypeId::next_ffi(),
             "Color",
             vec![
                 ("Red".to_string(), 0),
@@ -136,7 +136,7 @@ mod tests {
     #[test]
     fn negative_values() {
         let enum_def = FfiEnumDef::new(
-            TypeId::next(),
+            TypeId::next_ffi(),
             "ErrorCode",
             vec![
                 ("Success".to_string(), 0),
@@ -151,7 +151,7 @@ mod tests {
 
     #[test]
     fn debug_output() {
-        let enum_def = FfiEnumDef::new(TypeId::next(), "Test", vec![]);
+        let enum_def = FfiEnumDef::new(TypeId::next_ffi(), "Test", vec![]);
         let debug = format!("{:?}", enum_def);
         assert!(debug.contains("FfiEnumDef"));
         assert!(debug.contains("Test"));
@@ -160,7 +160,7 @@ mod tests {
     #[test]
     fn clone() {
         let original = FfiEnumDef::new(
-            TypeId::next(),
+            TypeId::next_ffi(),
             "Direction",
             vec![
                 ("North".to_string(), 0),

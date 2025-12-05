@@ -141,7 +141,7 @@ impl<'m, 'app> EnumBuilder<'m, 'app> {
             ));
         }
 
-        let enum_def = FfiEnumDef::new(TypeId::next(), self.name, self.values);
+        let enum_def = FfiEnumDef::new(TypeId::next_ffi(), self.name, self.values);
 
         self.module.add_enum(enum_def);
         Ok(())

@@ -116,7 +116,7 @@ impl<'m, 'app> InterfaceBuilder<'m, 'app> {
             )));
         }
 
-        let interface_def = FfiInterfaceDef::new(TypeId::next(), self.name, self.methods);
+        let interface_def = FfiInterfaceDef::new(TypeId::next_ffi(), self.name, self.methods);
 
         self.module.add_interface(interface_def);
         Ok(())

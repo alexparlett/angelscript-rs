@@ -188,7 +188,7 @@ pub fn signature_to_ffi_function(
     let params: Vec<FfiParam> = sig.params.iter().map(function_param_to_ffi).collect();
     let return_type = return_type_to_ffi(&sig.return_type);
 
-    FfiFunctionDef::new(FunctionId::next(), name)
+    FfiFunctionDef::new(FunctionId::next_ffi(), name)
         .with_params(params)
         .with_return_type(return_type)
         .with_native_fn(native_fn)

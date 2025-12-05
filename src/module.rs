@@ -576,7 +576,7 @@ impl<'app> Module<'app> {
         // Convert return type to FfiDataType
         let return_type = return_type_to_ffi(&fd.return_type);
 
-        FfiFuncdefDef::new(TypeId::next(), fd.name.name.to_string(), params, return_type)
+        FfiFuncdefDef::new(TypeId::next_ffi(), fd.name.name.to_string(), params, return_type)
     }
 
     /// Internal method to add a funcdef definition.
@@ -752,13 +752,13 @@ impl<'app> Module<'app> {
         let qualified_name = self.qualified_name(&type_def.name);
 
         // Create and register template parameters
-        // Each param gets a unique TypeId and is registered with a name like "array::$T"
+        // Each param gets a unique FFI TypeId and is registered with a name like "array::$T"
         let template_param_ids: Vec<TypeId> = type_def
             .template_params
             .iter()
             .enumerate()
             .map(|(index, param_name)| {
-                let param_id = TypeId::next();
+                let param_id = TypeId::next_ffi();
 
                 // Register the template param as a TypeDef
                 let param_typedef = TypeDef::TemplateParam {
@@ -885,7 +885,7 @@ impl<'app> Module<'app> {
 
         for prop in &type_def.properties {
             // Create getter function
-            let getter_id = FunctionId::next();
+            let getter_id = FunctionId::next_ffi();
             let getter_func = FfiFunctionDef::new(getter_id, format!("get_{}", prop.name))
                 .with_return_type(prop.data_type.clone())
                 .with_const(true)
@@ -895,7 +895,7 @@ impl<'app> Module<'app> {
 
             // Create setter function if writable
             let setter_id = if let Some(setter) = &prop.setter {
-                let setter_id = FunctionId::next();
+                let setter_id = FunctionId::next_ffi();
                 let setter_func = FfiFunctionDef::new(setter_id, format!("set_{}", prop.name))
                     .with_params(vec![FfiParam::new("value", prop.data_type.clone())])
                     .with_return_type(FfiDataType::void())
@@ -1332,7 +1332,7 @@ mod tests {
         let mut module = Module::<'static>::root();
 
         module.add_enum(FfiEnumDef::new(
-            TypeId::next(),
+            TypeId::next_ffi(),
             "Color".to_string(),
             vec![
                 ("Red".to_string(), 0),
@@ -1377,7 +1377,7 @@ mod tests {
     #[test]
     fn ffi_enum_def_clone() {
         let enum_def = FfiEnumDef::new(
-            TypeId::next(),
+            TypeId::next_ffi(),
             "Color".to_string(),
             vec![("Red".to_string(), 0)],
         );

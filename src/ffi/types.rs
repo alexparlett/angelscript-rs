@@ -4,7 +4,7 @@
 //! Type specifications use AST primitives parsed from declaration strings.
 //!
 //! IDs are assigned at registration time using the global atomic counters
-//! (`TypeId::next()` and `FunctionId::next()`).
+//! (`TypeId::next_ffi()` and `FunctionId::next_ffi()` for FFI types/functions).
 
 use crate::ast::{FunctionParam, Ident, ReturnType, TypeExpr};
 use crate::semantic::types::type_def::{FunctionTraits, TypeId, Visibility};
@@ -123,7 +123,7 @@ pub struct NativeFunctionDef<'ast> {
 /// `Behaviors` struct. During import to the semantic layer, these are
 /// converted to `TypeBehaviors` with registered `FunctionId`s.
 pub struct NativeTypeDef<'ast> {
-    /// Unique type ID (assigned at registration via TypeId::next())
+    /// Unique FFI type ID (assigned at registration via TypeId::next_ffi())
     pub id: TypeId,
     /// Type name (unqualified)
     pub name: String,
@@ -231,7 +231,7 @@ pub struct NativePropertyDef<'ast> {
 /// Uses AST primitives for method signatures.
 #[derive(Debug)]
 pub struct NativeInterfaceDef<'ast> {
-    /// Unique type ID (assigned at registration via TypeId::next())
+    /// Unique FFI type ID (assigned at registration via TypeId::next_ffi())
     pub id: TypeId,
     /// Interface name
     pub name: String,
@@ -257,7 +257,7 @@ pub struct NativeInterfaceMethod<'ast> {
 /// Uses AST primitives for the function signature.
 #[derive(Debug)]
 pub struct NativeFuncdefDef<'ast> {
-    /// Unique type ID (assigned at registration via TypeId::next())
+    /// Unique FFI type ID (assigned at registration via TypeId::next_ffi())
     pub id: TypeId,
     /// Funcdef name
     pub name: Ident<'ast>,
@@ -311,7 +311,7 @@ mod tests {
     #[test]
     fn native_interface_def_debug() {
         let interface = NativeInterfaceDef {
-            id: TypeId::next(),
+            id: TypeId::next_ffi(),
             name: "ISerializable".to_string(),
             methods: Vec::new(),
         };

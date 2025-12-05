@@ -118,7 +118,7 @@ mod tests {
             ),
         ];
 
-        let interface = FfiInterfaceDef::new(TypeId::next(), "IDrawable", methods);
+        let interface = FfiInterfaceDef::new(TypeId::next_ffi(), "IDrawable", methods);
 
         assert_eq!(interface.name(), "IDrawable");
         assert_eq!(interface.methods().len(), 2);
@@ -128,7 +128,7 @@ mod tests {
 
     #[test]
     fn debug_output() {
-        let interface = FfiInterfaceDef::new(TypeId::next(), "ITest", vec![]);
+        let interface = FfiInterfaceDef::new(TypeId::next_ffi(), "ITest", vec![]);
         let debug = format!("{:?}", interface);
         assert!(debug.contains("FfiInterfaceDef"));
         assert!(debug.contains("ITest"));

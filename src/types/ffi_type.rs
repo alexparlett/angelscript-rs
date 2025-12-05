@@ -21,7 +21,7 @@ use std::sync::Arc;
 /// let type_def = FfiTypeDef::new::<MyClass>("MyClass", TypeKind::Reference);
 /// ```
 pub struct FfiTypeDef {
-    /// Unique type ID (assigned at registration via TypeId::next())
+    /// Unique FFI type ID (assigned at registration via TypeId::next_ffi())
     pub id: TypeId,
 
     /// Type name (unqualified)
@@ -255,7 +255,7 @@ mod tests {
     #[test]
     fn type_def_creation() {
         let type_def =
-            FfiTypeDef::new::<TestClass>(TypeId::next(), "TestClass", TypeKind::reference());
+            FfiTypeDef::new::<TestClass>(TypeId::next_ffi(), "TestClass", TypeKind::reference());
 
         assert_eq!(type_def.name(), "TestClass");
         assert!(!type_def.is_template());
@@ -266,7 +266,7 @@ mod tests {
     #[test]
     fn template_type_def_creation() {
         let type_def = FfiTypeDef::new_template::<TestClass>(
-            TypeId::next(),
+            TypeId::next_ffi(),
             "Container",
             vec!["T".to_string()],
             TypeKind::reference(),
@@ -281,7 +281,7 @@ mod tests {
     #[test]
     fn value_type_def() {
         let type_def = FfiTypeDef::new::<TestClass>(
-            TypeId::next(),
+            TypeId::next_ffi(),
             "Vec3",
             TypeKind::Value { size: 12, align: 4, is_pod: false },
         );
@@ -293,7 +293,7 @@ mod tests {
     #[test]
     fn debug_output() {
         let type_def =
-            FfiTypeDef::new::<TestClass>(TypeId::next(), "TestClass", TypeKind::reference());
+            FfiTypeDef::new::<TestClass>(TypeId::next_ffi(), "TestClass", TypeKind::reference());
         let debug = format!("{:?}", type_def);
         assert!(debug.contains("FfiTypeDef"));
         assert!(debug.contains("TestClass"));

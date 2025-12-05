@@ -22,7 +22,7 @@ use crate::types::{FfiDataType, FfiParam};
 /// ```ignore
 /// // Define a callback type: void Callback(int value)
 /// let funcdef = FfiFuncdefDef::new(
-///     TypeId::next(),
+///     TypeId::next_ffi(),
 ///     "Callback",
 ///     vec![FfiParam::new("value", FfiDataType::resolved(DataType::simple(INT32_TYPE)), None)],
 ///     FfiDataType::resolved(DataType::simple(VOID_TYPE)),
@@ -89,7 +89,7 @@ mod tests {
     #[test]
     fn funcdef_creation() {
         let funcdef = FfiFuncdefDef::new(
-            TypeId::next(),
+            TypeId::next_ffi(),
             "Callback",
             vec![FfiParam::new(
                 "value",
@@ -106,7 +106,7 @@ mod tests {
     #[test]
     fn funcdef_no_params() {
         let funcdef = FfiFuncdefDef::new(
-            TypeId::next(),
+            TypeId::next_ffi(),
             "NoArgCallback",
             vec![],
             FfiDataType::resolved(DataType::simple(VOID_TYPE)),
@@ -119,7 +119,7 @@ mod tests {
     #[test]
     fn debug_output() {
         let funcdef = FfiFuncdefDef::new(
-            TypeId::next(),
+            TypeId::next_ffi(),
             "TestFunc",
             vec![],
             FfiDataType::resolved(DataType::simple(VOID_TYPE)),
@@ -132,7 +132,7 @@ mod tests {
     #[test]
     fn clone() {
         let original = FfiFuncdefDef::new(
-            TypeId::next(),
+            TypeId::next_ffi(),
             "Cloneable",
             vec![FfiParam::new(
                 "x",

@@ -20,20 +20,20 @@ use crate::semantic::types::type_def::FunctionId;
 ///
 /// The inner callable is wrapped in Arc to support cloning for FFI registration.
 pub struct NativeFn {
-    /// Unique function ID (assigned at creation via FunctionId::next())
+    /// Unique FFI function ID (assigned at creation via FunctionId::next_ffi())
     pub id: FunctionId,
     inner: std::sync::Arc<dyn NativeCallable + Send + Sync>,
 }
 
 impl NativeFn {
     /// Create a new NativeFn from a callable.
-    /// Automatically assigns a unique FunctionId.
+    /// Automatically assigns a unique FFI FunctionId.
     pub fn new<F>(f: F) -> Self
     where
         F: NativeCallable + Send + Sync + 'static,
     {
         Self {
-            id: FunctionId::next(),
+            id: FunctionId::next_ffi(),
             inner: std::sync::Arc::new(f),
         }
     }

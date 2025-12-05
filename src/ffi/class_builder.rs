@@ -625,7 +625,7 @@ impl<'m, 'app, T: NativeType> ClassBuilder<'m, 'app, T> {
     /// without factory, value type without constructor).
     pub fn build(self) -> Result<(), FfiModuleError> {
         // Build the FfiTypeDef
-        let mut type_def = FfiTypeDef::new::<T>(TypeId::next(), self.name, self.type_kind);
+        let mut type_def = FfiTypeDef::new::<T>(TypeId::next_ffi(), self.name, self.type_kind);
 
         // Set template params
         type_def.template_params = self.template_params;
