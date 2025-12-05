@@ -555,7 +555,7 @@ impl<'r, 'ast> FunctionDefView<'r, 'ast> {
 ---
 
 ### Phase 2: Add FfiExpr and FfiFunctionDef
-**Status:** In Progress
+**Status:** Complete
 
 **Tasks:**
 1. Create `src/types/ffi_expr.rs`:
@@ -578,6 +578,15 @@ impl<'r, 'ast> FunctionDefView<'r, 'ast> {
 - `src/types/ffi_expr.rs` (new)
 - `src/types/ffi_function.rs` (new)
 - `src/types/mod.rs` (modify)
+
+**Key Implementation Details:**
+- `FfiExpr` enum covers: `Int`, `UInt`, `Float`, `Bool`, `String`, `Null`, `EnumValue`, `Construct`, `Unary`, `Binary`, `Ident`, `ScopedIdent`
+- `FfiExpr::from_ast()` converts arena-allocated expressions to owned form
+- `FfiParam` holds name, `FfiDataType`, and optional `FfiExpr` default value
+- `FfiFunctionDef` holds all function metadata with deferred type resolution
+- `FfiFunctionDef::resolve()` produces `ResolvedFfiFunctionDef` with concrete `DataType`s
+- `FfiResolutionError` provides detailed error messages for resolution failures
+- Comprehensive tests: 48 tests for ffi_expr, ffi_function modules
 
 ---
 
