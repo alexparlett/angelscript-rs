@@ -489,9 +489,11 @@ impl FfiRegistryBuilder {
         builder
     }
 
-    /// Register a primitive type.
+    /// Register a primitive type name for lookup.
+    ///
+    /// Only inserts into `type_names` for name resolution during `build()`.
+    /// The actual `TypeDef::Primitive` definitions are handled by `Registry`.
     fn register_primitive(&mut self, kind: PrimitiveType, type_id: TypeId) {
-        self.types.insert(type_id, TypeDef::Primitive { kind });
         self.type_names.insert(kind.name().to_string(), type_id);
     }
 
@@ -946,10 +948,12 @@ mod tests {
         let builder = FfiRegistryBuilder::new();
         let registry = builder.build().unwrap();
 
-        // Should have primitives
-        assert!(registry.get_type(VOID_TYPE).is_some());
-        assert!(registry.get_type(INT32_TYPE).is_some());
+        // Should have primitive names registered for lookup
+        // (TypeDef::Primitive is handled by Registry, not FfiRegistry)
+        assert!(registry.get_type_by_name("void").is_some());
         assert!(registry.get_type_by_name("int").is_some());
+        assert_eq!(registry.get_type_by_name("void"), Some(VOID_TYPE));
+        assert_eq!(registry.get_type_by_name("int"), Some(INT32_TYPE));
     }
 
     #[test]
