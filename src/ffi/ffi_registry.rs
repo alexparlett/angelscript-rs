@@ -168,6 +168,11 @@ impl FfiRegistry {
         self.functions.len()
     }
 
+    /// Get access to the function name map for iteration.
+    pub fn func_by_name(&self) -> &FxHashMap<String, Vec<FunctionId>> {
+        &self.function_names
+    }
+
     // =========================================================================
     // Behavior Lookups
     // =========================================================================

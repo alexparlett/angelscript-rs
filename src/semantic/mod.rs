@@ -23,11 +23,13 @@
 //! }
 //! ```
 
+pub mod compilation_context;
 pub mod compiler;
 pub mod const_eval;
 pub mod error;
 pub mod local_scope;
 pub mod passes;
+pub mod template_instantiator;
 pub mod types;
 
 // Unified compiler interface (recommended for most users)
@@ -56,3 +58,6 @@ pub use types::{
 
 // Re-export Registry as alias for backwards compatibility during transition
 pub use types::ScriptRegistry as Registry;
+
+// Re-export CompilationContext
+pub use compilation_context::CompilationContext;

@@ -848,6 +848,9 @@ mod tests {
     use crate::semantic::types::TypeBehaviors;
     use crate::semantic::types::type_def::PrimitiveType;
     use crate::semantic::FunctionId;
+    use crate::semantic::CompilationContext;
+    use crate::ffi::FfiRegistryBuilder;
+    use std::sync::Arc;
 
     /// Creates a test array template and returns (registry, array_template_id)
     fn create_test_registry_with_array() -> (Registry<'static>, TypeId) {
@@ -907,6 +910,56 @@ mod tests {
         registry
     }
 
+    /// Creates a CompilationContext with an array template registered in FFI.
+    /// Returns (context, array_template_id) for use in init list tests.
+    fn create_test_context_with_array() -> (CompilationContext<'static>, TypeId) {
+        let mut builder = FfiRegistryBuilder::new();
+
+        // Register template param T first
+        let t_param = TypeId::next_ffi();
+        let template_id = TypeId::next_ffi();
+
+        builder.register_type_with_id(
+            t_param,
+            TypeDef::TemplateParam {
+                name: "T".to_string(),
+                index: 0,
+                owner: template_id,
+            },
+            None,
+        );
+
+        // Register array template
+        let array_typedef = TypeDef::Class {
+            name: "array".to_string(),
+            qualified_name: "array".to_string(),
+            fields: Vec::new(),
+            methods: Vec::new(),
+            base_class: None,
+            interfaces: Vec::new(),
+            operator_methods: rustc_hash::FxHashMap::default(),
+            properties: rustc_hash::FxHashMap::default(),
+            is_final: false,
+            is_abstract: false,
+            template_params: vec![t_param],
+            template: None,
+            type_args: Vec::new(),
+            type_kind: crate::types::TypeKind::reference(),
+        };
+
+        builder.register_type_with_id(template_id, array_typedef, Some("array"));
+
+        // Register list_factory behavior for array template
+        let mut behaviors = TypeBehaviors::default();
+        behaviors.list_factory = Some(FunctionId::new(9999)); // Dummy function ID
+        builder.set_behaviors(template_id, behaviors);
+
+        let ffi = Arc::new(builder.build().unwrap());
+        let ctx = CompilationContext::new(ffi);
+
+        (ctx, template_id)
+    }
+
     #[test]
     fn new_compiler_initializes() {
         let registry = create_test_registry();
@@ -918,7 +971,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "Requires instantiate_template - Phase 6.4 (CompilationContext)"]
     fn init_list_empty_error() {
         use crate::ast::{Parser, Expr};
         use bumpalo::Bump;
@@ -927,10 +979,10 @@ mod tests {
         let mut parser = Parser::new("{}", &arena);
         let expr = parser.parse_expr(0).unwrap();
 
-        let (mut registry, array_template) = create_test_registry_with_array();
+        let (mut ctx, array_template) = create_test_context_with_array();
 
-        // Pre-instantiate array<int32> for testing (but don't set as expected target)
-        let _array_int = registry
+        // Pre-instantiate array<int> for testing (but don't set as expected target)
+        let _array_int = ctx
             .instantiate_template(
                 array_template,
                 vec![DataType::simple(INT32_TYPE)],
@@ -938,7 +990,7 @@ mod tests {
             .unwrap();
 
         let return_type = DataType::simple(VOID_TYPE);
-        let mut compiler = FunctionCompiler::new(&registry, return_type);
+        let mut compiler = FunctionCompiler::new(ctx.script(), return_type);
 
         // NOTE: Don't set expected_init_list_target - test that we get an error
         if let Expr::InitList(init_list) = *expr {
@@ -955,7 +1007,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "Requires instantiate_template - Phase 6.4 (CompilationContext)"]
     fn init_list_simple_int() {
         use crate::ast::{Parser, Expr};
         use bumpalo::Bump;
@@ -964,10 +1015,10 @@ mod tests {
         let mut parser = Parser::new("{1, 2, 3}", &arena);
         let expr = parser.parse_expr(0).unwrap();
 
-        let (mut registry, array_template) = create_test_registry_with_array();
+        let (mut ctx, array_template) = create_test_context_with_array();
 
-        // Pre-instantiate array<int32> for testing
-        let array_int = registry
+        // Pre-instantiate array<int> for testing
+        let array_int = ctx
             .instantiate_template(
                 array_template,
                 vec![DataType::simple(INT32_TYPE)],
@@ -975,7 +1026,7 @@ mod tests {
             .unwrap();
 
         let return_type = DataType::simple(VOID_TYPE);
-        let mut compiler = FunctionCompiler::new(&registry, return_type);
+        let mut compiler = FunctionCompiler::new(ctx.script(), return_type);
 
         // Set expected init list target type (as would be set by var decl)
         compiler.expected_init_list_target = Some(array_int);
@@ -985,7 +1036,7 @@ mod tests {
             assert!(result.is_some(), "check_init_list failed: {:?}", compiler.errors);
             let result_ctx = result.unwrap();
 
-            // Should return array<int32>@
+            // Should return array<int>@
             assert!(result_ctx.data_type.is_handle);
             assert_eq!(result_ctx.data_type.type_id, array_int);
             assert_eq!(compiler.errors.len(), 0);
@@ -1001,7 +1052,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "Requires instantiate_template - Phase 6.4 (CompilationContext)"]
     fn init_list_nested() {
         use crate::ast::{Parser, Expr};
         use bumpalo::Bump;
@@ -1010,18 +1060,18 @@ mod tests {
         let mut parser = Parser::new("{{1, 2}, {3, 4}}", &arena);
         let expr = parser.parse_expr(0).unwrap();
 
-        let (mut registry, array_template) = create_test_registry_with_array();
+        let (mut ctx, array_template) = create_test_context_with_array();
 
-        // Pre-instantiate array<int32>
-        let array_int = registry
+        // Pre-instantiate array<int>
+        let array_int = ctx
             .instantiate_template(
                 array_template,
                 vec![DataType::simple(INT32_TYPE)],
             )
             .unwrap();
 
-        // Pre-instantiate array<array<int32>@>
-        let array_array_int = registry
+        // Pre-instantiate array<array<int>@>
+        let array_array_int = ctx
             .instantiate_template(
                 array_template,
                 vec![DataType::with_handle(array_int, false)],
@@ -1029,7 +1079,7 @@ mod tests {
             .unwrap();
 
         let return_type = DataType::simple(VOID_TYPE);
-        let mut compiler = FunctionCompiler::new(&registry, return_type);
+        let mut compiler = FunctionCompiler::new(ctx.script(), return_type);
 
         // Set expected init list target type for outer array
         compiler.expected_init_list_target = Some(array_array_int);
@@ -1039,7 +1089,7 @@ mod tests {
             assert!(result.is_some(), "check_init_list failed: {:?}", compiler.errors);
             let result_ctx = result.unwrap();
 
-            // Should return array<array<int32>@>@
+            // Should return array<array<int>@>@
             assert!(result_ctx.data_type.is_handle);
             assert_eq!(result_ctx.data_type.type_id, array_array_int);
             assert_eq!(compiler.errors.len(), 0);
@@ -1049,7 +1099,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "Requires instantiate_template - Phase 6.4 (CompilationContext)"]
     fn init_list_type_promotion() {
         use crate::ast::{Parser, Expr};
         use bumpalo::Bump;
@@ -1058,10 +1107,10 @@ mod tests {
         let mut parser = Parser::new("{1, 2.5, 3}", &arena);
         let expr = parser.parse_expr(0).unwrap();
 
-        let (mut registry, array_template) = create_test_registry_with_array();
+        let (mut ctx, array_template) = create_test_context_with_array();
 
         // Pre-instantiate array<double>
-        let array_double = registry
+        let array_double = ctx
             .instantiate_template(
                 array_template,
                 vec![DataType::simple(DOUBLE_TYPE)],
@@ -1069,7 +1118,7 @@ mod tests {
             .unwrap();
 
         let return_type = DataType::simple(VOID_TYPE);
-        let mut compiler = FunctionCompiler::new(&registry, return_type);
+        let mut compiler = FunctionCompiler::new(ctx.script(), return_type);
 
         // Set expected init list target type
         compiler.expected_init_list_target = Some(array_double);

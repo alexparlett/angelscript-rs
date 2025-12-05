@@ -764,35 +764,59 @@ CompilationContext (Phase 6.4) to work properly with the new architecture.
 
 ---
 
-#### Phase 6.4: Create CompilationContext
-**New file:** `src/semantic/compilation_context.rs`
+#### Phase 6.4: Create CompilationContext ✓
+**Status:** Complete
+**New files:**
+- `src/semantic/compilation_context.rs`
+- `src/semantic/template_instantiator.rs`
 
 ```rust
 pub struct CompilationContext<'ast> {
     ffi: Arc<FfiRegistry>,
     script: ScriptRegistry<'ast>,
-    template_cache: FxHashMap<(TypeId, Vec<TypeId>), TypeId>,
+    type_by_name: FxHashMap<String, TypeId>,      // Unified name lookup
+    func_by_name: FxHashMap<String, Vec<FunctionId>>,  // Unified name lookup
+    template_instantiator: TemplateInstantiator,
 }
 ```
 
-1. Implement unified lookup methods that route by `is_ffi()`:
-   - `get_type(TypeId) -> &TypeDef` - routes to correct registry
-   - `get_type_mut(TypeId) -> Option<&mut TypeDef>` - script only
-   - `lookup_type(&str) -> Option<TypeId>` - FFI first, then script
-   - `get_function(FunctionId) -> ...` - routes by `is_ffi()`
-   - `lookup_functions(&str) -> ...` - FFI first, then script
-   - `get_behaviors(TypeId) -> Option<&TypeBehaviors>` - routes by `is_ffi()`
-   - `find_constructors()`, `find_factories()`, `find_operator_method()`, etc.
+**Changes:**
 
-2. Move `instantiate_template()` here with template_cache:
-   - Template definitions can be FFI (e.g., `array<T>`)
-   - Template instances are always ScriptTypes but T may be Ffi or Script type
-   - Cache key: `(template_type_id, vec of arg type_ids)`
+1. **Created `CompilationContext`** (`src/semantic/compilation_context.rs`):
+   - Unified type/function lookup with `type_by_name` and `func_by_name` maps
+   - Initialized from FFI registry on construction
+   - Routes ID-based lookups by `is_ffi()` bit
+   - Delegates registration to ScriptRegistry and updates unified maps
 
-3. Add delegation methods to ScriptRegistry for registration:
-   - `register_type()`, `register_function()`, etc.
+2. **Created `TemplateInstantiator`** (`src/semantic/template_instantiator.rs`):
+   - Single-responsibility struct for template instantiation
+   - Caches template instances to avoid duplicates
+   - Handles validation callbacks for FFI templates
+   - Copies behaviors from template to instance
 
-4. Update `src/semantic/types/mod.rs` to export `CompilationContext`
+3. **Implemented unified lookup methods**:
+   - `lookup_type()` - single HashMap lookup (unified map)
+   - `get_type()` - routes by `is_ffi()` bit
+   - `lookup_functions()` - single HashMap lookup (unified map)
+   - All behavior/method/operator lookups route by `is_ffi()`
+
+4. **Updated exports** (`src/semantic/mod.rs`):
+   - Added `template_instantiator` module
+   - Re-exported `CompilationContext`
+
+5. **Re-enabled ignored tests**:
+   - `init_list_empty_error` ✓
+   - `init_list_simple_int` ✓
+   - `init_list_nested` ✓
+   - `init_list_type_promotion` ✓
+
+   Added `create_test_context_with_array()` helper that creates FfiRegistry
+   with array template, wraps in CompilationContext for template instantiation.
+
+**Test Results:**
+- All 4 re-enabled tests pass
+- 1869 total tests pass (up from 1851 in Phase 6.3)
+- 554 tests still fail (need Phase 6.5 to use CompilationContext in compiler)
 
 ---
 
