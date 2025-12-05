@@ -18,6 +18,9 @@
 - SELF_TYPE placeholder for template self-references
 - Template callback support for validation
 - Multiple operator overload support (const/non-const)
+- FFI_BIT for TypeId/FunctionId to distinguish FFI vs script-defined items
+- FfiRegistry stored in Context, shared via Arc to Units
+- Primitives now stored in FfiRegistry with TypeDef::Primitive entries
 
 ---
 
@@ -55,7 +58,7 @@ Detailed task files are in `/claude/tasks/`. Complete in order:
 ### Phase 5: Performance & Advanced Features
 | Task | Description | Status |
 |------|-------------|--------|
-| [20](tasks/20_ffi_import_performance.md) | FFI import performance optimization | 🔄 Investigation |
+| [20](tasks/20_ffi_import_performance.md) | FFI import performance optimization | 🔄 Phase 6.2 Complete |
 | [12](tasks/12_ffi_template_functions.md) | Template functions via register_fn_raw | Not Started |
 | [13](tasks/13_ffi_variadic_args.md) | Variadic function arguments | Not Started |
 | [14](tasks/14_ffi_advanced_templates.md) | Advanced templates (if_handle_then_const, funcdefs, specializations) | Not Started |
@@ -87,7 +90,16 @@ Detailed task files are in `/claude/tasks/`. Complete in order:
 
 ## Next Steps
 
-**Task 20: FFI Import Performance** - Investigate and fix ~20x performance regression in benchmarks (~100μs → ~2.2ms) caused by FFI module import happening on every compilation
+**Task 20: FFI Import Performance** - Continue with Phase 6.3 (update Registry to use FfiRegistry)
+
+Completed so far:
+- Phase 6.1: Added FFI_BIT to TypeId/FunctionId with next_ffi()/next_script() methods
+- Phase 6.2: Updated all FFI registration code to use next_ffi()
+
+Remaining:
+- Phase 6.3: Update Registry to use Arc<FfiRegistry> from Context
+- Phase 6.4: Update import_modules() to be incremental
+- Phase 7: Run benchmarks to verify performance improvement
 
 ---
 

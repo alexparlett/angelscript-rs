@@ -667,53 +667,71 @@ impl<'r, 'ast> FunctionDefView<'r, 'ast> {
 ---
 
 ### Phase 6: Refactor Registry Architecture
-**Status:** Pending
+**Status:** In Progress (6.1, 6.2 Complete)
 
 **Goal:** Refactor so `Registry` becomes `ScriptRegistry` (no FFI knowledge), introduce `CompilationContext` as the unified facade, and use TypeId/FunctionId high bits to identify FFI vs Script.
 
 ---
 
-#### Phase 6.1: TypeId and FunctionId Refactoring
+#### Phase 6.1: TypeId and FunctionId Refactoring ✓
+**Status:** Complete
 **File:** `src/semantic/types/type_def.rs`
 
 **TypeId changes:**
-1. Add `FFI_BIT` constant (`0x8000_0000`) and helper methods:
+1. Added `FFI_BIT` constant (`0x8000_0000`) and helper methods:
    - `is_ffi()` - checks if high bit is set
    - `is_script()` - checks if high bit is clear
-2. Update primitive constants to use FFI bit:
+2. Updated primitive constants to use FFI bit:
    ```rust
    pub const VOID_TYPE: TypeId = TypeId(0x8000_0000);
    pub const BOOL_TYPE: TypeId = TypeId(0x8000_0001);
    // ... etc for all 12 primitives (0-11)
    ```
-3. Add separate atomic counters:
+3. Added separate atomic counters:
    - `FFI_TYPE_ID_COUNTER` starting at 32 (after primitives + special types)
    - `SCRIPT_TYPE_ID_COUNTER` starting at 0
-4. Add `TypeId::next_ffi()` and `TypeId::next_script()` methods
-5. Update special types to use FFI bit:
-   - `NULL_TYPE = TypeId(0x8000_000C)` (12)
-   - `VARIABLE_PARAM_TYPE = TypeId(0x8000_000D)` (13)
-   - `SELF_TYPE = TypeId(0x8000_0000 | (u32::MAX - 1))` or similar
+4. Added `TypeId::next_ffi()` and `TypeId::next_script()` methods
+5. Updated special types to use FFI bit:
+   - `VARIABLE_PARAM_TYPE = TypeId(0x8000_000C)` (12)
+   - `NULL_TYPE = TypeId(0x8000_000D)` (13)
+   - `SELF_TYPE = TypeId(0xFFFF_FFFE)` (max - 1, FFI bit set)
+   - `FIRST_USER_TYPE_ID = TypeId(0x8000_0020)` (32)
 
 **FunctionId changes:**
-1. Add `FFI_BIT` constant and helper methods:
+1. Added `FFI_BIT` constant and helper methods:
    - `is_ffi()`, `is_script()`
-2. Add separate atomic counters:
+2. Added separate atomic counters:
    - `FFI_FUNCTION_ID_COUNTER` starting at 0
    - `SCRIPT_FUNCTION_ID_COUNTER` starting at 0
-3. Add `FunctionId::next_ffi()` and `FunctionId::next_script()` methods
+3. Added `FunctionId::next_ffi()` and `FunctionId::next_script()` methods
 
 ---
 
-#### Phase 6.2: FfiRegistry Updates
-**File:** `src/ffi/ffi_registry.rs`
+#### Phase 6.2: FfiRegistry Updates ✓
+**Status:** Complete
+**Files:**
+- `src/ffi/ffi_registry.rs`
+- `src/ffi/class_builder.rs`
+- `src/ffi/interface_builder.rs`
+- `src/ffi/enum_builder.rs`
+- `src/ffi/native_fn.rs`
+- `src/module.rs`
+- `src/types/ffi_convert.rs`
+- `src/types/ffi_*.rs` (doc comment updates)
 
-1. Update `FfiRegistryBuilder::new()`:
-   - Register primitives with FFI TypeIds (`0x8000_0000 + index`)
-   - Store actual `TypeDef::Primitive` entries in `types` HashMap
-2. Update `register_type()` to use `TypeId::next_ffi()`
-3. Update function registration to use `FunctionId::next_ffi()`
-4. Ensure all ID generation uses FFI variants throughout
+**Changes:**
+1. Updated `FfiRegistryBuilder::new()`:
+   - Now stores `TypeDef::Primitive` entries in `types` HashMap
+   - Added "int" and "uint" aliases
+2. Updated `register_type()` to use `TypeId::next_ffi()`
+3. Updated all builders to use `TypeId::next_ffi()`:
+   - `class_builder.rs::build()`
+   - `interface_builder.rs::build()`
+   - `enum_builder.rs::build()`
+4. Updated `NativeFn::new()` to use `FunctionId::next_ffi()`
+5. Updated `module.rs` for funcdefs, template params, and properties
+6. Updated `ffi_convert.rs::signature_to_ffi_function_def()`
+7. Updated all doc comments to reference `next_ffi()` methods
 
 ---
 
