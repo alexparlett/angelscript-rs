@@ -414,17 +414,17 @@ pub struct FfiRegistryBuilder {
     types: FxHashMap<TypeId, TypeDef>,
     type_names: FxHashMap<String, TypeId>,
 
-    // === Unresolved Function Storage ===
-    /// Functions with potentially unresolved types
-    unresolved_functions: Vec<(FfiFunctionDef, Option<NativeFn>)>,
+    // === Function Storage ===
+    /// Functions (resolved during build)
+    functions: Vec<(FfiFunctionDef, Option<NativeFn>)>,
 
-    // === Unresolved Interface Storage ===
-    /// Interfaces with potentially unresolved method types
-    unresolved_interfaces: Vec<(TypeId, String, crate::types::FfiInterfaceDef)>,
+    // === Interface Storage ===
+    /// Interfaces (resolved during build)
+    interfaces: Vec<(TypeId, String, crate::types::FfiInterfaceDef)>,
 
-    // === Unresolved Funcdef Storage ===
-    /// Funcdefs with potentially unresolved types
-    unresolved_funcdefs: Vec<(TypeId, String, crate::types::FfiFuncdefDef)>,
+    // === Funcdef Storage ===
+    /// Funcdefs (resolved during build)
+    funcdefs: Vec<(TypeId, String, crate::types::FfiFuncdefDef)>,
 
     // === Behavior Storage ===
     behaviors: FxHashMap<TypeId, TypeBehaviors>,
@@ -442,9 +442,9 @@ impl std::fmt::Debug for FfiRegistryBuilder {
         f.debug_struct("FfiRegistryBuilder")
             .field("types", &self.types)
             .field("type_names", &self.type_names)
-            .field("unresolved_functions", &self.unresolved_functions.len())
-            .field("unresolved_interfaces", &self.unresolved_interfaces.len())
-            .field("unresolved_funcdefs", &self.unresolved_funcdefs.len())
+            .field("functions", &self.functions.len())
+            .field("interfaces", &self.interfaces.len())
+            .field("funcdefs", &self.funcdefs.len())
             .field("behaviors", &self.behaviors)
             .field("template_callbacks", &self.template_callbacks.len())
             .field("namespaces", &self.namespaces)
@@ -464,9 +464,9 @@ impl FfiRegistryBuilder {
         let mut builder = Self {
             types: FxHashMap::default(),
             type_names: FxHashMap::default(),
-            unresolved_functions: Vec::new(),
-            unresolved_interfaces: Vec::new(),
-            unresolved_funcdefs: Vec::new(),
+            functions: Vec::new(),
+            interfaces: Vec::new(),
+            funcdefs: Vec::new(),
             behaviors: FxHashMap::default(),
             template_callbacks: FxHashMap::default(),
             namespaces: FxHashSet::default(),
@@ -557,7 +557,7 @@ impl FfiRegistryBuilder {
     ///
     /// The function's types may be unresolved; they will be resolved during `build()`.
     pub fn register_function(&mut self, func: FfiFunctionDef, native_fn: Option<NativeFn>) {
-        self.unresolved_functions.push((func, native_fn));
+        self.functions.push((func, native_fn));
     }
 
     // =========================================================================
@@ -627,7 +627,7 @@ impl FfiRegistryBuilder {
         let type_id = interface_def.id;
         self.type_names
             .insert(qualified_name.to_string(), type_id);
-        self.unresolved_interfaces.push((
+        self.interfaces.push((
             type_id,
             qualified_name.to_string(),
             interface_def,
@@ -650,7 +650,7 @@ impl FfiRegistryBuilder {
         let type_id = funcdef_def.id;
         self.type_names
             .insert(qualified_name.to_string(), type_id);
-        self.unresolved_funcdefs.push((
+        self.funcdefs.push((
             type_id,
             qualified_name.to_string(),
             funcdef_def,
@@ -671,17 +671,17 @@ impl FfiRegistryBuilder {
     /// Returns a vector of resolution errors if any types cannot be resolved.
     pub fn build(mut self) -> Result<FfiRegistry, Vec<FfiRegistryError>> {
         let mut errors = Vec::new();
-        let mut functions = FxHashMap::default();
+        let mut resolved_functions = FxHashMap::default();
         let mut function_names: FxHashMap<String, Vec<FunctionId>> = FxHashMap::default();
         let mut native_fns = FxHashMap::default();
 
-        // Extract unresolved items to avoid borrow conflicts
-        let unresolved_interfaces = std::mem::take(&mut self.unresolved_interfaces);
-        let unresolved_funcdefs = std::mem::take(&mut self.unresolved_funcdefs);
-        let unresolved_functions = std::mem::take(&mut self.unresolved_functions);
+        // Extract items to avoid borrow conflicts
+        let interfaces = std::mem::take(&mut self.interfaces);
+        let funcdefs = std::mem::take(&mut self.funcdefs);
+        let functions = std::mem::take(&mut self.functions);
 
         // Resolve all interfaces
-        for (type_id, qualified_name, interface_def) in unresolved_interfaces {
+        for (type_id, qualified_name, interface_def) in interfaces {
             match Self::resolve_interface(&self.type_names, &interface_def, &qualified_name) {
                 Ok(typedef) => {
                     self.types.insert(type_id, typedef);
@@ -693,7 +693,7 @@ impl FfiRegistryBuilder {
         }
 
         // Resolve all funcdefs
-        for (type_id, qualified_name, funcdef_def) in unresolved_funcdefs {
+        for (type_id, qualified_name, funcdef_def) in funcdefs {
             match Self::resolve_funcdef(&self.type_names, &funcdef_def, &qualified_name) {
                 Ok(typedef) => {
                     self.types.insert(type_id, typedef);
@@ -705,7 +705,7 @@ impl FfiRegistryBuilder {
         }
 
         // Resolve all functions
-        for (ffi_func, native_fn_opt) in unresolved_functions {
+        for (ffi_func, native_fn_opt) in functions {
             let func_id = ffi_func.id;
 
             // Type lookup closure
@@ -725,7 +725,7 @@ impl FfiRegistryBuilder {
                         .or_default()
                         .push(func_id);
 
-                    functions.insert(func_id, resolved);
+                    resolved_functions.insert(func_id, resolved);
 
                     // Store native function if provided
                     if let Some(native_fn) = native_fn_opt {
@@ -745,7 +745,7 @@ impl FfiRegistryBuilder {
         Ok(FfiRegistry {
             types: self.types,
             type_names: self.type_names,
-            functions,
+            functions: resolved_functions,
             function_names,
             native_fns,
             behaviors: self.behaviors,
