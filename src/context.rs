@@ -21,6 +21,7 @@
 use std::sync::Arc;
 use thiserror::Error;
 
+use crate::ffi::{FfiRegistry, FfiRegistryBuilder, FfiRegistryError};
 use crate::module::{FfiModuleError, Module};
 use crate::modules::default_modules;
 use crate::unit::Unit;
@@ -36,10 +37,14 @@ use crate::unit::Unit;
 ///
 /// The `'app` lifetime parameter ensures that global property references
 /// in installed modules remain valid for the lifetime of the Context.
-#[derive(Debug)]
+/// Context is not Debug because FfiRegistryBuilder contains function pointers
 pub struct Context<'app> {
     /// Installed native modules
     modules: Vec<Module<'app>>,
+    /// Builder for FFI registry (consumed on seal)
+    builder: Option<FfiRegistryBuilder>,
+    /// Sealed FFI registry (available after seal)
+    ffi_registry: Option<Arc<FfiRegistry>>,
 }
 
 impl<'app> Context<'app> {
@@ -47,10 +52,12 @@ impl<'app> Context<'app> {
     pub fn new() -> Self {
         Self {
             modules: Vec::new(),
+            builder: Some(FfiRegistryBuilder::new()),
+            ffi_registry: None,
         }
     }
 
-    /// Create a context with default modules pre-installed.
+    /// Create a context with default modules pre-installed and sealed.
     ///
     /// Default modules include:
     /// - `std` - I/O functions (print, println, eprint, eprintln)
@@ -59,14 +66,18 @@ impl<'app> Context<'app> {
     /// - `array` - Array template type (array<T>)
     /// - `dictionary` - Dictionary template type (dictionary)
     ///
+    /// The context is automatically sealed after installing default modules,
+    /// making it ready for `create_unit()` calls.
+    ///
     /// # Errors
     ///
-    /// Returns an error if any default module fails to build.
+    /// Returns an error if any default module fails to build or if sealing fails.
     pub fn with_default_modules() -> Result<Self, ContextError> {
         let mut ctx = Self::new();
         for module in default_modules().map_err(ContextError::ModuleBuildFailed)? {
             ctx.install(module)?;
         }
+        ctx.seal()?;
         Ok(ctx)
     }
 
@@ -74,6 +85,10 @@ impl<'app> Context<'app> {
     ///
     /// The module's functions, types, and global properties become available
     /// to scripts compiled against this context.
+    ///
+    /// # Errors
+    ///
+    /// Returns `ContextError::AlreadySealed` if the context has already been sealed.
     ///
     /// # Example
     ///
@@ -83,13 +98,67 @@ impl<'app> Context<'app> {
     /// let mut math = Module::new(&["math"]);
     /// // ... register math functions ...
     ///
-    /// ctx.install(math);
+    /// ctx.install(math)?;
+    /// ctx.seal()?;
     /// ```
     pub fn install(&mut self, module: Module<'app>) -> Result<(), ContextError> {
-        // Multiple modules can share the same namespace - they just contribute
-        // different items (functions, types, etc.) to that namespace
+        // Check if already sealed
+        if self.ffi_registry.is_some() {
+            return Err(ContextError::AlreadySealed);
+        }
+
+        // Install module into builder
+        let builder = self.builder.as_mut().expect("builder should exist before seal");
+        module.install_into(builder)?;
+
+        // Keep module for reference
         self.modules.push(module);
         Ok(())
+    }
+
+    /// Seal the context, building the immutable FFI registry.
+    ///
+    /// After sealing, no more modules can be installed, but `create_unit()` can be called.
+    /// This resolves all type references and builds the shared FFI registry.
+    ///
+    /// Calling `seal()` multiple times is safe - subsequent calls are no-ops.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the FFI registry fails to build (e.g., unresolved types).
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let mut ctx = Context::new();
+    /// ctx.install(my_module)?;
+    /// ctx.seal()?;
+    ///
+    /// let ctx = Arc::new(ctx);
+    /// let unit = ctx.create_unit();
+    /// ```
+    pub fn seal(&mut self) -> Result<(), ContextError> {
+        // Already sealed - no-op
+        if self.ffi_registry.is_some() {
+            return Ok(());
+        }
+
+        // Take builder and build the registry
+        let builder = self.builder.take().unwrap_or_default();
+        let registry = builder.build().map_err(ContextError::RegistryBuildFailed)?;
+        self.ffi_registry = Some(Arc::new(registry));
+
+        Ok(())
+    }
+
+    /// Check if the context has been sealed.
+    pub fn is_sealed(&self) -> bool {
+        self.ffi_registry.is_some()
+    }
+
+    /// Get the FFI registry (available after sealing).
+    pub fn ffi_registry(&self) -> Option<&Arc<FfiRegistry>> {
+        self.ffi_registry.as_ref()
     }
 
     /// Get the installed modules.
@@ -106,7 +175,12 @@ impl<'app> Context<'app> {
     /// Create a new compilation unit from this context.
     ///
     /// The unit will have access to all installed modules' functions,
-    /// types, and global properties.
+    /// types, and global properties through the sealed FFI registry.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the context has not been sealed. Call `seal()` first,
+    /// or use `with_default_modules()` which auto-seals.
     ///
     /// # Example
     ///
@@ -120,6 +194,7 @@ impl<'app> Context<'app> {
     /// unit.build()?;
     /// ```
     pub fn create_unit(self: &Arc<Self>) -> Unit<'app> {
+        assert!(self.is_sealed(), "Context must be sealed before creating units. Call seal() first.");
         Unit::with_context(Arc::clone(self))
     }
 
@@ -154,6 +229,14 @@ pub enum ContextError {
     /// Failed to build a default module
     #[error("failed to build module: {0}")]
     ModuleBuildFailed(#[from] FfiModuleError),
+
+    /// Context is already sealed - cannot install modules
+    #[error("context is already sealed - cannot install modules after seal() or create_unit()")]
+    AlreadySealed,
+
+    /// Failed to build FFI registry
+    #[error("failed to build FFI registry: {0:?}")]
+    RegistryBuildFailed(Vec<FfiRegistryError>),
 }
 
 #[cfg(test)]
@@ -250,10 +333,53 @@ mod tests {
 
     #[test]
     fn context_create_unit() {
-        let ctx = Arc::new(Context::<'static>::new());
+        let mut ctx = Context::<'static>::new();
+        ctx.seal().unwrap();
+        let ctx = Arc::new(ctx);
         let unit = ctx.create_unit();
 
         assert!(!unit.is_built());
+    }
+
+    #[test]
+    #[should_panic(expected = "Context must be sealed")]
+    fn context_create_unit_unsealed_panics() {
+        let ctx = Arc::new(Context::<'static>::new());
+        let _unit = ctx.create_unit(); // Should panic
+    }
+
+    #[test]
+    fn context_seal() {
+        let mut ctx = Context::<'static>::new();
+        assert!(!ctx.is_sealed());
+
+        ctx.seal().unwrap();
+        assert!(ctx.is_sealed());
+        assert!(ctx.ffi_registry().is_some());
+    }
+
+    #[test]
+    fn context_seal_idempotent() {
+        let mut ctx = Context::<'static>::new();
+        ctx.seal().unwrap();
+        ctx.seal().unwrap(); // Should be no-op
+        assert!(ctx.is_sealed());
+    }
+
+    #[test]
+    fn context_install_after_seal_fails() {
+        let mut ctx = Context::<'static>::new();
+        ctx.seal().unwrap();
+
+        let result = ctx.install(Module::new(&["test"]));
+        assert!(matches!(result, Err(ContextError::AlreadySealed)));
+    }
+
+    #[test]
+    fn context_with_default_modules_is_sealed() {
+        let ctx = Context::<'static>::with_default_modules().unwrap();
+        assert!(ctx.is_sealed());
+        assert!(ctx.ffi_registry().is_some());
     }
 
     #[test]
@@ -276,18 +402,14 @@ mod tests {
     }
 
     #[test]
-    fn context_debug() {
-        let ctx = Context::<'static>::new();
-        let debug = format!("{:?}", ctx);
-        assert!(debug.contains("Context"));
-    }
-
-    #[test]
     fn context_error_display() {
         let err = ContextError::ModuleNotFound("foo".to_string());
         assert!(err.to_string().contains("module not found"));
 
         let err = ContextError::ApplyFailed("some error".to_string());
         assert!(err.to_string().contains("failed to apply"));
+
+        let err = ContextError::AlreadySealed;
+        assert!(err.to_string().contains("already sealed"));
     }
 }

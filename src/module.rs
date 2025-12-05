@@ -751,12 +751,29 @@ impl<'app> Module<'app> {
 
         let qualified_name = self.qualified_name(&type_def.name);
 
-        // Convert template param names to placeholder TypeIds
-        // These will be resolved properly during actual template instantiation
+        // Create and register template parameters
+        // Each param gets a unique TypeId and is registered with a name like "array::$T"
         let template_param_ids: Vec<TypeId> = type_def
             .template_params
             .iter()
-            .map(|_| TypeId::next()) // Create unique TypeIds for each template param
+            .enumerate()
+            .map(|(index, param_name)| {
+                let param_id = TypeId::next();
+
+                // Register the template param as a TypeDef
+                let param_typedef = TypeDef::TemplateParam {
+                    name: param_name.clone(),
+                    index,
+                    owner: type_def.id,
+                };
+                let param_qualified_name = format!("{}::${}", qualified_name, param_name);
+                builder.register_type_with_id(param_id, param_typedef, Some(&param_qualified_name));
+
+                // Also register just the param name for simple lookups within template context
+                builder.register_type_alias(param_name, param_id);
+
+                param_id
+            })
             .collect();
 
         // Build the TypeDef

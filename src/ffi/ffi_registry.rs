@@ -56,7 +56,7 @@ use crate::semantic::types::behaviors::TypeBehaviors;
 use crate::semantic::types::type_def::{
     FunctionId, MethodSignature, OperatorBehavior, PropertyAccessors, TypeDef, TypeId,
     BOOL_TYPE, DOUBLE_TYPE, FLOAT_TYPE, INT16_TYPE, INT32_TYPE, INT64_TYPE, INT8_TYPE,
-    PrimitiveType, UINT16_TYPE, UINT32_TYPE, UINT64_TYPE, UINT8_TYPE, VOID_TYPE,
+    PrimitiveType, UINT16_TYPE, UINT32_TYPE, UINT64_TYPE, UINT8_TYPE, VARIABLE_PARAM_TYPE, VOID_TYPE,
 };
 use crate::semantic::types::DataType;
 use crate::types::{FfiFunctionDef, FfiResolutionError, ResolvedFfiFunctionDef};
@@ -77,12 +77,14 @@ pub struct FfiRegistry {
     type_names: FxHashMap<String, TypeId>,
 
     // === Function Storage ===
-    /// All FFI functions indexed by FunctionId
+    /// All FFI functions indexed by FunctionId (resolved, non-template)
     functions: FxHashMap<FunctionId, ResolvedFfiFunctionDef>,
     /// Function name to FunctionId mapping (supports overloads)
     function_names: FxHashMap<String, Vec<FunctionId>>,
     /// Native function implementations indexed by FunctionId
     native_fns: FxHashMap<FunctionId, NativeFn>,
+    /// Unresolved template functions (resolved at instantiation time)
+    unresolved_functions: FxHashMap<FunctionId, FfiFunctionDef>,
 
     // === Behavior Storage ===
     /// Type behaviors (constructors, factories, etc.) indexed by TypeId
@@ -106,6 +108,7 @@ impl std::fmt::Debug for FfiRegistry {
             .field("functions", &self.functions)
             .field("function_names", &self.function_names)
             .field("native_fns", &format!("<{} native fns>", self.native_fns.len()))
+            .field("unresolved_functions", &format!("<{} unresolved>", self.unresolved_functions.len()))
             .field("behaviors", &self.behaviors)
             .field("template_callbacks", &format!("<{} callbacks>", self.template_callbacks.len()))
             .field("namespaces", &self.namespaces)
@@ -383,6 +386,16 @@ impl FfiRegistry {
     pub fn namespaces(&self) -> &FxHashSet<String> {
         &self.namespaces
     }
+
+    /// Get an unresolved function by ID (for template instantiation).
+    pub fn get_unresolved_function(&self, id: FunctionId) -> Option<&FfiFunctionDef> {
+        self.unresolved_functions.get(&id)
+    }
+
+    /// Get all unresolved functions.
+    pub fn unresolved_functions(&self) -> &FxHashMap<FunctionId, FfiFunctionDef> {
+        &self.unresolved_functions
+    }
 }
 
 // ============================================================================
@@ -485,6 +498,11 @@ impl FfiRegistryBuilder {
         builder.register_primitive(PrimitiveType::Uint64, UINT64_TYPE);
         builder.register_primitive(PrimitiveType::Float, FLOAT_TYPE);
         builder.register_primitive(PrimitiveType::Double, DOUBLE_TYPE);
+
+        // Register special types
+        // "auto" and "?" are used for variable parameter types in FFI
+        builder.type_names.insert("auto".to_string(), VARIABLE_PARAM_TYPE);
+        builder.type_names.insert("?".to_string(), VARIABLE_PARAM_TYPE);
 
         builder
     }
@@ -707,6 +725,8 @@ impl FfiRegistryBuilder {
         }
 
         // Resolve all functions
+        let mut unresolved_functions = FxHashMap::default();
+
         for (ffi_func, native_fn_opt) in functions {
             let func_id = ffi_func.id;
 
@@ -734,8 +754,15 @@ impl FfiRegistryBuilder {
                         native_fns.insert(func_id, native_fn);
                     }
                 }
-                Err(e) => {
-                    errors.push(FfiRegistryError::FunctionResolution(e));
+                Err(_) => {
+                    // Failed to resolve - likely a template method with unresolved type params
+                    // Store unresolved for later resolution at template instantiation time
+                    unresolved_functions.insert(func_id, ffi_func);
+
+                    // Store native function if provided
+                    if let Some(native_fn) = native_fn_opt {
+                        native_fns.insert(func_id, native_fn);
+                    }
                 }
             }
         }
@@ -750,6 +777,7 @@ impl FfiRegistryBuilder {
             functions: resolved_functions,
             function_names,
             native_fns,
+            unresolved_functions,
             behaviors: self.behaviors,
             template_callbacks: self.template_callbacks,
             namespaces: self.namespaces,
@@ -1027,11 +1055,12 @@ mod tests {
     }
 
     #[test]
-    fn builder_build_with_unknown_type_fails() {
+    fn builder_build_with_unknown_type_stores_unresolved() {
         let mut builder = FfiRegistryBuilder::new();
 
         // Register function referencing unknown type
-        let func = FfiFunctionDef::new(FunctionId::next(), "process")
+        let func_id = FunctionId::next();
+        let func = FfiFunctionDef::new(func_id, "process")
             .with_params(vec![FfiParam::new(
                 "obj",
                 FfiDataType::unresolved_simple("UnknownType"),
@@ -1039,12 +1068,14 @@ mod tests {
 
         builder.register_function(func, None);
 
+        // Build succeeds - unknown types are stored as unresolved for later resolution
         let result = builder.build();
-        assert!(result.is_err());
+        assert!(result.is_ok());
 
-        let errors = result.unwrap_err();
-        assert_eq!(errors.len(), 1);
-        assert!(matches!(errors[0], FfiRegistryError::FunctionResolution(_)));
+        let registry = result.unwrap();
+        // Function should be in unresolved_functions, not functions
+        assert!(registry.get_function(func_id).is_none());
+        assert!(registry.get_unresolved_function(func_id).is_some());
     }
 
     #[test]
