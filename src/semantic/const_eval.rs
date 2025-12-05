@@ -18,7 +18,7 @@
 
 use crate::ast::expr::{Expr, LiteralKind};
 use crate::ast::{BinaryOp, UnaryOp};
-use crate::semantic::types::{Registry, TypeDef};
+use crate::semantic::types::{ScriptRegistry, TypeDef};
 
 /// A compile-time constant value.
 #[derive(Debug, Clone, PartialEq)]
@@ -115,12 +115,12 @@ impl ConstValue {
 /// Evaluates expressions at compile time when possible.
 /// Returns `None` if the expression cannot be evaluated as a constant.
 pub struct ConstEvaluator<'a, 'ast> {
-    registry: &'a Registry<'ast>,
+    registry: &'a ScriptRegistry<'ast>,
 }
 
 impl<'a, 'ast> ConstEvaluator<'a, 'ast> {
     /// Create a new constant evaluator.
-    pub fn new(registry: &'a Registry<'ast>) -> Self {
+    pub fn new(registry: &'a ScriptRegistry<'ast>) -> Self {
         Self { registry }
     }
 

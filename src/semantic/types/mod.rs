@@ -3,9 +3,12 @@
 //! This module contains all type-related functionality:
 //! - Type definitions (TypeDef)
 //! - Runtime data types (DataType)
-//! - Type registry (Registry)
+//! - Script registry (ScriptRegistry) - for script-defined types only
 //! - Type conversions (Conversion, ConversionKind)
 //! - Type behaviors (TypeBehaviors)
+//!
+//! FFI types (including primitives) are stored in `FfiRegistry` and accessed
+//! via `CompilationContext` which provides a unified lookup interface.
 
 pub mod behaviors;
 pub mod conversion;
@@ -17,7 +20,7 @@ pub mod type_def;
 pub use behaviors::TypeBehaviors;
 pub use conversion::{Conversion, ConversionKind};
 pub use data_type::{DataType, RefModifier};
-pub use registry::{FunctionDef, GlobalVarDef, ImportError, Registry};
+pub use registry::{FunctionDef, GlobalVarDef, ScriptRegistry};
 pub use type_def::{
     FieldDef, FunctionId, FunctionTraits, MethodSignature, OperatorBehavior, PrimitiveType,
     PropertyAccessors, TypeDef, TypeId, Visibility, BOOL_TYPE,

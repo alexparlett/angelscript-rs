@@ -32,7 +32,7 @@
 //! ```
 
 use super::{
-    CompiledModule, FunctionCompiler, Registrar, Registry, SemanticError, SemanticErrorKind,
+    CompiledModule, FunctionCompiler, Registrar, Registry, SemanticError,
     TypeCompiler,
 };
 use crate::ast::Script;
@@ -99,32 +99,21 @@ impl Compiler {
 
     /// Compile a script with FFI modules imported first.
     ///
-    /// This imports the provided modules before compilation, so templates
-    /// have their methods/operators populated.
+    /// TODO(Phase 6.5): This should accept `Arc<FfiRegistry>` instead of `&[Module]`
+    /// and create a `CompilationContext` for unified FFI + script type access.
+    ///
+    /// Currently the modules parameter is ignored - FFI types should be accessed
+    /// via CompilationContext once Phase 6.4-6.5 are complete.
     #[cfg_attr(feature = "profiling", profiling::function)]
-            pub fn compile_with_modules<'ast>(
+    pub fn compile_with_modules<'ast>(
         script: &'ast Script<'ast>,
-        modules: &[crate::Module<'_>],
+        _modules: &[crate::Module<'_>],
     ) -> CompilationResult<'ast> {
-        // Create registry and import modules
-        let mut registry = Registry::new();
-        if let Err(e) = registry.import_modules(modules) {
-            return CompilationResult {
-                module: CompiledModule {
-                    functions: Default::default(),
-                    errors: vec![],
-                },
-                registry,
-                type_map: Default::default(),
-                errors: vec![SemanticError::new(
-                    SemanticErrorKind::ImportError,
-                    crate::lexer::Span::default(),
-                    format!("Failed to import modules: {:?}", e),
-                )],
-            };
-        }
+        // Create empty script registry - FFI types are in FfiRegistry
+        // TODO(Phase 6.5): Create CompilationContext with Arc<FfiRegistry>
+        let registry = Registry::new();
 
-        // Pass 1: Registration (using registry with imported modules)
+        // Pass 1: Registration
         let registration = Registrar::register_with_registry(script, registry);
 
         // Collect Pass 1 errors

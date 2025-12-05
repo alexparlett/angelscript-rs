@@ -10,7 +10,7 @@
 
 use super::{
     data_type::DataType,
-    registry::Registry,
+    registry::ScriptRegistry,
     type_def::{
         FunctionId, OperatorBehavior, TypeDef, TypeId, DOUBLE_TYPE, FLOAT_TYPE, INT16_TYPE,
         INT32_TYPE, INT64_TYPE, INT8_TYPE, NULL_TYPE, UINT16_TYPE, UINT32_TYPE, UINT64_TYPE,
@@ -208,11 +208,11 @@ impl DataType {
     ///
     /// ```ignore
     /// use angelscript::semantic::{DataType, INT32_TYPE, FLOAT_TYPE};
-    /// # use angelscript::semantic::Registry;
+    /// # use angelscript::semantic::ScriptRegistry;
     ///
     /// let int_type = DataType::simple(INT32_TYPE);
     /// let float_type = DataType::simple(FLOAT_TYPE);
-    /// let registry = Registry::new();
+    /// let registry = ScriptRegistry::new();
     ///
     /// // int can implicitly convert to float
     /// let conv = int_type.can_convert_to(&float_type, &registry);
@@ -224,7 +224,7 @@ impl DataType {
     /// assert!(conv.is_some());
     /// assert!(!conv.unwrap().is_implicit);
     /// ```
-    pub fn can_convert_to(&self, target: &DataType, registry: &Registry) -> Option<Conversion> {
+    pub fn can_convert_to(&self, target: &DataType, registry: &ScriptRegistry) -> Option<Conversion> {
         // Exact match - no conversion needed
         if self == target {
             return Some(Conversion::identity());
@@ -299,7 +299,7 @@ impl DataType {
 
     /// Check for enum ↔ integer conversions.
     /// In AngelScript, enums implicitly convert to/from their underlying integer type.
-    fn enum_conversion(&self, target: &DataType, registry: &Registry) -> Option<Conversion> {
+    fn enum_conversion(&self, target: &DataType, registry: &ScriptRegistry) -> Option<Conversion> {
         // Don't convert handles
         if self.is_handle || target.is_handle {
             return None;
@@ -477,7 +477,7 @@ impl DataType {
     /// - `is_handle_to_const` - The object pointed to is const (can't modify)
     ///
     /// Returns None if not a handle conversion.
-    fn handle_conversion(&self, target: &DataType, registry: &Registry) -> Option<Conversion> {
+    fn handle_conversion(&self, target: &DataType, registry: &ScriptRegistry) -> Option<Conversion> {
         // Both types must be handles for handle conversion
         if !self.is_handle || !target.is_handle {
             return None;
@@ -524,7 +524,7 @@ impl DataType {
     }
 
 
-    fn derived_to_base_conversion(&self, target: &DataType, registry: &Registry) -> Option<Conversion> {
+    fn derived_to_base_conversion(&self, target: &DataType, registry: &ScriptRegistry) -> Option<Conversion> {
         // Walk up the inheritance chain to find base class
         let mut current_type = self.type_id;
 
@@ -566,7 +566,7 @@ impl DataType {
     }
 
 
-    fn class_to_interface_conversion(&self, target: &DataType, registry: &Registry) -> Option<Conversion> {
+    fn class_to_interface_conversion(&self, target: &DataType, registry: &ScriptRegistry) -> Option<Conversion> {
         // Target must be an interface
         let target_typedef = registry.get_type(target.type_id);
         if !target_typedef.is_interface() {
@@ -623,7 +623,7 @@ impl DataType {
     fn user_defined_conversion(
         &self,
         target: &DataType,
-        registry: &Registry,
+        registry: &ScriptRegistry,
     ) -> Option<Conversion> {
         // For value types (not handles), try:
         // 1. Single-arg constructor (unless explicit)
@@ -655,7 +655,7 @@ impl DataType {
     }
 
 
-    fn constructor_conversion(&self, target: &DataType, registry: &Registry) -> Option<Conversion> {
+    fn constructor_conversion(&self, target: &DataType, registry: &ScriptRegistry) -> Option<Conversion> {
         // Get the target type definition
         let target_typedef = registry.get_type(target.type_id);
 
@@ -681,7 +681,7 @@ impl DataType {
     }
 
 
-    fn value_operator_conversion(&self, target: &DataType, registry: &Registry) -> Option<Conversion> {
+    fn value_operator_conversion(&self, target: &DataType, registry: &ScriptRegistry) -> Option<Conversion> {
         // Get the source type definition
         let source_typedef = registry.get_type(self.type_id);
 
@@ -708,7 +708,7 @@ impl DataType {
     }
 
 
-    fn handle_operator_conversion(&self, target: &DataType, registry: &Registry) -> Option<Conversion> {
+    fn handle_operator_conversion(&self, target: &DataType, registry: &ScriptRegistry) -> Option<Conversion> {
         // Get the source type definition
         let source_typedef = registry.get_type(self.type_id);
 
@@ -741,7 +741,7 @@ mod tests {
     use crate::semantic::types::type_def::{INT32_TYPE, VOID_TYPE, TypeId};
 
     // Test-local type ID to simulate a user type (like string)
-    // This must be within the primitive type range for Registry::get_type to work without panicking
+    // This must be within the primitive type range for ScriptRegistry::get_type to work without panicking
     // Since we're just testing conversion logic, we can use any valid TypeId
     const TEST_USER_TYPE: TypeId = TypeId(100);
 
@@ -757,7 +757,7 @@ mod tests {
 
     #[test]
     fn null_converts_to_any_handle() {
-        let registry = Registry::new();
+        let registry = ScriptRegistry::new();
         let null = DataType::null_literal();
 
         // null -> int@ (handle to primitive)
@@ -786,7 +786,7 @@ mod tests {
     fn null_does_not_convert_to_non_handle() {
         use crate::semantic::types::type_def::TypeDef;
 
-        let mut registry = Registry::new();
+        let mut registry = ScriptRegistry::new();
         let null = DataType::null_literal();
 
         // null cannot convert to value types
@@ -828,7 +828,7 @@ mod tests {
 
     #[test]
     fn identity_conversion_same_type() {
-        let registry = Registry::new();
+        let registry = ScriptRegistry::new();
         let int_type = DataType::simple(INT32_TYPE);
 
         let conv = int_type.can_convert_to(&int_type, &registry);
@@ -851,7 +851,7 @@ mod tests {
 
     #[test]
     fn primitive_int_to_float_implicit() {
-        let registry = Registry::new();
+        let registry = ScriptRegistry::new();
 
         // int8 -> float
         let int8 = DataType::simple(INT8_TYPE);
@@ -886,7 +886,7 @@ mod tests {
 
     #[test]
     fn primitive_int_to_double_implicit() {
-        let registry = Registry::new();
+        let registry = ScriptRegistry::new();
         let double = DataType::simple(DOUBLE_TYPE);
 
         // int8 -> double
@@ -916,7 +916,7 @@ mod tests {
 
     #[test]
     fn primitive_uint_to_float_implicit() {
-        let registry = Registry::new();
+        let registry = ScriptRegistry::new();
         let float = DataType::simple(FLOAT_TYPE);
 
         // uint8 -> float
@@ -946,7 +946,7 @@ mod tests {
 
     #[test]
     fn primitive_uint_to_double_implicit() {
-        let registry = Registry::new();
+        let registry = ScriptRegistry::new();
         let double = DataType::simple(DOUBLE_TYPE);
 
         // uint8 -> double
@@ -964,7 +964,7 @@ mod tests {
 
     #[test]
     fn primitive_float_to_int_implicit_truncation() {
-        let registry = Registry::new();
+        let registry = ScriptRegistry::new();
         let float = DataType::simple(FLOAT_TYPE);
 
         // float -> int8
@@ -990,7 +990,7 @@ mod tests {
 
     #[test]
     fn primitive_double_to_int_implicit_truncation() {
-        let registry = Registry::new();
+        let registry = ScriptRegistry::new();
         let double = DataType::simple(DOUBLE_TYPE);
 
         // double -> int32
@@ -1008,7 +1008,7 @@ mod tests {
 
     #[test]
     fn primitive_float_double_conversion() {
-        let registry = Registry::new();
+        let registry = ScriptRegistry::new();
         let float = DataType::simple(FLOAT_TYPE);
         let double = DataType::simple(DOUBLE_TYPE);
 
@@ -1029,7 +1029,7 @@ mod tests {
 
     #[test]
     fn primitive_integer_widening() {
-        let registry = Registry::new();
+        let registry = ScriptRegistry::new();
 
         // int8 -> int16 -> int32 -> int64
         let int8 = DataType::simple(INT8_TYPE);
@@ -1060,7 +1060,7 @@ mod tests {
 
     #[test]
     fn primitive_integer_narrowing() {
-        let registry = Registry::new();
+        let registry = ScriptRegistry::new();
 
         // int64 -> int32 -> int16 -> int8
         let int8 = DataType::simple(INT8_TYPE);
@@ -1091,7 +1091,7 @@ mod tests {
 
     #[test]
     fn primitive_unsigned_widening() {
-        let registry = Registry::new();
+        let registry = ScriptRegistry::new();
 
         let uint8 = DataType::simple(UINT8_TYPE);
         let uint16 = DataType::simple(UINT16_TYPE);
@@ -1113,7 +1113,7 @@ mod tests {
 
     #[test]
     fn primitive_unsigned_narrowing() {
-        let registry = Registry::new();
+        let registry = ScriptRegistry::new();
 
         let uint8 = DataType::simple(UINT8_TYPE);
         let uint16 = DataType::simple(UINT16_TYPE);
@@ -1135,7 +1135,7 @@ mod tests {
 
     #[test]
     fn primitive_signed_unsigned_reinterpret() {
-        let registry = Registry::new();
+        let registry = ScriptRegistry::new();
 
         // Same size reinterpret
         let int8 = DataType::simple(INT8_TYPE);
@@ -1163,7 +1163,7 @@ mod tests {
 
     #[test]
     fn primitive_signed_to_unsigned_different_sizes() {
-        let registry = Registry::new();
+        let registry = ScriptRegistry::new();
 
         let int8 = DataType::simple(INT8_TYPE);
         let int16 = DataType::simple(INT16_TYPE);
@@ -1229,7 +1229,7 @@ mod tests {
 
     #[test]
     fn primitive_unsigned_to_signed_different_sizes() {
-        let registry = Registry::new();
+        let registry = ScriptRegistry::new();
 
         let int8 = DataType::simple(INT8_TYPE);
         let int16 = DataType::simple(INT16_TYPE);
@@ -1295,7 +1295,7 @@ mod tests {
 
     #[test]
     fn primitive_no_conversion_void() {
-        let registry = Registry::new();
+        let registry = ScriptRegistry::new();
         let int32 = DataType::simple(INT32_TYPE);
         let void_type = DataType::simple(VOID_TYPE);
 
@@ -1317,7 +1317,7 @@ mod tests {
 
     #[test]
     fn handle_to_const_handle_implicit() {
-        let registry = Registry::new();
+        let registry = ScriptRegistry::new();
 
         // T@ -> const T@ (adding const is implicit)
         let handle = DataType::with_handle(INT32_TYPE, false);
@@ -1333,7 +1333,7 @@ mod tests {
 
     #[test]
     fn const_handle_to_handle_explicit() {
-        let registry = Registry::new();
+        let registry = ScriptRegistry::new();
 
         // const T@ -> T@ (removing const requires explicit cast)
         let const_handle = DataType::const_handle(INT32_TYPE, false);
@@ -1367,7 +1367,7 @@ mod tests {
 
     #[test]
     fn derived_to_base_with_registry() {
-        let mut registry = Registry::new();
+        let mut registry = ScriptRegistry::new();
 
         // Register base class
         let base_id = registry.register_type(
@@ -1438,7 +1438,7 @@ mod tests {
 
     #[test]
     fn class_to_interface_with_registry() {
-        let mut registry = Registry::new();
+        let mut registry = ScriptRegistry::new();
 
         // Register interface
         let interface_id = registry.register_type(
@@ -1538,7 +1538,7 @@ mod tests {
     fn no_conversion_between_unrelated_types() {
         use crate::semantic::types::type_def::TypeDef;
 
-        let mut registry = Registry::new();
+        let mut registry = ScriptRegistry::new();
 
         // Register a custom class type
         let user_class = TypeDef::Class {
@@ -1569,7 +1569,7 @@ mod tests {
 
     #[test]
     fn no_primitive_conversion_for_handles() {
-        let registry = Registry::new();
+        let registry = ScriptRegistry::new();
 
         // int@ cannot use primitive conversion rules
         let int_handle = DataType::with_handle(INT32_TYPE, false);
@@ -1583,7 +1583,7 @@ mod tests {
     #[test]
     fn const_values_can_convert() {
         use crate::semantic::RefModifier;
-        let registry = Registry::new();
+        let registry = ScriptRegistry::new();
 
         // const int -> float SHOULD work - const only affects mutability, not conversions
         let const_int = DataType {
@@ -1606,7 +1606,7 @@ mod tests {
     #[test]
     fn const_int_to_int_conversion() {
         use crate::semantic::RefModifier;
-        let registry = Registry::new();
+        let registry = ScriptRegistry::new();
 
         // const int -> int should work (same base type, const doesn't matter for reading)
         let const_int = DataType {

@@ -574,7 +574,7 @@ impl<'ast> FunctionCompiler<'ast> {
         }
 
         let end_func = self.registry.get_function(end_func_id);
-        if end_func.params.len() != 1 || end_func.return_type.type_id != self.registry.bool_type {
+        if end_func.params.len() != 1 || end_func.return_type.type_id != BOOL_TYPE {
             self.error(
                 SemanticErrorKind::InvalidOperation,
                 foreach.expr.span(),

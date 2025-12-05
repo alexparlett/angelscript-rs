@@ -48,8 +48,11 @@ pub use error::{SemanticError, SemanticErrorKind, SemanticErrors};
 pub use local_scope::{CapturedVar, LocalScope, LocalVar};
 pub use types::{
     Conversion, ConversionKind, DataType, FieldDef, FunctionDef, FunctionId, FunctionTraits,
-    GlobalVarDef, ImportError, MethodSignature, OperatorBehavior, PrimitiveType, PropertyAccessors,
-    RefModifier, Registry, TypeDef, TypeId, Visibility, BOOL_TYPE,
+    GlobalVarDef, MethodSignature, OperatorBehavior, PrimitiveType, PropertyAccessors,
+    RefModifier, ScriptRegistry, TypeDef, TypeId, Visibility, BOOL_TYPE,
     DOUBLE_TYPE, FIRST_USER_TYPE_ID, FLOAT_TYPE, INT16_TYPE, INT32_TYPE, INT64_TYPE, INT8_TYPE,
     NULL_TYPE, UINT16_TYPE, UINT32_TYPE, UINT64_TYPE, UINT8_TYPE, VOID_TYPE,
 };
+
+// Re-export Registry as alias for backwards compatibility during transition
+pub use types::ScriptRegistry as Registry;

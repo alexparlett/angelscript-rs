@@ -735,25 +735,32 @@ impl<'r, 'ast> FunctionDefView<'r, 'ast> {
 
 ---
 
-#### Phase 6.3: Rename Registry to ScriptRegistry
+#### Phase 6.3: Rename Registry to ScriptRegistry ✓
+**Status:** Complete
 **Files:**
 - `src/semantic/types/registry.rs` (major changes)
 - `src/semantic/types/mod.rs` (update exports)
+- `src/semantic/mod.rs` (re-export with alias)
+- `src/semantic/passes/registration.rs` (use constants)
+- `src/semantic/passes/type_compilation.rs` (use constants)
+- `src/semantic/passes/function_processor/*.rs` (use constants)
+- `src/semantic/types/conversion.rs` (use ScriptRegistry)
+- `src/semantic/const_eval.rs` (use ScriptRegistry)
+- `src/semantic/compiler.rs` (stub import_modules)
 
-1. Rename `Registry<'ast>` to `ScriptRegistry<'ast>`
-2. Change `types: Vec<TypeDef>` to `types: FxHashMap<TypeId, TypeDef>`
-3. Remove fields:
-   - `template_callbacks` (FFI only)
-   - `template_cache` (moves to CompilationContext)
-   - `void_type`, `bool_type`, etc. primitive fields (use constants)
-4. Update `new()`:
-   - Initialize empty `types` HashMap (no primitives)
-   - Don't put primitive names in `type_by_name` (CompilationContext handles)
-5. Update `register_type()` to use `TypeId::next_script()` and HashMap insert
-6. Update `register_function()` to use `FunctionId::next_script()`
-7. Update `get_type()` to do HashMap lookup (returns `Option<&TypeDef>`)
-8. Remove all `import_*` methods (handled by FfiRegistry now)
-9. Remove `instantiate_template()` (moves to CompilationContext)
+**Changes:**
+1. Renamed `Registry<'ast>` to `ScriptRegistry<'ast>`
+2. Removed fields: `template_callbacks`, `template_cache`, `void_type`, `bool_type`, etc.
+3. Updated `new()` to initialize empty HashMap (no primitives)
+4. Removed all `import_*` methods (FFI handled by FfiRegistry)
+5. Added stub `instantiate_template()` that returns error (moves to CompilationContext)
+6. Replaced `registry.void_type` etc. with `VOID_TYPE` constants throughout codebase
+7. Updated `compiler.rs::compile_with_modules()` to stub out module import (Phase 6.5)
+8. Added `Registry` alias for backwards compatibility during transition
+9. Updated tests: removed primitive tests, ignored template tests pending Phase 6.4
+
+**Note:** ~554 tests fail because they expect primitives in Registry. These tests need
+CompilationContext (Phase 6.4) to work properly with the new architecture.
 
 ---
 
@@ -779,7 +786,7 @@ pub struct CompilationContext<'ast> {
 
 2. Move `instantiate_template()` here with template_cache:
    - Template definitions can be FFI (e.g., `array<T>`)
-   - Template instances are always Script types
+   - Template instances are always ScriptTypes but T may be Ffi or Script type
    - Cache key: `(template_type_id, vec of arg type_ids)`
 
 3. Add delegation methods to ScriptRegistry for registration:
