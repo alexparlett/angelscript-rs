@@ -48,7 +48,7 @@ impl FfiInterfaceMethod {
 /// so it can be stored in `Arc<FfiRegistry>`.
 ///
 /// Interfaces define abstract method signatures that script classes can implement.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct FfiInterfaceDef {
     /// Type ID assigned during build()
     pub id: TypeId,

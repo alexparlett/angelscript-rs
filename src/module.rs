@@ -22,13 +22,13 @@ use thiserror::Error;
 
 use crate::ast::{Parser, PropertyDecl, TypeBase};
 use crate::ffi::{
-    ClassBuilder, EnumBuilder, GlobalPropertyDef, InterfaceBuilder, IntoNativeFn, NativeCallable,
-    NativeFn, NativeType,
+    ClassBuilder, EnumBuilder, FfiRegistryBuilder, GlobalPropertyDef, InterfaceBuilder,
+    IntoNativeFn, NativeCallable, NativeFn, NativeType,
 };
 use crate::semantic::types::type_def::TypeId;
 use crate::types::{
     function_param_to_ffi, return_type_to_ffi, FfiDataType, FfiEnumDef, FfiFuncdefDef,
-    FfiFunctionDef, FfiInterfaceDef, FfiParam, FfiRegistryBuilder, FfiTypeDef,
+    FfiFunctionDef, FfiInterfaceDef, FfiParam, FfiTypeDef,
 };
 
 /// A namespaced collection of native functions, types, and global properties.
@@ -954,111 +954,14 @@ impl<'app> Module<'app> {
 
     /// Install an interface definition into the builder.
     fn install_interface(&self, builder: &mut FfiRegistryBuilder, interface_def: &FfiInterfaceDef) {
-        use crate::semantic::types::type_def::{MethodSignature, TypeDef};
-        use crate::semantic::types::RefModifier;
-
         let qualified_name = self.qualified_name(interface_def.name());
-
-        // Convert FfiInterfaceMethod to MethodSignature
-        let methods: Vec<MethodSignature> = interface_def
-            .methods()
-            .iter()
-            .map(|m| {
-                // Resolve params - for interfaces, we need to handle unresolved types
-                // At this point, we just store the type names; resolution happens in build()
-                let params: Vec<_> = m
-                    .params
-                    .iter()
-                    .map(|p| {
-                        // For interface methods, params are typically primitives or known types
-                        // If unresolved, use a placeholder DataType
-                        match &p.data_type {
-                            FfiDataType::Resolved(dt) => dt.clone(),
-                            FfiDataType::Unresolved { .. } => {
-                                // Create a placeholder - will be resolved later
-                                crate::semantic::types::DataType {
-                                    type_id: TypeId::placeholder(),
-                                    is_const: false,
-                                    is_handle: false,
-                                    is_handle_to_const: false,
-                                    ref_modifier: RefModifier::None,
-                                }
-                            }
-                        }
-                    })
-                    .collect();
-
-                let return_type = match &m.return_type {
-                    FfiDataType::Resolved(dt) => dt.clone(),
-                    FfiDataType::Unresolved { .. } => crate::semantic::types::DataType {
-                        type_id: TypeId::placeholder(),
-                        is_const: false,
-                        is_handle: false,
-                        is_handle_to_const: false,
-                        ref_modifier: RefModifier::None,
-                    },
-                };
-
-                MethodSignature {
-                    name: m.name.clone(),
-                    params,
-                    return_type,
-                    is_const: m.is_const,
-                }
-            })
-            .collect();
-
-        let typedef = TypeDef::Interface {
-            name: interface_def.name().to_string(),
-            qualified_name: qualified_name.clone(),
-            methods,
-        };
-
-        builder.register_type_with_id(interface_def.id, typedef, Some(&qualified_name));
+        builder.register_interface(interface_def.clone(), &qualified_name);
     }
 
     /// Install a funcdef definition into the builder.
     fn install_funcdef(&self, builder: &mut FfiRegistryBuilder, funcdef_def: &FfiFuncdefDef) {
-        use crate::semantic::types::type_def::TypeDef;
-        use crate::semantic::types::RefModifier;
-
         let qualified_name = self.qualified_name(&funcdef_def.name);
-
-        // Resolve params
-        let params: Vec<_> = funcdef_def
-            .params
-            .iter()
-            .map(|p| match &p.data_type {
-                FfiDataType::Resolved(dt) => dt.clone(),
-                FfiDataType::Unresolved { .. } => crate::semantic::types::DataType {
-                    type_id: TypeId::placeholder(),
-                    is_const: false,
-                    is_handle: false,
-                    is_handle_to_const: false,
-                    ref_modifier: RefModifier::None,
-                },
-            })
-            .collect();
-
-        let return_type = match &funcdef_def.return_type {
-            FfiDataType::Resolved(dt) => dt.clone(),
-            FfiDataType::Unresolved { .. } => crate::semantic::types::DataType {
-                type_id: TypeId::placeholder(),
-                is_const: false,
-                is_handle: false,
-                is_handle_to_const: false,
-                ref_modifier: RefModifier::None,
-            },
-        };
-
-        let typedef = TypeDef::Funcdef {
-            name: funcdef_def.name.clone(),
-            qualified_name: qualified_name.clone(),
-            params,
-            return_type,
-        };
-
-        builder.register_type_with_id(funcdef_def.id, typedef, Some(&qualified_name));
+        builder.register_funcdef(funcdef_def.clone(), &qualified_name);
     }
 
     /// Install a function definition into the builder.

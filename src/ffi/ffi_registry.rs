@@ -418,6 +418,14 @@ pub struct FfiRegistryBuilder {
     /// Functions with potentially unresolved types
     unresolved_functions: Vec<(FfiFunctionDef, Option<NativeFn>)>,
 
+    // === Unresolved Interface Storage ===
+    /// Interfaces with potentially unresolved method types
+    unresolved_interfaces: Vec<(TypeId, String, crate::types::FfiInterfaceDef)>,
+
+    // === Unresolved Funcdef Storage ===
+    /// Funcdefs with potentially unresolved types
+    unresolved_funcdefs: Vec<(TypeId, String, crate::types::FfiFuncdefDef)>,
+
     // === Behavior Storage ===
     behaviors: FxHashMap<TypeId, TypeBehaviors>,
 
@@ -435,6 +443,8 @@ impl std::fmt::Debug for FfiRegistryBuilder {
             .field("types", &self.types)
             .field("type_names", &self.type_names)
             .field("unresolved_functions", &self.unresolved_functions.len())
+            .field("unresolved_interfaces", &self.unresolved_interfaces.len())
+            .field("unresolved_funcdefs", &self.unresolved_funcdefs.len())
             .field("behaviors", &self.behaviors)
             .field("template_callbacks", &self.template_callbacks.len())
             .field("namespaces", &self.namespaces)
@@ -455,6 +465,8 @@ impl FfiRegistryBuilder {
             types: FxHashMap::default(),
             type_names: FxHashMap::default(),
             unresolved_functions: Vec::new(),
+            unresolved_interfaces: Vec::new(),
+            unresolved_funcdefs: Vec::new(),
             behaviors: FxHashMap::default(),
             template_callbacks: FxHashMap::default(),
             namespaces: FxHashSet::default(),
@@ -600,28 +612,104 @@ impl FfiRegistryBuilder {
     }
 
     // =========================================================================
+    // Interface Registration
+    // =========================================================================
+
+    /// Register an interface with potentially unresolved method types.
+    ///
+    /// The interface's method parameter and return types may be unresolved;
+    /// they will be resolved during `build()`.
+    pub fn register_interface(
+        &mut self,
+        interface_def: crate::types::FfiInterfaceDef,
+        qualified_name: &str,
+    ) {
+        let type_id = interface_def.id;
+        self.type_names
+            .insert(qualified_name.to_string(), type_id);
+        self.unresolved_interfaces.push((
+            type_id,
+            qualified_name.to_string(),
+            interface_def,
+        ));
+    }
+
+    // =========================================================================
+    // Funcdef Registration
+    // =========================================================================
+
+    /// Register a funcdef with potentially unresolved types.
+    ///
+    /// The funcdef's parameter and return types may be unresolved;
+    /// they will be resolved during `build()`.
+    pub fn register_funcdef(
+        &mut self,
+        funcdef_def: crate::types::FfiFuncdefDef,
+        qualified_name: &str,
+    ) {
+        let type_id = funcdef_def.id;
+        self.type_names
+            .insert(qualified_name.to_string(), type_id);
+        self.unresolved_funcdefs.push((
+            type_id,
+            qualified_name.to_string(),
+            funcdef_def,
+        ));
+    }
+
+    // =========================================================================
     // Build
     // =========================================================================
 
     /// Build the immutable FfiRegistry.
     ///
-    /// This resolves all unresolved types in functions and validates the registry.
+    /// This resolves all unresolved types in functions, interfaces, and funcdefs,
+    /// then validates the registry.
     ///
     /// # Errors
     ///
     /// Returns a vector of resolution errors if any types cannot be resolved.
-    pub fn build(self) -> Result<FfiRegistry, Vec<FfiRegistryError>> {
+    pub fn build(mut self) -> Result<FfiRegistry, Vec<FfiRegistryError>> {
         let mut errors = Vec::new();
         let mut functions = FxHashMap::default();
         let mut function_names: FxHashMap<String, Vec<FunctionId>> = FxHashMap::default();
         let mut native_fns = FxHashMap::default();
 
-        // Create type lookup closure
-        let type_lookup = |name: &str| -> Option<TypeId> { self.type_names.get(name).copied() };
+        // Extract unresolved items to avoid borrow conflicts
+        let unresolved_interfaces = std::mem::take(&mut self.unresolved_interfaces);
+        let unresolved_funcdefs = std::mem::take(&mut self.unresolved_funcdefs);
+        let unresolved_functions = std::mem::take(&mut self.unresolved_functions);
+
+        // Resolve all interfaces
+        for (type_id, qualified_name, interface_def) in unresolved_interfaces {
+            match Self::resolve_interface(&self.type_names, &interface_def, &qualified_name) {
+                Ok(typedef) => {
+                    self.types.insert(type_id, typedef);
+                }
+                Err(e) => {
+                    errors.push(e);
+                }
+            }
+        }
+
+        // Resolve all funcdefs
+        for (type_id, qualified_name, funcdef_def) in unresolved_funcdefs {
+            match Self::resolve_funcdef(&self.type_names, &funcdef_def, &qualified_name) {
+                Ok(typedef) => {
+                    self.types.insert(type_id, typedef);
+                }
+                Err(e) => {
+                    errors.push(e);
+                }
+            }
+        }
 
         // Resolve all functions
-        for (ffi_func, native_fn_opt) in self.unresolved_functions {
+        for (ffi_func, native_fn_opt) in unresolved_functions {
             let func_id = ffi_func.id;
+
+            // Type lookup closure
+            let type_lookup = |name: &str| -> Option<TypeId> { self.type_names.get(name).copied() };
 
             // Create a dummy instantiate function (no template instantiation during build)
             let mut instantiate = |_: TypeId, _: Vec<DataType>| -> Result<TypeId, String> {
@@ -664,6 +752,108 @@ impl FfiRegistryBuilder {
             template_callbacks: self.template_callbacks,
             namespaces: self.namespaces,
         })
+    }
+
+    /// Resolve an interface definition's method types.
+    fn resolve_interface(
+        type_names: &FxHashMap<String, TypeId>,
+        interface_def: &crate::types::FfiInterfaceDef,
+        qualified_name: &str,
+    ) -> Result<TypeDef, FfiRegistryError> {
+        let methods: Result<Vec<MethodSignature>, FfiRegistryError> = interface_def
+            .methods()
+            .iter()
+            .map(|m| {
+                // Resolve params
+                let params: Result<Vec<DataType>, FfiRegistryError> = m
+                    .params
+                    .iter()
+                    .map(|p| Self::resolve_ffi_data_type(type_names, &p.data_type))
+                    .collect();
+
+                // Resolve return type
+                let return_type = Self::resolve_ffi_data_type(type_names, &m.return_type)?;
+
+                Ok(MethodSignature {
+                    name: m.name.clone(),
+                    params: params?,
+                    return_type,
+                    is_const: m.is_const,
+                })
+            })
+            .collect();
+
+        Ok(TypeDef::Interface {
+            name: interface_def.name().to_string(),
+            qualified_name: qualified_name.to_string(),
+            methods: methods?,
+        })
+    }
+
+    /// Resolve a funcdef definition's types.
+    fn resolve_funcdef(
+        type_names: &FxHashMap<String, TypeId>,
+        funcdef_def: &crate::types::FfiFuncdefDef,
+        qualified_name: &str,
+    ) -> Result<TypeDef, FfiRegistryError> {
+        // Resolve params
+        let params: Result<Vec<DataType>, FfiRegistryError> = funcdef_def
+            .params
+            .iter()
+            .map(|p| Self::resolve_ffi_data_type(type_names, &p.data_type))
+            .collect();
+
+        // Resolve return type
+        let return_type = Self::resolve_ffi_data_type(type_names, &funcdef_def.return_type)?;
+
+        Ok(TypeDef::Funcdef {
+            name: funcdef_def.name.clone(),
+            qualified_name: qualified_name.to_string(),
+            params: params?,
+            return_type,
+        })
+    }
+
+    /// Resolve an FfiDataType to a DataType.
+    fn resolve_ffi_data_type(
+        type_names: &FxHashMap<String, TypeId>,
+        ffi_type: &crate::types::FfiDataType,
+    ) -> Result<DataType, FfiRegistryError> {
+        use crate::types::{FfiDataType, UnresolvedBaseType};
+
+        match ffi_type {
+            FfiDataType::Resolved(dt) => Ok(dt.clone()),
+            FfiDataType::Unresolved {
+                base,
+                is_const,
+                is_handle,
+                is_handle_to_const,
+                ref_modifier,
+            } => {
+                let type_id = match base {
+                    UnresolvedBaseType::Simple(name) => type_names
+                        .get(name)
+                        .copied()
+                        .ok_or_else(|| FfiRegistryError::TypeNotFound(name.clone()))?,
+                    UnresolvedBaseType::Template { name, args: _ } => {
+                        // For templates, just look up the base template type
+                        // (full instantiation happens elsewhere)
+                        type_names
+                            .get(name)
+                            .copied()
+                            .ok_or_else(|| FfiRegistryError::TypeNotFound(name.clone()))?
+                    }
+                };
+
+                Ok(DataType {
+                    type_id,
+                    is_const: *is_const,
+                    is_handle: *is_handle,
+                    is_handle_to_const: *is_handle_to_const,
+                    ref_modifier: *ref_modifier,
+                })
+            }
+        }
     }
 }
 

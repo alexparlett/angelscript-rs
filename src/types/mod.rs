@@ -17,8 +17,6 @@
 //! - [`FfiEnumDef`] - Owned enum definition for FFI registry
 //! - [`FfiInterfaceDef`] - Owned interface definition for FFI registry
 //! - [`FfiFuncdefDef`] - Owned funcdef (callback type) definition for FFI registry
-//! - [`FfiRegistry`] - Immutable registry shared across all Units
-//! - [`FfiRegistryBuilder`] - Builder for constructing FfiRegistry
 
 mod ffi_convert;
 mod ffi_data_type;
@@ -28,7 +26,6 @@ mod ffi_funcdef;
 mod ffi_function;
 mod ffi_interface;
 mod ffi_property;
-mod ffi_registry;
 mod ffi_type;
 mod type_kind;
 
@@ -45,6 +42,5 @@ pub use ffi_function::{
 };
 pub use ffi_interface::{FfiInterfaceDef, FfiInterfaceMethod};
 pub use ffi_property::FfiPropertyDef;
-pub use ffi_registry::{FfiRegistry, FfiRegistryBuilder, FfiRegistryError};
 pub use ffi_type::FfiTypeDef;
 pub use type_kind::{ReferenceKind, TypeKind};
