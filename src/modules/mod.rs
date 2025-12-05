@@ -88,7 +88,7 @@ mod tests {
         let std = &modules[0];
         assert!(std.is_root(), "std module should be root namespace");
         assert!(
-            std.functions().iter().any(|f| f.name.name == "print"),
+            std.functions().iter().any(|f| f.name == "print"),
             "should have print function"
         );
     }

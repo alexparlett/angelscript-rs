@@ -1236,7 +1236,7 @@ mod tests {
     fn test_dictionary_module_method_names() {
         let module = dictionary_module().expect("dictionary module should build");
         let ty = &module.types()[0];
-        let method_names: Vec<_> = ty.methods.iter().map(|m| m.name.name).collect();
+        let method_names: Vec<_> = ty.methods.iter().map(|m| m.name.as_str()).collect();
 
         assert!(method_names.contains(&"getSize"), "should have getSize method");
         assert!(method_names.contains(&"isEmpty"), "should have isEmpty method");

@@ -20,12 +20,16 @@
 use bumpalo::Bump;
 use thiserror::Error;
 
-use crate::ast::{FuncdefDecl, FunctionSignatureDecl, Ident, Parser, PropertyDecl};
+use crate::ast::{Parser, PropertyDecl, TypeBase};
 use crate::ffi::{
     ClassBuilder, EnumBuilder, GlobalPropertyDef, InterfaceBuilder, IntoNativeFn, NativeCallable,
-    NativeFn, NativeFuncdefDef, NativeFunctionDef, NativeInterfaceDef, NativeType, NativeTypeDef,
+    NativeFn, NativeType,
 };
-use crate::semantic::types::type_def::{FunctionTraits, TypeId, Visibility};
+use crate::semantic::types::type_def::TypeId;
+use crate::types::{
+    function_param_to_ffi, return_type_to_ffi, FfiEnumDef, FfiFuncdefDef, FfiFunctionDef,
+    FfiInterfaceDef, FfiParam, FfiTypeDef,
+};
 
 /// A namespaced collection of native functions, types, and global properties.
 ///
@@ -58,7 +62,7 @@ use crate::semantic::types::type_def::{FunctionTraits, TypeId, Visibility};
 /// globals.register_fn("print", |s: &str| println!("{}", s));
 /// ```
 pub struct Module<'app> {
-    /// Arena for storing parsed AST nodes
+    /// Arena for storing parsed AST nodes (still needed for parsing declarations)
     arena: Bump,
 
     /// Namespace path for all items.
@@ -66,39 +70,24 @@ pub struct Module<'app> {
     /// ["std", "collections"] = nested namespace
     namespace: Vec<String>,
 
-    /// Registered native functions
-    /// The 'static lifetime is transmuted - actual lifetime is tied to arena
-    functions: Vec<NativeFunctionDef<'static>>,
+    /// Registered native functions (owned, no arena lifetime)
+    functions: Vec<FfiFunctionDef>,
 
-    /// Registered native types
-    /// The 'static lifetime is transmuted - actual lifetime is tied to arena
-    types: Vec<NativeTypeDef<'static>>,
+    /// Registered native types (owned, no arena lifetime)
+    types: Vec<FfiTypeDef>,
 
-    /// Registered enums (name -> values)
-    enums: Vec<NativeEnumDef>,
+    /// Registered enums (owned, no arena lifetime)
+    enums: Vec<FfiEnumDef>,
 
-    /// Registered interfaces
-    /// The 'static lifetime is transmuted - actual lifetime is tied to arena
-    interfaces: Vec<NativeInterfaceDef<'static>>,
+    /// Registered interfaces (owned, no arena lifetime)
+    interfaces: Vec<FfiInterfaceDef>,
 
-    /// Registered funcdefs (function pointer types)
-    /// The 'static lifetime is transmuted - actual lifetime is tied to arena
-    funcdefs: Vec<NativeFuncdefDef<'static>>,
+    /// Registered funcdefs (function pointer types, owned, no arena lifetime)
+    funcdefs: Vec<FfiFuncdefDef>,
 
     /// Global properties (app-owned references)
     /// The lifetime is tied to the module's arena via a transmute in register_global_property
     global_properties: Vec<GlobalPropertyDef<'static, 'app>>,
-}
-
-/// A native enum definition.
-#[derive(Debug, Clone)]
-pub struct NativeEnumDef {
-    /// Unique type ID (assigned at registration via TypeId::next())
-    pub id: TypeId,
-    /// Enum name
-    pub name: String,
-    /// Enum values (name -> value)
-    pub values: Vec<(String, i64)>,
 }
 
 impl<'app> Module<'app> {
@@ -299,40 +288,16 @@ impl<'app> Module<'app> {
         Ok(self)
     }
 
-    /// Internal helper to build a NativeFunctionDef from parsed signature.
+    /// Internal helper to build a FfiFunctionDef from parsed signature.
     fn build_function_def(
         &self,
-        sig: FunctionSignatureDecl<'_>,
+        sig: crate::ast::FunctionSignatureDecl<'_>,
         native_fn: NativeFn,
-    ) -> NativeFunctionDef<'static> {
-        // Build function traits from the parsed signature
-        let mut traits = FunctionTraits::default();
-        if sig.is_const {
-            traits.is_const = true;
-        }
-        // Note: property attribute is stored in FuncAttr but not in FunctionTraits
-        // This will be used during semantic analysis if needed
+    ) -> FfiFunctionDef {
+        use crate::types::signature_to_ffi_function;
 
-        // SAFETY: The arena is owned by self and lives as long as self.
-        // We transmute the lifetime to 'static for storage, but the actual
-        // lifetime is tied to the module. This is safe because:
-        // 1. The arena is never moved or replaced
-        // 2. The functions vec is dropped before the arena
-        // 3. We never expose references with incorrect lifetimes
-        let name = unsafe { std::mem::transmute(sig.name) };
-        let params = unsafe { std::mem::transmute(sig.params) };
-        let return_type = unsafe { std::mem::transmute(sig.return_type) };
-
-        NativeFunctionDef {
-            name,
-            params,
-            return_type,
-            object_type: None, // Global functions have no object type
-            traits,
-            default_exprs: Vec::new(), // TODO: Parse default expressions in Task 04
-            visibility: Visibility::Public,
-            native_fn, // FunctionId is stored on NativeFn
-        }
+        // Use the conversion helper to build the FfiFunctionDef
+        signature_to_ffi_function(&sig, native_fn)
     }
 
     /// Internal helper to build a GlobalPropertyDef from parsed property.
@@ -354,7 +319,7 @@ impl<'app> Module<'app> {
     }
 
     /// Get the registered functions.
-    pub fn functions(&self) -> &[NativeFunctionDef<'static>] {
+    pub fn functions(&self) -> &[FfiFunctionDef] {
         &self.functions
     }
 
@@ -388,8 +353,6 @@ impl<'app> Module<'app> {
     ///     .build()?;
     /// ```
     pub fn register_type<T: NativeType>(&mut self, decl: &str) -> ClassBuilder<'_, 'app, T> {
-        use crate::ast::types::TypeBase;
-
         // Parse the type declaration as a TypeExpr (e.g., "array<class T>")
         let type_expr = Parser::type_expr(decl, &self.arena)
             .expect("Invalid type declaration"); // TODO: Return Result in future
@@ -401,34 +364,20 @@ impl<'app> Module<'app> {
             _ => panic!("Invalid type declaration: expected named type"),
         };
 
-        // Extract template param names from template_args
+        // Extract template param names from template_args as owned strings.
         // Only TemplateParam types (e.g., "class T") are template parameters.
         // Named types (e.g., "string") are concrete type constraints, not parameters.
-        let template_params = if type_expr.template_args.is_empty() {
-            None
-        } else {
-            let idents: Vec<Ident> = type_expr
-                .template_args
-                .iter()
-                .filter_map(|ty| {
-                    if let TypeBase::TemplateParam(ident) = ty.base {
-                        Some(ident)
-                    } else {
-                        None
-                    }
-                })
-                .collect();
-
-            if idents.is_empty() {
-                None
-            } else {
-                let params_slice = self.arena.alloc_slice_copy(&idents);
-                // SAFETY: The arena is owned by self and lives as long as self.
-                let static_params: &'static [Ident<'static>] =
-                    unsafe { std::mem::transmute(params_slice) };
-                Some(static_params)
-            }
-        };
+        let template_params: Vec<String> = type_expr
+            .template_args
+            .iter()
+            .filter_map(|ty| {
+                if let TypeBase::TemplateParam(ident) = ty.base {
+                    Some(ident.name.to_string())
+                } else {
+                    None
+                }
+            })
+            .collect();
 
         ClassBuilder::new(self, name, template_params)
     }
@@ -436,12 +385,12 @@ impl<'app> Module<'app> {
     /// Internal method to add a type definition.
     ///
     /// Called by ClassBuilder::build().
-    pub(crate) fn add_type(&mut self, type_def: NativeTypeDef<'static>) {
+    pub(crate) fn add_type(&mut self, type_def: FfiTypeDef) {
         self.types.push(type_def);
     }
 
     /// Get the registered types.
-    pub fn types(&self) -> &[NativeTypeDef<'static>] {
+    pub fn types(&self) -> &[FfiTypeDef] {
         &self.types
     }
 
@@ -499,12 +448,12 @@ impl<'app> Module<'app> {
     /// Internal method to add an enum definition.
     ///
     /// Called by EnumBuilder::build().
-    pub(crate) fn add_enum(&mut self, enum_def: NativeEnumDef) {
+    pub(crate) fn add_enum(&mut self, enum_def: FfiEnumDef) {
         self.enums.push(enum_def);
     }
 
     /// Get the registered enums.
-    pub fn enums(&self) -> &[NativeEnumDef] {
+    pub fn enums(&self) -> &[FfiEnumDef] {
         &self.enums
     }
 
@@ -553,12 +502,12 @@ impl<'app> Module<'app> {
     /// Internal method to add an interface definition.
     ///
     /// Called by InterfaceBuilder::build().
-    pub(crate) fn add_interface(&mut self, interface_def: NativeInterfaceDef<'static>) {
+    pub(crate) fn add_interface(&mut self, interface_def: FfiInterfaceDef) {
         self.interfaces.push(interface_def);
     }
 
     /// Get the registered interfaces.
-    pub fn interfaces(&self) -> &[NativeInterfaceDef<'static>] {
+    pub fn interfaces(&self) -> &[FfiInterfaceDef] {
         &self.interfaces
     }
 
@@ -619,35 +568,26 @@ impl<'app> Module<'app> {
         Ok(self)
     }
 
-    /// Internal helper to build a NativeFuncdefDef from parsed funcdef declaration.
-    fn build_funcdef_def(&self, fd: FuncdefDecl<'_>) -> NativeFuncdefDef<'static> {
-        // SAFETY: The arena is owned by self and lives as long as self.
-        // We transmute the lifetime to 'static for storage, but the actual
-        // lifetime is tied to the module. This is safe because:
-        // 1. The arena is never moved or replaced
-        // 2. The funcdefs vec is dropped before the arena
-        // 3. We never expose references with incorrect lifetimes
-        let name = unsafe { std::mem::transmute(fd.name) };
-        let params = unsafe { std::mem::transmute(fd.params) };
-        let return_type = unsafe { std::mem::transmute(fd.return_type) };
+    /// Internal helper to build a FfiFuncdefDef from parsed funcdef declaration.
+    fn build_funcdef_def(&self, fd: crate::ast::FuncdefDecl<'_>) -> FfiFuncdefDef {
+        // Convert params to owned FfiParam
+        let params: Vec<FfiParam> = fd.params.iter().map(function_param_to_ffi).collect();
 
-        NativeFuncdefDef {
-            id: TypeId::next(),
-            name,
-            params,
-            return_type,
-        }
+        // Convert return type to FfiDataType
+        let return_type = return_type_to_ffi(&fd.return_type);
+
+        FfiFuncdefDef::new(TypeId::next(), fd.name.name.to_string(), params, return_type)
     }
 
     /// Internal method to add a funcdef definition.
     ///
     /// Called internally by register_funcdef().
-    pub(crate) fn add_funcdef(&mut self, funcdef_def: NativeFuncdefDef<'static>) {
+    pub(crate) fn add_funcdef(&mut self, funcdef_def: FfiFuncdefDef) {
         self.funcdefs.push(funcdef_def);
     }
 
     /// Get the registered funcdefs.
-    pub fn funcdefs(&self) -> &[NativeFuncdefDef<'static>] {
+    pub fn funcdefs(&self) -> &[FfiFuncdefDef] {
         &self.funcdefs
     }
 
@@ -1057,15 +997,15 @@ mod tests {
     fn module_add_enum() {
         let mut module = Module::<'static>::root();
 
-        module.add_enum(NativeEnumDef {
-            id: TypeId::next(),
-            name: "Color".to_string(),
-            values: vec![
+        module.add_enum(FfiEnumDef::new(
+            TypeId::next(),
+            "Color".to_string(),
+            vec![
                 ("Red".to_string(), 0),
                 ("Green".to_string(), 1),
                 ("Blue".to_string(), 2),
             ],
-        });
+        ));
 
         assert_eq!(module.enums().len(), 1);
         assert_eq!(module.enums()[0].name, "Color");
@@ -1101,12 +1041,12 @@ mod tests {
     }
 
     #[test]
-    fn native_enum_def_clone() {
-        let enum_def = NativeEnumDef {
-            id: TypeId::next(),
-            name: "Color".to_string(),
-            values: vec![("Red".to_string(), 0)],
-        };
+    fn ffi_enum_def_clone() {
+        let enum_def = FfiEnumDef::new(
+            TypeId::next(),
+            "Color".to_string(),
+            vec![("Red".to_string(), 0)],
+        );
         let cloned = enum_def.clone();
         assert_eq!(cloned.name, "Color");
     }
@@ -1124,7 +1064,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(module.functions().len(), 1);
-        assert_eq!(module.functions()[0].name.name, "add");
+        assert_eq!(module.functions()[0].name, "add");
         assert_eq!(module.functions()[0].params.len(), 2);
     }
 
@@ -1137,7 +1077,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(module.functions().len(), 1);
-        assert_eq!(module.functions()[0].name.name, "pi");
+        assert_eq!(module.functions()[0].name, "pi");
         assert_eq!(module.functions()[0].params.len(), 0);
     }
 
@@ -1152,7 +1092,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(module.functions().len(), 1);
-        assert_eq!(module.functions()[0].name.name, "greet");
+        assert_eq!(module.functions()[0].name, "greet");
     }
 
     #[test]
@@ -1198,7 +1138,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(module.functions().len(), 1);
-        assert_eq!(module.functions()[0].name.name, "add");
+        assert_eq!(module.functions()[0].name, "add");
     }
 
     #[test]
@@ -1281,7 +1221,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(module.funcdefs().len(), 1);
-        assert_eq!(module.funcdefs()[0].name.name, "Callback");
+        assert_eq!(module.funcdefs()[0].name, "Callback");
         assert_eq!(module.funcdefs()[0].params.len(), 0);
     }
 
@@ -1294,7 +1234,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(module.funcdefs().len(), 1);
-        assert_eq!(module.funcdefs()[0].name.name, "Predicate");
+        assert_eq!(module.funcdefs()[0].name, "Predicate");
         assert_eq!(module.funcdefs()[0].params.len(), 1);
     }
 
@@ -1307,7 +1247,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(module.funcdefs().len(), 1);
-        assert_eq!(module.funcdefs()[0].name.name, "EventHandler");
+        assert_eq!(module.funcdefs()[0].name, "EventHandler");
         assert_eq!(module.funcdefs()[0].params.len(), 2);
     }
 
@@ -1320,7 +1260,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(module.funcdefs().len(), 1);
-        assert_eq!(module.funcdefs()[0].name.name, "EntityFactory");
+        assert_eq!(module.funcdefs()[0].name, "EntityFactory");
     }
 
     #[test]

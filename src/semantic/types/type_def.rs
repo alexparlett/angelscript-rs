@@ -576,6 +576,8 @@ pub struct MethodSignature {
     pub params: Vec<DataType>,
     /// Return type
     pub return_type: DataType,
+    /// Whether the method is const
+    pub is_const: bool,
 }
 
 impl MethodSignature {
@@ -585,6 +587,17 @@ impl MethodSignature {
             name,
             params,
             return_type,
+            is_const: false,
+        }
+    }
+
+    /// Create a new const method signature
+    pub fn new_const(name: String, params: Vec<DataType>, return_type: DataType) -> Self {
+        Self {
+            name,
+            params,
+            return_type,
+            is_const: true,
         }
     }
 }

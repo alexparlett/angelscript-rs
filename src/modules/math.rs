@@ -446,7 +446,7 @@ mod tests {
     #[test]
     fn test_constant_functions_exist() {
         let module = math_module().expect("math module should build");
-        let names: Vec<_> = module.functions().iter().map(|f| f.name.name).collect();
+        let names: Vec<_> = module.functions().iter().map(|f| f.name.as_str()).collect();
 
         assert!(names.contains(&"PI"), "should have PI");
         assert!(names.contains(&"E"), "should have E");
@@ -459,7 +459,7 @@ mod tests {
     #[test]
     fn test_trig_functions_exist() {
         let module = math_module().expect("math module should build");
-        let names: Vec<_> = module.functions().iter().map(|f| f.name.name).collect();
+        let names: Vec<_> = module.functions().iter().map(|f| f.name.as_str()).collect();
 
         assert!(names.contains(&"sin"), "should have sin");
         assert!(names.contains(&"cos"), "should have cos");
@@ -476,7 +476,7 @@ mod tests {
     #[test]
     fn test_hyperbolic_functions_exist() {
         let module = math_module().expect("math module should build");
-        let names: Vec<_> = module.functions().iter().map(|f| f.name.name).collect();
+        let names: Vec<_> = module.functions().iter().map(|f| f.name.as_str()).collect();
 
         assert!(names.contains(&"sinh"), "should have sinh");
         assert!(names.contains(&"cosh"), "should have cosh");
@@ -490,7 +490,7 @@ mod tests {
     #[test]
     fn test_exp_log_functions_exist() {
         let module = math_module().expect("math module should build");
-        let names: Vec<_> = module.functions().iter().map(|f| f.name.name).collect();
+        let names: Vec<_> = module.functions().iter().map(|f| f.name.as_str()).collect();
 
         assert!(names.contains(&"exp"), "should have exp");
         assert!(names.contains(&"exp2"), "should have exp2");
@@ -505,7 +505,7 @@ mod tests {
     #[test]
     fn test_power_functions_exist() {
         let module = math_module().expect("math module should build");
-        let names: Vec<_> = module.functions().iter().map(|f| f.name.name).collect();
+        let names: Vec<_> = module.functions().iter().map(|f| f.name.as_str()).collect();
 
         assert!(names.contains(&"pow"), "should have pow");
         assert!(names.contains(&"powi"), "should have powi");
@@ -518,7 +518,7 @@ mod tests {
     #[test]
     fn test_rounding_functions_exist() {
         let module = math_module().expect("math module should build");
-        let names: Vec<_> = module.functions().iter().map(|f| f.name.name).collect();
+        let names: Vec<_> = module.functions().iter().map(|f| f.name.as_str()).collect();
 
         assert!(names.contains(&"floor"), "should have floor");
         assert!(names.contains(&"ceil"), "should have ceil");
@@ -531,7 +531,7 @@ mod tests {
     #[test]
     fn test_abs_sign_functions_exist() {
         let module = math_module().expect("math module should build");
-        let names: Vec<_> = module.functions().iter().map(|f| f.name.name).collect();
+        let names: Vec<_> = module.functions().iter().map(|f| f.name.as_str()).collect();
 
         assert!(names.contains(&"abs"), "should have abs");
         assert!(names.contains(&"absf"), "should have absf");
@@ -543,7 +543,7 @@ mod tests {
     #[test]
     fn test_minmax_functions_exist() {
         let module = math_module().expect("math module should build");
-        let names: Vec<_> = module.functions().iter().map(|f| f.name.name).collect();
+        let names: Vec<_> = module.functions().iter().map(|f| f.name.as_str()).collect();
 
         assert!(names.contains(&"min"), "should have min");
         assert!(names.contains(&"max"), "should have max");
@@ -557,7 +557,7 @@ mod tests {
     #[test]
     fn test_classification_functions_exist() {
         let module = math_module().expect("math module should build");
-        let names: Vec<_> = module.functions().iter().map(|f| f.name.name).collect();
+        let names: Vec<_> = module.functions().iter().map(|f| f.name.as_str()).collect();
 
         assert!(names.contains(&"is_nan"), "should have is_nan");
         assert!(names.contains(&"is_infinite"), "should have is_infinite");
@@ -572,7 +572,7 @@ mod tests {
     #[test]
     fn test_misc_functions_exist() {
         let module = math_module().expect("math module should build");
-        let names: Vec<_> = module.functions().iter().map(|f| f.name.name).collect();
+        let names: Vec<_> = module.functions().iter().map(|f| f.name.as_str()).collect();
 
         assert!(names.contains(&"mul_add"), "should have mul_add");
         assert!(names.contains(&"div_euclid"), "should have div_euclid");
@@ -589,7 +589,7 @@ mod tests {
         let module = math_module().expect("math module should build");
 
         for func in module.functions() {
-            let name = func.name.name;
+            let name = func.name.as_str();
             let param_count = func.params.len();
 
             // Constants (zero params)

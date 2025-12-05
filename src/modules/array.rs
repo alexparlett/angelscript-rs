@@ -1678,7 +1678,7 @@ mod tests {
     fn test_array_module_method_names() {
         let module = array_module().expect("array module should build");
         let ty = &module.types()[0];
-        let method_names: Vec<_> = ty.methods.iter().map(|m| m.name.name).collect();
+        let method_names: Vec<_> = ty.methods.iter().map(|m| m.name.as_str()).collect();
 
         assert!(method_names.contains(&"length"), "should have length method");
         assert!(method_names.contains(&"isEmpty"), "should have isEmpty method");

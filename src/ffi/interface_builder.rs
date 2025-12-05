@@ -20,9 +20,9 @@
 //! ```
 
 use crate::ast::Parser;
-use crate::ffi::{NativeInterfaceDef, NativeInterfaceMethod};
 use crate::module::{FfiModuleError, Module};
 use crate::semantic::types::type_def::TypeId;
+use crate::types::{function_param_to_ffi, return_type_to_ffi, FfiInterfaceDef, FfiInterfaceMethod};
 
 /// Builder for registering native interface types.
 ///
@@ -42,8 +42,8 @@ pub struct InterfaceBuilder<'m, 'app> {
     module: &'m mut Module<'app>,
     /// Interface name
     name: String,
-    /// Abstract method signatures
-    methods: Vec<NativeInterfaceMethod<'static>>,
+    /// Abstract method signatures (owned, no arena lifetime)
+    methods: Vec<FfiInterfaceMethod>,
 }
 
 impl<'m, 'app> InterfaceBuilder<'m, 'app> {
@@ -87,22 +87,15 @@ impl<'m, 'app> InterfaceBuilder<'m, 'app> {
     ///     .build()?;
     /// ```
     pub fn method(mut self, decl: &str) -> Result<Self, FfiModuleError> {
-        let sig = self.parse_method_decl(decl)?;
+        let method = self.parse_method_decl(decl)?;
 
         // Check for duplicate method names
-        if self.methods.iter().any(|m| m.name.name == sig.name.name) {
+        if self.methods.iter().any(|m| m.name == method.name) {
             return Err(FfiModuleError::DuplicateRegistration {
-                name: sig.name.name.to_string(),
+                name: method.name.clone(),
                 kind: "interface method".to_string(),
             });
         }
-
-        let method = NativeInterfaceMethod {
-            name: sig.name,
-            params: sig.params,
-            return_type: sig.return_type,
-            is_const: sig.is_const,
-        };
 
         self.methods.push(method);
         Ok(self)
@@ -123,11 +116,7 @@ impl<'m, 'app> InterfaceBuilder<'m, 'app> {
             )));
         }
 
-        let interface_def = NativeInterfaceDef {
-            id: TypeId::next(),
-            name: self.name,
-            methods: self.methods,
-        };
+        let interface_def = FfiInterfaceDef::new(TypeId::next(), self.name, self.methods);
 
         self.module.add_interface(interface_def);
         Ok(())
@@ -137,11 +126,8 @@ impl<'m, 'app> InterfaceBuilder<'m, 'app> {
     // Internal helpers
     // =========================================================================
 
-    /// Parse a method declaration using the module's arena.
-    fn parse_method_decl(
-        &self,
-        decl: &str,
-    ) -> Result<crate::ast::FunctionSignatureDecl<'static>, FfiModuleError> {
+    /// Parse a method declaration and convert to FfiInterfaceMethod.
+    fn parse_method_decl(&self, decl: &str) -> Result<FfiInterfaceMethod, FfiModuleError> {
         let decl = decl.trim();
         if decl.is_empty() {
             return Err(FfiModuleError::InvalidDeclaration(
@@ -154,9 +140,16 @@ impl<'m, 'app> InterfaceBuilder<'m, 'app> {
             FfiModuleError::InvalidDeclaration(format!("parse error: {}", errors))
         })?;
 
-        // SAFETY: The arena is owned by module and lives as long as module.
-        // We transmute the lifetime to 'static for storage.
-        Ok(unsafe { std::mem::transmute(sig) })
+        // Convert to owned FfiInterfaceMethod
+        let params = sig.params.iter().map(function_param_to_ffi).collect();
+        let return_type = return_type_to_ffi(&sig.return_type);
+
+        Ok(FfiInterfaceMethod::new(
+            sig.name.name.to_string(),
+            params,
+            return_type,
+            sig.is_const,
+        ))
     }
 }
 
@@ -175,10 +168,10 @@ mod tests {
             .unwrap();
 
         assert_eq!(module.interfaces().len(), 1);
-        assert_eq!(module.interfaces()[0].name, "IDrawable");
-        assert_eq!(module.interfaces()[0].methods.len(), 1);
-        assert_eq!(module.interfaces()[0].methods[0].name.name, "draw");
-        assert!(module.interfaces()[0].methods[0].is_const);
+        assert_eq!(module.interfaces()[0].name(), "IDrawable");
+        assert_eq!(module.interfaces()[0].methods().len(), 1);
+        assert_eq!(module.interfaces()[0].methods()[0].name, "draw");
+        assert!(module.interfaces()[0].methods()[0].is_const);
     }
 
     #[test]
@@ -194,11 +187,11 @@ mod tests {
             .unwrap();
 
         assert_eq!(module.interfaces().len(), 1);
-        assert_eq!(module.interfaces()[0].methods.len(), 2);
-        assert_eq!(module.interfaces()[0].methods[0].name.name, "serialize");
-        assert!(module.interfaces()[0].methods[0].is_const);
-        assert_eq!(module.interfaces()[0].methods[1].name.name, "deserialize");
-        assert!(!module.interfaces()[0].methods[1].is_const);
+        assert_eq!(module.interfaces()[0].methods().len(), 2);
+        assert_eq!(module.interfaces()[0].methods()[0].name, "serialize");
+        assert!(module.interfaces()[0].methods()[0].is_const);
+        assert_eq!(module.interfaces()[0].methods()[1].name, "deserialize");
+        assert!(!module.interfaces()[0].methods()[1].is_const);
     }
 
     #[test]
@@ -215,16 +208,16 @@ mod tests {
             .build()
             .unwrap();
 
-        assert_eq!(module.interfaces()[0].methods.len(), 3);
+        assert_eq!(module.interfaces()[0].methods().len(), 3);
 
         // Check getName
-        assert_eq!(module.interfaces()[0].methods[0].params.len(), 0);
+        assert_eq!(module.interfaces()[0].methods()[0].params.len(), 0);
 
         // Check setName - has 1 param
-        assert_eq!(module.interfaces()[0].methods[1].params.len(), 1);
+        assert_eq!(module.interfaces()[0].methods()[1].params.len(), 1);
 
         // Check update - has 1 param
-        assert_eq!(module.interfaces()[0].methods[2].params.len(), 1);
+        assert_eq!(module.interfaces()[0].methods()[2].params.len(), 1);
     }
 
     #[test]
@@ -291,8 +284,8 @@ mod tests {
             .build()
             .unwrap();
 
-        assert!(module.interfaces()[0].methods[0].is_const);
-        assert!(!module.interfaces()[0].methods[1].is_const);
+        assert!(module.interfaces()[0].methods()[0].is_const);
+        assert!(!module.interfaces()[0].methods()[1].is_const);
     }
 
     #[test]
@@ -307,7 +300,7 @@ mod tests {
             .build()
             .unwrap();
 
-        assert_eq!(module.interfaces()[0].methods.len(), 2);
+        assert_eq!(module.interfaces()[0].methods().len(), 2);
     }
 
     #[test]
@@ -329,7 +322,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(module.interfaces().len(), 2);
-        assert_eq!(module.interfaces()[0].name, "IFirst");
-        assert_eq!(module.interfaces()[1].name, "ISecond");
+        assert_eq!(module.interfaces()[0].name(), "IFirst");
+        assert_eq!(module.interfaces()[1].name(), "ISecond");
     }
 }

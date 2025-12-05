@@ -144,7 +144,8 @@ pub use ast::{
 pub use unit::{Unit, BuildError, UnitError};
 
 // Re-export FFI module and context API
-pub use module::{Module, FfiModuleError, NativeEnumDef};
+pub use module::{Module, FfiModuleError};
+pub use types::FfiEnumDef;
 pub use context::{Context, ContextError};
 
 // Backwards compatibility alias (deprecated)

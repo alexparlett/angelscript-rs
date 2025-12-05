@@ -1859,7 +1859,7 @@ mod tests {
     #[test]
     fn test_parse_function_names() {
         let module = string_module().expect("string module should build");
-        let fn_names: Vec<_> = module.functions().iter().map(|f| f.name.name).collect();
+        let fn_names: Vec<_> = module.functions().iter().map(|f| f.name.as_str()).collect();
 
         assert!(fn_names.contains(&"parseInt"), "should have parseInt");
         assert!(fn_names.contains(&"parseUInt"), "should have parseUInt");
@@ -1869,7 +1869,7 @@ mod tests {
     #[test]
     fn test_format_function_names() {
         let module = string_module().expect("string module should build");
-        let fn_names: Vec<_> = module.functions().iter().map(|f| f.name.name).collect();
+        let fn_names: Vec<_> = module.functions().iter().map(|f| f.name.as_str()).collect();
 
         assert!(fn_names.contains(&"formatInt"), "should have formatInt");
         assert!(fn_names.contains(&"formatUInt"), "should have formatUInt");

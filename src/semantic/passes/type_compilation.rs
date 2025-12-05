@@ -687,6 +687,7 @@ impl<'ast> TypeCompiler<'ast> {
             name: method.name.name.to_string(),
             params,
             return_type,
+            is_const: method.is_const,
         })
     }
 

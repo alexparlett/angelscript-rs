@@ -22,8 +22,9 @@
 //!     .build()?;
 //! ```
 
-use crate::module::{FfiModuleError, Module, NativeEnumDef};
+use crate::module::{FfiModuleError, Module};
 use crate::semantic::types::type_def::TypeId;
+use crate::types::FfiEnumDef;
 
 /// Builder for registering native enum types.
 ///
@@ -140,11 +141,7 @@ impl<'m, 'app> EnumBuilder<'m, 'app> {
             ));
         }
 
-        let enum_def = NativeEnumDef {
-            id: TypeId::next(),
-            name: self.name,
-            values: self.values,
-        };
+        let enum_def = FfiEnumDef::new(TypeId::next(), self.name, self.values);
 
         self.module.add_enum(enum_def);
         Ok(())

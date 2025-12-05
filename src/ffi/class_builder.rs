@@ -36,18 +36,20 @@
 //! ```
 
 use std::marker::PhantomData;
+use std::sync::Arc;
 
-use crate::ast::{FunctionSignatureDecl, Ident, Parser, PropertyDecl};
+use crate::ast::Parser;
 use crate::module::FfiModuleError;
+use crate::types::{
+    signature_to_ffi_function, type_expr_to_ffi, FfiFunctionDef, FfiPropertyDef, FfiTypeDef,
+    ReferenceKind, TypeKind,
+};
 use crate::Module;
 
 use super::list_buffer::ListPattern;
 use super::native_fn::{CallContext, NativeCallable, NativeFn};
 use super::traits::{FromScript, IntoNativeFn, NativeType, ToScript};
-use super::types::{
-    ListBehavior, NativeMethodDef, NativePropertyDef, NativeTypeDef, ReferenceKind,
-    TemplateInstanceInfo, TemplateValidation, TypeKind,
-};
+use super::types::{ListBehavior, TemplateInstanceInfo, TemplateValidation};
 use crate::semantic::types::type_def::TypeId;
 
 /// Builder for registering native types with the FFI system.
@@ -65,17 +67,16 @@ pub struct ClassBuilder<'m, 'app, T: NativeType> {
     /// Type name (base name without template params)
     name: String,
     /// Template parameter names (for template types like array<T>)
-    /// Stored as 'static because we transmute from arena-allocated data
-    template_params: Option<&'static [Ident<'static>]>,
+    template_params: Vec<String>,
     /// Type kind (value or reference)
     type_kind: TypeKind,
 
     // === Behaviors ===
 
     /// Constructors (for value types)
-    constructors: Vec<NativeMethodDef<'static>>,
+    constructors: Vec<FfiFunctionDef>,
     /// Factory functions (for reference types)
-    factories: Vec<NativeMethodDef<'static>>,
+    factories: Vec<FfiFunctionDef>,
     /// AddRef behavior
     addref: Option<NativeFn>,
     /// Release behavior
@@ -90,16 +91,16 @@ pub struct ClassBuilder<'m, 'app, T: NativeType> {
     get_weakref_flag: Option<NativeFn>,
     /// Template callback
     template_callback:
-        Option<Box<dyn Fn(&TemplateInstanceInfo) -> TemplateValidation + Send + Sync>>,
+        Option<Arc<dyn Fn(&TemplateInstanceInfo) -> TemplateValidation + Send + Sync>>,
 
     // === Type members ===
 
     /// Methods
-    methods: Vec<NativeMethodDef<'static>>,
+    methods: Vec<FfiFunctionDef>,
     /// Properties
-    properties: Vec<NativePropertyDef<'static>>,
+    properties: Vec<FfiPropertyDef>,
     /// Operators
-    operators: Vec<NativeMethodDef<'static>>,
+    operators: Vec<FfiFunctionDef>,
     /// Marker for the type parameter
     _marker: PhantomData<T>,
 }
@@ -111,7 +112,7 @@ impl<'m, 'app, T: NativeType> ClassBuilder<'m, 'app, T> {
     pub(crate) fn new(
         module: &'m mut Module<'app>,
         name: String,
-        template_params: Option<&'static [Ident<'static>]>,
+        template_params: Vec<String>,
     ) -> Self {
         Self {
             module,
@@ -227,7 +228,7 @@ impl<'m, 'app, T: NativeType> ClassBuilder<'m, 'app, T> {
     where
         F: Fn(&TemplateInstanceInfo) -> TemplateValidation + Send + Sync + 'static,
     {
-        self.template_callback = Some(Box::new(f));
+        self.template_callback = Some(Arc::new(f));
         self
     }
 
@@ -253,8 +254,7 @@ impl<'m, 'app, T: NativeType> ClassBuilder<'m, 'app, T> {
     where
         F: IntoNativeFn<Args, T>,
     {
-        let sig = self.parse_method_decl(decl)?;
-        let method_def = self.build_method_def(sig, f.into_native_fn());
+        let method_def = self.parse_method_decl(decl, f.into_native_fn())?;
         self.constructors.push(method_def);
         Ok(self)
     }
@@ -281,8 +281,7 @@ impl<'m, 'app, T: NativeType> ClassBuilder<'m, 'app, T> {
     where
         F: IntoNativeFn<Args, T>,
     {
-        let sig = self.parse_method_decl(decl)?;
-        let method_def = self.build_method_def(sig, f.into_native_fn());
+        let method_def = self.parse_method_decl(decl, f.into_native_fn())?;
         self.factories.push(method_def);
         Ok(self)
     }
@@ -310,8 +309,7 @@ impl<'m, 'app, T: NativeType> ClassBuilder<'m, 'app, T> {
     where
         F: NativeCallable + Send + Sync + 'static,
     {
-        let sig = self.parse_method_decl(decl)?;
-        let method_def = self.build_method_def(sig, NativeFn::new(f));
+        let method_def = self.parse_method_decl(decl, NativeFn::new(f))?;
         self.factories.push(method_def);
         Ok(self)
     }
@@ -444,8 +442,7 @@ impl<'m, 'app, T: NativeType> ClassBuilder<'m, 'app, T> {
     where
         F: IntoNativeFn<Args, Ret>,
     {
-        let sig = self.parse_method_decl(decl)?;
-        let method_def = self.build_method_def(sig, f.into_native_fn());
+        let method_def = self.parse_method_decl(decl, f.into_native_fn())?;
         self.methods.push(method_def);
         Ok(self)
     }
@@ -467,8 +464,7 @@ impl<'m, 'app, T: NativeType> ClassBuilder<'m, 'app, T> {
     where
         F: IntoNativeFn<Args, Ret>,
     {
-        let sig = self.parse_method_decl(decl)?;
-        let method_def = self.build_method_def(sig, f.into_native_fn());
+        let method_def = self.parse_method_decl(decl, f.into_native_fn())?;
         self.methods.push(method_def);
         Ok(self)
     }
@@ -495,8 +491,7 @@ impl<'m, 'app, T: NativeType> ClassBuilder<'m, 'app, T> {
     where
         F: NativeCallable + Send + Sync + 'static,
     {
-        let sig = self.parse_method_decl(decl)?;
-        let method_def = self.build_method_def(sig, NativeFn::new(f));
+        let method_def = self.parse_method_decl(decl, NativeFn::new(f))?;
         self.methods.push(method_def);
         Ok(self)
     }
@@ -523,8 +518,7 @@ impl<'m, 'app, T: NativeType> ClassBuilder<'m, 'app, T> {
         V: ToScript + 'static,
         F: Fn(&T) -> V + Send + Sync + 'static,
     {
-        let prop = self.parse_property_decl(decl)?;
-        let prop_def = self.build_readonly_property_def(prop, getter);
+        let prop_def = self.parse_readonly_property_decl(decl, getter)?;
         self.properties.push(prop_def);
         Ok(self)
     }
@@ -559,8 +553,7 @@ impl<'m, 'app, T: NativeType> ClassBuilder<'m, 'app, T> {
         G: Fn(&T) -> V + Send + Sync + 'static,
         S: Fn(&mut T, V) + Send + Sync + 'static,
     {
-        let prop = self.parse_property_decl(decl)?;
-        let prop_def = self.build_readwrite_property_def(prop, getter, setter);
+        let prop_def = self.parse_readwrite_property_decl(decl, getter, setter)?;
         self.properties.push(prop_def);
         Ok(self)
     }
@@ -590,9 +583,8 @@ impl<'m, 'app, T: NativeType> ClassBuilder<'m, 'app, T> {
     where
         F: IntoNativeFn<Args, Ret>,
     {
-        let sig = self.parse_method_decl(decl)?;
-        let method_def = self.build_method_def(sig, f.into_native_fn());
-        self.operators.push(method_def);
+        let operator_def = self.parse_method_decl(decl, f.into_native_fn())?;
+        self.operators.push(operator_def);
         Ok(self)
     }
 
@@ -618,9 +610,8 @@ impl<'m, 'app, T: NativeType> ClassBuilder<'m, 'app, T> {
     where
         F: NativeCallable + Send + Sync + 'static,
     {
-        let sig = self.parse_method_decl(decl)?;
-        let method_def = self.build_method_def(sig, NativeFn::new(f));
-        self.operators.push(method_def);
+        let operator_def = self.parse_method_decl(decl, NativeFn::new(f))?;
+        self.operators.push(operator_def);
         Ok(self)
     }
 
@@ -633,28 +624,27 @@ impl<'m, 'app, T: NativeType> ClassBuilder<'m, 'app, T> {
     /// Returns an error if the type configuration is invalid (e.g., reference type
     /// without factory, value type without constructor).
     pub fn build(self) -> Result<(), FfiModuleError> {
-        // Build the type definition
-        let type_def = NativeTypeDef {
-            id: TypeId::next(),
-            name: self.name,
-            template_params: self.template_params,
-            type_kind: self.type_kind,
-            // Behaviors
-            constructors: self.constructors,
-            factories: self.factories,
-            addref: self.addref,
-            release: self.release,
-            destruct: self.destruct,
-            list_construct: self.list_construct,
-            list_factory: self.list_factory,
-            get_weakref_flag: self.get_weakref_flag,
-            template_callback: self.template_callback.map(|cb| std::sync::Arc::from(cb)),
-            // Type members
-            methods: self.methods,
-            properties: self.properties,
-            operators: self.operators,
-            rust_type_id: std::any::TypeId::of::<T>(),
-        };
+        // Build the FfiTypeDef
+        let mut type_def = FfiTypeDef::new::<T>(TypeId::next(), self.name, self.type_kind);
+
+        // Set template params
+        type_def.template_params = self.template_params;
+
+        // Set behaviors
+        type_def.constructors = self.constructors;
+        type_def.factories = self.factories;
+        type_def.addref = self.addref;
+        type_def.release = self.release;
+        type_def.destruct = self.destruct;
+        type_def.list_construct = self.list_construct;
+        type_def.list_factory = self.list_factory;
+        type_def.get_weakref_flag = self.get_weakref_flag;
+        type_def.template_callback = self.template_callback;
+
+        // Set type members
+        type_def.methods = self.methods;
+        type_def.properties = self.properties;
+        type_def.operators = self.operators;
 
         // Add to module
         self.module.add_type(type_def);
@@ -665,8 +655,8 @@ impl<'m, 'app, T: NativeType> ClassBuilder<'m, 'app, T> {
     // Internal helpers
     // =========================================================================
 
-    /// Parse a method declaration using the module's arena.
-    fn parse_method_decl(&self, decl: &str) -> Result<FunctionSignatureDecl<'static>, FfiModuleError> {
+    /// Parse a method declaration and convert to FfiFunctionDef.
+    fn parse_method_decl(&self, decl: &str, native_fn: NativeFn) -> Result<FfiFunctionDef, FfiModuleError> {
         let decl = decl.trim();
         if decl.is_empty() {
             return Err(FfiModuleError::InvalidDeclaration(
@@ -679,13 +669,20 @@ impl<'m, 'app, T: NativeType> ClassBuilder<'m, 'app, T> {
             FfiModuleError::InvalidDeclaration(format!("parse error: {}", errors))
         })?;
 
-        // SAFETY: The arena is owned by module and lives as long as module.
-        // We transmute the lifetime to 'static for storage.
-        Ok(unsafe { std::mem::transmute(sig) })
+        // Convert to owned FfiFunctionDef using the conversion helper
+        Ok(signature_to_ffi_function(&sig, native_fn))
     }
 
-    /// Parse a property declaration using the module's arena.
-    fn parse_property_decl(&self, decl: &str) -> Result<PropertyDecl<'static>, FfiModuleError> {
+    /// Parse a property declaration and convert to FfiPropertyDef.
+    fn parse_readonly_property_decl<V, G>(
+        &self,
+        decl: &str,
+        getter: G,
+    ) -> Result<FfiPropertyDef, FfiModuleError>
+    where
+        V: ToScript + 'static,
+        G: Fn(&T) -> V + Send + Sync + 'static,
+    {
         let decl = decl.trim();
         if decl.is_empty() {
             return Err(FfiModuleError::InvalidDeclaration(
@@ -698,35 +695,10 @@ impl<'m, 'app, T: NativeType> ClassBuilder<'m, 'app, T> {
             FfiModuleError::InvalidDeclaration(format!("parse error: {}", errors))
         })?;
 
-        // SAFETY: The arena is owned by module and lives as long as module.
-        Ok(unsafe { std::mem::transmute(prop) })
-    }
+        // Convert the type expression to FfiDataType
+        let data_type = type_expr_to_ffi(&prop.ty);
 
-    /// Build a NativeMethodDef from a parsed signature.
-    fn build_method_def(
-        &self,
-        sig: FunctionSignatureDecl<'static>,
-        native_fn: NativeFn,
-    ) -> NativeMethodDef<'static> {
-        NativeMethodDef {
-            name: sig.name,
-            params: sig.params,
-            return_type: sig.return_type,
-            is_const: sig.is_const,
-            native_fn,
-        }
-    }
-
-    /// Build a read-only NativePropertyDef from a parsed property declaration.
-    fn build_readonly_property_def<V, G>(
-        &self,
-        prop: PropertyDecl<'static>,
-        getter: G,
-    ) -> NativePropertyDef<'static>
-    where
-        V: ToScript + 'static,
-        G: Fn(&T) -> V + Send + Sync + 'static,
-    {
+        // Build the getter function
         let getter_fn = NativeFn::new(move |ctx: &mut CallContext| {
             let this: &T = ctx.this()?;
             let value = getter(this);
@@ -734,32 +706,41 @@ impl<'m, 'app, T: NativeType> ClassBuilder<'m, 'app, T> {
             Ok(())
         });
 
-        // Allocate the type in the arena
-        let ty = self.module.arena().alloc(prop.ty);
-        // SAFETY: Arena is owned by module and lives as long as module
-        let ty: &'static _ = unsafe { std::mem::transmute(ty) };
-
-        NativePropertyDef {
-            name: prop.name,
-            ty,
-            is_const: true,
-            getter: getter_fn,
-            setter: None,
-        }
+        Ok(FfiPropertyDef::read_only(
+            prop.name.name.to_string(),
+            data_type,
+            getter_fn,
+        ))
     }
 
-    /// Build a read-write NativePropertyDef from a parsed property declaration.
-    fn build_readwrite_property_def<V, G, S>(
+    /// Parse a property declaration and convert to FfiPropertyDef (read-write).
+    fn parse_readwrite_property_decl<V, G, S>(
         &self,
-        prop: PropertyDecl<'static>,
+        decl: &str,
         getter: G,
         setter: S,
-    ) -> NativePropertyDef<'static>
+    ) -> Result<FfiPropertyDef, FfiModuleError>
     where
         V: ToScript + FromScript + 'static,
         G: Fn(&T) -> V + Send + Sync + 'static,
         S: Fn(&mut T, V) + Send + Sync + 'static,
     {
+        let decl = decl.trim();
+        if decl.is_empty() {
+            return Err(FfiModuleError::InvalidDeclaration(
+                "empty declaration".to_string(),
+            ));
+        }
+
+        // Parse the declaration using the module's arena
+        let prop = Parser::property_decl(decl, self.module.arena()).map_err(|errors| {
+            FfiModuleError::InvalidDeclaration(format!("parse error: {}", errors))
+        })?;
+
+        // Convert the type expression to FfiDataType
+        let data_type = type_expr_to_ffi(&prop.ty);
+
+        // Build the getter function
         let getter_fn = NativeFn::new(move |ctx: &mut CallContext| {
             let this: &T = ctx.this()?;
             let value = getter(this);
@@ -767,6 +748,7 @@ impl<'m, 'app, T: NativeType> ClassBuilder<'m, 'app, T> {
             Ok(())
         });
 
+        // Build the setter function
         let setter_fn = NativeFn::new(move |ctx: &mut CallContext| {
             let value: V = ctx.arg(0)?;
             let this: &mut T = ctx.this_mut()?;
@@ -774,18 +756,12 @@ impl<'m, 'app, T: NativeType> ClassBuilder<'m, 'app, T> {
             Ok(())
         });
 
-        // Allocate the type in the arena
-        let ty = self.module.arena().alloc(prop.ty);
-        // SAFETY: Arena is owned by module and lives as long as module
-        let ty: &'static _ = unsafe { std::mem::transmute(ty) };
-
-        NativePropertyDef {
-            name: prop.name,
-            ty,
-            is_const: false,
-            getter: getter_fn,
-            setter: Some(setter_fn),
-        }
+        Ok(FfiPropertyDef::read_write(
+            prop.name.name.to_string(),
+            data_type,
+            getter_fn,
+            setter_fn,
+        ))
     }
 }
 
@@ -886,7 +862,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(module.types()[0].methods.len(), 1);
-        assert!(module.types()[0].methods[0].is_const);
+        assert!(module.types()[0].methods[0].is_const());
     }
 
     #[test]
@@ -901,7 +877,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(module.types()[0].methods.len(), 1);
-        assert!(module.types()[0].methods[0].is_const);
+        assert!(module.types()[0].methods[0].is_const());
     }
 
     #[test]
@@ -920,7 +896,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(module.types()[0].methods.len(), 1);
-        assert!(!module.types()[0].methods[0].is_const);
+        assert!(!module.types()[0].methods[0].is_const());
     }
 
     #[test]
@@ -1187,7 +1163,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(module.types()[0].methods.len(), 1);
-        assert!(!module.types()[0].methods[0].is_const);
+        assert!(!module.types()[0].methods[0].is_const());
     }
 
     #[test]
@@ -1331,10 +1307,9 @@ mod tests {
 
         let ty = &module.types()[0];
         assert_eq!(ty.name, "array");
-        assert!(ty.template_params.is_some());
-        let params = ty.template_params.unwrap();
-        assert_eq!(params.len(), 1);
-        assert_eq!(params[0].name, "T");
+        assert!(!ty.template_params.is_empty());
+        assert_eq!(ty.template_params.len(), 1);
+        assert_eq!(ty.template_params[0], "T");
     }
 
     #[test]
@@ -1350,11 +1325,10 @@ mod tests {
 
         let ty = &module.types()[0];
         assert_eq!(ty.name, "dictionary");
-        assert!(ty.template_params.is_some());
-        let params = ty.template_params.unwrap();
-        assert_eq!(params.len(), 2);
-        assert_eq!(params[0].name, "K");
-        assert_eq!(params[1].name, "V");
+        assert!(!ty.template_params.is_empty());
+        assert_eq!(ty.template_params.len(), 2);
+        assert_eq!(ty.template_params[0], "K");
+        assert_eq!(ty.template_params[1], "V");
     }
 
     #[test]
@@ -1371,11 +1345,10 @@ mod tests {
 
         let ty = &module.types()[0];
         assert_eq!(ty.name, "stringmap");
-        assert!(ty.template_params.is_some());
-        let params = ty.template_params.unwrap();
+        assert!(!ty.template_params.is_empty());
         // Only "T" should be captured as a template param, not "string"
-        assert_eq!(params.len(), 1);
-        assert_eq!(params[0].name, "T");
+        assert_eq!(ty.template_params.len(), 1);
+        assert_eq!(ty.template_params[0], "T");
     }
 
     #[test]

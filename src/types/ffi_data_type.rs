@@ -34,7 +34,7 @@
 //! )?;
 //! ```
 
-use crate::semantic::types::{DataType, RefModifier, TypeId};
+use crate::semantic::types::{DataType, RefModifier, TypeId, VOID_TYPE};
 
 /// The base type portion of a type reference (without modifiers).
 ///
@@ -246,6 +246,19 @@ impl FfiDataType {
         match self {
             FfiDataType::Resolved(dt) => Some(dt),
             FfiDataType::Unresolved { .. } => None,
+        }
+    }
+
+    /// Check if this type is void.
+    ///
+    /// Returns true if this is a resolved void type, false otherwise.
+    pub fn is_void(&self) -> bool {
+        match self {
+            FfiDataType::Resolved(dt) => dt.type_id == VOID_TYPE,
+            FfiDataType::Unresolved { base, .. } => match base {
+                UnresolvedBaseType::Simple(name) => name == "void",
+                UnresolvedBaseType::Template { .. } => false,
+            },
         }
     }
 }

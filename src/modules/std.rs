@@ -177,7 +177,7 @@ mod tests {
     #[test]
     fn test_std_module_function_names() {
         let module = std_module().expect("std module should build");
-        let names: Vec<_> = module.functions().iter().map(|f| f.name.name).collect();
+        let names: Vec<_> = module.functions().iter().map(|f| f.name.as_str()).collect();
 
         assert!(names.contains(&"print"), "should have print function");
         assert!(names.contains(&"println"), "should have println function");
@@ -191,7 +191,7 @@ mod tests {
         let print_count = module
             .functions()
             .iter()
-            .filter(|f| f.name.name == "print")
+            .filter(|f| f.name.as_str() == "print")
             .count();
         // Just one print(msg, val) using generic calling convention
         assert_eq!(print_count, 1, "should have 1 print function");
@@ -203,7 +203,7 @@ mod tests {
         let println_count = module
             .functions()
             .iter()
-            .filter(|f| f.name.name == "println")
+            .filter(|f| f.name.as_str() == "println")
             .count();
         // println(msg, val) + println() = 2
         assert_eq!(println_count, 2, "should have 2 println functions");
@@ -215,9 +215,9 @@ mod tests {
 
         for func in module.functions() {
             assert!(
-                func.return_type.ty.is_void(),
+                func.return_type.is_void(),
                 "function {} should return void",
-                func.name.name
+                func.name
             );
         }
     }

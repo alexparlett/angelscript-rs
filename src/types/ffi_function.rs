@@ -247,6 +247,12 @@ impl FfiFunctionDef {
         self
     }
 
+    /// Set whether this is a const method.
+    pub fn with_const(mut self, is_const: bool) -> Self {
+        self.traits.is_const = is_const;
+        self
+    }
+
     /// Resolve all `FfiDataType` references to concrete `DataType`.
     ///
     /// This is called during Context sealing when all types are known.
