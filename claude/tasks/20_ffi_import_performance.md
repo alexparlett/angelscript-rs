@@ -591,7 +591,7 @@ impl<'r, 'ast> FunctionDefView<'r, 'ast> {
 ---
 
 ### Phase 3: Create FfiRegistry
-**Status:** Pending
+**Status:** Complete
 
 **Tasks:**
 1. Create `src/types/ffi_registry.rs`:
@@ -607,6 +607,16 @@ impl<'r, 'ast> FunctionDefView<'r, 'ast> {
 **Files:**
 - `src/types/ffi_registry.rs` (new)
 - `src/types/mod.rs` (modify)
+
+**Key Implementation Details:**
+- `FfiRegistry` holds resolved types, functions, behaviors, template callbacks, and namespaces
+- `FfiRegistryBuilder::new()` pre-registers all primitive types (void, bool, int, etc.)
+- `FfiRegistryBuilder::build()` resolves all `FfiFunctionDef` to `ResolvedFfiFunctionDef`
+- Lookup methods mirror `Registry` API: `get_type()`, `lookup_functions()`, `find_method()`, `find_operator_method()`, `find_constructors()`, `find_factories()`, `get_behaviors()`, etc.
+- Template callbacks stored as `Arc<dyn Fn>` for thread-safe sharing
+- Manual `Debug` impl to handle non-Debug callback types
+- Comprehensive tests: 16 tests for registry creation, lookup, resolution errors
+- All 2400 tests passing
 
 ---
 

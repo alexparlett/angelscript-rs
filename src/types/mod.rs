@@ -12,10 +12,13 @@
 //! - [`FfiExpr`] - Owned expressions for default argument values
 //! - [`FfiParam`] - Function parameter with deferred types
 //! - [`FfiFunctionDef`] - Owned function definition for FFI registry
+//! - [`FfiRegistry`] - Immutable registry shared across all Units
+//! - [`FfiRegistryBuilder`] - Builder for constructing FfiRegistry
 
 mod ffi_data_type;
 mod ffi_expr;
 mod ffi_function;
+mod ffi_registry;
 mod type_kind;
 
 pub use ffi_data_type::{FfiDataType, UnresolvedBaseType};
@@ -23,4 +26,5 @@ pub use ffi_expr::FfiExpr;
 pub use ffi_function::{
     FfiFunctionDef, FfiParam, FfiResolutionError, ResolvedFfiFunctionDef, ResolvedFfiParam,
 };
+pub use ffi_registry::{FfiRegistry, FfiRegistryBuilder, FfiRegistryError};
 pub use type_kind::{ReferenceKind, TypeKind};
