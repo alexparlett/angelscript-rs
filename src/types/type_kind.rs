@@ -1,7 +1,7 @@
-//! Common type definitions shared across the crate.
+//! Type kind definitions for memory semantics.
 //!
-//! This module contains core type definitions used by both the FFI layer
-//! and the semantic analysis layer.
+//! This module contains `TypeKind` and `ReferenceKind` which determine
+//! how types are managed in memory (stack vs heap, value vs reference).
 
 /// Type kind determines memory semantics for types.
 ///
