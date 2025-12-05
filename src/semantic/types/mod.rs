@@ -21,6 +21,7 @@ pub use registry::{FunctionDef, GlobalVarDef, ImportError, Registry};
 pub use type_def::{
     FieldDef, FunctionId, FunctionTraits, MethodSignature, OperatorBehavior, PrimitiveType,
     PropertyAccessors, TypeDef, TypeId, Visibility, BOOL_TYPE,
-    DOUBLE_TYPE, FIRST_USER_TYPE_ID, FLOAT_TYPE, INT16_TYPE, INT32_TYPE, INT64_TYPE, INT8_TYPE,
-    NULL_TYPE, UINT16_TYPE, UINT32_TYPE, UINT64_TYPE, UINT8_TYPE, VOID_TYPE,
+    DOUBLE_TYPE, FFI_BIT, FIRST_USER_TYPE_ID, FLOAT_TYPE, INT16_TYPE, INT32_TYPE, INT64_TYPE,
+    INT8_TYPE, NULL_TYPE, SELF_TYPE, UINT16_TYPE, UINT32_TYPE, UINT64_TYPE, UINT8_TYPE,
+    VARIABLE_PARAM_TYPE, VOID_TYPE,
 };

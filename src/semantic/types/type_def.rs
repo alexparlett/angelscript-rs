@@ -10,12 +10,19 @@ use crate::types::TypeKind;
 use std::fmt;
 use std::sync::atomic::{AtomicU32, Ordering};
 
+/// High bit used to distinguish FFI types/functions from script types/functions.
+/// - FFI types have this bit SET (0x8000_0000 | index)
+/// - Script types have this bit CLEAR (just index)
+pub const FFI_BIT: u32 = 0x8000_0000;
+
 /// Global atomic counter for generating unique TypeIds.
 /// Starts at 32 to avoid conflicting with reserved primitive types (0-13)
 /// and reserved special types (14-31).
+/// Both FFI and script types share this counter; the FFI_BIT distinguishes them.
 static TYPE_ID_COUNTER: AtomicU32 = AtomicU32::new(32);
 
-/// Global atomic counter for generating unique FunctionIds
+/// Global atomic counter for generating unique FunctionIds.
+/// Both FFI and script functions share this counter; the FFI_BIT distinguishes them.
 static FUNCTION_ID_COUNTER: AtomicU32 = AtomicU32::new(0);
 
 /// A unique identifier for a type in the type system.
@@ -33,9 +40,36 @@ impl TypeId {
     }
 
     /// Generate the next unique TypeId using the global atomic counter.
+    /// This is a legacy method - prefer `next_ffi()` or `next_script()`.
     #[inline]
     pub fn next() -> Self {
         TypeId(TYPE_ID_COUNTER.fetch_add(1, Ordering::Relaxed))
+    }
+
+    /// Generate the next unique FFI TypeId (with FFI_BIT set).
+    /// Use this for types registered through the FFI system.
+    #[inline]
+    pub fn next_ffi() -> Self {
+        TypeId(TYPE_ID_COUNTER.fetch_add(1, Ordering::Relaxed) | FFI_BIT)
+    }
+
+    /// Generate the next unique script TypeId (without FFI_BIT).
+    /// Use this for types defined in AngelScript code.
+    #[inline]
+    pub fn next_script() -> Self {
+        TypeId(TYPE_ID_COUNTER.fetch_add(1, Ordering::Relaxed))
+    }
+
+    /// Check if this is an FFI type (high bit set).
+    #[inline]
+    pub const fn is_ffi(self) -> bool {
+        (self.0 & FFI_BIT) != 0
+    }
+
+    /// Check if this is a script type (high bit clear).
+    #[inline]
+    pub const fn is_script(self) -> bool {
+        (self.0 & FFI_BIT) == 0
     }
 
     /// Get the underlying u32 value.
@@ -51,7 +85,6 @@ impl TypeId {
     pub fn reset_counter(start: u32) {
         TYPE_ID_COUNTER.store(start, Ordering::Relaxed);
     }
-
 }
 
 impl fmt::Display for TypeId {
@@ -60,31 +93,32 @@ impl fmt::Display for TypeId {
     }
 }
 
-// Fixed TypeIds for primitive types (0-11)
-pub const VOID_TYPE: TypeId = TypeId(0);
-pub const BOOL_TYPE: TypeId = TypeId(1);
-pub const INT8_TYPE: TypeId = TypeId(2);
-pub const INT16_TYPE: TypeId = TypeId(3);
-pub const INT32_TYPE: TypeId = TypeId(4);   // "int" alias
-pub const INT64_TYPE: TypeId = TypeId(5);
-pub const UINT8_TYPE: TypeId = TypeId(6);
-pub const UINT16_TYPE: TypeId = TypeId(7);
-pub const UINT32_TYPE: TypeId = TypeId(8);  // "uint" alias
-pub const UINT64_TYPE: TypeId = TypeId(9);
-pub const FLOAT_TYPE: TypeId = TypeId(10);
-pub const DOUBLE_TYPE: TypeId = TypeId(11);
+// Fixed TypeIds for primitive types (0-11) - all FFI types have FFI_BIT set
+pub const VOID_TYPE: TypeId = TypeId(FFI_BIT | 0);
+pub const BOOL_TYPE: TypeId = TypeId(FFI_BIT | 1);
+pub const INT8_TYPE: TypeId = TypeId(FFI_BIT | 2);
+pub const INT16_TYPE: TypeId = TypeId(FFI_BIT | 3);
+pub const INT32_TYPE: TypeId = TypeId(FFI_BIT | 4);   // "int" alias
+pub const INT64_TYPE: TypeId = TypeId(FFI_BIT | 5);
+pub const UINT8_TYPE: TypeId = TypeId(FFI_BIT | 6);
+pub const UINT16_TYPE: TypeId = TypeId(FFI_BIT | 7);
+pub const UINT32_TYPE: TypeId = TypeId(FFI_BIT | 8);  // "uint" alias
+pub const UINT64_TYPE: TypeId = TypeId(FFI_BIT | 9);
+pub const FLOAT_TYPE: TypeId = TypeId(FFI_BIT | 10);
+pub const DOUBLE_TYPE: TypeId = TypeId(FFI_BIT | 11);
 
-// Special types (12-15)
-pub const NULL_TYPE: TypeId = TypeId(12);  // Null literal type (converts to any handle)
-pub const VARIABLE_PARAM_TYPE: TypeId = TypeId(13);  // ? type - accepts any value (for generic FFI functions)
+// Special types (12-15) - also FFI types
+pub const NULL_TYPE: TypeId = TypeId(FFI_BIT | 12);  // Null literal type (converts to any handle)
+pub const VARIABLE_PARAM_TYPE: TypeId = TypeId(FFI_BIT | 13);  // ? type - accepts any value (for generic FFI functions)
 
 /// Placeholder for self-referential template types during FFI import.
 /// Used for methods like `array<T> opAssign(const array<T> &in)` where the
 /// return/param type is the template itself with its own params.
 /// At instantiation time, this is replaced with the actual instance TypeId.
-pub const SELF_TYPE: TypeId = TypeId(u32::MAX - 1);
+/// Uses FFI_BIT since it's used in FFI template definitions.
+pub const SELF_TYPE: TypeId = TypeId(FFI_BIT | (u32::MAX & !FFI_BIT) - 1);
 
-// Gap: TypeIds 13-31 reserved for future special types
+// Gap: TypeIds 14-31 reserved for future special types
 
 /// First TypeId available for user-defined types (including FFI types like array, string)
 pub const FIRST_USER_TYPE_ID: u32 = 32;
@@ -242,9 +276,36 @@ impl FunctionId {
     }
 
     /// Generate the next unique FunctionId using the global atomic counter.
+    /// This is a legacy method - prefer `next_ffi()` or `next_script()`.
     #[inline]
     pub fn next() -> Self {
         FunctionId(FUNCTION_ID_COUNTER.fetch_add(1, Ordering::Relaxed))
+    }
+
+    /// Generate the next unique FFI FunctionId (with FFI_BIT set).
+    /// Use this for functions registered through the FFI system.
+    #[inline]
+    pub fn next_ffi() -> Self {
+        FunctionId(FFI_BIT | FUNCTION_ID_COUNTER.fetch_add(1, Ordering::Relaxed))
+    }
+
+    /// Generate the next unique script FunctionId (without FFI_BIT).
+    /// Use this for functions defined in AngelScript code.
+    #[inline]
+    pub fn next_script() -> Self {
+        FunctionId(FUNCTION_ID_COUNTER.fetch_add(1, Ordering::Relaxed))
+    }
+
+    /// Check if this is an FFI function (high bit set).
+    #[inline]
+    pub const fn is_ffi(self) -> bool {
+        (self.0 & FFI_BIT) != 0
+    }
+
+    /// Check if this is a script function (high bit clear).
+    #[inline]
+    pub const fn is_script(self) -> bool {
+        (self.0 & FFI_BIT) == 0
     }
 
     /// Get the underlying u32 value
@@ -957,18 +1018,38 @@ mod tests {
 
     #[test]
     fn primitive_type_constants() {
-        assert_eq!(VOID_TYPE, TypeId(0));
-        assert_eq!(BOOL_TYPE, TypeId(1));
-        assert_eq!(INT8_TYPE, TypeId(2));
-        assert_eq!(INT16_TYPE, TypeId(3));
-        assert_eq!(INT32_TYPE, TypeId(4));
-        assert_eq!(INT64_TYPE, TypeId(5));
-        assert_eq!(UINT8_TYPE, TypeId(6));
-        assert_eq!(UINT16_TYPE, TypeId(7));
-        assert_eq!(UINT32_TYPE, TypeId(8));
-        assert_eq!(UINT64_TYPE, TypeId(9));
-        assert_eq!(FLOAT_TYPE, TypeId(10));
-        assert_eq!(DOUBLE_TYPE, TypeId(11));
+        // All primitives have FFI_BIT set
+        assert_eq!(VOID_TYPE, TypeId(FFI_BIT | 0));
+        assert_eq!(BOOL_TYPE, TypeId(FFI_BIT | 1));
+        assert_eq!(INT8_TYPE, TypeId(FFI_BIT | 2));
+        assert_eq!(INT16_TYPE, TypeId(FFI_BIT | 3));
+        assert_eq!(INT32_TYPE, TypeId(FFI_BIT | 4));
+        assert_eq!(INT64_TYPE, TypeId(FFI_BIT | 5));
+        assert_eq!(UINT8_TYPE, TypeId(FFI_BIT | 6));
+        assert_eq!(UINT16_TYPE, TypeId(FFI_BIT | 7));
+        assert_eq!(UINT32_TYPE, TypeId(FFI_BIT | 8));
+        assert_eq!(UINT64_TYPE, TypeId(FFI_BIT | 9));
+        assert_eq!(FLOAT_TYPE, TypeId(FFI_BIT | 10));
+        assert_eq!(DOUBLE_TYPE, TypeId(FFI_BIT | 11));
+    }
+
+    #[test]
+    fn primitive_types_are_ffi() {
+        assert!(VOID_TYPE.is_ffi());
+        assert!(BOOL_TYPE.is_ffi());
+        assert!(INT32_TYPE.is_ffi());
+        assert!(FLOAT_TYPE.is_ffi());
+        assert!(DOUBLE_TYPE.is_ffi());
+
+        assert!(!VOID_TYPE.is_script());
+        assert!(!INT32_TYPE.is_script());
+    }
+
+    #[test]
+    fn special_types_are_ffi() {
+        assert!(NULL_TYPE.is_ffi());
+        assert!(VARIABLE_PARAM_TYPE.is_ffi());
+        assert!(SELF_TYPE.is_ffi());
     }
 
     #[test]
@@ -1789,6 +1870,32 @@ mod tests {
     // NULL_TYPE constant test
     #[test]
     fn null_type_constant() {
-        assert_eq!(NULL_TYPE, TypeId(12));
+        assert_eq!(NULL_TYPE, TypeId(FFI_BIT | 12));
+    }
+
+    #[test]
+    fn type_id_ffi_vs_script() {
+        // FFI type has high bit set
+        let ffi_id = TypeId::new(FFI_BIT | 42);
+        assert!(ffi_id.is_ffi());
+        assert!(!ffi_id.is_script());
+
+        // Script type has high bit clear
+        let script_id = TypeId::new(42);
+        assert!(!script_id.is_ffi());
+        assert!(script_id.is_script());
+    }
+
+    #[test]
+    fn function_id_ffi_vs_script() {
+        // FFI function has high bit set
+        let ffi_id = FunctionId::new(FFI_BIT | 100);
+        assert!(ffi_id.is_ffi());
+        assert!(!ffi_id.is_script());
+
+        // Script function has high bit clear
+        let script_id = FunctionId::new(100);
+        assert!(!script_id.is_ffi());
+        assert!(script_id.is_script());
     }
 }

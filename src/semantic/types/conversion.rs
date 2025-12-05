@@ -242,6 +242,12 @@ impl DataType {
             return Some(Conversion::null_to_handle());
         }
 
+        // Null literal cannot convert to non-handle types - return early to avoid
+        // looking up NULL_TYPE in registry (it's a special sentinel, not a real type)
+        if self.type_id == NULL_TYPE {
+            return None;
+        }
+
         // Try primitive conversions first (most common)
         if let Some(conv) = self.primitive_conversion(target) {
             return Some(conv);

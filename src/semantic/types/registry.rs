@@ -159,8 +159,8 @@ impl<'ast> MixinDef<'ast> {
 /// Global registry for all types, functions, and variables
 #[derive(Clone)]
 pub struct Registry<'ast> {
-    // Type storage
-    types: Vec<TypeDef>,
+    // Type storage - HashMap for O(1) lookup by TypeId (supports FFI_BIT in TypeIds)
+    types: FxHashMap<TypeId, TypeDef>,
     type_by_name: FxHashMap<String, TypeId>,
 
     // Type behaviors (lifecycle, initialization) - stored separately from TypeDef
@@ -235,7 +235,7 @@ impl<'ast> Registry<'ast> {
     /// Create a new registry with all built-in types pre-registered
     pub fn new() -> Self {
         let mut registry = Self {
-            types: Vec::with_capacity(32),
+            types: FxHashMap::default(),
             type_by_name: FxHashMap::default(),
             behaviors: FxHashMap::default(),
             functions: FxHashMap::default(),
@@ -258,7 +258,7 @@ impl<'ast> Registry<'ast> {
             double_type: DOUBLE_TYPE,
         };
 
-        // Pre-register primitives at fixed indices (0-11)
+        // Pre-register primitives with their fixed TypeIds (which now have FFI_BIT set)
         registry.register_primitive(PrimitiveType::Void, VOID_TYPE);
         registry.register_primitive(PrimitiveType::Bool, BOOL_TYPE);
         registry.register_primitive(PrimitiveType::Int8, INT8_TYPE);
@@ -272,42 +272,20 @@ impl<'ast> Registry<'ast> {
         registry.register_primitive(PrimitiveType::Float, FLOAT_TYPE);
         registry.register_primitive(PrimitiveType::Double, DOUBLE_TYPE);
 
-        // Fill gap 12-15 with placeholders
-        while registry.types.len() < 16 {
-            registry.types.push(TypeDef::Primitive {
-                kind: PrimitiveType::Void,
-            });
-        }
-
-        // Fill gap 19-31 with placeholders
-        while registry.types.len() < FIRST_USER_TYPE_ID as usize {
-            registry.types.push(TypeDef::Primitive {
-                kind: PrimitiveType::Void,
-            });
-        }
-
         registry
     }
 
-    /// Register a primitive type at a fixed index
+    /// Register a primitive type with a fixed TypeId
     fn register_primitive(&mut self, kind: PrimitiveType, type_id: TypeId) {
-        let index = type_id.as_u32() as usize;
-
-        // Ensure vector is large enough
-        while self.types.len() <= index {
-            self.types.push(TypeDef::Primitive {
-                kind: PrimitiveType::Void,
-            });
-        }
-
-        self.types[index] = TypeDef::Primitive { kind };
+        self.types.insert(type_id, TypeDef::Primitive { kind });
         self.type_by_name.insert(kind.name().to_string(), type_id);
     }
 
-    /// Register a new type and return its TypeId
+    /// Register a new type and return its TypeId.
+    /// Uses `TypeId::next_script()` since Registry holds script-defined types.
     pub fn register_type(&mut self, typedef: TypeDef, name: Option<&str>) -> TypeId {
-        let type_id = TypeId::new(self.types.len() as u32);
-        self.types.push(typedef);
+        let type_id = TypeId::next_script();
+        self.types.insert(type_id, typedef);
 
         if let Some(name) = name {
             self.type_by_name.insert(name.to_string(), type_id);
@@ -337,12 +315,12 @@ impl<'ast> Registry<'ast> {
 
     /// Get a type definition by TypeId
     pub fn get_type(&self, type_id: TypeId) -> &TypeDef {
-        &self.types[type_id.as_u32() as usize]
+        self.types.get(&type_id).expect("TypeId not found in registry")
     }
 
     /// Get a mutable type definition by TypeId
     pub fn get_type_mut(&mut self, type_id: TypeId) -> &mut TypeDef {
-        &mut self.types[type_id.as_u32() as usize]
+        self.types.get_mut(&type_id).expect("TypeId not found in registry")
     }
 
     /// Get the behaviors for a type, if any are registered.
@@ -476,7 +454,8 @@ impl<'ast> Registry<'ast> {
             .collect();
 
         // Reserve instance ID before specializing methods (they need to reference the new object type)
-        let instance_id = TypeId::new(self.types.len() as u32);
+        // Template instances are script types (no FFI_BIT)
+        let instance_id = TypeId::next_script();
 
         // Specialize methods
         let mut instance_methods = Vec::new();
@@ -514,7 +493,7 @@ impl<'ast> Registry<'ast> {
         };
 
         // Actually register the instance
-        self.types.push(instance);
+        self.types.insert(instance_id, instance);
         self.type_by_name.insert(instance_name.clone(), instance_id);
 
         // Copy and specialize behaviors from template to instance
@@ -1835,7 +1814,8 @@ impl<'ast> Registry<'ast> {
                 .iter()
                 .enumerate()
                 .map(|(i, name)| {
-                    let param_id = TypeId::next();
+                    // Template params from FFI use next_ffi()
+                    let param_id = TypeId::next_ffi();
                     // Use the actual type_id as owner (if pre-existing) or the def's id
                     let owner_id = actual_type_id.unwrap_or(type_def.id);
                     let param_def = TypeDef::TemplateParam {
@@ -1843,15 +1823,8 @@ impl<'ast> Registry<'ast> {
                         index: i,
                         owner: owner_id,
                     };
-                    // Register at the specific index matching param_id
-                    // (using register_type_at_id logic to ensure alignment)
-                    let index = param_id.as_u32() as usize;
-                    while self.types.len() <= index {
-                        self.types.push(TypeDef::Primitive {
-                            kind: PrimitiveType::Void,
-                        });
-                    }
-                    self.types[index] = param_def;
+                    // Register the template param
+                    self.types.insert(param_id, param_def);
                     // Register with a special internal name for lookup
                     self.type_by_name
                         .insert(format!("{}::${}", qualified_name, name), param_id);
@@ -2699,17 +2672,7 @@ impl<'ast> Registry<'ast> {
     ///
     /// This is used for FFI types where the TypeId was assigned during registration.
     fn register_type_at_id(&mut self, type_id: TypeId, typedef: TypeDef, name: &str) {
-        let index = type_id.as_u32() as usize;
-
-        // Ensure the types vec is large enough
-        while self.types.len() <= index {
-            // Add placeholder types
-            self.types.push(TypeDef::Primitive {
-                kind: PrimitiveType::Void,
-            });
-        }
-
-        self.types[index] = typedef;
+        self.types.insert(type_id, typedef);
         self.type_by_name.insert(name.to_string(), type_id);
     }
 }
@@ -2728,7 +2691,8 @@ mod tests {
     #[test]
     fn registry_new_has_primitives() {
         let registry = Registry::new();
-        assert_eq!(registry.types.len(), 32);
+        // 12 primitive types registered (no placeholders needed with HashMap)
+        assert_eq!(registry.types.len(), 12);
     }
 
     #[test]
@@ -3090,8 +3054,8 @@ mod tests {
         let mut registry = Registry::new();
 
         // Reserve IDs - template first, then param
-        let template_id = TypeId::new(registry.types.len() as u32);
-        let template_param_id = TypeId::new(registry.types.len() as u32 + 1);
+        let template_id = TypeId::next_script();
+        let template_param_id = TypeId::next_script();
 
         // Create a method with SELF_TYPE as return type (simulates `TestTemplate<T> clone()`)
         let method_id = FunctionId::next();
@@ -3110,8 +3074,8 @@ mod tests {
         };
         registry.register_function(method);
 
-        // Register the template FIRST (at template_id index)
-        registry.types.push(TypeDef::Class {
+        // Register the template
+        registry.types.insert(template_id, TypeDef::Class {
             name: "TestTemplate".to_string(),
             qualified_name: "TestTemplate".to_string(),
             fields: Vec::new(),
@@ -3125,12 +3089,12 @@ mod tests {
             template_params: vec![template_param_id],
             template: None,
             type_args: Vec::new(),
-        type_kind: crate::types::TypeKind::reference(),
-            });
+            type_kind: crate::types::TypeKind::reference(),
+        });
         registry.type_by_name.insert("TestTemplate".to_string(), template_id);
 
-        // Register template param SECOND (at template_param_id index)
-        registry.types.push(TypeDef::TemplateParam {
+        // Register template param
+        registry.types.insert(template_param_id, TypeDef::TemplateParam {
             name: "T".to_string(),
             index: 0,
             owner: template_id,
@@ -3244,8 +3208,8 @@ mod tests {
         let array_id = registry.lookup_type("array").expect("array type not found");
 
         // Register a custom class type to use as an element type
-        let custom_type_id = TypeId::new(registry.types.len() as u32);
-        registry.types.push(TypeDef::Class {
+        let custom_type_id = TypeId::next_script();
+        registry.types.insert(custom_type_id, TypeDef::Class {
             name: "CustomType".to_string(),
             qualified_name: "CustomType".to_string(),
             fields: Vec::new(),
@@ -3259,8 +3223,8 @@ mod tests {
             template_params: Vec::new(),
             template: None,
             type_args: Vec::new(),
-        type_kind: crate::types::TypeKind::reference(),
-            });
+            type_kind: crate::types::TypeKind::reference(),
+        });
         registry.type_by_name.insert("CustomType".to_string(), custom_type_id);
 
         // Test: array<CustomType> - value type element
@@ -3325,8 +3289,8 @@ mod tests {
         );
 
         // Register a class type
-        let class_id = TypeId::new(registry.types.len() as u32);
-        registry.types.push(TypeDef::Class {
+        let class_id = TypeId::next_script();
+        registry.types.insert(class_id, TypeDef::Class {
             name: "Entity".to_string(),
             qualified_name: "Entity".to_string(),
             fields: Vec::new(),
@@ -3340,8 +3304,8 @@ mod tests {
             template_params: Vec::new(),
             template: None,
             type_args: Vec::new(),
-        type_kind: crate::types::TypeKind::reference(),
-            });
+            type_kind: crate::types::TypeKind::reference(),
+        });
         registry.type_by_name.insert("Entity".to_string(), class_id);
 
         // Instantiate with a handle type (simulating @Entity)
@@ -3385,8 +3349,8 @@ mod tests {
         );
 
         // Register a class type
-        let class_id = TypeId::new(registry.types.len() as u32);
-        registry.types.push(TypeDef::Class {
+        let class_id = TypeId::next_script();
+        registry.types.insert(class_id, TypeDef::Class {
             name: "Foo".to_string(),
             qualified_name: "Foo".to_string(),
             fields: Vec::new(),
@@ -3400,8 +3364,8 @@ mod tests {
             template_params: Vec::new(),
             template: None,
             type_args: Vec::new(),
-        type_kind: crate::types::TypeKind::reference(),
-            });
+            type_kind: crate::types::TypeKind::reference(),
+        });
         registry.type_by_name.insert("Foo".to_string(), class_id);
 
         // Test handle rejection FIRST (before the value type instantiation caches)
@@ -3442,8 +3406,8 @@ mod tests {
         );
 
         // Register a class type
-        let class_id = TypeId::new(registry.types.len() as u32);
-        registry.types.push(TypeDef::Class {
+        let class_id = TypeId::next_script();
+        registry.types.insert(class_id, TypeDef::Class {
             name: "Bar".to_string(),
             qualified_name: "Bar".to_string(),
             fields: Vec::new(),
@@ -3457,8 +3421,8 @@ mod tests {
             template_params: Vec::new(),
             template: None,
             type_args: Vec::new(),
-        type_kind: crate::types::TypeKind::reference(),
-            });
+            type_kind: crate::types::TypeKind::reference(),
+        });
         registry.type_by_name.insert("Bar".to_string(), class_id);
 
         // Instantiate with value type should work
@@ -3516,14 +3480,14 @@ mod tests {
         registry.register_function(mutable_method);
 
         // Create a class with both opIndex methods
-        let class_id = TypeId::new(registry.types.len() as u32);
+        let class_id = TypeId::next_script();
         let mut operator_methods: FxHashMap<OperatorBehavior, Vec<FunctionId>> = FxHashMap::default();
         operator_methods.insert(
             OperatorBehavior::OpIndex,
             vec![const_method_id, mutable_method_id],
         );
 
-        registry.types.push(TypeDef::Class {
+        registry.types.insert(class_id, TypeDef::Class {
             name: "TestClass".to_string(),
             qualified_name: "TestClass".to_string(),
             fields: Vec::new(),
@@ -3537,8 +3501,8 @@ mod tests {
             template_params: Vec::new(),
             template: None,
             type_args: Vec::new(),
-        type_kind: crate::types::TypeKind::reference(),
-            });
+            type_kind: crate::types::TypeKind::reference(),
+        });
         registry.type_by_name.insert("TestClass".to_string(), class_id);
 
         // When prefer_mutable=true, should return the non-const method
@@ -3779,7 +3743,8 @@ mod tests {
     #[test]
     fn registry_default() {
         let registry = Registry::default();
-        assert_eq!(registry.types.len(), 32);
+        // 12 primitive types registered (no placeholders needed with HashMap)
+        assert_eq!(registry.types.len(), 12);
     }
 
     #[test]

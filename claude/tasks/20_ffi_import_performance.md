@@ -666,28 +666,173 @@ impl<'r, 'ast> FunctionDefView<'r, 'ast> {
 
 ---
 
-### Phase 6: Refactor Registry
+### Phase 6: Refactor Registry Architecture
 **Status:** Pending
 
-**Tasks:**
-1. Update `src/semantic/types/registry.rs`:
-   - Add `ffi: Arc<FfiRegistry>` field
-   - Add script-specific HashMaps
-   - Implement two-tier lookup methods
-   - Update all existing methods for new structure
+**Goal:** Refactor so `Registry` becomes `ScriptRegistry` (no FFI knowledge), introduce `CompilationContext` as the unified facade, and use TypeId/FunctionId high bits to identify FFI vs Script.
 
-2. Create view types:
-   - `FunctionDefView` enum
-   - Unified parameter/return type access
+---
 
-3. Update callers:
-   - Compiler passes that access registry
-   - Type resolution code
-   - Overload resolution
+#### Phase 6.1: TypeId and FunctionId Refactoring
+**File:** `src/semantic/types/type_def.rs`
+
+**TypeId changes:**
+1. Add `FFI_BIT` constant (`0x8000_0000`) and helper methods:
+   - `is_ffi()` - checks if high bit is set
+   - `is_script()` - checks if high bit is clear
+2. Update primitive constants to use FFI bit:
+   ```rust
+   pub const VOID_TYPE: TypeId = TypeId(0x8000_0000);
+   pub const BOOL_TYPE: TypeId = TypeId(0x8000_0001);
+   // ... etc for all 12 primitives (0-11)
+   ```
+3. Add separate atomic counters:
+   - `FFI_TYPE_ID_COUNTER` starting at 32 (after primitives + special types)
+   - `SCRIPT_TYPE_ID_COUNTER` starting at 0
+4. Add `TypeId::next_ffi()` and `TypeId::next_script()` methods
+5. Update special types to use FFI bit:
+   - `NULL_TYPE = TypeId(0x8000_000C)` (12)
+   - `VARIABLE_PARAM_TYPE = TypeId(0x8000_000D)` (13)
+   - `SELF_TYPE = TypeId(0x8000_0000 | (u32::MAX - 1))` or similar
+
+**FunctionId changes:**
+1. Add `FFI_BIT` constant and helper methods:
+   - `is_ffi()`, `is_script()`
+2. Add separate atomic counters:
+   - `FFI_FUNCTION_ID_COUNTER` starting at 0
+   - `SCRIPT_FUNCTION_ID_COUNTER` starting at 0
+3. Add `FunctionId::next_ffi()` and `FunctionId::next_script()` methods
+
+---
+
+#### Phase 6.2: FfiRegistry Updates
+**File:** `src/ffi/ffi_registry.rs`
+
+1. Update `FfiRegistryBuilder::new()`:
+   - Register primitives with FFI TypeIds (`0x8000_0000 + index`)
+   - Store actual `TypeDef::Primitive` entries in `types` HashMap
+2. Update `register_type()` to use `TypeId::next_ffi()`
+3. Update function registration to use `FunctionId::next_ffi()`
+4. Ensure all ID generation uses FFI variants throughout
+
+---
+
+#### Phase 6.3: Rename Registry to ScriptRegistry
+**Files:**
+- `src/semantic/types/registry.rs` (major changes)
+- `src/semantic/types/mod.rs` (update exports)
+
+1. Rename `Registry<'ast>` to `ScriptRegistry<'ast>`
+2. Change `types: Vec<TypeDef>` to `types: FxHashMap<TypeId, TypeDef>`
+3. Remove fields:
+   - `template_callbacks` (FFI only)
+   - `template_cache` (moves to CompilationContext)
+   - `void_type`, `bool_type`, etc. primitive fields (use constants)
+4. Update `new()`:
+   - Initialize empty `types` HashMap (no primitives)
+   - Don't put primitive names in `type_by_name` (CompilationContext handles)
+5. Update `register_type()` to use `TypeId::next_script()` and HashMap insert
+6. Update `register_function()` to use `FunctionId::next_script()`
+7. Update `get_type()` to do HashMap lookup (returns `Option<&TypeDef>`)
+8. Remove all `import_*` methods (handled by FfiRegistry now)
+9. Remove `instantiate_template()` (moves to CompilationContext)
+
+---
+
+#### Phase 6.4: Create CompilationContext
+**New file:** `src/semantic/compilation_context.rs`
+
+```rust
+pub struct CompilationContext<'ast> {
+    ffi: Arc<FfiRegistry>,
+    script: ScriptRegistry<'ast>,
+    template_cache: FxHashMap<(TypeId, Vec<TypeId>), TypeId>,
+}
+```
+
+1. Implement unified lookup methods that route by `is_ffi()`:
+   - `get_type(TypeId) -> &TypeDef` - routes to correct registry
+   - `get_type_mut(TypeId) -> Option<&mut TypeDef>` - script only
+   - `lookup_type(&str) -> Option<TypeId>` - FFI first, then script
+   - `get_function(FunctionId) -> ...` - routes by `is_ffi()`
+   - `lookup_functions(&str) -> ...` - FFI first, then script
+   - `get_behaviors(TypeId) -> Option<&TypeBehaviors>` - routes by `is_ffi()`
+   - `find_constructors()`, `find_factories()`, `find_operator_method()`, etc.
+
+2. Move `instantiate_template()` here with template_cache:
+   - Template definitions can be FFI (e.g., `array<T>`)
+   - Template instances are always Script types
+   - Cache key: `(template_type_id, vec of arg type_ids)`
+
+3. Add delegation methods to ScriptRegistry for registration:
+   - `register_type()`, `register_function()`, etc.
+
+4. Update `src/semantic/types/mod.rs` to export `CompilationContext`
+
+---
+
+#### Phase 6.5: Update Compiler Infrastructure
+**Files:**
+- `src/semantic/compiler.rs`
+- `src/semantic/passes/registration.rs`
+- `src/semantic/passes/type_compilation.rs`
+- `src/semantic/passes/function_processor/*.rs`
+
+1. `Compiler::compile_with_modules()`:
+   - Accept `Arc<FfiRegistry>` instead of `&[Module]`
+   - Create `CompilationContext` instead of `Registry`
+
+2. `Registrar`:
+   - Work with `ScriptRegistry` via `CompilationContext`
+   - Use `TypeId::next_script()` / `FunctionId::next_script()`
+
+3. `TypeCompiler`:
+   - Use `CompilationContext` for all type lookups
+   - Template instantiation via `CompilationContext`
+
+4. `FunctionCompiler` / `ExprChecker`:
+   - Use `CompilationContext` for lookups
+   - Operator resolution, overload resolution via `CompilationContext`
+
+---
+
+#### Phase 6.6: Update Context and Unit
+**Files:**
+- `src/context.rs`
+- `src/unit.rs`
+
+1. `Unit::build()` creates `CompilationContext` from `Arc<FfiRegistry>`
+2. Update `CompilationResult` to return appropriate types
+3. Ensure `Arc<FfiRegistry>` is passed through correctly
+
+---
+
+#### Phase 6.7: Cleanup and Testing
+1. Update all imports across codebase (`Registry` → `ScriptRegistry` or `CompilationContext`)
+2. Fix test files that use `Registry` directly
+3. Run full test suite: `cargo test --lib`
+4. Remove any dead code from old Registry implementation
+
+**Design Notes:**
+- Template instances are always Script types (created in ScriptRegistry)
+- Template definitions can be FFI types (e.g., `array<T>`)
+- Primitives are FFI types - `CompilationContext.lookup_type()` checks FfiRegistry first
+- The high bit approach allows O(1) routing without string comparisons
+- `get_type()`/`get_function()` dispatch by checking `is_ffi()` on the ID
+- `lookup_type()`/`lookup_functions()` check FFI first, then Script (for shadowing)
 
 **Files:**
-- `src/semantic/types/registry.rs` (major refactor)
-- `src/semantic/types/mod.rs` (modify exports)
+- `src/semantic/types/type_def.rs` (TypeId/FunctionId FFI bit)
+- `src/semantic/types/registry.rs` (rename to ScriptRegistry, use HashMap)
+- `src/ffi/ffi_registry.rs` (use FFI TypeIds, store primitives)
+- `src/semantic/compilation_context.rs` (NEW: unified facade)
+- `src/semantic/types/mod.rs` (update exports)
+- `src/semantic/compiler.rs` (use CompilationContext)
+- `src/semantic/passes/registration.rs` (use CompilationContext)
+- `src/semantic/passes/type_compilation.rs` (use CompilationContext)
+- `src/semantic/passes/function_processor/*.rs` (use CompilationContext)
+- `src/context.rs` (pass FfiRegistry to compilation)
+- `src/unit.rs` (create CompilationContext)
 
 ---
 
