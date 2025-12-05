@@ -63,18 +63,153 @@ use std::sync::Arc;
 
 use rustc_hash::FxHashMap;
 
-use crate::ast::Expr;
 use crate::ffi::FfiRegistry;
 use crate::semantic::error::SemanticError;
 use crate::semantic::template_instantiator::TemplateInstantiator;
 use crate::semantic::types::behaviors::TypeBehaviors;
-use crate::semantic::types::registry::{FunctionDef, GlobalVarDef, MixinDef, ScriptRegistry};
+use crate::semantic::types::registry::{FunctionDef, GlobalVarDef, MixinDef, ScriptParam, ScriptRegistry};
 use crate::semantic::types::type_def::{
     FieldDef, FunctionId, FunctionTraits, MethodSignature, OperatorBehavior, PropertyAccessors,
-    TypeDef, TypeId,
+    TypeDef, TypeId, Visibility,
 };
 use crate::semantic::types::DataType;
-use crate::types::{FfiFunctionDef, ResolvedFfiFunctionDef};
+use crate::types::ResolvedFfiFunctionDef;
+
+/// Unified reference to a function definition (either FFI or Script).
+///
+/// This enum provides a unified interface to access function metadata
+/// regardless of whether the function is from FFI or script code.
+#[derive(Debug, Clone, Copy)]
+pub enum FunctionRef<'a, 'ast> {
+    /// Reference to a script function
+    Script(&'a FunctionDef<'ast>),
+    /// Reference to an FFI function
+    Ffi(&'a ResolvedFfiFunctionDef),
+}
+
+impl<'a, 'ast> FunctionRef<'a, 'ast> {
+    /// Get the function's unique identifier.
+    pub fn id(&self) -> FunctionId {
+        match self {
+            FunctionRef::Script(f) => f.id,
+            FunctionRef::Ffi(f) => f.id,
+        }
+    }
+
+    /// Get the function name.
+    pub fn name(&self) -> &str {
+        match self {
+            FunctionRef::Script(f) => &f.name,
+            FunctionRef::Ffi(f) => &f.name,
+        }
+    }
+
+    /// Get the function's return type.
+    pub fn return_type(&self) -> &DataType {
+        match self {
+            FunctionRef::Script(f) => &f.return_type,
+            FunctionRef::Ffi(f) => &f.return_type,
+        }
+    }
+
+    /// Get the function traits (const, virtual, etc.).
+    pub fn traits(&self) -> &FunctionTraits {
+        match self {
+            FunctionRef::Script(f) => &f.traits,
+            FunctionRef::Ffi(f) => &f.traits,
+        }
+    }
+
+    /// Get the parameter types as DataTypes.
+    pub fn param_types(&self) -> Vec<DataType> {
+        match self {
+            FunctionRef::Script(f) => f.params.iter().map(|p| p.data_type.clone()).collect(),
+            FunctionRef::Ffi(f) => f.params.iter().map(|p| p.data_type.clone()).collect(),
+        }
+    }
+
+    /// Get the number of parameters.
+    pub fn param_count(&self) -> usize {
+        match self {
+            FunctionRef::Script(f) => f.params.len(),
+            FunctionRef::Ffi(f) => f.params.len(),
+        }
+    }
+
+    /// Get the owning type if this is a method.
+    pub fn owner_type(&self) -> Option<TypeId> {
+        match self {
+            FunctionRef::Script(f) => f.object_type,
+            FunctionRef::Ffi(f) => f.owner_type,
+        }
+    }
+
+    /// Check if this is a method (has an owner type).
+    pub fn is_method(&self) -> bool {
+        self.owner_type().is_some()
+    }
+
+    /// Get the visibility of this function.
+    pub fn visibility(&self) -> Visibility {
+        match self {
+            FunctionRef::Script(f) => f.visibility,
+            FunctionRef::Ffi(f) => f.visibility,
+        }
+    }
+
+    /// Get the number of required parameters (without defaults).
+    pub fn required_param_count(&self) -> usize {
+        match self {
+            FunctionRef::Script(f) => f.params.iter().filter(|p| p.default.is_none()).count(),
+            FunctionRef::Ffi(f) => f.params.iter().filter(|p| p.default_value.is_none()).count(),
+        }
+    }
+
+    /// Check if this function has default arguments.
+    pub fn has_defaults(&self) -> bool {
+        self.required_param_count() < self.param_count()
+    }
+
+    /// Get as a script function reference, if this is a script function.
+    pub fn as_script(&self) -> Option<&'a FunctionDef<'ast>> {
+        match self {
+            FunctionRef::Script(f) => Some(f),
+            FunctionRef::Ffi(_) => None,
+        }
+    }
+
+    /// Get as an FFI function reference, if this is an FFI function.
+    pub fn as_ffi(&self) -> Option<&'a ResolvedFfiFunctionDef> {
+        match self {
+            FunctionRef::Script(_) => None,
+            FunctionRef::Ffi(f) => Some(f),
+        }
+    }
+
+    /// Check if this is a script function.
+    pub fn is_script(&self) -> bool {
+        matches!(self, FunctionRef::Script(_))
+    }
+
+    /// Check if this is an FFI function.
+    pub fn is_ffi(&self) -> bool {
+        matches!(self, FunctionRef::Ffi(_))
+    }
+}
+
+/// Routes a lookup by TypeId to the appropriate registry (FFI or Script).
+///
+/// This macro reduces boilerplate for methods that have the same signature on both registries.
+/// It routes based on `type_id.is_ffi()`.
+macro_rules! route_type_lookup {
+    ($self:expr, $type_id:expr, $method:ident $(, $args:expr)*) => {
+        if $type_id.is_ffi() {
+            $self.ffi.$method($type_id $(, $args)*)
+        } else {
+            $self.script.$method($type_id $(, $args)*)
+        }
+    };
+}
 
 /// Unified compilation context providing access to both FFI and Script registries.
 ///
@@ -185,11 +320,12 @@ impl<'ast> CompilationContext<'ast> {
     /// Get a mutable type definition by TypeId.
     ///
     /// Only works for script types - FFI types are immutable.
-    /// Panics if the TypeId is an FFI type or not found.
+    /// Panics if the TypeId is an FFI type (this is a compiler bug).
     pub fn get_type_mut(&mut self, type_id: TypeId) -> &mut TypeDef {
-        if type_id.is_ffi() {
-            panic!("Cannot get mutable reference to FFI type - FFI types are immutable");
-        }
+        assert!(
+            !type_id.is_ffi(),
+            "Cannot modify FFI type - FFI types are immutable"
+        );
         self.script.get_type_mut(type_id)
     }
 
@@ -242,23 +378,32 @@ impl<'ast> CompilationContext<'ast> {
             .unwrap_or(&[])
     }
 
-    /// Get a script function definition by FunctionId.
+    /// Get a function definition by FunctionId (unified interface).
     ///
-    /// Only works for script functions. For FFI functions, use `get_ffi_function`.
-    /// Panics if the FunctionId is not found or is an FFI function.
-    pub fn get_function(&self, func_id: FunctionId) -> &FunctionDef<'ast> {
+    /// Returns a `FunctionRef` that provides unified access to function metadata
+    /// for both FFI and script functions.
+    /// Panics if the function is not found.
+    pub fn get_function_ref(&self, func_id: FunctionId) -> FunctionRef<'_, 'ast> {
         if func_id.is_ffi() {
-            panic!("Use get_ffi_function for FFI functions");
+            FunctionRef::Ffi(
+                self.ffi
+                    .get_function(func_id)
+                    .expect("FFI function not found"),
+            )
+        } else {
+            FunctionRef::Script(self.script.get_function(func_id))
         }
-        self.script.get_function(func_id)
     }
 
-    /// Get a mutable script function definition by FunctionId.
-    pub fn get_function_mut(&mut self, func_id: FunctionId) -> &mut FunctionDef<'ast> {
-        if func_id.is_ffi() {
-            panic!("Cannot get mutable reference to FFI function");
-        }
-        self.script.get_function_mut(func_id)
+    /// Get a script function definition by FunctionId.
+    ///
+    /// Only works for script functions. Panics if called with an FFI function ID.
+    pub fn get_function(&self, func_id: FunctionId) -> &FunctionDef<'ast> {
+        assert!(
+            !func_id.is_ffi(),
+            "get_function called with FFI function ID - use get_function_ref for FFI functions"
+        );
+        self.script.get_function(func_id)
     }
 
     /// Get an FFI function definition by FunctionId.
@@ -266,9 +411,28 @@ impl<'ast> CompilationContext<'ast> {
         self.ffi.get_function(func_id)
     }
 
+    /// Get a mutable script function definition by FunctionId.
+    ///
+    /// Only works for script functions. FFI functions are immutable.
+    pub fn get_function_mut(&mut self, func_id: FunctionId) -> &mut FunctionDef<'ast> {
+        assert!(
+            !func_id.is_ffi(),
+            "Cannot get mutable reference to FFI function"
+        );
+        self.script.get_function_mut(func_id)
+    }
+
     /// Get the total count of registered functions (FFI + Script).
     pub fn function_count(&self) -> usize {
         self.ffi.function_count() + self.script.function_count()
+    }
+
+    /// Generate the next script FunctionId.
+    ///
+    /// This allocates a new FunctionId for a script-defined function.
+    /// FFI functions get their IDs from FfiRegistry.
+    pub fn next_function_id(&self) -> FunctionId {
+        FunctionId::next()
     }
 
     // =========================================================================
@@ -297,11 +461,10 @@ impl<'ast> CompilationContext<'ast> {
     pub fn update_function_signature(
         &mut self,
         qualified_name: &str,
-        params: Vec<DataType>,
+        params: Vec<ScriptParam<'ast>>,
         return_type: DataType,
         object_type: Option<TypeId>,
         traits: FunctionTraits,
-        default_args: Vec<Option<&'ast Expr<'ast>>>,
     ) {
         self.script.update_function_signature(
             qualified_name,
@@ -309,12 +472,11 @@ impl<'ast> CompilationContext<'ast> {
             return_type,
             object_type,
             traits,
-            default_args,
         );
     }
 
     /// Update a function's parameters directly by FunctionId.
-    pub fn update_function_params(&mut self, func_id: FunctionId, params: Vec<DataType>) {
+    pub fn update_function_params(&mut self, func_id: FunctionId, params: Vec<ScriptParam<'ast>>) {
         self.script.update_function_params(func_id, params);
     }
 
@@ -331,11 +493,7 @@ impl<'ast> CompilationContext<'ast> {
     ///
     /// Routes to FFI or Script registry based on the FFI_BIT.
     pub fn get_behaviors(&self, type_id: TypeId) -> Option<&TypeBehaviors> {
-        if type_id.is_ffi() {
-            self.ffi.get_behaviors(type_id)
-        } else {
-            self.script.get_behaviors(type_id)
-        }
+        route_type_lookup!(self, type_id, get_behaviors)
     }
 
     /// Get mutable behaviors for a script type.
@@ -364,20 +522,12 @@ impl<'ast> CompilationContext<'ast> {
 
     /// Find all constructors for a given type (value types).
     pub fn find_constructors(&self, type_id: TypeId) -> Vec<FunctionId> {
-        if type_id.is_ffi() {
-            self.ffi.find_constructors(type_id)
-        } else {
-            self.script.find_constructors(type_id)
-        }
+        route_type_lookup!(self, type_id, find_constructors)
     }
 
     /// Find all factories for a given type (reference types).
     pub fn find_factories(&self, type_id: TypeId) -> Vec<FunctionId> {
-        if type_id.is_ffi() {
-            self.ffi.find_factories(type_id)
-        } else {
-            self.script.find_factories(type_id)
-        }
+        route_type_lookup!(self, type_id, find_factories)
     }
 
     /// Find a constructor for a type with specific argument types.
@@ -420,29 +570,17 @@ impl<'ast> CompilationContext<'ast> {
 
     /// Get all methods for a given type.
     pub fn get_methods(&self, type_id: TypeId) -> Vec<FunctionId> {
-        if type_id.is_ffi() {
-            self.ffi.get_methods(type_id)
-        } else {
-            self.script.get_methods(type_id)
-        }
+        route_type_lookup!(self, type_id, get_methods)
     }
 
     /// Find a method by name on a type (first match, with inheritance).
     pub fn find_method(&self, type_id: TypeId, name: &str) -> Option<FunctionId> {
-        if type_id.is_ffi() {
-            self.ffi.find_method(type_id, name)
-        } else {
-            self.script.find_method(type_id, name)
-        }
+        route_type_lookup!(self, type_id, find_method, name)
     }
 
     /// Find all methods with the given name on a type (for overload resolution).
     pub fn find_methods_by_name(&self, type_id: TypeId, name: &str) -> Vec<FunctionId> {
-        if type_id.is_ffi() {
-            self.ffi.find_methods_by_name(type_id, name)
-        } else {
-            self.script.find_methods_by_name(type_id, name)
-        }
+        route_type_lookup!(self, type_id, find_methods_by_name, name)
     }
 
     /// Get all methods for a class, including inherited methods.
@@ -473,11 +611,7 @@ impl<'ast> CompilationContext<'ast> {
         type_id: TypeId,
         operator: OperatorBehavior,
     ) -> Option<FunctionId> {
-        if type_id.is_ffi() {
-            self.ffi.find_operator_method(type_id, operator)
-        } else {
-            self.script.find_operator_method(type_id, operator)
-        }
+        route_type_lookup!(self, type_id, find_operator_method, operator)
     }
 
     /// Find all overloads of an operator method for a type.
@@ -486,11 +620,7 @@ impl<'ast> CompilationContext<'ast> {
         type_id: TypeId,
         operator: OperatorBehavior,
     ) -> &[FunctionId] {
-        if type_id.is_ffi() {
-            self.ffi.find_operator_methods(type_id, operator)
-        } else {
-            self.script.find_operator_methods(type_id, operator)
-        }
+        route_type_lookup!(self, type_id, find_operator_methods, operator)
     }
 
     /// Find the best operator method based on desired mutability.
@@ -515,20 +645,12 @@ impl<'ast> CompilationContext<'ast> {
 
     /// Find a property by name on a type.
     pub fn find_property(&self, type_id: TypeId, property_name: &str) -> Option<PropertyAccessors> {
-        if type_id.is_ffi() {
-            self.ffi.find_property(type_id, property_name)
-        } else {
-            self.script.find_property(type_id, property_name)
-        }
+        route_type_lookup!(self, type_id, find_property, property_name)
     }
 
     /// Get all properties for a type (including inherited).
     pub fn get_all_properties(&self, type_id: TypeId) -> FxHashMap<String, PropertyAccessors> {
-        if type_id.is_ffi() {
-            self.ffi.get_all_properties(type_id)
-        } else {
-            self.script.get_all_properties(type_id)
-        }
+        route_type_lookup!(self, type_id, get_all_properties)
     }
 
     // =========================================================================
@@ -537,14 +659,7 @@ impl<'ast> CompilationContext<'ast> {
 
     /// Get the base class of a type (if any).
     pub fn get_base_class(&self, type_id: TypeId) -> Option<TypeId> {
-        if type_id.is_ffi() {
-            self.ffi.get_base_class(type_id)
-        } else {
-            match self.script.get_type(type_id) {
-                TypeDef::Class { base_class, .. } => *base_class,
-                _ => None,
-            }
-        }
+        route_type_lookup!(self, type_id, get_base_class)
     }
 
     /// Check if `derived_class` is a subclass of `base_class`.
@@ -598,20 +713,12 @@ impl<'ast> CompilationContext<'ast> {
 
     /// Get all method signatures for an interface type.
     pub fn get_interface_methods(&self, type_id: TypeId) -> Option<&[MethodSignature]> {
-        if type_id.is_ffi() {
-            self.ffi.get_interface_methods(type_id)
-        } else {
-            self.script.get_interface_methods(type_id)
-        }
+        route_type_lookup!(self, type_id, get_interface_methods)
     }
 
     /// Get all interfaces implemented by a class.
     pub fn get_all_interfaces(&self, type_id: TypeId) -> Vec<TypeId> {
-        if type_id.is_ffi() {
-            self.ffi.get_all_interfaces(type_id)
-        } else {
-            self.script.get_all_interfaces(type_id)
-        }
+        route_type_lookup!(self, type_id, get_all_interfaces)
     }
 
     /// Check if a class has a method matching an interface method signature.
@@ -635,11 +742,7 @@ impl<'ast> CompilationContext<'ast> {
 
     /// Look up an enum value by enum type ID and value name.
     pub fn lookup_enum_value(&self, type_id: TypeId, value_name: &str) -> Option<i64> {
-        if type_id.is_ffi() {
-            self.ffi.lookup_enum_value(type_id, value_name)
-        } else {
-            self.script.lookup_enum_value(type_id, value_name)
-        }
+        route_type_lookup!(self, type_id, lookup_enum_value, value_name)
     }
 
     // =========================================================================
@@ -648,11 +751,7 @@ impl<'ast> CompilationContext<'ast> {
 
     /// Get the signature of a funcdef type.
     pub fn get_funcdef_signature(&self, type_id: TypeId) -> Option<(&[DataType], &DataType)> {
-        if type_id.is_ffi() {
-            self.ffi.get_funcdef_signature(type_id)
-        } else {
-            self.script.get_funcdef_signature(type_id)
-        }
+        route_type_lookup!(self, type_id, get_funcdef_signature)
     }
 
     /// Check if a function is compatible with a funcdef type.
@@ -859,20 +958,10 @@ impl<'ast> CompilationContext<'ast> {
     }
 
     /// Check if a type is a template (has template parameters).
+    ///
+    /// Templates are always FFI types - script types can only be template *instances*.
     pub fn is_template(&self, type_id: TypeId) -> bool {
-        if type_id.is_ffi() {
-            self.ffi.is_template(type_id)
-        } else {
-            match self.script.get_type(type_id) {
-                TypeDef::Class { template_params, .. } => !template_params.is_empty(),
-                _ => false,
-            }
-        }
-    }
-
-    /// Get an unresolved FFI function by ID (for template method instantiation).
-    pub fn get_unresolved_ffi_function(&self, id: FunctionId) -> Option<&FfiFunctionDef> {
-        self.ffi.get_unresolved_function(id)
+        type_id.is_ffi() && self.ffi.is_template(type_id)
     }
 }
 

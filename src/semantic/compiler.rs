@@ -10,6 +10,7 @@
 //! ```ignore
 //! use angelscript::{Parser::parse_lenient, Compiler};
 //! use bumpalo::Bump;
+//! use std::sync::Arc;
 //!
 //! let arena = Bump::new();
 //! let source = r#"
@@ -24,18 +25,22 @@
 //! "#;
 //!
 //! let (script, _) = Parser::parse_lenient(source, &arena);
-//! let compiled = Compiler::compile(&script);
+//! let ffi = Arc::new(FfiRegistryBuilder::new().build().unwrap());
+//! let compiled = Compiler::compile_with_ffi(&script, ffi);
 //!
 //! if compiled.errors.is_empty() {
 //!     println!("Compiled {} functions", compiled.module.functions.len());
 //! }
 //! ```
 
+use std::sync::Arc;
+
 use super::{
-    CompiledModule, FunctionCompiler, Registrar, Registry, SemanticError,
+    CompiledModule, CompilationContext, FunctionCompiler, Registrar, SemanticError,
     TypeCompiler,
 };
 use crate::ast::Script;
+use crate::ffi::{FfiRegistry, FfiRegistryBuilder};
 use rustc_hash::FxHashMap;
 
 /// Result of compiling a complete script.
@@ -46,8 +51,8 @@ pub struct CompilationResult<'ast> {
     /// The compiled module with all function bytecode (including lambdas)
     pub module: CompiledModule,
 
-    /// The complete type registry with all type information
-    pub registry: Registry<'ast>,
+    /// The complete compilation context with all type information (FFI + Script)
+    pub context: CompilationContext<'ast>,
 
     /// Type resolution map (AST span → resolved DataType)
     pub type_map: FxHashMap<crate::lexer::Span, super::DataType>,
@@ -67,9 +72,9 @@ impl<'ast> CompilationResult<'ast> {
         self.module.functions.len()
     }
 
-    /// Get the number of types registered
+    /// Get the number of types registered (FFI + Script)
     pub fn type_count(&self) -> usize {
-        self.registry.type_count()
+        self.context.type_count()
     }
 }
 
@@ -89,74 +94,113 @@ impl Compiler {
     /// Returns a `CompilationResult` containing all compiled artifacts and any errors.
     ///
     /// # Deprecated
-    /// Use `compile_with_modules` instead to ensure FFI modules (like array, string)
-    /// are imported and templates have their methods/operators populated.
-    #[deprecated(since = "0.2.0", note = "Use compile_with_modules instead")]
+    /// Use `compile_with_ffi` instead to ensure FFI types (primitives, array, string)
+    /// are available and templates have their methods/operators populated.
+    #[deprecated(since = "0.2.0", note = "Use compile_with_ffi instead")]
     #[cfg_attr(feature = "profiling", profiling::function)]
     pub fn compile<'ast>(script: &'ast Script<'ast>) -> CompilationResult<'ast> {
-        Self::compile_with_modules(script, &[])
+        // Create default FfiRegistry with primitives
+        let ffi = Arc::new(FfiRegistryBuilder::new().build().unwrap());
+        Self::compile_with_ffi(script, ffi)
     }
 
     /// Compile a script with FFI modules imported first.
     ///
-    /// TODO(Phase 6.5): This should accept `Arc<FfiRegistry>` instead of `&[Module]`
-    /// and create a `CompilationContext` for unified FFI + script type access.
-    ///
-    /// Currently the modules parameter is ignored - FFI types should be accessed
-    /// via CompilationContext once Phase 6.4-6.5 are complete.
+    /// # Deprecated
+    /// Use `compile_with_ffi` instead - modules are now installed into an FfiRegistry
+    /// before compilation.
+    #[deprecated(since = "0.3.0", note = "Use compile_with_ffi instead")]
     #[cfg_attr(feature = "profiling", profiling::function)]
     pub fn compile_with_modules<'ast>(
         script: &'ast Script<'ast>,
         _modules: &[crate::Module<'_>],
     ) -> CompilationResult<'ast> {
-        // Create empty script registry - FFI types are in FfiRegistry
-        // TODO(Phase 6.5): Create CompilationContext with Arc<FfiRegistry>
-        let registry = Registry::new();
+        // Create default FfiRegistry with primitives
+        let ffi = Arc::new(FfiRegistryBuilder::new().build().unwrap());
+        Self::compile_with_ffi(script, ffi)
+    }
+
+    /// Compile a script with an FFI registry providing primitives and registered types.
+    ///
+    /// This is the main compilation entry point. It:
+    /// 1. Creates a `CompilationContext` from the FFI registry
+    /// 2. Pass 1: Registration - Register all script-defined names
+    /// 3. Pass 2a: Type Compilation - Resolve types and fill in type details
+    /// 4. Pass 2b: Function Compilation - Compile all function bodies to bytecode
+    ///
+    /// # Arguments
+    /// - `script`: The parsed AST to compile
+    /// - `ffi`: An FFI registry containing primitives and any registered FFI types
+    ///
+    /// # Returns
+    /// A `CompilationResult` containing all compiled artifacts and any errors.
+    #[cfg_attr(feature = "profiling", profiling::function)]
+    pub fn compile_with_ffi<'ast>(
+        script: &'ast Script<'ast>,
+        ffi: Arc<FfiRegistry>,
+    ) -> CompilationResult<'ast> {
+        // Create CompilationContext from FfiRegistry
+        let context = CompilationContext::new(ffi);
 
         // Pass 1: Registration
-        let registration = Registrar::register_with_registry(script, registry);
+        let registration = Registrar::register_with_context(script, context);
 
         // Collect Pass 1 errors
         let mut all_errors = registration.errors;
 
         // Pass 2a: Type Compilation
-        let type_compilation = TypeCompiler::compile(script, registration.registry);
+        let type_compilation = TypeCompiler::compile(script, registration.context);
 
         // Collect Pass 2a errors
         all_errors.extend(type_compilation.errors);
 
         // Pass 2b: Function Compilation
-        let mut function_compilation = FunctionCompiler::compile(script, &type_compilation.registry);
+        let mut function_compilation = FunctionCompiler::compile(script, &type_compilation.context);
 
         // Collect Pass 2b errors
         all_errors.append(&mut function_compilation.errors);
 
         CompilationResult {
             module: function_compilation,
-            registry: type_compilation.registry,
+            context: type_compilation.context,
             type_map: type_compilation.type_map,
             errors: all_errors,
         }
     }
 
-    /// Compile a script and return only the registry (for testing or type-only compilation).
+    /// Compile a script and return only the context (for testing or type-only compilation).
     ///
     /// This performs Pass 1 and Pass 2a only, skipping function body compilation.
     pub fn compile_types<'ast>(script: &'ast Script<'ast>) -> TypeCompilationResult<'ast> {
+        // Create default FfiRegistry with primitives
+        let ffi = Arc::new(FfiRegistryBuilder::new().build().unwrap());
+        Self::compile_types_with_ffi(script, ffi)
+    }
+
+    /// Compile types only with an FFI registry.
+    ///
+    /// This performs Pass 1 and Pass 2a only, skipping function body compilation.
+    pub fn compile_types_with_ffi<'ast>(
+        script: &'ast Script<'ast>,
+        ffi: Arc<FfiRegistry>,
+    ) -> TypeCompilationResult<'ast> {
+        // Create CompilationContext from FfiRegistry
+        let context = CompilationContext::new(ffi);
+
         // Pass 1: Registration
-        let registration = Registrar::register(script);
+        let registration = Registrar::register_with_context(script, context);
 
         // Collect Pass 1 errors
         let mut all_errors = registration.errors;
 
         // Pass 2a: Type Compilation
-        let type_compilation = TypeCompiler::compile(script, registration.registry);
+        let type_compilation = TypeCompiler::compile(script, registration.context);
 
         // Collect Pass 2a errors
         all_errors.extend(type_compilation.errors);
 
         TypeCompilationResult {
-            registry: type_compilation.registry,
+            context: type_compilation.context,
             type_map: type_compilation.type_map,
             errors: all_errors,
         }
@@ -168,8 +212,8 @@ impl Compiler {
 /// Useful for tools that only need type information without function bodies.
 #[derive(Debug)]
 pub struct TypeCompilationResult<'ast> {
-    /// The complete type registry
-    pub registry: Registry<'ast>,
+    /// The complete compilation context with all type information (FFI + Script)
+    pub context: CompilationContext<'ast>,
 
     /// Type resolution map
     pub type_map: FxHashMap<crate::lexer::Span, super::DataType>,
@@ -231,7 +275,7 @@ mod tests {
         assert!(result.function_count() >= 1, "Expected at least 1 function, got {}", result.function_count());
 
         // Should have registered the Player type
-        assert!(result.registry.lookup_type("Player").is_some());
+        assert!(result.context.lookup_type("Player").is_some());
     }
 
     #[test]
@@ -271,7 +315,7 @@ mod tests {
         assert!(result.is_success(), "Errors: {:?}", result.errors);
 
         // Should have registered the Player type
-        assert!(result.registry.lookup_type("Player").is_some());
+        assert!(result.context.lookup_type("Player").is_some());
     }
 
     // ========== Visibility Enforcement Tests ==========

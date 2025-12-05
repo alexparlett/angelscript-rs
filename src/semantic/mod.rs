@@ -37,8 +37,8 @@ pub use compiler::{CompilationResult, Compiler, TypeCompilationResult};
 
 // Individual pass results (for advanced use cases)
 pub use passes::{
-    CompiledFunction, FunctionCompiler, RegistrationData, Registrar, TypeCompilationData,
-    TypeCompiler,
+    CompiledFunction, FunctionCompiler, RegistrationData, RegistrationDataWithContext,
+    Registrar, TypeCompilationData, TypeCompiler,
 };
 
 // Re-export CompiledModule from codegen (it's the output of FunctionCompiler)
@@ -59,5 +59,5 @@ pub use types::{
 // Re-export Registry as alias for backwards compatibility during transition
 pub use types::ScriptRegistry as Registry;
 
-// Re-export CompilationContext
-pub use compilation_context::CompilationContext;
+// Re-export CompilationContext and FunctionRef
+pub use compilation_context::{CompilationContext, FunctionRef};

@@ -31,6 +31,37 @@ use super::type_def::{
 use crate::ast::expr::Expr;
 use rustc_hash::FxHashMap;
 
+/// A script function parameter with type and optional default value.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ScriptParam<'ast> {
+    /// Parameter name
+    pub name: String,
+    /// Parameter type
+    pub data_type: DataType,
+    /// Default value expression (if any)
+    pub default: Option<&'ast Expr<'ast>>,
+}
+
+impl<'ast> ScriptParam<'ast> {
+    /// Create a new parameter with no default.
+    pub fn new(name: impl Into<String>, data_type: DataType) -> Self {
+        Self {
+            name: name.into(),
+            data_type,
+            default: None,
+        }
+    }
+
+    /// Create a new parameter with a default value.
+    pub fn with_default(name: impl Into<String>, data_type: DataType, default: &'ast Expr<'ast>) -> Self {
+        Self {
+            name: name.into(),
+            data_type,
+            default: Some(default),
+        }
+    }
+}
+
 /// Function definition with complete signature
 #[derive(Debug, Clone, PartialEq)]
 pub struct FunctionDef<'ast> {
@@ -40,8 +71,8 @@ pub struct FunctionDef<'ast> {
     pub name: String,
     /// Namespace path (e.g., ["Game", "Player"])
     pub namespace: Vec<String>,
-    /// Parameter types
-    pub params: Vec<DataType>,
+    /// Parameters with types and optional defaults
+    pub params: Vec<ScriptParam<'ast>>,
     /// Return type
     pub return_type: DataType,
     /// Object type if this is a method
@@ -50,8 +81,6 @@ pub struct FunctionDef<'ast> {
     pub traits: FunctionTraits,
     /// True if this is a native (FFI) function
     pub is_native: bool,
-    /// Default argument expressions (one per parameter, None if no default)
-    pub default_args: Vec<Option<&'ast Expr<'ast>>>,
     /// Visibility (public, private, protected) - only meaningful for methods
     pub visibility: Visibility,
     /// Whether the function signature has been filled in by Pass 2a
@@ -492,15 +521,15 @@ impl<'ast> ScriptRegistry<'ast> {
         // Check each parameter type matches
         for (func_param, funcdef_param) in func.params.iter().zip(funcdef_params.iter()) {
             // Base type must match
-            if func_param.type_id != funcdef_param.type_id {
+            if func_param.data_type.type_id != funcdef_param.type_id {
                 return false;
             }
             // Reference modifier must match
-            if func_param.ref_modifier != funcdef_param.ref_modifier {
+            if func_param.data_type.ref_modifier != funcdef_param.ref_modifier {
                 return false;
             }
             // Handle modifier must match
-            if func_param.is_handle != funcdef_param.is_handle {
+            if func_param.data_type.is_handle != funcdef_param.is_handle {
                 return false;
             }
         }
@@ -532,11 +561,10 @@ impl<'ast> ScriptRegistry<'ast> {
     pub fn update_function_signature(
         &mut self,
         qualified_name: &str,
-        params: Vec<DataType>,
+        params: Vec<ScriptParam<'ast>>,
         return_type: DataType,
         object_type: Option<TypeId>,
         traits: FunctionTraits,
-        default_args: Vec<Option<&'ast Expr<'ast>>>,
     ) {
         // Find the function(s) with this name
         if let Some(func_ids) = self.func_by_name.get(qualified_name).cloned() {
@@ -555,7 +583,6 @@ impl<'ast> ScriptRegistry<'ast> {
                             func_mut.params = params;
                             func_mut.return_type = return_type;
                             func_mut.traits = traits;
-                            func_mut.default_args = default_args;
                             func_mut.signature_filled = true;
                         }
                         return; // Only update one function
@@ -567,7 +594,7 @@ impl<'ast> ScriptRegistry<'ast> {
 
     /// Update a function's parameters directly by FunctionId
     /// Used to fill in params for auto-generated constructors
-    pub fn update_function_params(&mut self, func_id: FunctionId, params: Vec<DataType>) {
+    pub fn update_function_params(&mut self, func_id: FunctionId, params: Vec<ScriptParam<'ast>>) {
         if let Some(func) = self.functions.get_mut(&func_id) {
             func.params = params;
         }
@@ -608,7 +635,7 @@ impl<'ast> ScriptRegistry<'ast> {
                     .params
                     .iter()
                     .zip(arg_types.iter())
-                    .all(|(param_type, arg_type)| param_type == arg_type);
+                    .all(|(param, arg_type)| &param.data_type == arg_type);
 
                 if all_match {
                     return Some(method_id);
@@ -665,14 +692,14 @@ impl<'ast> ScriptRegistry<'ast> {
 
             // Parameter must be a reference (&in or &inout)
             if !matches!(
-                param.ref_modifier,
+                param.data_type.ref_modifier,
                 crate::semantic::RefModifier::In | crate::semantic::RefModifier::InOut
             ) {
                 continue;
             }
 
             // Parameter type must match the class type (ignoring const/ref modifiers)
-            if param.type_id == type_id {
+            if param.data_type.type_id == type_id {
                 return Some(ctor_id);
             }
         }
@@ -775,7 +802,7 @@ impl<'ast> ScriptRegistry<'ast> {
     }
 
     /// Get the base class of a type (if any)
-    fn get_base_class(&self, type_id: TypeId) -> Option<TypeId> {
+    pub fn get_base_class(&self, type_id: TypeId) -> Option<TypeId> {
         let typedef = self.get_type(type_id);
         if let TypeDef::Class { base_class, .. } = typedef {
             *base_class
@@ -1151,7 +1178,7 @@ impl<'ast> ScriptRegistry<'ast> {
                 .params
                 .iter()
                 .zip(params.iter())
-                .all(|(a, b)| a.type_id == b.type_id && a.ref_modifier == b.ref_modifier);
+                .all(|(a, b)| a.data_type.type_id == b.type_id && a.data_type.ref_modifier == b.ref_modifier);
 
             if params_match {
                 return Some(method_id);
@@ -1189,9 +1216,9 @@ impl<'ast> ScriptRegistry<'ast> {
             // Check parameter types match
             let params_match = func.params.iter().zip(interface_method.params.iter()).all(
                 |(func_param, iface_param)| {
-                    func_param.type_id == iface_param.type_id
-                        && func_param.ref_modifier == iface_param.ref_modifier
-                        && func_param.is_handle == iface_param.is_handle
+                    func_param.data_type.type_id == iface_param.type_id
+                        && func_param.data_type.ref_modifier == iface_param.ref_modifier
+                        && func_param.data_type.is_handle == iface_param.is_handle
                 },
             );
 
@@ -1294,6 +1321,15 @@ mod tests {
     use super::*;
     use crate::semantic::types::data_type::RefModifier;
     use crate::semantic::types::type_def::{Visibility, INT32_TYPE, VOID_TYPE, FLOAT_TYPE, DOUBLE_TYPE, BOOL_TYPE};
+
+    /// Test helper to create a ScriptParam from a DataType with an auto-generated name
+    fn param(data_type: DataType) -> ScriptParam<'static> {
+        ScriptParam {
+            name: String::new(),
+            data_type,
+            default: None,
+        }
+    }
 
     #[test]
     fn script_registry_new_is_empty() {
@@ -1460,7 +1496,7 @@ mod tests {
             id: const_method_id,
             name: "opIndex".to_string(),
             namespace: Vec::new(),
-            params: vec![DataType::simple(INT32_TYPE)],
+            params: vec![param(DataType::simple(INT32_TYPE))],
             return_type: DataType {
                 type_id: INT32_TYPE,
                 is_const: true, // const return
@@ -1471,7 +1507,7 @@ mod tests {
             object_type: None,
             traits: FunctionTraits { is_const: true, ..FunctionTraits::new() },
             is_native: true,
-            default_args: Vec::new(),
+
             visibility: Visibility::Public,
             signature_filled: true,
         };
@@ -1482,7 +1518,7 @@ mod tests {
             id: mutable_method_id,
             name: "opIndex".to_string(),
             namespace: Vec::new(),
-            params: vec![DataType::simple(INT32_TYPE)],
+            params: vec![param(DataType::simple(INT32_TYPE))],
             return_type: DataType {
                 type_id: INT32_TYPE,
                 is_const: false, // non-const return
@@ -1493,7 +1529,7 @@ mod tests {
             object_type: None,
             traits: FunctionTraits::new(),
             is_native: true,
-            default_args: Vec::new(),
+
             visibility: Visibility::Public,
             signature_filled: true,
         };
@@ -1550,12 +1586,12 @@ mod tests {
             id: FunctionId::new(0),
             name: "foo".to_string(),
             namespace: Vec::new(),
-            params: vec![DataType::simple(INT32_TYPE)],
+            params: vec![param(DataType::simple(INT32_TYPE))],
             return_type: DataType::simple(VOID_TYPE),
             object_type: None,
             traits: FunctionTraits::new(),
             is_native: false,
-            default_args: Vec::new(),
+
             visibility: Visibility::Public,
             signature_filled: true,
         };
@@ -1572,12 +1608,12 @@ mod tests {
             id: FunctionId::new(0),
             name: "foo".to_string(),
             namespace: Vec::new(),
-            params: vec![DataType::simple(INT32_TYPE)],
+            params: vec![param(DataType::simple(INT32_TYPE))],
             return_type: DataType::simple(VOID_TYPE),
             object_type: None,
             traits: FunctionTraits::new(),
             is_native: false,
-            default_args: Vec::new(),
+
             visibility: Visibility::Public,
             signature_filled: true,
         };
@@ -1605,12 +1641,12 @@ mod tests {
             id: FunctionId::new(0),
             name: "foo".to_string(),
             namespace: Vec::new(),
-            params: vec![DataType::simple(INT32_TYPE)],
+            params: vec![param(DataType::simple(INT32_TYPE))],
             return_type: DataType::simple(VOID_TYPE),
             object_type: None,
             traits: FunctionTraits::new(),
             is_native: false,
-            default_args: Vec::new(),
+
             visibility: Visibility::Public,
             signature_filled: true,
         };
@@ -1620,12 +1656,12 @@ mod tests {
             id: FunctionId::new(1),
             name: "foo".to_string(),
             namespace: Vec::new(),
-            params: vec![DataType::simple(FLOAT_TYPE)],
+            params: vec![param(DataType::simple(FLOAT_TYPE))],
             return_type: DataType::simple(VOID_TYPE),
             object_type: None,
             traits: FunctionTraits::new(),
             is_native: false,
-            default_args: Vec::new(),
+
             visibility: Visibility::Public,
             signature_filled: true,
         };
@@ -1648,7 +1684,7 @@ mod tests {
             object_type: None,
             traits: FunctionTraits::new(),
             is_native: false,
-            default_args: Vec::new(),
+
             visibility: Visibility::Public,
             signature_filled: true,
         };
@@ -1667,7 +1703,7 @@ mod tests {
             object_type: None,
             traits: FunctionTraits::new(),
             is_native: false,
-            default_args: Vec::new(),
+
             visibility: Visibility::Public,
             signature_filled: true,
         };
@@ -1683,12 +1719,12 @@ mod tests {
             id: FunctionId::new(0),
             name: "foo".to_string(),
             namespace: Vec::new(),
-            params: vec![DataType::simple(INT32_TYPE)],
+            params: vec![param(DataType::simple(INT32_TYPE))],
             return_type: DataType::simple(VOID_TYPE),
             object_type: None,
             traits: FunctionTraits::new(),
             is_native: false,
-            default_args: Vec::new(),
+
             visibility: Visibility::Public,
             signature_filled: true,
         };
@@ -1714,7 +1750,7 @@ mod tests {
             object_type: Some(player_type),
             traits: FunctionTraits::new(),
             is_native: false,
-            default_args: Vec::new(),
+
             visibility: Visibility::Public,
             signature_filled: true,
         };
@@ -1729,7 +1765,7 @@ mod tests {
             object_type: Some(player_type),
             traits: FunctionTraits::new(),
             is_native: false,
-            default_args: Vec::new(),
+
             visibility: Visibility::Public,
             signature_filled: true,
         };
@@ -1744,7 +1780,7 @@ mod tests {
             object_type: None,
             traits: FunctionTraits::new(),
             is_native: false,
-            default_args: Vec::new(),
+
             visibility: Visibility::Public,
             signature_filled: true,
         };
@@ -1763,8 +1799,9 @@ mod tests {
     #[test]
     fn registry_default() {
         let registry = ScriptRegistry::default();
-        // 12 primitive types registered (no placeholders needed with HashMap)
-        assert_eq!(registry.types.len(), 12);
+        // ScriptRegistry no longer contains primitives (they're in FfiRegistry)
+        // ScriptRegistry::default() starts empty
+        assert_eq!(registry.types.len(), 0);
     }
 
     #[test]
@@ -1827,7 +1864,7 @@ mod tests {
             id: FunctionId(0), // Will be reassigned by register_function
             name: "Vector3".to_string(),
             namespace: Vec::new(),
-            params: vec![int_type.clone(), int_type.clone(), int_type.clone()],
+            params: vec![param(int_type.clone()), param(int_type.clone()), param(int_type.clone())],
             return_type: DataType::simple(VOID_TYPE),
             object_type: Some(type_id),
             traits: FunctionTraits {
@@ -1841,7 +1878,7 @@ mod tests {
                 auto_generated: None,
             },
             is_native: false,
-            default_args: Vec::new(),
+
             visibility: Visibility::Public,
             signature_filled: true,
         };
@@ -1890,7 +1927,7 @@ mod tests {
             id: FunctionId(0),
             name: "Vector3".to_string(),
             namespace: Vec::new(),
-            params: vec![int_type.clone(), int_type.clone(), int_type.clone()],
+            params: vec![param(int_type.clone()), param(int_type.clone()), param(int_type.clone())],
             return_type: DataType::simple(VOID_TYPE),
             object_type: Some(type_id),
             traits: FunctionTraits {
@@ -1904,7 +1941,7 @@ mod tests {
                 auto_generated: None,
             },
             is_native: false,
-            default_args: Vec::new(),
+
             visibility: Visibility::Public,
             signature_filled: true,
         };
@@ -1950,7 +1987,7 @@ mod tests {
             id: FunctionId(0),
             name: "Vector3".to_string(),
             namespace: Vec::new(),
-            params: vec![int_type.clone()],
+            params: vec![param(int_type.clone())],
             return_type: DataType::simple(VOID_TYPE),
             object_type: Some(type_id),
             traits: FunctionTraits {
@@ -1964,7 +2001,7 @@ mod tests {
                 auto_generated: None,
             },
             is_native: false,
-            default_args: Vec::new(),
+
             visibility: Visibility::Public,
             signature_filled: true,
         };
@@ -2019,7 +2056,7 @@ mod tests {
                 auto_generated: None,
             },
             is_native: false,
-            default_args: Vec::new(),
+
             visibility: Visibility::Public,
             signature_filled: true,
         };
@@ -2029,7 +2066,7 @@ mod tests {
             id: FunctionId(0),
             name: "Vector3".to_string(),
             namespace: Vec::new(),
-            params: vec![int_type.clone()],
+            params: vec![param(int_type.clone())],
             return_type: DataType::simple(VOID_TYPE),
             object_type: Some(type_id),
             traits: FunctionTraits {
@@ -2043,7 +2080,7 @@ mod tests {
                 auto_generated: None,
             },
             is_native: false,
-            default_args: Vec::new(),
+
             visibility: Visibility::Public,
             signature_filled: true,
         };
@@ -2096,7 +2133,7 @@ mod tests {
             id: FunctionId(0),
             name: "Player".to_string(),
             namespace: Vec::new(),
-            params: vec![copy_ctor_param],
+            params: vec![param(copy_ctor_param)],
             return_type: DataType::simple(VOID_TYPE),
             object_type: Some(type_id),
             traits: FunctionTraits {
@@ -2112,7 +2149,7 @@ mod tests {
                 ),
             },
             is_native: false,
-            default_args: Vec::new(),
+
             visibility: Visibility::Public,
             signature_filled: true,
         };
@@ -2157,7 +2194,7 @@ mod tests {
             id: FunctionId(0),
             name: "Player".to_string(),
             namespace: Vec::new(),
-            params: vec![copy_ctor_param],
+            params: vec![param(copy_ctor_param)],
             return_type: DataType::simple(VOID_TYPE),
             object_type: Some(type_id),
             traits: FunctionTraits {
@@ -2173,7 +2210,7 @@ mod tests {
                 ),
             },
             is_native: false,
-            default_args: Vec::new(),
+
             visibility: Visibility::Public,
             signature_filled: true,
         };
@@ -2219,7 +2256,7 @@ mod tests {
             id: FunctionId(0),
             name: "Player".to_string(),
             namespace: Vec::new(),
-            params: vec![param1, param2],
+            params: vec![param(param1), param(param2)],
             return_type: DataType::simple(VOID_TYPE),
             object_type: Some(type_id),
             traits: FunctionTraits {
@@ -2233,7 +2270,7 @@ mod tests {
                 auto_generated: None,
             },
             is_native: false,
-            default_args: Vec::new(),
+
             visibility: Visibility::Public,
             signature_filled: true,
         };
@@ -2270,12 +2307,12 @@ mod tests {
         let type_id = registry.register_type(typedef, Some("Player"));
 
         // Create constructor with &out (wrong for copy constructor)
-        let param = DataType::with_ref_out(type_id);
+        let param_type = DataType::with_ref_out(type_id);
         let ctor = FunctionDef {
             id: FunctionId(0),
             name: "Player".to_string(),
             namespace: Vec::new(),
-            params: vec![param],
+            params: vec![param(param_type)],
             return_type: DataType::simple(VOID_TYPE),
             object_type: Some(type_id),
             traits: FunctionTraits {
@@ -2289,7 +2326,7 @@ mod tests {
                 auto_generated: None,
             },
             is_native: false,
-            default_args: Vec::new(),
+
             visibility: Visibility::Public,
             signature_filled: true,
         };
@@ -2326,12 +2363,12 @@ mod tests {
         let type_id = registry.register_type(typedef, Some("Player"));
 
         // Create constructor with different type parameter (not same class)
-        let param = DataType::with_ref_in(INT32_TYPE);
+        let param_type = DataType::with_ref_in(INT32_TYPE);
         let ctor = FunctionDef {
             id: FunctionId(0),
             name: "Player".to_string(),
             namespace: Vec::new(),
-            params: vec![param],
+            params: vec![param(param_type)],
             return_type: DataType::simple(VOID_TYPE),
             object_type: Some(type_id),
             traits: FunctionTraits {
@@ -2345,7 +2382,7 @@ mod tests {
                 auto_generated: None,
             },
             is_native: false,
-            default_args: Vec::new(),
+
             visibility: Visibility::Public,
             signature_filled: true,
         };
@@ -2514,7 +2551,7 @@ mod tests {
             object_type: None, // Set later
             traits: FunctionTraits::new(),
             is_native: false,
-            default_args: Vec::new(),
+
             visibility: Visibility::Public,
             signature_filled: true,
         };
@@ -2577,7 +2614,7 @@ mod tests {
             object_type: None,
             traits: FunctionTraits::new(),
             is_native: false,
-            default_args: Vec::new(),
+
             visibility: Visibility::Public,
             signature_filled: true,
         };
@@ -2612,7 +2649,7 @@ mod tests {
             object_type: None,
             traits: FunctionTraits::new(),
             is_native: false,
-            default_args: Vec::new(),
+
             visibility: Visibility::Public,
             signature_filled: true,
         };
@@ -2660,7 +2697,7 @@ mod tests {
             object_type: None,
             traits: FunctionTraits::new(),
             is_native: false,
-            default_args: Vec::new(),
+
             visibility: Visibility::Public,
             signature_filled: true,
         };

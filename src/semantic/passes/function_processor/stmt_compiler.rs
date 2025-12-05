@@ -161,7 +161,7 @@ impl<'ast> FunctionCompiler<'ast> {
 
             // Check if variable type is a funcdef (for function handle inference)
             let is_funcdef = matches!(
-                self.registry.get_type(var_type.type_id),
+                self.context.get_type(var_type.type_id),
                 TypeDef::Funcdef { .. }
             );
 
@@ -175,7 +175,7 @@ impl<'ast> FunctionCompiler<'ast> {
                 // Set expected init list target type if it has list behaviors
                 // The target type is the type that has list_factory or list_construct behavior
                 // (e.g., array<int>, StringBuffer, or any type with list initialization support)
-                if self.registry.get_behaviors(var_type.type_id)
+                if self.context.get_behaviors(var_type.type_id)
                     .is_some_and(|b| b.has_list_init())
                 {
                     self.expected_init_list_target = Some(var_type.type_id);
@@ -195,7 +195,7 @@ impl<'ast> FunctionCompiler<'ast> {
                 self.expected_init_list_target = None;
 
                 // Check if initializer can be converted to variable type and emit conversion if needed
-                if let Some(conversion) = init_ctx.data_type.can_convert_to(&var_type, self.registry) {
+                if let Some(conversion) = init_ctx.data_type.can_convert_to(&var_type, self.context) {
                     if !conversion.is_implicit {
                         self.error(
                             SemanticErrorKind::TypeMismatch,
@@ -243,7 +243,7 @@ impl<'ast> FunctionCompiler<'ast> {
             // Set expected funcdef type if return type is a funcdef
             // This allows lambda inference in return statements
             // Note: funcdef types are always handles, so we just check the type
-            let type_def = self.registry.get_type(self.return_type.type_id);
+            let type_def = self.context.get_type(self.return_type.type_id);
             if matches!(type_def, TypeDef::Funcdef { .. }) {
                 self.expected_funcdef_type = Some(self.return_type.type_id);
             }
@@ -270,7 +270,7 @@ impl<'ast> FunctionCompiler<'ast> {
             }
 
             // Check if value can be converted to return type and emit conversion if needed
-            if let Some(conversion) = value_ctx.data_type.can_convert_to(&self.return_type, self.registry) {
+            if let Some(conversion) = value_ctx.data_type.can_convert_to(&self.return_type, self.context) {
                 if !conversion.is_implicit {
                     self.error(
                         SemanticErrorKind::TypeMismatch,
@@ -517,7 +517,7 @@ impl<'ast> FunctionCompiler<'ast> {
         let container_type_id = container_ctx.data_type.type_id;
 
         // Check for required foreach operators
-        let begin_func_id = match self.registry.find_operator_method(container_type_id, OperatorBehavior::OpForBegin) {
+        let begin_func_id = match self.context.find_operator_method(container_type_id, OperatorBehavior::OpForBegin) {
             Some(func_id) => func_id,
             None => {
                 self.error(
@@ -532,7 +532,7 @@ impl<'ast> FunctionCompiler<'ast> {
             }
         };
 
-        let end_func_id = match self.registry.find_operator_method(container_type_id, OperatorBehavior::OpForEnd) {
+        let end_func_id = match self.context.find_operator_method(container_type_id, OperatorBehavior::OpForEnd) {
             Some(func_id) => func_id,
             None => {
                 self.error(
@@ -547,7 +547,7 @@ impl<'ast> FunctionCompiler<'ast> {
             }
         };
 
-        let next_func_id = match self.registry.find_operator_method(container_type_id, OperatorBehavior::OpForNext) {
+        let next_func_id = match self.context.find_operator_method(container_type_id, OperatorBehavior::OpForNext) {
             Some(func_id) => func_id,
             None => {
                 self.error(
@@ -563,7 +563,7 @@ impl<'ast> FunctionCompiler<'ast> {
         };
 
         // Validate operator signatures
-        let begin_func = self.registry.get_function(begin_func_id);
+        let begin_func = self.context.get_function(begin_func_id);
         if !begin_func.params.is_empty() {
             self.error(
                 SemanticErrorKind::InvalidOperation,
@@ -573,7 +573,7 @@ impl<'ast> FunctionCompiler<'ast> {
             return;
         }
 
-        let end_func = self.registry.get_function(end_func_id);
+        let end_func = self.context.get_function(end_func_id);
         if end_func.params.len() != 1 || end_func.return_type.type_id != BOOL_TYPE {
             self.error(
                 SemanticErrorKind::InvalidOperation,
@@ -583,7 +583,7 @@ impl<'ast> FunctionCompiler<'ast> {
             return;
         }
 
-        let next_func = self.registry.get_function(next_func_id);
+        let next_func = self.context.get_function(next_func_id);
         if next_func.params.len() != 1 {
             self.error(
                 SemanticErrorKind::InvalidOperation,
@@ -597,9 +597,9 @@ impl<'ast> FunctionCompiler<'ast> {
         let num_vars = foreach.vars.len();
         let value_func_ids: Vec<FunctionId> = if num_vars == 1 {
             // Try opForValue first, fall back to opForValue0
-            if let Some(func_id) = self.registry.find_operator_method(container_type_id, OperatorBehavior::OpForValue) {
+            if let Some(func_id) = self.context.find_operator_method(container_type_id, OperatorBehavior::OpForValue) {
                 vec![func_id]
-            } else if let Some(func_id) = self.registry.find_operator_method(container_type_id, OperatorBehavior::OpForValue0) {
+            } else if let Some(func_id) = self.context.find_operator_method(container_type_id, OperatorBehavior::OpForValue0) {
                 vec![func_id]
             } else {
                 self.error(
@@ -628,7 +628,7 @@ impl<'ast> FunctionCompiler<'ast> {
                     }
                 };
 
-                if let Some(func_id) = self.registry.find_operator_method(container_type_id, op_behavior) {
+                if let Some(func_id) = self.context.find_operator_method(container_type_id, op_behavior) {
                     operators.push(func_id);
                 } else {
                     self.error(
@@ -647,7 +647,7 @@ impl<'ast> FunctionCompiler<'ast> {
 
         // Declare and type-check loop variables
         for (i, var) in foreach.vars.iter().enumerate() {
-            let value_func = self.registry.get_function(value_func_ids[i]);
+            let value_func = self.context.get_function(value_func_ids[i]);
 
             if value_func.params.len() != 1 {
                 self.error(
@@ -663,7 +663,7 @@ impl<'ast> FunctionCompiler<'ast> {
             // Resolve the variable's type
             if let Some(var_type) = self.resolve_type_expr(&var.ty) {
                 // Check if element type can be converted to variable type
-                if let Some(_conversion) = element_type.can_convert_to(&var_type, self.registry) {
+                if let Some(_conversion) = element_type.can_convert_to(&var_type, self.context) {
                     // Type is compatible
                 } else {
                     self.error(
@@ -735,7 +735,7 @@ impl<'ast> FunctionCompiler<'ast> {
         // Load values into loop variables
         for (i, var) in foreach.vars.iter().enumerate() {
             let value_func_id = value_func_ids[i];
-            let value_func = self.registry.get_function(value_func_id);
+            let value_func = self.context.get_function(value_func_id);
 
             // Call container.opForValue#(iterator)
             // Stack: [] -> [value]
@@ -749,7 +749,7 @@ impl<'ast> FunctionCompiler<'ast> {
                 let var_offset = var_local.stack_offset; // Extract offset before mutable borrow
                 let var_type = var_local.data_type.clone();
 
-                if let Some(conversion) = element_type.can_convert_to(&var_type, self.registry)
+                if let Some(conversion) = element_type.can_convert_to(&var_type, self.context)
                     && conversion.is_implicit {
                         self.emit_conversion(&conversion);
                     }
@@ -853,7 +853,7 @@ impl<'ast> FunctionCompiler<'ast> {
                         && let Some(type_id) = self.try_resolve_type_pattern(value_expr) {
                             let key = SwitchCaseKey::Type(type_id);
                             if !case_values.insert(key) {
-                                let type_name = self.registry.get_type(type_id).name();
+                                let type_name = self.context.get_type(type_id).name();
                                 self.error(
                                     SemanticErrorKind::DuplicateDeclaration,
                                     value_expr.span(),
@@ -883,7 +883,7 @@ impl<'ast> FunctionCompiler<'ast> {
                         }
 
                     // Evaluate constant value for duplicate detection
-                    let evaluator = ConstEvaluator::new(self.registry);
+                    let evaluator = ConstEvaluator::new(self.context);
                     if let Some(const_value) = evaluator.eval(value_expr) {
                         let key = match &const_value {
                             ConstValue::Int(i) => SwitchCaseKey::Int(*i),
@@ -965,7 +965,7 @@ impl<'ast> FunctionCompiler<'ast> {
                                     || self.is_integer(&value_ctx.data_type)
                             }
                             SwitchCategory::String => {
-                                self.registry.lookup_type("string") == Some(value_ctx.data_type.type_id)
+                                self.context.lookup_type("string") == Some(value_ctx.data_type.type_id)
                             }
                             SwitchCategory::Handle => {
                                 value_ctx.data_type.type_id == NULL_TYPE
@@ -991,7 +991,7 @@ impl<'ast> FunctionCompiler<'ast> {
                     match switch_category {
                         SwitchCategory::String => {
                             // String comparison via opEquals
-                            if let Some(func_id) = self.registry.find_operator_method(
+                            if let Some(func_id) = self.context.find_operator_method(
                                 switch_ctx.data_type.type_id,
                                 OperatorBehavior::OpEquals,
                             ) {

@@ -22,20 +22,20 @@ impl<'ast> FunctionCompiler<'ast> {
         _span: Span,
     ) -> Option<DataType> {
         // Try left operand's operator first
-        if let Some(func_id) = self.registry.find_operator_method(left_type.type_id, operator) {
+        if let Some(func_id) = self.context.find_operator_method(left_type.type_id, operator) {
             self.bytecode.emit(Instruction::Call(func_id.as_u32()));
-            let func = self.registry.get_function(func_id);
+            let func = self.context.get_function(func_id);
             return Some(func.return_type.clone());
         }
 
         // Try right operand's reverse operator
-        if let Some(func_id) = self.registry.find_operator_method(right_type.type_id, reverse_operator) {
+        if let Some(func_id) = self.context.find_operator_method(right_type.type_id, reverse_operator) {
             // For reverse operators, arguments are swapped: right.opAdd_r(left)
             // Stack already has: [left, right]
             // We need: [right, left]
             self.bytecode.emit(Instruction::Swap);
             self.bytecode.emit(Instruction::Call(func_id.as_u32()));
-            let func = self.registry.get_function(func_id);
+            let func = self.context.get_function(func_id);
             return Some(func.return_type.clone());
         }
 
@@ -52,9 +52,9 @@ impl<'ast> FunctionCompiler<'ast> {
         operand_type: &DataType,
         _span: Span,
     ) -> Option<DataType> {
-        if let Some(func_id) = self.registry.find_operator_method(operand_type.type_id, operator) {
+        if let Some(func_id) = self.context.find_operator_method(operand_type.type_id, operator) {
             self.bytecode.emit(Instruction::Call(func_id.as_u32()));
-            let func = self.registry.get_function(func_id);
+            let func = self.context.get_function(func_id);
             return Some(func.return_type.clone());
         }
         None
@@ -92,7 +92,7 @@ impl<'ast> FunctionCompiler<'ast> {
                 return None;
             }
 
-            match param_type.ref_modifier {
+            match param_type.data_type.ref_modifier {
                 RefModifier::None => {
                     // No reference, any value is fine
                 }
@@ -109,7 +109,7 @@ impl<'ast> FunctionCompiler<'ast> {
                             format!(
                                 "parameter {} with '{}' modifier requires an lvalue, found rvalue",
                                 i + 1,
-                                if param_type.ref_modifier == RefModifier::Out { "&out" } else { "&inout" }
+                                if param_type.data_type.ref_modifier == RefModifier::Out { "&out" } else { "&inout" }
                             ),
                         );
                         return None;
@@ -122,7 +122,7 @@ impl<'ast> FunctionCompiler<'ast> {
                             format!(
                                 "parameter {} with '{}' modifier requires a mutable lvalue, found const lvalue",
                                 i + 1,
-                                if param_type.ref_modifier == RefModifier::Out { "&out" } else { "&inout" }
+                                if param_type.data_type.ref_modifier == RefModifier::Out { "&out" } else { "&inout" }
                             ),
                         );
                         return None;
@@ -146,10 +146,9 @@ impl<'ast> FunctionCompiler<'ast> {
         // Filter candidates by argument count first (considering default parameters)
         let count_matched: Vec<_> = candidates.iter().copied()
             .filter(|&func_id| {
-                let func_def = self.registry.get_function(func_id);
-                // Calculate minimum required params (total - defaults with values)
-                let default_count = func_def.default_args.iter().filter(|a| a.is_some()).count();
-                let min_params = func_def.params.len() - default_count;
+                let func_def = self.context.get_function(func_id);
+                // Calculate minimum required params (params without defaults)
+                let min_params = func_def.params.iter().filter(|p| p.default.is_none()).count();
                 let max_params = func_def.params.len();
                 // Accept if arg count is within valid range
                 arg_types.len() >= min_params && arg_types.len() <= max_params
@@ -170,14 +169,14 @@ impl<'ast> FunctionCompiler<'ast> {
 
         // Find exact match first (all types match exactly)
         for &func_id in &count_matched {
-            let func_def = self.registry.get_function(func_id);
+            let func_def = self.context.get_function(func_id);
 
             // Check if all parameters match exactly (considering identity conversions)
             let mut conversions = Vec::with_capacity(arg_types.len());
             let mut is_exact = true;
 
             for (param, arg) in func_def.params.iter().zip(arg_types.iter()) {
-                if let Some(conversion) = arg.can_convert_to(param, self.registry) {
+                if let Some(conversion) = arg.can_convert_to(&param.data_type, self.context) {
                     if conversion.cost == 0 {
                         // Identity or trivial conversion
                         conversions.push(if matches!(conversion.kind, crate::semantic::ConversionKind::Identity) {
@@ -207,16 +206,16 @@ impl<'ast> FunctionCompiler<'ast> {
         let mut best_match: Option<(FunctionId, Vec<Option<crate::semantic::Conversion>>, u32)> = None;
 
         for &func_id in &count_matched {
-            let func_def = self.registry.get_function(func_id);
+            let func_def = self.context.get_function(func_id);
             let mut conversions = Vec::with_capacity(arg_types.len());
             let mut total_cost = 0u32;
             let mut all_convertible = true;
 
             for (param_type, arg_type) in func_def.params.iter().zip(arg_types.iter()) {
-                if param_type.type_id == arg_type.type_id {
+                if param_type.data_type.type_id == arg_type.type_id {
                     // Exact match - no conversion needed
                     conversions.push(None);
-                } else if let Some(conversion) = arg_type.can_convert_to(param_type, self.registry) {
+                } else if let Some(conversion) = arg_type.can_convert_to(&param_type.data_type, self.context) {
                     if !conversion.is_implicit {
                         // Explicit conversion required - not valid for function calls
                         all_convertible = false;

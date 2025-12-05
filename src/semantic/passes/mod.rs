@@ -9,6 +9,6 @@ pub mod registration;
 pub mod type_compilation;
 pub mod function_processor;
 
-pub use registration::{RegistrationData, Registrar};
+pub use registration::{RegistrationData, RegistrationDataWithContext, Registrar};
 pub use type_compilation::{TypeCompilationData, TypeCompiler};
 pub use function_processor::{CompiledFunction, FunctionCompiler};

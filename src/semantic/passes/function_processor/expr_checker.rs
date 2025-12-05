@@ -57,7 +57,7 @@ impl<'ast> FunctionCompiler<'ast> {
                 let idx = self.bytecode.add_string_constant(s.clone());
                 self.bytecode.emit(Instruction::PushString(idx));
                 // String type is an FFI type, look up by name
-                let string_type = self.registry.lookup_type("string").unwrap_or(VOID_TYPE);
+                let string_type = self.context.lookup_type("string").unwrap_or(VOID_TYPE);
                 return Some(ExprContext::rvalue(DataType::simple(string_type)));
             }
             LiteralKind::Null => {
@@ -93,18 +93,18 @@ impl<'ast> FunctionCompiler<'ast> {
 
             // Try to look up as an enum type - first with the given name, then with namespace prefix,
             // then in imported namespaces
-            let type_id = self.registry.lookup_type(&type_name).or_else(|| {
+            let type_id = self.context.lookup_type(&type_name).or_else(|| {
                 // If not found and we're in a namespace, try with namespace prefix
                 if !self.namespace_path.is_empty() {
                     let qualified_type_name = Self::build_qualified_name_from_path(&self.namespace_path, &type_name);
-                    if let Some(id) = self.registry.lookup_type(&qualified_type_name) {
+                    if let Some(id) = self.context.lookup_type(&qualified_type_name) {
                         return Some(id);
                     }
                 }
                 // Try imported namespaces
                 for ns in &self.imported_namespaces {
                     let imported_qualified = format!("{}::{}", ns, type_name);
-                    if let Some(id) = self.registry.lookup_type(&imported_qualified) {
+                    if let Some(id) = self.context.lookup_type(&imported_qualified) {
                         return Some(id);
                     }
                 }
@@ -112,10 +112,10 @@ impl<'ast> FunctionCompiler<'ast> {
             });
 
             if let Some(type_id) = type_id {
-                let typedef = self.registry.get_type(type_id);
+                let typedef = self.context.get_type(type_id);
                 if typedef.is_enum() {
                     // Look up the enum value
-                    if let Some(value) = self.registry.lookup_enum_value(type_id, name) {
+                    if let Some(value) = self.context.lookup_enum_value(type_id, name) {
                         // Emit instruction to push the enum value as an integer constant
                         self.bytecode.emit(Instruction::PushInt(value));
                         // Enum values are rvalues of the enum type (implicitly convertible to int)
@@ -134,7 +134,7 @@ impl<'ast> FunctionCompiler<'ast> {
 
             // Not an enum - try namespace-qualified global variable
             let qualified_name = format!("{}::{}", type_name, name);
-            if let Some(global_var) = self.registry.lookup_global_var(&qualified_name) {
+            if let Some(global_var) = self.context.lookup_global_var(&qualified_name) {
                 // Emit load global instruction (using string constant for qualified name)
                 let name_idx = self.bytecode.add_string_constant(global_var.qualified_name());
                 self.bytecode.emit(Instruction::LoadGlobal(name_idx));
@@ -186,7 +186,7 @@ impl<'ast> FunctionCompiler<'ast> {
 
         // Check global variables in registry
         // First try the unqualified name (for global scope variables)
-        if let Some(global_var) = self.registry.lookup_global_var(name) {
+        if let Some(global_var) = self.context.lookup_global_var(name) {
             // Emit load global instruction (using string constant for name)
             let name_idx = self.bytecode.add_string_constant(global_var.qualified_name());
             self.bytecode.emit(Instruction::LoadGlobal(name_idx));
@@ -198,7 +198,7 @@ impl<'ast> FunctionCompiler<'ast> {
         // This allows code in `namespace Foo` to reference `Foo::PI` as just `PI`
         if !self.namespace_path.is_empty() {
             let qualified_name = Self::build_qualified_name_from_path(&self.namespace_path, name);
-            if let Some(global_var) = self.registry.lookup_global_var(&qualified_name) {
+            if let Some(global_var) = self.context.lookup_global_var(&qualified_name) {
                 let name_idx = self.bytecode.add_string_constant(global_var.qualified_name());
                 self.bytecode.emit(Instruction::LoadGlobal(name_idx));
                 let is_mutable = !global_var.data_type.is_const;
@@ -212,7 +212,7 @@ impl<'ast> FunctionCompiler<'ast> {
             let qualified_enum = format!("{}::{}", ns, name);
 
             // First, check if this is a global variable in the imported namespace
-            if let Some(global_var) = self.registry.lookup_global_var(&qualified_enum) {
+            if let Some(global_var) = self.context.lookup_global_var(&qualified_enum) {
                 let name_idx = self.bytecode.add_string_constant(global_var.qualified_name());
                 self.bytecode.emit(Instruction::LoadGlobal(name_idx));
                 let is_mutable = !global_var.data_type.is_const;
@@ -222,11 +222,11 @@ impl<'ast> FunctionCompiler<'ast> {
             // Check if this is an enum value by looking for it in all enum types in the namespace
             // We need to search all enum types since the name might be an unscoped enum value like `Red`
             // First, collect enum types from this namespace
-            for (type_name, &type_id) in self.registry.type_by_name() {
+            for (type_name, &type_id) in self.context.type_by_name() {
                 if type_name.starts_with(ns) && type_name.starts_with(&format!("{}::", ns)) {
-                    let typedef = self.registry.get_type(type_id);
+                    let typedef = self.context.get_type(type_id);
                     if typedef.is_enum()
-                        && let Some(value) = self.registry.lookup_enum_value(type_id, name) {
+                        && let Some(value) = self.context.lookup_enum_value(type_id, name) {
                             self.bytecode.emit(Instruction::PushInt(value));
                             return Some(ExprContext::rvalue(DataType::simple(type_id)));
                         }
@@ -255,14 +255,14 @@ impl<'ast> FunctionCompiler<'ast> {
         name: &str,
         span: Span,
     ) -> Option<ExprContext> {
-        let class_def = self.registry.get_type(class_id);
+        let class_def = self.context.get_type(class_id);
 
         match class_def {
             TypeDef::Class { fields, properties, .. } => {
                 // Check properties (getter access)
                 if let Some(accessors) = properties.get(name)
                     && let Some(getter_id) = accessors.getter {
-                        let getter = self.registry.get_function(getter_id);
+                        let getter = self.context.get_function(getter_id);
                         let return_type = getter.return_type.clone();
 
                         // Emit LoadThis followed by CallMethod for the getter
@@ -457,7 +457,7 @@ impl<'ast> FunctionCompiler<'ast> {
             // Comparison operators - try opEquals for ==, !=
             BinaryOp::Equal | BinaryOp::NotEqual => {
                 // Try opEquals first (returns bool)
-                if let Some(func_id) = self.registry.find_operator_method(left_ctx.data_type.type_id, OperatorBehavior::OpEquals) {
+                if let Some(func_id) = self.context.find_operator_method(left_ctx.data_type.type_id, OperatorBehavior::OpEquals) {
                     self.bytecode.emit(Instruction::Call(func_id.as_u32()));
                     // For !=, negate the result
                     if binary.op == BinaryOp::NotEqual {
@@ -473,7 +473,7 @@ impl<'ast> FunctionCompiler<'ast> {
             BinaryOp::Less | BinaryOp::LessEqual
             | BinaryOp::Greater | BinaryOp::GreaterEqual => {
                 // Try opCmp first (returns int: negative/zero/positive)
-                if let Some(func_id) = self.registry.find_operator_method(left_ctx.data_type.type_id, OperatorBehavior::OpCmp) {
+                if let Some(func_id) = self.context.find_operator_method(left_ctx.data_type.type_id, OperatorBehavior::OpCmp) {
                     self.bytecode.emit(Instruction::Call(func_id.as_u32()));
                     // Compare result with zero based on operator
                     self.bytecode.emit(Instruction::PushInt(0));
@@ -711,7 +711,7 @@ impl<'ast> FunctionCompiler<'ast> {
                 // Check if there's an expected funcdef type for validation
                 if let Some(funcdef_type_id) = self.expected_funcdef_type {
                     // Try to find a compatible function
-                    if let Some(func_id) = self.registry.find_compatible_function(&qualified_name, funcdef_type_id) {
+                    if let Some(func_id) = self.context.find_compatible_function(&qualified_name, funcdef_type_id) {
                         // Emit FuncPtr instruction
                         self.bytecode.emit(Instruction::FuncPtr(func_id.as_u32()));
                         // Return funcdef handle type
@@ -720,7 +720,7 @@ impl<'ast> FunctionCompiler<'ast> {
 
                     // Try without namespace if that failed
                     if !self.namespace_path.is_empty()
-                        && let Some(func_id) = self.registry.find_compatible_function(name, funcdef_type_id) {
+                        && let Some(func_id) = self.context.find_compatible_function(name, funcdef_type_id) {
                             self.bytecode.emit(Instruction::FuncPtr(func_id.as_u32()));
                             return Some(ExprContext::rvalue(DataType::with_handle(funcdef_type_id, false)));
                         }
@@ -735,8 +735,8 @@ impl<'ast> FunctionCompiler<'ast> {
                 }
 
                 // No expected funcdef type - check if it's a function and error appropriately
-                if !self.registry.lookup_functions(&qualified_name).is_empty()
-                    || !self.registry.lookup_functions(name).is_empty()
+                if !self.context.lookup_functions(&qualified_name).is_empty()
+                    || !self.context.lookup_functions(name).is_empty()
                 {
                     self.error(
                         SemanticErrorKind::TypeMismatch,
@@ -986,7 +986,7 @@ impl<'ast> FunctionCompiler<'ast> {
 
                         // Check if target is a funcdef handle (for function reference assignment)
                         let is_funcdef_target = matches!(
-                            self.registry.get_type(operand_ctx.data_type.type_id),
+                            self.context.get_type(operand_ctx.data_type.type_id),
                             TypeDef::Funcdef { .. }
                         );
 
@@ -1000,7 +1000,7 @@ impl<'ast> FunctionCompiler<'ast> {
 
                         // Check type compatibility
                         // For handle assignment, the value must be convertible to the handle type
-                        if let Some(conversion) = value_ctx.data_type.can_convert_to(&operand_ctx.data_type, self.registry) {
+                        if let Some(conversion) = value_ctx.data_type.can_convert_to(&operand_ctx.data_type, self.context) {
                             self.emit_conversion(&conversion);
                         } else if value_ctx.data_type.type_id != operand_ctx.data_type.type_id {
                             self.error(
@@ -1029,7 +1029,7 @@ impl<'ast> FunctionCompiler<'ast> {
                 // Check if target is a funcdef handle (for function reference assignment)
                 let is_funcdef_target = target_ctx.data_type.is_handle
                     && matches!(
-                        self.registry.get_type(target_ctx.data_type.type_id),
+                        self.context.get_type(target_ctx.data_type.type_id),
                         TypeDef::Funcdef { .. }
                     );
 
@@ -1072,17 +1072,17 @@ impl<'ast> FunctionCompiler<'ast> {
                 }
 
                 // Try opAssign operator overload first (for user-defined types)
-                if let Some(func_id) = self.registry.find_operator_method(target_ctx.data_type.type_id, OperatorBehavior::OpAssign) {
+                if let Some(func_id) = self.context.find_operator_method(target_ctx.data_type.type_id, OperatorBehavior::OpAssign) {
                     // Call opAssign(value) on target
                     // Stack: [target, value] → target.opAssign(value)
                     self.bytecode.emit(Instruction::Call(func_id.as_u32()));
-                    let func = self.registry.get_function(func_id);
+                    let func = self.context.get_function(func_id);
                     return Some(ExprContext::rvalue(func.return_type.clone()));
                 }
 
                 // Fall back to primitive assignment with type conversion
                 // Check if value is assignable to target and emit conversion if needed
-                if let Some(conversion) = value_ctx.data_type.can_convert_to(&target_ctx.data_type, self.registry) {
+                if let Some(conversion) = value_ctx.data_type.can_convert_to(&target_ctx.data_type, self.context) {
                     if !conversion.is_implicit {
                         self.error(
                             SemanticErrorKind::TypeMismatch,
@@ -1169,11 +1169,11 @@ impl<'ast> FunctionCompiler<'ast> {
                     _ => unreachable!(),
                 };
 
-                if let Some(func_id) = self.registry.find_operator_method(target_ctx.data_type.type_id, compound_op) {
+                if let Some(func_id) = self.context.find_operator_method(target_ctx.data_type.type_id, compound_op) {
                     // Call opXxxAssign(value) on target
                     // Stack: [target, value] → target.opAddAssign(value)
                     self.bytecode.emit(Instruction::Call(func_id.as_u32()));
-                    let func = self.registry.get_function(func_id);
+                    let func = self.context.get_function(func_id);
                     return Some(ExprContext::rvalue(func.return_type.clone()));
                 }
 
@@ -1338,7 +1338,7 @@ impl<'ast> FunctionCompiler<'ast> {
                     };
 
                     // Get the class definition
-                    let class_def = self.registry.get_type(class_id);
+                    let class_def = self.context.get_type(class_id);
 
                     // Check if class has a base class
                     let base_id = match class_def {
@@ -1375,14 +1375,14 @@ impl<'ast> FunctionCompiler<'ast> {
                     }
 
                     // Find matching base constructor
-                    let base_constructors = self.registry.find_constructors(base_id);
+                    let base_constructors = self.context.find_constructors(base_id);
                     let (matching_ctor, conversions) = self.find_best_function_overload(
                         &base_constructors,
                         &arg_types,
                         call.span,
                     )?;
 
-                    let func_def = self.registry.get_function(matching_ctor);
+                    let func_def = self.context.get_function(matching_ctor);
 
                     // Validate reference parameters
                     self.validate_reference_parameters(func_def, &arg_contexts, call.args, call.span)?;
@@ -1411,10 +1411,10 @@ impl<'ast> FunctionCompiler<'ast> {
                             && let Some(base_class_id) = self.get_base_class_by_name(current_class_id, scope_name) {
                                 // This is a base class method call - load 'this' and call the base method
                                 // Look up the method in the base class (pre-allocate)
-                                let all_methods = self.registry.get_methods(base_class_id);
+                                let all_methods = self.context.get_methods(base_class_id);
                                 let mut base_methods = Vec::with_capacity(all_methods.len().min(4));
                                 for func_id in all_methods {
-                                    let func = self.registry.get_function(func_id);
+                                    let func = self.context.get_function(func_id);
                                     if func.name == method_name {
                                         base_methods.push(func_id);
                                     }
@@ -1442,7 +1442,7 @@ impl<'ast> FunctionCompiler<'ast> {
                                         call.span,
                                     )?;
 
-                                    let func_def = self.registry.get_function(method_id);
+                                    let func_def = self.context.get_function(method_id);
 
                                     // Validate reference parameters
                                     self.validate_reference_parameters(func_def, &arg_contexts, call.args, call.span)?;
@@ -1470,7 +1470,7 @@ impl<'ast> FunctionCompiler<'ast> {
                     if let Some((var_type_id, is_handle)) = var_info {
                         // Check for funcdef handle
                         if is_handle {
-                            let type_def = self.registry.get_type(var_type_id);
+                            let type_def = self.context.get_type(var_type_id);
                             if let TypeDef::Funcdef { params, return_type, .. } = type_def {
                                 // This is a funcdef variable
                                 let _callee_ctx = self.check_expr(call.callee)?;
@@ -1499,7 +1499,7 @@ impl<'ast> FunctionCompiler<'ast> {
 
                                 // Validate and emit conversions for each argument
                                 for (i, (arg_ctx, param)) in arg_contexts.iter().zip(params.iter()).enumerate() {
-                                    if let Some(conv) = arg_ctx.data_type.can_convert_to(param, self.registry) {
+                                    if let Some(conv) = arg_ctx.data_type.can_convert_to(param, self.context) {
                                         self.emit_conversion(&conv);
                                     } else {
                                         self.error(
@@ -1521,7 +1521,7 @@ impl<'ast> FunctionCompiler<'ast> {
 
                         // Check for class with opCall operator (callable objects)
                         // This handles cases like: Functor f; f(5); where Functor has opCall(int)
-                        if let Some(func_id) = self.registry.find_operator_method(var_type_id, OperatorBehavior::OpCall) {
+                        if let Some(func_id) = self.context.find_operator_method(var_type_id, OperatorBehavior::OpCall) {
                             // Evaluate the callee (load the object)
                             let _callee_ctx = self.check_expr(call.callee)?;
 
@@ -1532,7 +1532,7 @@ impl<'ast> FunctionCompiler<'ast> {
                                 arg_contexts.push(arg_ctx);
                             }
 
-                            let func_def = self.registry.get_function(func_id);
+                            let func_def = self.context.get_function(func_id);
 
                             // Validate argument count
                             if arg_contexts.len() != func_def.params.len() {
@@ -1550,8 +1550,8 @@ impl<'ast> FunctionCompiler<'ast> {
 
                             // Emit conversions for arguments that need conversion
                             for (i, (arg_ctx, param)) in arg_contexts.iter().zip(func_def.params.iter()).enumerate() {
-                                if arg_ctx.data_type.type_id != param.type_id {
-                                    if let Some(conv) = arg_ctx.data_type.can_convert_to(param, self.registry) {
+                                if arg_ctx.data_type.type_id != param.data_type.type_id {
+                                    if let Some(conv) = arg_ctx.data_type.can_convert_to(&param.data_type, self.context) {
                                         if conv.is_implicit {
                                             self.emit_conversion(&conv);
                                         } else {
@@ -1569,7 +1569,7 @@ impl<'ast> FunctionCompiler<'ast> {
                                             format!("cannot convert argument {} from '{}' to '{}'",
                                                 i + 1,
                                                 self.type_name(&arg_ctx.data_type),
-                                                self.type_name(param)),
+                                                self.type_name(&param.data_type)),
                                         );
                                         return None;
                                     }
@@ -1590,7 +1590,7 @@ impl<'ast> FunctionCompiler<'ast> {
                     let mut arg_names: Vec<&str> = Vec::with_capacity(ident_expr.type_args.len());
                     for arg in ident_expr.type_args {
                         if let Some(dt) = self.resolve_type_expr(arg) {
-                            let typedef = self.registry.get_type(dt.type_id);
+                            let typedef = self.context.get_type(dt.type_id);
                             arg_names.push(typedef.name());
                         } else {
                             return None; // Error already reported
@@ -1609,16 +1609,16 @@ impl<'ast> FunctionCompiler<'ast> {
                         full_type_name.push_str(arg_name);
                     }
                     full_type_name.push('>');
-                    self.registry.lookup_type(&full_type_name)
+                    self.context.lookup_type(&full_type_name)
                 } else {
                     // Simple type lookup - try raw name first, then namespace-qualified, then imports
                     // Try raw name first, then progressively qualified names
-                    self.registry.lookup_type(&name).or_else(|| {
+                    self.context.lookup_type(&name).or_else(|| {
                         // Try ancestor namespaces (current, then parent, then grandparent, etc.)
                         if !self.namespace_path.is_empty() {
                             // Try full namespace first
                             let qualified_name = self.build_qualified_name(&name);
-                            if let Some(type_id) = self.registry.lookup_type(&qualified_name) {
+                            if let Some(type_id) = self.context.lookup_type(&qualified_name) {
                                 return Some(type_id);
                             }
                             // Try progressively shorter namespace prefixes
@@ -1627,7 +1627,7 @@ impl<'ast> FunctionCompiler<'ast> {
                                     &self.namespace_path[..prefix_len],
                                     &name,
                                 );
-                                if let Some(type_id) = self.registry.lookup_type(&ancestor_qualified) {
+                                if let Some(type_id) = self.context.lookup_type(&ancestor_qualified) {
                                     return Some(type_id);
                                 }
                             }
@@ -1635,7 +1635,7 @@ impl<'ast> FunctionCompiler<'ast> {
                         // Try imported namespaces
                         for ns in &self.imported_namespaces {
                             let imported_qualified = format!("{}::{}", ns, name);
-                            if let Some(type_id) = self.registry.lookup_type(&imported_qualified) {
+                            if let Some(type_id) = self.context.lookup_type(&imported_qualified) {
                                 return Some(type_id);
                             }
                         }
@@ -1662,12 +1662,12 @@ impl<'ast> FunctionCompiler<'ast> {
                     // Try namespace-qualified name first
                     if !self.namespace_path.is_empty() {
                         let qualified_name = self.build_qualified_name(&name);
-                        let ns_candidates = self.registry.lookup_functions(&qualified_name);
+                        let ns_candidates = self.context.lookup_functions(&qualified_name);
                         if !ns_candidates.is_empty() {
                             ns_candidates.to_vec()
                         } else {
                             // Try global scope
-                            let global = self.registry.lookup_functions(&name);
+                            let global = self.context.lookup_functions(&name);
                             if !global.is_empty() {
                                 global.to_vec()
                             } else {
@@ -1677,7 +1677,7 @@ impl<'ast> FunctionCompiler<'ast> {
                         }
                     } else {
                         // Not in a namespace, try global then imports
-                        let global = self.registry.lookup_functions(&name);
+                        let global = self.context.lookup_functions(&name);
                         if !global.is_empty() {
                             global.to_vec()
                         } else {
@@ -1685,7 +1685,7 @@ impl<'ast> FunctionCompiler<'ast> {
                         }
                     }
                 } else {
-                    self.registry.lookup_functions(&name).to_vec()
+                    self.context.lookup_functions(&name).to_vec()
                 };
 
                 if candidates.is_empty() {
@@ -1726,9 +1726,9 @@ impl<'ast> FunctionCompiler<'ast> {
                     // Narrow candidates based on non-lambda argument types (pre-allocate)
                     let mut narrowed_candidates = Vec::with_capacity(candidates.len());
                     for &func_id in &candidates {
-                        let func_def = self.registry.get_function(func_id);
+                        let func_def = self.context.get_function(func_id);
                         // Check argument count (considering defaults)
-                        let min_params = func_def.params.len() - func_def.default_args.iter().filter(|a| a.is_some()).count();
+                        let min_params = func_def.params.iter().filter(|p| p.default.is_none()).count();
                         if call.args.len() < min_params || call.args.len() > func_def.params.len() {
                             continue;
                         }
@@ -1739,8 +1739,8 @@ impl<'ast> FunctionCompiler<'ast> {
                                 && i < func_def.params.len() {
                                     let param = &func_def.params[i];
                                     // Check if types are compatible (exact match or implicit conversion)
-                                    if arg_type.type_id != param.type_id
-                                        && arg_type.can_convert_to(param, self.registry).is_none_or(|c| !c.is_implicit) {
+                                    if arg_type.type_id != param.data_type.type_id
+                                        && arg_type.can_convert_to(&param.data_type, self.context).is_none_or(|c| !c.is_implicit) {
                                             matches = false;
                                             break;
                                         }
@@ -1753,7 +1753,7 @@ impl<'ast> FunctionCompiler<'ast> {
 
                     // Pass 2: Type-check lambda arguments with inferred funcdef types
                     let expected_param_types = if narrowed_candidates.len() == 1 {
-                        let func_def = self.registry.get_function(narrowed_candidates[0]);
+                        let func_def = self.context.get_function(narrowed_candidates[0]);
                         Some(func_def.params.clone())
                     } else {
                         None
@@ -1767,9 +1767,9 @@ impl<'ast> FunctionCompiler<'ast> {
                             // Set expected_funcdef_type for lambda inference
                             if let Some(ref params) = expected_param_types
                                 && i < params.len() {
-                                    let param_type = &params[i];
+                                    let param_type = &params[i].data_type;
                                     if param_type.is_handle {
-                                        let type_def = self.registry.get_type(param_type.type_id);
+                                        let type_def = self.context.get_type(param_type.type_id);
                                         if matches!(type_def, TypeDef::Funcdef { .. }) {
                                             self.expected_funcdef_type = Some(param_type.type_id);
                                         }
@@ -1788,7 +1788,7 @@ impl<'ast> FunctionCompiler<'ast> {
                 } else {
                     // Simple case: single candidate or no lambdas
                     let expected_param_types = if candidates.len() == 1 {
-                        let func_def = self.registry.get_function(candidates[0]);
+                        let func_def = self.context.get_function(candidates[0]);
                         Some(&func_def.params)
                     } else {
                         None
@@ -1798,9 +1798,9 @@ impl<'ast> FunctionCompiler<'ast> {
                         // Set expected_funcdef_type if this parameter expects a funcdef
                         if let Some(params) = expected_param_types
                             && i < params.len() {
-                                let param_type = &params[i];
+                                let param_type = &params[i].data_type;
                                 if param_type.is_handle {
-                                    let type_def = self.registry.get_type(param_type.type_id);
+                                    let type_def = self.context.get_type(param_type.type_id);
                                     if matches!(type_def, TypeDef::Funcdef { .. }) {
                                         self.expected_funcdef_type = Some(param_type.type_id);
                                     }
@@ -1827,17 +1827,17 @@ impl<'ast> FunctionCompiler<'ast> {
                     call.span,
                 )?;
 
-                let func_def = self.registry.get_function(matching_func);
+                let func_def = self.context.get_function(matching_func);
 
                 // Compile default arguments if fewer args provided than params
                 if arg_contexts.len() < func_def.params.len() {
                     for i in arg_contexts.len()..func_def.params.len() {
-                        if let Some(default_expr) = func_def.default_args.get(i).and_then(|opt| *opt) {
+                        if let Some(default_expr) = func_def.params[i].default {
                             // Compile the default argument expression inline
                             let default_ctx = self.check_expr(default_expr)?;
 
                             // Apply implicit conversion if needed
-                            if let Some(conv) = default_ctx.data_type.can_convert_to(&func_def.params[i], self.registry) {
+                            if let Some(conv) = default_ctx.data_type.can_convert_to(&func_def.params[i].data_type, self.context) {
                                 self.emit_conversion(&conv);
                             }
                         } else {
@@ -1879,11 +1879,11 @@ impl<'ast> FunctionCompiler<'ast> {
                 }
 
                 // Try opCall operator overload (allows objects to be called like functions)
-                if let Some(func_id) = self.registry.find_operator_method(callee_ctx.data_type.type_id, OperatorBehavior::OpCall) {
+                if let Some(func_id) = self.context.find_operator_method(callee_ctx.data_type.type_id, OperatorBehavior::OpCall) {
                     // Call opCall(args) on callee
                     // Stack: [callee, arg1, arg2, ...] → callee.opCall(arg1, arg2, ...)
 
-                    let func_def = self.registry.get_function(func_id);
+                    let func_def = self.context.get_function(func_id);
 
                     // Validate argument count
                     if arg_contexts.len() != func_def.params.len() {
@@ -1901,8 +1901,8 @@ impl<'ast> FunctionCompiler<'ast> {
 
                     // Emit conversions for arguments that need conversion
                     for (i, (arg_ctx, param)) in arg_contexts.iter().zip(func_def.params.iter()).enumerate() {
-                        if arg_ctx.data_type.type_id != param.type_id {
-                            if let Some(conv) = arg_ctx.data_type.can_convert_to(param, self.registry) {
+                        if arg_ctx.data_type.type_id != param.data_type.type_id {
+                            if let Some(conv) = arg_ctx.data_type.can_convert_to(&param.data_type, self.context) {
                                 if conv.is_implicit {
                                     self.emit_conversion(&conv);
                                 } else {
@@ -1920,7 +1920,7 @@ impl<'ast> FunctionCompiler<'ast> {
                                     format!("cannot convert argument {} from '{}' to '{}'",
                                         i + 1,
                                         self.type_name(&arg_ctx.data_type),
-                                        self.type_name(param)),
+                                        self.type_name(&param.data_type)),
                                 );
                                 return None;
                             }
@@ -1933,7 +1933,7 @@ impl<'ast> FunctionCompiler<'ast> {
 
                 // No opCall found - check if it's a funcdef/function pointer
                 if callee_ctx.data_type.is_handle {
-                    let type_def = self.registry.get_type(callee_ctx.data_type.type_id);
+                    let type_def = self.context.get_type(callee_ctx.data_type.type_id);
 
                     if let TypeDef::Funcdef { params, return_type, .. } = type_def {
                         // This is a funcdef handle - validate arguments
@@ -1949,7 +1949,7 @@ impl<'ast> FunctionCompiler<'ast> {
 
                         // Validate and emit conversions for each argument
                         for (i, (arg_ctx, param)) in arg_contexts.iter().zip(params.iter()).enumerate() {
-                            if let Some(conv) = arg_ctx.data_type.can_convert_to(param, self.registry) {
+                            if let Some(conv) = arg_ctx.data_type.can_convert_to(param, self.context) {
                                 self.emit_conversion(&conv);
                             } else {
                                 self.error(
@@ -1998,15 +1998,15 @@ impl<'ast> FunctionCompiler<'ast> {
             arg_types.push(ctx.data_type.clone());
         }
 
-        let typedef = self.registry.get_type(type_id);
+        let typedef = self.context.get_type(type_id);
         let type_name = typedef.name().to_string();
         let use_factory = typedef.type_kind().uses_factories();
 
         // Get factories or constructors based on type kind
         let candidates = if use_factory {
-            self.registry.find_factories(type_id)
+            self.context.find_factories(type_id)
         } else {
-            self.registry.find_constructors(type_id)
+            self.context.find_constructors(type_id)
         };
 
         if candidates.is_empty() {
@@ -2076,8 +2076,8 @@ impl<'ast> FunctionCompiler<'ast> {
         }
 
         // Try to find opIndex for the object type (priority 1)
-        if let Some(func_id) = self.registry.find_operator_method(current_ctx.data_type.type_id, OperatorBehavior::OpIndex) {
-            let func = self.registry.get_function(func_id);
+        if let Some(func_id) = self.context.find_operator_method(current_ctx.data_type.type_id, OperatorBehavior::OpIndex) {
+            let func = self.context.get_function(func_id);
 
             // Check parameter count matches
             if func.params.len() != idx_contexts.len() {
@@ -2095,9 +2095,9 @@ impl<'ast> FunctionCompiler<'ast> {
 
             // Type check each index argument against corresponding opIndex parameter
             for (i, (idx_ctx, idx_span)) in idx_contexts.iter().enumerate() {
-                let param_type = &func.params[i];
+                let param_type = &func.params[i].data_type;
 
-                if let Some(conversion) = idx_ctx.data_type.can_convert_to(param_type, self.registry) {
+                if let Some(conversion) = idx_ctx.data_type.can_convert_to(param_type, self.context) {
                     if !conversion.is_implicit {
                         self.error(
                             SemanticErrorKind::TypeMismatch,
@@ -2137,8 +2137,8 @@ impl<'ast> FunctionCompiler<'ast> {
         }
 
         // Try get_opIndex accessor (priority 2)
-        if let Some(func_id) = self.registry.find_operator_method(current_ctx.data_type.type_id, OperatorBehavior::OpIndexGet) {
-            let func = self.registry.get_function(func_id);
+        if let Some(func_id) = self.context.find_operator_method(current_ctx.data_type.type_id, OperatorBehavior::OpIndexGet) {
+            let func = self.context.get_function(func_id);
 
             // Check parameter count matches
             if func.params.len() != idx_contexts.len() {
@@ -2156,9 +2156,9 @@ impl<'ast> FunctionCompiler<'ast> {
 
             // Type check each index argument
             for (i, (idx_ctx, idx_span)) in idx_contexts.iter().enumerate() {
-                let param_type = &func.params[i];
+                let param_type = &func.params[i].data_type;
 
-                if let Some(conversion) = idx_ctx.data_type.can_convert_to(param_type, self.registry) {
+                if let Some(conversion) = idx_ctx.data_type.can_convert_to(param_type, self.context) {
                     if !conversion.is_implicit {
                         self.error(
                             SemanticErrorKind::TypeMismatch,
@@ -2229,8 +2229,8 @@ impl<'ast> FunctionCompiler<'ast> {
             if i < last_idx {
                 // Not the final index - use regular opIndex/get_opIndex (read context)
                 // This is the same logic as check_index
-                if let Some(func_id) = self.registry.find_operator_method(current_ctx.data_type.type_id, OperatorBehavior::OpIndex) {
-                    let func = self.registry.get_function(func_id);
+                if let Some(func_id) = self.context.find_operator_method(current_ctx.data_type.type_id, OperatorBehavior::OpIndex) {
+                    let func = self.context.get_function(func_id);
 
                     if func.params.len() != 1 {
                         self.error(
@@ -2241,8 +2241,8 @@ impl<'ast> FunctionCompiler<'ast> {
                         return None;
                     }
 
-                    let param_type = &func.params[0];
-                    if let Some(conversion) = idx_ctx.data_type.can_convert_to(param_type, self.registry) {
+                    let param_type = &func.params[0].data_type;
+                    if let Some(conversion) = idx_ctx.data_type.can_convert_to(param_type, self.context) {
                         if !conversion.is_implicit {
                             self.error(
                                 SemanticErrorKind::TypeMismatch,
@@ -2272,8 +2272,8 @@ impl<'ast> FunctionCompiler<'ast> {
                     self.bytecode.emit(Instruction::Call(func_id.as_u32()));
                     let is_mutable = current_ctx.is_mutable && !func.return_type.is_const;
                     current_ctx = ExprContext::lvalue(func.return_type.clone(), is_mutable);
-                } else if let Some(func_id) = self.registry.find_operator_method(current_ctx.data_type.type_id, OperatorBehavior::OpIndexGet) {
-                    let func = self.registry.get_function(func_id);
+                } else if let Some(func_id) = self.context.find_operator_method(current_ctx.data_type.type_id, OperatorBehavior::OpIndexGet) {
+                    let func = self.context.get_function(func_id);
 
                     if func.params.len() != 1 {
                         self.error(
@@ -2284,8 +2284,8 @@ impl<'ast> FunctionCompiler<'ast> {
                         return None;
                     }
 
-                    let param_type = &func.params[0];
-                    if let Some(conversion) = idx_ctx.data_type.can_convert_to(param_type, self.registry) {
+                    let param_type = &func.params[0].data_type;
+                    if let Some(conversion) = idx_ctx.data_type.can_convert_to(param_type, self.context) {
                         if !conversion.is_implicit {
                             self.error(
                                 SemanticErrorKind::TypeMismatch,
@@ -2325,9 +2325,9 @@ impl<'ast> FunctionCompiler<'ast> {
             } else {
                 // Final index - try opIndex first (returns reference), then set_opIndex
                 // For assignment, we prefer the non-const opIndex if available
-                if let Some(func_id) = self.registry.find_operator_method_with_mutability(current_ctx.data_type.type_id, OperatorBehavior::OpIndex, true) {
+                if let Some(func_id) = self.context.find_operator_method_with_mutability(current_ctx.data_type.type_id, OperatorBehavior::OpIndex, true) {
                     // opIndex exists - use regular assignment through reference
-                    let func = self.registry.get_function(func_id);
+                    let func = self.context.get_function(func_id);
 
                     if func.params.len() != 1 {
                         self.error(
@@ -2338,8 +2338,8 @@ impl<'ast> FunctionCompiler<'ast> {
                         return None;
                     }
 
-                    let param_type = &func.params[0];
-                    if let Some(conversion) = idx_ctx.data_type.can_convert_to(param_type, self.registry) {
+                    let param_type = &func.params[0].data_type;
+                    if let Some(conversion) = idx_ctx.data_type.can_convert_to(param_type, self.context) {
                         if !conversion.is_implicit {
                             self.error(
                                 SemanticErrorKind::TypeMismatch,
@@ -2391,7 +2391,7 @@ impl<'ast> FunctionCompiler<'ast> {
 
                     // Type check the value being assigned
                     let value_ctx = self.check_expr(value)?;
-                    if let Some(conversion) = value_ctx.data_type.can_convert_to(&current_ctx.data_type, self.registry) {
+                    if let Some(conversion) = value_ctx.data_type.can_convert_to(&current_ctx.data_type, self.context) {
                         if !conversion.is_implicit {
                             self.error(
                                 SemanticErrorKind::TypeMismatch,
@@ -2421,9 +2421,9 @@ impl<'ast> FunctionCompiler<'ast> {
                     // Emit store instruction (handled by VM based on lvalue on stack)
                     return Some(ExprContext::rvalue(current_ctx.data_type));
 
-                } else if let Some(func_id) = self.registry.find_operator_method(current_ctx.data_type.type_id, OperatorBehavior::OpIndexSet) {
+                } else if let Some(func_id) = self.context.find_operator_method(current_ctx.data_type.type_id, OperatorBehavior::OpIndexSet) {
                     // No opIndex, but set_opIndex exists
-                    let func = self.registry.get_function(func_id);
+                    let func = self.context.get_function(func_id);
 
                     // set_opIndex should have exactly 2 parameters: (index, value)
                     if func.params.len() != 2 {
@@ -2435,11 +2435,11 @@ impl<'ast> FunctionCompiler<'ast> {
                         return None;
                     }
 
-                    let index_param_type = &func.params[0];
-                    let value_param_type = &func.params[1];
+                    let index_param_type = &func.params[0].data_type;
+                    let value_param_type = &func.params[1].data_type;
 
                     // Type check the index argument
-                    if let Some(conversion) = idx_ctx.data_type.can_convert_to(index_param_type, self.registry) {
+                    if let Some(conversion) = idx_ctx.data_type.can_convert_to(index_param_type, self.context) {
                         if !conversion.is_implicit {
                             self.error(
                                 SemanticErrorKind::TypeMismatch,
@@ -2468,7 +2468,7 @@ impl<'ast> FunctionCompiler<'ast> {
 
                     // Type check the value argument
                     let value_ctx = self.check_expr(value)?;
-                    if let Some(conversion) = value_ctx.data_type.can_convert_to(value_param_type, self.registry) {
+                    if let Some(conversion) = value_ctx.data_type.can_convert_to(value_param_type, self.context) {
                         if !conversion.is_implicit {
                             self.error(
                                 SemanticErrorKind::TypeMismatch,
@@ -2533,7 +2533,7 @@ impl<'ast> FunctionCompiler<'ast> {
         let object_ctx = self.check_expr(member.object)?;
 
         // Check if the object type has a property with this name
-        let property = self.registry.find_property(object_ctx.data_type.type_id, property_name)?;
+        let property = self.context.find_property(object_ctx.data_type.type_id, property_name)?;
 
         // Property exists - check for setter
         let setter_id = match property.setter {
@@ -2565,7 +2565,7 @@ impl<'ast> FunctionCompiler<'ast> {
         }
 
         // Get setter function to validate value type
-        let setter_func = self.registry.get_function(setter_id);
+        let setter_func = self.context.get_function(setter_id);
 
         // Setter should have exactly one parameter (the value)
         if setter_func.params.len() != 1 {
@@ -2581,7 +2581,7 @@ impl<'ast> FunctionCompiler<'ast> {
             return Some(ExprContext::rvalue(DataType::simple(VOID_TYPE)));
         }
 
-        let value_param_type = &setter_func.params[0];
+        let value_param_type = &setter_func.params[0].data_type;
 
         // Type check the value expression
         let value_ctx = self.check_expr(value)?;
@@ -2597,7 +2597,7 @@ impl<'ast> FunctionCompiler<'ast> {
         }
 
         // Check type conversion for value
-        if let Some(conversion) = value_ctx.data_type.can_convert_to(value_param_type, self.registry) {
+        if let Some(conversion) = value_ctx.data_type.can_convert_to(value_param_type, self.context) {
             if !conversion.is_implicit {
                 self.error(
                     SemanticErrorKind::TypeMismatch,
@@ -2640,7 +2640,7 @@ impl<'ast> FunctionCompiler<'ast> {
         let object_ctx = self.check_expr(member.object)?;
 
         // Check that the object is a class/interface type
-        let typedef = self.registry.get_type(object_ctx.data_type.type_id);
+        let typedef = self.context.get_type(object_ctx.data_type.type_id);
 
         match &member.member {
             MemberAccess::Field(field_name) => {
@@ -2649,7 +2649,7 @@ impl<'ast> FunctionCompiler<'ast> {
                     TypeDef::Class { .. } => {
                         // First check for property accessor (get_X pattern)
                         // Property accessors take precedence over direct field access
-                        if let Some(property) = self.registry.find_property(object_ctx.data_type.type_id, field_name.name) {
+                        if let Some(property) = self.context.find_property(object_ctx.data_type.type_id, field_name.name) {
                             if let Some(getter_id) = property.getter {
                                 // Check visibility access for the property
                                 if !self.check_visibility_access(property.visibility, object_ctx.data_type.type_id) {
@@ -2664,7 +2664,7 @@ impl<'ast> FunctionCompiler<'ast> {
 
                                 // Check const-correctness: if object is const, getter must be const
                                 let is_const_object = object_ctx.data_type.is_const || object_ctx.data_type.is_handle_to_const;
-                                let getter_func = self.registry.get_function(getter_id);
+                                let getter_func = self.context.get_function(getter_id);
                                 if is_const_object && !getter_func.traits.is_const {
                                     self.error(
                                         SemanticErrorKind::InvalidOperation,
@@ -2759,7 +2759,7 @@ impl<'ast> FunctionCompiler<'ast> {
                 match typedef {
                     TypeDef::Class { .. } => {
                         // Look up methods with this name on the type
-                        let candidates = self.registry.find_methods_by_name(object_ctx.data_type.type_id, name.name);
+                        let candidates = self.context.find_methods_by_name(object_ctx.data_type.type_id, name.name);
 
                         if candidates.is_empty() {
                             self.error(
@@ -2781,7 +2781,7 @@ impl<'ast> FunctionCompiler<'ast> {
                             // Const objects can only call const methods (pre-allocate)
                             let mut filtered = Vec::with_capacity(candidates.len());
                             for func_id in candidates {
-                                let func_def = self.registry.get_function(func_id);
+                                let func_def = self.context.get_function(func_id);
                                 if func_def.traits.is_const {
                                     filtered.push(func_id);
                                 }
@@ -2809,7 +2809,7 @@ impl<'ast> FunctionCompiler<'ast> {
                         // When there's a single matching method, we can infer funcdef types for lambdas
                         let mut arg_contexts = Vec::with_capacity(args.len());
                         let expected_param_types = if const_filtered.len() == 1 {
-                            let func_def = self.registry.get_function(const_filtered[0]);
+                            let func_def = self.context.get_function(const_filtered[0]);
                             Some(&func_def.params)
                         } else {
                             None
@@ -2819,9 +2819,9 @@ impl<'ast> FunctionCompiler<'ast> {
                             // Set expected_funcdef_type if this parameter expects a funcdef
                             if let Some(params) = expected_param_types
                                 && i < params.len() {
-                                    let param_type = &params[i];
+                                    let param_type = &params[i].data_type;
                                     if param_type.is_handle {
-                                        let type_def = self.registry.get_type(param_type.type_id);
+                                        let type_def = self.context.get_type(param_type.type_id);
                                         if matches!(type_def, TypeDef::Funcdef { .. }) {
                                             self.expected_funcdef_type = Some(param_type.type_id);
                                         }
@@ -2847,7 +2847,7 @@ impl<'ast> FunctionCompiler<'ast> {
                             member.span,
                         )?;
 
-                        let func_def = self.registry.get_function(matching_method);
+                        let func_def = self.context.get_function(matching_method);
 
                         // Check visibility access
                         if !self.check_visibility_access(func_def.visibility, object_ctx.data_type.type_id) {
@@ -2921,7 +2921,7 @@ impl<'ast> FunctionCompiler<'ast> {
                             let mut all_match = true;
 
                             for (arg_type, param_type) in arg_types.iter().zip(sig.params.iter()) {
-                                if let Some(conv) = arg_type.can_convert_to(param_type, self.registry) {
+                                if let Some(conv) = arg_type.can_convert_to(param_type, self.context) {
                                     conversions.push(Some(conv));
                                 } else {
                                     all_match = false;
@@ -3062,13 +3062,13 @@ impl<'ast> FunctionCompiler<'ast> {
 
         // The cast<> syntax in AngelScript is a handle cast operation.
         // If the target type is a class or interface, it's implicitly a handle.
-        let target_typedef = self.registry.get_type(target_type.type_id);
+        let target_typedef = self.context.get_type(target_type.type_id);
         if matches!(target_typedef, TypeDef::Class { .. } | TypeDef::Interface { .. }) {
             target_type.is_handle = true;
         }
 
         // Check if conversion is valid
-        if let Some(conversion) = expr_ctx.data_type.can_convert_to(&target_type, self.registry) {
+        if let Some(conversion) = expr_ctx.data_type.can_convert_to(&target_type, self.context) {
             // Emit the appropriate conversion instruction
             self.emit_conversion(&conversion);
             Some(ExprContext::rvalue(target_type))
@@ -3102,14 +3102,14 @@ impl<'ast> FunctionCompiler<'ast> {
         }
 
         // Source must be a class or interface
-        let source_typedef = self.registry.get_type(source.type_id);
+        let source_typedef = self.context.get_type(source.type_id);
         let source_is_object = matches!(
             source_typedef,
             TypeDef::Class { .. } | TypeDef::Interface { .. }
         );
 
         // Target must be a class or interface
-        let target_typedef = self.registry.get_type(target.type_id);
+        let target_typedef = self.context.get_type(target.type_id);
         let target_is_object = matches!(
             target_typedef,
             TypeDef::Class { .. } | TypeDef::Interface { .. }
@@ -3135,7 +3135,7 @@ impl<'ast> FunctionCompiler<'ast> {
         };
 
         // Get funcdef signature
-        let funcdef = self.registry.get_type(funcdef_type_id);
+        let funcdef = self.context.get_type(funcdef_type_id);
         let (expected_params, expected_return) = match funcdef {
             TypeDef::Funcdef { params, return_type, .. } => (params, return_type),
             _ => {
@@ -3247,7 +3247,7 @@ impl<'ast> FunctionCompiler<'ast> {
 
         // ✨ COMPILE LAMBDA IMMEDIATELY using compile_block
         let compiled = FunctionCompiler::compile_block(
-            self.registry,
+            self.context,
             expected_return.clone(),
             &all_vars,
             lambda.body,
@@ -3297,10 +3297,10 @@ impl<'ast> FunctionCompiler<'ast> {
         };
 
         // Look up behaviors for the target type
-        let behaviors = match self.registry.get_behaviors(target_type_id) {
+        let behaviors = match self.context.get_behaviors(target_type_id) {
             Some(b) => b.clone(),
             None => {
-                let type_name = self.registry.get_type(target_type_id).name();
+                let type_name = self.context.get_type(target_type_id).name();
                 self.error(
                     SemanticErrorKind::MissingListBehavior,
                     init_list.span,
@@ -3320,7 +3320,7 @@ impl<'ast> FunctionCompiler<'ast> {
         } else if let Some(construct) = behaviors.list_construct {
             (construct, false)
         } else {
-            let type_name = self.registry.get_type(target_type_id).name();
+            let type_name = self.context.get_type(target_type_id).name();
             self.error(
                 SemanticErrorKind::MissingListBehavior,
                 init_list.span,

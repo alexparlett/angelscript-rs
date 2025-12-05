@@ -20,7 +20,7 @@ pub mod type_def;
 pub use behaviors::TypeBehaviors;
 pub use conversion::{Conversion, ConversionKind};
 pub use data_type::{DataType, RefModifier};
-pub use registry::{FunctionDef, GlobalVarDef, ScriptRegistry};
+pub use registry::{FunctionDef, GlobalVarDef, ScriptParam, ScriptRegistry};
 pub use type_def::{
     FieldDef, FunctionId, FunctionTraits, MethodSignature, OperatorBehavior, PrimitiveType,
     PropertyAccessors, TypeDef, TypeId, Visibility, BOOL_TYPE,

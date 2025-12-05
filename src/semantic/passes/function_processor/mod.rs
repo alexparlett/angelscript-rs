@@ -18,10 +18,11 @@ use crate::ast::{
     types::TypeSuffix,
 };
 use crate::semantic::types::registry::FunctionDef;
+use crate::semantic::CompilationContext;
 use crate::codegen::{BytecodeEmitter, CompiledBytecode, CompiledModule, Instruction};
 use crate::lexer::Span;
 use crate::semantic::{
-    DataType, LocalScope, Registry,
+    DataType, LocalScope,
     SemanticError, SemanticErrorKind, TypeDef, TypeId, VOID_TYPE,
 };
 use crate::semantic::types::type_def::FunctionId;
@@ -121,8 +122,8 @@ pub struct CompiledFunction {
 /// 2. Single function mode: Compile one function body
 #[derive(Debug)]
 pub struct FunctionCompiler<'ast> {
-    /// Global registry (read-only) - contains all type information
-    registry: &'ast Registry<'ast>,
+    /// Compilation context (read-only) - contains all type information (FFI + Script)
+    context: &'ast CompilationContext<'ast>,
 
     /// Local variables for current function (only used in single-function mode)
     local_scope: LocalScope,
@@ -171,9 +172,9 @@ impl<'ast> FunctionCompiler<'ast> {
     /// This is the main entry point for compiling all functions in a module.
     pub fn compile(
         script: &Script<'ast>,
-        registry: &'ast Registry<'ast>,
+        context: &'ast CompilationContext<'ast>,
     ) -> CompiledModule {
-        let mut compiler = Self::new_module_compiler(registry);
+        let mut compiler = Self::new_module_compiler(context);
         compiler.visit_script(script);
 
         CompiledModule {
@@ -183,10 +184,10 @@ impl<'ast> FunctionCompiler<'ast> {
     }
 
     /// Creates a new module-level compiler (for compiling all functions).
-    fn new_module_compiler(registry: &'ast Registry<'ast>) -> Self {
+    fn new_module_compiler(context: &'ast CompilationContext<'ast>) -> Self {
         Self {
-            next_lambda_id: registry.function_count() as u32,  // Start after regular functions
-            registry,
+            next_lambda_id: context.function_count() as u32,  // Start after regular functions
+            context,
             local_scope: LocalScope::new(),
             bytecode: BytecodeEmitter::new(),
             return_type: DataType::simple(VOID_TYPE),
@@ -206,12 +207,12 @@ impl<'ast> FunctionCompiler<'ast> {
     ///
     /// # Parameters
     ///
-    /// - `registry`: The complete type registry from Pass 2a
+    /// - `context`: The complete compilation context from Pass 2a
     /// - `return_type`: The expected return type for this function
-    fn new(registry: &'ast Registry<'ast>, return_type: DataType) -> Self {
+    fn new(context: &'ast CompilationContext<'ast>, return_type: DataType) -> Self {
         Self {
-            next_lambda_id: registry.function_count() as u32,  // Start after regular functions
-            registry,
+            next_lambda_id: context.function_count() as u32,  // Start after regular functions
+            context,
             local_scope: LocalScope::new(),
             bytecode: BytecodeEmitter::new(),
             return_type,
@@ -231,12 +232,12 @@ impl<'ast> FunctionCompiler<'ast> {
     ///
     /// This is a convenience method for compiling a complete function with parameters.
     pub fn compile_block(
-        registry: &'ast Registry<'ast>,
+        context: &'ast CompilationContext<'ast>,
         return_type: DataType,
         params: &[(String, DataType)],
         body: &'ast Block<'ast>,
     ) -> CompiledFunction {
-        let mut compiler = Self::new(registry, return_type);
+        let mut compiler = Self::new(context, return_type);
 
         // Enter function scope
         compiler.local_scope.enter_scope();
@@ -275,7 +276,7 @@ impl<'ast> FunctionCompiler<'ast> {
     /// This variant allows tracking the current class for super() resolution
     /// and the namespace path for unqualified name lookup.
     fn compile_block_with_context(
-        registry: &'ast Registry<'ast>,
+        context: &'ast CompilationContext<'ast>,
         return_type: DataType,
         params: &[(String, DataType)],
         body: &'ast Block<'ast>,
@@ -283,7 +284,7 @@ impl<'ast> FunctionCompiler<'ast> {
         namespace_path: Vec<String>,
         imported_namespaces: Vec<String>,
     ) -> CompiledFunction {
-        let mut compiler = Self::new(registry, return_type);
+        let mut compiler = Self::new(context, return_type);
         compiler.current_class = current_class;
         compiler.namespace_path = namespace_path;
         compiler.imported_namespaces = imported_namespaces;
@@ -327,11 +328,11 @@ impl<'ast> FunctionCompiler<'ast> {
     ///
     /// Returns: (instructions, errors)
     fn compile_field_initializer(
-        registry: &'ast Registry<'ast>,
+        context: &'ast CompilationContext<'ast>,
         expr: &'ast Expr<'ast>,
         class_type_id: TypeId,
     ) -> (Vec<Instruction>, Vec<SemanticError>) {
-        let mut compiler = Self::new(registry, DataType::simple(VOID_TYPE));
+        let mut compiler = Self::new(context, DataType::simple(VOID_TYPE));
         compiler.current_class = Some(class_type_id);
 
         // Compile the expression - this will emit bytecode to push the value onto the stack
@@ -412,7 +413,7 @@ impl<'ast> FunctionCompiler<'ast> {
         let qualified_name = self.build_qualified_name(class.name.name);
 
         // Look up the class type ID
-        let type_id = match self.registry.lookup_type(&qualified_name) {
+        let type_id = match self.context.lookup_type(&qualified_name) {
             Some(id) => id,
             None => {
                 // Class wasn't registered - this shouldn't happen if Pass 1 & 2a worked
@@ -421,7 +422,7 @@ impl<'ast> FunctionCompiler<'ast> {
         };
 
         // Get all methods for this class from the registry
-        let method_ids = self.registry.get_methods(type_id);
+        let method_ids = self.context.get_methods(type_id);
 
         // Compile each method by matching AST to FunctionIds
         for member in class.members {
@@ -432,7 +433,7 @@ impl<'ast> FunctionCompiler<'ast> {
                     .iter()
                     .copied()
                     .find(|&fid| {
-                        let func_def = self.registry.get_function(fid);
+                        let func_def = self.context.get_function(fid);
                         self.method_signature_matches(method_decl, func_def)
                     });
 
@@ -468,19 +469,19 @@ impl<'ast> FunctionCompiler<'ast> {
         for (ast_param, def_param) in method_decl.params.iter().zip(func_def.params.iter()) {
             // Resolve AST parameter type to TypeId
             let type_name = format!("{}", ast_param.ty.ty.base);
-            let ast_type_id = match self.registry.lookup_type(&type_name) {
+            let ast_type_id = match self.context.lookup_type(&type_name) {
                 Some(id) => id,
                 None => return false, // Unknown type - can't match
             };
 
             // Compare base type IDs
-            if ast_type_id != def_param.type_id {
+            if ast_type_id != def_param.data_type.type_id {
                 return false;
             }
 
             // Check handle modifier (@) matches
             let ast_is_handle = ast_param.ty.ty.suffixes.iter().any(|s| matches!(s, TypeSuffix::Handle { .. }));
-            if ast_is_handle != def_param.is_handle {
+            if ast_is_handle != def_param.data_type.is_handle {
                 return false;
             }
         }
@@ -496,19 +497,20 @@ impl<'ast> FunctionCompiler<'ast> {
             None => return,
         };
 
-        let func_def = self.registry.get_function(func_id);
+        let func_def = self.context.get_function(func_id);
 
         // Extract parameters for compilation (pre-allocate capacity)
-        let mut params = Vec::with_capacity(func_def.params.len());
-        for (i, param_type) in func_def.params.iter().enumerate() {
-            // Get parameter name from AST
-            let name = if i < func.params.len() {
-                func.params[i].name.map(|id| id.name.to_string()).unwrap_or_else(|| format!("param{}", i))
-            } else {
-                format!("param{}", i)
-            };
-            params.push((name, param_type.clone()));
-        }
+        let params: Vec<(String, DataType)> = func_def.params.iter().enumerate()
+            .map(|(i, param)| {
+                // Get parameter name from AST if available, otherwise from ScriptParam
+                let name = if i < func.params.len() {
+                    func.params[i].name.map(|id| id.name.to_string()).unwrap_or_else(|| param.name.clone())
+                } else {
+                    param.name.clone()
+                };
+                (name, param.data_type.clone())
+            })
+            .collect();
 
         // For constructors, emit member initialization in the correct order
         let mut constructor_prologue = None;
@@ -518,7 +520,7 @@ impl<'ast> FunctionCompiler<'ast> {
 
         // Compile the function body with class and namespace context
         let mut compiled = Self::compile_block_with_context(
-            self.registry,
+            self.context,
             func_def.return_type.clone(),
             &params,
             body,
@@ -562,7 +564,7 @@ impl<'ast> FunctionCompiler<'ast> {
             None => return instructions, // Not a method, shouldn't happen
         };
 
-        let class_typedef = self.registry.get_type(class_id);
+        let class_typedef = self.context.get_type(class_id);
         let base_class_id = match class_typedef {
             TypeDef::Class { base_class, .. } => *base_class,
             _ => None,
@@ -598,7 +600,7 @@ impl<'ast> FunctionCompiler<'ast> {
             if !has_super_call {
                 // Emit call to base class default constructor
                 // Only auto-call if super() is not explicitly called
-                let base_constructors = self.registry.find_constructors(base_id);
+                let base_constructors = self.context.find_constructors(base_id);
                 if let Some(&base_ctor_id) = base_constructors.first() {
                     instructions.push(Instruction::CallConstructor {
                         type_id: base_id.0,
@@ -628,7 +630,7 @@ impl<'ast> FunctionCompiler<'ast> {
 
                     // 2. Compile the initializer expression
                     let (expr_instructions, expr_errors) =
-                        Self::compile_field_initializer(self.registry, init_expr, class_id);
+                        Self::compile_field_initializer(self.context, init_expr, class_id);
                     instructions.extend(expr_instructions);
                     self.errors.extend(expr_errors);
 
@@ -772,7 +774,7 @@ impl<'ast> FunctionCompiler<'ast> {
         let qualified_name = self.build_qualified_name(func.name.name);
 
         // Look up the function in the registry to get its FunctionId and signature
-        let func_ids = self.registry.lookup_functions(&qualified_name);
+        let func_ids = self.context.lookup_functions(&qualified_name);
 
         if func_ids.is_empty() {
             // Function wasn't registered - this shouldn't happen if Pass 1 & 2a worked
@@ -784,7 +786,7 @@ impl<'ast> FunctionCompiler<'ast> {
             .iter()
             .copied()
             .find(|&id| {
-                let func_def = self.registry.get_function(id);
+                let func_def = self.context.get_function(id);
                 func_def.object_type == object_type
             });
 
@@ -796,23 +798,24 @@ impl<'ast> FunctionCompiler<'ast> {
             }
         };
 
-        let func_def = self.registry.get_function(func_id);
+        let func_def = self.context.get_function(func_id);
 
         // Extract parameters for compilation (pre-allocate capacity)
-        let mut params = Vec::with_capacity(func_def.params.len());
-        for (i, param_type) in func_def.params.iter().enumerate() {
-            // Get parameter name from AST
-            let name = if i < func.params.len() {
-                func.params[i].name.map(|id| id.name.to_string()).unwrap_or_else(|| format!("param{}", i))
-            } else {
-                format!("param{}", i)
-            };
-            params.push((name, param_type.clone()));
-        }
+        let params: Vec<(String, DataType)> = func_def.params.iter().enumerate()
+            .map(|(i, param)| {
+                // Get parameter name from AST if available, otherwise from ScriptParam
+                let name = if i < func.params.len() {
+                    func.params[i].name.map(|id| id.name.to_string()).unwrap_or_else(|| param.name.clone())
+                } else {
+                    param.name.clone()
+                };
+                (name, param.data_type.clone())
+            })
+            .collect();
 
         // Compile the function body with namespace context
         let compiled = Self::compile_block_with_context(
-            self.registry,
+            self.context,
             func_def.return_type.clone(),
             &params,
             body,
@@ -852,62 +855,10 @@ mod tests {
     use crate::ffi::FfiRegistryBuilder;
     use std::sync::Arc;
 
-    /// Creates a test array template and returns (registry, array_template_id)
-    fn create_test_registry_with_array() -> (Registry<'static>, TypeId) {
-        let mut registry = Registry::new();
-
-        // Register a test "array" template with one type parameter
-        let array_template = {
-            // First register the template TypeId placeholder
-            let template_id = registry.register_type(
-                TypeDef::Primitive { kind: PrimitiveType::Void }, // temporary placeholder
-                Some("array"),
-            );
-
-            // Register template param T
-            let t_param = registry.register_type(
-                TypeDef::TemplateParam {
-                    name: "T".to_string(),
-                    index: 0,
-                    owner: template_id,
-                },
-                None,
-            );
-
-            // Update with proper Class typedef
-            let typedef = TypeDef::Class {
-                name: "array".to_string(),
-                qualified_name: "array".to_string(),
-                fields: Vec::new(),
-                methods: Vec::new(),
-                base_class: None,
-                interfaces: Vec::new(),
-                operator_methods: rustc_hash::FxHashMap::default(),
-                properties: rustc_hash::FxHashMap::default(),
-                is_final: false,
-                is_abstract: false,
-                template_params: vec![t_param],
-                template: None,
-                type_args: Vec::new(),
-            type_kind: crate::types::TypeKind::reference(),
-            };
-            *registry.get_type_mut(template_id) = typedef;
-            template_id
-        };
-
-        // Register a dummy list_factory behavior for array template
-        // so init list tests work. The FunctionId doesn't need to be real
-        // since we're only testing semantic analysis, not bytecode generation.
-        let mut behaviors = TypeBehaviors::default();
-        behaviors.list_factory = Some(FunctionId::new(9999)); // Dummy function ID
-        registry.set_behaviors(array_template, behaviors);
-
-        (registry, array_template)
-    }
-
-    fn create_test_registry() -> Registry<'static> {
-        let (registry, _) = create_test_registry_with_array();
-        registry
+    /// Creates a default CompilationContext for basic tests
+    fn create_test_context() -> CompilationContext<'static> {
+        let ffi = Arc::new(FfiRegistryBuilder::new().build().unwrap());
+        CompilationContext::new(ffi)
     }
 
     /// Creates a CompilationContext with an array template registered in FFI.
@@ -962,9 +913,9 @@ mod tests {
 
     #[test]
     fn new_compiler_initializes() {
-        let registry = create_test_registry();
+        let ctx = create_test_context();
         let return_type = DataType::simple(VOID_TYPE);
-        let compiler = FunctionCompiler::<'_>::new(&registry, return_type);
+        let compiler = FunctionCompiler::<'_>::new(&ctx, return_type);
 
         assert_eq!(compiler.errors.len(), 0);
         assert_eq!(compiler.return_type.type_id, VOID_TYPE);
@@ -990,7 +941,7 @@ mod tests {
             .unwrap();
 
         let return_type = DataType::simple(VOID_TYPE);
-        let mut compiler = FunctionCompiler::new(ctx.script(), return_type);
+        let mut compiler = FunctionCompiler::new(&ctx, return_type);
 
         // NOTE: Don't set expected_init_list_target - test that we get an error
         if let Expr::InitList(init_list) = *expr {
@@ -1026,7 +977,7 @@ mod tests {
             .unwrap();
 
         let return_type = DataType::simple(VOID_TYPE);
-        let mut compiler = FunctionCompiler::new(ctx.script(), return_type);
+        let mut compiler = FunctionCompiler::new(&ctx, return_type);
 
         // Set expected init list target type (as would be set by var decl)
         compiler.expected_init_list_target = Some(array_int);
@@ -1079,7 +1030,7 @@ mod tests {
             .unwrap();
 
         let return_type = DataType::simple(VOID_TYPE);
-        let mut compiler = FunctionCompiler::new(ctx.script(), return_type);
+        let mut compiler = FunctionCompiler::new(&ctx, return_type);
 
         // Set expected init list target type for outer array
         compiler.expected_init_list_target = Some(array_array_int);
@@ -1118,7 +1069,7 @@ mod tests {
             .unwrap();
 
         let return_type = DataType::simple(VOID_TYPE);
-        let mut compiler = FunctionCompiler::new(ctx.script(), return_type);
+        let mut compiler = FunctionCompiler::new(&ctx, return_type);
 
         // Set expected init list target type
         compiler.expected_init_list_target = Some(array_double);
@@ -1187,11 +1138,11 @@ mod tests {
             "Expected 3 functions (takeCallback, main, lambda), got {}", result.module.functions.len());
 
         // Find the functions by name via the registry
-        let takecb_ids = result.registry.lookup_functions("takeCallback");
+        let takecb_ids = result.context.lookup_functions("takeCallback");
         assert_eq!(takecb_ids.len(), 1, "Expected 1 takeCallback function");
         let takecb_id = takecb_ids[0];
 
-        let main_ids = result.registry.lookup_functions("main");
+        let main_ids = result.context.lookup_functions("main");
         assert_eq!(main_ids.len(), 1, "Expected 1 main function");
         let main_id = main_ids[0];
 
@@ -1282,8 +1233,8 @@ mod tests {
         assert!(result.is_success(), "Lambda variable capture failed: {:?}", result.errors);
 
         // Find lambda - it's any function that's not runAction or main
-        let run_action_ids = result.registry.lookup_functions("runAction");
-        let main_ids = result.registry.lookup_functions("main");
+        let run_action_ids = result.context.lookup_functions("runAction");
+        let main_ids = result.context.lookup_functions("main");
         let run_action_id = run_action_ids.first().copied();
         let main_id = main_ids.first().copied();
 

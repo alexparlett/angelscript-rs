@@ -65,7 +65,7 @@ impl<'ast> FunctionCompiler<'ast> {
     pub(super) fn lookup_function_in_imports(&self, name: &str) -> Vec<FunctionId> {
         for ns in &self.imported_namespaces {
             let qualified = format!("{}::{}", ns, name);
-            let candidates = self.registry.lookup_functions(&qualified);
+            let candidates = self.context.lookup_functions(&qualified);
             if !candidates.is_empty() {
                 return candidates.to_vec();
             }
@@ -86,14 +86,14 @@ impl<'ast> FunctionCompiler<'ast> {
             // Build template instance name like "array<int>" or "array<array<int>>"
             // For nested templates, we need to recursively resolve the inner type first
             // to get its registered name (which uses canonical type names like "int" not "int32")
-            let base_name = self.registry.get_type(base_type_id).name();
+            let base_name = self.context.get_type(base_type_id).name();
 
             // Collect arg names and calculate capacity
             let mut arg_names: Vec<&str> = Vec::with_capacity(type_expr.template_args.len());
             for arg in type_expr.template_args {
                 // Recursively resolve the template argument to get its canonical name
                 if let Some(resolved) = self.resolve_type_expr(arg) {
-                    let typedef = self.registry.get_type(resolved.type_id);
+                    let typedef = self.context.get_type(resolved.type_id);
                     arg_names.push(typedef.name());
                 } else {
                     return None; // Error already reported
@@ -115,7 +115,7 @@ impl<'ast> FunctionCompiler<'ast> {
             template_name.push('>');
 
             // Look up the instantiated template type
-            if let Some(id) = self.registry.lookup_type(&template_name) {
+            if let Some(id) = self.context.lookup_type(&template_name) {
                 id
             } else {
                 self.error(
@@ -134,9 +134,9 @@ impl<'ast> FunctionCompiler<'ast> {
 
         // Check if this is an array template instance - arrays are always reference types (handles)
         // Note: Template instances are Class types with template: Some(...)
-        let typedef = self.registry.get_type(type_id);
+        let typedef = self.context.get_type(type_id);
         if let TypeDef::Class { template: Some(tmpl), .. } = typedef
-            && let Some(array_template) = self.registry.lookup_type("array")
+            && let Some(array_template) = self.context.lookup_type("array")
                 && *tmpl == array_template {
                     // Arrays are reference types, so they're implicitly handles
                     data_type.is_handle = true;
@@ -195,7 +195,7 @@ impl<'ast> FunctionCompiler<'ast> {
                 if let Some(scope) = scope {
                     // Scoped type: Namespace::Type
                     let type_name = self.build_scoped_name(scope, ident.name);
-                    if let Some(type_id) = self.registry.lookup_type(&type_name) {
+                    if let Some(type_id) = self.context.lookup_type(&type_name) {
                         return Some(type_id);
                     }
                     self.error(
@@ -213,7 +213,7 @@ impl<'ast> FunctionCompiler<'ast> {
                     let qualified = self.build_qualified_name(ident.name);
 
                     // Look up in registry
-                    if let Some(type_id) = self.registry.lookup_type(&qualified) {
+                    if let Some(type_id) = self.context.lookup_type(&qualified) {
                         return Some(type_id);
                     }
 
@@ -225,14 +225,14 @@ impl<'ast> FunctionCompiler<'ast> {
                                 &self.namespace_path[..prefix_len],
                                 ident.name,
                             );
-                            if let Some(type_id) = self.registry.lookup_type(&ancestor_qualified) {
+                            if let Some(type_id) = self.context.lookup_type(&ancestor_qualified) {
                                 return Some(type_id);
                             }
                         }
                     }
 
                     // Try global scope
-                    if let Some(type_id) = self.registry.lookup_type(ident.name) {
+                    if let Some(type_id) = self.context.lookup_type(ident.name) {
                         return Some(type_id);
                     }
 
@@ -240,7 +240,7 @@ impl<'ast> FunctionCompiler<'ast> {
                     let mut found_in_import: Option<TypeId> = None;
                     for ns in &self.imported_namespaces {
                         let imported_qualified = format!("{}::{}", ns, ident.name);
-                        if let Some(type_id) = self.registry.lookup_type(&imported_qualified) {
+                        if let Some(type_id) = self.context.lookup_type(&imported_qualified) {
                             if found_in_import.is_some() {
                                 // Ambiguous - found in multiple imported namespaces
                                 self.error(
@@ -333,7 +333,7 @@ impl<'ast> FunctionCompiler<'ast> {
     /// - Types are identical, OR
     /// - An implicit conversion exists from value to target
     pub(super) fn is_assignable(&self, value: &DataType, target: &DataType) -> bool {
-        if let Some(conversion) = value.can_convert_to(target, self.registry) {
+        if let Some(conversion) = value.can_convert_to(target, self.context) {
             conversion.is_implicit
         } else {
             false
@@ -351,7 +351,7 @@ impl<'ast> FunctionCompiler<'ast> {
             return true;
         }
         // Enum types are also numeric (int32 values)
-        self.registry.get_type(ty.type_id).is_enum()
+        self.context.get_type(ty.type_id).is_enum()
     }
 
     /// Checks if a type is an integer type (includes enums since they're int32 underneath).
@@ -364,7 +364,7 @@ impl<'ast> FunctionCompiler<'ast> {
             return true;
         }
         // Enum types are also integers (int32 values)
-        self.registry.get_type(ty.type_id).is_enum()
+        self.context.get_type(ty.type_id).is_enum()
     }
 
     /// Checks if a type can be used in bitwise operations (integers and bool).
@@ -387,7 +387,7 @@ impl<'ast> FunctionCompiler<'ast> {
         }
 
         // Enum types (treated as integers)
-        let typedef = self.registry.get_type(ty.type_id);
+        let typedef = self.context.get_type(ty.type_id);
         if typedef.is_enum() {
             return Some(SwitchCategory::Integer);
         }
@@ -403,7 +403,7 @@ impl<'ast> FunctionCompiler<'ast> {
         }
 
         // String
-        if let Some(string_type) = self.registry.lookup_type("string")
+        if let Some(string_type) = self.context.lookup_type("string")
             && ty.type_id == string_type {
                 return Some(SwitchCategory::String);
             }
@@ -417,8 +417,8 @@ impl<'ast> FunctionCompiler<'ast> {
         // Only identifiers can be type patterns
         if let Expr::Ident(ident) = expr {
             // Look up as type name, not variable
-            if let Some(type_id) = self.registry.lookup_type(ident.ident.name) {
-                let typedef = self.registry.get_type(type_id);
+            if let Some(type_id) = self.context.lookup_type(ident.ident.name) {
+                let typedef = self.context.get_type(type_id);
                 // Only classes and interfaces are valid type patterns
                 if typedef.is_class() || typedef.is_interface() {
                     return Some(type_id);
@@ -444,7 +444,7 @@ impl<'ast> FunctionCompiler<'ast> {
 
     /// Gets a human-readable name for a type.
     pub(super) fn type_name(&self, ty: &DataType) -> String {
-        let type_def = self.registry.get_type(ty.type_id);
+        let type_def = self.context.get_type(ty.type_id);
         type_def.name().to_string()
     }
 
@@ -473,7 +473,7 @@ impl<'ast> FunctionCompiler<'ast> {
                             return true;
                         }
                         // Check if current class is derived from member_class
-                        self.registry.is_subclass_of(current_class_id, member_class)
+                        self.context.is_subclass_of(current_class_id, member_class)
                     }
                 }
             }
@@ -495,7 +495,7 @@ impl<'ast> FunctionCompiler<'ast> {
         let mut current_class_id = Some(class_id);
 
         while let Some(cid) = current_class_id {
-            let typedef = self.registry.get_type(cid);
+            let typedef = self.context.get_type(cid);
             match typedef {
                 TypeDef::Class { fields, base_class, .. } => {
                     // Check fields in this class
@@ -537,10 +537,10 @@ impl<'ast> FunctionCompiler<'ast> {
     }
 
     pub(super) fn get_base_class_by_name(&self, class_id: TypeId, name: &str) -> Option<TypeId> {
-        let class_def = self.registry.get_type(class_id);
+        let class_def = self.context.get_type(class_id);
         if let TypeDef::Class { base_class, .. } = class_def
             && let Some(base_id) = base_class {
-                let base_def = self.registry.get_type(*base_id);
+                let base_def = self.context.get_type(*base_id);
                 // Check if the base class name matches (short name only)
                 if base_def.name() == name {
                     return Some(*base_id);

@@ -18,7 +18,8 @@
 
 use crate::ast::expr::{Expr, LiteralKind};
 use crate::ast::{BinaryOp, UnaryOp};
-use crate::semantic::types::{ScriptRegistry, TypeDef};
+use crate::semantic::CompilationContext;
+use crate::semantic::types::TypeDef;
 
 /// A compile-time constant value.
 #[derive(Debug, Clone, PartialEq)]
@@ -115,13 +116,13 @@ impl ConstValue {
 /// Evaluates expressions at compile time when possible.
 /// Returns `None` if the expression cannot be evaluated as a constant.
 pub struct ConstEvaluator<'a, 'ast> {
-    registry: &'a ScriptRegistry<'ast>,
+    context: &'a CompilationContext<'ast>,
 }
 
 impl<'a, 'ast> ConstEvaluator<'a, 'ast> {
     /// Create a new constant evaluator.
-    pub fn new(registry: &'a ScriptRegistry<'ast>) -> Self {
-        Self { registry }
+    pub fn new(context: &'a CompilationContext<'ast>) -> Self {
+        Self { context }
     }
 
     /// Evaluate an expression as a constant value.
@@ -288,8 +289,8 @@ impl<'a, 'ast> ConstEvaluator<'a, 'ast> {
             };
 
             // Look up the enum type
-            if let Some(type_id) = self.registry.lookup_type(&enum_name) {
-                let typedef = self.registry.get_type(type_id);
+            if let Some(type_id) = self.context.lookup_type(&enum_name) {
+                let typedef = self.context.get_type(type_id);
                 if let TypeDef::Enum { values, .. } = typedef {
                     // Look up the value
                     let value_name = ident.ident.name;
@@ -608,7 +609,7 @@ mod tests {
     use crate::ast::decl::Item;
     use crate::ast::stmt::Stmt;
     use crate::Parser;
-    use crate::semantic::Registrar;
+    use crate::semantic::Compiler;
     use bumpalo::Bump;
 
     fn eval_expr(source: &str) -> Option<ConstValue> {
@@ -618,9 +619,9 @@ mod tests {
         let (script, errors) = Parser::parse_lenient(&full_source, &arena);
         assert!(errors.is_empty(), "Parse errors: {:?}", errors);
 
-        // Register to get a registry
-        let data = Registrar::register(&script);
-        let evaluator = ConstEvaluator::new(&data.registry);
+        // Compile to get a context with type information
+        let data = Compiler::compile_types(&script);
+        let evaluator = ConstEvaluator::new(&data.context);
 
         // Find the expression in the function body
         for item in script.items() {
@@ -909,8 +910,8 @@ mod tests {
         let (script, errors) = Parser::parse_lenient(source, &arena);
         assert!(errors.is_empty(), "Parse errors: {:?}", errors);
 
-        let data = Registrar::register(&script);
-        let evaluator = ConstEvaluator::new(&data.registry);
+        let data = Compiler::compile_types(&script);
+        let evaluator = ConstEvaluator::new(&data.context);
 
         // Find the expression
         for item in script.items() {
@@ -943,8 +944,8 @@ mod tests {
         let (script, errors) = Parser::parse_lenient(source, &arena);
         assert!(errors.is_empty(), "Parse errors: {:?}", errors);
 
-        let data = Registrar::register(&script);
-        let evaluator = ConstEvaluator::new(&data.registry);
+        let data = Compiler::compile_types(&script);
+        let evaluator = ConstEvaluator::new(&data.context);
 
         for item in script.items() {
             if let Item::Function(func) = item {
@@ -1471,8 +1472,8 @@ mod tests {
         let (script, errors) = Parser::parse_lenient(&full_source, &arena);
         assert!(errors.is_empty(), "Parse errors: {:?}", errors);
 
-        let data = Registrar::register(&script);
-        let evaluator = ConstEvaluator::new(&data.registry);
+        let data = Compiler::compile_types(&script);
+        let evaluator = ConstEvaluator::new(&data.context);
 
         for item in script.items() {
             if let Item::Function(func) = item {
@@ -1513,8 +1514,8 @@ mod tests {
         let source = "void test() { int x; x = 5; }";
         let (script, _) = Parser::parse_lenient(source, &arena);
 
-        let data = Registrar::register(&script);
-        let evaluator = ConstEvaluator::new(&data.registry);
+        let data = Compiler::compile_types(&script);
+        let evaluator = ConstEvaluator::new(&data.context);
 
         for item in script.items() {
             if let Item::Function(func) = item {
@@ -1539,8 +1540,8 @@ mod tests {
         let source = "void foo() {} void test() { foo(); }";
         let (script, _) = Parser::parse_lenient(source, &arena);
 
-        let data = Registrar::register(&script);
-        let evaluator = ConstEvaluator::new(&data.registry);
+        let data = Compiler::compile_types(&script);
+        let evaluator = ConstEvaluator::new(&data.context);
 
         for item in script.items() {
             if let Item::Function(func) = item {
@@ -1567,8 +1568,8 @@ mod tests {
         let source = "void test() { int x = 0; x++; }";
         let (script, _) = Parser::parse_lenient(source, &arena);
 
-        let data = Registrar::register(&script);
-        let evaluator = ConstEvaluator::new(&data.registry);
+        let data = Compiler::compile_types(&script);
+        let evaluator = ConstEvaluator::new(&data.context);
 
         for item in script.items() {
             if let Item::Function(func) = item {
@@ -1594,8 +1595,8 @@ mod tests {
         let source = "void test() { int x = 0; ++x; }";
         let (script, _) = Parser::parse_lenient(source, &arena);
 
-        let data = Registrar::register(&script);
-        let evaluator = ConstEvaluator::new(&data.registry);
+        let data = Compiler::compile_types(&script);
+        let evaluator = ConstEvaluator::new(&data.context);
 
         for item in script.items() {
             if let Item::Function(func) = item {
@@ -1625,8 +1626,8 @@ mod tests {
         "#;
         let (script, _) = Parser::parse_lenient(source, &arena);
 
-        let data = Registrar::register(&script);
-        let evaluator = ConstEvaluator::new(&data.registry);
+        let data = Compiler::compile_types(&script);
+        let evaluator = ConstEvaluator::new(&data.context);
 
         for item in script.items() {
             if let Item::Function(func) = item {
@@ -1671,8 +1672,8 @@ mod tests {
         let source = "void test() { int[] arr; arr[0]; }";
         let (script, _) = Parser::parse_lenient(source, &arena);
 
-        let data = Registrar::register(&script);
-        let evaluator = ConstEvaluator::new(&data.registry);
+        let data = Compiler::compile_types(&script);
+        let evaluator = ConstEvaluator::new(&data.context);
 
         for item in script.items() {
             if let Item::Function(func) = item {
@@ -1701,8 +1702,8 @@ mod tests {
         "#;
         let (script, _) = Parser::parse_lenient(source, &arena);
 
-        let data = Registrar::register(&script);
-        let evaluator = ConstEvaluator::new(&data.registry);
+        let data = Compiler::compile_types(&script);
+        let evaluator = ConstEvaluator::new(&data.context);
 
         for item in script.items() {
             if let Item::Function(func) = item {
@@ -1730,8 +1731,8 @@ mod tests {
         let source = "void test() { int(3.14); }";
         let (script, _) = Parser::parse_lenient(source, &arena);
 
-        let data = Registrar::register(&script);
-        let evaluator = ConstEvaluator::new(&data.registry);
+        let data = Compiler::compile_types(&script);
+        let evaluator = ConstEvaluator::new(&data.context);
 
         for item in script.items() {
             if let Item::Function(func) = item {
@@ -1757,8 +1758,8 @@ mod tests {
         let source = "void test() { int x = 1; --x; }";
         let (script, _) = Parser::parse_lenient(source, &arena);
 
-        let data = Registrar::register(&script);
-        let evaluator = ConstEvaluator::new(&data.registry);
+        let data = Compiler::compile_types(&script);
+        let evaluator = ConstEvaluator::new(&data.context);
 
         for item in script.items() {
             if let Item::Function(func) = item {
@@ -1789,8 +1790,8 @@ mod tests {
         "#;
         let (script, _) = Parser::parse_lenient(source, &arena);
 
-        let data = Registrar::register(&script);
-        let evaluator = ConstEvaluator::new(&data.registry);
+        let data = Compiler::compile_types(&script);
+        let evaluator = ConstEvaluator::new(&data.context);
 
         for item in script.items() {
             if let Item::Function(func) = item {
@@ -2548,8 +2549,8 @@ mod tests {
         let source = "void test() { int x = 5; x; }";
         let (script, _) = Parser::parse_lenient(source, &arena);
 
-        let data = Registrar::register(&script);
-        let evaluator = ConstEvaluator::new(&data.registry);
+        let data = Compiler::compile_types(&script);
+        let evaluator = ConstEvaluator::new(&data.context);
 
         for item in script.items() {
             if let Item::Function(func) = item {
@@ -2575,8 +2576,8 @@ mod tests {
         let source = "void test() { UnknownEnum::VALUE; }";
         let (script, _) = Parser::parse_lenient(source, &arena);
 
-        let data = Registrar::register(&script);
-        let evaluator = ConstEvaluator::new(&data.registry);
+        let data = Compiler::compile_types(&script);
+        let evaluator = ConstEvaluator::new(&data.context);
 
         for item in script.items() {
             if let Item::Function(func) = item {
@@ -2605,8 +2606,8 @@ mod tests {
         "#;
         let (script, _) = Parser::parse_lenient(source, &arena);
 
-        let data = Registrar::register(&script);
-        let evaluator = ConstEvaluator::new(&data.registry);
+        let data = Compiler::compile_types(&script);
+        let evaluator = ConstEvaluator::new(&data.context);
 
         for item in script.items() {
             if let Item::Function(func) = item {
@@ -2638,8 +2639,8 @@ mod tests {
         "#;
         let (script, _) = Parser::parse_lenient(source, &arena);
 
-        let data = Registrar::register(&script);
-        let evaluator = ConstEvaluator::new(&data.registry);
+        let data = Compiler::compile_types(&script);
+        let evaluator = ConstEvaluator::new(&data.context);
 
         for item in script.items() {
             if let Item::Function(func) = item {
@@ -2675,8 +2676,8 @@ mod tests {
         let source = "void test() { 3.14d; }";
         let (script, _) = Parser::parse_lenient(source, &arena);
 
-        let data = Registrar::register(&script);
-        let evaluator = ConstEvaluator::new(&data.registry);
+        let data = Compiler::compile_types(&script);
+        let evaluator = ConstEvaluator::new(&data.context);
 
         for item in script.items() {
             if let Item::Function(func) = item {
@@ -2698,8 +2699,8 @@ mod tests {
     fn test_evaluator_add_uint_uint() {
         let arena = Bump::new();
         let (script, _) = Parser::parse_lenient("void test() {}", &arena);
-        let data = Registrar::register(&script);
-        let evaluator = ConstEvaluator::new(&data.registry);
+        let data = Compiler::compile_types(&script);
+        let evaluator = ConstEvaluator::new(&data.context);
 
         let left = ConstValue::UInt(10);
         let right = ConstValue::UInt(5);
@@ -2711,8 +2712,8 @@ mod tests {
     fn test_evaluator_sub_uint_uint() {
         let arena = Bump::new();
         let (script, _) = Parser::parse_lenient("void test() {}", &arena);
-        let data = Registrar::register(&script);
-        let evaluator = ConstEvaluator::new(&data.registry);
+        let data = Compiler::compile_types(&script);
+        let evaluator = ConstEvaluator::new(&data.context);
 
         let left = ConstValue::UInt(10);
         let right = ConstValue::UInt(3);
@@ -2724,8 +2725,8 @@ mod tests {
     fn test_evaluator_mul_uint_uint() {
         let arena = Bump::new();
         let (script, _) = Parser::parse_lenient("void test() {}", &arena);
-        let data = Registrar::register(&script);
-        let evaluator = ConstEvaluator::new(&data.registry);
+        let data = Compiler::compile_types(&script);
+        let evaluator = ConstEvaluator::new(&data.context);
 
         let left = ConstValue::UInt(10);
         let right = ConstValue::UInt(3);
@@ -2737,8 +2738,8 @@ mod tests {
     fn test_evaluator_div_uint_uint() {
         let arena = Bump::new();
         let (script, _) = Parser::parse_lenient("void test() {}", &arena);
-        let data = Registrar::register(&script);
-        let evaluator = ConstEvaluator::new(&data.registry);
+        let data = Compiler::compile_types(&script);
+        let evaluator = ConstEvaluator::new(&data.context);
 
         let left = ConstValue::UInt(10);
         let right = ConstValue::UInt(3);
@@ -2750,8 +2751,8 @@ mod tests {
     fn test_evaluator_div_uint_by_zero() {
         let arena = Bump::new();
         let (script, _) = Parser::parse_lenient("void test() {}", &arena);
-        let data = Registrar::register(&script);
-        let evaluator = ConstEvaluator::new(&data.registry);
+        let data = Compiler::compile_types(&script);
+        let evaluator = ConstEvaluator::new(&data.context);
 
         let left = ConstValue::UInt(10);
         let right = ConstValue::UInt(0);
@@ -2763,8 +2764,8 @@ mod tests {
     fn test_evaluator_mod_uint_uint() {
         let arena = Bump::new();
         let (script, _) = Parser::parse_lenient("void test() {}", &arena);
-        let data = Registrar::register(&script);
-        let evaluator = ConstEvaluator::new(&data.registry);
+        let data = Compiler::compile_types(&script);
+        let evaluator = ConstEvaluator::new(&data.context);
 
         let left = ConstValue::UInt(10);
         let right = ConstValue::UInt(3);
@@ -2776,8 +2777,8 @@ mod tests {
     fn test_evaluator_mod_uint_by_zero() {
         let arena = Bump::new();
         let (script, _) = Parser::parse_lenient("void test() {}", &arena);
-        let data = Registrar::register(&script);
-        let evaluator = ConstEvaluator::new(&data.registry);
+        let data = Compiler::compile_types(&script);
+        let evaluator = ConstEvaluator::new(&data.context);
 
         let left = ConstValue::UInt(10);
         let right = ConstValue::UInt(0);
@@ -2789,8 +2790,8 @@ mod tests {
     fn test_evaluator_bitwise_and_uint_uint() {
         let arena = Bump::new();
         let (script, _) = Parser::parse_lenient("void test() {}", &arena);
-        let data = Registrar::register(&script);
-        let evaluator = ConstEvaluator::new(&data.registry);
+        let data = Compiler::compile_types(&script);
+        let evaluator = ConstEvaluator::new(&data.context);
 
         let left = ConstValue::UInt(0xFF);
         let right = ConstValue::UInt(0x0F);
@@ -2802,8 +2803,8 @@ mod tests {
     fn test_evaluator_bitwise_and_int_uint() {
         let arena = Bump::new();
         let (script, _) = Parser::parse_lenient("void test() {}", &arena);
-        let data = Registrar::register(&script);
-        let evaluator = ConstEvaluator::new(&data.registry);
+        let data = Compiler::compile_types(&script);
+        let evaluator = ConstEvaluator::new(&data.context);
 
         let left = ConstValue::Int(0xFF);
         let right = ConstValue::UInt(0x0F);
@@ -2815,8 +2816,8 @@ mod tests {
     fn test_evaluator_bitwise_and_uint_int() {
         let arena = Bump::new();
         let (script, _) = Parser::parse_lenient("void test() {}", &arena);
-        let data = Registrar::register(&script);
-        let evaluator = ConstEvaluator::new(&data.registry);
+        let data = Compiler::compile_types(&script);
+        let evaluator = ConstEvaluator::new(&data.context);
 
         let left = ConstValue::UInt(0xFF);
         let right = ConstValue::Int(0x0F);
@@ -2828,8 +2829,8 @@ mod tests {
     fn test_evaluator_bitwise_or_uint_uint() {
         let arena = Bump::new();
         let (script, _) = Parser::parse_lenient("void test() {}", &arena);
-        let data = Registrar::register(&script);
-        let evaluator = ConstEvaluator::new(&data.registry);
+        let data = Compiler::compile_types(&script);
+        let evaluator = ConstEvaluator::new(&data.context);
 
         let left = ConstValue::UInt(0xF0);
         let right = ConstValue::UInt(0x0F);
@@ -2841,8 +2842,8 @@ mod tests {
     fn test_evaluator_bitwise_or_int_uint() {
         let arena = Bump::new();
         let (script, _) = Parser::parse_lenient("void test() {}", &arena);
-        let data = Registrar::register(&script);
-        let evaluator = ConstEvaluator::new(&data.registry);
+        let data = Compiler::compile_types(&script);
+        let evaluator = ConstEvaluator::new(&data.context);
 
         let left = ConstValue::Int(0xF0);
         let right = ConstValue::UInt(0x0F);
@@ -2854,8 +2855,8 @@ mod tests {
     fn test_evaluator_bitwise_or_uint_int() {
         let arena = Bump::new();
         let (script, _) = Parser::parse_lenient("void test() {}", &arena);
-        let data = Registrar::register(&script);
-        let evaluator = ConstEvaluator::new(&data.registry);
+        let data = Compiler::compile_types(&script);
+        let evaluator = ConstEvaluator::new(&data.context);
 
         let left = ConstValue::UInt(0xF0);
         let right = ConstValue::Int(0x0F);
@@ -2867,8 +2868,8 @@ mod tests {
     fn test_evaluator_bitwise_xor_uint_uint() {
         let arena = Bump::new();
         let (script, _) = Parser::parse_lenient("void test() {}", &arena);
-        let data = Registrar::register(&script);
-        let evaluator = ConstEvaluator::new(&data.registry);
+        let data = Compiler::compile_types(&script);
+        let evaluator = ConstEvaluator::new(&data.context);
 
         let left = ConstValue::UInt(0xFF);
         let right = ConstValue::UInt(0x0F);
@@ -2880,8 +2881,8 @@ mod tests {
     fn test_evaluator_bitwise_xor_int_uint() {
         let arena = Bump::new();
         let (script, _) = Parser::parse_lenient("void test() {}", &arena);
-        let data = Registrar::register(&script);
-        let evaluator = ConstEvaluator::new(&data.registry);
+        let data = Compiler::compile_types(&script);
+        let evaluator = ConstEvaluator::new(&data.context);
 
         let left = ConstValue::Int(0xFF);
         let right = ConstValue::UInt(0x0F);
@@ -2893,8 +2894,8 @@ mod tests {
     fn test_evaluator_bitwise_xor_uint_int() {
         let arena = Bump::new();
         let (script, _) = Parser::parse_lenient("void test() {}", &arena);
-        let data = Registrar::register(&script);
-        let evaluator = ConstEvaluator::new(&data.registry);
+        let data = Compiler::compile_types(&script);
+        let evaluator = ConstEvaluator::new(&data.context);
 
         let left = ConstValue::UInt(0xFF);
         let right = ConstValue::Int(0x0F);
@@ -2906,8 +2907,8 @@ mod tests {
     fn test_evaluator_shift_left_uint() {
         let arena = Bump::new();
         let (script, _) = Parser::parse_lenient("void test() {}", &arena);
-        let data = Registrar::register(&script);
-        let evaluator = ConstEvaluator::new(&data.registry);
+        let data = Compiler::compile_types(&script);
+        let evaluator = ConstEvaluator::new(&data.context);
 
         let left = ConstValue::UInt(1);
         let right = ConstValue::Int(4);
@@ -2919,8 +2920,8 @@ mod tests {
     fn test_evaluator_shift_right_uint() {
         let arena = Bump::new();
         let (script, _) = Parser::parse_lenient("void test() {}", &arena);
-        let data = Registrar::register(&script);
-        let evaluator = ConstEvaluator::new(&data.registry);
+        let data = Compiler::compile_types(&script);
+        let evaluator = ConstEvaluator::new(&data.context);
 
         let left = ConstValue::UInt(16);
         let right = ConstValue::Int(2);
@@ -2932,8 +2933,8 @@ mod tests {
     fn test_evaluator_shift_right_unsigned_uint() {
         let arena = Bump::new();
         let (script, _) = Parser::parse_lenient("void test() {}", &arena);
-        let data = Registrar::register(&script);
-        let evaluator = ConstEvaluator::new(&data.registry);
+        let data = Compiler::compile_types(&script);
+        let evaluator = ConstEvaluator::new(&data.context);
 
         let left = ConstValue::UInt(16);
         let right = ConstValue::Int(2);
@@ -2945,8 +2946,8 @@ mod tests {
     fn test_evaluator_equal_uint_uint() {
         let arena = Bump::new();
         let (script, _) = Parser::parse_lenient("void test() {}", &arena);
-        let data = Registrar::register(&script);
-        let evaluator = ConstEvaluator::new(&data.registry);
+        let data = Compiler::compile_types(&script);
+        let evaluator = ConstEvaluator::new(&data.context);
 
         let left = ConstValue::UInt(5);
         let right = ConstValue::UInt(5);
@@ -2958,8 +2959,8 @@ mod tests {
     fn test_evaluator_equal_int_uint_positive() {
         let arena = Bump::new();
         let (script, _) = Parser::parse_lenient("void test() {}", &arena);
-        let data = Registrar::register(&script);
-        let evaluator = ConstEvaluator::new(&data.registry);
+        let data = Compiler::compile_types(&script);
+        let evaluator = ConstEvaluator::new(&data.context);
 
         let left = ConstValue::Int(5);
         let right = ConstValue::UInt(5);
@@ -2971,8 +2972,8 @@ mod tests {
     fn test_evaluator_equal_int_uint_negative() {
         let arena = Bump::new();
         let (script, _) = Parser::parse_lenient("void test() {}", &arena);
-        let data = Registrar::register(&script);
-        let evaluator = ConstEvaluator::new(&data.registry);
+        let data = Compiler::compile_types(&script);
+        let evaluator = ConstEvaluator::new(&data.context);
 
         let left = ConstValue::Int(-5);
         let right = ConstValue::UInt(5);
@@ -2984,8 +2985,8 @@ mod tests {
     fn test_evaluator_equal_uint_int_positive() {
         let arena = Bump::new();
         let (script, _) = Parser::parse_lenient("void test() {}", &arena);
-        let data = Registrar::register(&script);
-        let evaluator = ConstEvaluator::new(&data.registry);
+        let data = Compiler::compile_types(&script);
+        let evaluator = ConstEvaluator::new(&data.context);
 
         let left = ConstValue::UInt(5);
         let right = ConstValue::Int(5);
@@ -2997,8 +2998,8 @@ mod tests {
     fn test_evaluator_equal_uint_int_negative() {
         let arena = Bump::new();
         let (script, _) = Parser::parse_lenient("void test() {}", &arena);
-        let data = Registrar::register(&script);
-        let evaluator = ConstEvaluator::new(&data.registry);
+        let data = Compiler::compile_types(&script);
+        let evaluator = ConstEvaluator::new(&data.context);
 
         let left = ConstValue::UInt(5);
         let right = ConstValue::Int(-5);
@@ -3010,8 +3011,8 @@ mod tests {
     fn test_evaluator_less_uint_uint() {
         let arena = Bump::new();
         let (script, _) = Parser::parse_lenient("void test() {}", &arena);
-        let data = Registrar::register(&script);
-        let evaluator = ConstEvaluator::new(&data.registry);
+        let data = Compiler::compile_types(&script);
+        let evaluator = ConstEvaluator::new(&data.context);
 
         let left = ConstValue::UInt(3);
         let right = ConstValue::UInt(5);
@@ -3023,8 +3024,8 @@ mod tests {
     fn test_evaluator_less_int_uint_negative() {
         let arena = Bump::new();
         let (script, _) = Parser::parse_lenient("void test() {}", &arena);
-        let data = Registrar::register(&script);
-        let evaluator = ConstEvaluator::new(&data.registry);
+        let data = Compiler::compile_types(&script);
+        let evaluator = ConstEvaluator::new(&data.context);
 
         let left = ConstValue::Int(-5);
         let right = ConstValue::UInt(5);
@@ -3036,8 +3037,8 @@ mod tests {
     fn test_evaluator_less_int_uint_positive() {
         let arena = Bump::new();
         let (script, _) = Parser::parse_lenient("void test() {}", &arena);
-        let data = Registrar::register(&script);
-        let evaluator = ConstEvaluator::new(&data.registry);
+        let data = Compiler::compile_types(&script);
+        let evaluator = ConstEvaluator::new(&data.context);
 
         let left = ConstValue::Int(5);
         let right = ConstValue::UInt(10);
@@ -3049,8 +3050,8 @@ mod tests {
     fn test_evaluator_less_uint_int_negative() {
         let arena = Bump::new();
         let (script, _) = Parser::parse_lenient("void test() {}", &arena);
-        let data = Registrar::register(&script);
-        let evaluator = ConstEvaluator::new(&data.registry);
+        let data = Compiler::compile_types(&script);
+        let evaluator = ConstEvaluator::new(&data.context);
 
         let left = ConstValue::UInt(5);
         let right = ConstValue::Int(-5);
@@ -3062,8 +3063,8 @@ mod tests {
     fn test_evaluator_less_uint_int_positive() {
         let arena = Bump::new();
         let (script, _) = Parser::parse_lenient("void test() {}", &arena);
-        let data = Registrar::register(&script);
-        let evaluator = ConstEvaluator::new(&data.registry);
+        let data = Compiler::compile_types(&script);
+        let evaluator = ConstEvaluator::new(&data.context);
 
         let left = ConstValue::UInt(5);
         let right = ConstValue::Int(10);
@@ -3075,8 +3076,8 @@ mod tests {
     fn test_evaluator_less_equal_uint_uint() {
         let arena = Bump::new();
         let (script, _) = Parser::parse_lenient("void test() {}", &arena);
-        let data = Registrar::register(&script);
-        let evaluator = ConstEvaluator::new(&data.registry);
+        let data = Compiler::compile_types(&script);
+        let evaluator = ConstEvaluator::new(&data.context);
 
         let left = ConstValue::UInt(5);
         let right = ConstValue::UInt(5);
@@ -3088,8 +3089,8 @@ mod tests {
     fn test_evaluator_less_equal_int_uint_negative() {
         let arena = Bump::new();
         let (script, _) = Parser::parse_lenient("void test() {}", &arena);
-        let data = Registrar::register(&script);
-        let evaluator = ConstEvaluator::new(&data.registry);
+        let data = Compiler::compile_types(&script);
+        let evaluator = ConstEvaluator::new(&data.context);
 
         let left = ConstValue::Int(-5);
         let right = ConstValue::UInt(5);
@@ -3101,8 +3102,8 @@ mod tests {
     fn test_evaluator_less_equal_int_uint_positive() {
         let arena = Bump::new();
         let (script, _) = Parser::parse_lenient("void test() {}", &arena);
-        let data = Registrar::register(&script);
-        let evaluator = ConstEvaluator::new(&data.registry);
+        let data = Compiler::compile_types(&script);
+        let evaluator = ConstEvaluator::new(&data.context);
 
         let left = ConstValue::Int(5);
         let right = ConstValue::UInt(5);
@@ -3114,8 +3115,8 @@ mod tests {
     fn test_evaluator_less_equal_uint_int_negative() {
         let arena = Bump::new();
         let (script, _) = Parser::parse_lenient("void test() {}", &arena);
-        let data = Registrar::register(&script);
-        let evaluator = ConstEvaluator::new(&data.registry);
+        let data = Compiler::compile_types(&script);
+        let evaluator = ConstEvaluator::new(&data.context);
 
         let left = ConstValue::UInt(5);
         let right = ConstValue::Int(-5);
@@ -3127,8 +3128,8 @@ mod tests {
     fn test_evaluator_less_equal_uint_int_positive() {
         let arena = Bump::new();
         let (script, _) = Parser::parse_lenient("void test() {}", &arena);
-        let data = Registrar::register(&script);
-        let evaluator = ConstEvaluator::new(&data.registry);
+        let data = Compiler::compile_types(&script);
+        let evaluator = ConstEvaluator::new(&data.context);
 
         let left = ConstValue::UInt(5);
         let right = ConstValue::Int(5);
@@ -3140,8 +3141,8 @@ mod tests {
     fn test_evaluator_bitwise_and_unsupported() {
         let arena = Bump::new();
         let (script, _) = Parser::parse_lenient("void test() {}", &arena);
-        let data = Registrar::register(&script);
-        let evaluator = ConstEvaluator::new(&data.registry);
+        let data = Compiler::compile_types(&script);
+        let evaluator = ConstEvaluator::new(&data.context);
 
         let left = ConstValue::Float(1.0);
         let right = ConstValue::Float(2.0);
@@ -3153,8 +3154,8 @@ mod tests {
     fn test_evaluator_bitwise_or_unsupported() {
         let arena = Bump::new();
         let (script, _) = Parser::parse_lenient("void test() {}", &arena);
-        let data = Registrar::register(&script);
-        let evaluator = ConstEvaluator::new(&data.registry);
+        let data = Compiler::compile_types(&script);
+        let evaluator = ConstEvaluator::new(&data.context);
 
         let left = ConstValue::Float(1.0);
         let right = ConstValue::Float(2.0);
@@ -3166,8 +3167,8 @@ mod tests {
     fn test_evaluator_bitwise_xor_unsupported() {
         let arena = Bump::new();
         let (script, _) = Parser::parse_lenient("void test() {}", &arena);
-        let data = Registrar::register(&script);
-        let evaluator = ConstEvaluator::new(&data.registry);
+        let data = Compiler::compile_types(&script);
+        let evaluator = ConstEvaluator::new(&data.context);
 
         let left = ConstValue::Float(1.0);
         let right = ConstValue::Float(2.0);
@@ -3179,8 +3180,8 @@ mod tests {
     fn test_evaluator_shift_left_unsupported() {
         let arena = Bump::new();
         let (script, _) = Parser::parse_lenient("void test() {}", &arena);
-        let data = Registrar::register(&script);
-        let evaluator = ConstEvaluator::new(&data.registry);
+        let data = Compiler::compile_types(&script);
+        let evaluator = ConstEvaluator::new(&data.context);
 
         let left = ConstValue::Float(1.0);
         let right = ConstValue::Int(2);
@@ -3192,8 +3193,8 @@ mod tests {
     fn test_evaluator_shift_right_unsupported() {
         let arena = Bump::new();
         let (script, _) = Parser::parse_lenient("void test() {}", &arena);
-        let data = Registrar::register(&script);
-        let evaluator = ConstEvaluator::new(&data.registry);
+        let data = Compiler::compile_types(&script);
+        let evaluator = ConstEvaluator::new(&data.context);
 
         let left = ConstValue::Float(1.0);
         let right = ConstValue::Int(2);
@@ -3205,8 +3206,8 @@ mod tests {
     fn test_evaluator_shift_right_unsigned_unsupported() {
         let arena = Bump::new();
         let (script, _) = Parser::parse_lenient("void test() {}", &arena);
-        let data = Registrar::register(&script);
-        let evaluator = ConstEvaluator::new(&data.registry);
+        let data = Compiler::compile_types(&script);
+        let evaluator = ConstEvaluator::new(&data.context);
 
         let left = ConstValue::Float(1.0);
         let right = ConstValue::Int(2);
@@ -3218,8 +3219,8 @@ mod tests {
     fn test_evaluator_add_unsupported() {
         let arena = Bump::new();
         let (script, _) = Parser::parse_lenient("void test() {}", &arena);
-        let data = Registrar::register(&script);
-        let evaluator = ConstEvaluator::new(&data.registry);
+        let data = Compiler::compile_types(&script);
+        let evaluator = ConstEvaluator::new(&data.context);
 
         let left = ConstValue::Bool(true);
         let right = ConstValue::Bool(false);
@@ -3231,8 +3232,8 @@ mod tests {
     fn test_evaluator_sub_unsupported() {
         let arena = Bump::new();
         let (script, _) = Parser::parse_lenient("void test() {}", &arena);
-        let data = Registrar::register(&script);
-        let evaluator = ConstEvaluator::new(&data.registry);
+        let data = Compiler::compile_types(&script);
+        let evaluator = ConstEvaluator::new(&data.context);
 
         let left = ConstValue::Bool(true);
         let right = ConstValue::Bool(false);
@@ -3244,8 +3245,8 @@ mod tests {
     fn test_evaluator_mul_unsupported() {
         let arena = Bump::new();
         let (script, _) = Parser::parse_lenient("void test() {}", &arena);
-        let data = Registrar::register(&script);
-        let evaluator = ConstEvaluator::new(&data.registry);
+        let data = Compiler::compile_types(&script);
+        let evaluator = ConstEvaluator::new(&data.context);
 
         let left = ConstValue::Bool(true);
         let right = ConstValue::Bool(false);
@@ -3257,8 +3258,8 @@ mod tests {
     fn test_evaluator_div_unsupported() {
         let arena = Bump::new();
         let (script, _) = Parser::parse_lenient("void test() {}", &arena);
-        let data = Registrar::register(&script);
-        let evaluator = ConstEvaluator::new(&data.registry);
+        let data = Compiler::compile_types(&script);
+        let evaluator = ConstEvaluator::new(&data.context);
 
         let left = ConstValue::Bool(true);
         let right = ConstValue::Bool(false);
@@ -3270,8 +3271,8 @@ mod tests {
     fn test_evaluator_mod_unsupported() {
         let arena = Bump::new();
         let (script, _) = Parser::parse_lenient("void test() {}", &arena);
-        let data = Registrar::register(&script);
-        let evaluator = ConstEvaluator::new(&data.registry);
+        let data = Compiler::compile_types(&script);
+        let evaluator = ConstEvaluator::new(&data.context);
 
         let left = ConstValue::Bool(true);
         let right = ConstValue::Bool(false);
@@ -3283,8 +3284,8 @@ mod tests {
     fn test_evaluator_pow_unsupported() {
         let arena = Bump::new();
         let (script, _) = Parser::parse_lenient("void test() {}", &arena);
-        let data = Registrar::register(&script);
-        let evaluator = ConstEvaluator::new(&data.registry);
+        let data = Compiler::compile_types(&script);
+        let evaluator = ConstEvaluator::new(&data.context);
 
         let left = ConstValue::Bool(true);
         let right = ConstValue::Bool(false);
@@ -3296,8 +3297,8 @@ mod tests {
     fn test_evaluator_equal_unsupported() {
         let arena = Bump::new();
         let (script, _) = Parser::parse_lenient("void test() {}", &arena);
-        let data = Registrar::register(&script);
-        let evaluator = ConstEvaluator::new(&data.registry);
+        let data = Compiler::compile_types(&script);
+        let evaluator = ConstEvaluator::new(&data.context);
 
         let left = ConstValue::String("abc".to_string());
         let right = ConstValue::Int(5);
@@ -3309,8 +3310,8 @@ mod tests {
     fn test_evaluator_less_unsupported() {
         let arena = Bump::new();
         let (script, _) = Parser::parse_lenient("void test() {}", &arena);
-        let data = Registrar::register(&script);
-        let evaluator = ConstEvaluator::new(&data.registry);
+        let data = Compiler::compile_types(&script);
+        let evaluator = ConstEvaluator::new(&data.context);
 
         let left = ConstValue::String("abc".to_string());
         let right = ConstValue::String("def".to_string());
@@ -3322,8 +3323,8 @@ mod tests {
     fn test_evaluator_less_equal_unsupported() {
         let arena = Bump::new();
         let (script, _) = Parser::parse_lenient("void test() {}", &arena);
-        let data = Registrar::register(&script);
-        let evaluator = ConstEvaluator::new(&data.registry);
+        let data = Compiler::compile_types(&script);
+        let evaluator = ConstEvaluator::new(&data.context);
 
         let left = ConstValue::String("abc".to_string());
         let right = ConstValue::String("def".to_string());
@@ -3335,8 +3336,8 @@ mod tests {
     fn test_evaluator_mixed_int_float_div() {
         let arena = Bump::new();
         let (script, _) = Parser::parse_lenient("void test() {}", &arena);
-        let data = Registrar::register(&script);
-        let evaluator = ConstEvaluator::new(&data.registry);
+        let data = Compiler::compile_types(&script);
+        let evaluator = ConstEvaluator::new(&data.context);
 
         // Int / Float
         let left = ConstValue::Int(10);
@@ -3355,8 +3356,8 @@ mod tests {
     fn test_evaluator_mixed_int_float_mod() {
         let arena = Bump::new();
         let (script, _) = Parser::parse_lenient("void test() {}", &arena);
-        let data = Registrar::register(&script);
-        let evaluator = ConstEvaluator::new(&data.registry);
+        let data = Compiler::compile_types(&script);
+        let evaluator = ConstEvaluator::new(&data.context);
 
         // Int % Float
         let left = ConstValue::Int(7);
