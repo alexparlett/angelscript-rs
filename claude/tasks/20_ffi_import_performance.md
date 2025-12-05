@@ -694,14 +694,46 @@ impl<'r, 'ast> FunctionDefView<'r, 'ast> {
    - Remove `import_modules()` call
    - Use new two-tier lookup
 
-3. Remove old import code:
+3. Remove old import code from `src/semantic/types/registry.rs`:
    - Delete `import_modules()` function
-   - Clean up related helpers
+   - Delete `import_type_shell()` function
+   - Delete `import_type_details()` function
+   - Delete `import_function()` function
+   - Delete `import_behavior()` function
+   - Delete `import_enum()` function
+   - Delete `import_interface()` function
+   - Delete `import_funcdef()` function
+   - Delete any other `import_*` helper functions
+
+4. Remove deprecated NativeX types from `src/ffi/types.rs`:
+   - Delete `NativeFunctionDef<'ast>` struct
+   - Delete `NativeTypeDef<'ast>` struct
+   - Delete `NativeMethodDef<'ast>` struct
+   - Delete `NativePropertyDef<'ast>` struct
+   - Delete `NativeInterfaceDef<'ast>` struct
+   - Delete `NativeInterfaceMethod<'ast>` struct
+   - Delete `NativeFuncdefDef<'ast>` struct
+   - Update module exports in `src/ffi/types.rs`
+   - Update `src/ffi/mod.rs` exports if needed
+
+5. Rename and move `NativeEnumDef` (still needed for FfiRegistry):
+   - Rename `NativeEnumDef` to `FfiEnumDef`
+   - Move from `src/module.rs` to `src/types/ffi_enum.rs`
+   - Update `src/types/mod.rs` to export `FfiEnumDef`
+   - Update all usages in `src/module.rs`, `src/ffi/enum_builder.rs`, `src/lib.rs`
+
+6. Struct to keep unchanged:
+   - `NativeFn` in `src/ffi/native_fn.rs` - actual function pointer wrapper (used by FfiFunctionDef)
 
 **Files:**
 - `src/unit.rs` (modify)
 - `src/semantic/compiler.rs` (modify)
-- `src/semantic/types/registry.rs` (remove import_*)
+- `src/semantic/types/registry.rs` (remove all import_* functions)
+- `src/ffi/types.rs` (remove NativeX structs)
+- `src/types/ffi_enum.rs` (new - FfiEnumDef moved from module.rs)
+- `src/module.rs` (modify - remove NativeEnumDef, use FfiEnumDef)
+- `src/ffi/enum_builder.rs` (modify - use FfiEnumDef)
+- `src/lib.rs` (modify - update re-export)
 
 ---
 
