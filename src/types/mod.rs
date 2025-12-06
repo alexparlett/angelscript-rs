@@ -27,6 +27,7 @@ mod ffi_function;
 mod ffi_interface;
 mod ffi_property;
 mod ffi_type;
+mod type_hash;
 mod type_kind;
 
 pub use ffi_convert::{
@@ -43,4 +44,5 @@ pub use ffi_function::{
 pub use ffi_interface::{FfiInterfaceDef, FfiInterfaceMethod};
 pub use ffi_property::FfiPropertyDef;
 pub use ffi_type::FfiTypeDef;
+pub use type_hash::{hash_constants, primitives as primitive_hashes, TypeHash};
 pub use type_kind::{ReferenceKind, TypeKind};

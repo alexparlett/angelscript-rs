@@ -21,7 +21,7 @@ The current TypeId/FunctionId system has several pain points:
 Type identity is computed deterministically from the qualified type name using XXHash64. This means:
 - A type's hash can be computed before it's registered (forward references)
 - No registration order dependencies
-- No need for FFI_BIT routing - just check both registries
+- Same name = same hash, always (no FFI/Script distinction in the hash)
 - Single map replaces dual name+id maps
 
 ### TypeHash Struct
@@ -37,6 +37,30 @@ pub struct TypeHash(pub u64);
 impl TypeHash {
     pub const EMPTY: TypeHash = TypeHash(0);
 
+    /// Create type hash from qualified name
+    /// Same name = same hash, always
+    pub fn from_name(name: &str) -> Self {
+        TypeHash(TYPE_MARKER ^ xxhash(name))
+    }
+
+    /// Create function hash from name + parameter types
+    pub fn from_function(name: &str, param_hashes: &[TypeHash]) -> Self {
+        let mut hash = FUNCTION_MARKER ^ xxhash(name);
+        for (i, param) in param_hashes.iter().enumerate() {
+            hash ^= PARAM_MARKERS[i] ^ param.0;
+        }
+        TypeHash(hash)
+    }
+
+    /// Create template instance hash from template + type arguments
+    pub fn from_template_instance(template: TypeHash, args: &[TypeHash]) -> Self {
+        let mut hash = template.0;
+        for (i, arg) in args.iter().enumerate() {
+            hash ^= PARAM_MARKERS[i] ^ arg.0;
+        }
+        TypeHash(hash)
+    }
+
     pub const fn is_empty(self) -> bool { self.0 == 0 }
     pub const fn as_u64(self) -> u64 { self.0 }
 }
@@ -49,9 +73,9 @@ Uses XXHash64 with domain-specific mixing constants:
 | Entity | Hash Computation |
 |--------|------------------|
 | Simple type | `TYPE_MARKER ^ xxhash("int")` |
-| Qualified type | `TYPE_MARKER ^ xxhash("Game") ^ SEP ^ xxhash("Player")` |
+| Qualified type | `TYPE_MARKER ^ xxhash("Game::Player")` |
 | Template instance | `template_hash ^ (PARAM[0] ^ arg0_hash) ^ (PARAM[1] ^ arg1_hash)...` |
-| Global function | `FUNCTION_MARKER ^ xxhash(name) ^ param_type_hashes...` |
+| Global function | `FUNCTION_MARKER ^ xxhash(name) ^ PARAM[i] ^ param_type_hashes...` |
 | Method | `METHOD_MARKER ^ owner_type_hash ^ xxhash(name) ^ param_type_hashes...` |
 | Constructor | `CONSTRUCTOR_MARKER ^ owner_type_hash ^ param_type_hashes...` |
 | Operator | `OPERATOR_MARKER ^ owner_type_hash ^ operator_kind` |
@@ -67,13 +91,13 @@ pub mod hash_constants {
     pub const OPERATOR: u64 = 0x3e9f5d2a8c7b1403;      // Operator method domain
     pub const CONSTRUCTOR: u64 = 0x9a7f3d5e2b8c4601;   // Constructor domain
     pub const IDENT: u64 = 0x1a095090689d4647;         // Identifier domain
-    pub const TEMPLATE_PARAMS: [u64; 32] = [/* ... */]; // Template arg mixing
+    pub const PARAM_MARKERS: [u64; 32] = [/* ... */];  // Parameter mixing
 }
 ```
 
 ### Primitive Hashes
 
-Well-known constant hashes for primitives (computed at compile time):
+Well-known constant hashes for primitives:
 
 ```rust
 pub mod primitives {
@@ -89,8 +113,8 @@ pub mod primitives {
     pub const UINT64: TypeHash = TypeHash(/* computed */);
     pub const FLOAT: TypeHash = TypeHash(/* computed */);
     pub const DOUBLE: TypeHash = TypeHash(/* computed */);
-
     pub const NULL: TypeHash = TypeHash(/* computed */);
+    pub const SELF: TypeHash = TypeHash(/* computed */);
     pub const VARIABLE_PARAM: TypeHash = TypeHash(/* computed */);
 }
 ```
@@ -100,10 +124,14 @@ pub mod primitives {
 ## Design Decisions
 
 1. **Scope**: Complete refactor - replace TypeId/FunctionId entirely with TypeHash
-2. **Unified struct**: Single `TypeHash` for types, functions, methods (mixing constants prevent collisions)
-3. **Bytecode/VM**: Bytecode uses hashes; VM not built yet; runtime already hash-based - aligns well
-4. **Hash collisions**: Trust the math - 64-bit space is astronomically unlikely to collide
-5. **Algorithm**: XXHash64 - fast (~15 GB/s), non-cryptographic, well-distributed
+2. **Pure TypeHash**: No FFI_BIT - same name = same hash, always (simplifies mental model)
+3. **Try-both dispatch**: `ffi.get(hash).or_else(|| script.get(hash))` - optimized for common case (primitives hit FFI first)
+4. **HashSet for shadowing**: CompilationContext maintains unified set of all registered hashes
+5. **Keep function_overloads index**: Required for overload resolution by name
+6. **Unified struct**: Single `TypeHash` for types, functions, methods (mixing constants prevent collisions)
+7. **Algorithm**: XXHash64 - fast (~15 GB/s), non-cryptographic, well-distributed
+
+**Note**: If profiling shows dispatch overhead is significant, we can add routing optimization later.
 
 ---
 
@@ -153,23 +181,49 @@ pub struct DataType {
 }
 ```
 
-### CompilationContext Simplification
+### CompilationContext Changes
 
-**Before (FFI_BIT routing):**
+**New fields for shadowing check:**
 ```rust
-pub fn get_type(&self, type_id: TypeId) -> &TypeDef {
-    if type_id.is_ffi() {
-        self.ffi.get_type(type_id).expect("FFI TypeId not found")
-    } else {
-        self.script.get_type(type_id)
+pub struct CompilationContext<'ast> {
+    ffi: Arc<FfiRegistry>,
+    script: ScriptRegistry<'ast>,
+    registered_types: FxHashSet<TypeHash>,  // All type hashes for shadow check
+    registered_funcs: FxHashSet<TypeHash>,  // All function hashes for shadow check
+}
+```
+
+**Initialization seeds with FFI hashes:**
+```rust
+impl CompilationContext {
+    pub fn new(ffi: Arc<FfiRegistry>) -> Self {
+        let registered_types = ffi.types.keys().copied().collect();
+        let registered_funcs = ffi.functions.keys().copied().collect();
+        Self { ffi, script: ScriptRegistry::new(), registered_types, registered_funcs }
     }
 }
 ```
 
-**After:**
+**Shadowing check via HashSet:**
+```rust
+pub fn register_script_type(&mut self, hash: TypeHash, def: TypeDef) -> Result<(), SemanticError> {
+    if !self.registered_types.insert(hash) {
+        return Err(SemanticError::TypeAlreadyDefined { name: def.name().to_string() });
+    }
+    self.script.types.insert(hash, def);
+    Ok(())
+}
+```
+
+**Dispatch - try FFI first, then Script:**
 ```rust
 pub fn get_type(&self, hash: TypeHash) -> Option<&TypeDef> {
     self.ffi.get_type(hash).or_else(|| self.script.get_type(hash))
+}
+
+pub fn get_type_by_name(&self, name: &str) -> Option<&TypeDef> {
+    let hash = TypeHash::from_name(name);
+    self.get_type(hash)
 }
 ```
 
@@ -179,10 +233,10 @@ Each overload has a unique hash because parameter types are included:
 
 ```rust
 // void foo(int x)
-let hash1 = TypeHash::function("foo", &[primitives::INT32]);
+let hash1 = TypeHash::from_function("foo", &[primitives::INT32]);
 
 // void foo(float x)
-let hash2 = TypeHash::function("foo", &[primitives::FLOAT]);
+let hash2 = TypeHash::from_function("foo", &[primitives::FLOAT]);
 
 // hash1 != hash2
 ```
@@ -192,6 +246,8 @@ Secondary index for name-based lookup during overload resolution:
 function_overloads: FxHashMap<String, Vec<TypeHash>>
 ```
 
+**Why keep this index?** At a call site `foo(x)`, we only know the name "foo" - we need to find ALL overloads to perform resolution. Unlike types (unique names → computable hash), functions share names.
+
 ### Template Instantiation
 
 ```rust
@@ -199,10 +255,10 @@ impl TemplateInstantiator {
     pub fn instantiate(&mut self, template_hash: TypeHash, args: Vec<DataType>) -> TypeHash {
         // Compute instance hash from template + args
         let arg_hashes: Vec<TypeHash> = args.iter().map(|a| a.type_hash).collect();
-        let instance_hash = TypeHash::template_instance(template_hash, &arg_hashes);
+        let instance_hash = TypeHash::from_template_instance(template_hash, &arg_hashes);
 
-        // Check if already exists (either FFI or Script)
-        if self.exists(instance_hash) {
+        // Check if already exists
+        if self.context.get_type(instance_hash).is_some() {
             return instance_hash;
         }
 
@@ -217,16 +273,16 @@ impl TemplateInstantiator {
 ## Implementation Phases
 
 ### Phase 1: Add TypeHash Infrastructure
+- [ ] Add `xxhash-rust` crate dependency
 - [ ] Create `src/semantic/types/type_hash.rs`
 - [ ] Add `TypeHash` struct with `Debug, Clone, Copy, PartialEq, Eq, Hash, Ord`
-- [ ] Add `TypeHasher` builder for computing hashes
 - [ ] Add hash constants module
 - [ ] Add primitive hash constants
-- [ ] Add `twox-hash` crate dependency
+- [ ] Add tests for hash determinism and uniqueness
 
 ### Phase 2: Dual-Key Migration Period
 - [ ] Add `type_hash: TypeHash` field to `TypeDef` (computed on construction)
-- [ ] Add `function_hash: TypeHash` field to function definitions
+- [ ] Add `func_hash: TypeHash` field to function definitions
 - [ ] Keep `TypeId`/`FunctionId` working during transition
 - [ ] Add `types_by_hash` secondary map to registries
 - [ ] Add hash-based lookup methods alongside existing ones
@@ -236,7 +292,8 @@ impl TemplateInstantiator {
 - [ ] Remove `type_names` map (hash computed from name)
 - [ ] Update `FfiRegistryBuilder` to compute hashes during registration
 - [ ] Change `ScriptRegistry` similarly
-- [ ] Update `CompilationContext` to remove FFI_BIT routing
+- [ ] Add `registered_types`/`registered_funcs` HashSets to CompilationContext
+- [ ] Update dispatch to try-both pattern
 
 ### Phase 4: DataType Migration
 - [ ] Change `DataType.type_id: TypeId` to `DataType.type_hash: TypeHash`
@@ -250,7 +307,7 @@ impl TemplateInstantiator {
 - [ ] Remove atomic counters (`TYPE_ID_COUNTER`, `FUNCTION_ID_COUNTER`)
 - [ ] Remove `FFI_BIT` constant and all `is_ffi()`/`is_script()` checks
 - [ ] Remove `next_ffi()`/`next_script()` methods
-- [ ] Clean up all routing logic in CompilationContext
+- [ ] Remove `route_type_lookup!` macro
 
 ### Phase 6: Global Properties (from Task 20 6.4.1)
 - [ ] Implement global property builder API on Context
@@ -263,13 +320,13 @@ impl TemplateInstantiator {
 
 | File | Changes |
 |------|---------|
-| `src/semantic/types/type_hash.rs` | **NEW** - TypeHash struct, TypeHasher, constants |
+| `src/semantic/types/type_hash.rs` | **NEW** - TypeHash struct, constants |
 | `src/semantic/types/type_def.rs` | Remove TypeId/FunctionId, add TypeHash re-export |
 | `src/semantic/types/data_type.rs` | `type_id` → `type_hash` |
 | `src/semantic/types/mod.rs` | Update exports |
-| `src/ffi/ffi_registry.rs` | HashMap keys TypeId → TypeHash |
+| `src/ffi/ffi_registry.rs` | HashMap keys TypeId → TypeHash, remove type_names |
 | `src/semantic/types/registry.rs` | ScriptRegistry HashMap keys |
-| `src/semantic/compilation_context.rs` | Remove FFI_BIT routing |
+| `src/semantic/compilation_context.rs` | Add registered_types/funcs HashSets, try-both dispatch |
 | `src/semantic/template_instantiator.rs` | Hash-based caching |
 | `src/semantic/passes/registration.rs` | Use TypeHash for registration |
 | `src/semantic/passes/type_compilation.rs` | Use TypeHash lookups |
@@ -286,9 +343,17 @@ impl TemplateInstantiator {
 - Short type names (5-20 chars): ~10-20 nanoseconds
 - Computed once at registration, reused thereafter
 
+### Dispatch Overhead
+- Try-both pattern: 2 lookups worst case
+- Primitives/builtins: 1 lookup (FFI hit first)
+- Script types: 2 lookups (FFI miss + Script hit)
+- For typical code (mostly primitives): average closer to 1 lookup
+- If profiling shows overhead, can add routing optimization later
+
 ### Memory
 - TypeHash: 8 bytes (vs TypeId: 4 bytes) - minor increase
 - Eliminates secondary `type_names` HashMap - memory savings
+- Adds `registered_types`/`registered_funcs` HashSets - minor increase
 - Net effect: roughly neutral
 
 ### Collision Risk
@@ -310,4 +375,4 @@ impl TemplateInstantiator {
 - [Rune TypeOf trait](https://github.com/rune-rs/rune/blob/main/crates/rune/src/runtime/type_of.rs)
 - [Rune RTTI](https://docs.rs/rune/latest/rune/runtime/struct.Rtti.html)
 - [XXHash algorithm](https://github.com/Cyan4973/xxHash)
-- [twox-hash crate](https://crates.io/crates/twox-hash)
+- [xxhash-rust crate](https://crates.io/crates/xxhash-rust)
