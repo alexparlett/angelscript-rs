@@ -309,11 +309,6 @@ impl TemplateInstantiator {
 - [ ] Remove `next_ffi()`/`next_script()` methods
 - [ ] Remove `route_type_lookup!` macro
 
-### Phase 6: Global Properties (from Task 20 6.4.1)
-- [ ] Implement global property builder API on Context
-- [ ] Type resolution now works anytime (hash computed from type name string)
-- [ ] No sealing requirement
-
 ---
 
 ## Critical Files

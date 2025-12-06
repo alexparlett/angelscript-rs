@@ -70,57 +70,62 @@ use crate::types::{FfiFunctionDef, FfiResolutionError, ResolvedFfiFunctionDef, T
 ///
 /// Template instances are NOT stored here - they are created per-Unit during
 /// compilation and cached in the per-Unit Registry.
+///
+/// # Type Identity (Phase 3)
+///
+/// Types and functions are identified by `TypeHash` - a deterministic 64-bit hash
+/// computed from the qualified name (for types) or name+signature (for functions).
+/// This enables forward references and eliminates registration order dependencies.
+///
+/// `TypeId` and `FunctionId` are still used within data structures (e.g., method lists,
+/// base class references) but lookups use `TypeHash` as the primary key.
 pub struct FfiRegistry {
-    // === Type Storage ===
-    /// All FFI types indexed by TypeId
-    types: FxHashMap<TypeId, TypeDef>,
-    /// Type name to TypeId mapping
-    type_names: FxHashMap<String, TypeId>,
+    // === Type Storage (TypeHash primary key) ===
+    /// All FFI types indexed by TypeHash
+    types: FxHashMap<TypeHash, TypeDef>,
+    /// TypeHash to TypeId mapping (for compatibility during transition)
+    type_ids: FxHashMap<TypeHash, TypeId>,
 
-    // === Function Storage ===
-    /// All FFI functions indexed by FunctionId (resolved, non-template)
-    functions: FxHashMap<FunctionId, ResolvedFfiFunctionDef>,
-    /// Function name to FunctionId mapping (supports overloads)
-    function_names: FxHashMap<String, Vec<FunctionId>>,
-    /// Native function implementations indexed by FunctionId
-    native_fns: FxHashMap<FunctionId, NativeFn>,
-    /// Unresolved template functions (resolved at instantiation time)
+    // === Function Storage (TypeHash primary key) ===
+    /// All FFI functions indexed by TypeHash (resolved, non-template)
+    functions: FxHashMap<TypeHash, ResolvedFfiFunctionDef>,
+    /// FunctionId to TypeHash reverse mapping (for compatibility during transition)
+    function_hashes: FxHashMap<FunctionId, TypeHash>,
+    /// Function name to TypeHash mapping (supports overloads)
+    function_overloads: FxHashMap<String, Vec<TypeHash>>,
+    /// Native function implementations indexed by TypeHash
+    native_fns: FxHashMap<TypeHash, NativeFn>,
+    /// Unresolved template functions indexed by FunctionId (resolved at instantiation time)
+    /// Note: These keep FunctionId as key since they're unresolved and don't have a func_hash yet
     unresolved_functions: FxHashMap<FunctionId, FfiFunctionDef>,
 
     // === Behavior Storage ===
-    /// Type behaviors (constructors, factories, etc.) indexed by TypeId
-    behaviors: FxHashMap<TypeId, TypeBehaviors>,
+    /// Type behaviors (constructors, factories, etc.) indexed by TypeHash
+    behaviors: FxHashMap<TypeHash, TypeBehaviors>,
 
     // === Template Support ===
-    /// Template validation callbacks indexed by template TypeId
+    /// Template validation callbacks indexed by TypeHash
     template_callbacks:
-        FxHashMap<TypeId, Arc<dyn Fn(&TemplateInstanceInfo) -> TemplateValidation + Send + Sync>>,
+        FxHashMap<TypeHash, Arc<dyn Fn(&TemplateInstanceInfo) -> TemplateValidation + Send + Sync>>,
 
     // === Namespace Tracking ===
     /// All registered namespaces
     namespaces: FxHashSet<String>,
-
-    // === Hash-Based Lookups (Phase 2 TypeHash Migration) ===
-    /// Types indexed by TypeHash (secondary index)
-    types_by_hash: FxHashMap<TypeHash, TypeId>,
-    /// Functions indexed by TypeHash (secondary index)
-    functions_by_hash: FxHashMap<TypeHash, FunctionId>,
 }
 
 impl std::fmt::Debug for FfiRegistry {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("FfiRegistry")
-            .field("types", &self.types)
-            .field("type_names", &self.type_names)
-            .field("functions", &self.functions)
-            .field("function_names", &self.function_names)
+            .field("types", &format!("<{} types>", self.types.len()))
+            .field("type_ids", &format!("<{} entries>", self.type_ids.len()))
+            .field("functions", &format!("<{} functions>", self.functions.len()))
+            .field("function_hashes", &format!("<{} entries>", self.function_hashes.len()))
+            .field("function_overloads", &format!("<{} names>", self.function_overloads.len()))
             .field("native_fns", &format!("<{} native fns>", self.native_fns.len()))
             .field("unresolved_functions", &format!("<{} unresolved>", self.unresolved_functions.len()))
-            .field("behaviors", &self.behaviors)
+            .field("behaviors", &format!("<{} behaviors>", self.behaviors.len()))
             .field("template_callbacks", &format!("<{} callbacks>", self.template_callbacks.len()))
             .field("namespaces", &self.namespaces)
-            .field("types_by_hash", &format!("<{} entries>", self.types_by_hash.len()))
-            .field("functions_by_hash", &format!("<{} entries>", self.functions_by_hash.len()))
             .finish()
     }
 }
@@ -131,18 +136,39 @@ impl FfiRegistry {
     // =========================================================================
 
     /// Get a type definition by TypeId.
+    ///
+    /// This method provides backward compatibility during the TypeHash migration.
+    /// It looks up the TypeHash from the type_ids map, then retrieves the TypeDef.
+    /// Prefer using `get_type_by_hash` for new code.
     pub fn get_type(&self, id: TypeId) -> Option<&TypeDef> {
-        self.types.get(&id)
+        // Find the TypeHash for this TypeId by scanning type_ids
+        // This is O(n) but maintains compatibility - will be removed in Phase 5
+        self.type_ids
+            .iter()
+            .find(|&(_, tid)| *tid == id)
+            .and_then(|(hash, _)| self.types.get(hash))
     }
 
     /// Look up a TypeId by type name.
+    ///
+    /// Computes the TypeHash from the name, then looks up the TypeId.
     pub fn get_type_by_name(&self, name: &str) -> Option<TypeId> {
-        self.type_names.get(name).copied()
+        let hash = TypeHash::from_name(name);
+        self.type_ids.get(&hash).copied()
     }
 
-    /// Get access to the type name map for iteration.
-    pub fn type_by_name(&self) -> &FxHashMap<String, TypeId> {
-        &self.type_names
+    /// Get access to the type name → TypeId map for iteration.
+    ///
+    /// This reconstructs a name→TypeId map from the hash-based storage.
+    /// Used by CompilationContext for initializing its unified name maps.
+    pub fn type_by_name(&self) -> FxHashMap<String, TypeId> {
+        self.types
+            .iter()
+            .filter_map(|(hash, def)| {
+                let type_id = self.type_ids.get(hash)?;
+                Some((def.qualified_name().to_string(), *type_id))
+            })
+            .collect()
     }
 
     /// Get the number of registered types.
@@ -151,15 +177,20 @@ impl FfiRegistry {
     }
 
     /// Get a type definition by TypeHash.
+    ///
+    /// This is the primary lookup method in the TypeHash-based architecture.
     pub fn get_type_by_hash(&self, hash: TypeHash) -> Option<&TypeDef> {
-        self.types_by_hash
-            .get(&hash)
-            .and_then(|id| self.types.get(id))
+        self.types.get(&hash)
     }
 
     /// Get the TypeId for a TypeHash.
     pub fn get_type_id_by_hash(&self, hash: TypeHash) -> Option<TypeId> {
-        self.types_by_hash.get(&hash).copied()
+        self.type_ids.get(&hash).copied()
+    }
+
+    /// Check if a type exists by TypeHash.
+    pub fn has_type(&self, hash: TypeHash) -> bool {
+        self.types.contains_key(&hash)
     }
 
     // =========================================================================
@@ -167,21 +198,54 @@ impl FfiRegistry {
     // =========================================================================
 
     /// Get a function definition by FunctionId.
+    ///
+    /// This method provides backward compatibility during the TypeHash migration.
+    /// Uses a reverse lookup map for O(1) performance.
+    /// Prefer using `get_function_by_hash` for new code.
     pub fn get_function(&self, id: FunctionId) -> Option<&ResolvedFfiFunctionDef> {
-        self.functions.get(&id)
+        self.function_hashes
+            .get(&id)
+            .and_then(|hash| self.functions.get(hash))
     }
 
-    /// Look up all functions with the given name (for overload resolution).
-    pub fn lookup_functions(&self, name: &str) -> &[FunctionId] {
-        self.function_names
+    /// Look up all function hashes with the given name (for overload resolution).
+    ///
+    /// Returns TypeHashes which can be used with `get_function_by_hash`.
+    pub fn lookup_function_hashes(&self, name: &str) -> &[TypeHash] {
+        self.function_overloads
             .get(name)
             .map(|v| v.as_slice())
             .unwrap_or(&[])
     }
 
+    /// Look up all functions with the given name (for overload resolution).
+    ///
+    /// Returns FunctionIds for backward compatibility.
+    pub fn lookup_functions(&self, name: &str) -> Vec<FunctionId> {
+        self.function_overloads
+            .get(name)
+            .map(|hashes| {
+                hashes
+                    .iter()
+                    .filter_map(|hash| self.functions.get(hash).map(|f| f.id))
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
     /// Get the native function implementation for a FunctionId.
+    ///
+    /// This method provides backward compatibility during the TypeHash migration.
+    /// Uses a reverse lookup map for O(1) performance.
     pub fn get_native_fn(&self, id: FunctionId) -> Option<&NativeFn> {
-        self.native_fns.get(&id)
+        self.function_hashes
+            .get(&id)
+            .and_then(|hash| self.native_fns.get(hash))
+    }
+
+    /// Get the native function implementation by TypeHash.
+    pub fn get_native_fn_by_hash(&self, hash: TypeHash) -> Option<&NativeFn> {
+        self.native_fns.get(&hash)
     }
 
     /// Get the number of registered functions.
@@ -189,44 +253,72 @@ impl FfiRegistry {
         self.functions.len()
     }
 
-    /// Get access to the function name map for iteration.
-    pub fn func_by_name(&self) -> &FxHashMap<String, Vec<FunctionId>> {
-        &self.function_names
+    /// Get access to the function name → FunctionIds map for iteration.
+    ///
+    /// This reconstructs the map from hash-based storage for compatibility.
+    pub fn func_by_name(&self) -> FxHashMap<String, Vec<FunctionId>> {
+        self.function_overloads
+            .iter()
+            .map(|(name, hashes)| {
+                let func_ids: Vec<FunctionId> = hashes
+                    .iter()
+                    .filter_map(|hash| self.functions.get(hash).map(|f| f.id))
+                    .collect();
+                (name.clone(), func_ids)
+            })
+            .collect()
     }
 
     /// Get a function definition by TypeHash.
+    ///
+    /// This is the primary lookup method in the TypeHash-based architecture.
     pub fn get_function_by_hash(&self, hash: TypeHash) -> Option<&ResolvedFfiFunctionDef> {
-        self.functions_by_hash
-            .get(&hash)
-            .and_then(|id| self.functions.get(id))
+        self.functions.get(&hash)
     }
 
     /// Get the FunctionId for a TypeHash.
     pub fn get_function_id_by_hash(&self, hash: TypeHash) -> Option<FunctionId> {
-        self.functions_by_hash.get(&hash).copied()
+        self.functions.get(&hash).map(|f| f.id)
+    }
+
+    /// Check if a function exists by TypeHash.
+    pub fn has_function(&self, hash: TypeHash) -> bool {
+        self.functions.contains_key(&hash)
     }
 
     // =========================================================================
     // Behavior Lookups
     // =========================================================================
 
-    /// Get the behaviors for a type, if any are registered.
+    /// Get the behaviors for a type by TypeId.
+    ///
+    /// This method provides backward compatibility during the TypeHash migration.
     pub fn get_behaviors(&self, type_id: TypeId) -> Option<&TypeBehaviors> {
-        self.behaviors.get(&type_id)
+        // Get the TypeHash for this TypeId, then look up behaviors
+        self.get_type(type_id)
+            .map(|def| def.type_hash())
+            .and_then(|hash| self.behaviors.get(&hash))
+    }
+
+    /// Get the behaviors for a type by TypeHash.
+    pub fn get_behaviors_by_hash(&self, hash: TypeHash) -> Option<&TypeBehaviors> {
+        self.behaviors.get(&hash)
     }
 
     /// Find all constructors for a given type (value types).
     pub fn find_constructors(&self, type_id: TypeId) -> Vec<FunctionId> {
-        self.behaviors
-            .get(&type_id)
+        self.get_type(type_id)
+            .map(|def| def.type_hash())
+            .and_then(|hash| self.behaviors.get(&hash))
             .map(|b| b.constructors.clone())
             .unwrap_or_default()
     }
 
     /// Find all factories for a given type (reference types).
     pub fn find_factories(&self, type_id: TypeId) -> Vec<FunctionId> {
-        self.behaviors
-            .get(&type_id)
+        self.get_type(type_id)
+            .map(|def| def.type_hash())
+            .and_then(|hash| self.behaviors.get(&hash))
             .map(|b| b.factories.clone())
             .unwrap_or_default()
     }
@@ -517,9 +609,9 @@ impl FfiRegistry {
         funcdef_type_id: TypeId,
     ) -> Option<FunctionId> {
         // Search through all FFI functions for a match
-        for (&func_id, func) in &self.functions {
-            if func.name == name && self.is_function_compatible_with_funcdef(func_id, funcdef_type_id) {
-                return Some(func_id);
+        for func in self.functions.values() {
+            if func.name == name && self.is_function_compatible_with_funcdef(func.id, funcdef_type_id) {
+                return Some(func.id);
             }
         }
         None
@@ -529,17 +621,37 @@ impl FfiRegistry {
     // Template Support
     // =========================================================================
 
-    /// Get the template callback for a template type.
+    /// Get the template callback for a template type by TypeId.
+    ///
+    /// This method provides backward compatibility during the TypeHash migration.
     pub fn get_template_callback(
         &self,
         type_id: TypeId,
     ) -> Option<&Arc<dyn Fn(&TemplateInstanceInfo) -> TemplateValidation + Send + Sync>> {
-        self.template_callbacks.get(&type_id)
+        self.get_type(type_id)
+            .map(|def| def.type_hash())
+            .and_then(|hash| self.template_callbacks.get(&hash))
+    }
+
+    /// Get the template callback for a template type by TypeHash.
+    pub fn get_template_callback_by_hash(
+        &self,
+        hash: TypeHash,
+    ) -> Option<&Arc<dyn Fn(&TemplateInstanceInfo) -> TemplateValidation + Send + Sync>> {
+        self.template_callbacks.get(&hash)
     }
 
     /// Check if a type is a template (has template parameters).
     pub fn is_template(&self, type_id: TypeId) -> bool {
         match self.get_type(type_id) {
+            Some(TypeDef::Class { template_params, .. }) => !template_params.is_empty(),
+            _ => false,
+        }
+    }
+
+    /// Check if a type is a template by TypeHash.
+    pub fn is_template_by_hash(&self, hash: TypeHash) -> bool {
+        match self.get_type_by_hash(hash) {
             Some(TypeDef::Class { template_params, .. }) => !template_params.is_empty(),
             _ => false,
         }
@@ -994,30 +1106,76 @@ impl FfiRegistryBuilder {
             return Err(errors);
         }
 
-        // Build types_by_hash secondary index
-        let types_by_hash: FxHashMap<TypeHash, TypeId> = self.types
+        // Convert TypeId-keyed types to TypeHash-keyed types
+        let types_by_hash: FxHashMap<TypeHash, TypeDef> = self.types
+            .iter()
+            .map(|(_, def)| (def.type_hash(), def.clone()))
+            .collect();
+
+        // Build TypeHash → TypeId mapping for compatibility
+        let type_ids: FxHashMap<TypeHash, TypeId> = self.types
             .iter()
             .map(|(&id, def)| (def.type_hash(), id))
             .collect();
 
-        // Build functions_by_hash secondary index
-        let functions_by_hash: FxHashMap<TypeHash, FunctionId> = resolved_functions
+        // Convert FunctionId-keyed functions to TypeHash-keyed functions
+        let functions_by_hash: FxHashMap<TypeHash, ResolvedFfiFunctionDef> = resolved_functions
             .iter()
-            .map(|(&id, def)| (def.func_hash, id))
+            .map(|(_, def)| (def.func_hash, def.clone()))
+            .collect();
+
+        // Build FunctionId → TypeHash reverse lookup map
+        let function_hashes: FxHashMap<FunctionId, TypeHash> = resolved_functions
+            .iter()
+            .map(|(&func_id, def)| (func_id, def.func_hash))
+            .collect();
+
+        // Build function name → TypeHash mapping (for overload resolution)
+        let function_overloads: FxHashMap<String, Vec<TypeHash>> = {
+            let mut map: FxHashMap<String, Vec<TypeHash>> = FxHashMap::default();
+            for func in functions_by_hash.values() {
+                map.entry(func.qualified_name())
+                    .or_default()
+                    .push(func.func_hash);
+            }
+            map
+        };
+
+        // Convert native_fns to TypeHash keys
+        let native_fns_by_hash: FxHashMap<TypeHash, NativeFn> = native_fns
+            .into_iter()
+            .filter_map(|(func_id, native_fn)| {
+                resolved_functions.get(&func_id).map(|f| (f.func_hash, native_fn))
+            })
+            .collect();
+
+        // Convert behaviors from TypeId keys to TypeHash keys
+        let behaviors_by_hash: FxHashMap<TypeHash, TypeBehaviors> = self.behaviors
+            .into_iter()
+            .filter_map(|(type_id, behaviors)| {
+                self.types.get(&type_id).map(|def| (def.type_hash(), behaviors))
+            })
+            .collect();
+
+        // Convert template_callbacks from TypeId keys to TypeHash keys
+        let template_callbacks_by_hash: FxHashMap<TypeHash, Arc<dyn Fn(&TemplateInstanceInfo) -> TemplateValidation + Send + Sync>> = self.template_callbacks
+            .into_iter()
+            .filter_map(|(type_id, callback)| {
+                self.types.get(&type_id).map(|def| (def.type_hash(), callback))
+            })
             .collect();
 
         Ok(FfiRegistry {
-            types: self.types,
-            type_names: self.type_names,
-            functions: resolved_functions,
-            function_names,
-            native_fns,
+            types: types_by_hash,
+            type_ids,
+            functions: functions_by_hash,
+            function_hashes,
+            function_overloads,
+            native_fns: native_fns_by_hash,
             unresolved_functions,
-            behaviors: self.behaviors,
-            template_callbacks: self.template_callbacks,
+            behaviors: behaviors_by_hash,
+            template_callbacks: template_callbacks_by_hash,
             namespaces: self.namespaces,
-            types_by_hash,
-            functions_by_hash,
         })
     }
 
