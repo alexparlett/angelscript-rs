@@ -1353,6 +1353,17 @@ impl<'ast> TypeCompiler<'ast> {
             crate::ast::Visibility::Protected => Visibility::Protected,
         };
 
+        // Compute func_hash from resolved params
+        let owner_hash = self.context.get_type(type_id).type_hash();
+        let param_hashes: Vec<crate::types::TypeHash> = params.iter()
+            .map(|p| self.context.get_type(p.data_type.type_id).type_hash())
+            .collect();
+        let func_hash = if is_constructor {
+            crate::types::TypeHash::from_constructor(owner_hash, &param_hashes)
+        } else {
+            crate::types::TypeHash::from_method(owner_hash, method.name.name, &param_hashes)
+        };
+
         // Create and register the function
         let func_def = crate::semantic::types::registry::FunctionDef {
             id: func_id,
@@ -1365,6 +1376,7 @@ impl<'ast> TypeCompiler<'ast> {
             is_native: false,
             visibility,
             signature_filled: true, // Interface method - fully filled here
+            func_hash,
         };
 
         self.context.register_function(func_def);

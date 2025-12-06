@@ -6,7 +6,7 @@
 use rustc_hash::FxHashMap;
 
 use super::data_type::DataType;
-use crate::types::TypeKind;
+use crate::types::{TypeHash, TypeKind};
 use std::fmt;
 use std::sync::atomic::{AtomicU32, Ordering};
 
@@ -779,6 +779,8 @@ pub enum TypeDef {
     /// Primitive type (int, float, bool, etc.)
     Primitive {
         kind: PrimitiveType,
+        /// Deterministic hash for this type (computed from name)
+        type_hash: TypeHash,
     },
 
     /// User-defined class, template definition, or template instance
@@ -795,6 +797,8 @@ pub enum TypeDef {
     Class {
         name: String,
         qualified_name: String,
+        /// Deterministic hash for this type (computed from qualified_name)
+        type_hash: TypeHash,
         fields: Vec<FieldDef>,
         methods: Vec<FunctionId>,
         base_class: Option<TypeId>,
@@ -833,6 +837,8 @@ pub enum TypeDef {
     Interface {
         name: String,
         qualified_name: String,
+        /// Deterministic hash for this type (computed from qualified_name)
+        type_hash: TypeHash,
         methods: Vec<MethodSignature>,
     },
 
@@ -840,6 +846,8 @@ pub enum TypeDef {
     Enum {
         name: String,
         qualified_name: String,
+        /// Deterministic hash for this type (computed from qualified_name)
+        type_hash: TypeHash,
         values: Vec<(String, i64)>,
     },
 
@@ -847,6 +855,8 @@ pub enum TypeDef {
     Funcdef {
         name: String,
         qualified_name: String,
+        /// Deterministic hash for this type (computed from qualified_name)
+        type_hash: TypeHash,
         params: Vec<DataType>,
         return_type: DataType,
     },
@@ -863,6 +873,9 @@ pub enum TypeDef {
         index: usize,
         /// The template TypeId this parameter belongs to
         owner: TypeId,
+        /// Deterministic hash for this template parameter
+        /// Computed as: owner_hash ^ (PARAM_MARKER[index])
+        type_hash: TypeHash,
     },
 }
 
@@ -870,7 +883,7 @@ impl TypeDef {
     /// Get the name of this type (unqualified)
     pub fn name(&self) -> &str {
         match self {
-            TypeDef::Primitive { kind } => kind.name(),
+            TypeDef::Primitive { kind, .. } => kind.name(),
             TypeDef::Class { name, .. } => name,
             TypeDef::Interface { name, .. } => name,
             TypeDef::Enum { name, .. } => name,
@@ -882,12 +895,27 @@ impl TypeDef {
     /// Get the qualified name of this type (with namespace)
     pub fn qualified_name(&self) -> &str {
         match self {
-            TypeDef::Primitive { kind } => kind.name(),
+            TypeDef::Primitive { kind, .. } => kind.name(),
             TypeDef::Class { qualified_name, .. } => qualified_name,
             TypeDef::Interface { qualified_name, .. } => qualified_name,
             TypeDef::Enum { qualified_name, .. } => qualified_name,
             TypeDef::Funcdef { qualified_name, .. } => qualified_name,
             TypeDef::TemplateParam { name, .. } => name,
+        }
+    }
+
+    /// Get the deterministic type hash for this type.
+    ///
+    /// This hash is computed from the qualified type name and can be used
+    /// for hash-based lookups. Same name = same hash, always.
+    pub fn type_hash(&self) -> TypeHash {
+        match self {
+            TypeDef::Primitive { type_hash, .. } => *type_hash,
+            TypeDef::Class { type_hash, .. } => *type_hash,
+            TypeDef::Interface { type_hash, .. } => *type_hash,
+            TypeDef::Enum { type_hash, .. } => *type_hash,
+            TypeDef::Funcdef { type_hash, .. } => *type_hash,
+            TypeDef::TemplateParam { type_hash, .. } => *type_hash,
         }
     }
 
@@ -1183,7 +1211,7 @@ mod tests {
 
     #[test]
     fn typedef_primitive() {
-        let typedef = TypeDef::Primitive { kind: PrimitiveType::Int32 };
+        let typedef = TypeDef::Primitive { kind: PrimitiveType::Int32, type_hash: crate::types::TypeHash::from_name(PrimitiveType::Int32.name()) };
         assert_eq!(typedef.name(), "int");
         assert_eq!(typedef.qualified_name(), "int");
         assert!(typedef.is_primitive());
@@ -1195,6 +1223,7 @@ mod tests {
         let typedef = TypeDef::Class {
             name: "Player".to_string(),
             qualified_name: "Game::Player".to_string(),
+            type_hash: crate::types::TypeHash::from_name("Game::Player"),
             fields: vec![],
             methods: vec![],
             base_class: None,
@@ -1220,6 +1249,7 @@ mod tests {
         let typedef = TypeDef::Class {
             name: "Player".to_string(),
             qualified_name: "Player".to_string(),
+            type_hash: crate::types::TypeHash::from_name("Player"),
             fields: vec![
                 FieldDef::new(
                     "health".to_string(),
@@ -1255,6 +1285,7 @@ mod tests {
         let typedef = TypeDef::Interface {
             name: "IDrawable".to_string(),
             qualified_name: "Graphics::IDrawable".to_string(),
+            type_hash: crate::types::TypeHash::from_name("Graphics::IDrawable"),
             methods: vec![],
         };
         assert_eq!(typedef.name(), "IDrawable");
@@ -1268,6 +1299,7 @@ mod tests {
         let typedef = TypeDef::Enum {
             name: "Color".to_string(),
             qualified_name: "Color".to_string(),
+            type_hash: crate::types::TypeHash::from_name("Color"),
             values: vec![
                 ("Red".to_string(), 0),
                 ("Green".to_string(), 1),
@@ -1289,6 +1321,7 @@ mod tests {
         let typedef = TypeDef::Funcdef {
             name: "Callback".to_string(),
             qualified_name: "Callback".to_string(),
+            type_hash: crate::types::TypeHash::from_name("Callback"),
             params: vec![DataType::simple(INT32_TYPE)],
             return_type: DataType::simple(VOID_TYPE),
         };
@@ -1308,6 +1341,7 @@ mod tests {
         let typedef = TypeDef::Class {
             name: "array".to_string(),
             qualified_name: "array".to_string(),
+            type_hash: crate::types::TypeHash::from_name("array"),
             fields: vec![],
             methods: vec![],
             base_class: None,
@@ -1331,10 +1365,12 @@ mod tests {
     #[test]
     fn typedef_template_param() {
         let owner = TypeId::new(200);
+        let owner_hash = crate::types::TypeHash::from_name("TestTemplate");
         let typedef = TypeDef::TemplateParam {
             name: "T".to_string(),
             index: 0,
             owner,
+            type_hash: crate::types::TypeHash::from_template_instance(owner_hash, &[crate::types::TypeHash(0)]),
         };
         assert_eq!(typedef.name(), "T");
         assert_eq!(typedef.qualified_name(), "T");
@@ -1351,6 +1387,7 @@ mod tests {
         let typedef = TypeDef::Class {
             name: "Container<int>".to_string(),
             qualified_name: "Container<int>".to_string(),
+            type_hash: crate::types::TypeHash::from_name("Container<int>"),
             fields: vec![],
             methods: Vec::new(),
             base_class: None,
@@ -1374,7 +1411,7 @@ mod tests {
 
     #[test]
     fn typedef_all_type_checks() {
-        let primitive = TypeDef::Primitive { kind: PrimitiveType::Int32 };
+        let primitive = TypeDef::Primitive { kind: PrimitiveType::Int32, type_hash: crate::types::TypeHash::from_name(PrimitiveType::Int32.name()) };
         assert!(primitive.is_primitive());
         assert!(!primitive.is_class());
         assert!(!primitive.is_interface());
@@ -1800,6 +1837,7 @@ mod tests {
         let typedef = TypeDef::Class {
             name: "Container<int>".to_string(),
             qualified_name: "Container<int>".to_string(),
+            type_hash: crate::types::TypeHash::from_name("Container<int>"),
             fields: vec![],
             methods: Vec::new(),
             base_class: None,
@@ -1824,6 +1862,7 @@ mod tests {
         let typedef = TypeDef::Class {
             name: "array".to_string(),
             qualified_name: "array".to_string(),
+            type_hash: crate::types::TypeHash::from_name("array"),
             fields: vec![],
             methods: vec![],
             base_class: None,

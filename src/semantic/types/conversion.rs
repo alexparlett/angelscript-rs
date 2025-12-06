@@ -802,6 +802,7 @@ mod tests {
         let user_class = TypeDef::Class {
             name: "UserType".to_string(),
             qualified_name: "UserType".to_string(),
+            type_hash: crate::types::TypeHash::from_name("UserType"),
             fields: Vec::new(),
             methods: Vec::new(),
             base_class: None,
@@ -1379,6 +1380,7 @@ mod tests {
             TypeDef::Class {
                 name: "Base".to_string(),
                 qualified_name: "Base".to_string(),
+                type_hash: crate::types::TypeHash::from_name("Base"),
                 base_class: None,
                 interfaces: vec![],
                 fields: vec![],
@@ -1400,6 +1402,7 @@ mod tests {
             TypeDef::Class {
                 name: "Derived".to_string(),
                 qualified_name: "Derived".to_string(),
+                type_hash: crate::types::TypeHash::from_name("Derived"),
                 base_class: Some(base_id),
                 interfaces: vec![],
                 fields: vec![],
@@ -1450,6 +1453,7 @@ mod tests {
             TypeDef::Interface {
                 name: "IDrawable".to_string(),
                 qualified_name: "IDrawable".to_string(),
+                type_hash: crate::types::TypeHash::from_name("IDrawable"),
                 methods: vec![],
             },
             Some("IDrawable"),
@@ -1460,6 +1464,7 @@ mod tests {
             TypeDef::Class {
                 name: "Circle".to_string(),
                 qualified_name: "Circle".to_string(),
+                type_hash: crate::types::TypeHash::from_name("Circle"),
                 base_class: None,
                 interfaces: vec![interface_id],
                 fields: vec![],
@@ -1549,6 +1554,7 @@ mod tests {
         let user_class = TypeDef::Class {
             name: "UserType".to_string(),
             qualified_name: "UserType".to_string(),
+            type_hash: crate::types::TypeHash::from_name("UserType"),
             fields: Vec::new(),
             methods: Vec::new(),
             base_class: None,

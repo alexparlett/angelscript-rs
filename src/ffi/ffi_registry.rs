@@ -60,7 +60,7 @@ use crate::semantic::types::type_def::{
 };
 use crate::semantic::types::SELF_TYPE;
 use crate::semantic::types::DataType;
-use crate::types::{FfiFunctionDef, FfiResolutionError, ResolvedFfiFunctionDef};
+use crate::types::{FfiFunctionDef, FfiResolutionError, ResolvedFfiFunctionDef, TypeHash};
 
 /// Immutable FFI registry, shared across all Units in a Context.
 ///
@@ -99,6 +99,12 @@ pub struct FfiRegistry {
     // === Namespace Tracking ===
     /// All registered namespaces
     namespaces: FxHashSet<String>,
+
+    // === Hash-Based Lookups (Phase 2 TypeHash Migration) ===
+    /// Types indexed by TypeHash (secondary index)
+    types_by_hash: FxHashMap<TypeHash, TypeId>,
+    /// Functions indexed by TypeHash (secondary index)
+    functions_by_hash: FxHashMap<TypeHash, FunctionId>,
 }
 
 impl std::fmt::Debug for FfiRegistry {
@@ -113,6 +119,8 @@ impl std::fmt::Debug for FfiRegistry {
             .field("behaviors", &self.behaviors)
             .field("template_callbacks", &format!("<{} callbacks>", self.template_callbacks.len()))
             .field("namespaces", &self.namespaces)
+            .field("types_by_hash", &format!("<{} entries>", self.types_by_hash.len()))
+            .field("functions_by_hash", &format!("<{} entries>", self.functions_by_hash.len()))
             .finish()
     }
 }
@@ -140,6 +148,18 @@ impl FfiRegistry {
     /// Get the number of registered types.
     pub fn type_count(&self) -> usize {
         self.types.len()
+    }
+
+    /// Get a type definition by TypeHash.
+    pub fn get_type_by_hash(&self, hash: TypeHash) -> Option<&TypeDef> {
+        self.types_by_hash
+            .get(&hash)
+            .and_then(|id| self.types.get(id))
+    }
+
+    /// Get the TypeId for a TypeHash.
+    pub fn get_type_id_by_hash(&self, hash: TypeHash) -> Option<TypeId> {
+        self.types_by_hash.get(&hash).copied()
     }
 
     // =========================================================================
@@ -172,6 +192,18 @@ impl FfiRegistry {
     /// Get access to the function name map for iteration.
     pub fn func_by_name(&self) -> &FxHashMap<String, Vec<FunctionId>> {
         &self.function_names
+    }
+
+    /// Get a function definition by TypeHash.
+    pub fn get_function_by_hash(&self, hash: TypeHash) -> Option<&ResolvedFfiFunctionDef> {
+        self.functions_by_hash
+            .get(&hash)
+            .and_then(|id| self.functions.get(id))
+    }
+
+    /// Get the FunctionId for a TypeHash.
+    pub fn get_function_id_by_hash(&self, hash: TypeHash) -> Option<FunctionId> {
+        self.functions_by_hash.get(&hash).copied()
     }
 
     // =========================================================================
@@ -653,7 +685,8 @@ impl FfiRegistryBuilder {
 
     /// Register a primitive type with its TypeDef and name lookup.
     fn register_primitive(&mut self, kind: PrimitiveType, type_id: TypeId) {
-        self.types.insert(type_id, TypeDef::Primitive { kind });
+        let type_hash = crate::types::TypeHash::from_name(kind.name());
+        self.types.insert(type_id, TypeDef::Primitive { kind, type_hash });
         self.type_names.insert(kind.name().to_string(), type_id);
     }
 
@@ -876,6 +909,13 @@ impl FfiRegistryBuilder {
             // Type lookup closure
             let type_lookup = |name: &str| -> Option<TypeId> { self.type_names.get(name).copied() };
 
+            // Type hash lookup closure
+            let type_hash_lookup = |type_id: TypeId| -> crate::types::TypeHash {
+                self.types.get(&type_id)
+                    .map(|td| td.type_hash())
+                    .unwrap_or_else(|| crate::types::TypeHash::from_name(&format!("unknown_{}", type_id.as_u32())))
+            };
+
             // Get the owner type's template parameters (if this is a method on a template)
             let owner_template_params: Option<Vec<TypeId>> = ffi_func.owner_type.and_then(|owner_id| {
                 self.types.get(&owner_id).and_then(|typedef| {
@@ -921,7 +961,7 @@ impl FfiRegistryBuilder {
                 Err("Template instantiation not supported during FfiRegistry build".to_string())
             };
 
-            match ffi_func.resolve(&type_lookup, &mut instantiate) {
+            match ffi_func.resolve(&type_lookup, &mut instantiate, &type_hash_lookup) {
                 Ok(resolved) => {
                     // Add to function name map
                     let qualified_name = resolved.qualified_name();
@@ -954,6 +994,18 @@ impl FfiRegistryBuilder {
             return Err(errors);
         }
 
+        // Build types_by_hash secondary index
+        let types_by_hash: FxHashMap<TypeHash, TypeId> = self.types
+            .iter()
+            .map(|(&id, def)| (def.type_hash(), id))
+            .collect();
+
+        // Build functions_by_hash secondary index
+        let functions_by_hash: FxHashMap<TypeHash, FunctionId> = resolved_functions
+            .iter()
+            .map(|(&id, def)| (def.func_hash, id))
+            .collect();
+
         Ok(FfiRegistry {
             types: self.types,
             type_names: self.type_names,
@@ -964,6 +1016,8 @@ impl FfiRegistryBuilder {
             behaviors: self.behaviors,
             template_callbacks: self.template_callbacks,
             namespaces: self.namespaces,
+            types_by_hash,
+            functions_by_hash,
         })
     }
 
@@ -999,6 +1053,7 @@ impl FfiRegistryBuilder {
         Ok(TypeDef::Interface {
             name: interface_def.name().to_string(),
             qualified_name: qualified_name.to_string(),
+            type_hash: crate::types::TypeHash::from_name(qualified_name),
             methods: methods?,
         })
     }
@@ -1022,6 +1077,7 @@ impl FfiRegistryBuilder {
         Ok(TypeDef::Funcdef {
             name: funcdef_def.name.clone(),
             qualified_name: qualified_name.to_string(),
+            type_hash: crate::types::TypeHash::from_name(qualified_name),
             params: params?,
             return_type,
         })
@@ -1127,6 +1183,7 @@ mod tests {
             TypeDef::Enum {
                 name: "Color".to_string(),
                 qualified_name: "Color".to_string(),
+                type_hash: crate::types::TypeHash::from_name("Color"),
                 values: vec![
                     ("Red".to_string(), 0),
                     ("Green".to_string(), 1),
@@ -1201,6 +1258,7 @@ mod tests {
             TypeDef::Class {
                 name: "MyClass".to_string(),
                 qualified_name: "MyClass".to_string(),
+                type_hash: crate::types::TypeHash::from_name("MyClass"),
                 fields: Vec::new(),
                 methods: Vec::new(),
                 base_class: None,
@@ -1269,6 +1327,7 @@ mod tests {
             TypeDef::Enum {
                 name: "Color".to_string(),
                 qualified_name: "Color".to_string(),
+                type_hash: crate::types::TypeHash::from_name("Color"),
                 values: vec![
                     ("Red".to_string(), 0),
                     ("Green".to_string(), 1),
@@ -1294,6 +1353,7 @@ mod tests {
             TypeDef::Class {
                 name: "MyClass".to_string(),
                 qualified_name: "MyClass".to_string(),
+                type_hash: crate::types::TypeHash::from_name("MyClass"),
                 fields: Vec::new(),
                 methods: Vec::new(),
                 base_class: None,
@@ -1347,6 +1407,7 @@ mod tests {
             TypeDef::Class {
                 name: "Base".to_string(),
                 qualified_name: "Base".to_string(),
+                type_hash: crate::types::TypeHash::from_name("Base"),
                 fields: Vec::new(),
                 methods: Vec::new(),
                 base_class: None,
@@ -1368,6 +1429,7 @@ mod tests {
             TypeDef::Class {
                 name: "Derived".to_string(),
                 qualified_name: "Derived".to_string(),
+                type_hash: crate::types::TypeHash::from_name("Derived"),
                 fields: Vec::new(),
                 methods: Vec::new(),
                 base_class: Some(base_id),
@@ -1400,6 +1462,7 @@ mod tests {
             TypeDef::Class {
                 name: "array".to_string(),
                 qualified_name: "array".to_string(),
+                type_hash: crate::types::TypeHash::from_name("array"),
                 fields: Vec::new(),
                 methods: Vec::new(),
                 base_class: None,

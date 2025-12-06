@@ -73,7 +73,7 @@ use crate::semantic::types::type_def::{
     TypeDef, TypeId, Visibility,
 };
 use crate::semantic::types::DataType;
-use crate::types::ResolvedFfiFunctionDef;
+use crate::types::{ResolvedFfiFunctionDef, TypeHash};
 
 /// Unified reference to a function definition (either FFI or Script).
 ///
@@ -337,6 +337,25 @@ impl<'ast> CompilationContext<'ast> {
         self.ffi.type_count() + self.script.type_count()
     }
 
+    /// Get a type definition by TypeHash.
+    ///
+    /// Tries FFI registry first, then Script registry.
+    pub fn get_type_by_hash(&self, hash: TypeHash) -> Option<&TypeDef> {
+        // Try FFI first (more likely for common types like primitives)
+        self.ffi
+            .get_type_by_hash(hash)
+            .or_else(|| self.script.get_type_by_hash(hash))
+    }
+
+    /// Get the TypeId for a TypeHash.
+    ///
+    /// Tries FFI registry first, then Script registry.
+    pub fn get_type_id_by_hash(&self, hash: TypeHash) -> Option<TypeId> {
+        self.ffi
+            .get_type_id_by_hash(hash)
+            .or_else(|| self.script.get_type_id_by_hash(hash))
+    }
+
     // =========================================================================
     // Type Registration (delegates to ScriptRegistry)
     // =========================================================================
@@ -396,6 +415,30 @@ impl<'ast> CompilationContext<'ast> {
     /// Get the total count of registered functions (FFI + Script).
     pub fn function_count(&self) -> usize {
         self.ffi.function_count() + self.script.function_count()
+    }
+
+    /// Get a function definition by TypeHash.
+    ///
+    /// Tries FFI registry first, then Script registry.
+    /// Returns a FunctionRef for unified access.
+    pub fn get_function_by_hash(&self, hash: TypeHash) -> Option<FunctionRef<'_, 'ast>> {
+        // Try FFI first
+        if let Some(ffi_func) = self.ffi.get_function_by_hash(hash) {
+            return Some(FunctionRef::Ffi(ffi_func));
+        }
+        // Then script
+        self.script
+            .get_function_by_hash(hash)
+            .map(FunctionRef::Script)
+    }
+
+    /// Get the FunctionId for a TypeHash.
+    ///
+    /// Tries FFI registry first, then Script registry.
+    pub fn get_function_id_by_hash(&self, hash: TypeHash) -> Option<FunctionId> {
+        self.ffi
+            .get_function_id_by_hash(hash)
+            .or_else(|| self.script.get_function_id_by_hash(hash))
     }
 
     /// Generate the next script FunctionId.
@@ -854,6 +897,7 @@ mod tests {
         let typedef = TypeDef::Class {
             name: "Player".to_string(),
             qualified_name: "Player".to_string(),
+            type_hash: crate::types::TypeHash::from_name("Player"),
             fields: Vec::new(),
             methods: Vec::new(),
             base_class: None,
@@ -908,12 +952,14 @@ mod tests {
 
         // Register a template type
         let t_param = TypeId::next_ffi();
+        let owner_hash = crate::types::TypeHash::from_name("array");
         builder.register_type_with_id(
             t_param,
             TypeDef::TemplateParam {
                 name: "T".to_string(),
                 index: 0,
                 owner: TypeId::next_ffi(), // Will be updated
+                type_hash: crate::types::TypeHash::from_template_instance(owner_hash, &[crate::types::TypeHash(0)]),
             },
             None,
         );
@@ -921,6 +967,7 @@ mod tests {
         let template_def = TypeDef::Class {
             name: "array".to_string(),
             qualified_name: "array".to_string(),
+            type_hash: crate::types::TypeHash::from_name("array"),
             fields: Vec::new(),
             methods: Vec::new(),
             base_class: None,
@@ -963,12 +1010,14 @@ mod tests {
         let mut builder = FfiRegistryBuilder::new();
 
         let t_param = TypeId::next_ffi();
+        let owner_hash = crate::types::TypeHash::from_name("array");
         builder.register_type_with_id(
             t_param,
             TypeDef::TemplateParam {
                 name: "T".to_string(),
                 index: 0,
                 owner: TypeId::next_ffi(),
+                type_hash: crate::types::TypeHash::from_template_instance(owner_hash, &[crate::types::TypeHash(0)]),
             },
             None,
         );
@@ -976,6 +1025,7 @@ mod tests {
         let template_def = TypeDef::Class {
             name: "array".to_string(),
             qualified_name: "array".to_string(),
+            type_hash: owner_hash,
             fields: Vec::new(),
             methods: Vec::new(),
             base_class: None,

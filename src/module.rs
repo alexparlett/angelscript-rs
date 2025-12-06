@@ -28,7 +28,7 @@ use crate::ffi::{
 use crate::semantic::types::type_def::TypeId;
 use crate::types::{
     function_param_to_ffi, return_type_to_ffi, FfiDataType, FfiEnumDef, FfiFuncdefDef,
-    FfiFunctionDef, FfiInterfaceDef, FfiParam, FfiTypeDef,
+    FfiFunctionDef, FfiInterfaceDef, FfiParam, FfiTypeDef, TypeHash,
 };
 
 /// A namespaced collection of native functions, types, and global properties.
@@ -753,20 +753,25 @@ impl<'app> Module<'app> {
 
         // Create and register template parameters
         // Each param gets a unique FFI TypeId and is registered with a name like "array::$T"
+        // The owner_hash is computed from the template's qualified name
+        let owner_hash = TypeHash::from_name(&qualified_name);
         let template_param_ids: Vec<TypeId> = type_def
             .template_params
             .iter()
             .enumerate()
             .map(|(index, param_name)| {
                 let param_id = TypeId::next_ffi();
+                let param_qualified_name = format!("{}::${}", qualified_name, param_name);
+                // Template param hash: use owner hash XOR'd with param marker
+                let param_hash = TypeHash::from_template_instance(owner_hash, &[TypeHash(index as u64)]);
 
                 // Register the template param as a TypeDef
                 let param_typedef = TypeDef::TemplateParam {
                     name: param_name.clone(),
                     index,
                     owner: type_def.id,
+                    type_hash: param_hash,
                 };
-                let param_qualified_name = format!("{}::${}", qualified_name, param_name);
                 builder.register_type_with_id(param_id, param_typedef, Some(&param_qualified_name));
 
                 // Also register just the param name for simple lookups within template context
@@ -780,6 +785,7 @@ impl<'app> Module<'app> {
         let typedef = TypeDef::Class {
             name: type_def.name.clone(),
             qualified_name: qualified_name.clone(),
+            type_hash: owner_hash, // Use the already computed owner_hash
             fields: Vec::new(), // FFI types don't have script-visible fields
             methods: Vec::new(), // Will be populated when methods are installed
             base_class: None, // TODO: Support base class in FfiTypeDef
@@ -986,6 +992,7 @@ impl<'app> Module<'app> {
         let typedef = TypeDef::Enum {
             name: enum_def.name.clone(),
             qualified_name: qualified_name.clone(),
+            type_hash: TypeHash::from_name(&qualified_name),
             values: enum_def.values.clone(),
         };
 

@@ -28,6 +28,7 @@ use super::type_def::{
     FunctionId, FunctionTraits, OperatorBehavior,
     PropertyAccessors, TypeDef, TypeId, Visibility,
 };
+use crate::types::TypeHash;
 use crate::ast::expr::Expr;
 use rustc_hash::FxHashMap;
 
@@ -86,6 +87,9 @@ pub struct FunctionDef<'ast> {
     /// Whether the function signature has been filled in by Pass 2a
     /// Functions are registered with empty signatures in Pass 1, then filled in Pass 2a
     pub signature_filled: bool,
+    /// Deterministic hash for identity across compilation units
+    /// This is computed from the qualified name and parameter types
+    pub func_hash: TypeHash,
 }
 
 impl<'ast> FunctionDef<'ast> {
@@ -171,6 +175,12 @@ pub struct ScriptRegistry<'ast> {
 
     // Mixin storage (mixins are not types, stored separately)
     mixins: FxHashMap<String, MixinDef<'ast>>,
+
+    // === Hash-Based Lookups (Phase 2 TypeHash Migration) ===
+    /// Types indexed by TypeHash (secondary index)
+    types_by_hash: FxHashMap<TypeHash, TypeId>,
+    /// Functions indexed by TypeHash (secondary index)
+    functions_by_hash: FxHashMap<TypeHash, FunctionId>,
 }
 
 impl<'ast> std::fmt::Debug for ScriptRegistry<'ast> {
@@ -183,6 +193,8 @@ impl<'ast> std::fmt::Debug for ScriptRegistry<'ast> {
             .field("func_by_name", &self.func_by_name)
             .field("global_vars", &self.global_vars)
             .field("mixins", &self.mixins)
+            .field("types_by_hash", &format!("<{} entries>", self.types_by_hash.len()))
+            .field("functions_by_hash", &format!("<{} entries>", self.functions_by_hash.len()))
             .finish()
     }
 }
@@ -201,6 +213,8 @@ impl<'ast> ScriptRegistry<'ast> {
             func_by_name: FxHashMap::default(),
             global_vars: FxHashMap::default(),
             mixins: FxHashMap::default(),
+            types_by_hash: FxHashMap::default(),
+            functions_by_hash: FxHashMap::default(),
         }
     }
 
@@ -208,7 +222,9 @@ impl<'ast> ScriptRegistry<'ast> {
     /// Uses `TypeId::next_script()` since ScriptRegistry holds script-defined types.
     pub fn register_type(&mut self, typedef: TypeDef, name: Option<&str>) -> TypeId {
         let type_id = TypeId::next_script();
+        let type_hash = typedef.type_hash();
         self.types.insert(type_id, typedef);
+        self.types_by_hash.insert(type_hash, type_id);
 
         if let Some(name) = name {
             self.type_by_name.insert(name.to_string(), type_id);
@@ -244,6 +260,18 @@ impl<'ast> ScriptRegistry<'ast> {
     /// Get a mutable type definition by TypeId
     pub fn get_type_mut(&mut self, type_id: TypeId) -> &mut TypeDef {
         self.types.get_mut(&type_id).expect("TypeId not found in registry")
+    }
+
+    /// Get a type definition by TypeHash.
+    pub fn get_type_by_hash(&self, hash: TypeHash) -> Option<&TypeDef> {
+        self.types_by_hash
+            .get(&hash)
+            .and_then(|id| self.types.get(id))
+    }
+
+    /// Get the TypeId for a TypeHash.
+    pub fn get_type_id_by_hash(&self, hash: TypeHash) -> Option<TypeId> {
+        self.types_by_hash.get(&hash).copied()
     }
 
     /// Get the behaviors for a type, if any are registered.
@@ -305,8 +333,10 @@ impl<'ast> ScriptRegistry<'ast> {
     pub fn register_function(&mut self, def: FunctionDef<'ast>) -> FunctionId {
         let func_id = def.id;
         let qualified_name = def.qualified_name();
+        let func_hash = def.func_hash;
 
         self.functions.insert(func_id, def);
+        self.functions_by_hash.insert(func_hash, func_id);
 
         // Add to overload map
         self.func_by_name
@@ -342,6 +372,18 @@ impl<'ast> ScriptRegistry<'ast> {
     /// Get the count of registered functions
     pub fn function_count(&self) -> usize {
         self.functions.len()
+    }
+
+    /// Get a function definition by TypeHash.
+    pub fn get_function_by_hash(&self, hash: TypeHash) -> Option<&FunctionDef<'ast>> {
+        self.functions_by_hash
+            .get(&hash)
+            .and_then(|id| self.functions.get(id))
+    }
+
+    /// Get the FunctionId for a TypeHash.
+    pub fn get_function_id_by_hash(&self, hash: TypeHash) -> Option<FunctionId> {
+        self.functions_by_hash.get(&hash).copied()
     }
 
     /// Get the next available function ID
@@ -1327,7 +1369,8 @@ impl<'ast> Default for ScriptRegistry<'ast> {
 mod tests {
     use super::*;
     use crate::semantic::types::data_type::RefModifier;
-    use crate::semantic::types::type_def::{Visibility, INT32_TYPE, VOID_TYPE, FLOAT_TYPE, DOUBLE_TYPE, BOOL_TYPE};
+    use crate::semantic::types::type_def::{Visibility, INT32_TYPE, VOID_TYPE, FLOAT_TYPE};
+    use crate::types::TypeHash;
 
     /// Test helper to create a ScriptParam from a DataType with an auto-generated name
     fn param(data_type: DataType) -> ScriptParam<'static> {
@@ -1336,6 +1379,11 @@ mod tests {
             data_type,
             default: None,
         }
+    }
+
+    /// Test helper to create a placeholder func_hash for test FunctionDefs
+    fn test_func_hash() -> TypeHash {
+        TypeHash::EMPTY
     }
 
     #[test]
@@ -1358,6 +1406,7 @@ mod tests {
         let typedef = TypeDef::Class {
             name: "Player".to_string(),
             qualified_name: "Player".to_string(),
+            type_hash: crate::types::TypeHash::from_name("Player"),
             fields: Vec::new(),
             methods: Vec::new(),
             base_class: None,
@@ -1384,6 +1433,7 @@ mod tests {
         let typedef = TypeDef::Class {
             name: "Player".to_string(),
             qualified_name: "Game::Player".to_string(),
+            type_hash: crate::types::TypeHash::from_name("Game::Player"),
             fields: Vec::new(),
             methods: Vec::new(),
             base_class: None,
@@ -1409,6 +1459,7 @@ mod tests {
         let typedef = TypeDef::Interface {
             name: "IDrawable".to_string(),
             qualified_name: "IDrawable".to_string(),
+            type_hash: crate::types::TypeHash::from_name("IDrawable"),
             methods: Vec::new(),
         };
 
@@ -1424,6 +1475,7 @@ mod tests {
         let typedef = TypeDef::Enum {
             name: "Color".to_string(),
             qualified_name: "Color".to_string(),
+            type_hash: crate::types::TypeHash::from_name("Color"),
             values: vec![
                 ("Red".to_string(), 0),
                 ("Green".to_string(), 1),
@@ -1443,6 +1495,7 @@ mod tests {
         let typedef = TypeDef::Funcdef {
             name: "Callback".to_string(),
             qualified_name: "Callback".to_string(),
+            type_hash: crate::types::TypeHash::from_name("Callback"),
             params: vec![DataType::simple(INT32_TYPE)],
             return_type: DataType::simple(VOID_TYPE),
         };
@@ -1459,6 +1512,7 @@ mod tests {
         let typedef = TypeDef::Class {
             name: "Player".to_string(),
             qualified_name: "Player".to_string(),
+            type_hash: crate::types::TypeHash::from_name("Player"),
             fields: Vec::new(),
             methods: Vec::new(),
             base_class: None,
@@ -1517,6 +1571,7 @@ mod tests {
 
             visibility: Visibility::Public,
             signature_filled: true,
+            func_hash: test_func_hash(),
         };
         registry.register_function(const_method);
 
@@ -1539,6 +1594,7 @@ mod tests {
 
             visibility: Visibility::Public,
             signature_filled: true,
+            func_hash: test_func_hash(),
         };
         registry.register_function(mutable_method);
 
@@ -1553,6 +1609,7 @@ mod tests {
         registry.types.insert(class_id, TypeDef::Class {
             name: "TestClass".to_string(),
             qualified_name: "TestClass".to_string(),
+            type_hash: crate::types::TypeHash::from_name("TestClass"),
             fields: Vec::new(),
             methods: vec![const_method_id, mutable_method_id],
             base_class: None,
@@ -1601,6 +1658,7 @@ mod tests {
 
             visibility: Visibility::Public,
             signature_filled: true,
+            func_hash: test_func_hash(),
         };
 
         let func_id = registry.register_function(func);
@@ -1623,6 +1681,7 @@ mod tests {
 
             visibility: Visibility::Public,
             signature_filled: true,
+            func_hash: test_func_hash(),
         };
 
         registry.register_function(func);
@@ -1656,6 +1715,7 @@ mod tests {
 
             visibility: Visibility::Public,
             signature_filled: true,
+            func_hash: test_func_hash(),
         };
 
         // foo(float)
@@ -1671,6 +1731,7 @@ mod tests {
 
             visibility: Visibility::Public,
             signature_filled: true,
+            func_hash: test_func_hash(),
         };
 
         registry.register_function(func1);
@@ -1694,6 +1755,7 @@ mod tests {
 
             visibility: Visibility::Public,
             signature_filled: true,
+            func_hash: test_func_hash(),
         };
 
         assert_eq!(func.qualified_name(), "Game::Player::update");
@@ -1713,6 +1775,7 @@ mod tests {
 
             visibility: Visibility::Public,
             signature_filled: true,
+            func_hash: test_func_hash(),
         };
 
         assert_eq!(func.qualified_name(), "foo");
@@ -1734,6 +1797,7 @@ mod tests {
 
             visibility: Visibility::Public,
             signature_filled: true,
+            func_hash: test_func_hash(),
         };
 
         let func_id = registry.register_function(func.clone());
@@ -1760,6 +1824,7 @@ mod tests {
 
             visibility: Visibility::Public,
             signature_filled: true,
+            func_hash: test_func_hash(),
         };
 
         // Another method for Player
@@ -1775,6 +1840,7 @@ mod tests {
 
             visibility: Visibility::Public,
             signature_filled: true,
+            func_hash: test_func_hash(),
         };
 
         // Global function (not a method)
@@ -1790,6 +1856,7 @@ mod tests {
 
             visibility: Visibility::Public,
             signature_filled: true,
+            func_hash: test_func_hash(),
         };
 
         registry.register_function(method1);
@@ -1818,6 +1885,7 @@ mod tests {
         let typedef = TypeDef::Class {
             name: "Player".to_string(),
             qualified_name: "Player".to_string(),
+            type_hash: crate::types::TypeHash::from_name("Player"),
             fields: Vec::new(),
             methods: Vec::new(),
             base_class: None,
@@ -1850,6 +1918,7 @@ mod tests {
         let typedef = TypeDef::Class {
             name: "Vector3".to_string(),
             qualified_name: "Vector3".to_string(),
+            type_hash: crate::types::TypeHash::from_name("Vector3"),
             fields: Vec::new(),
             methods: Vec::new(),
             base_class: None,
@@ -1888,6 +1957,7 @@ mod tests {
 
             visibility: Visibility::Public,
             signature_filled: true,
+            func_hash: test_func_hash(),
         };
 
         let func_id = registry.register_function(func_def);
@@ -1913,6 +1983,7 @@ mod tests {
         let typedef = TypeDef::Class {
             name: "Vector3".to_string(),
             qualified_name: "Vector3".to_string(),
+            type_hash: crate::types::TypeHash::from_name("Vector3"),
             fields: Vec::new(),
             methods: Vec::new(),
             base_class: None,
@@ -1951,6 +2022,7 @@ mod tests {
 
             visibility: Visibility::Public,
             signature_filled: true,
+            func_hash: test_func_hash(),
         };
 
         registry.register_function(func_def);
@@ -1973,6 +2045,7 @@ mod tests {
         let typedef = TypeDef::Class {
             name: "Vector3".to_string(),
             qualified_name: "Vector3".to_string(),
+            type_hash: crate::types::TypeHash::from_name("Vector3"),
             fields: Vec::new(),
             methods: Vec::new(),
             base_class: None,
@@ -2011,6 +2084,7 @@ mod tests {
 
             visibility: Visibility::Public,
             signature_filled: true,
+            func_hash: test_func_hash(),
         };
 
         let func_id = registry.register_function(func_def);
@@ -2027,6 +2101,7 @@ mod tests {
         let typedef = TypeDef::Class {
             name: "Vector3".to_string(),
             qualified_name: "Vector3".to_string(),
+            type_hash: crate::types::TypeHash::from_name("Vector3"),
             fields: Vec::new(),
             methods: Vec::new(),
             base_class: None,
@@ -2066,6 +2141,7 @@ mod tests {
 
             visibility: Visibility::Public,
             signature_filled: true,
+            func_hash: test_func_hash(),
         };
 
         // Register single-param constructor
@@ -2090,6 +2166,7 @@ mod tests {
 
             visibility: Visibility::Public,
             signature_filled: true,
+            func_hash: test_func_hash(),
         };
 
         let func_id1 = registry.register_function(func_def1);
@@ -2119,6 +2196,7 @@ mod tests {
         let typedef = TypeDef::Class {
             name: "Player".to_string(),
             qualified_name: "Player".to_string(),
+            type_hash: crate::types::TypeHash::from_name("Player"),
             base_class: None,
             interfaces: Vec::new(),
             fields: Vec::new(),
@@ -2159,6 +2237,7 @@ mod tests {
 
             visibility: Visibility::Public,
             signature_filled: true,
+            func_hash: test_func_hash(),
         };
 
         let copy_ctor_id = registry.register_function(copy_ctor);
@@ -2180,6 +2259,7 @@ mod tests {
         let typedef = TypeDef::Class {
             name: "Player".to_string(),
             qualified_name: "Player".to_string(),
+            type_hash: crate::types::TypeHash::from_name("Player"),
             base_class: None,
             interfaces: Vec::new(),
             fields: Vec::new(),
@@ -2220,6 +2300,7 @@ mod tests {
 
             visibility: Visibility::Public,
             signature_filled: true,
+            func_hash: test_func_hash(),
         };
 
         let copy_ctor_id = registry.register_function(copy_ctor);
@@ -2241,6 +2322,7 @@ mod tests {
         let typedef = TypeDef::Class {
             name: "Player".to_string(),
             qualified_name: "Player".to_string(),
+            type_hash: crate::types::TypeHash::from_name("Player"),
             base_class: None,
             interfaces: Vec::new(),
             fields: Vec::new(),
@@ -2280,6 +2362,7 @@ mod tests {
 
             visibility: Visibility::Public,
             signature_filled: true,
+            func_hash: test_func_hash(),
         };
 
         let ctor_id = registry.register_function(ctor);
@@ -2298,6 +2381,7 @@ mod tests {
         let typedef = TypeDef::Class {
             name: "Player".to_string(),
             qualified_name: "Player".to_string(),
+            type_hash: crate::types::TypeHash::from_name("Player"),
             base_class: None,
             interfaces: Vec::new(),
             fields: Vec::new(),
@@ -2336,6 +2420,7 @@ mod tests {
 
             visibility: Visibility::Public,
             signature_filled: true,
+            func_hash: test_func_hash(),
         };
 
         let ctor_id = registry.register_function(ctor);
@@ -2354,6 +2439,7 @@ mod tests {
         let typedef = TypeDef::Class {
             name: "Player".to_string(),
             qualified_name: "Player".to_string(),
+            type_hash: crate::types::TypeHash::from_name("Player"),
             base_class: None,
             interfaces: Vec::new(),
             fields: Vec::new(),
@@ -2392,6 +2478,7 @@ mod tests {
 
             visibility: Visibility::Public,
             signature_filled: true,
+            func_hash: test_func_hash(),
         };
 
         let ctor_id = registry.register_function(ctor);
@@ -2410,6 +2497,7 @@ mod tests {
         let typedef = TypeDef::Class {
             name: "Player".to_string(),
             qualified_name: "Player".to_string(),
+            type_hash: crate::types::TypeHash::from_name("Player"),
             base_class: None,
             interfaces: Vec::new(),
             fields: Vec::new(),
@@ -2438,6 +2526,7 @@ mod tests {
         let base_typedef = TypeDef::Class {
             name: "Base".to_string(),
             qualified_name: "Base".to_string(),
+            type_hash: crate::types::TypeHash::from_name("Base"),
             base_class: None,
             interfaces: Vec::new(),
             fields: Vec::new(),
@@ -2457,6 +2546,7 @@ mod tests {
         let derived_typedef = TypeDef::Class {
             name: "Derived".to_string(),
             qualified_name: "Derived".to_string(),
+            type_hash: crate::types::TypeHash::from_name("Derived"),
             base_class: Some(base_id),
             interfaces: Vec::new(),
             fields: Vec::new(),
@@ -2495,6 +2585,7 @@ mod tests {
         let base_typedef = TypeDef::Class {
             name: "Base".to_string(),
             qualified_name: "Base".to_string(),
+            type_hash: crate::types::TypeHash::from_name("Base"),
             base_class: None,
             interfaces: Vec::new(),
             fields: Vec::new(),
@@ -2520,6 +2611,7 @@ mod tests {
         let derived_typedef = TypeDef::Class {
             name: "Derived".to_string(),
             qualified_name: "Derived".to_string(),
+            type_hash: crate::types::TypeHash::from_name("Derived"),
             base_class: Some(base_id),
             interfaces: Vec::new(),
             fields: Vec::new(),
@@ -2561,6 +2653,7 @@ mod tests {
 
             visibility: Visibility::Public,
             signature_filled: true,
+            func_hash: test_func_hash(),
         };
         let base_method_id = registry.register_function(base_method);
 
@@ -2568,6 +2661,7 @@ mod tests {
         let base_typedef = TypeDef::Class {
             name: "Base".to_string(),
             qualified_name: "Base".to_string(),
+            type_hash: crate::types::TypeHash::from_name("Base"),
             base_class: None,
             interfaces: Vec::new(),
             fields: Vec::new(),
@@ -2587,6 +2681,7 @@ mod tests {
         let derived_typedef = TypeDef::Class {
             name: "Derived".to_string(),
             qualified_name: "Derived".to_string(),
+            type_hash: crate::types::TypeHash::from_name("Derived"),
             base_class: Some(base_id),
             interfaces: Vec::new(),
             fields: Vec::new(),
@@ -2624,6 +2719,7 @@ mod tests {
 
             visibility: Visibility::Public,
             signature_filled: true,
+            func_hash: test_func_hash(),
         };
         let base_method_id = registry.register_function(base_method);
 
@@ -2631,6 +2727,7 @@ mod tests {
         let base_typedef = TypeDef::Class {
             name: "Base".to_string(),
             qualified_name: "Base".to_string(),
+            type_hash: crate::types::TypeHash::from_name("Base"),
             base_class: None,
             interfaces: Vec::new(),
             fields: Vec::new(),
@@ -2659,6 +2756,7 @@ mod tests {
 
             visibility: Visibility::Public,
             signature_filled: true,
+            func_hash: test_func_hash(),
         };
         let derived_method_id = registry.register_function(derived_method);
 
@@ -2666,6 +2764,7 @@ mod tests {
         let derived_typedef = TypeDef::Class {
             name: "Derived".to_string(),
             qualified_name: "Derived".to_string(),
+            type_hash: crate::types::TypeHash::from_name("Derived"),
             base_class: Some(base_id),
             interfaces: Vec::new(),
             fields: Vec::new(),
@@ -2707,6 +2806,7 @@ mod tests {
 
             visibility: Visibility::Public,
             signature_filled: true,
+            func_hash: test_func_hash(),
         };
         let base_method_id = registry.register_function(base_method);
 
@@ -2714,6 +2814,7 @@ mod tests {
         let base_typedef = TypeDef::Class {
             name: "Base".to_string(),
             qualified_name: "Base".to_string(),
+            type_hash: crate::types::TypeHash::from_name("Base"),
             base_class: None,
             interfaces: Vec::new(),
             fields: Vec::new(),
@@ -2733,6 +2834,7 @@ mod tests {
         let middle_typedef = TypeDef::Class {
             name: "Middle".to_string(),
             qualified_name: "Middle".to_string(),
+            type_hash: crate::types::TypeHash::from_name("Middle"),
             base_class: Some(base_id),
             interfaces: Vec::new(),
             fields: Vec::new(),
@@ -2752,6 +2854,7 @@ mod tests {
         let most_derived_typedef = TypeDef::Class {
             name: "MostDerived".to_string(),
             qualified_name: "MostDerived".to_string(),
+            type_hash: crate::types::TypeHash::from_name("MostDerived"),
             base_class: Some(middle_id),
             interfaces: Vec::new(),
             fields: Vec::new(),
@@ -2779,6 +2882,7 @@ mod tests {
         let typedef = TypeDef::Class {
             name: "MyClass".to_string(),
             qualified_name: "MyClass".to_string(),
+            type_hash: crate::types::TypeHash::from_name("MyClass"),
             base_class: None,
             interfaces: Vec::new(),
             fields: Vec::new(),
@@ -2813,6 +2917,7 @@ mod tests {
         let base_typedef = TypeDef::Class {
             name: "Base".to_string(),
             qualified_name: "Base".to_string(),
+            type_hash: crate::types::TypeHash::from_name("Base"),
             base_class: None,
             interfaces: Vec::new(),
             fields: Vec::new(),
@@ -2832,6 +2937,7 @@ mod tests {
         let derived_typedef = TypeDef::Class {
             name: "Derived".to_string(),
             qualified_name: "Derived".to_string(),
+            type_hash: crate::types::TypeHash::from_name("Derived"),
             base_class: Some(base_id),
             interfaces: Vec::new(),
             fields: Vec::new(),

@@ -875,6 +875,7 @@ mod tests {
         // Register template param T first
         let t_param = TypeId::next_ffi();
         let template_id = TypeId::next_ffi();
+        let owner_hash = crate::types::TypeHash::from_name("array");
 
         builder.register_type_with_id(
             t_param,
@@ -882,6 +883,7 @@ mod tests {
                 name: "T".to_string(),
                 index: 0,
                 owner: template_id,
+                type_hash: crate::types::TypeHash::from_template_instance(owner_hash, &[crate::types::TypeHash(0)]),
             },
             None,
         );
@@ -890,6 +892,7 @@ mod tests {
         let array_typedef = TypeDef::Class {
             name: "array".to_string(),
             qualified_name: "array".to_string(),
+            type_hash: owner_hash,
             fields: Vec::new(),
             methods: Vec::new(),
             base_class: None,

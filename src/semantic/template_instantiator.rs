@@ -38,6 +38,7 @@ use crate::semantic::error::{SemanticError, SemanticErrorKind};
 use crate::semantic::types::registry::{FunctionDef, ScriptParam, ScriptRegistry};
 use crate::semantic::types::type_def::{FunctionId, OperatorBehavior, TypeDef, TypeId, Visibility, SELF_TYPE};
 use crate::semantic::types::DataType;
+use crate::types::TypeHash;
 
 /// Handles template instantiation with caching.
 ///
@@ -164,10 +165,11 @@ impl TemplateInstantiator {
         };
 
         // Verify it's a template and extract info
-        let (template_name, template_params, template_kind, template_operator_methods, template_methods) =
+        let (template_name, template_hash, template_params, template_kind, template_operator_methods, template_methods) =
             match template_def {
                 TypeDef::Class {
                     name,
+                    type_hash,
                     template_params,
                     type_kind,
                     operator_methods,
@@ -183,6 +185,7 @@ impl TemplateInstantiator {
                     }
                     (
                         name.clone(),
+                        *type_hash,
                         template_params.clone(),
                         type_kind.clone(),
                         operator_methods.clone(),
@@ -243,6 +246,24 @@ impl TemplateInstantiator {
             .collect();
         let instance_name = format!("{}<{}>", template_name, type_arg_names.join(", "));
 
+        // Compute instance hash from template hash + type argument hashes
+        // This is done early so we can use it for method hash computation
+        let arg_hashes: Vec<TypeHash> = args.iter().map(|a| {
+            // Get the type's hash from its definition
+            // ffi.get_type returns Option, script.get_type panics if not found
+            // Type args are typically FFI primitives or already-registered types
+            if let Some(def) = ffi.get_type(a.type_id) {
+                def.type_hash()
+            } else if a.type_id.is_script() {
+                // Script types should be looked up in script registry
+                script.get_type(a.type_id).type_hash()
+            } else {
+                // Fallback: compute from name if we can't find the type
+                TypeHash::from_name(&format!("unknown_{}", a.type_id.as_u32()))
+            }
+        }).collect();
+        let instance_hash = TypeHash::from_template_instance(template_hash, &arg_hashes);
+
         // Create specialized operator methods with substituted types
         let mut specialized_operator_methods: FxHashMap<OperatorBehavior, Vec<FunctionId>> =
             FxHashMap::default();
@@ -279,6 +300,24 @@ impl TemplateInstantiator {
                         None,
                     );
 
+                    // Compute func_hash for the specialized method
+                    let param_hashes: Vec<TypeHash> = specialized_params.iter()
+                        .map(|p| {
+                            if let Some(def) = ffi.get_type(p.data_type.type_id) {
+                                def.type_hash()
+                            } else if p.data_type.type_id.is_script() {
+                                script.get_type(p.data_type.type_id).type_hash()
+                            } else {
+                                TypeHash::from_name(&format!("unknown_{}", p.data_type.type_id.as_u32()))
+                            }
+                        })
+                        .collect();
+                    let func_hash = if ffi_func.traits.is_constructor {
+                        TypeHash::from_constructor(instance_hash, &param_hashes)
+                    } else {
+                        TypeHash::from_method(instance_hash, &ffi_func.name, &param_hashes)
+                    };
+
                     // Create a new script function with specialized types
                     let specialized_func = FunctionDef {
                         id: FunctionId::next_script(),
@@ -291,6 +330,7 @@ impl TemplateInstantiator {
                         is_native: true, // Still backed by native FFI function
                         visibility: Visibility::Public,
                         signature_filled: true,
+                        func_hash,
                     };
 
                     let specialized_id = script.register_function(specialized_func);
@@ -310,6 +350,7 @@ impl TemplateInstantiator {
         let instance_def = TypeDef::Class {
             name: instance_name.clone(),
             qualified_name: instance_name.clone(),
+            type_hash: instance_hash,
             fields: Vec::new(), // TODO: Copy and substitute fields from template
             methods: Vec::new(), // Methods will be added after registration
             base_class: None,
@@ -357,6 +398,24 @@ impl TemplateInstantiator {
                     Some(instance_id),
                 );
 
+                // Compute func_hash for the specialized method
+                let param_hashes: Vec<TypeHash> = specialized_params.iter()
+                    .map(|p| {
+                        if let Some(def) = ffi.get_type(p.data_type.type_id) {
+                            def.type_hash()
+                        } else if p.data_type.type_id.is_script() {
+                            script.get_type(p.data_type.type_id).type_hash()
+                        } else {
+                            TypeHash::from_name(&format!("unknown_{}", p.data_type.type_id.as_u32()))
+                        }
+                    })
+                    .collect();
+                let func_hash = if ffi_func.traits.is_constructor {
+                    TypeHash::from_constructor(instance_hash, &param_hashes)
+                } else {
+                    TypeHash::from_method(instance_hash, &ffi_func.name, &param_hashes)
+                };
+
                 // Create a new script function with specialized types
                 let specialized_func = FunctionDef {
                     id: FunctionId::next_script(),
@@ -369,6 +428,7 @@ impl TemplateInstantiator {
                     is_native: true, // Still backed by native FFI function
                     visibility: Visibility::Public,
                     signature_filled: true,
+                    func_hash,
                 };
 
                 let specialized_id = script.register_function(specialized_func);
@@ -413,12 +473,14 @@ mod tests {
         let t_param = TypeId::next_ffi();
         let template_id = TypeId::next_ffi();
 
+        let owner_hash = TypeHash::from_name("array");
         builder.register_type_with_id(
             t_param,
             TypeDef::TemplateParam {
                 name: "T".to_string(),
                 index: 0,
                 owner: template_id,
+                type_hash: TypeHash::from_template_instance(owner_hash, &[TypeHash(0)]),
             },
             None,
         );
@@ -427,6 +489,7 @@ mod tests {
         let array_typedef = TypeDef::Class {
             name: "array".to_string(),
             qualified_name: "array".to_string(),
+            type_hash: owner_hash,
             fields: Vec::new(),
             methods: Vec::new(),
             base_class: None,

@@ -42,7 +42,7 @@
 use crate::ffi::NativeFn;
 use crate::semantic::types::type_def::{FunctionId, FunctionTraits, OperatorBehavior, TypeId, Visibility};
 use crate::semantic::types::DataType;
-use crate::types::FfiDataType;
+use crate::types::{FfiDataType, TypeHash};
 
 use super::ffi_expr::FfiExpr;
 
@@ -261,18 +261,21 @@ impl FfiFunctionDef {
     ///
     /// * `lookup` - Function to look up a TypeId by name
     /// * `instantiate` - Function to instantiate templates
+    /// * `type_hash_lookup` - Function to get a TypeHash for a TypeId
     ///
     /// # Returns
     ///
     /// A `ResolvedFfiFunctionDef` with all types resolved, or an error.
-    pub fn resolve<L, I>(
+    pub fn resolve<L, I, H>(
         &self,
         lookup: &L,
         instantiate: &mut I,
+        type_hash_lookup: &H,
     ) -> Result<ResolvedFfiFunctionDef, FfiResolutionError>
     where
         L: Fn(&str) -> Option<TypeId>,
         I: FnMut(TypeId, Vec<DataType>) -> Result<TypeId, String>,
+        H: Fn(TypeId) -> TypeHash,
     {
         // Resolve return type
         let return_type = self
@@ -304,6 +307,22 @@ impl FfiFunctionDef {
             });
         }
 
+        // Compute function hash based on function type
+        let param_hashes: Vec<TypeHash> = params.iter()
+            .map(|p| type_hash_lookup(p.data_type.type_id))
+            .collect();
+
+        let func_hash = if let Some(owner_id) = self.owner_type {
+            let owner_hash = type_hash_lookup(owner_id);
+            if self.traits.is_constructor {
+                TypeHash::from_constructor(owner_hash, &param_hashes)
+            } else {
+                TypeHash::from_method(owner_hash, &self.name, &param_hashes)
+            }
+        } else {
+            TypeHash::from_function(&self.qualified_name(), &param_hashes)
+        };
+
         Ok(ResolvedFfiFunctionDef {
             id: self.id,
             name: self.name.clone(),
@@ -314,6 +333,7 @@ impl FfiFunctionDef {
             owner_type: self.owner_type,
             operator: self.operator,
             visibility: self.visibility,
+            func_hash,
         })
     }
 }
@@ -364,6 +384,9 @@ pub struct ResolvedFfiFunctionDef {
 
     /// Visibility
     pub visibility: Visibility,
+
+    /// Deterministic hash for this function (computed from name + parameter types)
+    pub func_hash: TypeHash,
 }
 
 impl ResolvedFfiFunctionDef {
@@ -412,6 +435,11 @@ pub enum FfiResolutionError {
 mod tests {
     use super::*;
     use crate::semantic::types::type_def::{INT32_TYPE, VOID_TYPE};
+
+    /// Simple type hash lookup for tests - just uses the type_id as the hash
+    fn test_type_hash_lookup(type_id: TypeId) -> TypeHash {
+        TypeHash::from_name(&format!("type_{}", type_id.as_u32()))
+    }
 
     #[test]
     fn ffi_param_new() {
@@ -536,7 +564,7 @@ mod tests {
             Err("no templates".to_string())
         };
 
-        let resolved = func.resolve(&lookup, &mut instantiate).unwrap();
+        let resolved = func.resolve(&lookup, &mut instantiate, &test_type_hash_lookup).unwrap();
 
         assert_eq!(resolved.name, "add");
         assert_eq!(resolved.params.len(), 2);
@@ -567,7 +595,7 @@ mod tests {
             Err("no templates".to_string())
         };
 
-        let resolved = func.resolve(&lookup, &mut instantiate).unwrap();
+        let resolved = func.resolve(&lookup, &mut instantiate, &test_type_hash_lookup).unwrap();
 
         assert_eq!(resolved.params[0].data_type.type_id, my_class_id);
         assert!(resolved.params[0].data_type.is_handle);
@@ -586,7 +614,7 @@ mod tests {
             Err("no templates".to_string())
         };
 
-        let result = func.resolve(&lookup, &mut instantiate);
+        let result = func.resolve(&lookup, &mut instantiate, &test_type_hash_lookup);
         assert!(result.is_err());
 
         let err = result.unwrap_err();
@@ -607,7 +635,7 @@ mod tests {
             Err("no templates".to_string())
         };
 
-        let result = func.resolve(&lookup, &mut instantiate);
+        let result = func.resolve(&lookup, &mut instantiate, &test_type_hash_lookup);
         assert!(result.is_err());
 
         let err = result.unwrap_err();
@@ -637,6 +665,7 @@ mod tests {
             owner_type: None,
             operator: None,
             visibility: Visibility::Public,
+            func_hash: TypeHash::from_function("add", &[test_type_hash_lookup(INT32_TYPE), test_type_hash_lookup(INT32_TYPE)]),
         };
 
         let param_types = resolved.param_types();
@@ -657,6 +686,7 @@ mod tests {
             owner_type: None,
             operator: None,
             visibility: Visibility::Public,
+            func_hash: TypeHash::from_function("Game::test", &[]),
         };
 
         assert_eq!(resolved.qualified_name(), "Game::test");
