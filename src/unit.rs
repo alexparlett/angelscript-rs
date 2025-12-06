@@ -73,8 +73,8 @@ pub struct Unit<'app> {
     compiled: Option<CompiledModule>,
 
     /// Type registry (available after build)
-    /// TODO: Cannot store Registry with lifetimes here - need to redesign module API
-    // registry: Option<Registry>,
+    /// TODO: Cannot store CompilationContext with lifetimes here - need to redesign module API
+    // context: Option<CompilationContext>,
 
     /// Whether the module has been built
     is_built: bool,
@@ -100,7 +100,7 @@ impl<'app> Unit<'app> {
             dirty_files: HashSet::new(),
             arena: None,
             compiled: None,
-            // registry: None,
+            // context: None,
             is_built: false,
         }
     }
@@ -117,7 +117,7 @@ impl<'app> Unit<'app> {
             dirty_files: HashSet::new(),
             arena: None,
             compiled: None,
-            // registry: None,
+            // context: None,
             is_built: false,
         }
     }
@@ -306,7 +306,7 @@ impl<'app> Unit<'app> {
         let compilation_result = {
             if scripts.len() == 1 {
                 // Single file - compile with FFI registry from context
-                Compiler::compile_with_ffi(&scripts[0].1, ffi_registry)
+                Compiler::compile(&scripts[0].1, ffi_registry)
             } else {
                 // Multi-file - TODO: implement
                 todo!("Multi-file compilation not yet implemented")
@@ -320,7 +320,7 @@ impl<'app> Unit<'app> {
 
         // Store the compiled module and registry
         self.compiled = Some(compilation_result.module);
-        // self.registry = Some(compilation_result.registry);  // TODO: Cannot store Registry with lifetimes
+        // self.compilation_context = Some(compilation_result.context);  // TODO: Cannot store CompilationContext with lifetimes
         self.arena = Some(arena);
         self.is_built = true;
         self.dirty_files.clear();
@@ -343,10 +343,10 @@ impl<'app> Unit<'app> {
         self.compiled.as_ref()
     }
 
-    /// Get the type registry (available after build).
-    // TODO: Cannot return Registry with lifetimes - need to redesign module API
-    // pub fn registry(&self) -> Option<&Registry> {
-    //     self.registry.as_ref()
+    // TODO: Cannot return CompilationContext with lifetimes - need to redesign module API
+    // /// Get the compilation context (available after build).
+    // pub fn compilation_context(&self) -> Option<&CompilationContext> {
+    //     self.compilation_context.as_ref()
     // }
 
     /// Clear the unit and reset to empty state.
@@ -358,7 +358,7 @@ impl<'app> Unit<'app> {
         self.dirty_files.clear();
         self.arena = None;
         self.compiled = None;
-        // self.registry = None;  // TODO: Cannot store Registry with lifetimes
+        // self.compilation_context = None;  // TODO: Cannot store CompilationContext with lifetimes
         self.is_built = false;
     }
 

@@ -1,8 +1,8 @@
 # Current Task: FFI Implementation
 
 **Status:** In Progress
-**Date:** 2025-12-03
-**Phase:** FFI Performance Optimization
+**Date:** 2025-12-06
+**Phase:** FFI Performance Optimization (Phase 6.7 Complete)
 
 ---
 
@@ -10,7 +10,7 @@
 
 **Parser:** 100% Complete
 **Semantic Analysis:** 100% Complete
-**Test Status:** 2326 library tests + 24 integration tests passing
+**Test Status:** 2423 library tests passing
 
 **Recent Additions:**
 - All FFI built-in modules implemented (std, string, math, array, dictionary)
@@ -21,6 +21,8 @@
 - FFI_BIT for TypeId/FunctionId to distinguish FFI vs script-defined items
 - FfiRegistry stored in Context, shared via Arc to Units
 - Primitives now stored in FfiRegistry with TypeDef::Primitive entries
+- CompilationContext as unified facade for FFI + Script registries
+- TemplateInstantiator for template instantiation with specialization
 
 ---
 
@@ -58,7 +60,7 @@ Detailed task files are in `/claude/tasks/`. Complete in order:
 ### Phase 5: Performance & Advanced Features
 | Task | Description | Status |
 |------|-------------|--------|
-| [20](tasks/20_ffi_import_performance.md) | FFI import performance optimization | 🔄 Phase 6.2 Complete |
+| [20](tasks/20_ffi_import_performance.md) | FFI import performance optimization | ✅ Phase 6.7 Complete |
 | [12](tasks/12_ffi_template_functions.md) | Template functions via register_fn_raw | Not Started |
 | [13](tasks/13_ffi_variadic_args.md) | Variadic function arguments | Not Started |
 | [14](tasks/14_ffi_advanced_templates.md) | Advanced templates (if_handle_then_const, funcdefs, specializations) | Not Started |
@@ -68,13 +70,11 @@ Detailed task files are in `/claude/tasks/`. Complete in order:
 
 ## Key Design Decisions
 
-- **Module owns arena** for storing parsed AST types (TypeExpr, Ident)
-- **GlobalPropertyDef uses AST types** - `Ident<'ast>` and `TypeExpr<'ast>` instead of String/TypeSpec
-- **Module has `'app` lifetime** for global property value references
-- **Global properties on Module**, not Context (follows same pattern as functions)
-- **Two calling conventions**: type-safe (closure) and raw (CallContext)
+- **Two-tier architecture**: `CompilationContext` = `Arc<FfiRegistry>` + `ScriptRegistry`
+- **FFI_BIT high bit**: TypeId/FunctionId with bit 0x8000_0000 set = FFI, clear = Script
+- **Compiler::compile(script, ffi)**: Main entry point, takes Arc<FfiRegistry>
+- **No Registry alias**: Use `ScriptRegistry` or `CompilationContext` directly
 - **Built-ins via FFI**: Replace ~800 lines of hardcoded registry.rs
-- **`import_modules()` on Registry** - processes all modules in one call
 - **Two-pass type import** - handles circular references between types in same module
 - **SELF_TYPE (TypeId(u32::MAX - 1))** - placeholder for self-referential template types
 - **Vec<FunctionId> for operator_methods** - supports const/non-const overloads
@@ -90,16 +90,15 @@ Detailed task files are in `/claude/tasks/`. Complete in order:
 
 ## Next Steps
 
-**Task 20: FFI Import Performance** - Continue with Phase 6.3 (update Registry to use FfiRegistry)
+**Task 20 Complete** - Phase 6.7 (Cleanup and Testing) finished:
+- Removed deprecated `Compiler::compile()` (no args version)
+- Renamed `Compiler::compile_with_ffi()` to `Compiler::compile(script, ffi)`
+- Removed `Registry` type alias from semantic/mod.rs
+- Updated all tests to use `default_ffi()` helper with new signature
+- Fixed unused import warning in conversion.rs
+- Updated doc comments to reference CompilationContext instead of Registry
 
-Completed so far:
-- Phase 6.1: Added FFI_BIT to TypeId/FunctionId with next_ffi()/next_script() methods
-- Phase 6.2: Updated all FFI registration code to use next_ffi()
-
-Remaining:
-- Phase 6.3: Update Registry to use Arc<FfiRegistry> from Context
-- Phase 6.4: Update import_modules() to be incremental
-- Phase 7: Run benchmarks to verify performance improvement
+**Next:** Phase 7 - Run benchmarks to verify performance improvement
 
 ---
 

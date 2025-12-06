@@ -984,11 +984,20 @@ All fail with "undefined type 'string'" or "undefined type 'array'" because:
 
 ---
 
-#### Phase 6.7: Cleanup and Testing
-1. Update all imports across codebase (`Registry` → `ScriptRegistry` or `CompilationContext`)
-2. Fix test files that use `Registry` directly
-3. Run full test suite: `cargo test --lib`
-4. Remove any dead code from old Registry implementation
+#### Phase 6.7: Cleanup and Testing ✓
+**Status:** Complete
+
+**Changes:**
+1. Removed deprecated `Compiler::compile()` (no-args version)
+2. Renamed `Compiler::compile_with_ffi()` → `Compiler::compile(script, ffi)`
+3. Removed `Registry` type alias from `src/semantic/mod.rs`
+4. Updated all ~420 test usages to pass `default_ffi()` helper
+5. Fixed unused import warning in `conversion.rs`
+6. Updated doc comments to reference `CompilationContext` instead of `Registry`
+
+**Test Results:**
+- 2423 tests passing
+- All FFI module tests working with proper registry setup
 
 **Design Notes:**
 - Template instances are always Script types (created in ScriptRegistry)

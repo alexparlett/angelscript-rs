@@ -847,7 +847,7 @@ impl<'ast> FunctionCompiler<'ast> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::semantic::{DataType, Registry, INT32_TYPE, DOUBLE_TYPE};
+    use crate::semantic::{DataType, INT32_TYPE, DOUBLE_TYPE};
     use crate::semantic::types::TypeBehaviors;
     use crate::semantic::types::type_def::PrimitiveType;
     use crate::semantic::FunctionId;
@@ -855,10 +855,14 @@ mod tests {
     use crate::ffi::FfiRegistryBuilder;
     use std::sync::Arc;
 
+    /// Create a default FFI registry with primitives for tests
+    fn default_ffi() -> Arc<crate::ffi::FfiRegistry> {
+        Arc::new(FfiRegistryBuilder::new().build().unwrap())
+    }
+
     /// Creates a default CompilationContext for basic tests
     fn create_test_context() -> CompilationContext<'static> {
-        let ffi = Arc::new(FfiRegistryBuilder::new().build().unwrap());
-        CompilationContext::new(ffi)
+        CompilationContext::new(default_ffi())
     }
 
     /// Creates a CompilationContext with an array template registered in FFI.
@@ -1148,7 +1152,7 @@ mod tests {
         let (script, parse_errors) = Parser::parse_lenient(source, &arena);
         assert!(parse_errors.is_empty(), "Parse errors: {:?}", parse_errors);
 
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         // Print actual state for debugging
         if !result.is_success() {
@@ -1221,7 +1225,7 @@ mod tests {
             eprintln!("Parse errors: {:?}", parse_errors);
         }
 
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         if !result.is_success() {
             eprintln!("Compilation errors: {:?}", result.errors);
@@ -1256,7 +1260,7 @@ mod tests {
         "#;
 
         let (script, _errors) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         // Should compile successfully with variable capture
         assert!(result.is_success(), "Lambda variable capture failed: {:?}", result.errors);
@@ -1299,7 +1303,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         // Should have an error about duplicate case value
         assert!(!result.errors.is_empty(), "Should detect duplicate case value");
@@ -1329,7 +1333,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         // Should compile without errors
         assert!(result.is_success(), "Different case values should not produce error: {:?}", result.errors);
@@ -1364,7 +1368,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         // Should compile without errors - correct overload selected
         assert!(result.is_success(), "Method overloading should work: {:?}", result.errors);
@@ -1389,7 +1393,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         // Should compile without errors - default params handled
         assert!(result.is_success(), "Default parameters should work: {:?}", result.errors);
@@ -1410,7 +1414,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         // Field initializers should compile without errors
         assert!(result.is_success(), "Field initializers should compile: {:?}", result.errors);
@@ -1440,7 +1444,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         // Break statements in switch should be allowed
         assert!(result.is_success(), "Break in switch should work: {:?}", result.errors);
@@ -1469,7 +1473,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         // Continue in switch inside loop should target the loop
         assert!(result.is_success(), "Continue in switch inside loop should work: {:?}", result.errors);
@@ -1495,7 +1499,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Namespace-qualified function call should work: {:?}", result.errors);
     }
@@ -1522,7 +1526,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Nested namespace function call should work: {:?}", result.errors);
     }
@@ -1547,7 +1551,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Namespace function with arguments should work: {:?}", result.errors);
     }
@@ -1576,7 +1580,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Namespace function overloading should work: {:?}", result.errors);
     }
@@ -1602,7 +1606,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Calls from within namespace should work: {:?}", result.errors);
     }
@@ -1640,7 +1644,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Namespace constants should be visible within namespace: {:?}", result.errors);
     }
@@ -1675,7 +1679,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Global functions should be callable from within namespace: {:?}", result.errors);
     }
@@ -1709,7 +1713,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Namespace types should be constructible from within namespace: {:?}", result.errors);
     }
@@ -1734,7 +1738,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Using namespace should allow unqualified function calls: {:?}", result.errors);
     }
@@ -1777,7 +1781,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Base class method call should work: {:?}", result.errors);
     }
@@ -1802,7 +1806,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Absolute scope function call should work: {:?}", result.errors);
     }
@@ -1829,7 +1833,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Cross-namespace function call should work: {:?}", result.errors);
     }
@@ -1856,7 +1860,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Basic enum value resolution should work: {:?}", result.errors);
     }
@@ -1883,7 +1887,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Enum value resolution with explicit values should work: {:?}", result.errors);
     }
@@ -1909,7 +1913,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Enum values in expressions should work: {:?}", result.errors);
     }
@@ -1937,7 +1941,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Namespaced enum value resolution should work: {:?}", result.errors);
     }
@@ -1962,7 +1966,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(!result.is_success(), "Should fail for undefined enum value");
         assert!(result.errors.iter().any(|e| e.message.contains("has no value named 'Yellow'")),
@@ -1994,7 +1998,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Enum values as function arguments should work: {:?}", result.errors);
     }
@@ -2027,7 +2031,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Enum values in switch cases should work: {:?}", result.errors);
     }
@@ -2053,7 +2057,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Funcdef variable with function reference should work: {:?}", result.errors);
     }
@@ -2081,7 +2085,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Funcdef assignment should work: {:?}", result.errors);
     }
@@ -2105,7 +2109,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(!result.is_success(), "Incompatible function signature should error");
         assert!(result.errors.iter().any(|e| format!("{:?}", e.kind).contains("TypeMismatch")));
@@ -2131,7 +2135,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Funcdef with return type should work: {:?}", result.errors);
     }
@@ -2157,7 +2161,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Calling through funcdef variable should work: {:?}", result.errors);
     }
@@ -2180,7 +2184,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         // This should error because there's no funcdef context for inference
         assert!(!result.is_success(), "Function reference without funcdef context should error");
@@ -2209,7 +2213,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Funcdef as function parameter should work: {:?}", result.errors);
     }
@@ -2231,7 +2235,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Lambda assigned to funcdef should work: {:?}", result.errors);
     }
@@ -2255,7 +2259,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(!result.is_success(), "Wrong parameter count should error");
     }
@@ -2279,7 +2283,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(!result.is_success(), "Wrong return type should error");
     }
@@ -2306,7 +2310,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Bitwise assignment operators should work: {:?}", result.errors);
     }
@@ -2327,7 +2331,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(!result.is_success(), "Should fail for void variable declaration");
         assert!(result.errors.iter().any(|e| {
@@ -2352,7 +2356,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(!result.is_success(), "Should fail for returning void expression");
         assert!(result.errors.iter().any(|e| {
@@ -2378,7 +2382,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(!result.is_success(), "Should fail for assigning void expression");
         assert!(result.errors.iter().any(|e| {
@@ -2403,7 +2407,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(!result.is_success(), "Should fail for void in binary operation");
         assert!(result.errors.iter().any(|e| {
@@ -2428,7 +2432,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(!result.is_success(), "Should fail for void in unary operation");
         assert!(result.errors.iter().any(|e| {
@@ -2454,7 +2458,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(!result.is_success(), "Should fail for void in ternary branch");
         assert!(result.errors.iter().any(|e| {
@@ -2481,7 +2485,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Void return type should be allowed: {:?}", result.errors);
     }
@@ -2502,7 +2506,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Void function call as statement should be allowed: {:?}", result.errors);
     }
@@ -2524,7 +2528,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Implicit int to float conversion should work: {:?}", result.errors);
     }
@@ -2543,7 +2547,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Implicit float to double conversion should work: {:?}", result.errors);
     }
@@ -2564,7 +2568,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Explicit cast int to float should work: {:?}", result.errors);
     }
@@ -2585,7 +2589,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Explicit cast double to int should work: {:?}", result.errors);
     }
@@ -2609,7 +2613,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Implicit conversion in function arguments should work: {:?}", result.errors);
     }
@@ -2630,7 +2634,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Type promotion in binary expressions should work: {:?}", result.errors);
     }
@@ -2651,7 +2655,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Type promotion in comparisons should work: {:?}", result.errors);
     }
@@ -2673,7 +2677,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Integer widening conversions should work: {:?}", result.errors);
     }
@@ -2694,7 +2698,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Literal operations should work: {:?}", result.errors);
     }
@@ -2717,7 +2721,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Null to handle conversion should work: {:?}", result.errors);
     }
@@ -2741,7 +2745,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Handle to const handle conversion should work: {:?}", result.errors);
     }
@@ -2766,7 +2770,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Exact match in overloading should work: {:?}", result.errors);
     }
@@ -2788,7 +2792,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Overload with implicit conversion should work: {:?}", result.errors);
     }
@@ -2813,7 +2817,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Multiple parameter overloading should work: {:?}", result.errors);
     }
@@ -2836,7 +2840,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Init list array creation should work: {:?}", result.errors);
     }
@@ -2859,7 +2863,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Ternary type promotion should work: {:?}", result.errors);
     }
@@ -2883,7 +2887,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Ternary with handles should work: {:?}", result.errors);
     }
@@ -2908,7 +2912,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Ternary with both handle branches should work: {:?}", result.errors);
     }
@@ -2936,7 +2940,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Class method overloading should work: {:?}", result.errors);
     }
@@ -2964,7 +2968,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Constructor with conversion should work: {:?}", result.errors);
     }
@@ -2989,7 +2993,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Derived to base handle conversion should work: {:?}", result.errors);
     }
@@ -3018,7 +3022,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Class implementing interface should work: {:?}", result.errors);
     }
@@ -3043,7 +3047,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Compound assignment with conversion should work: {:?}", result.errors);
     }
@@ -3068,7 +3072,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Return with conversion should work: {:?}", result.errors);
     }
@@ -3093,7 +3097,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Postfix increment/decrement should work: {:?}", result.errors);
     }
@@ -3116,7 +3120,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Prefix increment/decrement should work: {:?}", result.errors);
     }
@@ -3141,7 +3145,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Unary negation should work for all numeric types: {:?}", result.errors);
     }
@@ -3162,7 +3166,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Bitwise not should work: {:?}", result.errors);
     }
@@ -3188,7 +3192,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Nested loops with break/continue should work: {:?}", result.errors);
     }
@@ -3219,7 +3223,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Switch with fallthrough should work: {:?}", result.errors);
     }
@@ -3245,7 +3249,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Logical operators should work: {:?}", result.errors);
     }
@@ -3272,7 +3276,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Bitwise operators should work: {:?}", result.errors);
     }
@@ -3298,7 +3302,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Comparison operators should work: {:?}", result.errors);
     }
@@ -3329,7 +3333,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Chained member access should work: {:?}", result.errors);
     }
@@ -3357,7 +3361,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Simple method calls should work: {:?}", result.errors);
     }
@@ -3382,7 +3386,7 @@ mod tests {
         let (script, _) = Parser::parse_lenient(source, &arena);
         let string_mod = string_module().expect("Failed to create string module");
         let ffi = create_ffi_with_string();
-        let result = Compiler::compile_with_ffi(&script, ffi);
+        let result = Compiler::compile(&script, ffi);
 
         assert!(result.is_success(), "String literal usage should work: {:?}", result.errors);
     }
@@ -3406,7 +3410,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Complex expressions should work: {:?}", result.errors);
     }
@@ -3436,7 +3440,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Constructor with field initialization should work: {:?}", result.errors);
     }
@@ -3469,7 +3473,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Derived constructor with super() should work: {:?}", result.errors);
     }
@@ -3502,7 +3506,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Derived constructor without super() should auto-call base: {:?}", result.errors);
     }
@@ -3533,7 +3537,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Super call in nested if should be detected: {:?}", result.errors);
     }
@@ -3557,7 +3561,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Do-while loop should work: {:?}", result.errors);
     }
@@ -3582,7 +3586,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Do-while with break should work: {:?}", result.errors);
     }
@@ -3609,7 +3613,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Do-while with continue should work: {:?}", result.errors);
     }
@@ -3631,7 +3635,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(!result.errors.is_empty(), "Do-while with non-bool condition should error");
     }
@@ -3657,7 +3661,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Try-catch should work: {:?}", result.errors);
     }
@@ -3681,7 +3685,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Try-catch with return should work: {:?}", result.errors);
     }
@@ -3702,7 +3706,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(!result.errors.is_empty(), "Break outside loop should error");
     }
@@ -3721,7 +3725,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(!result.errors.is_empty(), "Continue outside loop should error");
     }
@@ -3740,7 +3744,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(!result.errors.is_empty(), "Void variable should error");
     }
@@ -3759,7 +3763,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(!result.errors.is_empty(), "Return void from non-void function should error");
     }
@@ -3778,7 +3782,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(!result.errors.is_empty(), "Return value type mismatch should error");
     }
@@ -3797,7 +3801,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(!result.errors.is_empty(), "Undefined variable should error");
     }
@@ -3816,7 +3820,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(!result.errors.is_empty(), "'this' outside class method should error");
     }
@@ -3843,7 +3847,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Enum value access should work: {:?}", result.errors);
     }
@@ -3868,7 +3872,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(!result.errors.is_empty(), "Undefined enum value should error");
     }
@@ -3890,7 +3894,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(!result.errors.is_empty(), "Assignment to const variable should error");
     }
@@ -3922,7 +3926,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Switch with default should work: {:?}", result.errors);
     }
@@ -3947,7 +3951,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(!result.errors.is_empty(), "Duplicate default should error");
     }
@@ -3972,7 +3976,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(!result.errors.is_empty(), "Duplicate case value should error");
     }
@@ -3998,7 +4002,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(!result.errors.is_empty(), "Switch on value type should error");
     }
@@ -4022,7 +4026,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "For loop with init expression should work: {:?}", result.errors);
     }
@@ -4045,7 +4049,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "For loop without condition should work: {:?}", result.errors);
     }
@@ -4066,7 +4070,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(!result.errors.is_empty(), "For loop with non-bool condition should error");
     }
@@ -4090,7 +4094,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(!result.errors.is_empty(), "If with non-bool condition should error");
     }
@@ -4112,7 +4116,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(!result.errors.is_empty(), "While with non-bool condition should error");
     }
@@ -4136,7 +4140,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Global variable access should work: {:?}", result.errors);
     }
@@ -4171,7 +4175,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Implicit this field access should work: {:?}", result.errors);
     }
@@ -4201,7 +4205,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Local shadowing field should work: {:?}", result.errors);
     }
@@ -4228,7 +4232,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Namespaced function should work: {:?}", result.errors);
     }
@@ -4253,7 +4257,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Nested namespace function should work: {:?}", result.errors);
     }
@@ -4287,7 +4291,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Super call in while should be detected: {:?}", result.errors);
     }
@@ -4318,7 +4322,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Super call in do-while should be detected: {:?}", result.errors);
     }
@@ -4349,7 +4353,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Super call in for loop should be detected: {:?}", result.errors);
     }
@@ -4382,7 +4386,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Super call in nested block should be detected: {:?}", result.errors);
     }
@@ -4417,7 +4421,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Super call in switch should be detected: {:?}", result.errors);
     }
@@ -4450,7 +4454,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Super call in try-catch should be detected: {:?}", result.errors);
     }
@@ -4484,7 +4488,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Super call in expression should be detected: {:?}", result.errors);
     }
@@ -4514,7 +4518,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Super call with return should work: {:?}", result.errors);
     }
@@ -4544,7 +4548,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Overloaded methods should work: {:?}", result.errors);
     }
@@ -4566,7 +4570,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(!result.errors.is_empty(), "Ternary with mismatched types should error");
     }
@@ -4586,7 +4590,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(!result.errors.is_empty(), "Ternary with non-bool condition should error");
     }
@@ -4607,7 +4611,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(!result.errors.is_empty(), "Postfix on rvalue should error");
     }
@@ -4631,7 +4635,7 @@ mod tests {
         let (script, _) = Parser::parse_lenient(source, &arena);
         let array_mod = array_module().expect("Failed to create array module");
         let ffi = create_ffi_with_array();
-        let result = Compiler::compile_with_ffi(&script, ffi);
+        let result = Compiler::compile(&script, ffi);
 
         assert!(result.is_success(), "Init list should work: {:?}", result.errors);
     }
@@ -4654,7 +4658,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Null literal should work: {:?}", result.errors);
     }
@@ -4676,7 +4680,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Cast to same type should work: {:?}", result.errors);
     }
@@ -4696,7 +4700,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Numeric cast should work: {:?}", result.errors);
     }
@@ -4716,7 +4720,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(!result.errors.is_empty(), "Invalid cast should error");
     }
@@ -4747,7 +4751,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Property getter access should work: {:?}", result.errors);
     }
@@ -4772,7 +4776,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Funcdef variable should work: {:?}", result.errors);
     }
@@ -4798,7 +4802,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Compound assignment should work: {:?}", result.errors);
     }
@@ -4818,7 +4822,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(!result.errors.is_empty(), "Compound assignment on const should error");
     }
@@ -4841,7 +4845,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Lambda should work: {:?}", result.errors);
     }
@@ -4863,7 +4867,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Lambda with captures should work: {:?}", result.errors);
     }
@@ -4886,7 +4890,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Unary not should work: {:?}", result.errors);
     }
@@ -4906,7 +4910,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Unary bitwise not should work: {:?}", result.errors);
     }
@@ -4926,7 +4930,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Pre-increment should work: {:?}", result.errors);
     }
@@ -4946,7 +4950,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Pre-decrement should work: {:?}", result.errors);
     }
@@ -4966,7 +4970,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Post-increment should work: {:?}", result.errors);
     }
@@ -4986,7 +4990,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Post-decrement should work: {:?}", result.errors);
     }
@@ -5014,7 +5018,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Bitwise operators should work: {:?}", result.errors);
     }
@@ -5040,7 +5044,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Handle assignment should work: {:?}", result.errors);
     }
@@ -5064,7 +5068,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Handle comparison with is/!is should work: {:?}", result.errors);
     }
@@ -5089,7 +5093,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Handle comparison with null should work: {:?}", result.errors);
     }
@@ -5110,7 +5114,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(!result.errors.is_empty(), "is operator with non-handles should error");
         let error_msg = format!("{:?}", result.errors);
@@ -5135,7 +5139,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(!result.errors.is_empty(), "is operator with mixed handle/non-handle should error");
     }
@@ -5159,7 +5163,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Logical AND should work: {:?}", result.errors);
     }
@@ -5181,7 +5185,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Logical OR should work: {:?}", result.errors);
     }
@@ -5202,7 +5206,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Logical XOR should work: {:?}", result.errors);
     }
@@ -5224,7 +5228,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Power operator should work: {:?}", result.errors);
     }
@@ -5247,7 +5251,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Double literals should work: {:?}", result.errors);
     }
@@ -5271,7 +5275,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Multiple variables should work: {:?}", result.errors);
     }
@@ -5303,7 +5307,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Super call with ternary should work: {:?}", result.errors);
     }
@@ -5333,7 +5337,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Super call with unary should work: {:?}", result.errors);
     }
@@ -5365,7 +5369,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Super call with assign should work: {:?}", result.errors);
     }
@@ -5400,7 +5404,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Super call with member access should work: {:?}", result.errors);
     }
@@ -5433,7 +5437,7 @@ mod tests {
         let (script, _) = Parser::parse_lenient(source, &arena);
         let array_mod = array_module().expect("Failed to create array module");
         let ffi = create_ffi_with_array();
-        let result = Compiler::compile_with_ffi(&script, ffi);
+        let result = Compiler::compile(&script, ffi);
 
         assert!(result.is_success(), "Super call with array init should work: {:?}", result.errors);
     }
@@ -5465,7 +5469,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Super call with postfix should work: {:?}", result.errors);
     }
@@ -5495,7 +5499,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Super call with cast should work: {:?}", result.errors);
     }
@@ -5525,7 +5529,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Super call with paren should work: {:?}", result.errors);
     }
@@ -5549,7 +5553,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         // Should error because int doesn't have foreach operators
         assert!(!result.errors.is_empty(), "Foreach on non-iterable should error");
@@ -5577,7 +5581,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "If-else should work: {:?}", result.errors);
     }
@@ -5606,7 +5610,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "If-else-if chain should work: {:?}", result.errors);
     }
@@ -5629,7 +5633,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Expression statement should work: {:?}", result.errors);
     }
@@ -5657,7 +5661,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Method call with args should work: {:?}", result.errors);
     }
@@ -5679,7 +5683,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Return implicit conversion should work: {:?}", result.errors);
     }
@@ -5702,7 +5706,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(!result.errors.is_empty(), "Binary with void left operand should error");
     }
@@ -5723,7 +5727,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(!result.errors.is_empty(), "Binary with void right operand should error");
     }
@@ -5755,7 +5759,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Inherited field access should work: {:?}", result.errors);
     }
@@ -5796,7 +5800,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "opAdd operator overload should work: {:?}", result.errors);
     }
@@ -5831,7 +5835,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Abstract class should work: {:?}", result.errors);
     }
@@ -5857,7 +5861,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Multi-index opIndex should work: {:?}", result.errors);
     }
@@ -5883,7 +5887,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Funcdef call should work: {:?}", result.errors);
     }
@@ -5909,7 +5913,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(!result.errors.is_empty(), "Incompatible assignment should error");
     }
@@ -5933,7 +5937,7 @@ mod tests {
         let (script, _) = Parser::parse_lenient(source, &arena);
         let array_mod = array_module().expect("Failed to create array module");
         let ffi = create_ffi_with_array();
-        let result = Compiler::compile_with_ffi(&script, ffi);
+        let result = Compiler::compile(&script, ffi);
 
         assert!(result.is_success(), "Empty init list should work: {:?}", result.errors);
     }
@@ -5955,7 +5959,7 @@ mod tests {
         let (script, _) = Parser::parse_lenient(source, &arena);
         let array_mod = array_module().expect("Failed to create array module");
         let ffi = create_ffi_with_array();
-        let result = Compiler::compile_with_ffi(&script, ffi);
+        let result = Compiler::compile(&script, ffi);
 
         assert!(result.is_success(), "Multidimensional init list should work: {:?}", result.errors);
     }
@@ -5980,7 +5984,7 @@ mod tests {
         let (script, _) = Parser::parse_lenient(source, &arena);
         let array_mod = array_module().expect("Failed to create array module");
         let ffi = create_ffi_with_array();
-        let result = Compiler::compile_with_ffi(&script, ffi);
+        let result = Compiler::compile(&script, ffi);
 
         assert!(result.is_success(), "Init list in nested block should work: {:?}", result.errors);
     }
@@ -6005,7 +6009,7 @@ mod tests {
         let (script, _) = Parser::parse_lenient(source, &arena);
         let array_mod = array_module().expect("Failed to create array module");
         let ffi = create_ffi_with_array();
-        let result = Compiler::compile_with_ffi(&script, ffi);
+        let result = Compiler::compile(&script, ffi);
 
         assert!(result.is_success(), "Init list in for loop should work: {:?}", result.errors);
     }
@@ -6032,7 +6036,7 @@ mod tests {
         let (script, _) = Parser::parse_lenient(source, &arena);
         let array_mod = array_module().expect("Failed to create array module");
         let ffi = create_ffi_with_array();
-        let result = Compiler::compile_with_ffi(&script, ffi);
+        let result = Compiler::compile(&script, ffi);
 
         assert!(result.is_success(), "Init list in while loop should work: {:?}", result.errors);
     }
@@ -6062,7 +6066,7 @@ mod tests {
         let (script, _) = Parser::parse_lenient(source, &arena);
         let array_mod = array_module().expect("Failed to create array module");
         let ffi = create_ffi_with_array();
-        let result = Compiler::compile_with_ffi(&script, ffi);
+        let result = Compiler::compile(&script, ffi);
 
         assert!(result.is_success(), "Init list in deeply nested blocks should work: {:?}", result.errors);
     }
@@ -6093,7 +6097,7 @@ mod tests {
         let (script, _) = Parser::parse_lenient(source, &arena);
         let array_mod = array_module().expect("Failed to create array module");
         let ffi = create_ffi_with_array();
-        let result = Compiler::compile_with_ffi(&script, ffi);
+        let result = Compiler::compile(&script, ffi);
 
         assert!(result.is_success(), "Template type in switch should work: {:?}", result.errors);
     }
@@ -6121,7 +6125,7 @@ mod tests {
         let (script, _) = Parser::parse_lenient(source, &arena);
         let array_mod = array_module().expect("Failed to create array module");
         let ffi = create_ffi_with_array();
-        let result = Compiler::compile_with_ffi(&script, ffi);
+        let result = Compiler::compile(&script, ffi);
 
         assert!(result.is_success(), "Template type in try/catch should work: {:?}", result.errors);
     }
@@ -6146,7 +6150,7 @@ mod tests {
         let (script, _) = Parser::parse_lenient(source, &arena);
         let array_mod = array_module().expect("Failed to create array module");
         let ffi = create_ffi_with_array();
-        let result = Compiler::compile_with_ffi(&script, ffi);
+        let result = Compiler::compile(&script, ffi);
 
         assert!(result.is_success(), "Multiple template types should work: {:?}", result.errors);
     }
@@ -6180,7 +6184,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Super call with function args should work: {:?}", result.errors);
     }
@@ -6213,7 +6217,7 @@ mod tests {
         let (script, _) = Parser::parse_lenient(source, &arena);
         let array_mod = array_module().expect("Failed to create array module");
         let ffi = create_ffi_with_array();
-        let result = Compiler::compile_with_ffi(&script, ffi);
+        let result = Compiler::compile(&script, ffi);
 
         assert!(result.is_success(), "Super detection with init list should work: {:?}", result.errors);
     }
@@ -6247,7 +6251,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Interface with implementation should work: {:?}", result.errors);
     }
@@ -6276,7 +6280,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         // Should error about missing opForEnd
         assert!(!result.errors.is_empty(), "Missing opForEnd should error");
@@ -6305,7 +6309,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         // Should error about missing opForNext
         assert!(!result.errors.is_empty(), "Missing opForNext should error");
@@ -6335,7 +6339,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         // Should error about missing opForValue
         assert!(!result.errors.is_empty(), "Missing opForValue should error");
@@ -6363,7 +6367,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Lambda in function call should work: {:?}", result.errors);
     }
@@ -6393,7 +6397,7 @@ mod tests {
         let (script, _) = Parser::parse_lenient(source, &arena);
         let string_mod = string_module().expect("Failed to create string module");
         let ffi = create_ffi_with_string();
-        let result = Compiler::compile_with_ffi(&script, ffi);
+        let result = Compiler::compile(&script, ffi);
 
         assert!(result.is_success(), "Overloaded function call should work: {:?}", result.errors);
     }
@@ -6415,7 +6419,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Overloaded function with conversion should work: {:?}", result.errors);
     }
@@ -6436,7 +6440,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(!result.errors.is_empty(), "Wrong argument count should error");
     }
@@ -6457,7 +6461,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(!result.errors.is_empty(), "Too many arguments should error");
     }
@@ -6489,7 +6493,7 @@ mod tests {
         let (script, _) = Parser::parse_lenient(source, &arena);
         let string_mod = string_module().expect("Failed to create string module");
         let ffi = create_ffi_with_string();
-        let result = Compiler::compile_with_ffi(&script, ffi);
+        let result = Compiler::compile(&script, ffi);
 
         assert!(result.is_success(), "Function with default args should work: {:?}", result.errors);
     }
@@ -6511,7 +6515,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(!result.errors.is_empty(), "Member access on primitive should error");
     }
@@ -6533,7 +6537,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(!result.errors.is_empty(), "Method call on primitive should error");
     }
@@ -6554,7 +6558,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(!result.errors.is_empty(), "Undefined function should error");
     }
@@ -6578,7 +6582,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(!result.errors.is_empty(), "Undefined method should error");
     }
@@ -6600,7 +6604,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Ternary with type promotion should work: {:?}", result.errors);
     }
@@ -6630,7 +6634,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Break in nested loops should work: {:?}", result.errors);
     }
@@ -6658,7 +6662,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Continue in nested loops should work: {:?}", result.errors);
     }
@@ -6680,7 +6684,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(!result.errors.is_empty(), "Compound assignment type mismatch should error");
     }
@@ -6704,7 +6708,7 @@ mod tests {
 
         let (script, _) = Parser::parse_lenient(source, &arena);
         let ffi = create_ffi_with_array();
-        let result = Compiler::compile_with_ffi(&script, ffi);
+        let result = Compiler::compile(&script, ffi);
 
         assert!(result.is_success(), "Array access should work: {:?}", result.errors);
     }
@@ -6730,7 +6734,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Various int types including unsigned should work: {:?}", result.errors);
     }
@@ -6756,7 +6760,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Method call should work: {:?}", result.errors);
     }
@@ -6780,7 +6784,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Complex expression chain should work: {:?}", result.errors);
     }
@@ -6806,7 +6810,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         // Exercises opIndex code path
         let _ = result;
@@ -6829,7 +6833,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(!result.errors.is_empty(), "Indexing type without opIndex should error");
     }
@@ -6850,7 +6854,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(!result.errors.is_empty(), "Super outside class should error");
     }
@@ -6875,7 +6879,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(!result.errors.is_empty(), "Super without base class should error");
     }
@@ -6900,7 +6904,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(!result.errors.is_empty(), "Constructor with wrong arg type should error");
     }
@@ -6924,7 +6928,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(!result.errors.is_empty(), "Void in ternary branches should error");
     }
@@ -6946,7 +6950,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(!result.errors.is_empty(), "Void in ternary else branch should error");
     }
@@ -6968,7 +6972,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Unsigned right shift should work: {:?}", result.errors);
     }
@@ -6991,7 +6995,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Prefix minus on various types should work: {:?}", result.errors);
     }
@@ -7011,7 +7015,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Prefix plus should work: {:?}", result.errors);
     }
@@ -7039,7 +7043,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "All comparison operators should work: {:?}", result.errors);
     }
@@ -7066,7 +7070,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         // Test handle-to-handle assignment
         let _ = result;
@@ -7093,7 +7097,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Const reference parameter should work: {:?}", result.errors);
     }
@@ -7123,7 +7127,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Multiple return paths should work: {:?}", result.errors);
     }
@@ -7157,7 +7161,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Deeply nested member access should work: {:?}", result.errors);
     }
@@ -7180,7 +7184,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Modulo operation should work: {:?}", result.errors);
     }
@@ -7203,7 +7207,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Global const variable should work: {:?}", result.errors);
     }
@@ -7229,7 +7233,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(!result.errors.is_empty(), "Private field access from outside should error");
     }
@@ -7251,7 +7255,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(!result.errors.is_empty(), "Unary not on int should error");
     }
@@ -7271,7 +7275,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(!result.errors.is_empty(), "Unary minus on bool should error");
     }
@@ -7296,7 +7300,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(!result.errors.is_empty(), "Reference out param with literal should error");
     }
@@ -7319,7 +7323,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Empty block should work: {:?}", result.errors);
     }
@@ -7342,7 +7346,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Division operators should work: {:?}", result.errors);
     }
@@ -7365,7 +7369,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         // Exercises string + operator path
         let _ = result;
@@ -7389,7 +7393,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(!result.errors.is_empty(), "Assignment to rvalue should error");
     }
@@ -7415,7 +7419,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Implicit default constructor should work: {:?}", result.errors);
     }
@@ -7438,7 +7442,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(!result.errors.is_empty(), "Arithmetic on non-numeric types should error");
     }
@@ -7459,7 +7463,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(!result.errors.is_empty(), "Bitwise on float types should error");
     }
@@ -7480,7 +7484,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(!result.errors.is_empty(), "Logical operators on int should error");
     }
@@ -7507,7 +7511,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Protected access from derived should work: {:?}", result.errors);
     }
@@ -7530,7 +7534,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Funcdef handle null assignment should work: {:?}", result.errors);
     }
@@ -7552,7 +7556,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Ternary type promotion should work: {:?}", result.errors);
     }
@@ -7574,7 +7578,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Compound modulo assignment should work: {:?}", result.errors);
     }
@@ -7594,7 +7598,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Compound power assignment should work: {:?}", result.errors);
     }
@@ -7622,7 +7626,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         // Exercises method call on handle
         let _ = result;
@@ -7645,7 +7649,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Bitwise not on int64 should work: {:?}", result.errors);
     }
@@ -7668,7 +7672,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Prefix increment on field should work: {:?}", result.errors);
     }
@@ -7693,7 +7697,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Break in do-while should work: {:?}", result.errors);
     }
@@ -7716,7 +7720,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Continue in for should work: {:?}", result.errors);
     }
@@ -7737,7 +7741,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Return int from float function should work: {:?}", result.errors);
     }
@@ -7765,7 +7769,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Deeply nested if should work: {:?}", result.errors);
     }
@@ -7800,7 +7804,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Switch on enum should work: {:?}", result.errors);
     }
@@ -7822,7 +7826,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Multiple variable init should work: {:?}", result.errors);
     }
@@ -7851,7 +7855,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Explicit this member access should work: {:?}", result.errors);
     }
@@ -7878,7 +7882,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Super call should work: {:?}", result.errors);
     }
@@ -7905,7 +7909,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "For loop with super should work: {:?}", result.errors);
     }
@@ -7930,7 +7934,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Super in derived constructor should work: {:?}", result.errors);
     }
@@ -7954,7 +7958,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Local variable shadowing should work: {:?}", result.errors);
     }
@@ -7978,7 +7982,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Nested block scoping should work: {:?}", result.errors);
     }
@@ -8003,7 +8007,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Method override should work: {:?}", result.errors);
     }
@@ -8027,7 +8031,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Early return should work: {:?}", result.errors);
     }
@@ -8049,7 +8053,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Void function with explicit return should work: {:?}", result.errors);
     }
@@ -8075,7 +8079,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Postfix on member should work: {:?}", result.errors);
     }
@@ -8097,7 +8101,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Field initializers with expressions should work: {:?}", result.errors);
     }
@@ -8123,7 +8127,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "While with complex condition should work: {:?}", result.errors);
     }
@@ -8145,7 +8149,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Explicit cast should work: {:?}", result.errors);
     }
@@ -8167,7 +8171,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Cast between numeric types should work: {:?}", result.errors);
     }
@@ -8190,7 +8194,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Expression statement call should work: {:?}", result.errors);
     }
@@ -8215,7 +8219,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Multiple arguments should work: {:?}", result.errors);
     }
@@ -8245,7 +8249,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Multiple interface implementation should work: {:?}", result.errors);
     }
@@ -8268,7 +8272,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Negative literals should work: {:?}", result.errors);
     }
@@ -8296,7 +8300,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         // Exercises chained method call path
         let _ = result;
@@ -8321,7 +8325,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "All shift operations should work: {:?}", result.errors);
     }
@@ -8345,7 +8349,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "For loop with no init should work: {:?}", result.errors);
     }
@@ -8366,7 +8370,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "For loop with no update should work: {:?}", result.errors);
     }
@@ -8393,7 +8397,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         // This just exercises the compilation, not testing specific error
         let _ = result;
@@ -8421,7 +8425,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Nested loop control flow should work: {:?}", result.errors);
     }
@@ -8442,7 +8446,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Class with methods should work: {:?}", result.errors);
     }
@@ -8466,7 +8470,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Complex boolean expression should work: {:?}", result.errors);
     }
@@ -8487,7 +8491,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Deeply parenthesized expression should work: {:?}", result.errors);
     }
@@ -8511,7 +8515,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         // Exercises handle null comparison
         let _ = result;
@@ -8536,7 +8540,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Mixed type arithmetic should work: {:?}", result.errors);
     }
@@ -8565,7 +8569,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Try-catch with function call should work: {:?}", result.errors);
     }
@@ -8591,7 +8595,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Try-catch with loop should work: {:?}", result.errors);
     }
@@ -8619,7 +8623,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Nested do-while should work: {:?}", result.errors);
     }
@@ -8643,7 +8647,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Do-while with complex condition should work: {:?}", result.errors);
     }
@@ -8667,7 +8671,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Do-while with expression body should work: {:?}", result.errors);
     }
@@ -8691,7 +8695,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Lambda capturing local variable should work: {:?}", result.errors);
     }
@@ -8714,7 +8718,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Lambda with multiple captures should work: {:?}", result.errors);
     }
@@ -8746,7 +8750,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Class with opCall should work: {:?}", result.errors);
     }
@@ -8772,7 +8776,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(!result.is_success(), "opCall with wrong arg count should fail");
     }
@@ -8801,7 +8805,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Constructor with field initializers should work: {:?}", result.errors);
     }
@@ -8827,7 +8831,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Constructor with complex field initializers should work: {:?}", result.errors);
     }
@@ -8853,7 +8857,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Function with default params should work: {:?}", result.errors);
     }
@@ -8878,7 +8882,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Function with multiple default params should work: {:?}", result.errors);
     }
@@ -8905,7 +8909,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Overload resolution with exact match should work: {:?}", result.errors);
     }
@@ -8928,7 +8932,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Overload resolution with conversion should work: {:?}", result.errors);
     }
@@ -8956,7 +8960,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(!result.is_success(), "Protected access from non-derived class should fail");
     }
@@ -8981,7 +8985,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Absolute scope type reference should work: {:?}", result.errors);
     }
@@ -9004,7 +9008,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(!result.is_success(), "Void in binary operation should fail");
     }
@@ -9026,7 +9030,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(!result.is_success(), "Void as function argument should fail");
     }
@@ -9052,7 +9056,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(!result.is_success(), "Index with wrong type should fail");
     }
@@ -9077,7 +9081,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Derived to base handle assignment should work: {:?}", result.errors);
     }
@@ -9102,7 +9106,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(!result.is_success(), "Passing rvalue to &out parameter should fail");
     }
@@ -9126,7 +9130,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(!result.is_success(), "Passing const lvalue to &inout parameter should fail");
     }
@@ -9150,7 +9154,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "&in should accept rvalue: {:?}", result.errors);
     }
@@ -9174,7 +9178,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "&in should accept lvalue: {:?}", result.errors);
     }
@@ -9198,7 +9202,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "&out should accept mutable lvalue: {:?}", result.errors);
     }
@@ -9222,7 +9226,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(!result.is_success(), "&out should reject const lvalue");
     }
@@ -9246,7 +9250,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "&inout should accept mutable lvalue: {:?}", result.errors);
     }
@@ -9269,7 +9273,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(!result.is_success(), "&inout should reject rvalue");
     }
@@ -9293,7 +9297,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "bare & should accept mutable lvalue (like &inout): {:?}", result.errors);
     }
@@ -9316,7 +9320,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(!result.is_success(), "bare & should reject rvalue (like &inout)");
     }
@@ -9337,7 +9341,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         // Exercise float init list type inference
         let _ = result;
@@ -9357,7 +9361,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         // Exercise mixed numeric init list type inference - should promote
         let _ = result;
@@ -9384,7 +9388,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Handle reference operator should work: {:?}", result.errors);
     }
@@ -9407,7 +9411,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         // Exercise int8 operations
         let _ = result;
@@ -9429,7 +9433,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         // Exercise uint64 operations
         let _ = result;
@@ -9453,7 +9457,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(!result.is_success(), "Lambda with wrong param type should fail");
     }
@@ -9474,7 +9478,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(!result.is_success(), "Lambda with wrong param count should fail");
     }
@@ -9504,7 +9508,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         // This exercises chained member access on handles
         let _ = result;
@@ -9532,7 +9536,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Namespace with function and enum should work: {:?}", result.errors);
     }
@@ -9572,7 +9576,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         // This exercises reverse operator lookup
         let _ = result;
@@ -9597,7 +9601,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(!result.is_success(), "Calling non-callable should fail");
     }
@@ -9618,7 +9622,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(!result.is_success(), "Calling undefined function should fail");
         assert!(result.errors.iter().any(|e| e.message.contains("undefined")));
@@ -9644,7 +9648,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         // This tests constructor overload resolution failure
         assert!(!result.is_success(), "Constructor with wrong arg count should fail");
@@ -9673,7 +9677,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Class with get_opIndex should work: {:?}", result.errors);
     }
@@ -9696,7 +9700,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(!result.is_success(), "While with non-boolean condition should fail");
     }
@@ -9719,7 +9723,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(!result.is_success(), "If with non-boolean condition should fail");
     }
@@ -9750,7 +9754,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         // This exercises funcdef call through member expression
         let _ = result;
@@ -9772,7 +9776,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(!result.is_success(), "Super outside class should fail");
     }
@@ -9797,7 +9801,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(!result.is_success(), "Funcdef with wrong return type should fail");
     }
@@ -9825,7 +9829,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Class with destructor should work: {:?}", result.errors);
     }
@@ -9848,7 +9852,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Short-circuit AND should work: {:?}", result.errors);
     }
@@ -9869,7 +9873,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Short-circuit OR should work: {:?}", result.errors);
     }
@@ -9892,7 +9896,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Float to double promotion should work: {:?}", result.errors);
     }
@@ -9918,7 +9922,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(!result.is_success(), "Setting property without setter should fail");
     }
@@ -9939,7 +9943,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(!result.is_success(), "Return wrong type should fail");
     }
@@ -9962,7 +9966,7 @@ mod tests {
 
         let (script, _) = Parser::parse_lenient(source, &arena);
         let ffi = create_ffi_with_string();
-        let result = Compiler::compile_with_ffi(&script, ffi);
+        let result = Compiler::compile(&script, ffi);
 
         // String indexing should work with built-in opIndex
         assert!(result.is_success(), "String index should work with opIndex: {:?}", result.errors);
@@ -9984,7 +9988,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         // This exercises nested init list handling
         let _ = result;
@@ -10008,7 +10012,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Double negation should work: {:?}", result.errors);
     }
@@ -10033,7 +10037,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Absolute scope enum value should work: {:?}", result.errors);
     }
@@ -10059,7 +10063,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(!result.is_success(), "Duplicate case values should fail");
     }
@@ -10083,7 +10087,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(!result.is_success(), "Duplicate default cases should fail");
     }
@@ -10105,7 +10109,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(!result.is_success(), "Switch case type mismatch should fail");
     }
@@ -10134,7 +10138,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Switch fallthrough should work: {:?}", result.errors);
     }
@@ -10156,7 +10160,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "int8 to float conversion should work: {:?}", result.errors);
     }
@@ -10176,7 +10180,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "uint8 to double conversion should work: {:?}", result.errors);
     }
@@ -10196,7 +10200,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "int16 to int32 widening should work: {:?}", result.errors);
     }
@@ -10216,7 +10220,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "uint16 to uint32 widening should work: {:?}", result.errors);
     }
@@ -10240,7 +10244,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         // May or may not work depending on array implementation
         let _ = result;
@@ -10263,7 +10267,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Bitwise AND assignment should work: {:?}", result.errors);
     }
@@ -10283,7 +10287,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Bitwise OR assignment should work: {:?}", result.errors);
     }
@@ -10303,7 +10307,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Bitwise XOR assignment should work: {:?}", result.errors);
     }
@@ -10323,7 +10327,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Left shift assignment should work: {:?}", result.errors);
     }
@@ -10343,7 +10347,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Right shift assignment should work: {:?}", result.errors);
     }
@@ -10377,7 +10381,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Three-level member access should work: {:?}", result.errors);
     }
@@ -10405,7 +10409,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Chained member assignment should work: {:?}", result.errors);
     }
@@ -10434,7 +10438,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "This in constructor should work: {:?}", result.errors);
     }
@@ -10453,7 +10457,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(!result.is_success(), "This outside class should fail");
     }
@@ -10475,7 +10479,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Explicit cast float to int should work: {:?}", result.errors);
     }
@@ -10495,7 +10499,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Explicit narrowing cast should work: {:?}", result.errors);
     }
@@ -10516,7 +10520,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         // May or may not work depending on array implementation
         let _ = result;
@@ -10547,7 +10551,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         // May or may not work depending on mixin implementation
         let _ = result;
@@ -10571,7 +10575,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Auto with function call should work: {:?}", result.errors);
     }
@@ -10592,7 +10596,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Auto with complex expression should work: {:?}", result.errors);
     }
@@ -10611,7 +10615,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Const auto should work: {:?}", result.errors);
     }
@@ -10633,7 +10637,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Auto with handle should work: {:?}", result.errors);
     }
@@ -10652,7 +10656,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(!result.is_success(), "Auto without initializer should fail");
         assert!(result.errors.iter().any(|e| e.message.contains("cannot use 'auto' without an initializer")),
@@ -10675,7 +10679,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(!result.is_success(), "Auto with void expression should fail");
         assert!(result.errors.iter().any(|e| e.message.contains("cannot infer type from void expression")),
@@ -10700,7 +10704,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Not on comparison expression should work: {:?}", result.errors);
     }
@@ -10720,7 +10724,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Double not operator should work: {:?}", result.errors);
     }
@@ -10749,7 +10753,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Property getter should work: {:?}", result.errors);
     }
@@ -10778,7 +10782,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Property getter and setter should work: {:?}", result.errors);
     }
@@ -10809,7 +10813,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Virtual property block syntax should work: {:?}", result.errors);
     }
@@ -10838,7 +10842,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Read-only virtual property should work: {:?}", result.errors);
     }
@@ -10860,7 +10864,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "int32 to int8 narrowing should work: {:?}", result.errors);
     }
@@ -10880,7 +10884,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "int64 to int16 narrowing should work: {:?}", result.errors);
     }
@@ -10900,7 +10904,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "uint32 to uint8 narrowing should work: {:?}", result.errors);
     }
@@ -10930,7 +10934,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Interface implementation should work: {:?}", result.errors);
     }
@@ -10958,7 +10962,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         // May or may not work depending on static method implementation
         let _ = result;
@@ -10987,7 +10991,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         // May or may not work depending on const field implementation
         let _ = result;
@@ -11014,7 +11018,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Final class should work: {:?}", result.errors);
     }
@@ -11044,7 +11048,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Implicit this member access should work: {:?}", result.errors);
     }
@@ -11067,7 +11071,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Empty void function should work: {:?}", result.errors);
     }
@@ -11089,7 +11093,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Nested ternary should work: {:?}", result.errors);
     }
@@ -11112,7 +11116,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         // May or may not work depending on comma expression support
         let _ = result;
@@ -11137,7 +11141,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Complex boolean logic should work: {:?}", result.errors);
     }
@@ -11161,7 +11165,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Global variable access should work: {:?}", result.errors);
     }
@@ -11183,7 +11187,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "double to float conversion should work: {:?}", result.errors);
     }
@@ -11203,7 +11207,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "float to double conversion should work: {:?}", result.errors);
     }
@@ -11229,7 +11233,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         // May or may not work depending on const handle implementation
         let _ = result;
@@ -11252,7 +11256,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "int8 to int32 widening should work: {:?}", result.errors);
     }
@@ -11272,7 +11276,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "int8 to int64 widening should work: {:?}", result.errors);
     }
@@ -11292,7 +11296,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "int16 to int64 widening should work: {:?}", result.errors);
     }
@@ -11312,7 +11316,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "int64 to int32 explicit narrowing should work: {:?}", result.errors);
     }
@@ -11332,7 +11336,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "int32 to int16 explicit narrowing should work: {:?}", result.errors);
     }
@@ -11352,7 +11356,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "int16 to int8 explicit narrowing should work: {:?}", result.errors);
     }
@@ -11374,7 +11378,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "int32 to double conversion should work: {:?}", result.errors);
     }
@@ -11394,7 +11398,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "int64 to double conversion should work: {:?}", result.errors);
     }
@@ -11414,7 +11418,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "float to int32 explicit conversion should work: {:?}", result.errors);
     }
@@ -11434,7 +11438,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "double to int64 explicit conversion should work: {:?}", result.errors);
     }
@@ -11457,7 +11461,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Less than with conversion should work: {:?}", result.errors);
     }
@@ -11478,7 +11482,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Greater than or equal with conversion should work: {:?}", result.errors);
     }
@@ -11513,7 +11517,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         // This tests method chaining with handle return
         let _ = result;
@@ -11547,7 +11551,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Deeply nested if-else should work: {:?}", result.errors);
     }
@@ -11574,7 +11578,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Compound assignment on field should work: {:?}", result.errors);
     }
@@ -11599,7 +11603,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Compound subtraction on field should work: {:?}", result.errors);
     }
@@ -11626,7 +11630,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         // This exercises postfix increment in index expression
         let _ = result;
@@ -11652,7 +11656,7 @@ mod tests {
         let (script, _) = Parser::parse_lenient(source, &arena);
         let string_mod = string_module().expect("Failed to create string module");
         let ffi = create_ffi_with_string();
-        let result = Compiler::compile_with_ffi(&script, ffi);
+        let result = Compiler::compile(&script, ffi);
 
         assert!(result.is_success(), "String assignment should work: {:?}", result.errors);
     }
@@ -11673,7 +11677,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         // String comparison - may or may not work depending on string implementation
         let _ = result;
@@ -11703,7 +11707,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Function with multiple returns should work: {:?}", result.errors);
     }
@@ -11733,7 +11737,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Virtual method override should work: {:?}", result.errors);
     }
@@ -11758,7 +11762,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         // This tests private constructor access - may or may not fail
         let _ = result;
@@ -11781,7 +11785,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Compound multiply assignment should work: {:?}", result.errors);
     }
@@ -11801,7 +11805,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Compound divide assignment should work: {:?}", result.errors);
     }
@@ -11827,7 +11831,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Float arithmetic operations should work: {:?}", result.errors);
     }
@@ -11851,7 +11855,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Double arithmetic operations should work: {:?}", result.errors);
     }
@@ -11876,7 +11880,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Arithmetic precedence should work: {:?}", result.errors);
     }
@@ -11900,7 +11904,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Enum with explicit values should work: {:?}", result.errors);
     }
@@ -11925,7 +11929,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Return with complex expression should work: {:?}", result.errors);
     }
@@ -11949,7 +11953,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Local shadowing global should work: {:?}", result.errors);
     }
@@ -11973,7 +11977,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "For loop with complex update should work: {:?}", result.errors);
     }
@@ -11997,7 +12001,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Prefix decrement in while loop should work: {:?}", result.errors);
     }
@@ -12024,7 +12028,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Bool switch should work: {:?}", result.errors);
     }
@@ -12049,7 +12053,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(!result.errors.is_empty(), "Should detect duplicate bool case");
         assert!(result.errors.iter().any(|e| e.message.contains("duplicate")),
@@ -12076,7 +12080,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Float switch should work: {:?}", result.errors);
     }
@@ -12101,7 +12105,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Double switch should work: {:?}", result.errors);
     }
@@ -12131,7 +12135,7 @@ mod tests {
         let (script, _) = Parser::parse_lenient(source, &arena);
         let string_mod = string_module().expect("Failed to create string module");
         let ffi = create_ffi_with_string();
-        let result = Compiler::compile_with_ffi(&script, ffi);
+        let result = Compiler::compile(&script, ffi);
 
         assert!(result.is_success(), "String switch should work: {:?}", result.errors);
     }
@@ -12159,7 +12163,7 @@ mod tests {
         let (script, _) = Parser::parse_lenient(source, &arena);
         let string_mod = string_module().expect("Failed to create string module");
         let ffi = create_ffi_with_string();
-        let result = Compiler::compile_with_ffi(&script, ffi);
+        let result = Compiler::compile(&script, ffi);
 
         assert!(!result.errors.is_empty(), "Should detect duplicate string case");
         assert!(result.errors.iter().any(|e| e.message.contains("duplicate")),
@@ -12187,7 +12191,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Handle switch with null case should work: {:?}", result.errors);
     }
@@ -12210,7 +12214,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(!result.errors.is_empty(), "Should error on null case for non-handle");
         assert!(result.errors.iter().any(|e| e.message.contains("null") && e.message.contains("handle")),
@@ -12238,7 +12242,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(!result.errors.is_empty(), "Should detect duplicate null case");
         assert!(result.errors.iter().any(|e| e.message.contains("duplicate")),
@@ -12278,7 +12282,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Type pattern matching in switch should work: {:?}", result.errors);
     }
@@ -12311,7 +12315,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(!result.errors.is_empty(), "Should detect duplicate type pattern");
         assert!(result.errors.iter().any(|e| e.message.contains("duplicate")),
@@ -12343,7 +12347,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Type pattern with null case should work: {:?}", result.errors);
     }
@@ -12377,7 +12381,7 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Interface type pattern should work: {:?}", result.errors);
     }

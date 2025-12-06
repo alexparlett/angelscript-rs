@@ -11,7 +11,6 @@
 use crate::semantic::CompilationContext;
 use super::{
     data_type::DataType,
-    registry::ScriptRegistry,
     type_def::{
         FunctionId, OperatorBehavior, TypeDef, TypeId, DOUBLE_TYPE, FLOAT_TYPE, INT16_TYPE,
         INT32_TYPE, INT64_TYPE, INT8_TYPE, NULL_TYPE, UINT16_TYPE, UINT32_TYPE, UINT64_TYPE,

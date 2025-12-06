@@ -1,7 +1,7 @@
 //! Semantic analysis module for AngelScript.
 //!
 //! This module provides semantic analysis functionality following a 2-pass model:
-//! - Pass 1: Registration (register all global names in Registry)
+//! - Pass 1: Registration (register all global names in ScriptRegistry)
 //! - Pass 2: Compilation & Codegen (type compilation + function compilation)
 //!   - Pass 2a: Type Compilation (fill in type details, resolve TypeExpr → DataType)
 //!   - Pass 2b: Function Compilation (type check function bodies, emit bytecode)
@@ -11,15 +11,17 @@
 //! For most use cases, use the unified `Compiler` interface:
 //!
 //! ```ignore
-//! use angelscript::{parse_lenient, Compiler};
+//! use angelscript::{parse_lenient, Compiler, FfiRegistryBuilder};
 //! use bumpalo::Bump;
+//! use std::sync::Arc;
 //!
 //! let arena = Bump::new();
 //! let (script, _) = parse_lenient(source, &arena);
-//! let compiled = Compiler::compile(&script);
+//! let ffi = Arc::new(FfiRegistryBuilder::new().build().unwrap());
+//! let compiled = Compiler::compile(&script, ffi);
 //!
 //! if compiled.is_success() {
-//!     // Use compiled.module, compiled.registry, etc.
+//!     // Use compiled.module, compiled.context, etc.
 //! }
 //! ```
 
@@ -55,9 +57,6 @@ pub use types::{
     DOUBLE_TYPE, FIRST_USER_TYPE_ID, FLOAT_TYPE, INT16_TYPE, INT32_TYPE, INT64_TYPE, INT8_TYPE,
     NULL_TYPE, UINT16_TYPE, UINT32_TYPE, UINT64_TYPE, UINT8_TYPE, VOID_TYPE,
 };
-
-// Re-export Registry as alias for backwards compatibility during transition
-pub use types::ScriptRegistry as Registry;
 
 // Re-export CompilationContext and FunctionRef
 pub use compilation_context::{CompilationContext, FunctionRef};
