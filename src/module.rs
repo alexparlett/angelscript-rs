@@ -1025,7 +1025,7 @@ impl<'app> Module<'app> {
             namespace: func.namespace.clone(),
             params: func.params.clone(),
             return_type: func.return_type.clone(),
-            traits: func.traits.clone(),
+            traits: func.traits,
             owner_type: func.owner_type,
             operator: func.operator,
             visibility: func.visibility,

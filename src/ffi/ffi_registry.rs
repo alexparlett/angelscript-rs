@@ -203,8 +203,8 @@ impl FfiRegistry {
     pub fn find_constructor(&self, type_id: TypeId, arg_types: &[DataType]) -> Option<FunctionId> {
         let constructors = self.find_constructors(type_id);
         for ctor_id in constructors {
-            if let Some(func) = self.get_function(ctor_id) {
-                if func.params.len() == arg_types.len() {
+            if let Some(func) = self.get_function(ctor_id)
+                && func.params.len() == arg_types.len() {
                     let all_match = func
                         .params
                         .iter()
@@ -214,7 +214,6 @@ impl FfiRegistry {
                         return Some(ctor_id);
                     }
                 }
-            }
         }
         None
     }
@@ -893,8 +892,8 @@ impl FfiRegistryBuilder {
             // Create instantiate function that handles self-referential template types
             let mut instantiate = |template_id: TypeId, args: Vec<DataType>| -> Result<TypeId, String> {
                 // Check if this is a self-reference: instantiating owner type with its own template params
-                if let (Some(owner_id), Some(params)) = (owner_type_id, &owner_template_params) {
-                    if template_id == owner_id && args.len() == params.len() {
+                if let (Some(owner_id), Some(params)) = (owner_type_id, &owner_template_params)
+                    && template_id == owner_id && args.len() == params.len() {
                         // Check if all args are the template params in order
                         let is_self_ref = args.iter().zip(params.iter()).all(|(arg, &param_id)| {
                             arg.type_id == param_id && !arg.is_const && !arg.is_handle
@@ -903,13 +902,12 @@ impl FfiRegistryBuilder {
                             return Ok(SELF_TYPE);
                         }
                     }
-                }
 
                 // Also check if the template_id's params match the args exactly
                 // This handles factory functions that return the template type itself
-                if let Some(template_def) = self.types.get(&template_id) {
-                    if let TypeDef::Class { template_params, .. } = template_def {
-                        if !template_params.is_empty() && template_params.len() == args.len() {
+                if let Some(template_def) = self.types.get(&template_id)
+                    && let TypeDef::Class { template_params, .. } = template_def
+                        && !template_params.is_empty() && template_params.len() == args.len() {
                             // Check if all args are the template's own params
                             let is_self_ref = args.iter().zip(template_params.iter()).all(|(arg, &param_id)| {
                                 arg.type_id == param_id && !arg.is_const && !arg.is_handle
@@ -918,8 +916,6 @@ impl FfiRegistryBuilder {
                                 return Ok(SELF_TYPE);
                             }
                         }
-                    }
-                }
 
                 // Not a self-reference - template instantiation not supported during build
                 Err("Template instantiation not supported during FfiRegistry build".to_string())

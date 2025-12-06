@@ -122,7 +122,7 @@ impl<'ast> Registrar<'ast> {
     pub fn register_with_registry(script: &Script<'ast>, registry: ScriptRegistry<'ast>) -> RegistrationData<'ast> {
         // Legacy: wrap ScriptRegistry in a default CompilationContext
         // This path is for backwards compatibility and won't have FFI types
-        let mut context = CompilationContext::default();
+        let context = CompilationContext::default();
         // Copy any types from the registry to context (for legacy tests)
         // This is a simplified migration path
         let _ = registry; // Unused, context has its own script registry

@@ -328,15 +328,14 @@ impl FfiExpr {
                 // Check for enum value: EnumType::Value or just Value accessed as member
                 // This handles the pattern: identifier.member (though enum syntax is usually ::)
                 // More commonly, enum values come through as scoped identifiers
-                if let Expr::Ident(obj_ident) = member.object {
-                    if let crate::ast::MemberAccess::Field(field) = &member.member {
+                if let Expr::Ident(obj_ident) = member.object
+                    && let crate::ast::MemberAccess::Field(field) = &member.member {
                         // This could be EnumType.Value (unusual but possible)
                         return Some(FfiExpr::EnumValue {
                             enum_name: obj_ident.ident.name.to_string(),
                             value_name: field.name.to_string(),
                         });
                     }
-                }
                 None
             }
 

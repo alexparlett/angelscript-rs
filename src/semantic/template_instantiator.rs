@@ -80,8 +80,8 @@ impl TemplateInstantiator {
         instance_id: Option<TypeId>,
     ) -> DataType {
         // Check for SELF_TYPE - substitute with the instance type
-        if data_type.type_id == SELF_TYPE {
-            if let Some(inst_id) = instance_id {
+        if data_type.type_id == SELF_TYPE
+            && let Some(inst_id) = instance_id {
                 let mut substituted = DataType::simple(inst_id);
                 // Preserve modifiers from the original type
                 substituted.is_const = data_type.is_const;
@@ -90,11 +90,10 @@ impl TemplateInstantiator {
                 substituted.ref_modifier = data_type.ref_modifier;
                 return substituted;
             }
-        }
 
         // Check if this type is a template parameter
-        if let Some(typedef) = ffi.get_type(data_type.type_id) {
-            if let TypeDef::TemplateParam { index, .. } = typedef {
+        if let Some(typedef) = ffi.get_type(data_type.type_id)
+            && let TypeDef::TemplateParam { index, .. } = typedef {
                 // This is a template parameter - substitute it
                 if *index < args.len() {
                     let mut substituted = args[*index].clone();
@@ -104,7 +103,6 @@ impl TemplateInstantiator {
                     return substituted;
                 }
             }
-        }
 
         // Also check if the type_id is directly in template_params
         for (i, &param_id) in template_params.iter().enumerate() {
@@ -215,8 +213,8 @@ impl TemplateInstantiator {
         }
 
         // Run validation callback if present (FFI templates only)
-        if template_id.is_ffi() {
-            if let Some(callback) = ffi.get_template_callback(template_id) {
+        if template_id.is_ffi()
+            && let Some(callback) = ffi.get_template_callback(template_id) {
                 let info = TemplateInstanceInfo::new(template_name.clone(), args.clone());
                 let validation = callback(&info);
                 if !validation.is_valid {
@@ -229,7 +227,6 @@ impl TemplateInstantiator {
                     ));
                 }
             }
-        }
 
         // Build the instance name (e.g., "array<int>")
         let type_arg_names: Vec<String> = args
@@ -290,7 +287,7 @@ impl TemplateInstantiator {
                         params: specialized_params,
                         return_type: specialized_return_type,
                         object_type: None, // Will be set after type is registered
-                        traits: ffi_func.traits.clone(),
+                        traits: ffi_func.traits,
                         is_native: true, // Still backed by native FFI function
                         visibility: Visibility::Public,
                         signature_filled: true,
@@ -368,7 +365,7 @@ impl TemplateInstantiator {
                     params: specialized_params,
                     return_type: specialized_return_type,
                     object_type: Some(instance_id),
-                    traits: ffi_func.traits.clone(),
+                    traits: ffi_func.traits,
                     is_native: true, // Still backed by native FFI function
                     visibility: Visibility::Public,
                     signature_filled: true,

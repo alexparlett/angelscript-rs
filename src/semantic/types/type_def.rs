@@ -94,7 +94,7 @@ impl fmt::Display for TypeId {
 }
 
 // Fixed TypeIds for primitive types (0-11) - all FFI types have FFI_BIT set
-pub const VOID_TYPE: TypeId = TypeId(FFI_BIT | 0);
+pub const VOID_TYPE: TypeId = TypeId(FFI_BIT);
 pub const BOOL_TYPE: TypeId = TypeId(FFI_BIT | 1);
 pub const INT8_TYPE: TypeId = TypeId(FFI_BIT | 2);
 pub const INT16_TYPE: TypeId = TypeId(FFI_BIT | 3);
@@ -116,7 +116,7 @@ pub const VARIABLE_PARAM_TYPE: TypeId = TypeId(FFI_BIT | 13);  // ? type - accep
 /// return/param type is the template itself with its own params.
 /// At instantiation time, this is replaced with the actual instance TypeId.
 /// Uses FFI_BIT since it's used in FFI template definitions.
-pub const SELF_TYPE: TypeId = TypeId(FFI_BIT | (u32::MAX & !FFI_BIT) - 1);
+pub const SELF_TYPE: TypeId = TypeId(FFI_BIT | ((u32::MAX & !FFI_BIT) - 1));
 
 // Gap: TypeIds 14-31 reserved for future special types
 
