@@ -36,7 +36,7 @@ use crate::ffi::{FfiRegistry, TemplateInstanceInfo};
 use crate::lexer::Span;
 use crate::semantic::error::{SemanticError, SemanticErrorKind};
 use crate::semantic::types::registry::{FunctionDef, ScriptParam, ScriptRegistry};
-use crate::semantic::types::type_def::{FunctionId, OperatorBehavior, TypeDef, TypeId, Visibility};
+use crate::semantic::types::type_def::{FunctionId, OperatorBehavior, TypeDef, TypeId, Visibility, SELF_TYPE};
 use crate::semantic::types::DataType;
 
 /// Handles template instantiation with caching.
@@ -70,12 +70,28 @@ impl TemplateInstantiator {
     ///
     /// If the type is a template parameter (matching one in `template_params`),
     /// it will be replaced with the corresponding type from `args`.
+    /// If the type is SELF_TYPE and `instance_id` is provided, it will be replaced
+    /// with the instance type.
     fn substitute_type(
         data_type: &DataType,
         template_params: &[TypeId],
         args: &[DataType],
         ffi: &FfiRegistry,
+        instance_id: Option<TypeId>,
     ) -> DataType {
+        // Check for SELF_TYPE - substitute with the instance type
+        if data_type.type_id == SELF_TYPE {
+            if let Some(inst_id) = instance_id {
+                let mut substituted = DataType::simple(inst_id);
+                // Preserve modifiers from the original type
+                substituted.is_const = data_type.is_const;
+                substituted.is_handle = data_type.is_handle;
+                substituted.is_handle_to_const = data_type.is_handle_to_const;
+                substituted.ref_modifier = data_type.ref_modifier;
+                return substituted;
+            }
+        }
+
         // Check if this type is a template parameter
         if let Some(typedef) = ffi.get_type(data_type.type_id) {
             if let TypeDef::TemplateParam { index, .. } = typedef {
@@ -150,13 +166,14 @@ impl TemplateInstantiator {
         };
 
         // Verify it's a template and extract info
-        let (template_name, template_params, template_kind, template_operator_methods) =
+        let (template_name, template_params, template_kind, template_operator_methods, template_methods) =
             match template_def {
                 TypeDef::Class {
                     name,
                     template_params,
                     type_kind,
                     operator_methods,
+                    methods,
                     ..
                 } => {
                     if template_params.is_empty() {
@@ -171,6 +188,7 @@ impl TemplateInstantiator {
                         template_params.clone(),
                         type_kind.clone(),
                         operator_methods.clone(),
+                        methods.clone(),
                     )
                 }
             _ => {
@@ -239,6 +257,7 @@ impl TemplateInstantiator {
                 // Get the original FFI function
                 if let Some(ffi_func) = ffi.get_function(func_id) {
                     // Create specialized parameters with substituted types
+                    // Use None for instance_id since we don't have the instance registered yet
                     let specialized_params: Vec<ScriptParam<'_>> = ffi_func
                         .params
                         .iter()
@@ -248,6 +267,7 @@ impl TemplateInstantiator {
                                 &template_params,
                                 &args,
                                 ffi,
+                                None,
                             );
                             ScriptParam::new(p.name.clone(), substituted_type)
                         })
@@ -259,6 +279,7 @@ impl TemplateInstantiator {
                         &template_params,
                         &args,
                         ffi,
+                        None,
                     );
 
                     // Create a new script function with specialized types
@@ -286,16 +307,17 @@ impl TemplateInstantiator {
             specialized_operator_methods.insert(*operator, specialized_ids);
         }
 
-        // Create the instance TypeDef
+        // Create the instance TypeDef first (with empty methods)
+        // We need the instance_id before we can specialize methods that use SELF_TYPE
         // Template instances are always Script types (created per-compilation)
         let instance_def = TypeDef::Class {
             name: instance_name.clone(),
             qualified_name: instance_name.clone(),
             fields: Vec::new(), // TODO: Copy and substitute fields from template
-            methods: Vec::new(), // Methods will be added via instantiate_template_methods
+            methods: Vec::new(), // Methods will be added after registration
             base_class: None,
             interfaces: Vec::new(),
-            operator_methods: specialized_operator_methods, // Use specialized functions
+            operator_methods: specialized_operator_methods, // Use specialized operator functions
             properties: FxHashMap::default(),
             is_final: false,
             is_abstract: false,
@@ -307,6 +329,56 @@ impl TemplateInstantiator {
 
         // Register the instance (always as a script type)
         let instance_id = script.register_type(instance_def, Some(&instance_name));
+
+        // Now specialize methods with substituted types (including SELF_TYPE substitution)
+        for &func_id in &template_methods {
+            // Get the original FFI function
+            if let Some(ffi_func) = ffi.get_function(func_id) {
+                // Create specialized parameters with substituted types
+                // Pass instance_id for SELF_TYPE substitution
+                let specialized_params: Vec<ScriptParam<'_>> = ffi_func
+                    .params
+                    .iter()
+                    .map(|p| {
+                        let substituted_type = Self::substitute_type(
+                            &p.data_type,
+                            &template_params,
+                            &args,
+                            ffi,
+                            Some(instance_id),
+                        );
+                        ScriptParam::new(p.name.clone(), substituted_type)
+                    })
+                    .collect();
+
+                // Substitute return type
+                let specialized_return_type = Self::substitute_type(
+                    &ffi_func.return_type,
+                    &template_params,
+                    &args,
+                    ffi,
+                    Some(instance_id),
+                );
+
+                // Create a new script function with specialized types
+                let specialized_func = FunctionDef {
+                    id: FunctionId::next_script(),
+                    name: ffi_func.name.clone(),
+                    namespace: Vec::new(),
+                    params: specialized_params,
+                    return_type: specialized_return_type,
+                    object_type: Some(instance_id),
+                    traits: ffi_func.traits.clone(),
+                    is_native: true, // Still backed by native FFI function
+                    visibility: Visibility::Public,
+                    signature_filled: true,
+                };
+
+                let specialized_id = script.register_function(specialized_func);
+                script.add_method_to_class(instance_id, specialized_id);
+            }
+            // If FFI function not found, skip it (shouldn't happen for valid templates)
+        }
 
         // Add to unified name map
         type_by_name.insert(instance_name, instance_id);

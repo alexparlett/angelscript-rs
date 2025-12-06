@@ -433,7 +433,7 @@ impl<'ast> FunctionCompiler<'ast> {
                     .iter()
                     .copied()
                     .find(|&fid| {
-                        let func_def = self.context.get_script_function(fid);
+                        let func_def = self.context.script().get_function(fid);
                         self.method_signature_matches(method_decl, func_def)
                     });
 
@@ -497,7 +497,7 @@ impl<'ast> FunctionCompiler<'ast> {
             None => return,
         };
 
-        let func_def = self.context.get_script_function(func_id);
+        let func_def = self.context.script().get_function(func_id);
 
         // Extract parameters for compilation (pre-allocate capacity)
         let params: Vec<(String, DataType)> = func_def.params.iter().enumerate()
@@ -600,7 +600,7 @@ impl<'ast> FunctionCompiler<'ast> {
             if !has_super_call {
                 // Emit call to base class default constructor
                 // Only auto-call if super() is not explicitly called
-                let base_constructors = self.context.find_constructors(base_id);
+                let base_constructors = self.context.script().find_constructors(base_id);
                 if let Some(&base_ctor_id) = base_constructors.first() {
                     instructions.push(Instruction::CallConstructor {
                         type_id: base_id.0,
@@ -782,11 +782,13 @@ impl<'ast> FunctionCompiler<'ast> {
         }
 
         // Find the matching function by checking object_type
+        // Only check script functions - FFI functions have bodies defined natively
         let func_id = func_ids
             .iter()
             .copied()
+            .filter(|id| id.is_script())
             .find(|&id| {
-                let func_def = self.context.get_script_function(id);
+                let func_def = self.context.script().get_function(id);
                 func_def.object_type == object_type
             });
 
@@ -798,7 +800,7 @@ impl<'ast> FunctionCompiler<'ast> {
             }
         };
 
-        let func_def = self.context.get_script_function(func_id);
+        let func_def = self.context.script().get_function(func_id);
 
         // Extract parameters for compilation (pre-allocate capacity)
         let params: Vec<(String, DataType)> = func_def.params.iter().enumerate()

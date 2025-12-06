@@ -1,7 +1,5 @@
 // Test template type usage
 
-// FFI placeholder - will be replaced with proper FFI bindings
-void print(const string &in msg) {}
 class Object {}
 
 void testBasicTemplates() {

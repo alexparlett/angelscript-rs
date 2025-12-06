@@ -5,24 +5,13 @@
 // This file will be composed of multiple game systems in a single file
 // to stress test the parser with realistic large-scale code
 
-// FFI placeholders - will be replaced with proper FFI bindings
-float abs(float x) { if (x < 0) return -x; return x; }
-float sqrt(float x) { return x; }
-float sin(float x) { return x; }
-float cos(float x) { return x; }
-float tan(float x) { return x; }
-float atan(float x) { return x; }
-float atan2(float y, float x) { return x; }
-float pow(float base, float exp) { return base; }
-float ceil(float x) { return x; }
-float floor(float x) { return x; }
-float random() { return 0.5; }
-int64 getSystemTime() { return 0; }
-void print(const string &in msg) { }
+// Import math functions from FFI
+using namespace math;
 
-// String method placeholders (normally built-in)
-// Note: These would be native methods on string, here as standalone for testing
-int stringFindFirst(const string &in str, const string &in substr) { return -1; }
+// TODO: Task 24 - Add random/time functions to standard library
+// Placeholder stubs until we implement proper support
+float random() { return 0.5; }
+uint getSystemTime() { return 0; }
 
 namespace Core {
     
@@ -4024,21 +4013,6 @@ namespace Testing {
     float round(float x) { return floor(x + 0.5); }
     float minimum(float a, float b) { return (a < b) ? a : b; }
     float maximum(float a, float b) { return (a > b) ? a : b; }
-
-// String utilities
-    bool startsWith(const string &in str, const string &in prefix) {
-        return str.substr(0, prefix.length()) == prefix;
-    }
-
-    bool endsWith(const string &in str, const string &in suffix) {
-        int pos = int(str.length()) - int(suffix.length());
-        if (pos < 0) return false;
-        return str.substr(pos, -1) == suffix;
-    }
-
-    bool contains(const string &in str, const string &in substr) {
-        return str.findFirst(substr, 0) >= 0;
-    }
 
     string toLowerCase(const string &in str) {
         string result = str;

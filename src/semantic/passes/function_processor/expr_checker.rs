@@ -262,8 +262,8 @@ impl<'ast> FunctionCompiler<'ast> {
                 // Check properties (getter access)
                 if let Some(accessors) = properties.get(name)
                     && let Some(getter_id) = accessors.getter {
-                        let getter = self.context.get_script_function(getter_id);
-                        let return_type = getter.return_type.clone();
+                        let getter = self.context.get_function(getter_id);
+                        let return_type = getter.return_type().clone();
 
                         // Emit LoadThis followed by CallMethod for the getter
                         self.bytecode.emit(Instruction::LoadThis);
@@ -1173,8 +1173,8 @@ impl<'ast> FunctionCompiler<'ast> {
                     // Call opXxxAssign(value) on target
                     // Stack: [target, value] → target.opAddAssign(value)
                     self.bytecode.emit(Instruction::Call(func_id.as_u32()));
-                    let func = self.context.get_script_function(func_id);
-                    return Some(ExprContext::rvalue(func.return_type.clone()));
+                    let func = self.context.get_function(func_id);
+                    return Some(ExprContext::rvalue(func.return_type().clone()));
                 }
 
                 // Fall back to desugaring: x += y  =>  x = x + y
@@ -1375,14 +1375,14 @@ impl<'ast> FunctionCompiler<'ast> {
                     }
 
                     // Find matching base constructor
-                    let base_constructors = self.context.find_constructors(base_id);
+                    let base_constructors = self.context.script().find_constructors(base_id);
                     let (matching_ctor, conversions) = self.find_best_function_overload(
                         &base_constructors,
                         &arg_types,
                         call.span,
                     )?;
 
-                    let func_def = self.context.get_script_function(matching_ctor);
+                    let func_def = self.context.script().get_function(matching_ctor);
 
                     // Validate reference parameters
                     self.validate_reference_parameters(func_def, &arg_contexts, call.args, call.span)?;
@@ -1411,11 +1411,12 @@ impl<'ast> FunctionCompiler<'ast> {
                             && let Some(base_class_id) = self.get_base_class_by_name(current_class_id, scope_name) {
                                 // This is a base class method call - load 'this' and call the base method
                                 // Look up the method in the base class (pre-allocate)
+                                // Note: base classes are always script classes (FFI class extension is forbidden)
                                 let all_methods = self.context.get_methods(base_class_id);
                                 let mut base_methods = Vec::with_capacity(all_methods.len().min(4));
                                 for func_id in all_methods {
-                                    let func = self.context.get_script_function(func_id);
-                                    if func.name == method_name {
+                                    let func = self.context.get_function(func_id);
+                                    if func.name() == method_name {
                                         base_methods.push(func_id);
                                     }
                                 }
@@ -1442,10 +1443,10 @@ impl<'ast> FunctionCompiler<'ast> {
                                         call.span,
                                     )?;
 
-                                    let func_def = self.context.get_script_function(method_id);
+                                    let func_ref = self.context.get_function(method_id);
 
                                     // Validate reference parameters
-                                    self.validate_reference_parameters(func_def, &arg_contexts, call.args, call.span)?;
+                                    self.validate_reference_parameters_ref(&func_ref, &arg_contexts, call.args, call.span)?;
 
                                     // Emit any needed conversions
                                     for c in conversions.into_iter().flatten() {
@@ -1455,7 +1456,7 @@ impl<'ast> FunctionCompiler<'ast> {
                                     // Emit call instruction
                                     self.bytecode.emit(Instruction::Call(method_id.as_u32()));
 
-                                    return Some(ExprContext::rvalue(func_def.return_type.clone()));
+                                    return Some(ExprContext::rvalue(func_ref.return_type().clone()));
                                 }
                             }
                     }
@@ -1532,26 +1533,27 @@ impl<'ast> FunctionCompiler<'ast> {
                                 arg_contexts.push(arg_ctx);
                             }
 
-                            let func_def = self.context.get_script_function(func_id);
+                            let func_ref = self.context.get_function(func_id);
 
                             // Validate argument count
-                            if arg_contexts.len() != func_def.params.len() {
+                            if arg_contexts.len() != func_ref.param_count() {
                                 self.error(
                                     SemanticErrorKind::WrongArgumentCount,
                                     call.span,
                                     format!("opCall expects {} arguments but {} were provided",
-                                        func_def.params.len(), arg_contexts.len()),
+                                        func_ref.param_count(), arg_contexts.len()),
                                 );
                                 return None;
                             }
 
                             // Validate reference parameters
-                            self.validate_reference_parameters(func_def, &arg_contexts, call.args, call.span)?;
+                            self.validate_reference_parameters_ref(&func_ref, &arg_contexts, call.args, call.span)?;
 
                             // Emit conversions for arguments that need conversion
-                            for (i, (arg_ctx, param)) in arg_contexts.iter().zip(func_def.params.iter()).enumerate() {
-                                if arg_ctx.data_type.type_id != param.data_type.type_id {
-                                    if let Some(conv) = arg_ctx.data_type.can_convert_to(&param.data_type, self.context) {
+                            for (i, arg_ctx) in arg_contexts.iter().enumerate() {
+                                let param_type = func_ref.param_type(i);
+                                if arg_ctx.data_type.type_id != param_type.type_id {
+                                    if let Some(conv) = arg_ctx.data_type.can_convert_to(param_type, self.context) {
                                         if conv.is_implicit {
                                             self.emit_conversion(&conv);
                                         } else {
@@ -1569,7 +1571,7 @@ impl<'ast> FunctionCompiler<'ast> {
                                             format!("cannot convert argument {} from '{}' to '{}'",
                                                 i + 1,
                                                 self.type_name(&arg_ctx.data_type),
-                                                self.type_name(&param.data_type)),
+                                                self.type_name(param_type)),
                                         );
                                         return None;
                                     }
@@ -1577,7 +1579,7 @@ impl<'ast> FunctionCompiler<'ast> {
                             }
 
                             self.bytecode.emit(Instruction::Call(func_id.as_u32()));
-                            return Some(ExprContext::rvalue(func_def.return_type.clone()));
+                            return Some(ExprContext::rvalue(func_ref.return_type().clone()));
                         }
                     }
                 }
@@ -1726,21 +1728,21 @@ impl<'ast> FunctionCompiler<'ast> {
                     // Narrow candidates based on non-lambda argument types (pre-allocate)
                     let mut narrowed_candidates = Vec::with_capacity(candidates.len());
                     for &func_id in &candidates {
-                        let func_def = self.context.get_script_function(func_id);
+                        let func_ref = self.context.get_function(func_id);
                         // Check argument count (considering defaults)
-                        let min_params = func_def.params.iter().filter(|p| p.default.is_none()).count();
-                        if call.args.len() < min_params || call.args.len() > func_def.params.len() {
+                        let min_params = func_ref.required_param_count();
+                        if call.args.len() < min_params || call.args.len() > func_ref.param_count() {
                             continue;
                         }
                         // Check non-lambda argument types match
                         let mut matches = true;
                         for (i, opt_type) in non_lambda_types.iter().enumerate() {
                             if let Some(arg_type) = opt_type
-                                && i < func_def.params.len() {
-                                    let param = &func_def.params[i];
+                                && i < func_ref.param_count() {
+                                    let param_type = func_ref.param_type(i);
                                     // Check if types are compatible (exact match or implicit conversion)
-                                    if arg_type.type_id != param.data_type.type_id
-                                        && arg_type.can_convert_to(&param.data_type, self.context).is_none_or(|c| !c.is_implicit) {
+                                    if arg_type.type_id != param_type.type_id
+                                        && arg_type.can_convert_to(param_type, self.context).is_none_or(|c| !c.is_implicit) {
                                             matches = false;
                                             break;
                                         }
@@ -1753,8 +1755,8 @@ impl<'ast> FunctionCompiler<'ast> {
 
                     // Pass 2: Type-check lambda arguments with inferred funcdef types
                     let expected_param_types = if narrowed_candidates.len() == 1 {
-                        let func_def = self.context.get_script_function(narrowed_candidates[0]);
-                        Some(func_def.params.clone())
+                        let func_ref = self.context.get_function(narrowed_candidates[0]);
+                        Some(func_ref.param_types())
                     } else {
                         None
                     };
@@ -1767,7 +1769,7 @@ impl<'ast> FunctionCompiler<'ast> {
                             // Set expected_funcdef_type for lambda inference
                             if let Some(ref params) = expected_param_types
                                 && i < params.len() {
-                                    let param_type = &params[i].data_type;
+                                    let param_type = &params[i];
                                     if param_type.is_handle {
                                         let type_def = self.context.get_type(param_type.type_id);
                                         if matches!(type_def, TypeDef::Funcdef { .. }) {
@@ -1788,17 +1790,17 @@ impl<'ast> FunctionCompiler<'ast> {
                 } else {
                     // Simple case: single candidate or no lambdas
                     let expected_param_types = if candidates.len() == 1 {
-                        let func_def = self.context.get_script_function(candidates[0]);
-                        Some(&func_def.params)
+                        let func_ref = self.context.get_function(candidates[0]);
+                        Some(func_ref.param_types())
                     } else {
                         None
                     };
 
                     for (i, arg) in call.args.iter().enumerate() {
                         // Set expected_funcdef_type if this parameter expects a funcdef
-                        if let Some(params) = expected_param_types
+                        if let Some(ref params) = expected_param_types
                             && i < params.len() {
-                                let param_type = &params[i].data_type;
+                                let param_type = &params[i];
                                 if param_type.is_handle {
                                     let type_def = self.context.get_type(param_type.type_id);
                                     if matches!(type_def, TypeDef::Funcdef { .. }) {
@@ -1827,34 +1829,48 @@ impl<'ast> FunctionCompiler<'ast> {
                     call.span,
                 )?;
 
-                let func_def = self.context.get_script_function(matching_func);
+                let func_ref = self.context.get_function(matching_func);
 
                 // Compile default arguments if fewer args provided than params
-                if arg_contexts.len() < func_def.params.len() {
-                    for i in arg_contexts.len()..func_def.params.len() {
-                        if let Some(default_expr) = func_def.params[i].default {
-                            // Compile the default argument expression inline
-                            let default_ctx = self.check_expr(default_expr)?;
+                if arg_contexts.len() < func_ref.param_count() {
+                    // Default argument expressions only exist on script functions
+                    if let Some(func_def) = func_ref.as_script() {
+                        for i in arg_contexts.len()..func_def.params.len() {
+                            if let Some(default_expr) = func_def.params[i].default {
+                                // Compile the default argument expression inline
+                                let default_ctx = self.check_expr(default_expr)?;
 
-                            // Apply implicit conversion if needed
-                            if let Some(conv) = default_ctx.data_type.can_convert_to(&func_def.params[i].data_type, self.context) {
-                                self.emit_conversion(&conv);
+                                // Apply implicit conversion if needed
+                                if let Some(conv) = default_ctx.data_type.can_convert_to(&func_def.params[i].data_type, self.context) {
+                                    self.emit_conversion(&conv);
+                                }
+                            } else {
+                                // No default arg for this parameter - error
+                                self.error(
+                                    SemanticErrorKind::TypeMismatch,
+                                    call.span,
+                                    format!("function '{}' expects {} arguments but {} were provided",
+                                        func_def.name, func_def.params.len(), arg_contexts.len()),
+                                );
+                                return None;
                             }
-                        } else {
-                            // No default arg for this parameter - error
-                            self.error(
-                                SemanticErrorKind::TypeMismatch,
-                                call.span,
-                                format!("function '{}' expects {} arguments but {} were provided",
-                                    func_def.name, func_def.params.len(), arg_contexts.len()),
-                            );
-                            return None;
                         }
+                    } else {
+                        // FFI function with defaults - the VM handles default value injection
+                        // For now, we emit a placeholder or handle differently
+                        // TODO: Implement FFI default argument handling if needed
+                        self.error(
+                            SemanticErrorKind::WrongArgumentCount,
+                            call.span,
+                            format!("function '{}' expects {} arguments but {} were provided (FFI default arguments not yet supported at compile time)",
+                                func_ref.name(), func_ref.param_count(), arg_contexts.len()),
+                        );
+                        return None;
                     }
                 }
 
                 // Validate reference parameters BEFORE emitting conversions
-                self.validate_reference_parameters(func_def, &arg_contexts, call.args, call.span)?;
+                self.validate_reference_parameters_ref(&func_ref, &arg_contexts, call.args, call.span)?;
 
                 // Emit conversion instructions for explicitly provided arguments
                 for conv in conversions.into_iter().flatten() {
@@ -1865,7 +1881,7 @@ impl<'ast> FunctionCompiler<'ast> {
                 self.bytecode.emit(Instruction::Call(matching_func.as_u32()));
 
                 // Function calls produce rvalues
-                Some(ExprContext::rvalue(func_def.return_type.clone()))
+                Some(ExprContext::rvalue(func_ref.return_type().clone()))
             }
             _ => {
                 // Complex call expression (e.g., obj(args) with opCall, function pointer, lambda)
@@ -1883,26 +1899,27 @@ impl<'ast> FunctionCompiler<'ast> {
                     // Call opCall(args) on callee
                     // Stack: [callee, arg1, arg2, ...] → callee.opCall(arg1, arg2, ...)
 
-                    let func_def = self.context.get_script_function(func_id);
+                    let func_ref = self.context.get_function(func_id);
 
                     // Validate argument count
-                    if arg_contexts.len() != func_def.params.len() {
+                    if arg_contexts.len() != func_ref.param_count() {
                         self.error(
                             SemanticErrorKind::WrongArgumentCount,
                             call.span,
                             format!("opCall expects {} arguments but {} were provided",
-                                func_def.params.len(), arg_contexts.len()),
+                                func_ref.param_count(), arg_contexts.len()),
                         );
                         return None;
                     }
 
                     // Validate reference parameters
-                    self.validate_reference_parameters(func_def, &arg_contexts, call.args, call.span)?;
+                    self.validate_reference_parameters_ref(&func_ref, &arg_contexts, call.args, call.span)?;
 
                     // Emit conversions for arguments that need conversion
-                    for (i, (arg_ctx, param)) in arg_contexts.iter().zip(func_def.params.iter()).enumerate() {
-                        if arg_ctx.data_type.type_id != param.data_type.type_id {
-                            if let Some(conv) = arg_ctx.data_type.can_convert_to(&param.data_type, self.context) {
+                    for (i, arg_ctx) in arg_contexts.iter().enumerate() {
+                        let param_type = func_ref.param_type(i);
+                        if arg_ctx.data_type.type_id != param_type.type_id {
+                            if let Some(conv) = arg_ctx.data_type.can_convert_to(param_type, self.context) {
                                 if conv.is_implicit {
                                     self.emit_conversion(&conv);
                                 } else {
@@ -1920,7 +1937,7 @@ impl<'ast> FunctionCompiler<'ast> {
                                     format!("cannot convert argument {} from '{}' to '{}'",
                                         i + 1,
                                         self.type_name(&arg_ctx.data_type),
-                                        self.type_name(&param.data_type)),
+                                        self.type_name(param_type)),
                                 );
                                 return None;
                             }
@@ -1928,7 +1945,7 @@ impl<'ast> FunctionCompiler<'ast> {
                     }
 
                     self.bytecode.emit(Instruction::Call(func_id.as_u32()));
-                    return Some(ExprContext::rvalue(func_def.return_type.clone()));
+                    return Some(ExprContext::rvalue(func_ref.return_type().clone()));
                 }
 
                 // No opCall found - check if it's a funcdef/function pointer
@@ -2565,23 +2582,23 @@ impl<'ast> FunctionCompiler<'ast> {
         }
 
         // Get setter function to validate value type
-        let setter_func = self.context.get_script_function(setter_id);
+        let setter_func = self.context.get_function(setter_id);
 
         // Setter should have exactly one parameter (the value)
-        if setter_func.params.len() != 1 {
+        if setter_func.param_count() != 1 {
             self.error(
                 SemanticErrorKind::InvalidOperation,
                 span,
                 format!(
                     "property setter 'set_{}' must have exactly 1 parameter, found {}",
                     property_name,
-                    setter_func.params.len()
+                    setter_func.param_count()
                 ),
             );
             return Some(ExprContext::rvalue(DataType::simple(VOID_TYPE)));
         }
 
-        let value_param_type = &setter_func.params[0].data_type;
+        let value_param_type = setter_func.param_type(0);
 
         // Type check the value expression
         let value_ctx = self.check_expr(value)?;
@@ -2664,8 +2681,8 @@ impl<'ast> FunctionCompiler<'ast> {
 
                                 // Check const-correctness: if object is const, getter must be const
                                 let is_const_object = object_ctx.data_type.is_const || object_ctx.data_type.is_handle_to_const;
-                                let getter_func = self.context.get_script_function(getter_id);
-                                if is_const_object && !getter_func.traits.is_const {
+                                let getter_func = self.context.get_function(getter_id);
+                                if is_const_object && !getter_func.traits().is_const {
                                     self.error(
                                         SemanticErrorKind::InvalidOperation,
                                         member.span,
@@ -2683,7 +2700,7 @@ impl<'ast> FunctionCompiler<'ast> {
 
                                 // Property getter returns rvalue (can't assign to it directly)
                                 // This is a property accessor, not a reference
-                                return Some(ExprContext::rvalue(getter_func.return_type.clone()));
+                                return Some(ExprContext::rvalue(getter_func.return_type().clone()));
                             } else {
                                 // Property exists but is write-only (no getter)
                                 self.error(
@@ -2781,8 +2798,8 @@ impl<'ast> FunctionCompiler<'ast> {
                             // Const objects can only call const methods (pre-allocate)
                             let mut filtered = Vec::with_capacity(candidates.len());
                             for func_id in candidates {
-                                let func_def = self.context.get_script_function(func_id);
-                                if func_def.traits.is_const {
+                                let func_ref = self.context.get_function(func_id);
+                                if func_ref.traits().is_const {
                                     filtered.push(func_id);
                                 }
                             }
@@ -2809,17 +2826,17 @@ impl<'ast> FunctionCompiler<'ast> {
                         // When there's a single matching method, we can infer funcdef types for lambdas
                         let mut arg_contexts = Vec::with_capacity(args.len());
                         let expected_param_types = if const_filtered.len() == 1 {
-                            let func_def = self.context.get_script_function(const_filtered[0]);
-                            Some(&func_def.params)
+                            let func_ref = self.context.get_function(const_filtered[0]);
+                            Some(func_ref.param_types())
                         } else {
                             None
                         };
 
                         for (i, arg) in args.iter().enumerate() {
                             // Set expected_funcdef_type if this parameter expects a funcdef
-                            if let Some(params) = expected_param_types
+                            if let Some(ref params) = expected_param_types
                                 && i < params.len() {
-                                    let param_type = &params[i].data_type;
+                                    let param_type = &params[i];
                                     if param_type.is_handle {
                                         let type_def = self.context.get_type(param_type.type_id);
                                         if matches!(type_def, TypeDef::Funcdef { .. }) {
@@ -2847,13 +2864,13 @@ impl<'ast> FunctionCompiler<'ast> {
                             member.span,
                         )?;
 
-                        let func_def = self.context.get_script_function(matching_method);
+                        let func_ref = self.context.get_function(matching_method);
 
                         // Check visibility access
-                        if !self.check_visibility_access(func_def.visibility, object_ctx.data_type.type_id) {
+                        if !self.check_visibility_access(func_ref.visibility(), object_ctx.data_type.type_id) {
                             self.report_access_violation(
-                                func_def.visibility,
-                                &func_def.name,
+                                func_ref.visibility(),
+                                func_ref.name(),
                                 &self.type_name(&object_ctx.data_type),
                                 member.span,
                             );
@@ -2861,7 +2878,7 @@ impl<'ast> FunctionCompiler<'ast> {
                         }
 
                         // Validate reference parameters
-                        self.validate_reference_parameters(func_def, &arg_contexts, args, member.span)?;
+                        self.validate_reference_parameters_ref(&func_ref, &arg_contexts, args, member.span)?;
 
                         // Emit conversion instructions for arguments
                         for conv in conversions.into_iter().flatten() {
@@ -2872,7 +2889,7 @@ impl<'ast> FunctionCompiler<'ast> {
                         self.bytecode.emit(Instruction::CallMethod(matching_method.as_u32()));
 
                         // Method calls return rvalues
-                        Some(ExprContext::rvalue(func_def.return_type.clone()))
+                        Some(ExprContext::rvalue(func_ref.return_type().clone()))
                     }
                     TypeDef::Interface { methods, .. } => {
                         // Type check arguments first

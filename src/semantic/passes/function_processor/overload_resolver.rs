@@ -24,8 +24,8 @@ impl<'ast> FunctionCompiler<'ast> {
         // Try left operand's operator first
         if let Some(func_id) = self.context.find_operator_method(left_type.type_id, operator) {
             self.bytecode.emit(Instruction::Call(func_id.as_u32()));
-            let func = self.context.get_script_function(func_id);
-            return Some(func.return_type.clone());
+            let func = self.context.get_function(func_id);
+            return Some(func.return_type().clone());
         }
 
         // Try right operand's reverse operator
@@ -35,8 +35,8 @@ impl<'ast> FunctionCompiler<'ast> {
             // We need: [right, left]
             self.bytecode.emit(Instruction::Swap);
             self.bytecode.emit(Instruction::Call(func_id.as_u32()));
-            let func = self.context.get_script_function(func_id);
-            return Some(func.return_type.clone());
+            let func = self.context.get_function(func_id);
+            return Some(func.return_type().clone());
         }
 
         None
@@ -54,8 +54,8 @@ impl<'ast> FunctionCompiler<'ast> {
     ) -> Option<DataType> {
         if let Some(func_id) = self.context.find_operator_method(operand_type.type_id, operator) {
             self.bytecode.emit(Instruction::Call(func_id.as_u32()));
-            let func = self.context.get_script_function(func_id);
-            return Some(func.return_type.clone());
+            let func = self.context.get_function(func_id);
+            return Some(func.return_type().clone());
         }
         None
     }
@@ -134,10 +134,84 @@ impl<'ast> FunctionCompiler<'ast> {
         Some(())
     }
 
+    /// Validates reference parameters against their arguments (for FunctionRef).
+    ///
+    /// This is the FunctionRef version of validate_reference_parameters.
+    /// Checks that &out and &inout arguments are mutable lvalues.
+    pub(super) fn validate_reference_parameters_ref(
+        &mut self,
+        func_ref: &crate::semantic::FunctionRef,
+        arg_contexts: &[ExprContext],
+        call_args: &[crate::ast::expr::Argument<'ast>],
+        _span: Span,
+    ) -> Option<()> {
+        use crate::semantic::types::RefModifier;
+
+        // Iterate through parameters and check reference modifiers
+        for i in 0..func_ref.param_count() {
+            // Skip if we don't have an argument for this parameter
+            if i >= arg_contexts.len() {
+                continue;
+            }
+
+            let arg_ctx = &arg_contexts[i];
+            let param_type = func_ref.param_type(i);
+
+            // Void expressions cannot be passed as arguments
+            if arg_ctx.data_type.type_id == VOID_TYPE {
+                self.error(
+                    SemanticErrorKind::VoidExpression,
+                    call_args[i].span,
+                    format!("cannot pass void expression as argument {}", i + 1),
+                );
+                return None;
+            }
+
+            match param_type.ref_modifier {
+                RefModifier::None => {
+                    // No reference, any value is fine
+                }
+                RefModifier::In => {
+                    // &in accepts any value (lvalue or rvalue)
+                }
+                RefModifier::Out | RefModifier::InOut => {
+                    // &out and &inout require mutable lvalues
+                    if !arg_ctx.is_lvalue {
+                        self.error(
+                            SemanticErrorKind::InvalidOperation,
+                            call_args[i].span,
+                            format!(
+                                "parameter {} with '{}' modifier requires an lvalue, found rvalue",
+                                i + 1,
+                                if param_type.ref_modifier == RefModifier::Out { "&out" } else { "&inout" }
+                            ),
+                        );
+                        return None;
+                    }
+
+                    if !arg_ctx.is_mutable {
+                        self.error(
+                            SemanticErrorKind::InvalidOperation,
+                            call_args[i].span,
+                            format!(
+                                "parameter {} with '{}' modifier requires a mutable lvalue, found const lvalue",
+                                i + 1,
+                                if param_type.ref_modifier == RefModifier::Out { "&out" } else { "&inout" }
+                            ),
+                        );
+                        return None;
+                    }
+                }
+            }
+        }
+
+        Some(())
+    }
+
     /// Finds the best matching function overload for the given arguments.
     ///
     /// Returns the FunctionId of the best match, or None if no match found.
-    pub(super) fn find_best_function_overload(
+    pub fn find_best_function_overload(
         &mut self,
         candidates: &[FunctionId],
         arg_types: &[DataType],
@@ -146,10 +220,10 @@ impl<'ast> FunctionCompiler<'ast> {
         // Filter candidates by argument count first (considering default parameters)
         let count_matched: Vec<_> = candidates.iter().copied()
             .filter(|&func_id| {
-                let func_def = self.context.get_script_function(func_id);
+                let func_ref = self.context.get_function(func_id);
                 // Calculate minimum required params (params without defaults)
-                let min_params = func_def.params.iter().filter(|p| p.default.is_none()).count();
-                let max_params = func_def.params.len();
+                let min_params = func_ref.required_param_count();
+                let max_params = func_ref.param_count();
                 // Accept if arg count is within valid range
                 arg_types.len() >= min_params && arg_types.len() <= max_params
             })
@@ -169,14 +243,15 @@ impl<'ast> FunctionCompiler<'ast> {
 
         // Find exact match first (all types match exactly)
         for &func_id in &count_matched {
-            let func_def = self.context.get_script_function(func_id);
+            let func_ref = self.context.get_function(func_id);
+            let param_types = func_ref.param_types();
 
             // Check if all parameters match exactly (considering identity conversions)
             let mut conversions = Vec::with_capacity(arg_types.len());
             let mut is_exact = true;
 
-            for (param, arg) in func_def.params.iter().zip(arg_types.iter()) {
-                if let Some(conversion) = arg.can_convert_to(&param.data_type, self.context) {
+            for (param_type, arg) in param_types.iter().zip(arg_types.iter()) {
+                if let Some(conversion) = arg.can_convert_to(param_type, self.context) {
                     if conversion.cost == 0 {
                         // Identity or trivial conversion
                         conversions.push(if matches!(conversion.kind, crate::semantic::ConversionKind::Identity) {
@@ -206,16 +281,17 @@ impl<'ast> FunctionCompiler<'ast> {
         let mut best_match: Option<(FunctionId, Vec<Option<crate::semantic::Conversion>>, u32)> = None;
 
         for &func_id in &count_matched {
-            let func_def = self.context.get_script_function(func_id);
+            let func_ref = self.context.get_function(func_id);
+            let param_types = func_ref.param_types();
             let mut conversions = Vec::with_capacity(arg_types.len());
             let mut total_cost = 0u32;
             let mut all_convertible = true;
 
-            for (param_type, arg_type) in func_def.params.iter().zip(arg_types.iter()) {
-                if param_type.data_type.type_id == arg_type.type_id {
+            for (param_type, arg_type) in param_types.iter().zip(arg_types.iter()) {
+                if param_type.type_id == arg_type.type_id {
                     // Exact match - no conversion needed
                     conversions.push(None);
-                } else if let Some(conversion) = arg_type.can_convert_to(&param_type.data_type, self.context) {
+                } else if let Some(conversion) = arg_type.can_convert_to(param_type, self.context) {
                     if !conversion.is_implicit {
                         // Explicit conversion required - not valid for function calls
                         all_convertible = false;

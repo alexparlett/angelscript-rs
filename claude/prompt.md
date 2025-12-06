@@ -66,6 +66,11 @@ Detailed task files are in `/claude/tasks/`. Complete in order:
 | [14](tasks/14_ffi_advanced_templates.md) | Advanced templates (if_handle_then_const, funcdefs, specializations) | Not Started |
 | [16](tasks/16_ffi_gc_weakref_behaviors.md) | GC and weak reference behaviors | Not Started |
 
+### Phase 6: Standard Library Extensions
+| Task | Description | Status |
+|------|-------------|--------|
+| [24](tasks/24_stdlib_random_time.md) | Random and time functions for standard library | Not Started |
+
 ---
 
 ## Key Design Decisions

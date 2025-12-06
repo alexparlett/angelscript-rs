@@ -1,9 +1,7 @@
 // Utility functions - demonstrates common helper functions
 
-// FFI placeholder - will be replaced with proper FFI bindings
-float sqrt(float x) { return x; }
-int rand() { return 0; }
-const int RAND_MAX = 32767;
+// Import math functions from FFI
+using namespace math;
 
 namespace Math {
     float clamp(float value, float min, float max) {
@@ -136,20 +134,25 @@ namespace Array {
     }
 }
 
+// TODO: Task 24 - Add random functions to standard library
+// These are placeholder stubs until we implement proper random support
+int rand() { return 42; }
+const int RAND_MAX = 32767;
+
 namespace Random {
     int range(int min, int max) {
         return min + (rand() % (max - min + 1));
     }
-    
+
     float rangeFloat(float min, float max) {
         float r = float(rand()) / float(RAND_MAX);
         return min + r * (max - min);
     }
-    
+
     bool chance(float probability) {
         return rangeFloat(0.0, 1.0) < probability;
     }
-    
+
     int choice(const array<int> &in options) {
         int index = range(0, options.length() - 1);
         return options[index];

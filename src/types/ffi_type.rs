@@ -12,8 +12,8 @@ use std::sync::Arc;
 
 /// A native type definition.
 ///
-/// This is the FFI equivalent of `NativeTypeDef<'ast>`, but fully owned
-/// so it can be stored in `Arc<FfiRegistry>`.
+/// This is an owned type definition that can be stored in `Arc<FfiRegistry>`
+/// without arena lifetimes.
 ///
 /// # Example
 ///

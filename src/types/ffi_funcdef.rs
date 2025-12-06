@@ -11,8 +11,8 @@ use crate::types::{FfiDataType, FfiParam};
 
 /// A funcdef (function pointer type) definition.
 ///
-/// This is the FFI equivalent of `NativeFuncdefDef<'ast>`, but fully owned
-/// so it can be stored in `Arc<FfiRegistry>`.
+/// This is an owned funcdef definition that can be stored in `Arc<FfiRegistry>`
+/// without arena lifetimes.
 ///
 /// Funcdefs define function signature types that scripts can use for callbacks
 /// and delegates.

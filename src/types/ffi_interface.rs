@@ -9,7 +9,7 @@ use crate::types::{FfiDataType, FfiParam};
 
 /// An interface method signature.
 ///
-/// This is the FFI equivalent of `NativeInterfaceMethod<'ast>`, but fully owned.
+/// This is an owned interface method that can be stored in `FfiInterfaceDef`.
 #[derive(Debug, Clone)]
 pub struct FfiInterfaceMethod {
     /// Method name

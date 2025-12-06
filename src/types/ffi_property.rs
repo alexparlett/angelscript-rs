@@ -8,8 +8,8 @@ use crate::types::FfiDataType;
 
 /// A property definition with getter and optional setter.
 ///
-/// This is the FFI equivalent of `NativePropertyDef<'ast>`, but fully owned
-/// so it can be stored in `Arc<FfiRegistry>`.
+/// This is an owned property definition that can be stored in `Arc<FfiRegistry>`
+/// without arena lifetimes.
 #[derive(Debug)]
 pub struct FfiPropertyDef {
     /// Property name

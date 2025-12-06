@@ -945,7 +945,14 @@ impl<'ast> ScriptRegistry<'ast> {
                 let mut matching_methods: Vec<FunctionId> = methods
                     .iter()
                     .copied()
-                    .filter(|&id| self.get_function(id).name == name)
+                    .filter(|&id| {
+                        // Debug: print which ID we're looking up
+                        if !self.functions.contains_key(&id) {
+                            eprintln!("DEBUG: FunctionId {:?} not found in ScriptRegistry (is_ffi={}, methods={:?})",
+                                id, id.is_ffi(), methods);
+                        }
+                        self.get_function(id).name == name
+                    })
                     .collect();
 
                 // Recursively add matching methods from base class

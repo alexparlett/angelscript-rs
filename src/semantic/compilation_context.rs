@@ -327,18 +327,6 @@ impl<'ast> CompilationContext<'ast> {
         }
     }
 
-    /// Get a mutable type definition by TypeId.
-    ///
-    /// Only works for script types - FFI types are immutable.
-    /// Panics if the TypeId is an FFI type (this is a compiler bug).
-    pub fn get_type_mut(&mut self, type_id: TypeId) -> &mut TypeDef {
-        assert!(
-            !type_id.is_ffi(),
-            "Cannot modify FFI type - FFI types are immutable"
-        );
-        self.script.get_type_mut(type_id)
-    }
-
     /// Get access to the unified type name map.
     pub fn type_by_name(&self) -> &FxHashMap<String, TypeId> {
         &self.type_by_name
@@ -403,29 +391,6 @@ impl<'ast> CompilationContext<'ast> {
         } else {
             FunctionRef::Script(self.script.get_function(func_id))
         }
-    }
-
-    /// Get a script function definition by FunctionId.
-    ///
-    /// Only works for script functions. Panics if called with an FFI function ID.
-    /// Use `get_function` for a unified interface that works with both.
-    pub fn get_script_function(&self, func_id: FunctionId) -> &FunctionDef<'ast> {
-        assert!(
-            !func_id.is_ffi(),
-            "get_script_function called with FFI function ID - use get_function for unified access"
-        );
-        self.script.get_function(func_id)
-    }
-
-    /// Get a mutable script function definition by FunctionId.
-    ///
-    /// Only works for script functions. FFI functions are immutable.
-    pub fn get_function_mut(&mut self, func_id: FunctionId) -> &mut FunctionDef<'ast> {
-        assert!(
-            !func_id.is_ffi(),
-            "Cannot get mutable reference to FFI function"
-        );
-        self.script.get_function_mut(func_id)
     }
 
     /// Get the total count of registered functions (FFI + Script).
@@ -502,30 +467,6 @@ impl<'ast> CompilationContext<'ast> {
         route_type_lookup!(self, type_id, get_behaviors)
     }
 
-    /// Get mutable behaviors for a script type.
-    pub fn get_behaviors_mut(&mut self, type_id: TypeId) -> Option<&mut TypeBehaviors> {
-        if type_id.is_ffi() {
-            panic!("Cannot get mutable reference to FFI behaviors");
-        }
-        self.script.get_behaviors_mut(type_id)
-    }
-
-    /// Set behaviors for a script type.
-    pub fn set_behaviors(&mut self, type_id: TypeId, behaviors: TypeBehaviors) {
-        if type_id.is_ffi() {
-            panic!("Cannot set behaviors for FFI type");
-        }
-        self.script.set_behaviors(type_id, behaviors);
-    }
-
-    /// Get or create behaviors for a script type.
-    pub fn behaviors_mut(&mut self, type_id: TypeId) -> &mut TypeBehaviors {
-        if type_id.is_ffi() {
-            panic!("Cannot get mutable reference to FFI behaviors");
-        }
-        self.script.behaviors_mut(type_id)
-    }
-
     /// Find all constructors for a given type (value types).
     pub fn find_constructors(&self, type_id: TypeId) -> Vec<FunctionId> {
         route_type_lookup!(self, type_id, find_constructors)
@@ -538,36 +479,18 @@ impl<'ast> CompilationContext<'ast> {
 
     /// Find a constructor for a type with specific argument types.
     pub fn find_constructor(&self, type_id: TypeId, arg_types: &[DataType]) -> Option<FunctionId> {
-        // For FFI types, we'd need to implement this lookup
-        // For now, delegate to script registry which has the implementation
-        if type_id.is_ffi() {
-            // TODO: Implement FFI constructor lookup with arg matching
-            None
-        } else {
-            self.script.find_constructor(type_id, arg_types)
-        }
+        route_type_lookup!(self, type_id, find_constructor, arg_types)
     }
 
     /// Find the copy constructor for a type.
+    /// Copy constructor has signature: ClassName(const ClassName&in) or ClassName(const ClassName&inout)
     pub fn find_copy_constructor(&self, type_id: TypeId) -> Option<FunctionId> {
-        if type_id.is_ffi() {
-            // TODO: Implement FFI copy constructor lookup
-            None
-        } else {
-            self.script.find_copy_constructor(type_id)
-        }
+        route_type_lookup!(self, type_id, find_copy_constructor)
     }
 
     /// Check if a constructor is marked as explicit.
     pub fn is_constructor_explicit(&self, func_id: FunctionId) -> bool {
-        if func_id.is_ffi() {
-            self.ffi
-                .get_function(func_id)
-                .map(|f| f.traits.is_explicit)
-                .unwrap_or(false)
-        } else {
-            self.script.is_constructor_explicit(func_id)
-        }
+        route_type_lookup!(self, func_id, is_constructor_explicit)
     }
 
     // =========================================================================
@@ -597,14 +520,6 @@ impl<'ast> CompilationContext<'ast> {
         } else {
             self.script.get_all_methods(type_id)
         }
-    }
-
-    /// Add a method to a class's methods list.
-    pub fn add_method_to_class(&mut self, type_id: TypeId, func_id: FunctionId) {
-        if type_id.is_ffi() {
-            panic!("Cannot add method to FFI class");
-        }
-        self.script.add_method_to_class(type_id, func_id);
     }
 
     // =========================================================================
@@ -725,21 +640,6 @@ impl<'ast> CompilationContext<'ast> {
         }
     }
 
-    /// Check if setting base_id as the base class would create circular inheritance.
-    pub fn would_create_circular_inheritance(
-        &self,
-        type_id: TypeId,
-        proposed_base_id: TypeId,
-    ) -> bool {
-        if type_id.is_ffi() {
-            // FFI types can't be modified, so no circular inheritance possible
-            false
-        } else {
-            self.script
-                .would_create_circular_inheritance(type_id, proposed_base_id)
-        }
-    }
-
     // =========================================================================
     // Interface Support
     // =========================================================================
@@ -761,8 +661,7 @@ impl<'ast> CompilationContext<'ast> {
         interface_method: &MethodSignature,
     ) -> bool {
         if class_type_id.is_ffi() {
-            // TODO: Implement for FFI types
-            false
+            self.ffi.has_method_matching_interface(class_type_id, interface_method)
         } else {
             self.script
                 .has_method_matching_interface(class_type_id, interface_method)
@@ -794,8 +693,7 @@ impl<'ast> CompilationContext<'ast> {
         funcdef_type_id: TypeId,
     ) -> bool {
         if func_id.is_ffi() {
-            // TODO: Implement for FFI functions
-            false
+            self.ffi.is_function_compatible_with_funcdef(func_id, funcdef_type_id)
         } else {
             self.script
                 .is_function_compatible_with_funcdef(func_id, funcdef_type_id)
@@ -812,8 +710,8 @@ impl<'ast> CompilationContext<'ast> {
         if let Some(func_id) = self.script.find_compatible_function(name, funcdef_type_id) {
             return Some(func_id);
         }
-        // TODO: Try FFI functions
-        None
+        // Try FFI functions
+        self.ffi.find_compatible_function(name, funcdef_type_id)
     }
 
     // =========================================================================
@@ -829,96 +727,6 @@ impl<'ast> CompilationContext<'ast> {
             }
         } else {
             self.script.get_class_fields(type_id)
-        }
-    }
-
-    // =========================================================================
-    // Class Update Methods (delegates to ScriptRegistry)
-    // =========================================================================
-
-    /// Update a class with complete details.
-    pub fn update_class_details(
-        &mut self,
-        type_id: TypeId,
-        fields: Vec<FieldDef>,
-        methods: Vec<FunctionId>,
-        base_class: Option<TypeId>,
-        interfaces: Vec<TypeId>,
-        operator_methods: FxHashMap<OperatorBehavior, Vec<FunctionId>>,
-        properties: FxHashMap<String, PropertyAccessors>,
-    ) {
-        if type_id.is_ffi() {
-            panic!("Cannot update FFI class details");
-        }
-        self.script.update_class_details(
-            type_id,
-            fields,
-            methods,
-            base_class,
-            interfaces,
-            operator_methods,
-            properties,
-        );
-    }
-
-    /// Update an interface with complete method signatures.
-    pub fn update_interface_details(&mut self, type_id: TypeId, methods: Vec<MethodSignature>) {
-        if type_id.is_ffi() {
-            panic!("Cannot update FFI interface details");
-        }
-        self.script.update_interface_details(type_id, methods);
-    }
-
-    /// Update a funcdef with complete signature.
-    pub fn update_funcdef_signature(
-        &mut self,
-        type_id: TypeId,
-        params: Vec<DataType>,
-        return_type: DataType,
-    ) {
-        if type_id.is_ffi() {
-            panic!("Cannot update FFI funcdef signature");
-        }
-        self.script
-            .update_funcdef_signature(type_id, params, return_type);
-    }
-
-    // =========================================================================
-    // Override Validation Methods (delegates to ScriptRegistry)
-    // =========================================================================
-
-    /// Find a method in the base class chain.
-    pub fn find_base_method(&self, type_id: TypeId, method_name: &str) -> Option<FunctionId> {
-        if type_id.is_ffi() {
-            // FFI types can't have script base classes
-            None
-        } else {
-            self.script.find_base_method(type_id, method_name)
-        }
-    }
-
-    /// Find a method in the base class chain with matching signature.
-    pub fn find_base_method_with_signature(
-        &self,
-        type_id: TypeId,
-        method_name: &str,
-        params: &[DataType],
-        return_type: &DataType,
-    ) -> Option<FunctionId> {
-        if type_id.is_ffi() {
-            None
-        } else {
-            self.script
-                .find_base_method_with_signature(type_id, method_name, params, return_type)
-        }
-    }
-
-    /// Check if a base class method is marked as final.
-    pub fn is_base_method_final(&self, type_id: TypeId, method_name: &str) -> Option<FunctionId> {
-        if type_id.is_ffi() {
-            None
-        } else {
-            self.script.is_base_method_final(type_id, method_name)
         }
     }
 

@@ -1078,7 +1078,27 @@ All fail with "undefined type 'string'" or "undefined type 'array'" because:
 
 ---
 
-## Expected Performance
+## Actual Performance Results
+
+Benchmarks run on 2025-12-06 after Phase 6.7 completion:
+
+| File Size | Time Before → After | Improvement | Throughput |
+|-----------|---------------------|-------------|------------|
+| tiny (5 lines) | ~2ms → 22µs | **-98%** | 3.8 MiB/s |
+| small (60 lines) | ~3ms → 58µs | **-98%** | 15.2 MiB/s |
+| medium (130 lines) | ~3.4ms → 77µs | **-98%** | 41.3 MiB/s |
+| large (266 lines) | ~3.6ms → 171µs | **-95%** | 32.1 MiB/s |
+| xlarge (500 lines) | ~4.2ms → 413µs | **-90%** | 32.6 MiB/s |
+| xxlarge (1000 lines) | ~4.8ms → 765µs | **-83%** | 34.2 MiB/s |
+| stress (5000 lines) | ~7.6ms → 3.6ms | **-52%** | 32.2 MiB/s |
+
+**Observations:**
+- Smaller files benefit most (~98% improvement) because FFI import overhead dominated
+- Larger files still see massive gains but percentage decreases as actual compilation work increases
+- Throughput is consistent at ~32 MiB/s for larger files, showing compilation scales linearly
+- The shared `Arc<FfiRegistry>` architecture eliminates per-compilation FFI import overhead
+
+## Expected Performance (Original Estimates)
 
 | Scenario | Before | After | Improvement |
 |----------|--------|-------|-------------|

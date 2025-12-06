@@ -199,6 +199,21 @@ impl<'ast> Registrar<'ast> {
         // AngelScript supports function overloading. Actual duplicate detection
         // (checking signatures) happens in Pass 2a.
 
+        // For global functions (not methods) in root namespace, check if FFI already has a function with this name
+        // Only check root namespace - functions in namespaces like String::isEmpty don't conflict
+        // with FFI string methods which are registered with simple names
+        if object_type.is_none() && self.namespace_path.is_empty() {
+            let ffi_funcs = self.context.ffi().lookup_functions(func.name.name);
+            if !ffi_funcs.is_empty() {
+                self.errors.push(SemanticError::new(
+                    SemanticErrorKind::FfiNameShadowing,
+                    func.span,
+                    format!("cannot define function '{}': name is already used by FFI", func.name.name),
+                ));
+                return;
+            }
+        }
+
         // Register function (with empty signature for now)
         let func_id = FunctionId::next();
 
@@ -234,16 +249,16 @@ impl<'ast> Registrar<'ast> {
 
         // If this is a method (has object_type), add it to the class's methods list
         if let Some(type_id) = object_type {
-            self.context.add_method_to_class(type_id, func_id);
+            self.context.script_mut().add_method_to_class(type_id, func_id);
 
             // If this is a constructor, also add to behaviors
             if func.is_constructor() {
-                self.context.behaviors_mut(type_id).add_constructor(func_id);
+                self.context.script_mut().behaviors_mut(type_id).add_constructor(func_id);
             }
 
             // If this is a destructor, also add to behaviors
             if func.is_destructor {
-                self.context.behaviors_mut(type_id).destruct = Some(func_id);
+                self.context.script_mut().behaviors_mut(type_id).destruct = Some(func_id);
             }
         }
     }
@@ -258,6 +273,16 @@ impl<'ast> Registrar<'ast> {
                 SemanticErrorKind::DuplicateDeclaration,
                 class.span,
                 format!("class '{}' is already declared", qualified_name),
+            ));
+            return;
+        }
+
+        // Check if FFI already has a type with this name
+        if self.context.ffi().get_type_by_name(&qualified_name).is_some() {
+            self.errors.push(SemanticError::new(
+                SemanticErrorKind::FfiNameShadowing,
+                class.span,
+                format!("cannot define class '{}': name is already used by FFI", qualified_name),
             ));
             return;
         }
@@ -387,6 +412,16 @@ impl<'ast> Registrar<'ast> {
             return;
         }
 
+        // Check if FFI already has a type with this name
+        if self.context.ffi().get_type_by_name(&qualified_name).is_some() {
+            self.errors.push(SemanticError::new(
+                SemanticErrorKind::FfiNameShadowing,
+                iface.span,
+                format!("cannot define interface '{}': name is already used by FFI", qualified_name),
+            ));
+            return;
+        }
+
         // Register interface type (empty shell)
         let typedef = TypeDef::Interface {
             name: iface.name.name.to_string(),
@@ -408,6 +443,16 @@ impl<'ast> Registrar<'ast> {
                 SemanticErrorKind::DuplicateDeclaration,
                 enum_decl.span,
                 format!("enum '{}' is already declared", qualified_name),
+            ));
+            return;
+        }
+
+        // Check if FFI already has a type with this name
+        if self.context.ffi().get_type_by_name(&qualified_name).is_some() {
+            self.errors.push(SemanticError::new(
+                SemanticErrorKind::FfiNameShadowing,
+                enum_decl.span,
+                format!("cannot define enum '{}': name is already used by FFI", qualified_name),
             ));
             return;
         }
@@ -533,6 +578,16 @@ impl<'ast> Registrar<'ast> {
             return;
         }
 
+        // Check if FFI already has a type with this name
+        if self.context.ffi().get_type_by_name(&qualified_name).is_some() {
+            self.errors.push(SemanticError::new(
+                SemanticErrorKind::FfiNameShadowing,
+                funcdef.span,
+                format!("cannot define funcdef '{}': name is already used by FFI", qualified_name),
+            ));
+            return;
+        }
+
         // Register funcdef type (empty shell)
         let typedef = TypeDef::Funcdef {
             name: funcdef.name.name.to_string(),
@@ -639,8 +694,8 @@ impl<'ast> Registrar<'ast> {
         };
 
         self.context.register_function(func_def);
-        self.context.add_method_to_class(type_id, func_id);
-        self.context.behaviors_mut(type_id).add_constructor(func_id);
+        self.context.script_mut().add_method_to_class(type_id, func_id);
+        self.context.script_mut().behaviors_mut(type_id).add_constructor(func_id);
     }
 
     /// Generate a copy constructor for a class
@@ -672,8 +727,8 @@ impl<'ast> Registrar<'ast> {
         };
 
         self.context.register_function(func_def);
-        self.context.add_method_to_class(type_id, func_id);
-        self.context.behaviors_mut(type_id).add_constructor(func_id);
+        self.context.script_mut().add_method_to_class(type_id, func_id);
+        self.context.script_mut().behaviors_mut(type_id).add_constructor(func_id);
     }
 
     /// Generate an assignment operator for a class
@@ -706,7 +761,7 @@ impl<'ast> Registrar<'ast> {
         };
 
         self.context.register_function(func_def);
-        self.context.add_method_to_class(type_id, func_id);
+        self.context.script_mut().add_method_to_class(type_id, func_id);
     }
 
     /// Process a virtual property declaration
@@ -751,7 +806,7 @@ impl<'ast> Registrar<'ast> {
                     };
 
                     self.context.register_function(func_def);
-                    self.context.add_method_to_class(type_id, func_id);
+                    self.context.script_mut().add_method_to_class(type_id, func_id);
                 }
                 PropertyAccessorKind::Set => {
                     // Create synthetic setter function: void set_$propname(T value)
@@ -780,7 +835,7 @@ impl<'ast> Registrar<'ast> {
                     };
 
                     self.context.register_function(func_def);
-                    self.context.add_method_to_class(type_id, func_id);
+                    self.context.script_mut().add_method_to_class(type_id, func_id);
                 }
             }
         }

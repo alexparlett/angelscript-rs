@@ -7,8 +7,8 @@ use crate::semantic::types::type_def::TypeId;
 
 /// A native enum type definition.
 ///
-/// This is the FFI equivalent of `NativeEnumDef`, providing an owned
-/// enum definition that can be stored in `Arc<FfiRegistry>`.
+/// This is an owned enum definition that can be stored in `Arc<FfiRegistry>`
+/// without arena lifetimes.
 ///
 /// # Example
 ///

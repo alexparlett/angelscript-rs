@@ -58,6 +58,7 @@ use crate::semantic::types::type_def::{
     BOOL_TYPE, DOUBLE_TYPE, FLOAT_TYPE, INT16_TYPE, INT32_TYPE, INT64_TYPE, INT8_TYPE,
     PrimitiveType, UINT16_TYPE, UINT32_TYPE, UINT64_TYPE, UINT8_TYPE, VARIABLE_PARAM_TYPE, VOID_TYPE,
 };
+use crate::semantic::types::SELF_TYPE;
 use crate::semantic::types::DataType;
 use crate::types::{FfiFunctionDef, FfiResolutionError, ResolvedFfiFunctionDef};
 
@@ -198,6 +199,62 @@ impl FfiRegistry {
             .unwrap_or_default()
     }
 
+    /// Find a constructor for a type with specific argument types.
+    pub fn find_constructor(&self, type_id: TypeId, arg_types: &[DataType]) -> Option<FunctionId> {
+        let constructors = self.find_constructors(type_id);
+        for ctor_id in constructors {
+            if let Some(func) = self.get_function(ctor_id) {
+                if func.params.len() == arg_types.len() {
+                    let all_match = func
+                        .params
+                        .iter()
+                        .zip(arg_types.iter())
+                        .all(|(param, arg_type)| &param.data_type == arg_type);
+                    if all_match {
+                        return Some(ctor_id);
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    /// Find the copy constructor for a type.
+    /// Copy constructor has signature: ClassName(const ClassName&in) or ClassName(const ClassName&inout)
+    pub fn find_copy_constructor(&self, type_id: TypeId) -> Option<FunctionId> {
+        use crate::semantic::RefModifier;
+
+        let constructors = self.find_constructors(type_id);
+        for ctor_id in constructors {
+            if let Some(func) = self.get_function(ctor_id) {
+                // Copy constructor must have exactly one parameter
+                if func.params.len() != 1 {
+                    continue;
+                }
+                let param = &func.params[0];
+                // Parameter must be a reference (&in or &inout)
+                if !matches!(
+                    param.data_type.ref_modifier,
+                    RefModifier::In | RefModifier::InOut
+                ) {
+                    continue;
+                }
+                // Parameter type must match the class type
+                if param.data_type.type_id == type_id {
+                    return Some(ctor_id);
+                }
+            }
+        }
+        None
+    }
+
+    /// Check if a constructor is marked as explicit.
+    pub fn is_constructor_explicit(&self, func_id: FunctionId) -> bool {
+        self.get_function(func_id)
+            .map(|f| f.traits.is_explicit)
+            .unwrap_or(false)
+    }
+
     // =========================================================================
     // Method Lookups
     // =========================================================================
@@ -298,6 +355,40 @@ impl FfiRegistry {
         }
     }
 
+    /// Check if a class has a method matching an interface method signature.
+    pub fn has_method_matching_interface(
+        &self,
+        class_type_id: TypeId,
+        interface_method: &MethodSignature,
+    ) -> bool {
+        // Get all methods with this name on the FFI class
+        let methods = self.find_methods_by_name(class_type_id, &interface_method.name);
+        for method_id in methods {
+            if let Some(func) = self.get_function(method_id) {
+                // Check return type matches
+                if func.return_type.type_id != interface_method.return_type.type_id {
+                    continue;
+                }
+                // Check parameter count matches
+                if func.params.len() != interface_method.params.len() {
+                    continue;
+                }
+                // Check parameter types match
+                let params_match = func.params.iter().zip(interface_method.params.iter()).all(
+                    |(func_param, iface_param)| {
+                        func_param.data_type.type_id == iface_param.type_id
+                            && func_param.data_type.ref_modifier == iface_param.ref_modifier
+                            && func_param.data_type.is_handle == iface_param.is_handle
+                    },
+                );
+                if params_match {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
     // =========================================================================
     // Inheritance Support
     // =========================================================================
@@ -356,6 +447,51 @@ impl FfiRegistry {
             }) => Some((params.as_slice(), return_type)),
             _ => None,
         }
+    }
+
+    /// Check if a function is compatible with a funcdef type.
+    pub fn is_function_compatible_with_funcdef(
+        &self,
+        func_id: FunctionId,
+        funcdef_type_id: TypeId,
+    ) -> bool {
+        let Some(func) = self.get_function(func_id) else {
+            return false;
+        };
+        let Some((params, return_type)) = self.get_funcdef_signature(funcdef_type_id) else {
+            return false;
+        };
+
+        // Check return type matches
+        if func.return_type.type_id != return_type.type_id {
+            return false;
+        }
+
+        // Check parameter count matches
+        if func.params.len() != params.len() {
+            return false;
+        }
+
+        // Check parameter types match
+        func.params.iter().zip(params.iter()).all(|(func_param, funcdef_param)| {
+            func_param.data_type.type_id == funcdef_param.type_id
+                && func_param.data_type.ref_modifier == funcdef_param.ref_modifier
+        })
+    }
+
+    /// Find a function by name that is compatible with a funcdef type.
+    pub fn find_compatible_function(
+        &self,
+        name: &str,
+        funcdef_type_id: TypeId,
+    ) -> Option<FunctionId> {
+        // Search through all FFI functions for a match
+        for (&func_id, func) in &self.functions {
+            if func.name == name && self.is_function_compatible_with_funcdef(func_id, funcdef_type_id) {
+                return Some(func_id);
+            }
+        }
+        None
     }
 
     // =========================================================================
@@ -741,8 +877,51 @@ impl FfiRegistryBuilder {
             // Type lookup closure
             let type_lookup = |name: &str| -> Option<TypeId> { self.type_names.get(name).copied() };
 
-            // Create a dummy instantiate function (no template instantiation during build)
-            let mut instantiate = |_: TypeId, _: Vec<DataType>| -> Result<TypeId, String> {
+            // Get the owner type's template parameters (if this is a method on a template)
+            let owner_template_params: Option<Vec<TypeId>> = ffi_func.owner_type.and_then(|owner_id| {
+                self.types.get(&owner_id).and_then(|typedef| {
+                    match typedef {
+                        TypeDef::Class { template_params, .. } if !template_params.is_empty() => {
+                            Some(template_params.clone())
+                        }
+                        _ => None,
+                    }
+                })
+            });
+            let owner_type_id = ffi_func.owner_type;
+
+            // Create instantiate function that handles self-referential template types
+            let mut instantiate = |template_id: TypeId, args: Vec<DataType>| -> Result<TypeId, String> {
+                // Check if this is a self-reference: instantiating owner type with its own template params
+                if let (Some(owner_id), Some(params)) = (owner_type_id, &owner_template_params) {
+                    if template_id == owner_id && args.len() == params.len() {
+                        // Check if all args are the template params in order
+                        let is_self_ref = args.iter().zip(params.iter()).all(|(arg, &param_id)| {
+                            arg.type_id == param_id && !arg.is_const && !arg.is_handle
+                        });
+                        if is_self_ref {
+                            return Ok(SELF_TYPE);
+                        }
+                    }
+                }
+
+                // Also check if the template_id's params match the args exactly
+                // This handles factory functions that return the template type itself
+                if let Some(template_def) = self.types.get(&template_id) {
+                    if let TypeDef::Class { template_params, .. } = template_def {
+                        if !template_params.is_empty() && template_params.len() == args.len() {
+                            // Check if all args are the template's own params
+                            let is_self_ref = args.iter().zip(template_params.iter()).all(|(arg, &param_id)| {
+                                arg.type_id == param_id && !arg.is_const && !arg.is_handle
+                            });
+                            if is_self_ref {
+                                return Ok(SELF_TYPE);
+                            }
+                        }
+                    }
+                }
+
+                // Not a self-reference - template instantiation not supported during build
                 Err("Template instantiation not supported during FfiRegistry build".to_string())
             };
 
@@ -762,7 +941,7 @@ impl FfiRegistryBuilder {
                         native_fns.insert(func_id, native_fn);
                     }
                 }
-                Err(_) => {
+                Err(_e) => {
                     // Failed to resolve - likely a template method with unresolved type params
                     // Store unresolved for later resolution at template instantiation time
                     unresolved_functions.insert(func_id, ffi_func);

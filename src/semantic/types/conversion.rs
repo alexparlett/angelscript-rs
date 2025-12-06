@@ -14,7 +14,7 @@ use super::{
     type_def::{
         FunctionId, OperatorBehavior, TypeDef, TypeId, DOUBLE_TYPE, FLOAT_TYPE, INT16_TYPE,
         INT32_TYPE, INT64_TYPE, INT8_TYPE, NULL_TYPE, UINT16_TYPE, UINT32_TYPE, UINT64_TYPE,
-        UINT8_TYPE,
+        UINT8_TYPE, VARIABLE_PARAM_TYPE,
     },
 };
 
@@ -246,6 +246,11 @@ impl DataType {
         // looking up NULL_TYPE in registry (it's a special sentinel, not a real type)
         if self.type_id == NULL_TYPE {
             return None;
+        }
+
+        // VARIABLE_PARAM_TYPE (?&in) accepts any type - used for generic FFI functions
+        if target.type_id == VARIABLE_PARAM_TYPE {
+            return Some(Conversion::identity());
         }
 
         // Try primitive conversions first (most common)

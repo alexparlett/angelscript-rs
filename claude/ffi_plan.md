@@ -1,6 +1,6 @@
 # FFI Registration System Plan
 
-**Status:** In Progress (Task 19 Complete, Task 20 Investigation)
+**Status:** In Progress (Task 20 Complete)
 **Date:** 2025-12-03
 
 ## Overview
@@ -1130,6 +1130,25 @@ impl Unit {
 - Native functions stored in same `functions: HashMap<FunctionId, FunctionDef>`
 - Native types stored in same `types: Vec<TypeDef>` with same `TypeId` allocation
 
+### FFI Name Shadowing Prevention
+
+Script code cannot define entities with the same name as FFI entities in the same namespace. This prevents accidental shadowing and ensures FFI bindings remain accessible.
+
+**Error:** `SemanticErrorKind::FfiNameShadowing`
+
+**Checked during registration (Pass 1):**
+- Classes - cannot shadow FFI types
+- Interfaces - cannot shadow FFI types
+- Enums - cannot shadow FFI types
+- Funcdefs - cannot shadow FFI types
+- Global functions (root namespace only) - cannot shadow FFI functions
+
+**Not checked (different scopes):**
+- Methods within classes (scoped to their type)
+- Functions in script namespaces (different from root)
+
+**Implementation:** `src/semantic/passes/registration.rs`
+
 ### Semantic Analysis Compatibility
 
 Native module registrations must provide complete information for compile-time checking. When `apply_to_registry()` runs, it creates full `FunctionDef` and `TypeDef` entries.
@@ -1639,11 +1658,17 @@ Detailed task files are in `/claude/tasks/`. Complete in order:
 
 | Task | File | Description | Status |
 |------|------|-------------|--------|
-| 20 | [20_ffi_import_performance.md](tasks/20_ffi_import_performance.md) | FFI import performance optimization | 🔄 Investigation |
+| 20 | [20_ffi_import_performance.md](tasks/20_ffi_import_performance.md) | FFI import performance optimization | ✅ Complete |
 | 12 | [12_ffi_template_functions.md](tasks/12_ffi_template_functions.md) | Template function support via register_fn_raw | Not Started |
 | 13 | [13_ffi_variadic_args.md](tasks/13_ffi_variadic_args.md) | Variadic function arguments | Not Started |
 | 14 | [14_ffi_advanced_templates.md](tasks/14_ffi_advanced_templates.md) | Advanced template features (if_handle_then_const, child funcdefs, specializations) | Not Started |
 | 16 | [16_ffi_gc_weakref_behaviors.md](tasks/16_ffi_gc_weakref_behaviors.md) | GC and weak reference behaviors | Not Started |
+
+### Phase 6: Standard Library Extensions
+
+| Task | File | Description | Status |
+|------|------|-------------|--------|
+| 24 | [24_stdlib_random_time.md](tasks/24_stdlib_random_time.md) | Random and time functions for standard library | Not Started |
 
 ---
 

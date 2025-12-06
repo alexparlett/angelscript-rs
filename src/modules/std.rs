@@ -76,6 +76,26 @@ pub fn std_module<'app>() -> Result<Module<'app>, FfiModuleError> {
     // PRINT - stdout without newline
     // =========================================================================
 
+    // print(msg) - print string message
+    module.register_fn_raw(
+        "void print(const string &in msg)",
+        |ctx: &mut CallContext| {
+            let msg: String = ctx.arg(0)?;
+            print!("{}", msg);
+            Ok(())
+        },
+    )?;
+
+    // print(val) - print any value directly
+    module.register_fn_raw(
+        "void print(?&in val)",
+        |ctx: &mut CallContext| {
+            let val = ctx.arg_slot(0)?;
+            print!("{}", format_slot(val));
+            Ok(())
+        },
+    )?;
+
     // print(msg, val) - print message followed by any value
     module.register_fn_raw(
         "void print(const string &in msg, ?&in val)",
@@ -83,7 +103,6 @@ pub fn std_module<'app>() -> Result<Module<'app>, FfiModuleError> {
             let msg: String = ctx.arg(0)?;
             let val = ctx.arg_slot(1)?;
             print!("{}{}", msg, format_slot(val));
-            let _ = io::stdout().flush();
             Ok(())
         },
     )?;
@@ -91,6 +110,16 @@ pub fn std_module<'app>() -> Result<Module<'app>, FfiModuleError> {
     // =========================================================================
     // PRINTLN - stdout with newline
     // =========================================================================
+
+    // println(msg) - print message followed by any value, with newline
+    module.register_fn_raw(
+        "void println(const string &in msg)",
+        |ctx: &mut CallContext| {
+            let msg: String = ctx.arg(0)?;
+            println!("{}", msg);
+            Ok(())
+        },
+    )?;
 
     // println(msg, val) - print message followed by any value, with newline
     module.register_fn_raw(
@@ -160,11 +189,11 @@ mod tests {
     #[test]
     fn test_std_module_function_count() {
         let module = std_module().expect("std module should build");
-        // print(msg, val) + println(msg, val) + println() + eprint(msg, val) + eprintln(msg, val) + eprintln() = 6
+        // print(msg) + print(val) + print(msg, val) + println(msg) + println(msg, val) + println() + eprint(msg, val) + eprintln(msg, val) + eprintln() = 9
         assert_eq!(
             module.functions().len(),
-            6,
-            "std module should have 6 functions"
+            9,
+            "std module should have 9 functions"
         );
     }
 
@@ -193,8 +222,8 @@ mod tests {
             .iter()
             .filter(|f| f.name.as_str() == "print")
             .count();
-        // Just one print(msg, val) using generic calling convention
-        assert_eq!(print_count, 1, "should have 1 print function");
+        // print(msg) + print(val) + print(msg, val) = 3
+        assert_eq!(print_count, 3, "should have 3 print functions");
     }
 
     #[test]
@@ -205,8 +234,8 @@ mod tests {
             .iter()
             .filter(|f| f.name.as_str() == "println")
             .count();
-        // println(msg, val) + println() = 2
-        assert_eq!(println_count, 2, "should have 2 println functions");
+        // println(msg) + println(msg, val) + println() = 3
+        assert_eq!(println_count, 3, "should have 3 println functions");
     }
 
     #[test]

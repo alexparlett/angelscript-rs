@@ -563,18 +563,18 @@ impl<'ast> FunctionCompiler<'ast> {
         };
 
         // Validate operator signatures
-        let begin_func = self.context.get_script_function(begin_func_id);
-        if !begin_func.params.is_empty() {
+        let begin_func = self.context.get_function(begin_func_id);
+        if begin_func.param_count() != 0 {
             self.error(
                 SemanticErrorKind::InvalidOperation,
                 foreach.expr.span(),
-                format!("opForBegin must have no parameters, found {}", begin_func.params.len()),
+                format!("opForBegin must have no parameters, found {}", begin_func.param_count()),
             );
             return;
         }
 
-        let end_func = self.context.get_script_function(end_func_id);
-        if end_func.params.len() != 1 || end_func.return_type.type_id != BOOL_TYPE {
+        let end_func = self.context.get_function(end_func_id);
+        if end_func.param_count() != 1 || end_func.return_type().type_id != BOOL_TYPE {
             self.error(
                 SemanticErrorKind::InvalidOperation,
                 foreach.expr.span(),
@@ -583,8 +583,8 @@ impl<'ast> FunctionCompiler<'ast> {
             return;
         }
 
-        let next_func = self.context.get_script_function(next_func_id);
-        if next_func.params.len() != 1 {
+        let next_func = self.context.get_function(next_func_id);
+        if next_func.param_count() != 1 {
             self.error(
                 SemanticErrorKind::InvalidOperation,
                 foreach.expr.span(),
@@ -647,9 +647,9 @@ impl<'ast> FunctionCompiler<'ast> {
 
         // Declare and type-check loop variables
         for (i, var) in foreach.vars.iter().enumerate() {
-            let value_func = self.context.get_script_function(value_func_ids[i]);
+            let value_func = self.context.get_function(value_func_ids[i]);
 
-            if value_func.params.len() != 1 {
+            if value_func.param_count() != 1 {
                 self.error(
                     SemanticErrorKind::InvalidOperation,
                     var.span,
@@ -658,7 +658,7 @@ impl<'ast> FunctionCompiler<'ast> {
                 continue;
             }
 
-            let element_type = value_func.return_type.clone();
+            let element_type = value_func.return_type().clone();
 
             // Resolve the variable's type
             if let Some(var_type) = self.resolve_type_expr(&var.ty) {
@@ -710,7 +710,7 @@ impl<'ast> FunctionCompiler<'ast> {
         self.bytecode.emit(Instruction::Call(begin_func_id.as_u32()));
 
         // Store iterator in a local variable
-        let iterator_type = begin_func.return_type.clone();
+        let iterator_type = begin_func.return_type().clone();
         let iterator_offset = self.local_scope.declare_variable_auto(
             format!("$it_{}_{}", foreach.span.line, foreach.span.col),
             iterator_type,
@@ -735,7 +735,7 @@ impl<'ast> FunctionCompiler<'ast> {
         // Load values into loop variables
         for (i, var) in foreach.vars.iter().enumerate() {
             let value_func_id = value_func_ids[i];
-            let value_func = self.context.get_script_function(value_func_id);
+            let value_func = self.context.get_function(value_func_id);
 
             // Call container.opForValue#(iterator)
             // Stack: [] -> [value]
@@ -745,7 +745,7 @@ impl<'ast> FunctionCompiler<'ast> {
 
             // Apply conversion if needed
             if let Some(var_local) = self.local_scope.lookup(var.name.name) {
-                let element_type = value_func.return_type.clone();
+                let element_type = value_func.return_type().clone();
                 let var_offset = var_local.stack_offset; // Extract offset before mutable borrow
                 let var_type = var_local.data_type.clone();
 

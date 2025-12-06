@@ -830,8 +830,9 @@ impl<'app> Module<'app> {
             let behaviors = builder.behaviors_mut(type_def.id);
             behaviors.constructors.push(ctor.id);
 
-            // Build a new FfiFunctionDef for registration
-            let ctor_func = self.clone_function_def(ctor);
+            // Build a new FfiFunctionDef for registration with owner_type set
+            let mut ctor_func = self.clone_function_def(ctor);
+            ctor_func.owner_type = Some(type_def.id);
             let native_fn = ctor.native_fn.as_ref().map(|nf| nf.clone_arc());
             builder.register_function(ctor_func, native_fn);
         }
@@ -846,8 +847,9 @@ impl<'app> Module<'app> {
             let behaviors = builder.behaviors_mut(type_def.id);
             behaviors.factories.push(factory.id);
 
-            // Build a new FfiFunctionDef for registration
-            let factory_func = self.clone_function_def(factory);
+            // Build a new FfiFunctionDef for registration with owner_type set
+            let mut factory_func = self.clone_function_def(factory);
+            factory_func.owner_type = Some(type_def.id);
             let native_fn = factory.native_fn.as_ref().map(|nf| nf.clone_arc());
             builder.register_function(factory_func, native_fn);
         }
