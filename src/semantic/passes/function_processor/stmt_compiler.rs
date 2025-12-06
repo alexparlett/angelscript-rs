@@ -563,7 +563,7 @@ impl<'ast> FunctionCompiler<'ast> {
         };
 
         // Validate operator signatures
-        let begin_func = self.context.get_function(begin_func_id);
+        let begin_func = self.context.get_script_function(begin_func_id);
         if !begin_func.params.is_empty() {
             self.error(
                 SemanticErrorKind::InvalidOperation,
@@ -573,7 +573,7 @@ impl<'ast> FunctionCompiler<'ast> {
             return;
         }
 
-        let end_func = self.context.get_function(end_func_id);
+        let end_func = self.context.get_script_function(end_func_id);
         if end_func.params.len() != 1 || end_func.return_type.type_id != BOOL_TYPE {
             self.error(
                 SemanticErrorKind::InvalidOperation,
@@ -583,7 +583,7 @@ impl<'ast> FunctionCompiler<'ast> {
             return;
         }
 
-        let next_func = self.context.get_function(next_func_id);
+        let next_func = self.context.get_script_function(next_func_id);
         if next_func.params.len() != 1 {
             self.error(
                 SemanticErrorKind::InvalidOperation,
@@ -647,7 +647,7 @@ impl<'ast> FunctionCompiler<'ast> {
 
         // Declare and type-check loop variables
         for (i, var) in foreach.vars.iter().enumerate() {
-            let value_func = self.context.get_function(value_func_ids[i]);
+            let value_func = self.context.get_script_function(value_func_ids[i]);
 
             if value_func.params.len() != 1 {
                 self.error(
@@ -735,7 +735,7 @@ impl<'ast> FunctionCompiler<'ast> {
         // Load values into loop variables
         for (i, var) in foreach.vars.iter().enumerate() {
             let value_func_id = value_func_ids[i];
-            let value_func = self.context.get_function(value_func_id);
+            let value_func = self.context.get_script_function(value_func_id);
 
             // Call container.opForValue#(iterator)
             // Stack: [] -> [value]

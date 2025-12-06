@@ -104,22 +104,6 @@ impl Compiler {
         Self::compile_with_ffi(script, ffi)
     }
 
-    /// Compile a script with FFI modules imported first.
-    ///
-    /// # Deprecated
-    /// Use `compile_with_ffi` instead - modules are now installed into an FfiRegistry
-    /// before compilation.
-    #[deprecated(since = "0.3.0", note = "Use compile_with_ffi instead")]
-    #[cfg_attr(feature = "profiling", profiling::function)]
-    pub fn compile_with_modules<'ast>(
-        script: &'ast Script<'ast>,
-        _modules: &[crate::Module<'_>],
-    ) -> CompilationResult<'ast> {
-        // Create default FfiRegistry with primitives
-        let ffi = Arc::new(FfiRegistryBuilder::new().build().unwrap());
-        Self::compile_with_ffi(script, ffi)
-    }
-
     /// Compile a script with an FFI registry providing primitives and registered types.
     ///
     /// This is the main compilation entry point. It:

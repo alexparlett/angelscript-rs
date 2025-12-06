@@ -433,7 +433,7 @@ impl<'ast> FunctionCompiler<'ast> {
                     .iter()
                     .copied()
                     .find(|&fid| {
-                        let func_def = self.context.get_function(fid);
+                        let func_def = self.context.get_script_function(fid);
                         self.method_signature_matches(method_decl, func_def)
                     });
 
@@ -497,7 +497,7 @@ impl<'ast> FunctionCompiler<'ast> {
             None => return,
         };
 
-        let func_def = self.context.get_function(func_id);
+        let func_def = self.context.get_script_function(func_id);
 
         // Extract parameters for compilation (pre-allocate capacity)
         let params: Vec<(String, DataType)> = func_def.params.iter().enumerate()
@@ -786,7 +786,7 @@ impl<'ast> FunctionCompiler<'ast> {
             .iter()
             .copied()
             .find(|&id| {
-                let func_def = self.context.get_function(id);
+                let func_def = self.context.get_script_function(id);
                 func_def.object_type == object_type
             });
 
@@ -798,7 +798,7 @@ impl<'ast> FunctionCompiler<'ast> {
             }
         };
 
-        let func_def = self.context.get_function(func_id);
+        let func_def = self.context.get_script_function(func_id);
 
         // Extract parameters for compilation (pre-allocate capacity)
         let params: Vec<(String, DataType)> = func_def.params.iter().enumerate()
@@ -909,6 +909,35 @@ mod tests {
         let ctx = CompilationContext::new(ffi);
 
         (ctx, template_id)
+    }
+
+    /// Creates an FfiRegistry with the string module installed
+    fn create_ffi_with_string() -> Arc<crate::ffi::FfiRegistry> {
+        use crate::modules::string_module;
+        let mut builder = FfiRegistryBuilder::new();
+        let string_mod = string_module().expect("Failed to create string module");
+        string_mod.install_into(&mut builder).expect("Failed to install string module");
+        Arc::new(builder.build().unwrap())
+    }
+
+    /// Creates an FfiRegistry with the array module installed
+    fn create_ffi_with_array() -> Arc<crate::ffi::FfiRegistry> {
+        use crate::modules::array_module;
+        let mut builder = FfiRegistryBuilder::new();
+        let array_mod = array_module().expect("Failed to create array module");
+        array_mod.install_into(&mut builder).expect("Failed to install array module");
+        Arc::new(builder.build().unwrap())
+    }
+
+    /// Creates an FfiRegistry with string and array modules installed
+    fn create_ffi_with_string_and_array() -> Arc<crate::ffi::FfiRegistry> {
+        use crate::modules::{array_module, string_module};
+        let mut builder = FfiRegistryBuilder::new();
+        let string_mod = string_module().expect("Failed to create string module");
+        string_mod.install_into(&mut builder).expect("Failed to install string module");
+        let array_mod = array_module().expect("Failed to create array module");
+        array_mod.install_into(&mut builder).expect("Failed to install array module");
+        Arc::new(builder.build().unwrap())
     }
 
     #[test]
@@ -3352,7 +3381,8 @@ mod tests {
 
         let (script, _) = Parser::parse_lenient(source, &arena);
         let string_mod = string_module().expect("Failed to create string module");
-        let result = Compiler::compile_with_modules(&script, &[string_mod]);
+        let ffi = create_ffi_with_string();
+        let result = Compiler::compile_with_ffi(&script, ffi);
 
         assert!(result.is_success(), "String literal usage should work: {:?}", result.errors);
     }
@@ -4600,7 +4630,8 @@ mod tests {
 
         let (script, _) = Parser::parse_lenient(source, &arena);
         let array_mod = array_module().expect("Failed to create array module");
-        let result = Compiler::compile_with_modules(&script, &[array_mod]);
+        let ffi = create_ffi_with_array();
+        let result = Compiler::compile_with_ffi(&script, ffi);
 
         assert!(result.is_success(), "Init list should work: {:?}", result.errors);
     }
@@ -5401,7 +5432,8 @@ mod tests {
 
         let (script, _) = Parser::parse_lenient(source, &arena);
         let array_mod = array_module().expect("Failed to create array module");
-        let result = Compiler::compile_with_modules(&script, &[array_mod]);
+        let ffi = create_ffi_with_array();
+        let result = Compiler::compile_with_ffi(&script, ffi);
 
         assert!(result.is_success(), "Super call with array init should work: {:?}", result.errors);
     }
@@ -5900,7 +5932,8 @@ mod tests {
 
         let (script, _) = Parser::parse_lenient(source, &arena);
         let array_mod = array_module().expect("Failed to create array module");
-        let result = Compiler::compile_with_modules(&script, &[array_mod]);
+        let ffi = create_ffi_with_array();
+        let result = Compiler::compile_with_ffi(&script, ffi);
 
         assert!(result.is_success(), "Empty init list should work: {:?}", result.errors);
     }
@@ -5921,7 +5954,8 @@ mod tests {
 
         let (script, _) = Parser::parse_lenient(source, &arena);
         let array_mod = array_module().expect("Failed to create array module");
-        let result = Compiler::compile_with_modules(&script, &[array_mod]);
+        let ffi = create_ffi_with_array();
+        let result = Compiler::compile_with_ffi(&script, ffi);
 
         assert!(result.is_success(), "Multidimensional init list should work: {:?}", result.errors);
     }
@@ -5945,7 +5979,8 @@ mod tests {
 
         let (script, _) = Parser::parse_lenient(source, &arena);
         let array_mod = array_module().expect("Failed to create array module");
-        let result = Compiler::compile_with_modules(&script, &[array_mod]);
+        let ffi = create_ffi_with_array();
+        let result = Compiler::compile_with_ffi(&script, ffi);
 
         assert!(result.is_success(), "Init list in nested block should work: {:?}", result.errors);
     }
@@ -5969,7 +6004,8 @@ mod tests {
 
         let (script, _) = Parser::parse_lenient(source, &arena);
         let array_mod = array_module().expect("Failed to create array module");
-        let result = Compiler::compile_with_modules(&script, &[array_mod]);
+        let ffi = create_ffi_with_array();
+        let result = Compiler::compile_with_ffi(&script, ffi);
 
         assert!(result.is_success(), "Init list in for loop should work: {:?}", result.errors);
     }
@@ -5995,7 +6031,8 @@ mod tests {
 
         let (script, _) = Parser::parse_lenient(source, &arena);
         let array_mod = array_module().expect("Failed to create array module");
-        let result = Compiler::compile_with_modules(&script, &[array_mod]);
+        let ffi = create_ffi_with_array();
+        let result = Compiler::compile_with_ffi(&script, ffi);
 
         assert!(result.is_success(), "Init list in while loop should work: {:?}", result.errors);
     }
@@ -6024,7 +6061,8 @@ mod tests {
 
         let (script, _) = Parser::parse_lenient(source, &arena);
         let array_mod = array_module().expect("Failed to create array module");
-        let result = Compiler::compile_with_modules(&script, &[array_mod]);
+        let ffi = create_ffi_with_array();
+        let result = Compiler::compile_with_ffi(&script, ffi);
 
         assert!(result.is_success(), "Init list in deeply nested blocks should work: {:?}", result.errors);
     }
@@ -6054,7 +6092,8 @@ mod tests {
 
         let (script, _) = Parser::parse_lenient(source, &arena);
         let array_mod = array_module().expect("Failed to create array module");
-        let result = Compiler::compile_with_modules(&script, &[array_mod]);
+        let ffi = create_ffi_with_array();
+        let result = Compiler::compile_with_ffi(&script, ffi);
 
         assert!(result.is_success(), "Template type in switch should work: {:?}", result.errors);
     }
@@ -6081,7 +6120,8 @@ mod tests {
 
         let (script, _) = Parser::parse_lenient(source, &arena);
         let array_mod = array_module().expect("Failed to create array module");
-        let result = Compiler::compile_with_modules(&script, &[array_mod]);
+        let ffi = create_ffi_with_array();
+        let result = Compiler::compile_with_ffi(&script, ffi);
 
         assert!(result.is_success(), "Template type in try/catch should work: {:?}", result.errors);
     }
@@ -6105,7 +6145,8 @@ mod tests {
 
         let (script, _) = Parser::parse_lenient(source, &arena);
         let array_mod = array_module().expect("Failed to create array module");
-        let result = Compiler::compile_with_modules(&script, &[array_mod]);
+        let ffi = create_ffi_with_array();
+        let result = Compiler::compile_with_ffi(&script, ffi);
 
         assert!(result.is_success(), "Multiple template types should work: {:?}", result.errors);
     }
@@ -6171,7 +6212,8 @@ mod tests {
 
         let (script, _) = Parser::parse_lenient(source, &arena);
         let array_mod = array_module().expect("Failed to create array module");
-        let result = Compiler::compile_with_modules(&script, &[array_mod]);
+        let ffi = create_ffi_with_array();
+        let result = Compiler::compile_with_ffi(&script, ffi);
 
         assert!(result.is_success(), "Super detection with init list should work: {:?}", result.errors);
     }
@@ -6350,7 +6392,8 @@ mod tests {
 
         let (script, _) = Parser::parse_lenient(source, &arena);
         let string_mod = string_module().expect("Failed to create string module");
-        let result = Compiler::compile_with_modules(&script, &[string_mod]);
+        let ffi = create_ffi_with_string();
+        let result = Compiler::compile_with_ffi(&script, ffi);
 
         assert!(result.is_success(), "Overloaded function call should work: {:?}", result.errors);
     }
@@ -6445,7 +6488,8 @@ mod tests {
 
         let (script, _) = Parser::parse_lenient(source, &arena);
         let string_mod = string_module().expect("Failed to create string module");
-        let result = Compiler::compile_with_modules(&script, &[string_mod]);
+        let ffi = create_ffi_with_string();
+        let result = Compiler::compile_with_ffi(&script, ffi);
 
         assert!(result.is_success(), "Function with default args should work: {:?}", result.errors);
     }
@@ -6647,7 +6691,6 @@ mod tests {
     fn array_access() {
         use crate::Parser;
         use crate::semantic::Compiler;
-        use crate::modules::array_module;
         use bumpalo::Bump;
 
         let arena = Bump::new();
@@ -6660,8 +6703,8 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let array_mod = array_module().expect("Failed to create array module");
-        let result = Compiler::compile_with_modules(&script, &[array_mod]);
+        let ffi = create_ffi_with_array();
+        let result = Compiler::compile_with_ffi(&script, ffi);
 
         assert!(result.is_success(), "Array access should work: {:?}", result.errors);
     }
@@ -9907,7 +9950,6 @@ mod tests {
     fn string_index_works() {
         use crate::Parser;
         use crate::semantic::Compiler;
-        use crate::modules::string_module;
         use bumpalo::Bump;
 
         let arena = Bump::new();
@@ -9919,8 +9961,8 @@ mod tests {
         "#;
 
         let (script, _) = Parser::parse_lenient(source, &arena);
-        let string_mod = string_module().expect("Failed to create string module");
-        let result = Compiler::compile_with_modules(&script, &[string_mod]);
+        let ffi = create_ffi_with_string();
+        let result = Compiler::compile_with_ffi(&script, ffi);
 
         // String indexing should work with built-in opIndex
         assert!(result.is_success(), "String index should work with opIndex: {:?}", result.errors);
@@ -11609,7 +11651,8 @@ mod tests {
 
         let (script, _) = Parser::parse_lenient(source, &arena);
         let string_mod = string_module().expect("Failed to create string module");
-        let result = Compiler::compile_with_modules(&script, &[string_mod]);
+        let ffi = create_ffi_with_string();
+        let result = Compiler::compile_with_ffi(&script, ffi);
 
         assert!(result.is_success(), "String assignment should work: {:?}", result.errors);
     }
@@ -12087,7 +12130,8 @@ mod tests {
 
         let (script, _) = Parser::parse_lenient(source, &arena);
         let string_mod = string_module().expect("Failed to create string module");
-        let result = Compiler::compile_with_modules(&script, &[string_mod]);
+        let ffi = create_ffi_with_string();
+        let result = Compiler::compile_with_ffi(&script, ffi);
 
         assert!(result.is_success(), "String switch should work: {:?}", result.errors);
     }
@@ -12114,7 +12158,8 @@ mod tests {
 
         let (script, _) = Parser::parse_lenient(source, &arena);
         let string_mod = string_module().expect("Failed to create string module");
-        let result = Compiler::compile_with_modules(&script, &[string_mod]);
+        let ffi = create_ffi_with_string();
+        let result = Compiler::compile_with_ffi(&script, ffi);
 
         assert!(!result.errors.is_empty(), "Should detect duplicate string case");
         assert!(result.errors.iter().any(|e| e.message.contains("duplicate")),

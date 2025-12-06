@@ -667,7 +667,7 @@ impl<'r, 'ast> FunctionDefView<'r, 'ast> {
 ---
 
 ### Phase 6: Refactor Registry Architecture
-**Status:** In Progress (6.1, 6.2 Complete)
+**Status:** In Progress (6.1-6.6 Complete)
 
 **Goal:** Refactor so `Registry` becomes `ScriptRegistry` (no FFI knowledge), introduce `CompilationContext` as the unified facade, and use TypeId/FunctionId high bits to identify FFI vs Script.
 
@@ -934,14 +934,53 @@ All fail with "undefined type 'string'" or "undefined type 'array'" because:
 
 ---
 
-#### Phase 6.6: Update Context and Unit
+#### Phase 6.6: Update Context and Unit ✓
+**Status:** Complete
 **Files:**
 - `src/context.rs`
 - `src/unit.rs`
+- `src/semantic/compiler.rs`
+- `src/semantic/compilation_context.rs`
+- `src/semantic/template_instantiator.rs`
+- `src/semantic/passes/function_processor/expr_checker.rs`
+- `src/semantic/passes/type_compilation.rs`
+- `src/ffi/class_builder.rs`
+- `src/types/ffi_convert.rs`
 
-1. `Unit::build()` creates `CompilationContext` from `Arc<FfiRegistry>`
-2. Update `CompilationResult` to return appropriate types
-3. Ensure `Arc<FfiRegistry>` is passed through correctly
+**Changes:**
+
+1. **`Unit::build()` uses `compile_with_ffi()`**:
+   - Gets `Arc<FfiRegistry>` from Context
+   - Passes to `Compiler::compile_with_ffi()`
+   - Falls back to default FFI registry (primitives only) if no context
+
+2. **Deleted `compile_with_modules()`**:
+   - Removed deprecated method from `src/semantic/compiler.rs`
+   - Updated all tests to use `compile_with_ffi()` with proper FFI registries
+   - Added test helpers: `create_ffi_with_string()`, `create_ffi_with_array()`, `create_ffi_with_string_and_array()`
+
+3. **Template specialization for operator methods**:
+   - `TemplateInstantiator` now creates specialized `FunctionDef` with substituted types
+   - When instantiating `array<int>`, operator methods get `int` return types (not `T`)
+   - Added `substitute_type()` helper to replace template params with concrete types
+
+4. **Unified function lookup via `FunctionRef`**:
+   - `CompilationContext::get_function()` returns `FunctionRef` (works for FFI and Script)
+   - Added `get_script_function()` for script-only access
+   - `FunctionRef` provides unified interface: `param_count()`, `param_type()`, `return_type()`, `traits()`, `name()`
+   - Updated all operator method lookups to use unified interface
+
+5. **Fixed operator behavior detection**:
+   - Moved auto-detection from `signature_to_ffi_function()` to `operator()` and `operator_raw()` in class_builder
+   - Operators are now properly registered with their behavior when using the builder API
+
+6. **Updated `find_operator_method_with_mutability()`**:
+   - Now implemented directly in `CompilationContext` using unified function lookup
+   - Handles cases where script types (template instances) have FFI function IDs in their `operator_methods`
+
+**Test Results:**
+- 2423 tests passing
+- All FFI module tests working with proper registry setup
 
 ---
 

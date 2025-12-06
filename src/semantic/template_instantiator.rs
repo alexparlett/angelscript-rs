@@ -35,9 +35,8 @@ use rustc_hash::FxHashMap;
 use crate::ffi::{FfiRegistry, TemplateInstanceInfo};
 use crate::lexer::Span;
 use crate::semantic::error::{SemanticError, SemanticErrorKind};
-use crate::semantic::types::behaviors::TypeBehaviors;
-use crate::semantic::types::registry::ScriptRegistry;
-use crate::semantic::types::type_def::{TypeDef, TypeId};
+use crate::semantic::types::registry::{FunctionDef, ScriptParam, ScriptRegistry};
+use crate::semantic::types::type_def::{FunctionId, OperatorBehavior, TypeDef, TypeId, Visibility};
 use crate::semantic::types::DataType;
 
 /// Handles template instantiation with caching.
@@ -65,6 +64,45 @@ impl TemplateInstantiator {
     pub fn get_cached(&self, template_id: TypeId, args: &[DataType]) -> Option<TypeId> {
         let key = (template_id, args.iter().map(|a| a.type_id).collect());
         self.cache.get(&key).copied()
+    }
+
+    /// Substitute template parameters in a DataType with concrete type arguments.
+    ///
+    /// If the type is a template parameter (matching one in `template_params`),
+    /// it will be replaced with the corresponding type from `args`.
+    fn substitute_type(
+        data_type: &DataType,
+        template_params: &[TypeId],
+        args: &[DataType],
+        ffi: &FfiRegistry,
+    ) -> DataType {
+        // Check if this type is a template parameter
+        if let Some(typedef) = ffi.get_type(data_type.type_id) {
+            if let TypeDef::TemplateParam { index, .. } = typedef {
+                // This is a template parameter - substitute it
+                if *index < args.len() {
+                    let mut substituted = args[*index].clone();
+                    // Preserve modifiers from the original type
+                    substituted.is_const = data_type.is_const;
+                    substituted.ref_modifier = data_type.ref_modifier;
+                    return substituted;
+                }
+            }
+        }
+
+        // Also check if the type_id is directly in template_params
+        for (i, &param_id) in template_params.iter().enumerate() {
+            if data_type.type_id == param_id && i < args.len() {
+                let mut substituted = args[i].clone();
+                // Preserve modifiers from the original type
+                substituted.is_const = data_type.is_const;
+                substituted.ref_modifier = data_type.ref_modifier;
+                return substituted;
+            }
+        }
+
+        // Not a template parameter - return as-is
+        data_type.clone()
     }
 
     /// Instantiate a template type with the given type arguments.
@@ -112,22 +150,29 @@ impl TemplateInstantiator {
         };
 
         // Verify it's a template and extract info
-        let (template_name, template_params, template_kind) = match template_def {
-            TypeDef::Class {
-                name,
-                template_params,
-                type_kind,
-                ..
-            } => {
-                if template_params.is_empty() {
-                    return Err(SemanticError::new(
-                        SemanticErrorKind::NotATemplate,
-                        Span::default(),
-                        format!("{} is not a template type", name),
-                    ));
+        let (template_name, template_params, template_kind, template_operator_methods) =
+            match template_def {
+                TypeDef::Class {
+                    name,
+                    template_params,
+                    type_kind,
+                    operator_methods,
+                    ..
+                } => {
+                    if template_params.is_empty() {
+                        return Err(SemanticError::new(
+                            SemanticErrorKind::NotATemplate,
+                            Span::default(),
+                            format!("{} is not a template type", name),
+                        ));
+                    }
+                    (
+                        name.clone(),
+                        template_params.clone(),
+                        type_kind.clone(),
+                        operator_methods.clone(),
+                    )
                 }
-                (name.clone(), template_params.clone(), type_kind.clone())
-            }
             _ => {
                 return Err(SemanticError::new(
                     SemanticErrorKind::NotATemplate,
@@ -183,6 +228,64 @@ impl TemplateInstantiator {
             .collect();
         let instance_name = format!("{}<{}>", template_name, type_arg_names.join(", "));
 
+        // Create specialized operator methods with substituted types
+        let mut specialized_operator_methods: FxHashMap<OperatorBehavior, Vec<FunctionId>> =
+            FxHashMap::default();
+
+        for (operator, func_ids) in &template_operator_methods {
+            let mut specialized_ids = Vec::with_capacity(func_ids.len());
+
+            for &func_id in func_ids {
+                // Get the original FFI function
+                if let Some(ffi_func) = ffi.get_function(func_id) {
+                    // Create specialized parameters with substituted types
+                    let specialized_params: Vec<ScriptParam<'_>> = ffi_func
+                        .params
+                        .iter()
+                        .map(|p| {
+                            let substituted_type = Self::substitute_type(
+                                &p.data_type,
+                                &template_params,
+                                &args,
+                                ffi,
+                            );
+                            ScriptParam::new(p.name.clone(), substituted_type)
+                        })
+                        .collect();
+
+                    // Substitute return type
+                    let specialized_return_type = Self::substitute_type(
+                        &ffi_func.return_type,
+                        &template_params,
+                        &args,
+                        ffi,
+                    );
+
+                    // Create a new script function with specialized types
+                    let specialized_func = FunctionDef {
+                        id: FunctionId::next_script(),
+                        name: ffi_func.name.clone(),
+                        namespace: Vec::new(),
+                        params: specialized_params,
+                        return_type: specialized_return_type,
+                        object_type: None, // Will be set after type is registered
+                        traits: ffi_func.traits.clone(),
+                        is_native: true, // Still backed by native FFI function
+                        visibility: Visibility::Public,
+                        signature_filled: true,
+                    };
+
+                    let specialized_id = script.register_function(specialized_func);
+                    specialized_ids.push(specialized_id);
+                } else {
+                    // Function not found in FFI - keep original ID (shouldn't happen)
+                    specialized_ids.push(func_id);
+                }
+            }
+
+            specialized_operator_methods.insert(*operator, specialized_ids);
+        }
+
         // Create the instance TypeDef
         // Template instances are always Script types (created per-compilation)
         let instance_def = TypeDef::Class {
@@ -192,7 +295,7 @@ impl TemplateInstantiator {
             methods: Vec::new(), // Methods will be added via instantiate_template_methods
             base_class: None,
             interfaces: Vec::new(),
-            operator_methods: FxHashMap::default(),
+            operator_methods: specialized_operator_methods, // Use specialized functions
             properties: FxHashMap::default(),
             is_final: false,
             is_abstract: false,
@@ -230,6 +333,7 @@ impl TemplateInstantiator {
 mod tests {
     use super::*;
     use crate::ffi::FfiRegistryBuilder;
+    use crate::semantic::types::behaviors::TypeBehaviors;
     use crate::semantic::types::type_def::INT32_TYPE;
     use crate::types::TypeKind;
 

@@ -128,6 +128,16 @@ impl<'a, 'ast> FunctionRef<'a, 'ast> {
         }
     }
 
+    /// Get a specific parameter's DataType by index.
+    ///
+    /// Panics if index is out of bounds.
+    pub fn param_type(&self, index: usize) -> &DataType {
+        match self {
+            FunctionRef::Script(f) => &f.params[index].data_type,
+            FunctionRef::Ffi(f) => &f.params[index].data_type,
+        }
+    }
+
     /// Get the number of parameters.
     pub fn param_count(&self) -> usize {
         match self {
@@ -383,7 +393,7 @@ impl<'ast> CompilationContext<'ast> {
     /// Returns a `FunctionRef` that provides unified access to function metadata
     /// for both FFI and script functions.
     /// Panics if the function is not found.
-    pub fn get_function_ref(&self, func_id: FunctionId) -> FunctionRef<'_, 'ast> {
+    pub fn get_function(&self, func_id: FunctionId) -> FunctionRef<'_, 'ast> {
         if func_id.is_ffi() {
             FunctionRef::Ffi(
                 self.ffi
@@ -398,17 +408,13 @@ impl<'ast> CompilationContext<'ast> {
     /// Get a script function definition by FunctionId.
     ///
     /// Only works for script functions. Panics if called with an FFI function ID.
-    pub fn get_function(&self, func_id: FunctionId) -> &FunctionDef<'ast> {
+    /// Use `get_function` for a unified interface that works with both.
+    pub fn get_script_function(&self, func_id: FunctionId) -> &FunctionDef<'ast> {
         assert!(
             !func_id.is_ffi(),
-            "get_function called with FFI function ID - use get_function_ref for FFI functions"
+            "get_script_function called with FFI function ID - use get_function for unified access"
         );
         self.script.get_function(func_id)
-    }
-
-    /// Get an FFI function definition by FunctionId.
-    pub fn get_ffi_function(&self, func_id: FunctionId) -> Option<&ResolvedFfiFunctionDef> {
-        self.ffi.get_function(func_id)
     }
 
     /// Get a mutable script function definition by FunctionId.
@@ -624,18 +630,45 @@ impl<'ast> CompilationContext<'ast> {
     }
 
     /// Find the best operator method based on desired mutability.
+    ///
+    /// This method uses unified function lookup because operator methods
+    /// on script types (like template instances) may be FFI functions.
     pub fn find_operator_method_with_mutability(
         &self,
         type_id: TypeId,
         operator: OperatorBehavior,
         prefer_mutable: bool,
     ) -> Option<FunctionId> {
-        if type_id.is_ffi() {
-            // FfiRegistry doesn't have this, fall back to simple lookup
-            self.ffi.find_operator_method(type_id, operator)
+        let overloads = self.find_operator_methods(type_id, operator);
+        if overloads.is_empty() {
+            return None;
+        }
+
+        // If only one overload, return it
+        if overloads.len() == 1 {
+            return Some(overloads[0]);
+        }
+
+        // Multiple overloads - find the one matching our preference
+        // For mutable access, we want the one with non-const return type
+        // For const access, we want the const one
+        let mut mutable_method = None;
+        let mut const_method = None;
+
+        for &func_id in overloads {
+            // Use unified lookup since operator methods could be FFI or Script
+            let func = self.get_function(func_id);
+            if func.return_type().is_const {
+                const_method = Some(func_id);
+            } else {
+                mutable_method = Some(func_id);
+            }
+        }
+
+        if prefer_mutable {
+            mutable_method.or(const_method)
         } else {
-            self.script
-                .find_operator_method_with_mutability(type_id, operator, prefer_mutable)
+            const_method.or(mutable_method)
         }
     }
 

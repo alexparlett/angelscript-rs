@@ -583,7 +583,15 @@ impl<'m, 'app, T: NativeType> ClassBuilder<'m, 'app, T> {
     where
         F: IntoNativeFn<Args, Ret>,
     {
-        let operator_def = self.parse_method_decl(decl, f.into_native_fn())?;
+        use crate::semantic::types::type_def::OperatorBehavior;
+
+        let mut operator_def = self.parse_method_decl(decl, f.into_native_fn())?;
+
+        // Auto-detect operator behavior from method name
+        if let Some(operator) = OperatorBehavior::from_method_name(&operator_def.name, None) {
+            operator_def = operator_def.with_operator(operator);
+        }
+
         self.operators.push(operator_def);
         Ok(self)
     }
@@ -610,7 +618,15 @@ impl<'m, 'app, T: NativeType> ClassBuilder<'m, 'app, T> {
     where
         F: NativeCallable + Send + Sync + 'static,
     {
-        let operator_def = self.parse_method_decl(decl, NativeFn::new(f))?;
+        use crate::semantic::types::type_def::OperatorBehavior;
+
+        let mut operator_def = self.parse_method_decl(decl, NativeFn::new(f))?;
+
+        // Auto-detect operator behavior from method name
+        if let Some(operator) = OperatorBehavior::from_method_name(&operator_def.name, None) {
+            operator_def = operator_def.with_operator(operator);
+        }
+
         self.operators.push(operator_def);
         Ok(self)
     }

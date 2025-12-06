@@ -24,7 +24,7 @@ impl<'ast> FunctionCompiler<'ast> {
         // Try left operand's operator first
         if let Some(func_id) = self.context.find_operator_method(left_type.type_id, operator) {
             self.bytecode.emit(Instruction::Call(func_id.as_u32()));
-            let func = self.context.get_function(func_id);
+            let func = self.context.get_script_function(func_id);
             return Some(func.return_type.clone());
         }
 
@@ -35,7 +35,7 @@ impl<'ast> FunctionCompiler<'ast> {
             // We need: [right, left]
             self.bytecode.emit(Instruction::Swap);
             self.bytecode.emit(Instruction::Call(func_id.as_u32()));
-            let func = self.context.get_function(func_id);
+            let func = self.context.get_script_function(func_id);
             return Some(func.return_type.clone());
         }
 
@@ -54,7 +54,7 @@ impl<'ast> FunctionCompiler<'ast> {
     ) -> Option<DataType> {
         if let Some(func_id) = self.context.find_operator_method(operand_type.type_id, operator) {
             self.bytecode.emit(Instruction::Call(func_id.as_u32()));
-            let func = self.context.get_function(func_id);
+            let func = self.context.get_script_function(func_id);
             return Some(func.return_type.clone());
         }
         None
@@ -146,7 +146,7 @@ impl<'ast> FunctionCompiler<'ast> {
         // Filter candidates by argument count first (considering default parameters)
         let count_matched: Vec<_> = candidates.iter().copied()
             .filter(|&func_id| {
-                let func_def = self.context.get_function(func_id);
+                let func_def = self.context.get_script_function(func_id);
                 // Calculate minimum required params (params without defaults)
                 let min_params = func_def.params.iter().filter(|p| p.default.is_none()).count();
                 let max_params = func_def.params.len();
@@ -169,7 +169,7 @@ impl<'ast> FunctionCompiler<'ast> {
 
         // Find exact match first (all types match exactly)
         for &func_id in &count_matched {
-            let func_def = self.context.get_function(func_id);
+            let func_def = self.context.get_script_function(func_id);
 
             // Check if all parameters match exactly (considering identity conversions)
             let mut conversions = Vec::with_capacity(arg_types.len());
@@ -206,7 +206,7 @@ impl<'ast> FunctionCompiler<'ast> {
         let mut best_match: Option<(FunctionId, Vec<Option<crate::semantic::Conversion>>, u32)> = None;
 
         for &func_id in &count_matched {
-            let func_def = self.context.get_function(func_id);
+            let func_def = self.context.get_script_function(func_id);
             let mut conversions = Vec::with_capacity(arg_types.len());
             let mut total_cost = 0u32;
             let mut all_convertible = true;

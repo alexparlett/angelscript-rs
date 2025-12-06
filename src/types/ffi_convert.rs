@@ -178,6 +178,8 @@ pub fn return_type_to_ffi(return_type: &ReturnType<'_>) -> FfiDataType {
 /// Convert a FunctionSignatureDecl to FfiFunctionDef.
 ///
 /// This is used for both standalone functions and methods.
+/// Note: Operator methods should be registered via `.operator()` or `.operator_raw()`
+/// which handle operator behavior registration separately.
 pub fn signature_to_ffi_function(
     sig: &FunctionSignatureDecl<'_>,
     native_fn: NativeFn,

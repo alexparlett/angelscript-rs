@@ -839,6 +839,8 @@ impl<'app> Module<'app> {
 
     /// Install factories for a reference type.
     fn install_type_factories(&self, builder: &mut FfiRegistryBuilder, type_def: &FfiTypeDef) {
+        use crate::semantic::types::type_def::FunctionId;
+
         for factory in &type_def.factories {
             // Add to behaviors
             let behaviors = builder.behaviors_mut(type_def.id);
@@ -848,6 +850,25 @@ impl<'app> Module<'app> {
             let factory_func = self.clone_function_def(factory);
             let native_fn = factory.native_fn.as_ref().map(|nf| nf.clone_arc());
             builder.register_function(factory_func, native_fn);
+        }
+
+        // Install list_factory if present (for init list support like `array<int> a = {1, 2, 3}`)
+        if let Some(list_behavior) = &type_def.list_factory {
+            let list_factory_id = FunctionId::next_ffi();
+
+            // Create a FfiFunctionDef for the list factory
+            let list_factory_func = FfiFunctionDef::new(
+                list_factory_id,
+                format!("{}$list_factory", type_def.name),
+            )
+            .with_owner_type(type_def.id)
+            .with_native_fn(list_behavior.native_fn.clone_arc());
+
+            builder.register_function(list_factory_func, Some(list_behavior.native_fn.clone_arc()));
+
+            // Set the list_factory behavior
+            let behaviors = builder.behaviors_mut(type_def.id);
+            behaviors.list_factory = Some(list_factory_id);
         }
     }
 

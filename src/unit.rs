@@ -37,6 +37,7 @@
 //! ```
 
 use crate::context::Context;
+use crate::ffi::FfiRegistryBuilder;
 use crate::semantic::{Compiler, CompiledModule, SemanticError};
 use crate::{Parser, ParseError};
 use bumpalo::Bump;
@@ -291,20 +292,21 @@ impl<'app> Unit<'app> {
             return Err(BuildError::MultiFileNotSupported);
         }
 
-        // Get modules from context (if available)
-        let empty_modules: &[crate::Module<'_>] = &[];
-        let modules = self
+        // Get FFI registry from context (if available)
+        let ffi_registry = self
             .context
             .as_ref()
-            .map(|ctx| ctx.modules())
-            .unwrap_or(empty_modules);
+            .and_then(|ctx| ctx.ffi_registry().cloned())
+            .unwrap_or_else(|| {
+                // Create default FFI registry with primitives only
+                Arc::new(FfiRegistryBuilder::new().build().unwrap())
+            });
 
-        // Compile the script(s) with FFI modules
-        #[allow(deprecated)]
+        // Compile the script(s) with FFI registry
         let compilation_result = {
             if scripts.len() == 1 {
-                // Single file - compile with modules from context
-                Compiler::compile_with_modules(&scripts[0].1, modules)
+                // Single file - compile with FFI registry from context
+                Compiler::compile_with_ffi(&scripts[0].1, ffi_registry)
             } else {
                 // Multi-file - TODO: implement
                 todo!("Multi-file compilation not yet implemented")

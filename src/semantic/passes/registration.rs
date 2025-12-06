@@ -1167,13 +1167,13 @@ mod tests {
         // Find default constructor (0 params)
         let default_ctor = constructors.iter().find(|&&id| {
             let func = data.context.get_function(id);
-            func.params.is_empty()
+            func.param_count() == 0
         });
 
         assert!(default_ctor.is_some(), "Default constructor should be auto-generated");
         let func = data.context.get_function(*default_ctor.unwrap());
-        assert!(func.traits.is_constructor);
-        assert!(!func.traits.is_explicit);
+        assert!(func.traits().is_constructor);
+        assert!(!func.traits().is_explicit);
     }
 
     #[test]
@@ -1210,15 +1210,15 @@ mod tests {
         };
         let op_assign = methods.iter().find(|&&id| {
             let func = data.context.get_function(id);
-            func.name == "opAssign"
+            func.name() == "opAssign"
         });
 
         assert!(op_assign.is_some(), "opAssign should be auto-generated");
 
         let func = data.context.get_function(*op_assign.unwrap());
-        assert_eq!(func.name, "opAssign");
-        assert!(!func.traits.is_constructor);
-        assert!(func.traits.auto_generated.is_some());
+        assert_eq!(func.name(), "opAssign");
+        assert!(!func.traits().is_constructor);
+        assert!(func.traits().auto_generated.is_some());
         // Params will be empty until Pass 2a fills them in
     }
 
@@ -1246,13 +1246,13 @@ mod tests {
         };
         let op_assign = methods.iter().find(|&&id| {
             let func = data.context.get_function(id);
-            func.name == "opAssign"
+            func.name() == "opAssign"
         });
 
         assert!(op_assign.is_some(), "opAssign should exist");
 
         let func = data.context.get_function(*op_assign.unwrap());
-        assert!(func.traits.auto_generated.is_none(), "Should NOT be auto-generated");
+        assert!(func.traits().auto_generated.is_none(), "Should NOT be auto-generated");
     }
 
     #[test]
@@ -1271,7 +1271,7 @@ mod tests {
         };
         let op_assign = methods.iter().find(|&&id| {
             let func = data.context.get_function(id);
-            func.name == "opAssign"
+            func.name() == "opAssign"
         });
 
         assert!(op_assign.is_none(), "Deleted opAssign should prevent auto-generation");
@@ -1318,11 +1318,11 @@ mod tests {
         // Should have getter and setter functions registered
         let getter = methods.iter().find(|&&id| {
             let func = data.context.get_function(id);
-            func.name == "get_health"
+            func.name() == "get_health"
         });
         let setter = methods.iter().find(|&&id| {
             let func = data.context.get_function(id);
-            func.name == "set_health"
+            func.name() == "set_health"
         });
 
         assert!(getter.is_some(), "Getter should be registered");
@@ -1330,11 +1330,11 @@ mod tests {
 
         // Check getter is const
         let getter_func = data.context.get_function(*getter.unwrap());
-        assert!(getter_func.traits.is_const, "Getter must be const");
+        assert!(getter_func.traits().is_const, "Getter must be const");
 
         // Check setter is not const
         let setter_func = data.context.get_function(*setter.unwrap());
-        assert!(!setter_func.traits.is_const, "Setter must not be const");
+        assert!(!setter_func.traits().is_const, "Setter must not be const");
     }
 
     #[test]
@@ -1362,11 +1362,11 @@ mod tests {
         // Should have getter but not setter
         let getter = methods.iter().find(|&&id| {
             let func = data.context.get_function(id);
-            func.name == "get_health"
+            func.name() == "get_health"
         });
         let setter = methods.iter().find(|&&id| {
             let func = data.context.get_function(id);
-            func.name == "set_health"
+            func.name() == "set_health"
         });
 
         assert!(getter.is_some(), "Getter should be registered");
@@ -1663,9 +1663,9 @@ mod tests {
         // Verify the destructor FunctionId is correctly marked
         let destructor_id = behaviors.destruct.unwrap();
         let func = data.context.get_function(destructor_id);
-        assert!(func.traits.is_destructor, "Function should be marked as destructor");
+        assert!(func.traits().is_destructor, "Function should be marked as destructor");
         // Name is stored as the class name (Player), not ~Player
-        assert_eq!(func.name, "Player", "Destructor name is the class name");
+        assert_eq!(func.name(), "Player", "Destructor name is the class name");
     }
 
     #[test]

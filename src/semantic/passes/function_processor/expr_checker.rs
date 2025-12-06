@@ -262,7 +262,7 @@ impl<'ast> FunctionCompiler<'ast> {
                 // Check properties (getter access)
                 if let Some(accessors) = properties.get(name)
                     && let Some(getter_id) = accessors.getter {
-                        let getter = self.context.get_function(getter_id);
+                        let getter = self.context.get_script_function(getter_id);
                         let return_type = getter.return_type.clone();
 
                         // Emit LoadThis followed by CallMethod for the getter
@@ -1077,7 +1077,7 @@ impl<'ast> FunctionCompiler<'ast> {
                     // Stack: [target, value] → target.opAssign(value)
                     self.bytecode.emit(Instruction::Call(func_id.as_u32()));
                     let func = self.context.get_function(func_id);
-                    return Some(ExprContext::rvalue(func.return_type.clone()));
+                    return Some(ExprContext::rvalue(func.return_type().clone()));
                 }
 
                 // Fall back to primitive assignment with type conversion
@@ -1173,7 +1173,7 @@ impl<'ast> FunctionCompiler<'ast> {
                     // Call opXxxAssign(value) on target
                     // Stack: [target, value] → target.opAddAssign(value)
                     self.bytecode.emit(Instruction::Call(func_id.as_u32()));
-                    let func = self.context.get_function(func_id);
+                    let func = self.context.get_script_function(func_id);
                     return Some(ExprContext::rvalue(func.return_type.clone()));
                 }
 
@@ -1382,7 +1382,7 @@ impl<'ast> FunctionCompiler<'ast> {
                         call.span,
                     )?;
 
-                    let func_def = self.context.get_function(matching_ctor);
+                    let func_def = self.context.get_script_function(matching_ctor);
 
                     // Validate reference parameters
                     self.validate_reference_parameters(func_def, &arg_contexts, call.args, call.span)?;
@@ -1414,7 +1414,7 @@ impl<'ast> FunctionCompiler<'ast> {
                                 let all_methods = self.context.get_methods(base_class_id);
                                 let mut base_methods = Vec::with_capacity(all_methods.len().min(4));
                                 for func_id in all_methods {
-                                    let func = self.context.get_function(func_id);
+                                    let func = self.context.get_script_function(func_id);
                                     if func.name == method_name {
                                         base_methods.push(func_id);
                                     }
@@ -1442,7 +1442,7 @@ impl<'ast> FunctionCompiler<'ast> {
                                         call.span,
                                     )?;
 
-                                    let func_def = self.context.get_function(method_id);
+                                    let func_def = self.context.get_script_function(method_id);
 
                                     // Validate reference parameters
                                     self.validate_reference_parameters(func_def, &arg_contexts, call.args, call.span)?;
@@ -1532,7 +1532,7 @@ impl<'ast> FunctionCompiler<'ast> {
                                 arg_contexts.push(arg_ctx);
                             }
 
-                            let func_def = self.context.get_function(func_id);
+                            let func_def = self.context.get_script_function(func_id);
 
                             // Validate argument count
                             if arg_contexts.len() != func_def.params.len() {
@@ -1726,7 +1726,7 @@ impl<'ast> FunctionCompiler<'ast> {
                     // Narrow candidates based on non-lambda argument types (pre-allocate)
                     let mut narrowed_candidates = Vec::with_capacity(candidates.len());
                     for &func_id in &candidates {
-                        let func_def = self.context.get_function(func_id);
+                        let func_def = self.context.get_script_function(func_id);
                         // Check argument count (considering defaults)
                         let min_params = func_def.params.iter().filter(|p| p.default.is_none()).count();
                         if call.args.len() < min_params || call.args.len() > func_def.params.len() {
@@ -1753,7 +1753,7 @@ impl<'ast> FunctionCompiler<'ast> {
 
                     // Pass 2: Type-check lambda arguments with inferred funcdef types
                     let expected_param_types = if narrowed_candidates.len() == 1 {
-                        let func_def = self.context.get_function(narrowed_candidates[0]);
+                        let func_def = self.context.get_script_function(narrowed_candidates[0]);
                         Some(func_def.params.clone())
                     } else {
                         None
@@ -1788,7 +1788,7 @@ impl<'ast> FunctionCompiler<'ast> {
                 } else {
                     // Simple case: single candidate or no lambdas
                     let expected_param_types = if candidates.len() == 1 {
-                        let func_def = self.context.get_function(candidates[0]);
+                        let func_def = self.context.get_script_function(candidates[0]);
                         Some(&func_def.params)
                     } else {
                         None
@@ -1827,7 +1827,7 @@ impl<'ast> FunctionCompiler<'ast> {
                     call.span,
                 )?;
 
-                let func_def = self.context.get_function(matching_func);
+                let func_def = self.context.get_script_function(matching_func);
 
                 // Compile default arguments if fewer args provided than params
                 if arg_contexts.len() < func_def.params.len() {
@@ -1883,7 +1883,7 @@ impl<'ast> FunctionCompiler<'ast> {
                     // Call opCall(args) on callee
                     // Stack: [callee, arg1, arg2, ...] → callee.opCall(arg1, arg2, ...)
 
-                    let func_def = self.context.get_function(func_id);
+                    let func_def = self.context.get_script_function(func_id);
 
                     // Validate argument count
                     if arg_contexts.len() != func_def.params.len() {
@@ -2080,13 +2080,13 @@ impl<'ast> FunctionCompiler<'ast> {
             let func = self.context.get_function(func_id);
 
             // Check parameter count matches
-            if func.params.len() != idx_contexts.len() {
+            if func.param_count() != idx_contexts.len() {
                 self.error(
                     SemanticErrorKind::InvalidOperation,
                     index.span,
                     format!(
                         "opIndex expects {} parameter(s), found {}",
-                        func.params.len(),
+                        func.param_count(),
                         idx_contexts.len()
                     ),
                 );
@@ -2095,7 +2095,7 @@ impl<'ast> FunctionCompiler<'ast> {
 
             // Type check each index argument against corresponding opIndex parameter
             for (i, (idx_ctx, idx_span)) in idx_contexts.iter().enumerate() {
-                let param_type = &func.params[i].data_type;
+                let param_type = func.param_type(i);
 
                 if let Some(conversion) = idx_ctx.data_type.can_convert_to(param_type, self.context) {
                     if !conversion.is_implicit {
@@ -2132,8 +2132,8 @@ impl<'ast> FunctionCompiler<'ast> {
             self.bytecode.emit(Instruction::Call(func_id.as_u32()));
 
             // opIndex returns a reference, so result is an lvalue
-            let is_mutable = current_ctx.is_mutable && !func.return_type.is_const;
-            return Some(ExprContext::lvalue(func.return_type.clone(), is_mutable));
+            let is_mutable = current_ctx.is_mutable && !func.return_type().is_const;
+            return Some(ExprContext::lvalue(func.return_type().clone(), is_mutable));
         }
 
         // Try get_opIndex accessor (priority 2)
@@ -2141,13 +2141,13 @@ impl<'ast> FunctionCompiler<'ast> {
             let func = self.context.get_function(func_id);
 
             // Check parameter count matches
-            if func.params.len() != idx_contexts.len() {
+            if func.param_count() != idx_contexts.len() {
                 self.error(
                     SemanticErrorKind::InvalidOperation,
                     index.span,
                     format!(
                         "get_opIndex expects {} parameter(s), found {}",
-                        func.params.len(),
+                        func.param_count(),
                         idx_contexts.len()
                     ),
                 );
@@ -2156,7 +2156,7 @@ impl<'ast> FunctionCompiler<'ast> {
 
             // Type check each index argument
             for (i, (idx_ctx, idx_span)) in idx_contexts.iter().enumerate() {
-                let param_type = &func.params[i].data_type;
+                let param_type = func.param_type(i);
 
                 if let Some(conversion) = idx_ctx.data_type.can_convert_to(param_type, self.context) {
                     if !conversion.is_implicit {
@@ -2192,7 +2192,7 @@ impl<'ast> FunctionCompiler<'ast> {
             self.bytecode.emit(Instruction::Call(func_id.as_u32()));
 
             // get_opIndex returns a value (read-only), so result is an rvalue
-            return Some(ExprContext::rvalue(func.return_type.clone()));
+            return Some(ExprContext::rvalue(func.return_type().clone()));
         }
 
         // No opIndex or get_opIndex registered for this type
@@ -2232,16 +2232,16 @@ impl<'ast> FunctionCompiler<'ast> {
                 if let Some(func_id) = self.context.find_operator_method(current_ctx.data_type.type_id, OperatorBehavior::OpIndex) {
                     let func = self.context.get_function(func_id);
 
-                    if func.params.len() != 1 {
+                    if func.param_count() != 1 {
                         self.error(
                             SemanticErrorKind::InvalidOperation,
                             idx_item.span,
-                            format!("opIndex must have exactly 1 parameter, found {}", func.params.len()),
+                            format!("opIndex must have exactly 1 parameter, found {}", func.param_count()),
                         );
                         return None;
                     }
 
-                    let param_type = &func.params[0].data_type;
+                    let param_type = func.param_type(0);
                     if let Some(conversion) = idx_ctx.data_type.can_convert_to(param_type, self.context) {
                         if !conversion.is_implicit {
                             self.error(
@@ -2270,21 +2270,21 @@ impl<'ast> FunctionCompiler<'ast> {
                     }
 
                     self.bytecode.emit(Instruction::Call(func_id.as_u32()));
-                    let is_mutable = current_ctx.is_mutable && !func.return_type.is_const;
-                    current_ctx = ExprContext::lvalue(func.return_type.clone(), is_mutable);
+                    let is_mutable = current_ctx.is_mutable && !func.return_type().is_const;
+                    current_ctx = ExprContext::lvalue(func.return_type().clone(), is_mutable);
                 } else if let Some(func_id) = self.context.find_operator_method(current_ctx.data_type.type_id, OperatorBehavior::OpIndexGet) {
                     let func = self.context.get_function(func_id);
 
-                    if func.params.len() != 1 {
+                    if func.param_count() != 1 {
                         self.error(
                             SemanticErrorKind::InvalidOperation,
                             idx_item.span,
-                            format!("get_opIndex must have exactly 1 parameter, found {}", func.params.len()),
+                            format!("get_opIndex must have exactly 1 parameter, found {}", func.param_count()),
                         );
                         return None;
                     }
 
-                    let param_type = &func.params[0].data_type;
+                    let param_type = func.param_type(0);
                     if let Some(conversion) = idx_ctx.data_type.can_convert_to(param_type, self.context) {
                         if !conversion.is_implicit {
                             self.error(
@@ -2313,7 +2313,7 @@ impl<'ast> FunctionCompiler<'ast> {
                     }
 
                     self.bytecode.emit(Instruction::Call(func_id.as_u32()));
-                    current_ctx = ExprContext::rvalue(func.return_type.clone());
+                    current_ctx = ExprContext::rvalue(func.return_type().clone());
                 } else {
                     self.error(
                         SemanticErrorKind::InvalidOperation,
@@ -2329,16 +2329,16 @@ impl<'ast> FunctionCompiler<'ast> {
                     // opIndex exists - use regular assignment through reference
                     let func = self.context.get_function(func_id);
 
-                    if func.params.len() != 1 {
+                    if func.param_count() != 1 {
                         self.error(
                             SemanticErrorKind::InvalidOperation,
                             idx_item.span,
-                            format!("opIndex must have exactly 1 parameter, found {}", func.params.len()),
+                            format!("opIndex must have exactly 1 parameter, found {}", func.param_count()),
                         );
                         return None;
                     }
 
-                    let param_type = &func.params[0].data_type;
+                    let param_type = func.param_type(0);
                     if let Some(conversion) = idx_ctx.data_type.can_convert_to(param_type, self.context) {
                         if !conversion.is_implicit {
                             self.error(
@@ -2367,8 +2367,8 @@ impl<'ast> FunctionCompiler<'ast> {
                     }
 
                     self.bytecode.emit(Instruction::Call(func_id.as_u32()));
-                    let is_mutable = current_ctx.is_mutable && !func.return_type.is_const;
-                    current_ctx = ExprContext::lvalue(func.return_type.clone(), is_mutable);
+                    let is_mutable = current_ctx.is_mutable && !func.return_type().is_const;
+                    current_ctx = ExprContext::lvalue(func.return_type().clone(), is_mutable);
 
                     // Now handle assignment to the returned reference
                     // Check that it's a mutable lvalue
@@ -2426,17 +2426,17 @@ impl<'ast> FunctionCompiler<'ast> {
                     let func = self.context.get_function(func_id);
 
                     // set_opIndex should have exactly 2 parameters: (index, value)
-                    if func.params.len() != 2 {
+                    if func.param_count() != 2 {
                         self.error(
                             SemanticErrorKind::InvalidOperation,
                             idx_item.span,
-                            format!("set_opIndex must have exactly 2 parameters, found {}", func.params.len()),
+                            format!("set_opIndex must have exactly 2 parameters, found {}", func.param_count()),
                         );
                         return None;
                     }
 
-                    let index_param_type = &func.params[0].data_type;
-                    let value_param_type = &func.params[1].data_type;
+                    let index_param_type = func.param_type(0);
+                    let value_param_type = func.param_type(1);
 
                     // Type check the index argument
                     if let Some(conversion) = idx_ctx.data_type.can_convert_to(index_param_type, self.context) {
@@ -2565,7 +2565,7 @@ impl<'ast> FunctionCompiler<'ast> {
         }
 
         // Get setter function to validate value type
-        let setter_func = self.context.get_function(setter_id);
+        let setter_func = self.context.get_script_function(setter_id);
 
         // Setter should have exactly one parameter (the value)
         if setter_func.params.len() != 1 {
@@ -2664,7 +2664,7 @@ impl<'ast> FunctionCompiler<'ast> {
 
                                 // Check const-correctness: if object is const, getter must be const
                                 let is_const_object = object_ctx.data_type.is_const || object_ctx.data_type.is_handle_to_const;
-                                let getter_func = self.context.get_function(getter_id);
+                                let getter_func = self.context.get_script_function(getter_id);
                                 if is_const_object && !getter_func.traits.is_const {
                                     self.error(
                                         SemanticErrorKind::InvalidOperation,
@@ -2781,7 +2781,7 @@ impl<'ast> FunctionCompiler<'ast> {
                             // Const objects can only call const methods (pre-allocate)
                             let mut filtered = Vec::with_capacity(candidates.len());
                             for func_id in candidates {
-                                let func_def = self.context.get_function(func_id);
+                                let func_def = self.context.get_script_function(func_id);
                                 if func_def.traits.is_const {
                                     filtered.push(func_id);
                                 }
@@ -2809,7 +2809,7 @@ impl<'ast> FunctionCompiler<'ast> {
                         // When there's a single matching method, we can infer funcdef types for lambdas
                         let mut arg_contexts = Vec::with_capacity(args.len());
                         let expected_param_types = if const_filtered.len() == 1 {
-                            let func_def = self.context.get_function(const_filtered[0]);
+                            let func_def = self.context.get_script_function(const_filtered[0]);
                             Some(&func_def.params)
                         } else {
                             None
@@ -2847,7 +2847,7 @@ impl<'ast> FunctionCompiler<'ast> {
                             member.span,
                         )?;
 
-                        let func_def = self.context.get_function(matching_method);
+                        let func_def = self.context.get_script_function(matching_method);
 
                         // Check visibility access
                         if !self.check_visibility_access(func_def.visibility, object_ctx.data_type.type_id) {
