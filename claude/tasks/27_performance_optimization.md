@@ -46,7 +46,7 @@ let behaviors: FxHashMap<TypeHash, TypeBehaviors> = self.behaviors
 
 ---
 
-### A2: Cache type_by_name in FfiRegistry
+### A2: Cache type_by_name in FfiRegistry - ✅ COMPLETE
 
 **File:** `crates/angelscript-ffi/src/registry/ffi_registry.rs`
 **Lines:** ~146-151
@@ -62,7 +62,7 @@ pub fn type_by_name(&self) -> FxHashMap<String, TypeHash> {
 
 Called from CompilationContext init (once per Unit). Allocates string for every FFI type.
 
-**Fix:** Cache this map in FfiRegistry at build time as a field.
+**Fix:** Cache this map in FfiRegistry at build time as a field. Returns `&FxHashMap` instead of owned map.
 
 **Impact:** 0.5-1ms
 
@@ -255,7 +255,7 @@ Add `unit/build_only` benchmark that measures just compilation without Unit crea
 | # | Task | Est. Impact | Effort | Status |
 |---|------|-------------|--------|--------|
 | A1 | Fix O(n²) in build() | 1-2ms | Easy | ✅ Complete |
-| A2 | Cache type_by_name | 0.5-1ms | Medium | Pending |
+| A2 | Cache type_by_name | 0.5-1ms | Medium | ✅ Complete |
 | A3 | Return ref from func_by_name | 0.5-1ms | Easy | Pending |
 | A4 | Arc refs in CompilationContext | 0.5-1ms | Medium | Pending |
 

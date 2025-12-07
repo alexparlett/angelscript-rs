@@ -79,6 +79,8 @@ pub struct FfiRegistry {
     // === Type Storage (TypeHash primary key) ===
     /// All FFI types indexed by TypeHash
     types: FxHashMap<TypeHash, TypeDef>,
+    /// Cached type name → TypeHash mapping (built once during registry creation)
+    type_by_name: FxHashMap<String, TypeHash>,
 
     // === Function Storage (TypeHash primary key) ===
     /// All FFI functions indexed by TypeHash (resolved, non-template)
@@ -106,6 +108,7 @@ impl std::fmt::Debug for FfiRegistry {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("FfiRegistry")
             .field("types", &format!("<{} types>", self.types.len()))
+            .field("type_by_name", &format!("<{} names>", self.type_by_name.len()))
             .field("functions", &format!("<{} functions>", self.functions.len()))
             .field("function_overloads", &format!("<{} names>", self.function_overloads.len()))
             .field("native_fns", &format!("<{} native fns>", self.native_fns.len()))
@@ -142,12 +145,10 @@ impl FfiRegistry {
 
     /// Get access to the type name → TypeHash map for iteration.
     ///
+    /// This map is cached at registry build time for O(1) access.
     /// Used by CompilationContext for initializing its unified name maps.
-    pub fn type_by_name(&self) -> FxHashMap<String, TypeHash> {
-        self.types
-            .iter()
-            .map(|(hash, def)| (def.qualified_name().to_string(), *hash))
-            .collect()
+    pub fn type_by_name(&self) -> &FxHashMap<String, TypeHash> {
+        &self.type_by_name
     }
 
     /// Get the number of registered types.
@@ -988,6 +989,12 @@ impl FfiRegistryBuilder {
             .map(|(_, def)| (def.type_hash(), def))
             .collect();
 
+        // Build type name → TypeHash cache (O(1) lookup instead of O(n) iteration)
+        let type_by_name: FxHashMap<String, TypeHash> = types
+            .iter()
+            .map(|(hash, def)| (def.qualified_name().to_string(), *hash))
+            .collect();
+
         // Functions are keyed by func_hash
         let functions: FxHashMap<TypeHash, FunctionDef> = resolved_functions
             .into_iter()
@@ -1021,6 +1028,7 @@ impl FfiRegistryBuilder {
 
         Ok(FfiRegistry {
             types,
+            type_by_name,
             functions,
             function_overloads,
             native_fns,
