@@ -212,17 +212,17 @@ impl FunctionBuilder {
 
     /// Build a `FunctionDef` from this builder.
     pub fn build(self) -> FunctionDef {
-        FunctionDef {
-            func_hash: self.func_hash,
-            name: self.name,
-            namespace: self.namespace,
-            params: self.params,
-            return_type: self.return_type,
-            object_type: self.owner_type,
-            traits: self.traits,
-            is_native: true,
-            visibility: self.visibility,
-        }
+        FunctionDef::new(
+            self.func_hash,
+            self.name,
+            self.namespace,
+            self.params,
+            self.return_type,
+            self.owner_type,
+            self.traits,
+            true,
+            self.visibility,
+        )
     }
 
     /// Build a `FunctionDef` and return the native function separately.

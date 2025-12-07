@@ -247,7 +247,7 @@ Add `unit/build_only` benchmark that measures just compilation without Unit crea
 | # | Task | Est. Impact | Effort | Status |
 |---|------|-------------|--------|--------|
 | B1 | Lexer cursor optimization | 10-15% | Medium | ✅ Complete |
-| B2 | Cache qualified_name | 8% | Easy | Pending |
+| B2 | Cache qualified_name | 8% | Easy | ✅ Complete |
 | B3 | Avoid namespace_path cloning | 3-4% | Medium | Pending |
 | B4 | Avoid format!() for TypeHash | 2% | Easy | Pending |
 | B5 | Remove types_by_hash | 2-4% | Easy | Pending |

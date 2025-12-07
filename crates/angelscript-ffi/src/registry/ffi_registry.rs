@@ -959,9 +959,8 @@ impl FfiRegistryBuilder {
             let func_hash = func_def.func_hash;
 
             // Add to function name map
-            let qualified_name = func_def.qualified_name();
             function_names
-                .entry(qualified_name)
+                .entry(func_def.qualified_name().to_string())
                 .or_default()
                 .push(func_hash);
 
@@ -999,7 +998,7 @@ impl FfiRegistryBuilder {
         let function_overloads: FxHashMap<String, Vec<TypeHash>> = {
             let mut map: FxHashMap<String, Vec<TypeHash>> = FxHashMap::default();
             for func in functions.values() {
-                map.entry(func.qualified_name())
+                map.entry(func.qualified_name().to_string())
                     .or_default()
                     .push(func.func_hash);
             }
@@ -1160,20 +1159,20 @@ mod tests {
     fn builder_build_with_function() {
         let mut builder = FfiRegistryBuilder::new();
 
-        let func = FunctionDef {
-            func_hash: TypeHash::from_function("add", &[primitives::INT32, primitives::INT32]),
-            name: "add".to_string(),
-            namespace: vec![],
-            params: vec![
+        let func = FunctionDef::new(
+            TypeHash::from_function("add", &[primitives::INT32, primitives::INT32]),
+            "add".to_string(),
+            vec![],
+            vec![
                 Param::new("a", DataType::simple(primitives::INT32)),
                 Param::new("b", DataType::simple(primitives::INT32)),
             ],
-            return_type: DataType::simple(primitives::INT32),
-            object_type: None,
-            traits: FunctionTraits::default(),
-            is_native: true,
-            visibility: Visibility::Public,
-        };
+            DataType::simple(primitives::INT32),
+            None,
+            FunctionTraits::default(),
+            true,
+            Visibility::Public,
+        );
 
         builder.register_function(func, None);
 
@@ -1217,20 +1216,20 @@ mod tests {
         );
 
         // Register function with user type (using TypeHash::from_name directly)
-        let func = FunctionDef {
-            func_hash: TypeHash::from_function("process", &[my_class_hash]),
-            name: "process".to_string(),
-            namespace: vec![],
-            params: vec![Param::new(
+        let func = FunctionDef::new(
+            TypeHash::from_function("process", &[my_class_hash]),
+            "process".to_string(),
+            vec![],
+            vec![Param::new(
                 "obj",
                 DataType::with_handle(my_class_hash, false),
             )],
-            return_type: DataType::simple(primitives::VOID),
-            object_type: None,
-            traits: FunctionTraits::default(),
-            is_native: true,
-            visibility: Visibility::Public,
-        };
+            DataType::simple(primitives::VOID),
+            None,
+            FunctionTraits::default(),
+            true,
+            Visibility::Public,
+        );
 
         builder.register_function(func, None);
 
