@@ -13,7 +13,7 @@ use crate::ast::{
 };
 use crate::codegen::Instruction;
 use crate::semantic::{
-    ConstEvaluator, ConstValue, OperatorBehavior,
+    ConstEvaluator, ConstValue, DataTypeExt, OperatorBehavior,
     SemanticErrorKind, TypeDef,
 };
 use crate::types::{primitive_hashes, TypeHash};

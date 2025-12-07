@@ -7,8 +7,7 @@
 //! # Example
 //!
 //! ```
-//! use angelscript_compiler::types::{DataType, RefModifier};
-//! use angelscript_compiler::types::primitives;
+//! use angelscript_core::{DataType, RefModifier, primitives};
 //!
 //! // Simple type: int
 //! let simple = DataType::simple(primitives::INT32);
@@ -26,7 +25,7 @@
 
 use std::fmt::{self, Display, Formatter};
 
-use super::TypeHash;
+use crate::TypeHash;
 
 /// Reference modifier for parameters.
 ///
@@ -113,7 +112,7 @@ impl DataType {
     /// # Example
     ///
     /// ```
-    /// use angelscript_compiler::types::{DataType, primitives};
+    /// use angelscript_core::{DataType, primitives};
     ///
     /// let int_type = DataType::simple(primitives::INT32);
     /// assert!(!int_type.is_const);
@@ -135,7 +134,7 @@ impl DataType {
     /// # Example
     ///
     /// ```
-    /// use angelscript_compiler::types::{DataType, primitives};
+    /// use angelscript_core::{DataType, primitives};
     ///
     /// let const_int = DataType::with_const(primitives::INT32);
     /// assert!(const_int.is_const);
@@ -167,7 +166,7 @@ impl DataType {
     /// # Example
     ///
     /// ```
-    /// use angelscript_compiler::types::{DataType, primitives};
+    /// use angelscript_core::{DataType, primitives};
     ///
     /// // int@ - mutable handle to mutable object
     /// let handle = DataType::with_handle(primitives::INT32, false);
@@ -205,7 +204,7 @@ impl DataType {
     /// # Example
     ///
     /// ```
-    /// use angelscript_compiler::types::{DataType, primitives};
+    /// use angelscript_core::{DataType, primitives};
     ///
     /// // const int@ - read-only handle to mutable object
     /// let const_handle = DataType::const_handle(primitives::INT32, false);
@@ -237,7 +236,7 @@ impl DataType {
     /// # Example
     ///
     /// ```
-    /// use angelscript_compiler::types::{DataType, RefModifier, primitives};
+    /// use angelscript_core::{DataType, RefModifier, primitives};
     ///
     /// let ref_in = DataType::with_ref_in(primitives::INT32);
     /// assert_eq!(ref_in.ref_modifier, RefModifier::In);
@@ -261,7 +260,7 @@ impl DataType {
     /// # Example
     ///
     /// ```
-    /// use angelscript_compiler::types::{DataType, RefModifier, primitives};
+    /// use angelscript_core::{DataType, RefModifier, primitives};
     ///
     /// let ref_out = DataType::with_ref_out(primitives::INT32);
     /// assert_eq!(ref_out.ref_modifier, RefModifier::Out);
@@ -285,7 +284,7 @@ impl DataType {
     /// # Example
     ///
     /// ```
-    /// use angelscript_compiler::types::{DataType, RefModifier, primitives};
+    /// use angelscript_core::{DataType, RefModifier, primitives};
     ///
     /// let ref_inout = DataType::with_ref_inout(primitives::INT32);
     /// assert_eq!(ref_inout.ref_modifier, RefModifier::InOut);
@@ -306,14 +305,14 @@ impl DataType {
     /// # Example
     ///
     /// ```
-    /// use angelscript_compiler::types::{DataType, primitives};
+    /// use angelscript_core::{DataType, primitives};
     ///
     /// let void_type = DataType::void();
     /// assert_eq!(void_type.type_hash, primitives::VOID);
     /// ```
     #[inline]
     pub const fn void() -> Self {
-        Self::simple(super::primitives::VOID)
+        Self::simple(crate::primitives::VOID)
     }
 
     /// Create a null literal type.
@@ -324,14 +323,14 @@ impl DataType {
     /// # Example
     ///
     /// ```
-    /// use angelscript_compiler::types::{DataType, primitives};
+    /// use angelscript_core::{DataType, primitives};
     ///
     /// let null_lit = DataType::null_literal();
     /// assert_eq!(null_lit.type_hash, primitives::NULL);
     /// ```
     #[inline]
     pub const fn null_literal() -> Self {
-        Self::simple(super::primitives::NULL)
+        Self::simple(crate::primitives::NULL)
     }
 
     /// Returns true if this type has any reference modifier.
@@ -366,6 +365,12 @@ impl DataType {
             ..self
         }
     }
+
+    /// Returns true if this type is void.
+    #[inline]
+    pub const fn is_void(&self) -> bool {
+        self.type_hash.0 == crate::primitives::VOID.0
+    }
 }
 
 impl Display for DataType {
@@ -398,7 +403,7 @@ impl Display for DataType {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::primitives;
+    use crate::primitives;
     use std::collections::HashSet;
 
     #[test]

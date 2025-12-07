@@ -6,7 +6,7 @@
 use crate::codegen::Instruction;
 use crate::lexer::Span;
 use crate::semantic::{
-    DataType, OperatorBehavior, SemanticErrorKind,
+    DataType, DataTypeExt, OperatorBehavior, SemanticErrorKind,
 };
 use crate::types::{primitive_hashes, TypeHash};
 

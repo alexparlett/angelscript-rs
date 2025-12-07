@@ -17,7 +17,7 @@
 //! # Examples
 //!
 //! ```
-//! use angelscript_compiler::TypeHash;
+//! use angelscript_core::TypeHash;
 //!
 //! // Type hash from name
 //! let int_hash = TypeHash::from_name("int");

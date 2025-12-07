@@ -6,7 +6,7 @@
 //! # Example
 //!
 //! ```
-//! use angelscript_compiler::types::{TypeDef, TypeHash, PrimitiveType};
+//! use angelscript_core::{TypeDef, TypeHash, PrimitiveType};
 //!
 //! // Create a primitive type
 //! let int_type = TypeDef::Primitive {
@@ -21,7 +21,7 @@ use std::fmt;
 
 use rustc_hash::FxHashMap;
 
-use super::{DataType, TypeHash};
+use crate::{DataType, TypeHash};
 
 /// Primitive type kinds.
 ///
@@ -45,7 +45,7 @@ pub enum PrimitiveType {
 impl PrimitiveType {
     /// Get the TypeHash for this primitive type.
     pub const fn type_hash(self) -> TypeHash {
-        use super::primitives;
+        use crate::primitives;
         match self {
             PrimitiveType::Void => primitives::VOID,
             PrimitiveType::Bool => primitives::BOOL,
@@ -106,74 +106,151 @@ impl fmt::Display for Visibility {
     }
 }
 
-/// Type kind - determines memory semantics and instantiation method.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+/// Type kind determines memory semantics for types.
+///
+/// This enum is used both during FFI registration (to specify how native types
+/// should be managed) and in the semantic layer (to determine constructor vs
+/// factory lookup during type instantiation).
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TypeKind {
-    /// Value type - stack-allocated, uses constructors.
-    /// Contains size, alignment, and whether it's a POD type.
+    /// Value type - stack allocated, copied on assignment.
+    /// Requires: constructor, destructor, copy/assignment behaviors.
+    /// Uses constructors for instantiation.
     Value {
+        /// Size in bytes for stack allocation
         size: usize,
+        /// Alignment requirement
         align: usize,
+        /// Plain Old Data - no constructor/destructor needed, can memcpy
         is_pod: bool,
     },
-    /// Reference type - heap-allocated, uses factories.
+
+    /// Reference type - heap allocated via factory, handle semantics.
+    /// The `kind` field specifies the reference semantics.
+    /// Uses factories for instantiation (FFI types like array, dictionary).
     Reference {
+        /// The kind of reference type
         kind: ReferenceKind,
     },
-    /// Script object - VM-managed, uses constructors (default for script classes).
+
+    /// Script object - reference semantics but VM-managed allocation.
+    /// Uses constructors for instantiation (VM handles allocation).
+    /// This is the type kind for all script-defined classes.
     ScriptObject,
 }
 
 impl TypeKind {
-    /// Create a value type kind.
-    pub const fn value(size: usize, align: usize, is_pod: bool) -> Self {
+    /// Create a value type kind with size and alignment from a type.
+    pub fn value<T>() -> Self {
+        TypeKind::Value {
+            size: std::mem::size_of::<T>(),
+            align: std::mem::align_of::<T>(),
+            is_pod: false,
+        }
+    }
+
+    /// Create a POD value type kind.
+    pub fn pod<T>() -> Self {
+        TypeKind::Value {
+            size: std::mem::size_of::<T>(),
+            align: std::mem::align_of::<T>(),
+            is_pod: true,
+        }
+    }
+
+    /// Create a value type kind with explicit size and alignment.
+    pub const fn value_sized(size: usize, align: usize, is_pod: bool) -> Self {
         TypeKind::Value { size, align, is_pod }
     }
 
-    /// Create a reference type kind with standard reference semantics.
-    pub const fn reference() -> Self {
+    /// Create a standard reference type kind.
+    pub fn reference() -> Self {
         TypeKind::Reference {
             kind: ReferenceKind::Standard,
         }
     }
 
+    /// Create a scoped reference type kind.
+    pub fn scoped() -> Self {
+        TypeKind::Reference {
+            kind: ReferenceKind::Scoped,
+        }
+    }
+
+    /// Create a single-ref type kind.
+    pub fn single_ref() -> Self {
+        TypeKind::Reference {
+            kind: ReferenceKind::SingleRef,
+        }
+    }
+
+    /// Create a generic handle type kind.
+    pub fn generic_handle() -> Self {
+        TypeKind::Reference {
+            kind: ReferenceKind::GenericHandle,
+        }
+    }
+
     /// Create a script object type kind.
-    pub const fn script_object() -> Self {
+    pub fn script_object() -> Self {
         TypeKind::ScriptObject
     }
 
     /// Check if this is a value type.
-    pub const fn is_value(&self) -> bool {
+    pub fn is_value(&self) -> bool {
         matches!(self, TypeKind::Value { .. })
     }
 
-    /// Check if this is a reference type.
-    pub const fn is_reference(&self) -> bool {
+    /// Check if this is a reference type (FFI reference, uses factories).
+    pub fn is_reference(&self) -> bool {
         matches!(self, TypeKind::Reference { .. })
     }
 
-    /// Check if this is a script object.
-    pub const fn is_script_object(&self) -> bool {
+    /// Check if this is a script object (reference semantics, uses constructors).
+    pub fn is_script_object(&self) -> bool {
         matches!(self, TypeKind::ScriptObject)
+    }
+
+    /// Check if this type uses factories for instantiation.
+    /// Only FFI Reference types use factories.
+    pub fn uses_factories(&self) -> bool {
+        matches!(self, TypeKind::Reference { .. })
+    }
+
+    /// Check if this type uses constructors for instantiation.
+    /// Value types and ScriptObjects use constructors.
+    pub fn uses_constructors(&self) -> bool {
+        matches!(self, TypeKind::Value { .. } | TypeKind::ScriptObject)
+    }
+
+    /// Check if this is a POD type.
+    pub fn is_pod(&self) -> bool {
+        matches!(self, TypeKind::Value { is_pod: true, .. })
     }
 }
 
 impl Default for TypeKind {
+    /// Default to script object (most common for script-defined classes).
     fn default() -> Self {
         TypeKind::ScriptObject
     }
 }
 
-/// Reference kind for reference types.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+/// Reference type variants for different ownership/lifetime semantics.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ReferenceKind {
-    /// Standard reference-counted object.
+    /// Standard reference type - full handle support with AddRef/Release ref counting.
     #[default]
     Standard,
-    /// Garbage-collected object.
-    GarbageCollected,
-    /// No reference counting (externally managed).
-    NoCount,
+
+    /// Scoped reference type - RAII-style, destroyed at scope exit, no handles.
+    Scoped,
+
+    /// Single-ref type - app-controlled lifetime, no handles in script.
+    SingleRef,
+
+    /// Generic handle - type-erased container that can hold any type.
+    GenericHandle,
 }
 
 /// A field definition in a class.
@@ -795,10 +872,10 @@ impl TypeDef {
     /// Get the type kind for this type.
     pub fn type_kind(&self) -> TypeKind {
         match self {
-            TypeDef::Primitive { .. } => TypeKind::value(0, 0, true),
-            TypeDef::Class { type_kind, .. } => *type_kind,
+            TypeDef::Primitive { .. } => TypeKind::value_sized(0, 0, true),
+            TypeDef::Class { type_kind, .. } => type_kind.clone(),
             TypeDef::Interface { .. } => TypeKind::reference(),
-            TypeDef::Enum { .. } => TypeKind::value(4, 4, true),
+            TypeDef::Enum { .. } => TypeKind::value_sized(4, 4, true),
             TypeDef::Funcdef { .. } => TypeKind::reference(),
             TypeDef::TemplateParam { .. } => TypeKind::reference(),
         }
@@ -824,7 +901,7 @@ impl fmt::Display for TypeDef {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::primitives;
+    use crate::primitives;
 
     #[test]
     fn primitive_type_names() {
@@ -870,7 +947,7 @@ mod tests {
 
     #[test]
     fn type_kind_constructors() {
-        let value = TypeKind::value(8, 8, true);
+        let value = TypeKind::value_sized(8, 8, true);
         assert!(value.is_value());
         assert!(!value.is_reference());
 

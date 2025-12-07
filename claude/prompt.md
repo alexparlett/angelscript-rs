@@ -2,7 +2,7 @@
 
 **Status:** In Progress
 **Date:** 2025-12-07
-**Branch:** compiler-rewrite
+**Branch:** ffi-type-hash-improvements
 
 ---
 
@@ -10,7 +10,7 @@
 
 **Parser:** 100% Complete
 **Semantic Analysis:** 100% Complete
-**Test Status:** 2411 library tests passing
+**Test Status:** 2440+ library tests passing
 
 ---
 
@@ -28,41 +28,41 @@ See `/claude/tasks/26_compiler_rewrite.md` for full details.
 | 4 | Types: TypeDef + FunctionDef | Create clean TypeDef enum and FunctionDef struct | ✅ Complete |
 | 5 | Types: ExprInfo | Create ExprInfo (renamed from ExprContext) | ✅ Complete |
 | 6 | ScriptRegistry + Registry trait | Implement clean registry, Registry trait for unification | ✅ Complete |
+| 7a | angelscript-core crate | Shared types for FFI and compiler crates | ✅ Complete |
 
-### Task 26.6 Summary (Just Completed)
+### Task 26.7a Summary (Just Completed)
 
-**TypeBehaviors struct** - Lifecycle behaviors for types:
-- Constructors/factories (multiple overloads)
-- Destructor, addref, release (single behaviors)
-- List initialization (list_construct, list_factory)
-- Template callback, weak reference support
+**Created `angelscript-core` crate** - Shared types for both FFI and compiler:
+- `TypeHash` - Deterministic 64-bit hash for type identity
+- `DataType` - Complete type with modifiers (const, handle, reference)
+- `TypeDef` - Type definitions with full `TypeKind` including generic methods
+- `FunctionDef` - Function definitions with complete signatures
+- `ExprInfo` - Expression type checking results
+- `TypeBehaviors` - Lifecycle behaviors for types
+- `FfiExpr` - Expressions for default argument values
+- `BinaryOp`, `UnaryOp` - Operator enums without token dependencies
 
-**Registry trait** - Common interface for FFI and Script registries:
-- Consistent naming: `get_*` (by hash), `lookup_*` (by name), `has_*` (existence), `find_*` (complex)
-- Type lookups, function lookups, behavior lookups
-- Method/operator/property lookups
-- Inheritance queries (base class, is_subclass_of, interfaces)
-- Enum and template support
+**Three-crate architecture:**
+```
+angelscript-core  →  angelscript-compiler
+                 →  angelscript (main crate)
+```
 
-**ScriptRegistry** - Clean implementation with no redundant maps:
-- `types: FxHashMap<TypeHash, TypeDef>` (primary)
-- `functions: FxHashMap<TypeHash, FunctionDef>` (primary)
-- `behaviors: FxHashMap<TypeHash, TypeBehaviors>`
-- Name indexes are secondary lookups returning TypeHash
-
-**Key design decision:**
-- `FunctionDef.Param.has_default: bool` (not `Option<&'ast Expr>`)
-- Registry stores metadata only; default value expressions accessed during Pass 2 AST walk
-- This keeps registry lifetime-free while allowing full compilation
+**Key changes:**
+- Unified `DataType` (removed `FfiDataType`)
+- `TypeKind` with generic methods: `value<T>()`, `pod<T>()`, `value_sized()`
+- `DataTypeExt` extension trait for `can_convert_to()` method
+- Backward-compatible re-exports in semantic module
 
 **Test results:**
-- 120 unit tests passing in compiler crate
-- 24 doctests passing in compiler crate
-- All 2411 main crate tests still passing
+- 113 unit tests in core crate
+- 19 unit tests in compiler crate
+- 2284+ main crate tests passing
+- All 2440+ library tests passing
 
 ### Next Task
 
-**Task 26.7: CompilationContext** - Implement context with name resolution
+**Task 26.7b: FfiRegistry updates** - Update FfiRegistry to use core types
 
 ---
 
@@ -75,10 +75,10 @@ See `/claude/tasks/26_compiler_rewrite.md` for full details.
 
 ## Architecture Overview
 
-### New (in `crates/angelscript-compiler/`):
+### New (in `crates/`):
 ```
-Pass 1 (registration.rs):  Register types → Register functions with COMPLETE signatures
-Pass 2 (compilation/):     Type check function bodies + generate bytecode
+angelscript-core/       →  Shared types (TypeHash, DataType, TypeDef, etc.)
+angelscript-compiler/   →  2-pass compiler (registration + compilation)
 ```
 
 ### Key Benefits
@@ -86,4 +86,5 @@ Pass 2 (compilation/):     Type check function bodies + generate bytecode
 - No format!() overhead - Proper type resolution
 - Better testability - Independent components
 - DataType as Copy - Eliminates 175+ clone() calls
+- Shared core types - No circular dependencies
 - ~8,000 lines deleted after migration

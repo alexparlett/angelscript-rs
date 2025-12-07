@@ -7,8 +7,7 @@
 //! # Example
 //!
 //! ```
-//! use angelscript_compiler::types::{FunctionDef, FunctionTraits, Param, DataType, TypeHash, Visibility};
-//! use angelscript_compiler::types::primitives;
+//! use angelscript_core::{FunctionDef, FunctionTraits, Param, DataType, TypeHash, Visibility, primitives};
 //!
 //! // Create a simple function: int add(int a, int b)
 //! let func = FunctionDef {
@@ -31,8 +30,8 @@
 
 use std::fmt;
 
-use super::{DataType, TypeHash};
-use super::type_def::Visibility;
+use crate::{DataType, TypeHash};
+use crate::type_def::Visibility;
 
 /// Function parameter with name, type, and optional default value marker.
 ///
@@ -226,7 +225,7 @@ impl FunctionDef {
     /// # Example
     ///
     /// ```
-    /// use angelscript_compiler::types::{FunctionDef, FunctionTraits, DataType, TypeHash, Visibility};
+    /// use angelscript_core::{FunctionDef, FunctionTraits, DataType, TypeHash, Visibility};
     ///
     /// let func = FunctionDef {
     ///     func_hash: TypeHash::from_name("Game::Player::update"),
@@ -331,7 +330,7 @@ impl fmt::Display for FunctionDef {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::primitives;
+    use crate::primitives;
 
     #[test]
     fn param_creation() {

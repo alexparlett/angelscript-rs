@@ -14,9 +14,8 @@
 use crate::ast::types::{ParamType, PrimitiveType as AstPrimitiveType, TypeBase, TypeExpr, TypeSuffix};
 use crate::ast::{FunctionParam, FunctionSignatureDecl, RefKind, ReturnType};
 use crate::ffi::NativeFn;
-use crate::types::{primitive_hashes, TypeHash};
-use crate::semantic::types::{DataType, RefModifier};
-use crate::types::{FfiExpr, FfiFunctionDef, FfiParam};
+use crate::types::{primitive_hashes, DataType, RefModifier, TypeHash};
+use crate::types::{FfiExpr, FfiExprExt, FfiFunctionDef, FfiParam};
 
 /// Convert an AST TypeExpr to DataType.
 ///

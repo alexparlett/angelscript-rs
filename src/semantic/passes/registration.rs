@@ -278,7 +278,7 @@ impl<'ast> Registrar<'ast> {
 
             // If this is a destructor, also add to behaviors
             if func.is_destructor {
-                self.context.script_mut().behaviors_mut(type_id).destruct = Some(func_hash);
+                self.context.script_mut().behaviors_mut(type_id).destructor = Some(func_hash);
             }
         }
     }
@@ -1757,10 +1757,10 @@ mod tests {
         let behaviors = data.context.get_behaviors(type_id).expect("Player should have behaviors");
 
         // Should have destructor in behaviors
-        assert!(behaviors.destruct.is_some(), "Destructor should be in behaviors");
+        assert!(behaviors.destructor.is_some(), "Destructor should be in behaviors");
 
         // Verify the destructor TypeHash is correctly marked
-        let destructor_id = behaviors.destruct.unwrap();
+        let destructor_id = behaviors.destructor.unwrap();
         let func = data.context.get_function(destructor_id);
         assert!(func.traits().is_destructor, "Function should be marked as destructor");
         // Name is stored as the class name (Player), not ~Player
@@ -1778,6 +1778,6 @@ mod tests {
         let behaviors = data.context.get_behaviors(type_id).expect("Player should have behaviors");
 
         // Should NOT have destructor in behaviors (none defined)
-        assert!(behaviors.destruct.is_none(), "No destructor should be in behaviors if not defined");
+        assert!(behaviors.destructor.is_none(), "No destructor should be in behaviors if not defined");
     }
 }

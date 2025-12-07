@@ -14,7 +14,7 @@ use crate::ast::{
 use crate::codegen::Instruction;
 use crate::lexer::Span;
 use crate::semantic::{
-    Conversion, DataType, MethodSignature, OperatorBehavior,
+    Conversion, DataType, DataTypeExt, MethodSignature, OperatorBehavior,
     SemanticErrorKind, TypeDef,
 };
 use crate::types::{primitive_hashes, TypeHash};

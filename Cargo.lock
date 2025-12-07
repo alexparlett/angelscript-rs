@@ -22,6 +22,7 @@ name = "angelscript"
 version = "0.1.0"
 dependencies = [
  "angelscript-compiler",
+ "angelscript-core",
  "bitflags",
  "bumpalo",
  "criterion",
@@ -38,8 +39,17 @@ dependencies = [
 name = "angelscript-compiler"
 version = "0.1.0"
 dependencies = [
+ "angelscript-core",
  "rustc-hash",
  "thiserror",
+ "xxhash-rust",
+]
+
+[[package]]
+name = "angelscript-core"
+version = "0.1.0"
+dependencies = [
+ "rustc-hash",
  "xxhash-rust",
 ]
 

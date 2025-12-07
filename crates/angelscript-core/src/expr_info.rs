@@ -3,7 +3,7 @@
 //! This module provides [`ExprInfo`], the result of type-checking an expression.
 //! It contains the expression's data type along with lvalue/mutability information.
 
-use super::DataType;
+use crate::DataType;
 
 /// Result of expression type checking.
 ///
@@ -27,7 +27,7 @@ use super::DataType;
 /// # Examples
 ///
 /// ```
-/// use angelscript_compiler::types::{ExprInfo, DataType, primitives};
+/// use angelscript_core::{ExprInfo, DataType, primitives};
 ///
 /// // Integer literal: rvalue (temporary, cannot assign to it)
 /// let literal = ExprInfo::rvalue(DataType::simple(primitives::INT32));
@@ -78,7 +78,7 @@ impl ExprInfo {
     /// # Example
     ///
     /// ```
-    /// use angelscript_compiler::types::{ExprInfo, DataType, primitives};
+    /// use angelscript_core::{ExprInfo, DataType, primitives};
     ///
     /// // The expression `1 + 2` produces an rvalue
     /// let result = ExprInfo::rvalue(DataType::simple(primitives::INT32));
@@ -108,7 +108,7 @@ impl ExprInfo {
     /// # Example
     ///
     /// ```
-    /// use angelscript_compiler::types::{ExprInfo, DataType, primitives};
+    /// use angelscript_core::{ExprInfo, DataType, primitives};
     ///
     /// // A mutable local variable `int x`
     /// let mutable_var = ExprInfo::lvalue(DataType::simple(primitives::INT32), true);
@@ -140,7 +140,7 @@ impl ExprInfo {
     /// # Example
     ///
     /// ```
-    /// use angelscript_compiler::types::{ExprInfo, DataType, primitives};
+    /// use angelscript_core::{ExprInfo, DataType, primitives};
     ///
     /// // A const variable `const int x = 42`
     /// let const_var = ExprInfo::const_lvalue(DataType::simple(primitives::INT32));
@@ -177,7 +177,7 @@ impl ExprInfo {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::{primitives, TypeHash};
+    use crate::{primitives, TypeHash};
 
     fn int_type() -> DataType {
         DataType::simple(primitives::INT32)
@@ -256,7 +256,7 @@ mod tests {
             is_const: false,
             is_handle: true,
             is_handle_to_const: false,
-            ref_modifier: crate::types::RefModifier::None,
+            ref_modifier: crate::RefModifier::None,
         };
 
         // Handle variable is a mutable lvalue
@@ -274,7 +274,7 @@ mod tests {
             is_const: true,
             is_handle: false,
             is_handle_to_const: false,
-            ref_modifier: crate::types::RefModifier::In,
+            ref_modifier: crate::RefModifier::In,
         };
 
         // const& parameter is an immutable lvalue

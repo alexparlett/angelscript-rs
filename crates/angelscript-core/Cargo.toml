@@ -1,10 +1,8 @@
 [package]
-name = "angelscript-compiler"
+name = "angelscript-core"
 version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-angelscript-core = { path = "../angelscript-core" }
-thiserror.workspace = true
 rustc-hash.workspace = true
 xxhash-rust.workspace = true

@@ -23,10 +23,8 @@
 //! // Primitives are in FfiRegistry, accessed via CompilationContext
 //! ```
 
-use super::data_type::DataType;
-use super::type_def::{
-    FunctionTraits, OperatorBehavior,
-    PropertyAccessors, TypeDef, Visibility,
+use super::{
+    DataType, FunctionTraits, OperatorBehavior, PropertyAccessors, TypeDef, Visibility,
 };
 use crate::types::TypeHash;
 use crate::ast::expr::Expr;

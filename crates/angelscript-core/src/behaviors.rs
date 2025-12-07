@@ -4,7 +4,7 @@
 //! lifecycle behaviors like construction, destruction, and initialization lists.
 //! Behaviors are stored centrally in the Registry, indexed by TypeHash.
 
-use super::TypeHash;
+use crate::TypeHash;
 
 /// Lifecycle and initialization behaviors for a type.
 ///
@@ -21,7 +21,7 @@ use super::TypeHash;
 /// # Example
 ///
 /// ```
-/// use angelscript_compiler::types::{TypeBehaviors, TypeHash};
+/// use angelscript_core::{TypeBehaviors, TypeHash};
 ///
 /// let mut behaviors = TypeBehaviors::new();
 /// behaviors.add_constructor(TypeHash::from_name("MyClass::MyClass"));

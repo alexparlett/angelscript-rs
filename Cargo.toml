@@ -1,5 +1,6 @@
 [workspace]
 members = [
+    "crates/angelscript-core",
     "crates/angelscript-compiler",
     ".",
 ]
@@ -23,6 +24,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+angelscript-core = { path = "crates/angelscript-core" }
 angelscript-compiler = { path = "crates/angelscript-compiler" }
 thiserror.workspace = true
 bitflags.workspace = true

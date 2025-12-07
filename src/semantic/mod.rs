@@ -51,10 +51,13 @@ pub use const_eval::{eval_const_int, ConstEvaluator, ConstValue};
 pub use error::{SemanticError, SemanticErrorKind, SemanticErrors};
 pub use local_scope::{CapturedVar, LocalScope, LocalVar};
 pub use types::{
-    Conversion, ConversionKind, DataType, FieldDef, FunctionDef, FunctionTraits,
+    Conversion, ConversionKind, DataType, DataTypeExt, FieldDef, FunctionDef, FunctionTraits,
     GlobalVarDef, MethodSignature, OperatorBehavior, PrimitiveType, PropertyAccessors,
     RefModifier, ScriptRegistry, TypeDef, Visibility,
 };
+
+// Re-export TypeHash from crate::types for backward compatibility
+pub use crate::types::TypeHash;
 
 // Re-export CompilationContext and FunctionRef
 pub use compilation_context::{CompilationContext, FunctionRef};

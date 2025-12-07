@@ -9,7 +9,7 @@ use crate::ast::{
 };
 use crate::lexer::Span;
 use crate::semantic::{
-    DataType, FieldDef, SemanticErrorKind, TypeDef, Visibility,
+    DataType, DataTypeExt, FieldDef, SemanticErrorKind, TypeDef, Visibility,
 };
 use crate::types::{primitive_hashes, TypeHash};
 
