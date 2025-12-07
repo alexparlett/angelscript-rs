@@ -103,7 +103,7 @@ This replaces both:
 | 2 | Create core error types | Define `AngelScriptError` and phase-specific errors in core | 1 | ✅ Complete |
 | 3 | Migrate parser errors | Update parser to use Span and errors from core | 2 | ✅ Complete |
 | 4 | Consolidate registration errors | Merge `FfiRegistryError` + `ModuleError` → `RegistrationError` | 2 | ✅ Complete |
-| 5 | Migrate compiler errors | Update compiler errors to use core types | 2 | Pending |
+| 5 | Migrate compiler errors | Update compiler errors to use core types | 2 | ✅ Complete |
 | 6 | Migrate main crate errors | Update `ContextError`, `UnitError`, `BuildError` | 2-5 | Pending |
 | 7 | Update public API | Expose `AngelScriptError` in public API | 6 | Pending |
 

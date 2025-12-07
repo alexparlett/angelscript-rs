@@ -60,21 +60,21 @@ See `/claude/tasks/28_unified_error_types.md` for full details.
 | 2 | Create core error types | Defined `AngelScriptError` and phase-specific errors in core | ✅ Complete |
 | 3 | Migrate parser errors | Parser now uses `LexError`, `ParseError`, `ParseErrorKind`, `ParseErrors` from core | ✅ Complete |
 | 4 | Consolidate registration errors | Merged `FfiRegistryError` + `ModuleError` → `RegistrationError` | ✅ Complete |
+| 5 | Migrate compiler errors | Compiler now uses `CompilationError` from core | ✅ Complete |
 
-### Task 28.4 Summary (Just Completed)
+### Task 28.5 Summary (Just Completed)
 
-**Consolidated registration errors:**
-- Removed `FfiRegistryError` from angelscript-ffi (2 variants)
-- Removed `ModuleError` from angelscript-module (5 variants)
-- Both replaced by `RegistrationError` from angelscript-core
-- Updated all builders (ClassBuilder, EnumBuilder, InterfaceBuilder)
-- Updated Context, Unit, and default modules
-- Re-exported `RegistrationError` from main crate's public API
-- All tests passing
+**Migrated compiler errors:**
+- Removed `SemanticError` from angelscript-compiler crate
+- Compiler now uses `CompilationError` from angelscript-core
+- Updated `CompilationResult.errors` to use `Vec<CompilationError>`
+- Updated `src/unit.rs` to import `CompilationError` from core instead of `SemanticError`
+- Updated `BuildError::CompilationErrors` variant to use `Vec<CompilationError>`
+- All 39 unit tests passing
 
 ### Next Task
 
-**Task 28.5: Migrate compiler errors** - Update compiler errors to use core types
+**Task 28.6: Migrate main crate errors** - Update `ContextError`, `UnitError`, `BuildError`
 
 ### Deferred
 

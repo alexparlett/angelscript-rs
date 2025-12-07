@@ -15,15 +15,9 @@
 //! - [`passes`]: Compiler passes (registration and compilation)
 
 use std::sync::Arc;
+use angelscript_core::CompilationError;
 use angelscript_ffi::FfiRegistry;
 use angelscript_parser::ast::Script;
-
-/// Semantic analysis error.
-#[derive(Debug, Clone, thiserror::Error)]
-#[error("{message}")]
-pub struct SemanticError {
-    pub message: String,
-}
 
 /// A compiled module containing bytecode and metadata.
 #[derive(Debug, Default)]
@@ -43,7 +37,7 @@ pub struct CompilationResult {
     /// The compiled module
     pub module: CompiledModule,
     /// Any errors that occurred
-    pub errors: Vec<SemanticError>,
+    pub errors: Vec<CompilationError>,
 }
 
 impl CompilationResult {

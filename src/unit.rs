@@ -37,8 +37,9 @@
 //! ```
 
 use crate::context::Context;
+use angelscript_core::CompilationError;
 use angelscript_ffi::FfiRegistryBuilder;
-use angelscript_compiler::{Compiler, CompiledModule, SemanticError};
+use angelscript_compiler::{Compiler, CompiledModule};
 use angelscript_parser::ast::{Parser, ParseError};
 use bumpalo::Bump;
 use std::collections::{HashMap, HashSet};
@@ -406,7 +407,7 @@ pub enum BuildError {
 
     /// Compilation errors occurred
     #[error("Compilation errors: {0:?}")]
-    CompilationErrors(Vec<SemanticError>),
+    CompilationErrors(Vec<CompilationError>),
 
     /// Multi-file compilation not yet supported
     #[error("Multi-file compilation not yet implemented")]
