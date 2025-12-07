@@ -81,7 +81,7 @@ impl FfiParam {
 ///
 /// All type references use `DataType` with deterministic `TypeHash` values.
 #[derive(Debug)]
-pub struct FfiFunctionDef {
+pub struct FunctionBuilder {
     /// Function name (unqualified)
     pub name: String,
 
@@ -113,7 +113,7 @@ pub struct FfiFunctionDef {
     pub func_hash: TypeHash,
 }
 
-impl FfiFunctionDef {
+impl FunctionBuilder {
     /// Create a new FFI function definition.
     pub fn new(name: impl Into<String>) -> Self {
         let name = name.into();
@@ -382,7 +382,7 @@ mod tests {
 
     #[test]
     fn ffi_function_def_new() {
-        let func = FfiFunctionDef::new("test");
+        let func = FunctionBuilder::new("test");
         assert_eq!(func.name, "test");
         assert!(func.namespace.is_empty());
         assert!(func.params.is_empty());
@@ -392,7 +392,7 @@ mod tests {
 
     #[test]
     fn ffi_function_def_qualified_name() {
-        let func = FfiFunctionDef::new("test");
+        let func = FunctionBuilder::new("test");
         assert_eq!(func.qualified_name(), "test");
 
         let func_ns = func.with_namespace(vec!["Game".to_string(), "Player".to_string()]);
@@ -401,7 +401,7 @@ mod tests {
 
     #[test]
     fn ffi_function_def_with_params() {
-        let func = FfiFunctionDef::new("add")
+        let func = FunctionBuilder::new("add")
             .with_params(vec![
                 FfiParam::new("a", DataType::simple(primitive_hashes::INT32)),
                 FfiParam::new("b", DataType::simple(primitive_hashes::INT32)),
@@ -414,7 +414,7 @@ mod tests {
 
     #[test]
     fn ffi_function_def_with_defaults() {
-        let func = FfiFunctionDef::new("greet")
+        let func = FunctionBuilder::new("greet")
             .with_params(vec![
                 FfiParam::new("name", DataType::simple(primitive_hashes::STRING)),
                 FfiParam::with_default(
@@ -431,7 +431,7 @@ mod tests {
     #[test]
     fn ffi_function_def_method() {
         let owner_type = TypeHash(100);
-        let func = FfiFunctionDef::new("getValue")
+        let func = FunctionBuilder::new("getValue")
             .with_owner_type(owner_type)
             .with_traits(FunctionTraits {
                 is_const: true,
@@ -447,7 +447,7 @@ mod tests {
     #[test]
     fn ffi_function_def_constructor() {
         let owner_type = TypeHash(100);
-        let func = FfiFunctionDef::new("MyClass")
+        let func = FunctionBuilder::new("MyClass")
             .with_owner_type(owner_type)
             .with_traits(FunctionTraits {
                 is_constructor: true,
@@ -461,7 +461,7 @@ mod tests {
     #[test]
     fn ffi_function_def_operator() {
         let owner_type = TypeHash(100);
-        let func = FfiFunctionDef::new("opAdd")
+        let func = FunctionBuilder::new("opAdd")
             .with_owner_type(owner_type)
             .with_operator(OperatorBehavior::OpAdd);
 
@@ -471,7 +471,7 @@ mod tests {
 
     #[test]
     fn ffi_function_def_to_resolved() {
-        let func = FfiFunctionDef::new("add")
+        let func = FunctionBuilder::new("add")
             .with_params(vec![
                 FfiParam::new("a", DataType::simple(primitive_hashes::INT32)),
                 FfiParam::new("b", DataType::simple(primitive_hashes::INT32)),
@@ -492,7 +492,7 @@ mod tests {
         // User types are resolved immediately using TypeHash::from_name()
         let my_class_hash = TypeHash::from_name("MyClass");
 
-        let func = FfiFunctionDef::new("process")
+        let func = FunctionBuilder::new("process")
             .with_params(vec![FfiParam::new(
                 "obj",
                 DataType::with_handle(my_class_hash, false),

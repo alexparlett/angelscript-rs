@@ -28,7 +28,7 @@ use crate::ffi::{
 use crate::semantic::types::DataType;
 use crate::types::{
     function_param_to_ffi, primitive_hashes, return_type_to_data_type, FfiEnumDef, FfiFuncdefDef,
-    FfiFunctionDef, FfiInterfaceDef, FfiParam, FfiTypeDef, TypeHash,
+    FunctionBuilder, FfiInterfaceDef, FfiParam, FfiTypeDef, TypeHash,
 };
 
 /// A namespaced collection of native functions, types, and global properties.
@@ -71,7 +71,7 @@ pub struct Module<'app> {
     namespace: Vec<String>,
 
     /// Registered native functions (owned, no arena lifetime)
-    functions: Vec<FfiFunctionDef>,
+    functions: Vec<FunctionBuilder>,
 
     /// Registered native types (owned, no arena lifetime)
     types: Vec<FfiTypeDef>,
@@ -293,7 +293,7 @@ impl<'app> Module<'app> {
         &self,
         sig: crate::ast::FunctionSignatureDecl<'_>,
         native_fn: NativeFn,
-    ) -> FfiFunctionDef {
+    ) -> FunctionBuilder {
         use crate::types::signature_to_ffi_function;
 
         // Use the conversion helper to build the FfiFunctionDef
@@ -319,7 +319,7 @@ impl<'app> Module<'app> {
     }
 
     /// Get the registered functions.
-    pub fn functions(&self) -> &[FfiFunctionDef] {
+    pub fn functions(&self) -> &[FunctionBuilder] {
         &self.functions
     }
 
@@ -903,7 +903,7 @@ impl<'app> Module<'app> {
         // Install list_factory if present (for init list support like `array<int> a = {1, 2, 3}`)
         if let Some(list_behavior) = &type_def.list_factory {
             // Create a FfiFunctionDef for the list factory
-            let list_factory_func = FfiFunctionDef::new(format!("{}$list_factory", type_def.name))
+            let list_factory_func = FunctionBuilder::new(format!("{}$list_factory", type_def.name))
                 .with_owner_type(type_def.id)
                 .with_native_fn(list_behavior.native_fn.clone_arc());
 
@@ -967,7 +967,7 @@ impl<'app> Module<'app> {
             let prop_type = Self::substitute_data_type(&prop.data_type, template_param_map);
 
             // Create getter function
-            let getter_func = FfiFunctionDef::new(format!("get_{}", prop.name))
+            let getter_func = FunctionBuilder::new(format!("get_{}", prop.name))
                 .with_owner_type(type_def.id)
                 .with_return_type(prop_type.clone())
                 .with_const(true)
@@ -978,7 +978,7 @@ impl<'app> Module<'app> {
 
             // Create setter function if writable
             let setter_hash = if let Some(setter) = &prop.setter {
-                let setter_func = FfiFunctionDef::new(format!("set_{}", prop.name))
+                let setter_func = FunctionBuilder::new(format!("set_{}", prop.name))
                     .with_owner_type(type_def.id)
                     .with_params(vec![FfiParam::new("value", prop_type.clone())])
                     .with_return_type(DataType::simple(primitive_hashes::VOID))
@@ -1074,7 +1074,7 @@ impl<'app> Module<'app> {
     }
 
     /// Install a function definition into the builder.
-    fn install_function(&self, builder: &mut FfiRegistryBuilder, func_def: &FfiFunctionDef) {
+    fn install_function(&self, builder: &mut FfiRegistryBuilder, func_def: &FunctionBuilder) {
         let mut func = self.clone_function_def(func_def);
 
         // Set namespace based on module namespace
@@ -1087,8 +1087,8 @@ impl<'app> Module<'app> {
     }
 
     /// Clone a FfiFunctionDef (helper to work around non-Clone NativeFn).
-    fn clone_function_def(&self, func: &FfiFunctionDef) -> FfiFunctionDef {
-        FfiFunctionDef {
+    fn clone_function_def(&self, func: &FunctionBuilder) -> FunctionBuilder {
+        FunctionBuilder {
             name: func.name.clone(),
             namespace: func.namespace.clone(),
             params: func.params.clone(),
@@ -1126,7 +1126,7 @@ impl<'app> Module<'app> {
     ///
     /// This updates params and return_type, then recomputes the func_hash.
     fn substitute_template_params(
-        func: &mut FfiFunctionDef,
+        func: &mut FunctionBuilder,
         template_param_map: &rustc_hash::FxHashMap<TypeHash, TypeHash>,
     ) {
         // Skip if no template params to substitute

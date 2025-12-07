@@ -15,7 +15,7 @@ use crate::ast::types::{ParamType, PrimitiveType as AstPrimitiveType, TypeBase, 
 use crate::ast::{FunctionParam, FunctionSignatureDecl, RefKind, ReturnType};
 use crate::ffi::NativeFn;
 use crate::types::{primitive_hashes, DataType, RefModifier, TypeHash};
-use crate::types::{FfiExpr, FfiExprExt, FfiFunctionDef, FfiParam};
+use crate::types::{FfiExpr, FfiExprExt, FunctionBuilder, FfiParam};
 
 /// Convert an AST TypeExpr to DataType.
 ///
@@ -171,12 +171,12 @@ pub fn return_type_to_data_type(return_type: &ReturnType<'_>) -> DataType {
 pub fn signature_to_ffi_function(
     sig: &FunctionSignatureDecl<'_>,
     native_fn: NativeFn,
-) -> FfiFunctionDef {
+) -> FunctionBuilder {
     let name = sig.name.name.to_string();
     let params: Vec<FfiParam> = sig.params.iter().map(function_param_to_ffi).collect();
     let return_type = return_type_to_data_type(&sig.return_type);
 
-    FfiFunctionDef::new(name)
+    FunctionBuilder::new(name)
         .with_params(params)
         .with_return_type(return_type)
         .with_native_fn(native_fn)

@@ -59,7 +59,7 @@ use crate::semantic::types::type_def::{
 };
 use crate::types::primitive_hashes;
 use crate::semantic::types::DataType;
-use crate::types::{FfiFunctionDef, ResolvedFfiFunctionDef, TypeHash};
+use crate::types::{FunctionBuilder, ResolvedFfiFunctionDef, TypeHash};
 
 /// Immutable FFI registry, shared across all Units in a Context.
 ///
@@ -660,7 +660,7 @@ pub struct FfiRegistryBuilder {
 
     // === Function Storage ===
     /// Functions (resolved during build)
-    functions: Vec<(FfiFunctionDef, Option<NativeFn>)>,
+    functions: Vec<(FunctionBuilder, Option<NativeFn>)>,
 
     // === Interface Storage ===
     /// Interfaces (resolved during build)
@@ -811,7 +811,7 @@ impl FfiRegistryBuilder {
     /// Register an FFI function.
     ///
     /// The function's types may be unresolved; they will be resolved during `build()`.
-    pub fn register_function(&mut self, func: FfiFunctionDef, native_fn: Option<NativeFn>) {
+    pub fn register_function(&mut self, func: FunctionBuilder, native_fn: Option<NativeFn>) {
         self.functions.push((func, native_fn));
     }
 
@@ -1185,7 +1185,7 @@ mod tests {
         use crate::types::primitive_hashes;
         let mut builder = FfiRegistryBuilder::new();
 
-        let func = FfiFunctionDef::new("add")
+        let func = FunctionBuilder::new("add")
             .with_params(vec![
                 FfiParam::new("a", DataType::simple(primitive_hashes::INT32)),
                 FfiParam::new("b", DataType::simple(primitive_hashes::INT32)),
@@ -1235,7 +1235,7 @@ mod tests {
         );
 
         // Register function with user type (using TypeHash::from_name directly)
-        let func = FfiFunctionDef::new("process")
+        let func = FunctionBuilder::new("process")
             .with_params(vec![FfiParam::new(
                 "obj",
                 DataType::with_handle(my_class_hash, false),

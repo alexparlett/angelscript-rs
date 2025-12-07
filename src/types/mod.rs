@@ -58,7 +58,7 @@ pub use ffi_enum::FfiEnumDef;
 pub use ffi_expr::{FfiExpr, FfiExprExt};
 pub use ffi_funcdef::FfiFuncdefDef;
 pub use ffi_function::{
-    FfiFunctionDef, FfiParam, ResolvedFfiFunctionDef, ResolvedFfiParam,
+    FunctionBuilder, FfiParam, ResolvedFfiFunctionDef, ResolvedFfiParam,
 };
 pub use ffi_interface::{FfiInterfaceDef, FfiInterfaceMethod};
 pub use ffi_property::FfiPropertyDef;

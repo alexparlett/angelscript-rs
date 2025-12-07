@@ -6,7 +6,7 @@
 //! This is the core type for registering native classes with the FFI system.
 
 use crate::ffi::{ListBehavior, NativeFn, TemplateInstanceInfo, TemplateValidation};
-use crate::types::{FfiFunctionDef, FfiPropertyDef, TypeHash, TypeKind};
+use crate::types::{FunctionBuilder, FfiPropertyDef, TypeHash, TypeKind};
 use std::sync::Arc;
 
 /// A native type definition.
@@ -36,11 +36,11 @@ pub struct FfiTypeDef {
     // === Behaviors (map to TypeBehaviors during import) ===
     /// Constructors - initialize value in pre-allocated memory (value types)
     /// Multiple overloads supported. Maps to TypeBehaviors.constructors
-    pub constructors: Vec<FfiFunctionDef>,
+    pub constructors: Vec<FunctionBuilder>,
 
     /// Factory functions - create new instance (reference types)
     /// Multiple overloads supported. Maps to TypeBehaviors.factories
-    pub factories: Vec<FfiFunctionDef>,
+    pub factories: Vec<FunctionBuilder>,
 
     /// AddRef - increment reference count (reference types)
     pub addref: Option<NativeFn>,
@@ -67,13 +67,13 @@ pub struct FfiTypeDef {
 
     // === Type members ===
     /// Methods
-    pub methods: Vec<FfiFunctionDef>,
+    pub methods: Vec<FunctionBuilder>,
 
     /// Properties
     pub properties: Vec<FfiPropertyDef>,
 
     /// Operators
-    pub operators: Vec<FfiFunctionDef>,
+    pub operators: Vec<FunctionBuilder>,
 
     /// Rust TypeHash for runtime type checking
     pub rust_type_id: std::any::TypeId,
@@ -152,17 +152,17 @@ impl FfiTypeDef {
     }
 
     /// Add a constructor.
-    pub fn add_constructor(&mut self, constructor: FfiFunctionDef) {
+    pub fn add_constructor(&mut self, constructor: FunctionBuilder) {
         self.constructors.push(constructor);
     }
 
     /// Add a factory.
-    pub fn add_factory(&mut self, factory: FfiFunctionDef) {
+    pub fn add_factory(&mut self, factory: FunctionBuilder) {
         self.factories.push(factory);
     }
 
     /// Add a method.
-    pub fn add_method(&mut self, method: FfiFunctionDef) {
+    pub fn add_method(&mut self, method: FunctionBuilder) {
         self.methods.push(method);
     }
 
@@ -172,7 +172,7 @@ impl FfiTypeDef {
     }
 
     /// Add an operator.
-    pub fn add_operator(&mut self, operator: FfiFunctionDef) {
+    pub fn add_operator(&mut self, operator: FunctionBuilder) {
         self.operators.push(operator);
     }
 

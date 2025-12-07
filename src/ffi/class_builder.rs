@@ -41,7 +41,7 @@ use std::sync::Arc;
 use crate::ast::Parser;
 use crate::module::FfiModuleError;
 use crate::types::{
-    signature_to_ffi_function, type_expr_to_data_type, FfiFunctionDef, FfiPropertyDef, FfiTypeDef,
+    signature_to_ffi_function, type_expr_to_data_type, FunctionBuilder, FfiPropertyDef, FfiTypeDef,
     ReferenceKind, TypeKind,
 };
 use crate::Module;
@@ -73,9 +73,9 @@ pub struct ClassBuilder<'m, 'app, T: NativeType> {
     // === Behaviors ===
 
     /// Constructors (for value types)
-    constructors: Vec<FfiFunctionDef>,
+    constructors: Vec<FunctionBuilder>,
     /// Factory functions (for reference types)
-    factories: Vec<FfiFunctionDef>,
+    factories: Vec<FunctionBuilder>,
     /// AddRef behavior
     addref: Option<NativeFn>,
     /// Release behavior
@@ -95,11 +95,11 @@ pub struct ClassBuilder<'m, 'app, T: NativeType> {
     // === Type members ===
 
     /// Methods
-    methods: Vec<FfiFunctionDef>,
+    methods: Vec<FunctionBuilder>,
     /// Properties
     properties: Vec<FfiPropertyDef>,
     /// Operators
-    operators: Vec<FfiFunctionDef>,
+    operators: Vec<FunctionBuilder>,
     /// Marker for the type parameter
     _marker: PhantomData<T>,
 }
@@ -698,7 +698,7 @@ impl<'m, 'app, T: NativeType> ClassBuilder<'m, 'app, T> {
     // =========================================================================
 
     /// Parse a method declaration and convert to FfiFunctionDef.
-    fn parse_method_decl(&self, decl: &str, native_fn: NativeFn) -> Result<FfiFunctionDef, FfiModuleError> {
+    fn parse_method_decl(&self, decl: &str, native_fn: NativeFn) -> Result<FunctionBuilder, FfiModuleError> {
         let decl = decl.trim();
         if decl.is_empty() {
             return Err(FfiModuleError::InvalidDeclaration(
