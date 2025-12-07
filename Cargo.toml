@@ -1,21 +1,47 @@
-[package]
-name = "angelscript"
-version = "0.1.0"
-edition = "2024"
+[workspace]
+members = [
+    "crates/angelscript-core",
+    "crates/angelscript-parser",
+    "crates/angelscript-ffi",
+    "crates/angelscript-compiler",
+    ".",
+]
+resolver = "3"
 
-[dependencies]
+[workspace.dependencies]
 thiserror = "2.0"
 bitflags = "2.10"
 num_enum = "0.7"
 bumpalo = { version = "3.16", features = ["collections"] }
 rustc-hash = "2.0"
 ordered-float = "4.0"
-profiling = { version = "1.0", optional = true }
+profiling = { version = "1.0" }
 xxhash-rust = { version = "0.8", features = ["xxh64"] }
-
-[dev-dependencies]
 criterion = "0.7"
 puffin = "0.19"
+
+[package]
+name = "angelscript"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+angelscript-core = { path = "crates/angelscript-core" }
+angelscript-compiler = { path = "crates/angelscript-compiler" }
+angelscript-parser = { path = "crates/angelscript-parser" }
+angelscript-ffi = { path = "crates/angelscript-ffi" }
+thiserror.workspace = true
+bitflags.workspace = true
+num_enum.workspace = true
+bumpalo.workspace = true
+rustc-hash.workspace = true
+ordered-float.workspace = true
+profiling = { workspace = true, optional = true }
+xxhash-rust.workspace = true
+
+[dev-dependencies]
+criterion.workspace = true
+puffin.workspace = true
 
 [features]
 default = []

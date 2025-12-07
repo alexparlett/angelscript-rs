@@ -377,14 +377,14 @@ impl Default for LocalScope {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::{primitive_hashes, TypeHash};
+    use angelscript_core::{primitives, TypeHash};
 
     fn int_type() -> DataType {
-        DataType::simple(primitive_hashes::INT32)
+        DataType::simple(primitives::INT32)
     }
 
     fn float_type() -> DataType {
-        DataType::simple(primitive_hashes::FLOAT)
+        DataType::simple(primitives::FLOAT)
     }
 
     #[test]

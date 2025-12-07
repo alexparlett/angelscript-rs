@@ -63,7 +63,7 @@ use std::sync::Arc;
 
 use rustc_hash::FxHashMap;
 
-use crate::ffi::FfiRegistry;
+use crate::module::FfiRegistry;
 use crate::semantic::error::SemanticError;
 use crate::semantic::template_instantiator::TemplateInstantiator;
 use crate::semantic::types::behaviors::TypeBehaviors;
@@ -73,7 +73,7 @@ use crate::semantic::types::type_def::{
     TypeDef, Visibility,
 };
 use crate::semantic::types::DataType;
-use crate::types::{ResolvedFfiFunctionDef, TypeHash};
+use angelscript_core::{FunctionDef as CoreFunctionDef, TypeHash};
 
 /// Unified reference to a function definition (either FFI or Script).
 ///
@@ -83,8 +83,8 @@ use crate::types::{ResolvedFfiFunctionDef, TypeHash};
 pub enum FunctionRef<'a, 'ast> {
     /// Reference to a script function
     Script(&'a FunctionDef<'ast>),
-    /// Reference to an FFI function
-    Ffi(&'a ResolvedFfiFunctionDef),
+    /// Reference to an FFI function (uses core FunctionDef)
+    Ffi(&'a CoreFunctionDef),
 }
 
 impl<'a, 'ast> FunctionRef<'a, 'ast> {
@@ -158,7 +158,7 @@ impl<'a, 'ast> FunctionRef<'a, 'ast> {
     pub fn owner_type(&self) -> Option<TypeHash> {
         match self {
             FunctionRef::Script(f) => f.object_type,
-            FunctionRef::Ffi(f) => f.owner_type,
+            FunctionRef::Ffi(f) => f.object_type,
         }
     }
 
@@ -179,7 +179,7 @@ impl<'a, 'ast> FunctionRef<'a, 'ast> {
     pub fn required_param_count(&self) -> usize {
         match self {
             FunctionRef::Script(f) => f.params.iter().filter(|p| p.default.is_none()).count(),
-            FunctionRef::Ffi(f) => f.params.iter().filter(|p| p.default_value.is_none()).count(),
+            FunctionRef::Ffi(f) => f.params.iter().filter(|p| !p.has_default).count(),
         }
     }
 
@@ -197,7 +197,7 @@ impl<'a, 'ast> FunctionRef<'a, 'ast> {
     }
 
     /// Get as an FFI function reference, if this is an FFI function.
-    pub fn as_ffi(&self) -> Option<&'a ResolvedFfiFunctionDef> {
+    pub fn as_ffi(&self) -> Option<&'a CoreFunctionDef> {
         match self {
             FunctionRef::Script(_) => None,
             FunctionRef::Ffi(f) => Some(f),
@@ -872,7 +872,7 @@ impl<'ast> CompilationContext<'ast> {
 impl<'ast> Default for CompilationContext<'ast> {
     fn default() -> Self {
         Self::new(Arc::new(
-            crate::ffi::FfiRegistryBuilder::new().build().unwrap(),
+            crate::module::FfiRegistryBuilder::new().build().unwrap(),
         ))
     }
 }
@@ -880,9 +880,9 @@ impl<'ast> Default for CompilationContext<'ast> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ffi::FfiRegistryBuilder;
-    use crate::types::primitive_hashes;
-    use crate::types::TypeKind;
+    use crate::module::FfiRegistryBuilder;
+    use angelscript_core::primitives as primitive_hashes;
+    use angelscript_core::TypeKind;
 
     fn create_test_context() -> CompilationContext<'static> {
         let ffi = Arc::new(FfiRegistryBuilder::new().build().unwrap());
@@ -917,7 +917,7 @@ mod tests {
         let typedef = TypeDef::Class {
             name: "Player".to_string(),
             qualified_name: "Player".to_string(),
-            type_hash: crate::types::TypeHash::from_name("Player"),
+            type_hash: angelscript_core::TypeHash::from_name("Player"),
             fields: Vec::new(),
             methods: Vec::new(),
             base_class: None,
@@ -966,14 +966,14 @@ mod tests {
 
         // Register a template type
         let t_param = TypeHash::from_name("test_type");
-        let owner_hash = crate::types::TypeHash::from_name("array");
+        let owner_hash = angelscript_core::TypeHash::from_name("array");
         builder.register_type_with_id(
             t_param,
             TypeDef::TemplateParam {
                 name: "T".to_string(),
                 index: 0,
                 owner: TypeHash::from_name("test_type"), // Will be updated
-                type_hash: crate::types::TypeHash::from_template_instance(owner_hash, &[crate::types::TypeHash(0)]),
+                type_hash: angelscript_core::TypeHash::from_template_instance(owner_hash, &[angelscript_core::TypeHash(0)]),
             },
             None,
         );
@@ -981,7 +981,7 @@ mod tests {
         let template_def = TypeDef::Class {
             name: "array".to_string(),
             qualified_name: "array".to_string(),
-            type_hash: crate::types::TypeHash::from_name("array"),
+            type_hash: angelscript_core::TypeHash::from_name("array"),
             fields: Vec::new(),
             methods: Vec::new(),
             base_class: None,
@@ -1024,14 +1024,14 @@ mod tests {
         let mut builder = FfiRegistryBuilder::new();
 
         let t_param = TypeHash::from_name("test_type");
-        let owner_hash = crate::types::TypeHash::from_name("array");
+        let owner_hash = angelscript_core::TypeHash::from_name("array");
         builder.register_type_with_id(
             t_param,
             TypeDef::TemplateParam {
                 name: "T".to_string(),
                 index: 0,
                 owner: TypeHash::from_name("test_type"),
-                type_hash: crate::types::TypeHash::from_template_instance(owner_hash, &[crate::types::TypeHash(0)]),
+                type_hash: angelscript_core::TypeHash::from_template_instance(owner_hash, &[angelscript_core::TypeHash(0)]),
             },
             None,
         );

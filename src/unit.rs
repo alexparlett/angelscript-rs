@@ -37,9 +37,9 @@
 //! ```
 
 use crate::context::Context;
-use crate::ffi::FfiRegistryBuilder;
+use crate::module::FfiRegistryBuilder;
 use crate::semantic::{Compiler, CompiledModule, SemanticError};
-use crate::{Parser, ParseError};
+use angelscript_parser::ast::{Parser, ParseError};
 use bumpalo::Bump;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;

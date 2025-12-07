@@ -3,7 +3,7 @@
 //! Provides comprehensive error reporting for semantic analysis with source location tracking
 //! and helpful error messages.
 
-use crate::lexer::Span;
+use angelscript_parser::lexer::Span;
 use std::fmt;
 
 /// A semantic error with location and diagnostic information.

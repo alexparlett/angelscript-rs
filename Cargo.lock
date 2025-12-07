@@ -21,6 +21,10 @@ checksum = "4b46cbb362ab8752921c97e041f5e366ee6297bd428a31275b9fcf1e380f7299"
 name = "angelscript"
 version = "0.1.0"
 dependencies = [
+ "angelscript-compiler",
+ "angelscript-core",
+ "angelscript-ffi",
+ "angelscript-parser",
  "bitflags",
  "bumpalo",
  "criterion",
@@ -31,6 +35,47 @@ dependencies = [
  "rustc-hash",
  "thiserror",
  "xxhash-rust",
+]
+
+[[package]]
+name = "angelscript-compiler"
+version = "0.1.0"
+dependencies = [
+ "angelscript-core",
+ "angelscript-ffi",
+ "angelscript-parser",
+ "bumpalo",
+ "rustc-hash",
+ "thiserror",
+ "xxhash-rust",
+]
+
+[[package]]
+name = "angelscript-core"
+version = "0.1.0"
+dependencies = [
+ "rustc-hash",
+ "xxhash-rust",
+]
+
+[[package]]
+name = "angelscript-ffi"
+version = "0.1.0"
+dependencies = [
+ "angelscript-core",
+ "angelscript-parser",
+ "bitflags",
+ "bumpalo",
+ "rustc-hash",
+ "thiserror",
+]
+
+[[package]]
+name = "angelscript-parser"
+version = "0.1.0"
+dependencies = [
+ "bumpalo",
+ "thiserror",
 ]
 
 [[package]]

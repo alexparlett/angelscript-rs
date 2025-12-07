@@ -4,7 +4,7 @@
 
 use crate::codegen::CompiledBytecode;
 use crate::semantic::SemanticError;
-use crate::types::TypeHash;
+use angelscript_core::TypeHash;
 use rustc_hash::FxHashMap;
 
 /// Result of compiling all functions in a script.

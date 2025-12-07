@@ -39,8 +39,8 @@ use super::{
     CompiledModule, CompilationContext, FunctionCompiler, Registrar, SemanticError,
     TypeCompiler,
 };
-use crate::ast::Script;
-use crate::ffi::{FfiRegistry, FfiRegistryBuilder};
+use angelscript_parser::ast::Script;
+use crate::module::{FfiRegistry, FfiRegistryBuilder};
 use rustc_hash::FxHashMap;
 
 /// Result of compiling a complete script.
@@ -55,7 +55,7 @@ pub struct CompilationResult<'ast> {
     pub context: CompilationContext<'ast>,
 
     /// Type resolution map (AST span → resolved DataType)
-    pub type_map: FxHashMap<crate::lexer::Span, super::DataType>,
+    pub type_map: FxHashMap<angelscript_parser::lexer::Span, super::DataType>,
 
     /// All errors encountered across all passes
     pub errors: Vec<SemanticError>,
@@ -180,7 +180,7 @@ pub struct TypeCompilationResult<'ast> {
     pub context: CompilationContext<'ast>,
 
     /// Type resolution map
-    pub type_map: FxHashMap<crate::lexer::Span, super::DataType>,
+    pub type_map: FxHashMap<angelscript_parser::lexer::Span, super::DataType>,
 
     /// All errors encountered
     pub errors: Vec<SemanticError>,
@@ -196,7 +196,7 @@ impl<'ast> TypeCompilationResult<'ast> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::Parser;
+    use angelscript_parser::Parser;
     use bumpalo::Bump;
 
     /// Create a default FFI registry with primitives for tests

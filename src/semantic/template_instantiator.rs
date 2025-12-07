@@ -23,7 +23,7 @@
 //! // Instantiate array<int> from array<T>
 //! let array_int_id = instantiator.instantiate(
 //!     array_template_id,
-//!     vec![DataType::simple(primitive_hashes::INT32)],
+//!     vec![DataType::simple(primitives::INT32)],
 //!     &ffi_registry,
 //!     &mut script_registry,
 //!     &mut type_by_name,
@@ -32,13 +32,13 @@
 
 use rustc_hash::FxHashMap;
 
-use crate::ffi::{FfiRegistry, TemplateInstanceInfo};
-use crate::lexer::Span;
+use crate::module::{FfiRegistry, TemplateInstanceInfo};
+use angelscript_parser::lexer::Span;
 use crate::semantic::error::{SemanticError, SemanticErrorKind};
 use crate::semantic::types::registry::{FunctionDef, ScriptParam, ScriptRegistry};
 use crate::semantic::types::type_def::{OperatorBehavior, TypeDef, Visibility};
 use crate::semantic::types::DataType;
-use crate::types::{primitive_hashes, TypeHash};
+use angelscript_core::{primitives, TypeHash};
 
 /// Handles template instantiation with caching.
 ///
@@ -71,7 +71,7 @@ impl TemplateInstantiator {
     ///
     /// If the type is a template parameter (matching one in `template_params`),
     /// it will be replaced with the corresponding type from `args`.
-    /// If the type is primitive_hashes::SELF and `instance_id` is provided, it will be replaced
+    /// If the type is primitives::SELF and `instance_id` is provided, it will be replaced
     /// with the instance type.
     fn substitute_type(
         data_type: &DataType,
@@ -80,8 +80,8 @@ impl TemplateInstantiator {
         ffi: &FfiRegistry,
         instance_id: Option<TypeHash>,
     ) -> DataType {
-        // Check for primitive_hashes::SELF - substitute with the instance type
-        if data_type.type_hash == primitive_hashes::SELF
+        // Check for primitives::SELF - substitute with the instance type
+        if data_type.type_hash == primitives::SELF
             && let Some(inst_id) = instance_id {
                 let mut substituted = DataType::simple(inst_id);
                 // Preserve modifiers from the original type
@@ -322,7 +322,7 @@ impl TemplateInstantiator {
         }
 
         // Create the instance TypeDef first (with empty methods)
-        // We need the instance_id before we can specialize methods that use primitive_hashes::SELF
+        // We need the instance_id before we can specialize methods that use primitives::SELF
         // Template instances are always Script types (created per-compilation)
         let instance_def = TypeDef::Class {
             name: instance_name.clone(),
@@ -345,12 +345,12 @@ impl TemplateInstantiator {
         // Register the instance (always as a script type)
         let instance_id = script.register_type(instance_def, Some(&instance_name));
 
-        // Now specialize methods with substituted types (including primitive_hashes::SELF substitution)
+        // Now specialize methods with substituted types (including primitives::SELF substitution)
         for &func_id in &template_methods {
             // Get the original FFI function
             if let Some(ffi_func) = ffi.get_function(func_id) {
                 // Create specialized parameters with substituted types
-                // Pass instance_id for primitive_hashes::SELF substitution
+                // Pass instance_id for primitives::SELF substitution
                 let specialized_params: Vec<ScriptParam<'_>> = ffi_func
                     .params
                     .iter()
@@ -430,10 +430,10 @@ impl TemplateInstantiator {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ffi::FfiRegistryBuilder;
+    use crate::module::FfiRegistryBuilder;
     use crate::semantic::types::behaviors::TypeBehaviors;
-    use crate::types::primitive_hashes;
-    use crate::types::TypeKind;
+    use angelscript_core::primitives;
+    use angelscript_core::TypeKind;
 
     fn create_test_ffi_with_array() -> (FfiRegistry, TypeHash) {
         let mut builder = FfiRegistryBuilder::new();
@@ -494,7 +494,7 @@ mod tests {
         let instance_id = instantiator
             .instantiate(
                 array_template,
-                vec![DataType::simple(primitive_hashes::INT32)],
+                vec![DataType::simple(primitives::INT32)],
                 &ffi,
                 &mut script,
                 &mut type_by_name,
@@ -510,7 +510,7 @@ mod tests {
         // Should be cached
         assert_eq!(instantiator.cache_size(), 1);
         assert_eq!(
-            instantiator.get_cached(array_template, &[DataType::simple(primitive_hashes::INT32)]),
+            instantiator.get_cached(array_template, &[DataType::simple(primitives::INT32)]),
             Some(instance_id)
         );
     }
@@ -525,7 +525,7 @@ mod tests {
         let instance_id1 = instantiator
             .instantiate(
                 array_template,
-                vec![DataType::simple(primitive_hashes::INT32)],
+                vec![DataType::simple(primitives::INT32)],
                 &ffi,
                 &mut script,
                 &mut type_by_name,
@@ -535,7 +535,7 @@ mod tests {
         let instance_id2 = instantiator
             .instantiate(
                 array_template,
-                vec![DataType::simple(primitive_hashes::INT32)],
+                vec![DataType::simple(primitives::INT32)],
                 &ffi,
                 &mut script,
                 &mut type_by_name,
@@ -578,9 +578,9 @@ mod tests {
         let mut type_by_name = ffi.type_by_name().clone();
         let mut instantiator = TemplateInstantiator::new();
 
-        // primitive_hashes::INT32 is a primitive, not a template
+        // primitives::INT32 is a primitive, not a template
         let result = instantiator.instantiate(
-            primitive_hashes::INT32,
+            primitives::INT32,
             vec![],
             &ffi,
             &mut script,
@@ -600,7 +600,7 @@ mod tests {
         let instance_id = instantiator
             .instantiate(
                 array_template,
-                vec![DataType::simple(primitive_hashes::INT32)],
+                vec![DataType::simple(primitives::INT32)],
                 &ffi,
                 &mut script,
                 &mut type_by_name,

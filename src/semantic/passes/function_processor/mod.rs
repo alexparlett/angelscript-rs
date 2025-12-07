@@ -10,7 +10,7 @@ mod overload_resolver;
 mod stmt_compiler;
 mod type_helpers;
 
-use crate::ast::{
+use angelscript_parser::ast::{
     Script,
     decl::{ClassDecl, ClassMember, FunctionDecl, Item, NamespaceDecl, UsingNamespaceDecl},
     expr::{Expr, InitElement},
@@ -20,12 +20,12 @@ use crate::ast::{
 use crate::semantic::types::registry::FunctionDef;
 use crate::semantic::CompilationContext;
 use crate::codegen::{BytecodeEmitter, CompiledBytecode, CompiledModule, Instruction};
-use crate::lexer::Span;
+use angelscript_parser::lexer::Span;
 use crate::semantic::{
     DataType, LocalScope,
     SemanticError, SemanticErrorKind, TypeDef,
 };
-use crate::types::{primitive_hashes, TypeHash};
+use angelscript_core::{primitives, TypeHash};
 use rustc_hash::FxHashMap;
 
 /// Category of switch expression for determining comparison strategy.
@@ -190,7 +190,7 @@ impl<'ast> FunctionCompiler<'ast> {
             context,
             local_scope: LocalScope::new(),
             bytecode: BytecodeEmitter::new(),
-            return_type: DataType::simple(primitive_hashes::VOID),
+            return_type: DataType::simple(primitives::VOID),
             compiled_functions: FxHashMap::default(),
             namespace_path: Vec::new(),
             imported_namespaces: Vec::new(),
@@ -256,7 +256,7 @@ impl<'ast> FunctionCompiler<'ast> {
         compiler.local_scope.exit_scope();
 
         // Ensure function returns properly
-        if compiler.return_type.type_hash != primitive_hashes::VOID {
+        if compiler.return_type.type_hash != primitives::VOID {
             // Non-void function should have explicit return
             // (In a complete implementation, we'd do control flow analysis)
             compiler.bytecode.emit(Instruction::ReturnVoid);
@@ -306,7 +306,7 @@ impl<'ast> FunctionCompiler<'ast> {
         compiler.local_scope.exit_scope();
 
         // Ensure function returns properly
-        if compiler.return_type.type_hash != primitive_hashes::VOID {
+        if compiler.return_type.type_hash != primitives::VOID {
             // Non-void function should have explicit return
             // (In a complete implementation, we'd do control flow analysis)
             compiler.bytecode.emit(Instruction::ReturnVoid);
@@ -332,7 +332,7 @@ impl<'ast> FunctionCompiler<'ast> {
         expr: &'ast Expr<'ast>,
         class_type_id: TypeHash,
     ) -> (Vec<Instruction>, Vec<SemanticError>) {
-        let mut compiler = Self::new(context, DataType::simple(primitive_hashes::VOID));
+        let mut compiler = Self::new(context, DataType::simple(primitives::VOID));
         compiler.current_class = Some(class_type_id);
 
         // Compile the expression - this will emit bytecode to push the value onto the stack
@@ -844,16 +844,16 @@ impl<'ast> FunctionCompiler<'ast> {
 mod tests {
     use super::*;
     use crate::semantic::DataType;
-    use crate::types::primitive_hashes;
+    use angelscript_core::primitives;
     use crate::semantic::types::TypeBehaviors;
     use crate::semantic::types::type_def::PrimitiveType;
-    use crate::types::TypeHash;
+    use angelscript_core::TypeHash;
     use crate::semantic::CompilationContext;
-    use crate::ffi::FfiRegistryBuilder;
+    use crate::module::FfiRegistryBuilder;
     use std::sync::Arc;
 
     /// Create a default FFI registry with primitives for tests
-    fn default_ffi() -> Arc<crate::ffi::FfiRegistry> {
+    fn default_ffi() -> Arc<crate::module::FfiRegistry> {
         Arc::new(FfiRegistryBuilder::new().build().unwrap())
     }
 
@@ -868,9 +868,9 @@ mod tests {
         let mut builder = FfiRegistryBuilder::new();
 
         // Compute hashes consistently
-        let owner_hash = crate::types::TypeHash::from_name("array");
+        let owner_hash = angelscript_core::TypeHash::from_name("array");
         // Template param hash: computed from owner + param index
-        let t_param_hash = crate::types::TypeHash::from_template_instance(owner_hash, &[crate::types::TypeHash(0)]);
+        let t_param_hash = angelscript_core::TypeHash::from_template_instance(owner_hash, &[angelscript_core::TypeHash(0)]);
 
         // Register template param T
         builder.register_type_with_id(
@@ -900,7 +900,7 @@ mod tests {
             template_params: vec![t_param_hash],
             template: None,
             type_args: Vec::new(),
-            type_kind: crate::types::TypeKind::reference(),
+            type_kind: angelscript_core::TypeKind::reference(),
         };
 
         builder.register_type_with_id(owner_hash, array_typedef, Some("array"));
@@ -917,8 +917,8 @@ mod tests {
     }
 
     /// Creates an FfiRegistry with the string module installed
-    fn create_ffi_with_string() -> Arc<crate::ffi::FfiRegistry> {
-        use crate::modules::string_module;
+    fn create_ffi_with_string() -> Arc<crate::module::FfiRegistry> {
+        use crate::module::stdlib::string_module;
         let mut builder = FfiRegistryBuilder::new();
         let string_mod = string_module().expect("Failed to create string module");
         string_mod.install_into(&mut builder).expect("Failed to install string module");
@@ -926,8 +926,8 @@ mod tests {
     }
 
     /// Creates an FfiRegistry with the array module installed
-    fn create_ffi_with_array() -> Arc<crate::ffi::FfiRegistry> {
-        use crate::modules::array_module;
+    fn create_ffi_with_array() -> Arc<crate::module::FfiRegistry> {
+        use crate::module::stdlib::array_module;
         let mut builder = FfiRegistryBuilder::new();
         let array_mod = array_module().expect("Failed to create array module");
         array_mod.install_into(&mut builder).expect("Failed to install array module");
@@ -935,8 +935,8 @@ mod tests {
     }
 
     /// Creates an FfiRegistry with string and array modules installed
-    fn create_ffi_with_string_and_array() -> Arc<crate::ffi::FfiRegistry> {
-        use crate::modules::{array_module, string_module};
+    fn create_ffi_with_string_and_array() -> Arc<crate::module::FfiRegistry> {
+        use crate::module::stdlib::{array_module, string_module};
         let mut builder = FfiRegistryBuilder::new();
         let string_mod = string_module().expect("Failed to create string module");
         string_mod.install_into(&mut builder).expect("Failed to install string module");
@@ -948,16 +948,16 @@ mod tests {
     #[test]
     fn new_compiler_initializes() {
         let ctx = create_test_context();
-        let return_type = DataType::simple(primitive_hashes::VOID);
+        let return_type = DataType::simple(primitives::VOID);
         let compiler = FunctionCompiler::<'_>::new(&ctx, return_type);
 
         assert_eq!(compiler.errors.len(), 0);
-        assert_eq!(compiler.return_type.type_hash, primitive_hashes::VOID);
+        assert_eq!(compiler.return_type.type_hash, primitives::VOID);
     }
 
     #[test]
     fn init_list_empty_error() {
-        use crate::ast::{Parser, Expr};
+        use angelscript_parser::ast::{Parser, Expr};
         use bumpalo::Bump;
 
         let arena = Bump::new();
@@ -970,11 +970,11 @@ mod tests {
         let _array_int = ctx
             .instantiate_template(
                 array_template,
-                vec![DataType::simple(primitive_hashes::INT32)],
+                vec![DataType::simple(primitives::INT32)],
             )
             .unwrap();
 
-        let return_type = DataType::simple(primitive_hashes::VOID);
+        let return_type = DataType::simple(primitives::VOID);
         let mut compiler = FunctionCompiler::new(&ctx, return_type);
 
         // NOTE: Don't set expected_init_list_target - test that we get an error
@@ -993,7 +993,7 @@ mod tests {
 
     #[test]
     fn init_list_simple_int() {
-        use crate::ast::{Parser, Expr};
+        use angelscript_parser::ast::{Parser, Expr};
         use bumpalo::Bump;
 
         let arena = Bump::new();
@@ -1006,11 +1006,11 @@ mod tests {
         let array_int = ctx
             .instantiate_template(
                 array_template,
-                vec![DataType::simple(primitive_hashes::INT32)],
+                vec![DataType::simple(primitives::INT32)],
             )
             .unwrap();
 
-        let return_type = DataType::simple(primitive_hashes::VOID);
+        let return_type = DataType::simple(primitives::VOID);
         let mut compiler = FunctionCompiler::new(&ctx, return_type);
 
         // Set expected init list target type (as would be set by var decl)
@@ -1038,7 +1038,7 @@ mod tests {
 
     #[test]
     fn init_list_nested() {
-        use crate::ast::{Parser, Expr};
+        use angelscript_parser::ast::{Parser, Expr};
         use bumpalo::Bump;
 
         let arena = Bump::new();
@@ -1051,7 +1051,7 @@ mod tests {
         let array_int = ctx
             .instantiate_template(
                 array_template,
-                vec![DataType::simple(primitive_hashes::INT32)],
+                vec![DataType::simple(primitives::INT32)],
             )
             .unwrap();
 
@@ -1063,7 +1063,7 @@ mod tests {
             )
             .unwrap();
 
-        let return_type = DataType::simple(primitive_hashes::VOID);
+        let return_type = DataType::simple(primitives::VOID);
         let mut compiler = FunctionCompiler::new(&ctx, return_type);
 
         // Set expected init list target type for outer array
@@ -1085,7 +1085,7 @@ mod tests {
 
     #[test]
     fn init_list_type_promotion() {
-        use crate::ast::{Parser, Expr};
+        use angelscript_parser::ast::{Parser, Expr};
         use bumpalo::Bump;
 
         let arena = Bump::new();
@@ -1098,11 +1098,11 @@ mod tests {
         let array_double = ctx
             .instantiate_template(
                 array_template,
-                vec![DataType::simple(primitive_hashes::DOUBLE)],
+                vec![DataType::simple(primitives::DOUBLE)],
             )
             .unwrap();
 
-        let return_type = DataType::simple(primitive_hashes::VOID);
+        let return_type = DataType::simple(primitives::VOID);
         let mut compiler = FunctionCompiler::new(&ctx, return_type);
 
         // Set expected init list target type
@@ -1133,7 +1133,7 @@ mod tests {
     #[test]
     fn lambda_compilation_basic() {
         // Test that lambda expressions compile to bytecode with immediate compilation
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -1203,7 +1203,7 @@ mod tests {
     #[test]
     fn lambda_type_inference() {
         // Test that lambda parameters are inferred from funcdef context
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -1240,7 +1240,7 @@ mod tests {
     #[test]
     fn lambda_variable_capture() {
         // Test that lambda captures variables from enclosing scope
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -1286,7 +1286,7 @@ mod tests {
 
     #[test]
     fn duplicate_switch_case_error() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -1314,7 +1314,7 @@ mod tests {
 
     #[test]
     fn switch_no_duplicate_different_values() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -1349,7 +1349,7 @@ mod tests {
 
     #[test]
     fn method_signature_matching_basic() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -1377,7 +1377,7 @@ mod tests {
 
     #[test]
     fn method_signature_matching_with_defaults() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -1402,7 +1402,7 @@ mod tests {
 
     #[test]
     fn field_initializer_compilation() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -1423,7 +1423,7 @@ mod tests {
 
     #[test]
     fn switch_with_break_statements() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -1453,7 +1453,7 @@ mod tests {
 
     #[test]
     fn switch_inside_loop_with_continue() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -1482,7 +1482,7 @@ mod tests {
 
     #[test]
     fn namespace_qualified_function_call() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -1507,7 +1507,7 @@ mod tests {
 
     #[test]
     fn nested_namespace_function_call() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -1534,7 +1534,7 @@ mod tests {
 
     #[test]
     fn namespace_function_with_arguments() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -1559,7 +1559,7 @@ mod tests {
 
     #[test]
     fn namespace_function_overloading() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -1588,7 +1588,7 @@ mod tests {
 
     #[test]
     fn call_from_within_namespace() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -1614,7 +1614,7 @@ mod tests {
 
     #[test]
     fn namespace_constant_access_from_within() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -1652,7 +1652,7 @@ mod tests {
 
     #[test]
     fn global_function_call_from_namespace() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -1687,7 +1687,7 @@ mod tests {
 
     #[test]
     fn namespace_type_constructor_call_from_within() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -1721,7 +1721,7 @@ mod tests {
 
     #[test]
     fn using_namespace_function_call() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -1746,7 +1746,7 @@ mod tests {
 
     #[test]
     fn base_class_method_call() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -1789,7 +1789,7 @@ mod tests {
 
     #[test]
     fn absolute_scope_function_call() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -1814,7 +1814,7 @@ mod tests {
 
     #[test]
     fn cross_namespace_function_call() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -1841,7 +1841,7 @@ mod tests {
 
     #[test]
     fn enum_value_resolution_basic() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -1868,7 +1868,7 @@ mod tests {
 
     #[test]
     fn enum_value_resolution_with_explicit_values() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -1895,7 +1895,7 @@ mod tests {
 
     #[test]
     fn enum_value_in_expression() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -1921,7 +1921,7 @@ mod tests {
 
     #[test]
     fn namespaced_enum_value_resolution() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -1949,7 +1949,7 @@ mod tests {
 
     #[test]
     fn enum_value_undefined_error() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -1976,7 +1976,7 @@ mod tests {
 
     #[test]
     fn enum_value_as_function_argument() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -2006,7 +2006,7 @@ mod tests {
 
     #[test]
     fn enum_value_in_switch() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -2041,7 +2041,7 @@ mod tests {
 
     #[test]
     fn funcdef_variable_declaration_with_function_reference() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -2065,7 +2065,7 @@ mod tests {
 
     #[test]
     fn funcdef_assignment_with_function_reference() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -2093,7 +2093,7 @@ mod tests {
 
     #[test]
     fn funcdef_incompatible_signature_error() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -2118,7 +2118,7 @@ mod tests {
 
     #[test]
     fn funcdef_with_return_type() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -2143,7 +2143,7 @@ mod tests {
 
     #[test]
     fn funcdef_call_through_variable() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -2169,7 +2169,7 @@ mod tests {
 
     #[test]
     fn funcdef_without_context_error() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -2193,7 +2193,7 @@ mod tests {
 
     #[test]
     fn funcdef_as_function_parameter() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -2221,7 +2221,7 @@ mod tests {
 
     #[test]
     fn funcdef_with_lambda() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -2243,7 +2243,7 @@ mod tests {
 
     #[test]
     fn funcdef_wrong_param_count_error() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -2267,7 +2267,7 @@ mod tests {
 
     #[test]
     fn funcdef_wrong_return_type_error() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -2293,7 +2293,7 @@ mod tests {
 
     #[test]
     fn bitwise_assignment_operators() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -2320,7 +2320,7 @@ mod tests {
 
     #[test]
     fn void_variable_declaration_error() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -2343,7 +2343,7 @@ mod tests {
 
     #[test]
     fn void_return_in_non_void_function_error() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -2368,7 +2368,7 @@ mod tests {
 
     #[test]
     fn void_assignment_error() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -2394,7 +2394,7 @@ mod tests {
 
     #[test]
     fn void_binary_operand_error() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -2419,7 +2419,7 @@ mod tests {
 
     #[test]
     fn void_unary_operand_error() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -2444,7 +2444,7 @@ mod tests {
 
     #[test]
     fn void_ternary_branch_error() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -2470,7 +2470,7 @@ mod tests {
 
     #[test]
     fn void_return_type_allowed() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -2493,7 +2493,7 @@ mod tests {
 
     #[test]
     fn void_function_call_as_statement() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -2516,7 +2516,7 @@ mod tests {
 
     #[test]
     fn implicit_int_to_float_conversion() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -2536,7 +2536,7 @@ mod tests {
 
     #[test]
     fn implicit_float_to_double_conversion() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -2555,7 +2555,7 @@ mod tests {
 
     #[test]
     fn explicit_cast_int_to_float() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -2576,7 +2576,7 @@ mod tests {
 
     #[test]
     fn explicit_cast_double_to_int() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -2597,7 +2597,7 @@ mod tests {
 
     #[test]
     fn conversion_in_function_argument() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -2621,7 +2621,7 @@ mod tests {
 
     #[test]
     fn conversion_in_binary_expression() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -2642,7 +2642,7 @@ mod tests {
 
     #[test]
     fn conversion_in_comparison() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -2663,7 +2663,7 @@ mod tests {
 
     #[test]
     fn integer_widening_conversions() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -2686,7 +2686,7 @@ mod tests {
     #[test]
     fn uint_literal_operations() {
         // Test uint literal in expressions
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -2708,7 +2708,7 @@ mod tests {
 
     #[test]
     fn null_to_handle_conversion() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -2729,7 +2729,7 @@ mod tests {
 
     #[test]
     fn handle_to_const_handle_conversion() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -2755,7 +2755,7 @@ mod tests {
 
     #[test]
     fn overload_exact_match_preferred() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -2778,7 +2778,7 @@ mod tests {
 
     #[test]
     fn overload_with_implicit_conversion() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -2800,7 +2800,7 @@ mod tests {
 
     #[test]
     fn overload_multiple_parameters() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -2829,7 +2829,7 @@ mod tests {
     #[test]
     fn init_list_array_creation() {
         // This test uses init_list which auto-infers the array type
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -2850,7 +2850,7 @@ mod tests {
 
     #[test]
     fn ternary_type_promotion() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -2871,7 +2871,7 @@ mod tests {
 
     #[test]
     fn ternary_with_handles() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -2896,7 +2896,7 @@ mod tests {
     #[test]
     fn ternary_both_handles() {
         // Note: null in ternary branches currently isn't supported - both branches need same handle type
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -2922,7 +2922,7 @@ mod tests {
 
     #[test]
     fn class_method_overloading() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -2948,7 +2948,7 @@ mod tests {
 
     #[test]
     fn class_constructor_with_conversion() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -2976,7 +2976,7 @@ mod tests {
 
     #[test]
     fn derived_to_base_handle_conversion() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -3002,7 +3002,7 @@ mod tests {
     #[test]
     fn class_implements_interface() {
         // Test that a class can implement an interface
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -3032,7 +3032,7 @@ mod tests {
 
     #[test]
     fn compound_assignment_with_conversion() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -3057,7 +3057,7 @@ mod tests {
 
     #[test]
     fn return_with_conversion() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -3082,7 +3082,7 @@ mod tests {
 
     #[test]
     fn postfix_increment_decrement() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -3105,7 +3105,7 @@ mod tests {
 
     #[test]
     fn prefix_increment_decrement() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -3130,7 +3130,7 @@ mod tests {
 
     #[test]
     fn unary_negation_all_types() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -3153,7 +3153,7 @@ mod tests {
 
     #[test]
     fn bitwise_not_operator() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -3176,7 +3176,7 @@ mod tests {
 
     #[test]
     fn nested_loops_with_break_continue() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -3200,7 +3200,7 @@ mod tests {
 
     #[test]
     fn switch_with_fallthrough() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -3233,7 +3233,7 @@ mod tests {
 
     #[test]
     fn logical_and_or_operators() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -3259,7 +3259,7 @@ mod tests {
 
     #[test]
     fn bitwise_operators() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -3284,7 +3284,7 @@ mod tests {
 
     #[test]
     fn comparison_operators() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -3312,7 +3312,7 @@ mod tests {
 
     #[test]
     fn chained_member_access() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -3342,7 +3342,7 @@ mod tests {
     #[test]
     fn simple_method_chaining() {
         // Simpler method call chaining without "return this" pattern
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -3371,9 +3371,9 @@ mod tests {
 
     #[test]
     fn string_literal_usage() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
-        use crate::modules::string_module;
+        use crate::module::stdlib::string_module;
         use bumpalo::Bump;
 
         let arena = Bump::new();
@@ -3396,7 +3396,7 @@ mod tests {
 
     #[test]
     fn complex_expression_evaluation() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -3420,7 +3420,7 @@ mod tests {
 
     #[test]
     fn class_constructor_with_field_initialization() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -3448,7 +3448,7 @@ mod tests {
 
     #[test]
     fn derived_class_constructor_with_base_call() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -3481,7 +3481,7 @@ mod tests {
 
     #[test]
     fn derived_class_constructor_without_explicit_super() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -3514,7 +3514,7 @@ mod tests {
 
     #[test]
     fn super_call_in_nested_statement() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -3547,7 +3547,7 @@ mod tests {
 
     #[test]
     fn do_while_basic() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -3569,7 +3569,7 @@ mod tests {
 
     #[test]
     fn do_while_with_break() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -3594,7 +3594,7 @@ mod tests {
 
     #[test]
     fn do_while_with_continue() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -3621,7 +3621,7 @@ mod tests {
 
     #[test]
     fn do_while_non_bool_condition_error() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -3645,7 +3645,7 @@ mod tests {
 
     #[test]
     fn try_catch_basic() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -3669,7 +3669,7 @@ mod tests {
 
     #[test]
     fn try_catch_with_return() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -3695,7 +3695,7 @@ mod tests {
 
     #[test]
     fn break_outside_loop_error() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -3714,7 +3714,7 @@ mod tests {
 
     #[test]
     fn continue_outside_loop_error() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -3733,7 +3733,7 @@ mod tests {
 
     #[test]
     fn void_variable_error() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -3752,7 +3752,7 @@ mod tests {
 
     #[test]
     fn return_void_from_non_void_function_error() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -3771,7 +3771,7 @@ mod tests {
 
     #[test]
     fn return_value_type_mismatch_error() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -3790,7 +3790,7 @@ mod tests {
 
     #[test]
     fn undefined_variable_error() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -3809,7 +3809,7 @@ mod tests {
 
     #[test]
     fn this_outside_class_error() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -3830,7 +3830,7 @@ mod tests {
 
     #[test]
     fn enum_value_access() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -3855,7 +3855,7 @@ mod tests {
 
     #[test]
     fn undefined_enum_value_error() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -3882,7 +3882,7 @@ mod tests {
 
     #[test]
     fn const_variable_assignment_error() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -3904,7 +3904,7 @@ mod tests {
 
     #[test]
     fn switch_with_default() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -3934,7 +3934,7 @@ mod tests {
 
     #[test]
     fn switch_duplicate_default_error() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -3959,7 +3959,7 @@ mod tests {
 
     #[test]
     fn switch_duplicate_case_value_error() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -3984,7 +3984,7 @@ mod tests {
 
     #[test]
     fn switch_unsupported_value_type_error() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -4012,7 +4012,7 @@ mod tests {
 
     #[test]
     fn for_loop_with_init_expr() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -4034,7 +4034,7 @@ mod tests {
 
     #[test]
     fn for_loop_no_condition() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -4057,7 +4057,7 @@ mod tests {
 
     #[test]
     fn for_loop_non_bool_condition_error() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -4080,7 +4080,7 @@ mod tests {
 
     #[test]
     fn if_non_bool_condition_error() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -4102,7 +4102,7 @@ mod tests {
 
     #[test]
     fn while_non_bool_condition_error() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -4126,7 +4126,7 @@ mod tests {
 
     #[test]
     fn global_variable_access() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -4150,7 +4150,7 @@ mod tests {
 
     #[test]
     fn implicit_this_field_access() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -4183,7 +4183,7 @@ mod tests {
 
     #[test]
     fn implicit_this_shadows_local() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -4215,7 +4215,7 @@ mod tests {
 
     #[test]
     fn namespaced_function() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -4240,7 +4240,7 @@ mod tests {
 
     #[test]
     fn nested_namespace_function() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -4267,7 +4267,7 @@ mod tests {
 
     #[test]
     fn super_call_in_while_loop() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -4299,7 +4299,7 @@ mod tests {
 
     #[test]
     fn super_call_in_do_while() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -4330,7 +4330,7 @@ mod tests {
 
     #[test]
     fn super_call_in_for_loop_init() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -4361,7 +4361,7 @@ mod tests {
 
     #[test]
     fn super_call_in_nested_block() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -4394,7 +4394,7 @@ mod tests {
 
     #[test]
     fn super_call_in_switch() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -4429,7 +4429,7 @@ mod tests {
 
     #[test]
     fn super_call_in_try_catch() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -4464,7 +4464,7 @@ mod tests {
 
     #[test]
     fn super_call_in_binary_expr() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -4496,7 +4496,7 @@ mod tests {
 
     #[test]
     fn super_call_in_return_value() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -4528,7 +4528,7 @@ mod tests {
 
     #[test]
     fn overloaded_methods() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -4558,7 +4558,7 @@ mod tests {
 
     #[test]
     fn ternary_type_mismatch_error() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -4578,7 +4578,7 @@ mod tests {
 
     #[test]
     fn ternary_non_bool_condition_error() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -4600,7 +4600,7 @@ mod tests {
 
     #[test]
     fn postfix_on_rvalue_error() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -4621,9 +4621,9 @@ mod tests {
 
     #[test]
     fn init_list_basic() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
-        use crate::modules::array_module;
+        use crate::module::stdlib::array_module;
         use bumpalo::Bump;
 
         let arena = Bump::new();
@@ -4645,7 +4645,7 @@ mod tests {
 
     #[test]
     fn null_literal_usage() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -4668,7 +4668,7 @@ mod tests {
 
     #[test]
     fn explicit_cast_to_same_type() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -4688,7 +4688,7 @@ mod tests {
 
     #[test]
     fn explicit_cast_numeric() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -4708,7 +4708,7 @@ mod tests {
 
     #[test]
     fn invalid_cast_error() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -4730,7 +4730,7 @@ mod tests {
 
     #[test]
     fn property_getter_access() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -4761,7 +4761,7 @@ mod tests {
 
     #[test]
     fn funcdef_variable() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -4786,7 +4786,7 @@ mod tests {
 
     #[test]
     fn compound_assignment_operators() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -4810,7 +4810,7 @@ mod tests {
 
     #[test]
     fn compound_assignment_on_const_error() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -4832,7 +4832,7 @@ mod tests {
 
     #[test]
     fn lambda_basic() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -4853,7 +4853,7 @@ mod tests {
 
     #[test]
     fn lambda_with_captures() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -4877,7 +4877,7 @@ mod tests {
 
     #[test]
     fn unary_not_operator() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -4898,7 +4898,7 @@ mod tests {
 
     #[test]
     fn unary_bitwise_not() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -4918,7 +4918,7 @@ mod tests {
 
     #[test]
     fn unary_pre_increment() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -4938,7 +4938,7 @@ mod tests {
 
     #[test]
     fn unary_pre_decrement() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -4958,7 +4958,7 @@ mod tests {
 
     #[test]
     fn postfix_increment() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -4978,7 +4978,7 @@ mod tests {
 
     #[test]
     fn postfix_decrement() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -5000,7 +5000,7 @@ mod tests {
 
     #[test]
     fn bitwise_operators_all() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -5028,7 +5028,7 @@ mod tests {
 
     #[test]
     fn handle_assignment() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -5052,7 +5052,7 @@ mod tests {
 
     #[test]
     fn handle_comparison() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -5076,7 +5076,7 @@ mod tests {
 
     #[test]
     fn handle_comparison_with_null() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -5101,7 +5101,7 @@ mod tests {
 
     #[test]
     fn is_operator_non_handle_error() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -5124,7 +5124,7 @@ mod tests {
 
     #[test]
     fn is_operator_mixed_types_error() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -5149,7 +5149,7 @@ mod tests {
 
     #[test]
     fn logical_and_short_circuit() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -5171,7 +5171,7 @@ mod tests {
 
     #[test]
     fn logical_or_short_circuit() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -5193,7 +5193,7 @@ mod tests {
 
     #[test]
     fn logical_xor() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -5216,7 +5216,7 @@ mod tests {
 
     #[test]
     fn power_operator() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -5238,7 +5238,7 @@ mod tests {
 
     #[test]
     fn double_literal() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -5261,7 +5261,7 @@ mod tests {
 
     #[test]
     fn multiple_variables_same_type() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -5285,7 +5285,7 @@ mod tests {
 
     #[test]
     fn super_call_in_ternary() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -5315,7 +5315,7 @@ mod tests {
 
     #[test]
     fn super_call_in_unary() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -5345,7 +5345,7 @@ mod tests {
 
     #[test]
     fn super_call_in_assign() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -5377,7 +5377,7 @@ mod tests {
 
     #[test]
     fn super_call_in_member_expr() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -5412,9 +5412,9 @@ mod tests {
 
     #[test]
     fn super_call_in_index_expr() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
-        use crate::modules::array_module;
+        use crate::module::stdlib::array_module;
         use bumpalo::Bump;
 
         let arena = Bump::new();
@@ -5445,7 +5445,7 @@ mod tests {
 
     #[test]
     fn super_call_in_postfix_expr() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -5477,7 +5477,7 @@ mod tests {
 
     #[test]
     fn super_call_in_cast_expr() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -5507,7 +5507,7 @@ mod tests {
 
     #[test]
     fn super_call_in_paren_expr() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -5539,7 +5539,7 @@ mod tests {
 
     #[test]
     fn foreach_on_non_iterable_error() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -5564,7 +5564,7 @@ mod tests {
 
     #[test]
     fn if_else_basic() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -5589,7 +5589,7 @@ mod tests {
 
     #[test]
     fn if_else_if_chain() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -5620,7 +5620,7 @@ mod tests {
 
     #[test]
     fn empty_expression_statement() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -5643,7 +5643,7 @@ mod tests {
 
     #[test]
     fn method_call_with_args() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -5671,7 +5671,7 @@ mod tests {
 
     #[test]
     fn return_implicit_conversion() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -5693,7 +5693,7 @@ mod tests {
 
     #[test]
     fn binary_void_left_operand_error() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -5714,7 +5714,7 @@ mod tests {
 
     #[test]
     fn binary_void_right_operand_error() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -5737,7 +5737,7 @@ mod tests {
 
     #[test]
     fn inherited_field_access() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -5769,7 +5769,7 @@ mod tests {
 
     #[test]
     fn class_with_opAdd() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -5810,7 +5810,7 @@ mod tests {
 
     #[test]
     fn abstract_method_no_body() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -5845,7 +5845,7 @@ mod tests {
 
     #[test]
     fn index_expression_multi() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -5871,7 +5871,7 @@ mod tests {
 
     #[test]
     fn funcdef_call() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -5897,7 +5897,7 @@ mod tests {
 
     #[test]
     fn assignment_incompatible_types_error() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -5923,9 +5923,9 @@ mod tests {
 
     #[test]
     fn init_list_empty() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
-        use crate::modules::array_module;
+        use crate::module::stdlib::array_module;
         use bumpalo::Bump;
 
         let arena = Bump::new();
@@ -5945,9 +5945,9 @@ mod tests {
 
     #[test]
     fn init_list_multidimensional() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
-        use crate::modules::array_module;
+        use crate::module::stdlib::array_module;
         use bumpalo::Bump;
 
         let arena = Bump::new();
@@ -5968,9 +5968,9 @@ mod tests {
     #[test]
     fn init_list_in_nested_block() {
         // Test that template types are instantiated when used in nested blocks
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
-        use crate::modules::array_module;
+        use crate::module::stdlib::array_module;
         use bumpalo::Bump;
 
         let arena = Bump::new();
@@ -5993,9 +5993,9 @@ mod tests {
     #[test]
     fn init_list_in_for_loop() {
         // Test that template types are instantiated when used in for loop body
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
-        use crate::modules::array_module;
+        use crate::module::stdlib::array_module;
         use bumpalo::Bump;
 
         let arena = Bump::new();
@@ -6018,9 +6018,9 @@ mod tests {
     #[test]
     fn init_list_in_while_loop() {
         // Test that template types are instantiated when used in while loop body
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
-        use crate::modules::array_module;
+        use crate::module::stdlib::array_module;
         use bumpalo::Bump;
 
         let arena = Bump::new();
@@ -6045,9 +6045,9 @@ mod tests {
     #[test]
     fn init_list_deeply_nested_blocks() {
         // Test template instantiation in deeply nested control structures
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
-        use crate::modules::array_module;
+        use crate::module::stdlib::array_module;
         use bumpalo::Bump;
 
         let arena = Bump::new();
@@ -6075,9 +6075,9 @@ mod tests {
     #[test]
     fn template_type_in_switch() {
         // Test template instantiation in switch case blocks
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
-        use crate::modules::array_module;
+        use crate::module::stdlib::array_module;
         use bumpalo::Bump;
 
         let arena = Bump::new();
@@ -6106,9 +6106,9 @@ mod tests {
     #[test]
     fn template_type_in_try_catch() {
         // Test template instantiation in try/catch blocks
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
-        use crate::modules::array_module;
+        use crate::module::stdlib::array_module;
         use bumpalo::Bump;
 
         let arena = Bump::new();
@@ -6134,9 +6134,9 @@ mod tests {
     #[test]
     fn multiple_template_types_same_function() {
         // Test multiple different template instantiations in same function
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
-        use crate::modules::array_module;
+        use crate::module::stdlib::array_module;
         use bumpalo::Bump;
 
         let arena = Bump::new();
@@ -6160,7 +6160,7 @@ mod tests {
 
     #[test]
     fn super_detection_in_call_args() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -6192,9 +6192,9 @@ mod tests {
 
     #[test]
     fn super_detection_in_init_list() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
-        use crate::modules::array_module;
+        use crate::module::stdlib::array_module;
         use bumpalo::Bump;
 
         let arena = Bump::new();
@@ -6227,7 +6227,7 @@ mod tests {
 
     #[test]
     fn interface_method_no_body() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -6261,7 +6261,7 @@ mod tests {
 
     #[test]
     fn foreach_missing_opForEnd() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -6289,7 +6289,7 @@ mod tests {
 
     #[test]
     fn foreach_missing_opForNext() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -6318,7 +6318,7 @@ mod tests {
 
     #[test]
     fn foreach_missing_opForValue() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -6350,7 +6350,7 @@ mod tests {
 
     #[test]
     fn lambda_in_function_call() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -6377,9 +6377,9 @@ mod tests {
 
     #[test]
     fn overloaded_function_call_exact_match() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
-        use crate::modules::string_module;
+        use crate::module::stdlib::string_module;
         use bumpalo::Bump;
 
         let arena = Bump::new();
@@ -6405,7 +6405,7 @@ mod tests {
 
     #[test]
     fn overloaded_function_call_with_conversion() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -6427,7 +6427,7 @@ mod tests {
 
     #[test]
     fn function_call_wrong_arg_count_error() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -6448,7 +6448,7 @@ mod tests {
 
     #[test]
     fn function_call_too_many_args_error() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -6471,9 +6471,9 @@ mod tests {
 
     #[test]
     fn function_with_default_args() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
-        use crate::modules::string_module;
+        use crate::module::stdlib::string_module;
         use bumpalo::Bump;
 
         let arena = Bump::new();
@@ -6503,7 +6503,7 @@ mod tests {
 
     #[test]
     fn member_access_on_primitive_error() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -6525,7 +6525,7 @@ mod tests {
 
     #[test]
     fn method_call_on_primitive_error() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -6547,7 +6547,7 @@ mod tests {
 
     #[test]
     fn undefined_function_call_error() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -6568,7 +6568,7 @@ mod tests {
 
     #[test]
     fn undefined_method_call_error() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -6592,7 +6592,7 @@ mod tests {
 
     #[test]
     fn ternary_int_float_promotion() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -6614,7 +6614,7 @@ mod tests {
 
     #[test]
     fn break_in_nested_loops() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -6642,7 +6642,7 @@ mod tests {
 
     #[test]
     fn continue_in_nested_loops() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -6672,7 +6672,7 @@ mod tests {
 
     #[test]
     fn compound_assignment_type_mismatch_error() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -6694,7 +6694,7 @@ mod tests {
 
     #[test]
     fn array_access() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -6718,7 +6718,7 @@ mod tests {
 
     #[test]
     fn various_int_types() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -6744,7 +6744,7 @@ mod tests {
 
     #[test]
     fn static_method_call() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -6770,7 +6770,7 @@ mod tests {
 
     #[test]
     fn complex_expression_chain() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -6794,7 +6794,7 @@ mod tests {
 
     #[test]
     fn class_with_opindex() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -6819,7 +6819,7 @@ mod tests {
 
     #[test]
     fn type_without_indexing_error() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -6843,7 +6843,7 @@ mod tests {
 
     #[test]
     fn super_outside_class_error() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -6862,7 +6862,7 @@ mod tests {
 
     #[test]
     fn super_without_base_class_error() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -6889,7 +6889,7 @@ mod tests {
 
     #[test]
     fn constructor_wrong_args_error() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -6914,7 +6914,7 @@ mod tests {
 
     #[test]
     fn void_ternary_both_branches_error() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -6936,7 +6936,7 @@ mod tests {
 
     #[test]
     fn void_ternary_else_branch_error() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -6960,7 +6960,7 @@ mod tests {
 
     #[test]
     fn unsigned_right_shift() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -6982,7 +6982,7 @@ mod tests {
 
     #[test]
     fn prefix_minus_on_various_types() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -7003,7 +7003,7 @@ mod tests {
 
     #[test]
     fn prefix_plus_on_numeric() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -7025,7 +7025,7 @@ mod tests {
 
     #[test]
     fn all_comparison_operators() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -7053,7 +7053,7 @@ mod tests {
 
     #[test]
     fn handle_to_object_access() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -7081,7 +7081,7 @@ mod tests {
 
     #[test]
     fn const_reference_parameter() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -7107,7 +7107,7 @@ mod tests {
 
     #[test]
     fn multiple_return_paths() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -7137,7 +7137,7 @@ mod tests {
 
     #[test]
     fn deeply_nested_member_access() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -7171,7 +7171,7 @@ mod tests {
 
     #[test]
     fn modulo_operation() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -7194,7 +7194,7 @@ mod tests {
 
     #[test]
     fn global_const_variable() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -7217,7 +7217,7 @@ mod tests {
 
     #[test]
     fn private_field_access_from_outside_error() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -7243,7 +7243,7 @@ mod tests {
 
     #[test]
     fn unary_not_on_int_error() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -7263,7 +7263,7 @@ mod tests {
 
     #[test]
     fn unary_minus_on_bool_error() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -7285,7 +7285,7 @@ mod tests {
 
     #[test]
     fn reference_out_param_with_literal_error() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -7310,7 +7310,7 @@ mod tests {
 
     #[test]
     fn empty_block_statement() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -7333,7 +7333,7 @@ mod tests {
 
     #[test]
     fn division_operators() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -7356,7 +7356,7 @@ mod tests {
 
     #[test]
     fn string_concatenation() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -7380,7 +7380,7 @@ mod tests {
 
     #[test]
     fn assignment_to_rvalue_error() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -7403,7 +7403,7 @@ mod tests {
 
     #[test]
     fn class_implicit_default_constructor() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -7429,7 +7429,7 @@ mod tests {
 
     #[test]
     fn binary_arithmetic_on_non_numeric_error() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -7450,7 +7450,7 @@ mod tests {
 
     #[test]
     fn binary_bitwise_on_float_error() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -7471,7 +7471,7 @@ mod tests {
 
     #[test]
     fn logical_operator_on_int_error() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -7494,7 +7494,7 @@ mod tests {
 
     #[test]
     fn protected_field_access_from_derived() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -7521,7 +7521,7 @@ mod tests {
 
     #[test]
     fn funcdef_handle_null_assignment() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -7544,7 +7544,7 @@ mod tests {
 
     #[test]
     fn ternary_type_promotion_int_double() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -7566,7 +7566,7 @@ mod tests {
 
     #[test]
     fn compound_modulo_assignment() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -7586,7 +7586,7 @@ mod tests {
 
     #[test]
     fn compound_power_assignment() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -7608,7 +7608,7 @@ mod tests {
 
     #[test]
     fn method_call_on_handle() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -7637,7 +7637,7 @@ mod tests {
 
     #[test]
     fn bitwise_not_on_uint64() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -7657,7 +7657,7 @@ mod tests {
 
     #[test]
     fn prefix_increment_on_field() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -7682,7 +7682,7 @@ mod tests {
 
     #[test]
     fn break_in_do_while() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -7705,7 +7705,7 @@ mod tests {
 
     #[test]
     fn continue_in_for() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -7730,7 +7730,7 @@ mod tests {
 
     #[test]
     fn return_int_from_float_function() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -7751,7 +7751,7 @@ mod tests {
 
     #[test]
     fn deeply_nested_if() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -7779,7 +7779,7 @@ mod tests {
 
     #[test]
     fn switch_on_enum() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -7814,7 +7814,7 @@ mod tests {
 
     #[test]
     fn multiple_variable_init_same_statement() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -7836,7 +7836,7 @@ mod tests {
 
     #[test]
     fn class_method_this_member_access() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -7865,7 +7865,7 @@ mod tests {
 
     #[test]
     fn super_call_in_foreach() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -7890,7 +7890,7 @@ mod tests {
 
     #[test]
     fn super_call_in_for_update() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -7917,7 +7917,7 @@ mod tests {
 
     #[test]
     fn super_call_in_lambda_body() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -7944,7 +7944,7 @@ mod tests {
 
     #[test]
     fn local_variable_shadowing() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -7966,7 +7966,7 @@ mod tests {
 
     #[test]
     fn nested_block_scoping() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -7992,7 +7992,7 @@ mod tests {
 
     #[test]
     fn method_override_in_derived() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -8017,7 +8017,7 @@ mod tests {
 
     #[test]
     fn function_early_return() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -8039,7 +8039,7 @@ mod tests {
 
     #[test]
     fn void_function_explicit_return() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -8063,7 +8063,7 @@ mod tests {
 
     #[test]
     fn postfix_on_member() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -8089,7 +8089,7 @@ mod tests {
 
     #[test]
     fn field_initializer_with_expression() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -8111,7 +8111,7 @@ mod tests {
 
     #[test]
     fn while_complex_condition() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -8137,7 +8137,7 @@ mod tests {
 
     #[test]
     fn explicit_cast_expression() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -8157,7 +8157,7 @@ mod tests {
 
     #[test]
     fn cast_between_numeric_types() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -8181,7 +8181,7 @@ mod tests {
 
     #[test]
     fn expression_statement_call() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -8204,7 +8204,7 @@ mod tests {
 
     #[test]
     fn multiple_arguments_function_call() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -8229,7 +8229,7 @@ mod tests {
 
     #[test]
     fn class_implements_multiple_interfaces() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -8259,7 +8259,7 @@ mod tests {
 
     #[test]
     fn negative_literal_in_expression() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -8282,7 +8282,7 @@ mod tests {
 
     #[test]
     fn chained_method_calls() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -8311,7 +8311,7 @@ mod tests {
 
     #[test]
     fn shift_operations_all_directions() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -8335,7 +8335,7 @@ mod tests {
 
     #[test]
     fn for_loop_no_init() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -8357,7 +8357,7 @@ mod tests {
 
     #[test]
     fn for_loop_no_update() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -8380,7 +8380,7 @@ mod tests {
 
     #[test]
     fn ternary_incompatible_types_error() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -8408,7 +8408,7 @@ mod tests {
 
     #[test]
     fn nested_loop_control_flow() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -8435,7 +8435,7 @@ mod tests {
 
     #[test]
     fn static_method_in_class() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -8456,7 +8456,7 @@ mod tests {
 
     #[test]
     fn complex_boolean_expression() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -8480,7 +8480,7 @@ mod tests {
 
     #[test]
     fn deeply_parenthesized() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -8501,7 +8501,7 @@ mod tests {
 
     #[test]
     fn handle_null_equality() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -8526,7 +8526,7 @@ mod tests {
 
     #[test]
     fn mixed_type_arithmetic() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -8550,7 +8550,7 @@ mod tests {
 
     #[test]
     fn try_catch_with_function_call() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -8577,7 +8577,7 @@ mod tests {
 
     #[test]
     fn try_catch_with_loop() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -8605,7 +8605,7 @@ mod tests {
 
     #[test]
     fn do_while_nested_loops() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -8631,7 +8631,7 @@ mod tests {
 
     #[test]
     fn do_while_complex_condition() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -8655,7 +8655,7 @@ mod tests {
 
     #[test]
     fn do_while_expression_body() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -8681,7 +8681,7 @@ mod tests {
 
     #[test]
     fn lambda_capture_local_variable() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -8703,7 +8703,7 @@ mod tests {
 
     #[test]
     fn lambda_multiple_captures() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -8728,7 +8728,7 @@ mod tests {
 
     #[test]
     fn class_with_op_call() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -8758,7 +8758,7 @@ mod tests {
 
     #[test]
     fn op_call_wrong_arg_count_error() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -8786,7 +8786,7 @@ mod tests {
 
     #[test]
     fn constructor_with_field_initializers() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -8813,7 +8813,7 @@ mod tests {
 
     #[test]
     fn constructor_with_complex_field_initializers() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -8841,7 +8841,7 @@ mod tests {
 
     #[test]
     fn function_with_default_params() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -8865,7 +8865,7 @@ mod tests {
 
     #[test]
     fn function_multiple_default_params() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -8892,7 +8892,7 @@ mod tests {
 
     #[test]
     fn overload_resolution_exact_match() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -8917,7 +8917,7 @@ mod tests {
 
     #[test]
     fn overload_resolution_with_conversion() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -8942,7 +8942,7 @@ mod tests {
 
     #[test]
     fn protected_member_from_non_derived_error() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -8970,7 +8970,7 @@ mod tests {
 
     #[test]
     fn absolute_scope_type_reference() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -8995,7 +8995,7 @@ mod tests {
 
     #[test]
     fn void_in_binary_operation_error() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -9016,7 +9016,7 @@ mod tests {
 
     #[test]
     fn void_as_function_argument_error() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -9040,7 +9040,7 @@ mod tests {
 
     #[test]
     fn index_type_mismatch_error() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -9066,7 +9066,7 @@ mod tests {
 
     #[test]
     fn derived_to_base_handle_assignment() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -9091,7 +9091,7 @@ mod tests {
 
     #[test]
     fn out_param_requires_lvalue_error() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -9114,7 +9114,7 @@ mod tests {
 
     #[test]
     fn inout_param_requires_mutable_lvalue_error() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -9138,7 +9138,7 @@ mod tests {
 
     #[test]
     fn ref_in_param_accepts_rvalue() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -9162,7 +9162,7 @@ mod tests {
 
     #[test]
     fn ref_in_param_accepts_lvalue() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -9186,7 +9186,7 @@ mod tests {
 
     #[test]
     fn ref_out_param_accepts_mutable_lvalue() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -9210,7 +9210,7 @@ mod tests {
 
     #[test]
     fn ref_out_param_rejects_const_lvalue() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -9234,7 +9234,7 @@ mod tests {
 
     #[test]
     fn ref_inout_param_accepts_mutable_lvalue() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -9258,7 +9258,7 @@ mod tests {
 
     #[test]
     fn ref_inout_param_rejects_rvalue() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -9281,7 +9281,7 @@ mod tests {
 
     #[test]
     fn bare_ref_param_treated_as_inout() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -9305,7 +9305,7 @@ mod tests {
 
     #[test]
     fn bare_ref_param_rejects_rvalue() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -9330,7 +9330,7 @@ mod tests {
 
     #[test]
     fn init_list_with_floats() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -9350,7 +9350,7 @@ mod tests {
 
     #[test]
     fn init_list_mixed_numeric_types() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -9372,7 +9372,7 @@ mod tests {
 
     #[test]
     fn handle_reference_operator() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -9398,7 +9398,7 @@ mod tests {
 
     #[test]
     fn int8_operations() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -9420,7 +9420,7 @@ mod tests {
 
     #[test]
     fn uint64_operations() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -9444,7 +9444,7 @@ mod tests {
 
     #[test]
     fn lambda_explicit_param_type_mismatch_error() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -9465,7 +9465,7 @@ mod tests {
 
     #[test]
     fn lambda_param_count_mismatch_error() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -9488,7 +9488,7 @@ mod tests {
 
     #[test]
     fn method_call_on_handle_member() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -9519,7 +9519,7 @@ mod tests {
 
     #[test]
     fn namespace_function_and_enum() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -9546,7 +9546,7 @@ mod tests {
 
     #[test]
     fn reverse_binary_operator() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -9587,7 +9587,7 @@ mod tests {
 
     #[test]
     fn not_callable_error() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -9611,7 +9611,7 @@ mod tests {
 
     #[test]
     fn undefined_function_error() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -9633,7 +9633,7 @@ mod tests {
 
     #[test]
     fn constructor_no_constructors_error() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -9659,7 +9659,7 @@ mod tests {
 
     #[test]
     fn class_with_get_op_index() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -9687,7 +9687,7 @@ mod tests {
 
     #[test]
     fn while_non_boolean_condition_error() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -9710,7 +9710,7 @@ mod tests {
 
     #[test]
     fn if_non_boolean_condition_error() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -9733,7 +9733,7 @@ mod tests {
 
     #[test]
     fn funcdef_call_through_field() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -9765,7 +9765,7 @@ mod tests {
 
     #[test]
     fn super_not_class_type_error() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -9786,7 +9786,7 @@ mod tests {
 
     #[test]
     fn funcdef_return_void_to_int_error() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -9811,7 +9811,7 @@ mod tests {
 
     #[test]
     fn class_with_destructor() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -9839,7 +9839,7 @@ mod tests {
 
     #[test]
     fn short_circuit_and() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -9860,7 +9860,7 @@ mod tests {
 
     #[test]
     fn short_circuit_or() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -9883,7 +9883,7 @@ mod tests {
 
     #[test]
     fn double_float_promotion() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -9906,7 +9906,7 @@ mod tests {
 
     #[test]
     fn property_set_without_setter_error() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -9932,7 +9932,7 @@ mod tests {
 
     #[test]
     fn return_wrong_type_error() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -9953,7 +9953,7 @@ mod tests {
 
     #[test]
     fn string_index_works() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -9977,7 +9977,7 @@ mod tests {
 
     #[test]
     fn nested_init_list() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -9999,7 +9999,7 @@ mod tests {
 
     #[test]
     fn double_negation() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -10022,7 +10022,7 @@ mod tests {
 
     #[test]
     fn absolute_scope_enum_value() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -10047,7 +10047,7 @@ mod tests {
 
     #[test]
     fn switch_duplicate_case_error() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -10071,7 +10071,7 @@ mod tests {
 
     #[test]
     fn switch_multiple_defaults_error() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -10095,7 +10095,7 @@ mod tests {
 
     #[test]
     fn switch_case_type_mismatch_error() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -10117,7 +10117,7 @@ mod tests {
 
     #[test]
     fn switch_fallthrough_cases() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -10148,7 +10148,7 @@ mod tests {
 
     #[test]
     fn int8_to_float_conversion() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -10168,7 +10168,7 @@ mod tests {
 
     #[test]
     fn uint8_to_double_conversion() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -10188,7 +10188,7 @@ mod tests {
 
     #[test]
     fn int16_to_int32_widening() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -10208,7 +10208,7 @@ mod tests {
 
     #[test]
     fn uint16_to_uint32_widening() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -10230,7 +10230,7 @@ mod tests {
 
     #[test]
     fn foreach_over_array() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -10255,7 +10255,7 @@ mod tests {
 
     #[test]
     fn compound_bitwise_and_assignment() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -10275,7 +10275,7 @@ mod tests {
 
     #[test]
     fn compound_bitwise_or_assignment() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -10295,7 +10295,7 @@ mod tests {
 
     #[test]
     fn compound_bitwise_xor_assignment() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -10315,7 +10315,7 @@ mod tests {
 
     #[test]
     fn compound_left_shift_assignment() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -10335,7 +10335,7 @@ mod tests {
 
     #[test]
     fn compound_right_shift_assignment() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -10357,7 +10357,7 @@ mod tests {
 
     #[test]
     fn member_access_chain_three_levels() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -10389,7 +10389,7 @@ mod tests {
 
     #[test]
     fn member_assignment_chain() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -10419,7 +10419,7 @@ mod tests {
 
     #[test]
     fn this_in_constructor() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -10446,7 +10446,7 @@ mod tests {
 
     #[test]
     fn this_outside_class_context_error() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -10467,7 +10467,7 @@ mod tests {
 
     #[test]
     fn explicit_cast_float_to_int() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -10487,7 +10487,7 @@ mod tests {
 
     #[test]
     fn explicit_cast_int_to_int8() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -10509,7 +10509,7 @@ mod tests {
 
     #[test]
     fn array_constructor() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -10531,7 +10531,7 @@ mod tests {
 
     #[test]
     fn class_with_mixin() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -10562,7 +10562,7 @@ mod tests {
 
     #[test]
     fn auto_with_function_call() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -10583,7 +10583,7 @@ mod tests {
 
     #[test]
     fn auto_with_complex_expression() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -10604,7 +10604,7 @@ mod tests {
 
     #[test]
     fn auto_with_const() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -10623,7 +10623,7 @@ mod tests {
 
     #[test]
     fn auto_with_handle() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -10645,7 +10645,7 @@ mod tests {
 
     #[test]
     fn auto_without_initializer_error() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -10666,7 +10666,7 @@ mod tests {
 
     #[test]
     fn auto_with_void_error() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -10691,7 +10691,7 @@ mod tests {
 
     #[test]
     fn not_on_bool_expression() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -10712,7 +10712,7 @@ mod tests {
 
     #[test]
     fn multiple_unary_operators() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -10735,7 +10735,7 @@ mod tests {
     // Property accessor using explicit method syntax with 'property' keyword
     #[test]
     fn property_getter_only() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -10762,7 +10762,7 @@ mod tests {
     // Property accessor using explicit method syntax with 'property' keyword
     #[test]
     fn property_getter_and_setter() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -10791,7 +10791,7 @@ mod tests {
     // Property accessor using virtual property block syntax
     #[test]
     fn property_virtual_block_syntax() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -10822,7 +10822,7 @@ mod tests {
     // Property accessor - read-only virtual property
     #[test]
     fn property_read_only_virtual() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -10852,7 +10852,7 @@ mod tests {
 
     #[test]
     fn int32_to_int8_narrowing() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -10872,7 +10872,7 @@ mod tests {
 
     #[test]
     fn int64_to_int16_narrowing() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -10892,7 +10892,7 @@ mod tests {
 
     #[test]
     fn uint32_to_uint8_narrowing() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -10914,7 +10914,7 @@ mod tests {
 
     #[test]
     fn interface_implementation() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -10944,7 +10944,7 @@ mod tests {
 
     #[test]
     fn static_method_invocation() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -10973,7 +10973,7 @@ mod tests {
 
     #[test]
     fn class_with_const_field() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -11002,7 +11002,7 @@ mod tests {
 
     #[test]
     fn final_class() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -11028,7 +11028,7 @@ mod tests {
 
     #[test]
     fn implicit_this_member_access() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -11058,7 +11058,7 @@ mod tests {
 
     #[test]
     fn empty_void_function() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -11081,7 +11081,7 @@ mod tests {
 
     #[test]
     fn nested_ternary() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -11103,7 +11103,7 @@ mod tests {
 
     #[test]
     fn for_loop_multiple_init_vars() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -11127,7 +11127,7 @@ mod tests {
 
     #[test]
     fn complex_boolean_and_or() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -11151,7 +11151,7 @@ mod tests {
 
     #[test]
     fn global_variable_read_and_write() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -11175,7 +11175,7 @@ mod tests {
 
     #[test]
     fn double_to_float_conversion() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -11195,7 +11195,7 @@ mod tests {
 
     #[test]
     fn float_to_double_conversion() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -11217,7 +11217,7 @@ mod tests {
 
     #[test]
     fn const_handle_assignment() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -11244,7 +11244,7 @@ mod tests {
 
     #[test]
     fn int8_to_int32_widening() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -11264,7 +11264,7 @@ mod tests {
 
     #[test]
     fn int8_to_int64_widening() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -11284,7 +11284,7 @@ mod tests {
 
     #[test]
     fn int16_to_int64_widening() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -11304,7 +11304,7 @@ mod tests {
 
     #[test]
     fn int64_to_int32_explicit_narrowing() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -11324,7 +11324,7 @@ mod tests {
 
     #[test]
     fn int32_to_int16_explicit_narrowing() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -11344,7 +11344,7 @@ mod tests {
 
     #[test]
     fn int16_to_int8_explicit_narrowing() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -11366,7 +11366,7 @@ mod tests {
 
     #[test]
     fn int32_to_double_conversion() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -11386,7 +11386,7 @@ mod tests {
 
     #[test]
     fn int64_to_double_conversion() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -11406,7 +11406,7 @@ mod tests {
 
     #[test]
     fn float_to_int32_explicit_conversion() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -11426,7 +11426,7 @@ mod tests {
 
     #[test]
     fn double_to_int64_explicit_conversion() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -11448,7 +11448,7 @@ mod tests {
 
     #[test]
     fn less_than_with_conversion() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -11469,7 +11469,7 @@ mod tests {
 
     #[test]
     fn greater_than_or_equal_with_conversion() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -11492,7 +11492,7 @@ mod tests {
 
     #[test]
     fn method_returning_self() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -11528,7 +11528,7 @@ mod tests {
 
     #[test]
     fn deeply_nested_if_else() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -11561,7 +11561,7 @@ mod tests {
 
     #[test]
     fn compound_assignment_on_field() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -11586,7 +11586,7 @@ mod tests {
 
     #[test]
     fn compound_subtraction_on_field() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -11613,7 +11613,7 @@ mod tests {
 
     #[test]
     fn postfix_increment_in_array_index() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -11641,9 +11641,9 @@ mod tests {
 
     #[test]
     fn string_assignment() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
-        use crate::modules::string_module;
+        use crate::module::stdlib::string_module;
         use bumpalo::Bump;
 
         let arena = Bump::new();
@@ -11664,7 +11664,7 @@ mod tests {
 
     #[test]
     fn string_comparison() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -11688,7 +11688,7 @@ mod tests {
 
     #[test]
     fn function_with_multiple_returns() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -11717,7 +11717,7 @@ mod tests {
 
     #[test]
     fn virtual_method_override() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -11747,7 +11747,7 @@ mod tests {
 
     #[test]
     fn class_with_private_constructor_external_error() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -11773,7 +11773,7 @@ mod tests {
 
     #[test]
     fn compound_multiply_assignment() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -11793,7 +11793,7 @@ mod tests {
 
     #[test]
     fn compound_divide_assignment() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -11815,7 +11815,7 @@ mod tests {
 
     #[test]
     fn float_arithmetic_operations() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -11839,7 +11839,7 @@ mod tests {
 
     #[test]
     fn double_arithmetic_operations() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -11865,7 +11865,7 @@ mod tests {
 
     #[test]
     fn arithmetic_expression_precedence() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -11890,7 +11890,7 @@ mod tests {
 
     #[test]
     fn enum_with_explicit_values() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -11914,7 +11914,7 @@ mod tests {
 
     #[test]
     fn return_with_complex_expression() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -11939,7 +11939,7 @@ mod tests {
 
     #[test]
     fn local_shadows_global() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -11963,7 +11963,7 @@ mod tests {
 
     #[test]
     fn for_loop_complex_update() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -11987,7 +11987,7 @@ mod tests {
 
     #[test]
     fn prefix_decrement_in_loop() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -12011,7 +12011,7 @@ mod tests {
 
     #[test]
     fn switch_on_bool() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -12036,7 +12036,7 @@ mod tests {
 
     #[test]
     fn switch_on_bool_duplicate_error() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -12063,7 +12063,7 @@ mod tests {
 
     #[test]
     fn switch_on_float() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -12088,7 +12088,7 @@ mod tests {
 
     #[test]
     fn switch_on_double() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -12113,9 +12113,9 @@ mod tests {
 
     #[test]
     fn switch_on_string() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
-        use crate::modules::string_module;
+        use crate::module::stdlib::string_module;
         use bumpalo::Bump;
 
         let arena = Bump::new();
@@ -12143,9 +12143,9 @@ mod tests {
 
     #[test]
     fn switch_on_string_duplicate_error() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
-        use crate::modules::string_module;
+        use crate::module::stdlib::string_module;
         use bumpalo::Bump;
 
         let arena = Bump::new();
@@ -12173,7 +12173,7 @@ mod tests {
 
     #[test]
     fn switch_on_handle_with_null() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -12199,7 +12199,7 @@ mod tests {
 
     #[test]
     fn switch_null_on_non_handle_error() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -12224,7 +12224,7 @@ mod tests {
 
     #[test]
     fn switch_duplicate_null_error() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -12252,7 +12252,7 @@ mod tests {
 
     #[test]
     fn switch_type_pattern_matching() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -12290,7 +12290,7 @@ mod tests {
 
     #[test]
     fn switch_type_pattern_duplicate_error() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -12325,7 +12325,7 @@ mod tests {
 
     #[test]
     fn switch_type_pattern_with_null() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 
@@ -12355,7 +12355,7 @@ mod tests {
 
     #[test]
     fn switch_interface_pattern() {
-        use crate::Parser;
+        use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
         use bumpalo::Bump;
 

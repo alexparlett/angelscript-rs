@@ -22,16 +22,18 @@ Each task is designed to be completable in a single session without context over
 
 | # | Task | Description | Dependencies | Status |
 |---|------|-------------|--------------|--------|
-| 1 | Workspace Setup | Create workspace Cargo.toml, crate skeleton, lib.rs with re-exports | None | Pending |
-| 2 | Types: TypeHash | Move TypeHash to compiler crate, add Display, make Copy | 1 | Pending |
-| 3 | Types: DataType | Move DataType, make Copy, add Display, RefModifier | 2 | Pending |
-| 4 | Types: TypeDef + FunctionDef | Create clean TypeDef and FunctionDef structs | 3 | Pending |
-| 5 | Types: ExprInfo | Create ExprInfo (renamed from ExprContext) | 3 | Pending |
-| 6 | ScriptRegistry | Implement clean registry (no redundant maps) | 4 | Pending |
-| 7 | CompilationContext | Implement context with name resolution | 6 | Pending |
-| 8 | Pass 1: RegistrationPass | Type + function registration with complete signatures | 7 | Pending |
-| 9 | Pass 2: Orchestrator | CompilationPass mod.rs + BytecodeEmitter integration | 7 | Pending |
-| 10 | Pass 2: OverloadResolver | Function overload resolution (standalone, testable) | 7 | Pending |
+| 1 | Workspace Setup | Create workspace Cargo.toml, crate skeleton, lib.rs with re-exports | None | Complete |
+| 2 | Types: TypeHash | Move TypeHash to compiler crate, add Display, make Copy | 1 | Complete |
+| 3 | Types: DataType | Move DataType, make Copy, add Display, RefModifier | 2 | Complete |
+| 4 | Types: TypeDef + FunctionDef | Create clean TypeDef and FunctionDef structs | 3 | Complete |
+| 5 | Types: ExprInfo | Create ExprInfo (renamed from ExprContext) | 3 | Complete |
+| 6 | ScriptRegistry + Registry trait | Implement clean registry (no redundant maps), Registry trait | 4, 5 | Complete |
+| 7a | Core Crate | Create angelscript-core crate, move shared types (move only, no unification yet) | 6 | Complete |
+| 7b | FFI + Parser Crates | Create angelscript-ffi and angelscript-parser crates, unify FunctionDef | 7a | Complete |
+| 7c | CompilationContext | Implement unified CompilationContext with FfiRegistry + ScriptRegistry | 7b | Complete |
+| 8 | Pass 1: RegistrationPass | Type + function registration with complete signatures | 7c | Pending |
+| 9 | Pass 2: Orchestrator | CompilationPass mod.rs + BytecodeEmitter integration | 7c | Pending |
+| 10 | Pass 2: OverloadResolver | Function overload resolution (standalone, testable) | 7c | Pending |
 | 11 | Pass 2: ExpressionChecker | Expression type checking | 9, 10 | Pending |
 | 12 | Pass 2: CallChecker | Function/method/constructor calls | 11 | Pending |
 | 13 | Pass 2: OperatorChecker | Binary/unary operator overloads | 11 | Pending |
@@ -39,6 +41,185 @@ Each task is designed to be completable in a single session without context over
 | 15 | Pass 2: StatementCompiler | Statement compilation + bytecode | 11-14 | Pending |
 | 16 | Integration | Wire up to main crate, feature flag, test against old | 15 | Pending |
 | 17 | Cleanup | Delete old code, remove feature flag, final benchmarks | 16 | Pending |
+
+---
+
+## Task 7 Details: Crate Restructuring
+
+Task 7 was expanded due to architectural blockers discovered during planning. The compiler crate needs access to `FfiRegistry`, which requires restructuring crates and unifying function types.
+
+### Problems Discovered
+
+1. **Circular dependency**: Compiler crate can't import `FfiRegistry` from main crate
+2. **Enum dispatch overhead**: Current `FunctionRef` enum in main crate requires match on every access
+3. **FFI defaults broken**: `FfiExpr` stored but never compiled to bytecode
+
+### Task 7a: Core Crate
+
+Create `crates/angelscript-core` with shared types. This is a **move only** task - compiler and main crate continue using their own copies until 7c.
+
+```
+crates/angelscript-core/
+├── Cargo.toml
+└── src/
+    ├── lib.rs
+    ├── type_hash.rs      # TypeHash (moved from compiler)
+    ├── data_type.rs      # DataType, RefModifier (moved from compiler)
+    ├── type_def.rs       # TypeDef (moved from compiler)
+    ├── function_def.rs   # FunctionDef, Param (UNIFIED - see below)
+    ├── expr_info.rs      # ExprInfo (moved from compiler)
+    ├── behaviors.rs      # TypeBehaviors, OperatorBehavior
+    └── ffi_expr.rs       # FfiExpr (moved from main crate)
+```
+
+**Unified FunctionDef** (designed for both script and FFI use):
+```rust
+pub struct FunctionDef {
+    pub func_hash: TypeHash,
+    pub name: String,
+    pub namespace: Vec<String>,
+    pub params: Vec<Param>,
+    pub return_type: DataType,
+    pub object_type: Option<TypeHash>,
+    pub traits: FunctionTraits,
+    pub is_native: bool,
+    pub visibility: Visibility,
+}
+
+pub struct Param {
+    pub name: String,
+    pub data_type: DataType,
+    pub has_default: bool,  // Default values stored separately
+}
+```
+
+Key design decisions:
+- Removes `operator` field (redundant - stored in `TypeDef::Class::operator_methods`)
+- `is_native: bool` distinguishes FFI from script
+- `has_default: bool` on Param (default values stored separately)
+
+**Note:** After 7a, compiler crate re-exports from core but `ScriptRegistry` still uses its own internal types. Main crate's `FfiRegistry` still uses `ResolvedFfiFunctionDef`. Full unification happens in 7c.
+
+### Task 7b: FFI + Parser Crates (COMPLETE)
+
+Created two new crates and unified FunctionDef:
+
+**angelscript-ffi crate** - FFI runtime support:
+```
+crates/angelscript-ffi/
+├── Cargo.toml              # depends on angelscript-core
+└── src/
+    ├── lib.rs
+    ├── registry/
+    │   ├── mod.rs
+    │   └── ffi_registry.rs # FfiRegistry, FfiRegistryBuilder
+    ├── native_fn.rs        # NativeFn, CallContext
+    ├── template.rs         # TemplateInstanceInfo
+    ├── convert.rs          # FFI type conversions
+    ├── traits.rs           # FFI traits
+    └── types/
+        ├── mod.rs
+        ├── ffi_type.rs     # FfiTypeDef (stores FunctionDef from core)
+        ├── ffi_interface.rs
+        ├── ffi_funcdef.rs
+        ├── ffi_enum.rs
+        ├── ffi_expr.rs
+        └── ffi_property.rs
+```
+
+**angelscript-parser crate** - Lexer and AST:
+```
+crates/angelscript-parser/
+├── Cargo.toml
+└── src/
+    ├── lib.rs
+    ├── ast/                # Full AST types and parser
+    └── lexer/              # Tokenizer
+```
+
+**Main crate restructuring** - Module builders in src/module/:
+```
+src/module/
+├── mod.rs
+├── module.rs              # Module type
+├── function_builder.rs    # FunctionBuilder -> FunctionDef
+├── class_builder.rs       # ClassBuilder
+├── enum_builder.rs        # EnumBuilder
+├── interface_builder.rs   # InterfaceBuilder
+├── global_property.rs     # GlobalPropertyBuilder
+└── stdlib/                # Standard library modules
+    ├── mod.rs
+    ├── array.rs
+    ├── dict.rs
+    ├── math.rs
+    ├── std.rs
+    └── string.rs
+```
+
+**Key changes:**
+- Deleted `ResolvedFfiFunctionDef` and `FfiParam` - use `FunctionDef` and `Param` from core
+- `FfiTypeDef` now stores `Vec<FunctionDef>` for methods/constructors/operators
+- `FunctionBuilder` builds `FunctionDef` immediately at registration time
+- Module stores `Vec<(FunctionDef, Option<NativeFn>)>` instead of `Vec<FunctionBuilder>`
+
+### Task 7c: CompilationContext (COMPLETE)
+
+**Note:** FunctionDef unification was completed in 7b. This task implemented the CompilationContext.
+
+**Completed:**
+- ✅ FfiRegistry stores `FunctionDef` (from core)
+- ✅ Deleted `ResolvedFfiFunctionDef` and `FfiParam`
+- ✅ `FunctionBuilder::build()` produces `FunctionDef`
+- ✅ CompilationContext implemented in `crates/angelscript-compiler/src/context.rs`
+- ✅ Unified lookups: `get_function()` returns `Option<&FunctionDef>` (no enum!)
+- ✅ Namespace management: `enter_namespace()`, `exit_namespace()`, `add_import()`
+- ✅ Name resolution: `resolve_type()` with namespace rules
+- ✅ Registration methods: `register_type()`, `register_function()`
+- ✅ All unified lookup methods for types, functions, behaviors, methods, operators, properties
+- ✅ 36 unit tests passing
+
+**Structure:**
+```rust
+pub struct CompilationContext {
+    ffi: Arc<FfiRegistry>,
+    script: ScriptRegistry,
+    type_by_name: FxHashMap<String, TypeHash>,
+    func_by_name: FxHashMap<String, Vec<TypeHash>>,
+    namespace_path: Vec<String>,
+    imported_namespaces: Vec<String>,
+}
+
+impl CompilationContext {
+    // Unified lookup - no enum needed!
+    pub fn get_function(&self, hash: TypeHash) -> Option<&FunctionDef> {
+        self.ffi.get_function(hash)
+            .or_else(|| self.script.get_function(hash))
+    }
+}
+```
+
+**Verification:**
+- ✅ `FfiRegistry::get_function()` and `ScriptRegistry::get_function()` return the same type
+- ✅ No `FunctionRef` enum in compiler crate
+- ✅ `cargo build --workspace` passes
+- ✅ `cargo test -p angelscript-compiler` passes (36 tests)
+
+### Task 7d: FFI Default Args
+
+Fix the bug where FFI default arguments are stored but never compiled to bytecode.
+
+**Current broken code in `expr_checker.rs`:**
+```rust
+// Default argument expressions only exist on script functions
+if let Some(func_def) = func_ref.as_script() {
+    // ... only handles script defaults
+}
+```
+
+**Fix:**
+1. Add `FfiRegistry::get_default_value(func_hash, param_idx) -> Option<&FfiExpr>`
+2. Add `FfiExpr` → bytecode compilation
+3. Update call compilation to handle both script and FFI defaults
 
 ---
 
@@ -61,37 +242,83 @@ Pass 2 (compilation/):     Type check function bodies + generate bytecode
 
 ## Crate Structure
 
-### Workspace Cargo.toml
+### Workspace Cargo.toml (CURRENT)
 
 ```toml
 # /Cargo.toml
 [workspace]
 members = [
-    "crates/angelscript-compiler",
+    "crates/angelscript-core",     # ✅ Complete
+    "crates/angelscript-ffi",      # ✅ Complete
+    "crates/angelscript-parser",   # ✅ Complete
+    "crates/angelscript-compiler", # Pending
     ".",  # Main crate (angelscript)
 ]
 ```
 
+### Dependency Graph (CURRENT)
+
+```
+angelscript-core (shared types: TypeHash, DataType, FunctionDef, etc.)
+       ↑
+       ├──────────────────┬─────────────────┐
+       │                  │                 │
+angelscript-ffi      angelscript-parser   angelscript-compiler
+(FfiRegistry)        (Lexer, AST)         (ScriptRegistry, passes) [PENDING]
+       ↑                  ↑                 │
+       │                  │                 │
+       └──────────────────┴─────────────────┤
+                                            ↓
+                                      angelscript (main)
+                                      (Unit, Module, Context, VM)
+```
+
+### `crates/angelscript-core`
+
+Shared types used by both FFI and compiler crates:
+
+```
+crates/angelscript-core/
+├── Cargo.toml              # name = "angelscript-core"
+└── src/
+    ├── lib.rs               # Re-exports all types
+    ├── type_hash.rs         # TypeHash, primitive_hashes
+    ├── data_type.rs         # DataType, RefModifier (Copy)
+    ├── type_def.rs          # TypeDef
+    ├── function_def.rs      # FunctionDef, Param (UNIFIED)
+    ├── expr_info.rs         # ExprInfo
+    ├── behaviors.rs         # TypeBehaviors, OperatorBehavior
+    └── ffi_expr.rs          # FfiExpr (for default arg storage)
+```
+
+### `crates/angelscript-ffi`
+
+FFI registration and runtime support (depends on core):
+
+```
+crates/angelscript-ffi/
+├── Cargo.toml              # name = "angelscript-ffi"
+└── src/
+    ├── lib.rs
+    ├── registry.rs          # FfiRegistry (stores FunctionDef from core)
+    ├── builder.rs           # FfiRegistryBuilder
+    ├── ffi_function.rs      # FfiFunctionDef (for registration)
+    ├── ffi_data_type.rs     # FfiDataType (unresolved types)
+    ├── native_fn.rs         # NativeFn
+    └── template.rs          # Template instantiation support
+```
+
 ### `crates/angelscript-compiler`
 
-**Note:** We put shared types (TypeHash, DataType, TypeDef) in compiler for now.
-The main crate's FFI code depends on compiler for these types.
-We can extract `crates/angelscript-core` later when boundaries are clearer.
+Compilation passes (depends on core + ffi):
 
 ```
 crates/angelscript-compiler/
 ├── Cargo.toml              # name = "angelscript-compiler"
 └── src/
-    ├── lib.rs               # Re-exports types for FFI to use
-    ├── types/
-    │   ├── mod.rs
-    │   ├── type_hash.rs     # TypeHash, primitive_hashes (moved from src/types/)
-    │   ├── data_type.rs     # DataType, RefModifier (moved, now Copy)
-    │   ├── type_def.rs      # TypeDef
-    │   ├── function_def.rs  # FunctionDef
-    │   └── expr_info.rs     # ExprInfo (renamed from ExprContext)
-    ├── context.rs           # CompilationContext (includes name resolution)
-    ├── registry.rs          # Clean ScriptRegistry (no redundant maps)
+    ├── lib.rs               # Re-exports
+    ├── context.rs           # CompilationContext (ffi + script registry)
+    ├── registry.rs          # ScriptRegistry
     └── passes/
         ├── mod.rs
         ├── registration.rs      # Pass 1: types + complete function signatures
@@ -106,10 +333,12 @@ crates/angelscript-compiler/
             └── lambda.rs        # Lambda compilation (~400 lines)
 ```
 
-Main crate FFI uses:
+Main crate uses:
 ```rust
-// src/ffi/types.rs
-use angelscript_compiler::{TypeHash, DataType, TypeDef};
+// Re-exports from all crates
+pub use angelscript_core::{TypeHash, DataType, TypeDef, FunctionDef};
+pub use angelscript_ffi::{FfiRegistry, FfiRegistryBuilder};
+pub use angelscript_compiler::{CompilationContext, ScriptRegistry};
 ```
 
 ---
