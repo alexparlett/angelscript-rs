@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 angelscript-core = { path = "../angelscript-core" }
+angelscript-ffi = { path = "../angelscript-ffi" }
 thiserror.workspace = true
 rustc-hash.workspace = true
 xxhash-rust.workspace = true
