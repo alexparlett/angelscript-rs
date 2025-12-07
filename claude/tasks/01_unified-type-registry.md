@@ -868,14 +868,24 @@ TypeEntry::Class(ClassEntry {
 
 ## Implementation Phases
 
-### Phase 1: Core Types (angelscript-core)
-- [ ] `src/entries.rs` - ClassEntry, EnumEntry, InterfaceEntry, FuncdefEntry, etc.
-- [ ] `src/type_entry.rs` - TypeEntry enum wrapping all entry types
-- [ ] `src/function_entry.rs` - FunctionEntry, FunctionImpl, FunctionSource
-- [ ] `src/ids.rs` - UnitId
-- [ ] `src/op.rs` - Op enum (for macro attribute)
-- [ ] `src/any.rs` - Any trait
-- [ ] Update `function_def.rs` - Add template_params, is_variadic
+### Phase 1: Core Types (angelscript-core) ✅ COMPLETE
+- [x] `src/ids.rs` - UnitId
+- [x] `src/operator.rs` - Operator enum (for macro attribute)
+- [x] `src/any.rs` - Any trait
+- [x] `src/entries/` module with:
+  - `source.rs` - TypeSource, FunctionSource
+  - `common.rs` - PropertyEntry, FieldEntry, EnumValue
+  - `primitive.rs` - PrimitiveEntry
+  - `template_param.rs` - TemplateParamEntry
+  - `enum_entry.rs` - EnumEntry
+  - `interface.rs` - InterfaceEntry
+  - `funcdef.rs` - FuncdefEntry
+  - `class.rs` - ClassEntry
+  - `function.rs` - FunctionEntry, FunctionImpl
+  - `type_entry.rs` - TypeEntry enum
+  - `mod.rs` - re-exports
+- [x] Update `function_def.rs` - Add template_params, is_variadic
+- [x] Update `lib.rs` - Export all new types
 
 ### Phase 2: Create angelscript-registry
 - [ ] `src/registry.rs` - TypeRegistry

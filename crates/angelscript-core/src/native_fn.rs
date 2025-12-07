@@ -63,6 +63,12 @@ impl fmt::Debug for NativeFn {
     }
 }
 
+impl Clone for NativeFn {
+    fn clone(&self) -> Self {
+        self.clone_arc()
+    }
+}
+
 /// Trait for callable native functions.
 ///
 /// This is the core trait that all native functions must implement.

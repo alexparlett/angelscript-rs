@@ -218,6 +218,10 @@ pub struct FunctionDef {
     pub is_native: bool,
     /// Visibility (public, private, protected) - only meaningful for methods.
     pub visibility: Visibility,
+    /// Template type parameter names (e.g., `["T", "U"]` for template functions).
+    pub template_params: Vec<String>,
+    /// True if this function accepts variadic arguments.
+    pub is_variadic: bool,
     /// Cached qualified name (computed on first access).
     cached_qualified_name: OnceCell<String>,
 }
@@ -234,6 +238,8 @@ impl PartialEq for FunctionDef {
             && self.traits == other.traits
             && self.is_native == other.is_native
             && self.visibility == other.visibility
+            && self.template_params == other.template_params
+            && self.is_variadic == other.is_variadic
     }
 }
 
@@ -261,6 +267,38 @@ impl FunctionDef {
             traits,
             is_native,
             visibility,
+            template_params: Vec::new(),
+            is_variadic: false,
+            cached_qualified_name: OnceCell::new(),
+        }
+    }
+
+    /// Create a new template function definition.
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_template(
+        func_hash: TypeHash,
+        name: String,
+        namespace: Vec<String>,
+        params: Vec<Param>,
+        return_type: DataType,
+        object_type: Option<TypeHash>,
+        traits: FunctionTraits,
+        is_native: bool,
+        visibility: Visibility,
+        template_params: Vec<String>,
+    ) -> Self {
+        Self {
+            func_hash,
+            name,
+            namespace,
+            params,
+            return_type,
+            object_type,
+            traits,
+            is_native,
+            visibility,
+            template_params,
+            is_variadic: false,
             cached_qualified_name: OnceCell::new(),
         }
     }
@@ -335,6 +373,16 @@ impl FunctionDef {
     /// Get the number of required parameters (those without defaults).
     pub fn required_param_count(&self) -> usize {
         self.params.iter().filter(|p| !p.has_default).count()
+    }
+
+    /// Check if this is a template function.
+    pub fn is_template(&self) -> bool {
+        !self.template_params.is_empty()
+    }
+
+    /// Check if this function accepts variadic arguments.
+    pub fn is_variadic_fn(&self) -> bool {
+        self.is_variadic
     }
 }
 

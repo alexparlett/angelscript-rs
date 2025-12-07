@@ -48,6 +48,45 @@ See `/claude/tasks/26_compiler_rewrite.md` for full details.
 
 ---
 
+## Task 1: Unified Type Registry - Phase 1 Complete
+
+See `/claude/tasks/01_unified-type-registry.md` for full details.
+
+### Phase 1 Summary (Just Completed)
+
+**Added new types to `crates/angelscript-core/src/`:**
+
+Standalone files:
+- `ids.rs` - `UnitId` for script compilation unit identification
+- `operator.rs` - `Operator` enum for proc-macro attributes
+- `any.rs` - `Any` trait for registrable types
+
+New `entries/` module:
+- `source.rs` - `TypeSource`, `FunctionSource` (FFI vs Script origin)
+- `common.rs` - `PropertyEntry`, `FieldEntry`, `EnumValue`
+- `primitive.rs` - `PrimitiveEntry`
+- `template_param.rs` - `TemplateParamEntry`
+- `enum_entry.rs` - `EnumEntry`
+- `interface.rs` - `InterfaceEntry`
+- `funcdef.rs` - `FuncdefEntry`
+- `class.rs` - `ClassEntry`
+- `function.rs` - `FunctionEntry`, `FunctionImpl`
+- `type_entry.rs` - `TypeEntry` unified enum
+- `mod.rs` - re-exports
+
+Updated:
+- `function_def.rs` - Added `template_params: Vec<String>` and `is_variadic: bool`
+- `native_fn.rs` - Added `Clone` impl for `NativeFn`
+- `lib.rs` - Exported all new types
+
+**Tests:** 313 unit tests passing in angelscript-core
+
+### Next Phase
+
+**Phase 2: Create angelscript-registry** - TypeRegistry and Module builder
+
+---
+
 ## Task 28: Unified Error Types - COMPLETE
 
 See `/claude/tasks/28_unified_error_types.md` for full details.

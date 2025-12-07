@@ -14,10 +14,22 @@
 //! - [`FfiExpr`]: Owned expressions for FFI default arguments
 //! - [`Span`]: Source location tracking for error reporting
 //!
+//! ## Registry Entry Types
+//!
+//! - [`TypeEntry`]: Unified enum for type storage in registry
+//! - [`ClassEntry`], [`EnumEntry`], [`InterfaceEntry`], [`FuncdefEntry`]: Type entries
+//! - [`FunctionEntry`]: Function storage with implementation
+//! - [`TypeSource`], [`FunctionSource`]: Origin tracking (FFI vs script)
+//!
 //! ## Operators
 //!
 //! - [`BinaryOp`]: Binary operators (arithmetic, logical, comparison)
 //! - [`UnaryOp`]: Unary operators (negation, not, increment)
+//! - [`Operator`]: Operator enum for proc-macro attributes
+//!
+//! ## Traits
+//!
+//! - [`Any`]: Trait for types registrable with AngelScript
 //!
 //! ## Error Types
 //!
@@ -39,6 +51,12 @@ mod behaviors;
 mod ffi_expr;
 mod span;
 mod error;
+
+// New types for unified type registry
+mod ids;
+mod operator;
+mod any;
+pub mod entries;
 
 // Native function / VM runtime types (moved from angelscript-registry)
 pub mod native_fn;
@@ -115,3 +133,27 @@ pub use template::{TemplateInstanceInfo, TemplateValidation};
 
 // Any type support
 pub use any_type::{AnyRef, AnyRefMut};
+
+// Unit ID for script compilation units
+pub use ids::UnitId;
+
+// Operator enum for proc-macro attributes
+pub use operator::Operator;
+
+// Any trait for registrable types
+pub use any::Any;
+
+// Registry entry types
+pub use entries::{
+    // Source tracking
+    TypeSource, FunctionSource,
+    // Common types
+    PropertyEntry, FieldEntry, EnumValue,
+    // Type entries
+    PrimitiveEntry, TemplateParamEntry, EnumEntry, InterfaceEntry,
+    FuncdefEntry, ClassEntry,
+    // Function entry
+    FunctionEntry, FunctionImpl,
+    // Unified type entry
+    TypeEntry,
+};
