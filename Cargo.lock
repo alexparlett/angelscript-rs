@@ -43,6 +43,8 @@ version = "0.1.0"
 dependencies = [
  "angelscript-core",
  "angelscript-ffi",
+ "angelscript-parser",
+ "bumpalo",
  "rustc-hash",
  "thiserror",
  "xxhash-rust",

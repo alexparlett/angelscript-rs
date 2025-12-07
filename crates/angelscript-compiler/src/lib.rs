@@ -35,3 +35,4 @@ pub use types::{
 };
 pub use registry::{Registry, ScriptRegistry};
 pub use context::CompilationContext;
+pub use passes::{RegistrationError, RegistrationOutput, RegistrationPass};

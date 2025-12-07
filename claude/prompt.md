@@ -2,7 +2,7 @@
 
 **Status:** In Progress
 **Date:** 2025-12-07
-**Branch:** ffi-type-hash-improvements
+**Branch:** compiler-rewrite
 
 ---
 
@@ -29,40 +29,27 @@ See `/claude/tasks/26_compiler_rewrite.md` for full details.
 | 5 | Types: ExprInfo | Create ExprInfo (renamed from ExprContext) | ✅ Complete |
 | 6 | ScriptRegistry + Registry trait | Implement clean registry, Registry trait for unification | ✅ Complete |
 | 7a | angelscript-core crate | Shared types for FFI and compiler crates | ✅ Complete |
+| 7b | FFI + Parser Crates | Create angelscript-ffi and angelscript-parser, unify FunctionDef | ✅ Complete |
+| 7c | CompilationContext | Implement unified CompilationContext with FfiRegistry + ScriptRegistry | ✅ Complete |
 
-### Task 26.7a Summary (Just Completed)
+### Task 26.7c Summary (Just Completed)
 
-**Created `angelscript-core` crate** - Shared types for both FFI and compiler:
-- `TypeHash` - Deterministic 64-bit hash for type identity
-- `DataType` - Complete type with modifiers (const, handle, reference)
-- `TypeDef` - Type definitions with full `TypeKind` including generic methods
-- `FunctionDef` - Function definitions with complete signatures
-- `ExprInfo` - Expression type checking results
-- `TypeBehaviors` - Lifecycle behaviors for types
-- `FfiExpr` - Expressions for default argument values
-- `BinaryOp`, `UnaryOp` - Operator enums without token dependencies
-
-**Three-crate architecture:**
-```
-angelscript-core  →  angelscript-compiler
-                 →  angelscript (main crate)
-```
-
-**Key changes:**
-- Unified `DataType` (removed `FfiDataType`)
-- `TypeKind` with generic methods: `value<T>()`, `pod<T>()`, `value_sized()`
-- `DataTypeExt` extension trait for `can_convert_to()` method
-- Backward-compatible re-exports in semantic module
-
-**Test results:**
-- 113 unit tests in core crate
-- 19 unit tests in compiler crate
-- 2284+ main crate tests passing
-- All 2440+ library tests passing
+**Implemented CompilationContext** in `crates/angelscript-compiler/src/context.rs`:
+- Unified facade for FFI + Script registry lookups
+- No `FunctionRef` enum needed - `get_function()` returns `Option<&FunctionDef>` directly
+- Namespace management: `enter_namespace()`, `exit_namespace()`, `add_import()`
+- Name resolution: `resolve_type()` with namespace rules
+- All unified lookup methods for types, functions, behaviors, methods, operators, properties
+- 36 unit tests passing
 
 ### Next Task
 
-**Task 26.7b: FfiRegistry updates** - Update FfiRegistry to use core types
+**Task 26.8: Pass 1: RegistrationPass** - Type + function registration with complete signatures
+
+### Deferred
+
+**Task 19: FFI Default Args** - Deferred until after new compiler passes (Tasks 8-15) are built.
+See `/claude/tasks/19_ffi_default_args.md` for details.
 
 ---
 
@@ -75,10 +62,26 @@ angelscript-core  →  angelscript-compiler
 
 ## Architecture Overview
 
-### New (in `crates/`):
+### Crates (in `crates/`):
 ```
-angelscript-core/       →  Shared types (TypeHash, DataType, TypeDef, etc.)
+angelscript-core/       →  Shared types (TypeHash, DataType, TypeDef, FunctionDef, etc.)
+angelscript-ffi/        →  FFI registry and type registration
+angelscript-parser/     →  Lexer + AST + Parser
 angelscript-compiler/   →  2-pass compiler (registration + compilation)
+```
+
+### Dependency Graph:
+```
+angelscript-core  ←─────────────────────────────┐
+       ↑                                        │
+       │                                        │
+angelscript-parser    angelscript-ffi ──────────┤
+       ↑                     ↑                  │
+       │                     │                  │
+       └─────── angelscript-compiler ───────────┘
+                      ↑
+                      │
+               angelscript (main)
 ```
 
 ### Key Benefits

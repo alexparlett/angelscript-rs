@@ -31,7 +31,6 @@ Each task is designed to be completable in a single session without context over
 | 7a | Core Crate | Create angelscript-core crate, move shared types (move only, no unification yet) | 6 | Complete |
 | 7b | FFI + Parser Crates | Create angelscript-ffi and angelscript-parser crates, unify FunctionDef | 7a | Complete |
 | 7c | CompilationContext | Implement unified CompilationContext with FfiRegistry + ScriptRegistry | 7b | Complete |
-| 7d | FFI Default Args | Fix FFI default arguments not compiling to bytecode | 7c | Pending |
 | 8 | Pass 1: RegistrationPass | Type + function registration with complete signatures | 7c | Pending |
 | 9 | Pass 2: Orchestrator | CompilationPass mod.rs + BytecodeEmitter integration | 7c | Pending |
 | 10 | Pass 2: OverloadResolver | Function overload resolution (standalone, testable) | 7c | Pending |
