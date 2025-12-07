@@ -99,8 +99,8 @@ This replaces both:
 
 | # | Task | Description | Dependencies | Status |
 |---|------|-------------|--------------|--------|
-| 1 | Move Span to core | Move `Span` from parser to angelscript-core | None | Pending |
-| 2 | Create core error types | Define `AngelScriptError` and phase-specific errors in core | 1 | Pending |
+| 1 | Move Span to core | Move `Span` from parser to angelscript-core | None | ✅ Complete |
+| 2 | Create core error types | Define `AngelScriptError` and phase-specific errors in core | 1 | ✅ Complete |
 | 3 | Migrate parser errors | Update parser to use Span and errors from core | 2 | Pending |
 | 4 | Consolidate registration errors | Merge `FfiRegistryError` + `ModuleError` → `RegistrationError` | 2 | Pending |
 | 5 | Migrate compiler errors | Update compiler errors to use core types | 2 | Pending |

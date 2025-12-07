@@ -18,6 +18,16 @@
 //!
 //! - [`BinaryOp`]: Binary operators (arithmetic, logical, comparison)
 //! - [`UnaryOp`]: Unary operators (negation, not, increment)
+//!
+//! ## Error Types
+//!
+//! - [`AngelScriptError`]: Unified error type for all phases
+//! - [`LexError`]: Lexer/tokenization errors
+//! - [`ParseError`]: Parser errors with [`ParseErrorKind`]
+//! - [`ParseErrors`]: Collection of parse errors
+//! - [`RegistrationError`]: Type/function registration errors
+//! - [`CompilationError`]: Semantic analysis and compilation errors
+//! - [`RuntimeError`]: Execution/runtime errors
 
 pub mod ops;
 pub mod type_hash;
@@ -28,6 +38,7 @@ mod expr_info;
 mod behaviors;
 mod ffi_expr;
 mod span;
+mod error;
 
 // TypeHash and related
 pub use type_hash::{hash_constants, primitives, TypeHash};
@@ -70,3 +81,15 @@ pub use ffi_expr::FfiExpr;
 
 // Source location tracking
 pub use span::Span;
+
+// Error types
+pub use error::{
+    AngelScriptError,
+    LexError,
+    ParseError,
+    ParseErrorKind,
+    ParseErrors,
+    RegistrationError,
+    CompilationError,
+    RuntimeError,
+};
