@@ -66,8 +66,6 @@
 //! ```
 
 mod context;
-pub mod semantic;
-pub mod codegen;
 mod unit;
 
 // Re-export compilation unit API (recommended for most users)
@@ -76,17 +74,6 @@ pub use unit::{Unit, BuildError, UnitError};
 // Re-export FFI module API directly from crates
 pub use angelscript_module::{Module, ModuleError};
 pub use context::{Context, ContextError};
-
-// Re-export semantic compiler (for advanced use cases)
-pub use semantic::Compiler;
-
-// Re-export semantic types
-pub use semantic::{
-    CompilationResult, CompiledModule, SemanticError, SemanticErrorKind, SemanticErrors,
-};
-
-// Re-export codegen types
-pub use codegen::{BytecodeEmitter, CompiledBytecode, Instruction};
 
 // Re-export built-in module types directly from crate
 pub use angelscript_modules::{ScriptArray, ScriptDict, ScriptString};
