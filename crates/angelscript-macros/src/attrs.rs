@@ -171,6 +171,9 @@ impl FunctionAttrs {
 
         for item in items {
             match item {
+                FunctionAttrItem::Const => {
+                    result.is_const = true;
+                }
                 FunctionAttrItem::Ident(ident) => {
                     let name = ident.to_string();
                     match name.as_str() {
@@ -256,14 +259,22 @@ impl FunctionAttrs {
 
 /// Individual function attribute item.
 enum FunctionAttrItem {
-    /// Simple identifier (e.g., `instance`, `const`)
+    /// Simple identifier (e.g., `instance`)
     Ident(Ident),
+    /// The `const` keyword (handled specially as it's a reserved word)
+    Const,
     /// Name = value (e.g., `operator = Operator::Add`)
     NameValue { name: Ident, value: Expr },
 }
 
 impl Parse for FunctionAttrItem {
     fn parse(input: ParseStream) -> syn::Result<Self> {
+        // Handle `const` keyword specially
+        if input.peek(Token![const]) {
+            let _: Token![const] = input.parse()?;
+            return Ok(FunctionAttrItem::Const);
+        }
+
         let ident: Ident = input.parse()?;
 
         if input.peek(Token![=]) {

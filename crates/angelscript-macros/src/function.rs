@@ -117,6 +117,12 @@ fn extract_params(inputs: &syn::punctuated::Punctuated<FnArg, syn::token::Comma>
 fn generate_behavior(attrs: &FunctionAttrs) -> TokenStream2 {
     use crate::attrs::FunctionKind;
 
+    // Check for operator first
+    if let Some(ref op_str) = attrs.operator {
+        let op_variant = operator_path_to_variant(op_str);
+        return quote! { Some(::angelscript_core::Behavior::Operator(#op_variant)) };
+    }
+
     match attrs.kind {
         FunctionKind::Global => quote! { None },
         FunctionKind::Instance => quote! { None },
@@ -141,4 +147,17 @@ fn generate_behavior(attrs: &FunctionAttrs) -> TokenStream2 {
         FunctionKind::GcReleaseRefs => quote! { Some(::angelscript_core::Behavior::GcReleaseRefs) },
         FunctionKind::GetWeakRefFlag => quote! { Some(::angelscript_core::Behavior::GetWeakRefFlag) },
     }
+}
+
+/// Convert operator path string to token stream for Operator enum variant.
+fn operator_path_to_variant(op_str: &str) -> TokenStream2 {
+    // Handle paths like "Operator::Add" or just "Add"
+    let variant = if op_str.contains("::") {
+        op_str.split("::").last().unwrap_or(op_str)
+    } else {
+        op_str
+    };
+
+    let variant_ident = syn::Ident::new(variant, proc_macro2::Span::call_site());
+    quote! { ::angelscript_core::Operator::#variant_ident }
 }
