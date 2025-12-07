@@ -87,6 +87,15 @@ pub use angelscript_core::{
 // Re-export common types
 pub use angelscript_core::{ReferenceKind, TypeKind};
 
+// Re-export types needed for proc macros
+pub use angelscript_core::{
+    Any, TypeHash, Operator,
+    ClassMeta, FunctionMeta, PropertyMeta, ParamMeta, Behavior,
+};
+
+// Re-export proc macros
+pub use angelscript_macros::{Any, function};
+
 // TODO: Re-export Module and stdlib types when Phase 2 is complete
 // pub use angelscript_registry::Module;
 // pub use angelscript_registry::{ScriptArray, ScriptDict, ScriptString};

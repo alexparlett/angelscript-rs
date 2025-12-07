@@ -65,6 +65,9 @@ pub mod list_buffer;
 pub mod template;
 pub mod any_type;
 
+// Metadata types for proc-macros
+pub mod meta;
+
 // TypeHash and related
 pub use type_hash::{hash_constants, primitives, TypeHash};
 
@@ -156,4 +159,13 @@ pub use entries::{
     FunctionEntry, FunctionImpl,
     // Unified type entry
     TypeEntry,
+};
+
+// Proc-macro metadata types
+pub use meta::{
+    ClassMeta,
+    FunctionMeta,
+    PropertyMeta,
+    ParamMeta,
+    Behavior,
 };

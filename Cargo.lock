@@ -23,6 +23,7 @@ version = "0.1.0"
 dependencies = [
  "angelscript-compiler",
  "angelscript-core",
+ "angelscript-macros",
  "angelscript-parser",
  "angelscript-registry",
  "bitflags",
@@ -57,6 +58,15 @@ dependencies = [
  "rustc-hash",
  "thiserror",
  "xxhash-rust",
+]
+
+[[package]]
+name = "angelscript-macros"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
 ]
 
 [[package]]

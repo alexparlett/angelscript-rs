@@ -895,9 +895,9 @@ Apply design clarifications from template/storage review:
 
 ### Phase 3: Create angelscript-registry
 - [x] `src/registry.rs` - TypeRegistry with unified `functions` map (methods + globals)
-- [ ] `src/module.rs` - Module builder with namespace support
 
 ### Phase 4: Create angelscript-macros
+Note: Macros must be implemented before Module builder because `Module.ty::<T>()` depends on macro-generated metadata.
 - [ ] `#[derive(Any)]`
 - [ ] `#[angelscript::function]`
 - [ ] `#[angelscript::param]` for generic calling convention
@@ -906,11 +906,14 @@ Apply design clarifications from template/storage review:
 - [ ] `#[angelscript::template_callback]`
 - [ ] `#[angelscript::list_pattern]` for list behaviors
 
-### Phase 5: Update Consumers
+### Phase 5: Module Builder (angelscript-registry)
+- [ ] `src/module.rs` - Module builder with namespace support (consumes macro-generated metadata)
+
+### Phase 6: Update Consumers
 - [ ] Main crate: Use TypeRegistry
 - [ ] Compiler: Update to new registry
 
-### Phase 6: Migrate stdlib
+### Phase 7: Migrate stdlib
 - [ ] Update to macro-based registration
 
 ## Crates to Delete/Merge

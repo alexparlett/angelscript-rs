@@ -78,7 +78,7 @@ See `/claude/tasks/01_unified-type-registry.md` for full details.
 
 ### Next Phase
 
-**Phase 3 Task 2: Module builder with namespace support** - `src/module.rs`
+**Phase 4: Create angelscript-macros** - Macros must be implemented before Module builder because `Module.ty::<T>()` depends on macro-generated metadata.
 
 ---
 
