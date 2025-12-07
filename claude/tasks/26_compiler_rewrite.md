@@ -22,10 +22,10 @@ Each task is designed to be completable in a single session without context over
 
 | # | Task | Description | Dependencies | Status |
 |---|------|-------------|--------------|--------|
-| 1 | Workspace Setup | Create workspace Cargo.toml, crate skeleton, lib.rs with re-exports | None | Pending |
-| 2 | Types: TypeHash | Move TypeHash to compiler crate, add Display, make Copy | 1 | Pending |
-| 3 | Types: DataType | Move DataType, make Copy, add Display, RefModifier | 2 | Pending |
-| 4 | Types: TypeDef + FunctionDef | Create clean TypeDef and FunctionDef structs | 3 | Pending |
+| 1 | Workspace Setup | Create workspace Cargo.toml, crate skeleton, lib.rs with re-exports | None | Complete |
+| 2 | Types: TypeHash | Move TypeHash to compiler crate, add Display, make Copy | 1 | Complete |
+| 3 | Types: DataType | Move DataType, make Copy, add Display, RefModifier | 2 | Complete |
+| 4 | Types: TypeDef + FunctionDef | Create clean TypeDef and FunctionDef structs | 3 | Complete |
 | 5 | Types: ExprInfo | Create ExprInfo (renamed from ExprContext) | 3 | Pending |
 | 6 | ScriptRegistry | Implement clean registry (no redundant maps) | 4 | Pending |
 | 7 | CompilationContext | Implement context with name resolution | 6 | Pending |
