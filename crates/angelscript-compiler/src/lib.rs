@@ -20,6 +20,6 @@ pub mod context;
 pub mod passes;
 
 // Re-export commonly used types for convenience
-pub use types::{TypeHash, DataType, TypeDef, FunctionDef, ExprInfo};
+pub use types::{TypeHash, DataType, RefModifier, TypeDef, FunctionDef, ExprInfo};
 pub use registry::ScriptRegistry;
 pub use context::CompilationContext;
