@@ -91,10 +91,11 @@ pub use angelscript_core::{ReferenceKind, TypeKind};
 pub use angelscript_core::{
     Any, TypeHash, Operator,
     ClassMeta, FunctionMeta, PropertyMeta, ParamMeta, Behavior,
+    InterfaceMeta, InterfaceMethodMeta, FuncdefMeta,
 };
 
 // Re-export proc macros
-pub use angelscript_macros::{Any, function};
+pub use angelscript_macros::{Any, function, interface, funcdef};
 
 // TODO: Re-export Module and stdlib types when Phase 2 is complete
 // pub use angelscript_registry::Module;

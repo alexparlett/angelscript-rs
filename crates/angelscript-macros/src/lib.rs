@@ -27,6 +27,8 @@ use proc_macro::TokenStream;
 
 mod derive_any;
 mod function;
+mod interface;
+mod funcdef;
 mod attrs;
 
 /// Derive the `Any` trait for a type.
@@ -109,4 +111,47 @@ pub fn derive_any(input: TokenStream) -> TokenStream {
 #[proc_macro_attribute]
 pub fn function(attr: TokenStream, item: TokenStream) -> TokenStream {
     function::function_impl(attr, item)
+}
+
+/// Define an AngelScript interface from a Rust trait.
+///
+/// This attribute transforms a Rust trait into an AngelScript interface
+/// definition, generating metadata that can be used for registration.
+///
+/// # Attributes
+///
+/// - `name = "..."` - Override the AngelScript interface name
+///
+/// # Example
+///
+/// ```ignore
+/// #[angelscript::interface(name = "IDrawable")]
+/// pub trait Drawable {
+///     fn draw(&self);
+///     fn get_bounds(&self) -> Rect;
+/// }
+/// ```
+#[proc_macro_attribute]
+pub fn interface(attr: TokenStream, item: TokenStream) -> TokenStream {
+    interface::interface_impl(attr, item)
+}
+
+/// Define an AngelScript funcdef from a type alias.
+///
+/// This attribute creates an AngelScript function pointer type (funcdef)
+/// from a Rust function type alias.
+///
+/// # Attributes
+///
+/// - `name = "..."` - Override the AngelScript funcdef name
+///
+/// # Example
+///
+/// ```ignore
+/// #[angelscript::funcdef(name = "Callback")]
+/// pub type MyCallback = fn(i32) -> bool;
+/// ```
+#[proc_macro_attribute]
+pub fn funcdef(attr: TokenStream, item: TokenStream) -> TokenStream {
+    funcdef::funcdef_impl(attr, item)
 }

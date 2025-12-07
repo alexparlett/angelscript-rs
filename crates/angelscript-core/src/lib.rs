@@ -168,4 +168,7 @@ pub use meta::{
     PropertyMeta,
     ParamMeta,
     Behavior,
+    InterfaceMeta,
+    InterfaceMethodMeta,
+    FuncdefMeta,
 };

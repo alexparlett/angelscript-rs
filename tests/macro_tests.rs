@@ -1,7 +1,7 @@
 //! Integration tests for AngelScript proc macros.
 
-use angelscript::{Any, TypeHash, TypeKind, ClassMeta, Behavior, FunctionMeta, Operator};
-use angelscript::function;
+use angelscript::{Any, TypeHash, TypeKind, ClassMeta, Behavior, FunctionMeta, Operator, InterfaceMeta, FuncdefMeta};
+use angelscript::{function, interface, funcdef};
 
 /// Test basic `#[derive(Any)]` usage.
 #[derive(Any)]
@@ -253,4 +253,93 @@ fn test_function_property() {
     assert_eq!(meta.name, "get_doubled");
     assert!(meta.is_property);
     assert!(meta.is_const);
+}
+
+// ============================================================================
+// Interface Macro Tests
+// ============================================================================
+
+/// Test basic interface.
+#[interface]
+pub trait Drawable {
+    fn draw(&self);
+    fn get_width(&self) -> i32;
+    fn set_position(&mut self, x: f32, y: f32);
+}
+
+#[test]
+fn test_interface_basic() {
+    let meta = __as_Drawable_interface_meta();
+    assert_eq!(meta.name, "Drawable");
+    assert_eq!(meta.methods.len(), 3);
+}
+
+#[test]
+fn test_interface_methods() {
+    let meta = __as_Drawable_interface_meta();
+
+    // draw is const (takes &self)
+    let draw = meta.methods.iter().find(|m| m.name == "draw").unwrap();
+    assert!(draw.is_const);
+    assert_eq!(draw.param_types.len(), 0);
+
+    // get_width is const
+    let get_width = meta.methods.iter().find(|m| m.name == "get_width").unwrap();
+    assert!(get_width.is_const);
+
+    // set_position is not const (takes &mut self)
+    let set_position = meta.methods.iter().find(|m| m.name == "set_position").unwrap();
+    assert!(!set_position.is_const);
+    assert_eq!(set_position.param_types.len(), 2);
+}
+
+/// Test interface with custom name.
+#[interface(name = "IUpdatable")]
+pub trait Updatable {
+    fn update(&mut self, dt: f32);
+}
+
+#[test]
+fn test_interface_custom_name() {
+    let meta = __as_Updatable_interface_meta();
+    assert_eq!(meta.name, "IUpdatable");
+    assert_eq!(meta.type_hash, TypeHash::from_name("IUpdatable"));
+}
+
+// ============================================================================
+// Funcdef Macro Tests
+// ============================================================================
+
+/// Test basic funcdef.
+#[funcdef]
+pub type Callback = fn(i32) -> bool;
+
+#[test]
+fn test_funcdef_basic() {
+    let meta = __as_Callback_funcdef_meta();
+    assert_eq!(meta.name, "Callback");
+    assert_eq!(meta.param_types.len(), 1);
+}
+
+/// Test funcdef with custom name.
+#[funcdef(name = "EventHandler")]
+pub type MyEventHandler = fn(u32, f32) -> ();
+
+#[test]
+fn test_funcdef_custom_name() {
+    let meta = __as_MyEventHandler_funcdef_meta();
+    assert_eq!(meta.name, "EventHandler");
+    assert_eq!(meta.type_hash, TypeHash::from_name("EventHandler"));
+    assert_eq!(meta.param_types.len(), 2);
+}
+
+/// Test funcdef with no return.
+#[funcdef]
+pub type VoidCallback = fn();
+
+#[test]
+fn test_funcdef_void() {
+    let meta = __as_VoidCallback_funcdef_meta();
+    assert_eq!(meta.name, "VoidCallback");
+    assert_eq!(meta.param_types.len(), 0);
 }
