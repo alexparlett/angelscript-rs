@@ -221,15 +221,9 @@ impl FfiRegistry {
 
     /// Get access to the function name → func_hashes map for iteration.
     ///
-    /// Returns the TypeHash (func_hash) for each overload.
-    pub fn func_by_name(&self) -> FxHashMap<String, Vec<TypeHash>> {
-        self.function_overloads
-            .iter()
-            .map(|(name, hashes)| {
-                // func_hash IS the identity now, just return the hashes
-                (name.clone(), hashes.clone())
-            })
-            .collect()
+    /// Returns a reference to the internal map of function names to TypeHashes.
+    pub fn func_by_name(&self) -> &FxHashMap<String, Vec<TypeHash>> {
+        &self.function_overloads
     }
 
     /// Get a function definition by TypeHash.

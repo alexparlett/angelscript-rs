@@ -256,7 +256,7 @@ Add `unit/build_only` benchmark that measures just compilation without Unit crea
 |---|------|-------------|--------|--------|
 | A1 | Fix O(n²) in build() | 1-2ms | Easy | ✅ Complete |
 | A2 | Cache type_by_name | 0.5-1ms | Medium | ✅ Complete |
-| A3 | Return ref from func_by_name | 0.5-1ms | Easy | Pending |
+| A3 | Return ref from func_by_name | 0.5-1ms | Easy | ✅ Complete |
 | A4 | Arc refs in CompilationContext | 0.5-1ms | Medium | Pending |
 
 ### Phase B: Script Optimizations (1.31ms → <1ms)
