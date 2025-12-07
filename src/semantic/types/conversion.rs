@@ -263,10 +263,11 @@ impl DataType {
         // Funcdef types are semantically always handles, so we should allow
         // conversions between handle and non-handle forms with the same type_id
         if self.type_hash == target.type_hash {
-            let source_typedef = ctx.get_type(self.type_hash);
-            if matches!(source_typedef, TypeDef::Funcdef { .. }) {
-                // Same funcdef type with different handle flags - identity conversion
-                return Some(Conversion::identity());
+            if let Some(source_typedef) = ctx.try_get_type(self.type_hash) {
+                if matches!(source_typedef, TypeDef::Funcdef { .. }) {
+                    // Same funcdef type with different handle flags - identity conversion
+                    return Some(Conversion::identity());
+                }
             }
         }
 
@@ -276,13 +277,14 @@ impl DataType {
         if !self.is_handle && target.is_handle && self.type_hash == target.type_hash {
             // Check if target is a class/object type (not primitive)
             // Note: Template instances are also Class types with template: Some(...)
-            let typedef = ctx.get_type(self.type_hash);
-            if matches!(typedef, TypeDef::Class { .. } | TypeDef::Interface { .. }) {
-                return Some(Conversion {
-                    kind: ConversionKind::ValueToHandle,
-                    cost: 1,
-                    is_implicit: true,
-                });
+            if let Some(typedef) = ctx.try_get_type(self.type_hash) {
+                if matches!(typedef, TypeDef::Class { .. } | TypeDef::Interface { .. }) {
+                    return Some(Conversion {
+                        kind: ConversionKind::ValueToHandle,
+                        cost: 1,
+                        is_implicit: true,
+                    });
+                }
             }
         }
 
@@ -307,16 +309,16 @@ impl DataType {
             return None;
         }
 
-        let source_typedef = ctx.get_type(self.type_hash);
-        let target_typedef = ctx.get_type(target.type_hash);
+        let source_typedef = ctx.try_get_type(self.type_hash);
+        let target_typedef = ctx.try_get_type(target.type_hash);
 
         // Enum -> int (implicit) - enums are int32 internally, no conversion needed
-        if source_typedef.is_enum() && target.type_hash == primitive_hashes::INT32 {
+        if source_typedef.is_some_and(|t| t.is_enum()) && target.type_hash == primitive_hashes::INT32 {
             return Some(Conversion::identity());
         }
 
         // Int -> enum (implicit) - enums are int32 internally, no conversion needed
-        if self.type_hash == primitive_hashes::INT32 && target_typedef.is_enum() {
+        if self.type_hash == primitive_hashes::INT32 && target_typedef.is_some_and(|t| t.is_enum()) {
             return Some(Conversion::identity());
         }
 
@@ -553,7 +555,7 @@ impl DataType {
             }
 
             // Get the type definition to find base class
-            let typedef = ctx.get_type(current_type);
+            let typedef = ctx.try_get_type(current_type)?;
             let base_class = match typedef {
                 TypeDef::Class { base_class, .. } => *base_class,
                 _ => None,
@@ -570,7 +572,7 @@ impl DataType {
 
     fn class_to_interface_conversion<'a>(&self, target: &DataType, ctx: &CompilationContext<'a>) -> Option<Conversion> {
         // Target must be an interface
-        let target_typedef = ctx.get_type(target.type_hash);
+        let target_typedef = ctx.try_get_type(target.type_hash)?;
         if !target_typedef.is_interface() {
             return None;
         }
@@ -579,7 +581,7 @@ impl DataType {
         let mut current_type = self.type_hash;
 
         loop {
-            let typedef = ctx.get_type(current_type);
+            let typedef = ctx.try_get_type(current_type)?;
 
             // Get interfaces this class implements
             let interfaces = match typedef {
@@ -659,7 +661,7 @@ impl DataType {
 
     fn constructor_conversion<'a>(&self, target: &DataType, ctx: &CompilationContext<'a>) -> Option<Conversion> {
         // Get the target type definition
-        let target_typedef = ctx.get_type(target.type_hash);
+        let target_typedef = ctx.try_get_type(target.type_hash)?;
 
         // Only classes can have constructors
         if !target_typedef.is_class() {
@@ -685,7 +687,7 @@ impl DataType {
 
     fn value_operator_conversion<'a>(&self, target: &DataType, ctx: &CompilationContext<'a>) -> Option<Conversion> {
         // Get the source type definition
-        let source_typedef = ctx.get_type(self.type_hash);
+        let source_typedef = ctx.try_get_type(self.type_hash)?;
 
         // Only classes can have operator methods
         let operator_methods = match source_typedef {
@@ -712,7 +714,7 @@ impl DataType {
 
     fn handle_operator_conversion<'a>(&self, target: &DataType, ctx: &CompilationContext<'a>) -> Option<Conversion> {
         // Get the source type definition
-        let source_typedef = ctx.get_type(self.type_hash);
+        let source_typedef = ctx.try_get_type(self.type_hash)?;
 
         // Only classes can have operator methods
         let operator_methods = match source_typedef {
@@ -1661,5 +1663,46 @@ mod tests {
         let conv = Conversion::identity();
         let cloned = conv.clone();
         assert_eq!(conv, cloned);
+    }
+
+    #[test]
+    fn conversion_unknown_type_does_not_panic() {
+        // Test that conversion checking doesn't panic when types don't exist in registry.
+        // This is important because CompilationContext uses or_else chains that may
+        // query both FFI and Script registries.
+        let ctx = CompilationContext::default();
+
+        // Create types with hashes that don't exist in any registry
+        let unknown_type1 = DataType::simple(TypeHash::from_name("CompletelyUnknownType1"));
+        let unknown_type2 = DataType::simple(TypeHash::from_name("CompletelyUnknownType2"));
+
+        // Should return None (no conversion), not panic
+        let conv = unknown_type1.can_convert_to(&unknown_type2, &ctx);
+        assert!(conv.is_none());
+
+        // Unknown to known should also not panic
+        let int_type = DataType::simple(primitive_hashes::INT32);
+        let conv = unknown_type1.can_convert_to(&int_type, &ctx);
+        assert!(conv.is_none());
+
+        // Known to unknown should also not panic
+        let conv = int_type.can_convert_to(&unknown_type1, &ctx);
+        assert!(conv.is_none());
+    }
+
+    #[test]
+    fn conversion_unknown_handle_type_does_not_panic() {
+        // Test handle conversions with unknown types
+        let ctx = CompilationContext::default();
+
+        let unknown_handle = DataType::with_handle(TypeHash::from_name("UnknownClass"), false);
+        let known_handle = DataType::with_handle(primitive_hashes::INT32, false);
+
+        // Should return None, not panic
+        let conv = unknown_handle.can_convert_to(&known_handle, &ctx);
+        assert!(conv.is_none());
+
+        let conv = known_handle.can_convert_to(&unknown_handle, &ctx);
+        assert!(conv.is_none());
     }
 }

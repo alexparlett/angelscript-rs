@@ -4,7 +4,7 @@
 //! that can be stored in `Arc<FfiRegistry>` without arena lifetimes.
 
 use crate::ffi::NativeFn;
-use crate::types::FfiDataType;
+use crate::semantic::types::DataType;
 
 /// A property definition with getter and optional setter.
 ///
@@ -15,8 +15,8 @@ pub struct FfiPropertyDef {
     /// Property name
     pub name: String,
 
-    /// Property type (may be unresolved during registration)
-    pub data_type: FfiDataType,
+    /// Property type (always resolved)
+    pub data_type: DataType,
 
     /// Whether this property is read-only
     pub is_const: bool,
@@ -30,7 +30,7 @@ pub struct FfiPropertyDef {
 
 impl FfiPropertyDef {
     /// Create a new read-only property.
-    pub fn read_only(name: impl Into<String>, data_type: FfiDataType, getter: NativeFn) -> Self {
+    pub fn read_only(name: impl Into<String>, data_type: DataType, getter: NativeFn) -> Self {
         Self {
             name: name.into(),
             data_type,
@@ -43,7 +43,7 @@ impl FfiPropertyDef {
     /// Create a new read-write property.
     pub fn read_write(
         name: impl Into<String>,
-        data_type: FfiDataType,
+        data_type: DataType,
         getter: NativeFn,
         setter: NativeFn,
     ) -> Self {
@@ -72,7 +72,6 @@ mod tests {
     use super::*;
     use crate::ffi::CallContext;
     use crate::types::primitive_hashes;
-    use crate::semantic::types::DataType;
 
     fn dummy_native_fn() -> NativeFn {
         NativeFn::new(|_ctx: &mut CallContext| Ok(()))
@@ -82,7 +81,7 @@ mod tests {
     fn read_only_property() {
         let prop = FfiPropertyDef::read_only(
             "value",
-            FfiDataType::resolved(DataType::simple(primitive_hashes::INT32)),
+            DataType::simple(primitive_hashes::INT32),
             dummy_native_fn(),
         );
 
@@ -97,7 +96,7 @@ mod tests {
     fn read_write_property() {
         let prop = FfiPropertyDef::read_write(
             "value",
-            FfiDataType::resolved(DataType::simple(primitive_hashes::INT32)),
+            DataType::simple(primitive_hashes::INT32),
             dummy_native_fn(),
             dummy_native_fn(),
         );
@@ -113,7 +112,7 @@ mod tests {
     fn debug_output() {
         let prop = FfiPropertyDef::read_only(
             "test",
-            FfiDataType::resolved(DataType::simple(primitive_hashes::INT32)),
+            DataType::simple(primitive_hashes::INT32),
             dummy_native_fn(),
         );
         let debug = format!("{:?}", prop);

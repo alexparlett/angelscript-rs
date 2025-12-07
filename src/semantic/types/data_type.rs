@@ -309,6 +309,25 @@ impl DataType {
     pub fn null_literal() -> Self {
         Self::simple(primitive_hashes::NULL)
     }
+
+    /// Check if this type is void.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use angelscript::semantic::DataType;
+    /// use angelscript::types::primitive_hashes;
+    ///
+    /// let void_type = DataType::simple(primitive_hashes::VOID);
+    /// assert!(void_type.is_void());
+    ///
+    /// let int_type = DataType::simple(primitive_hashes::INT32);
+    /// assert!(!int_type.is_void());
+    /// ```
+    #[inline]
+    pub fn is_void(&self) -> bool {
+        self.type_hash == primitive_hashes::VOID
+    }
 }
 
 #[cfg(test)]

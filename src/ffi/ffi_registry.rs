@@ -59,7 +59,7 @@ use crate::semantic::types::type_def::{
 };
 use crate::types::primitive_hashes;
 use crate::semantic::types::DataType;
-use crate::types::{FfiFunctionDef, FfiResolutionError, ResolvedFfiFunctionDef, TypeHash};
+use crate::types::{FfiFunctionDef, ResolvedFfiFunctionDef, TypeHash};
 
 /// Immutable FFI registry, shared across all Units in a Context.
 ///
@@ -87,8 +87,6 @@ pub struct FfiRegistry {
     function_overloads: FxHashMap<String, Vec<TypeHash>>,
     /// Native function implementations indexed by TypeHash
     native_fns: FxHashMap<TypeHash, NativeFn>,
-    /// Unresolved template functions indexed by TypeHash (resolved at instantiation time)
-    unresolved_functions: FxHashMap<TypeHash, FfiFunctionDef>,
 
     // === Behavior Storage ===
     /// Type behaviors (constructors, factories, etc.) indexed by TypeHash
@@ -111,7 +109,6 @@ impl std::fmt::Debug for FfiRegistry {
             .field("functions", &format!("<{} functions>", self.functions.len()))
             .field("function_overloads", &format!("<{} names>", self.function_overloads.len()))
             .field("native_fns", &format!("<{} native fns>", self.native_fns.len()))
-            .field("unresolved_functions", &format!("<{} unresolved>", self.unresolved_functions.len()))
             .field("behaviors", &format!("<{} behaviors>", self.behaviors.len()))
             .field("template_callbacks", &format!("<{} callbacks>", self.template_callbacks.len()))
             .field("namespaces", &self.namespaces)
@@ -630,15 +627,6 @@ impl FfiRegistry {
         &self.namespaces
     }
 
-    /// Get an unresolved function by ID (for template instantiation).
-    pub fn get_unresolved_function(&self, id: TypeHash) -> Option<&FfiFunctionDef> {
-        self.unresolved_functions.get(&id)
-    }
-
-    /// Get all unresolved functions.
-    pub fn unresolved_functions(&self) -> &FxHashMap<TypeHash, FfiFunctionDef> {
-        &self.unresolved_functions
-    }
 }
 
 // ============================================================================
@@ -971,112 +959,23 @@ impl FfiRegistryBuilder {
             }
         }
 
-        // Resolve all functions
-        let mut unresolved_functions = FxHashMap::default();
-        // Track unresolved functions with their native_fn for later
-        let mut unresolved_native_fns: Vec<(FfiFunctionDef, Option<NativeFn>)> = Vec::new();
-
+        // Process all functions - types are already resolved (DataType used directly)
         for (ffi_func, native_fn_opt) in functions {
-            // Type lookup closure
-            let type_lookup = |name: &str| -> Option<TypeHash> { self.type_names.get(name).copied() };
+            let resolved = ffi_func.to_resolved();
+            let func_hash = resolved.func_hash;
 
-            // Type hash lookup closure
-            let type_hash_lookup = |type_id: TypeHash| -> crate::types::TypeHash {
-                self.types.get(&type_id)
-                    .map(|td| td.type_hash())
-                    .unwrap_or_else(|| crate::types::TypeHash::from_name(&format!("unknown_{}", type_id.as_u64())))
-            };
+            // Add to function name map
+            let qualified_name = resolved.qualified_name();
+            function_names
+                .entry(qualified_name)
+                .or_default()
+                .push(func_hash);
 
-            // Get the owner type's template parameters (if this is a method on a template)
-            let owner_template_params: Option<Vec<TypeHash>> = ffi_func.owner_type.and_then(|owner_id| {
-                self.types.get(&owner_id).and_then(|typedef| {
-                    match typedef {
-                        TypeDef::Class { template_params, .. } if !template_params.is_empty() => {
-                            Some(template_params.clone())
-                        }
-                        _ => None,
-                    }
-                })
-            });
-            let owner_type_id = ffi_func.owner_type;
-
-            // Create instantiate function that handles self-referential template types
-            let mut instantiate = |template_id: TypeHash, args: Vec<DataType>| -> Result<TypeHash, String> {
-                // Check if this is a self-reference: instantiating owner type with its own template params
-                if let (Some(owner_id), Some(params)) = (owner_type_id, &owner_template_params)
-                    && template_id == owner_id && args.len() == params.len() {
-                        // Check if all args are the template params in order
-                        // Need to get type_hash for each param by looking up its TypeDef
-                        let is_self_ref = args.iter().zip(params.iter()).all(|(arg, &param_id)| {
-                            let param_hash = self.types.get(&param_id)
-                                .map(|td| td.type_hash())
-                                .unwrap_or(TypeHash::EMPTY);
-                            arg.type_hash == param_hash && !arg.is_const && !arg.is_handle
-                        });
-                        if is_self_ref {
-                            return Ok(primitive_hashes::SELF);
-                        }
-                    }
-
-                // Also check if the template_id's params match the args exactly
-                // This handles factory functions that return the template type itself
-                if let Some(template_def) = self.types.get(&template_id)
-                    && let TypeDef::Class { template_params, .. } = template_def
-                        && !template_params.is_empty() && template_params.len() == args.len() {
-                            // Check if all args are the template's own params
-                            let is_self_ref = args.iter().zip(template_params.iter()).all(|(arg, &param_id)| {
-                                let param_hash = self.types.get(&param_id)
-                                    .map(|td| td.type_hash())
-                                    .unwrap_or(TypeHash::EMPTY);
-                                arg.type_hash == param_hash && !arg.is_const && !arg.is_handle
-                            });
-                            if is_self_ref {
-                                return Ok(primitive_hashes::SELF);
-                            }
-                        }
-
-                // Not a self-reference - template instantiation not supported during build
-                Err("Template instantiation not supported during FfiRegistry build".to_string())
-            };
-
-            match ffi_func.resolve(&type_lookup, &mut instantiate, &type_hash_lookup) {
-                Ok(resolved) => {
-                    let func_hash = resolved.func_hash;
-
-                    // Add to function name map
-                    let qualified_name = resolved.qualified_name();
-                    function_names
-                        .entry(qualified_name)
-                        .or_default()
-                        .push(func_hash);
-
-                    resolved_functions.insert(func_hash, resolved);
-
-                    // Store native function if provided
-                    if let Some(native_fn) = native_fn_opt {
-                        native_fns.insert(func_hash, native_fn);
-                    }
-                }
-                Err(_e) => {
-                    // Failed to resolve - likely a template method with unresolved type params
-                    // Store for later processing
-                    unresolved_native_fns.push((ffi_func, native_fn_opt));
-                }
-            }
-        }
-
-        // Process unresolved functions - use their original func_hash
-        for (ffi_func, native_fn_opt) in unresolved_native_fns {
-            // For unresolved template methods, use their original func_hash which was
-            // computed in ClassBuilder::build() with the template param type hashes.
-            // This ensures the hash matches what's stored in TypeDef.methods.
-            let original_hash = ffi_func.func_hash;
-
-            unresolved_functions.insert(original_hash, ffi_func);
+            resolved_functions.insert(func_hash, resolved);
 
             // Store native function if provided
             if let Some(native_fn) = native_fn_opt {
-                native_fns.insert(original_hash, native_fn);
+                native_fns.insert(func_hash, native_fn);
             }
         }
 
@@ -1134,39 +1033,30 @@ impl FfiRegistryBuilder {
             functions,
             function_overloads,
             native_fns,
-            unresolved_functions,
             behaviors,
             template_callbacks,
             namespaces: self.namespaces,
         })
     }
 
-    /// Resolve an interface definition's method types.
+    /// Convert an interface definition to a TypeDef.
+    ///
+    /// Types are already resolved (DataType used directly), so this is just a conversion.
     fn resolve_interface(
-        type_names: &FxHashMap<String, TypeHash>,
+        _type_names: &FxHashMap<String, TypeHash>,
         interface_def: &crate::types::FfiInterfaceDef,
         qualified_name: &str,
     ) -> Result<TypeDef, FfiRegistryError> {
-        let methods: Result<Vec<MethodSignature>, FfiRegistryError> = interface_def
+        let methods: Vec<MethodSignature> = interface_def
             .methods()
             .iter()
             .map(|m| {
-                // Resolve params
-                let params: Result<Vec<DataType>, FfiRegistryError> = m
-                    .params
-                    .iter()
-                    .map(|p| Self::resolve_ffi_data_type(type_names, &p.data_type))
-                    .collect();
-
-                // Resolve return type
-                let return_type = Self::resolve_ffi_data_type(type_names, &m.return_type)?;
-
-                Ok(MethodSignature {
+                MethodSignature {
                     name: m.name.clone(),
-                    params: params?,
-                    return_type,
+                    params: m.params.iter().map(|p| p.data_type.clone()).collect(),
+                    return_type: m.return_type.clone(),
                     is_const: m.is_const,
-                })
+                }
             })
             .collect();
 
@@ -1174,80 +1064,25 @@ impl FfiRegistryBuilder {
             name: interface_def.name().to_string(),
             qualified_name: qualified_name.to_string(),
             type_hash: crate::types::TypeHash::from_name(qualified_name),
-            methods: methods?,
+            methods,
         })
     }
 
-    /// Resolve a funcdef definition's types.
+    /// Convert a funcdef definition to a TypeDef.
+    ///
+    /// Types are already resolved (DataType used directly), so this is just a conversion.
     fn resolve_funcdef(
-        type_names: &FxHashMap<String, TypeHash>,
+        _type_names: &FxHashMap<String, TypeHash>,
         funcdef_def: &crate::types::FfiFuncdefDef,
         qualified_name: &str,
     ) -> Result<TypeDef, FfiRegistryError> {
-        // Resolve params
-        let params: Result<Vec<DataType>, FfiRegistryError> = funcdef_def
-            .params
-            .iter()
-            .map(|p| Self::resolve_ffi_data_type(type_names, &p.data_type))
-            .collect();
-
-        // Resolve return type
-        let return_type = Self::resolve_ffi_data_type(type_names, &funcdef_def.return_type)?;
-
         Ok(TypeDef::Funcdef {
             name: funcdef_def.name.clone(),
             qualified_name: qualified_name.to_string(),
             type_hash: crate::types::TypeHash::from_name(qualified_name),
-            params: params?,
-            return_type,
+            params: funcdef_def.params.iter().map(|p| p.data_type.clone()).collect(),
+            return_type: funcdef_def.return_type.clone(),
         })
-    }
-
-    /// Resolve an FfiDataType to a DataType.
-    fn resolve_ffi_data_type(
-        type_names: &FxHashMap<String, TypeHash>,
-        ffi_type: &crate::types::FfiDataType,
-    ) -> Result<DataType, FfiRegistryError> {
-        use crate::types::{FfiDataType, UnresolvedBaseType};
-
-        match ffi_type {
-            FfiDataType::Resolved(dt) => Ok(dt.clone()),
-            FfiDataType::Unresolved {
-                base,
-                is_const,
-                is_handle,
-                is_handle_to_const,
-                ref_modifier,
-            } => {
-                let type_name = match base {
-                    UnresolvedBaseType::Simple(name) => {
-                        if !type_names.contains_key(name) {
-                            return Err(FfiRegistryError::TypeNotFound(name.clone()));
-                        }
-                        name.as_str()
-                    }
-                    UnresolvedBaseType::Template { name, args: _ } => {
-                        // For templates, just look up the base template type
-                        // (full instantiation happens elsewhere)
-                        if !type_names.contains_key(name) {
-                            return Err(FfiRegistryError::TypeNotFound(name.clone()));
-                        }
-                        name.as_str()
-                    }
-                };
-
-                // Compute type hash from name (same hash computation as TypeHash::from_name)
-                let type_hash = TypeHash::from_name(type_name);
-
-                Ok(DataType {
-                    type_hash,
-                    is_const: *is_const,
-                    is_handle: *is_handle,
-                    is_handle_to_const: *is_handle_to_const,
-                    ref_modifier: *ref_modifier,
-                })
-            }
-        }
     }
 }
 
@@ -1258,10 +1093,6 @@ impl FfiRegistryBuilder {
 /// Errors that can occur when building an FfiRegistry.
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
 pub enum FfiRegistryError {
-    /// Failed to resolve a function's types.
-    #[error("function resolution failed: {0}")]
-    FunctionResolution(FfiResolutionError),
-
     /// A referenced type was not found.
     #[error("type not found: {0}")]
     TypeNotFound(String),
@@ -1274,7 +1105,7 @@ pub enum FfiRegistryError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::{FfiDataType, FfiParam};
+    use crate::types::FfiParam;
 
     #[test]
     fn builder_new_has_primitives() {
@@ -1350,16 +1181,16 @@ mod tests {
     }
 
     #[test]
-    fn builder_build_with_resolved_function() {
+    fn builder_build_with_function() {
         use crate::types::primitive_hashes;
         let mut builder = FfiRegistryBuilder::new();
 
         let func = FfiFunctionDef::new("add")
             .with_params(vec![
-                FfiParam::new("a", FfiDataType::resolved(DataType::simple(primitive_hashes::INT32))),
-                FfiParam::new("b", FfiDataType::resolved(DataType::simple(primitive_hashes::INT32))),
+                FfiParam::new("a", DataType::simple(primitive_hashes::INT32)),
+                FfiParam::new("b", DataType::simple(primitive_hashes::INT32)),
             ])
-            .with_return_type(FfiDataType::resolved(DataType::simple(primitive_hashes::INT32)));
+            .with_return_type(DataType::simple(primitive_hashes::INT32));
 
         builder.register_function(func, None);
 
@@ -1376,7 +1207,7 @@ mod tests {
     }
 
     #[test]
-    fn builder_build_with_unresolved_function() {
+    fn builder_build_with_user_type_function() {
         use crate::types::primitive_hashes;
         let mut builder = FfiRegistryBuilder::new();
 
@@ -1403,13 +1234,13 @@ mod tests {
             Some("MyClass"),
         );
 
-        // Register function with unresolved type
+        // Register function with user type (using TypeHash::from_name directly)
         let func = FfiFunctionDef::new("process")
             .with_params(vec![FfiParam::new(
                 "obj",
-                FfiDataType::unresolved_handle("MyClass", false),
+                DataType::with_handle(my_class_hash, false),
             )])
-            .with_return_type(FfiDataType::resolved(DataType::simple(primitive_hashes::VOID)));
+            .with_return_type(DataType::simple(primitive_hashes::VOID));
 
         builder.register_function(func, None);
 
@@ -1421,33 +1252,6 @@ mod tests {
         let resolved = registry.get_function(func_ids[0]).unwrap();
         assert_eq!(resolved.params[0].data_type.type_hash, my_class_hash);
         assert!(resolved.params[0].data_type.is_handle);
-    }
-
-    #[test]
-    fn builder_build_with_unknown_type_stores_unresolved() {
-        let mut builder = FfiRegistryBuilder::new();
-
-        // Register function referencing unknown type
-        let func = FfiFunctionDef::new("process")
-            .with_params(vec![FfiParam::new(
-                "obj",
-                FfiDataType::unresolved_simple("UnknownType"),
-            )]);
-
-        // Get the func_hash before registering (it was computed in with_params via recompute_hash)
-        let original_hash = func.func_hash;
-
-        builder.register_function(func, None);
-
-        // Build succeeds - unknown types are stored as unresolved for later resolution
-        let result = builder.build();
-        assert!(result.is_ok());
-
-        let registry = result.unwrap();
-        // Function should be in unresolved_functions, not functions
-        // It's stored with its original func_hash (computed with unresolved type hashes)
-        assert!(registry.get_function(original_hash).is_none());
-        assert!(registry.get_unresolved_function(original_hash).is_some());
     }
 
     #[test]

@@ -41,7 +41,7 @@ use std::sync::Arc;
 use crate::ast::Parser;
 use crate::module::FfiModuleError;
 use crate::types::{
-    signature_to_ffi_function, type_expr_to_ffi, FfiFunctionDef, FfiPropertyDef, FfiTypeDef,
+    signature_to_ffi_function, type_expr_to_data_type, FfiFunctionDef, FfiPropertyDef, FfiTypeDef,
     ReferenceKind, TypeKind,
 };
 use crate::Module;
@@ -737,8 +737,8 @@ impl<'m, 'app, T: NativeType> ClassBuilder<'m, 'app, T> {
             FfiModuleError::InvalidDeclaration(format!("parse error: {}", errors))
         })?;
 
-        // Convert the type expression to FfiDataType
-        let data_type = type_expr_to_ffi(&prop.ty);
+        // Convert the type expression to DataType
+        let data_type = type_expr_to_data_type(&prop.ty);
 
         // Build the getter function
         let getter_fn = NativeFn::new(move |ctx: &mut CallContext| {
@@ -779,8 +779,8 @@ impl<'m, 'app, T: NativeType> ClassBuilder<'m, 'app, T> {
             FfiModuleError::InvalidDeclaration(format!("parse error: {}", errors))
         })?;
 
-        // Convert the type expression to FfiDataType
-        let data_type = type_expr_to_ffi(&prop.ty);
+        // Convert the type expression to DataType
+        let data_type = type_expr_to_data_type(&prop.ty);
 
         // Build the getter function
         let getter_fn = NativeFn::new(move |ctx: &mut CallContext| {

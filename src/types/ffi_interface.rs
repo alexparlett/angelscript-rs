@@ -4,7 +4,8 @@
 //! interface definitions that can be stored in `Arc<FfiRegistry>` without
 //! arena lifetimes.
 
-use crate::types::{FfiDataType, FfiParam, TypeHash};
+use crate::semantic::types::DataType;
+use crate::types::{FfiParam, TypeHash};
 
 /// An interface method signature.
 ///
@@ -14,11 +15,11 @@ pub struct FfiInterfaceMethod {
     /// Method name
     pub name: String,
 
-    /// Method parameters (with deferred type resolution)
+    /// Method parameters (always resolved)
     pub params: Vec<FfiParam>,
 
-    /// Return type (with deferred type resolution)
-    pub return_type: FfiDataType,
+    /// Return type (always resolved)
+    pub return_type: DataType,
 
     /// Whether this method is const
     pub is_const: bool,
@@ -29,7 +30,7 @@ impl FfiInterfaceMethod {
     pub fn new(
         name: impl Into<String>,
         params: Vec<FfiParam>,
-        return_type: FfiDataType,
+        return_type: DataType,
         is_const: bool,
     ) -> Self {
         Self {
@@ -83,7 +84,6 @@ impl FfiInterfaceDef {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::semantic::types::DataType;
     use crate::types::primitive_hashes;
 
     #[test]
@@ -91,7 +91,7 @@ mod tests {
         let method = FfiInterfaceMethod::new(
             "draw",
             vec![],
-            FfiDataType::resolved(DataType::simple(primitive_hashes::VOID)),
+            DataType::simple(primitive_hashes::VOID),
             true,
         );
 
@@ -106,13 +106,13 @@ mod tests {
             FfiInterfaceMethod::new(
                 "draw",
                 vec![],
-                FfiDataType::resolved(DataType::simple(primitive_hashes::VOID)),
+                DataType::simple(primitive_hashes::VOID),
                 true,
             ),
             FfiInterfaceMethod::new(
                 "update",
                 vec![],
-                FfiDataType::resolved(DataType::simple(primitive_hashes::VOID)),
+                DataType::simple(primitive_hashes::VOID),
                 false,
             ),
         ];
