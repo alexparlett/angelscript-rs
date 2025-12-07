@@ -630,7 +630,7 @@ pub fn string_module<'app>() -> Result<Module<'app>, FfiModuleError> {
     // Register minimal string type - just enough for semantic analysis
     // Methods use raw API since ScriptString doesn't implement FromScript/ToScript
     module
-        .register_type::<ScriptString>("string")
+        .register_type::<ScriptString>("string")?
         .value_type()
         .method_raw("uint length() const", |ctx: &mut crate::ffi::CallContext| {
             let s: &ScriptString = ctx.this()?;

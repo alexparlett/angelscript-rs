@@ -444,7 +444,7 @@ pub fn dictionary_module<'app>() -> Result<Module<'app>, FfiModuleError> {
     let mut module = Module::root();
 
     module
-        .register_type::<ScriptDict>("dictionary<class K, class V>")
+        .register_type::<ScriptDict>("dictionary<class K, class V>")?
         .reference_type()
         // Template validation - K must be hashable
         .template_callback(validate_dictionary_template)

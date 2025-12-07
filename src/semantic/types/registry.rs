@@ -255,9 +255,15 @@ impl<'ast> ScriptRegistry<'ast> {
         self.types.get(&type_id)
     }
 
-    /// Get a mutable type definition by TypeHash
+    /// Get a mutable type definition by TypeHash.
+    /// Panics if the TypeHash is not found - use for internal code where missing = bug.
     pub fn get_type_mut(&mut self, type_id: TypeHash) -> &mut TypeDef {
         self.types.get_mut(&type_id).expect("TypeHash not found in registry")
+    }
+
+    /// Try to get a mutable type definition by TypeHash, returns None if not found.
+    pub fn try_get_type_mut(&mut self, type_id: TypeHash) -> Option<&mut TypeDef> {
+        self.types.get_mut(&type_id)
     }
 
     /// Get a type definition by TypeHash.

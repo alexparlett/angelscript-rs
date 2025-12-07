@@ -335,32 +335,45 @@ impl<'app> Module<'app> {
     ///
     /// - `decl`: Type declaration (e.g., `"Vec3"`, `"array<class T>"`)
     ///
+    /// # Errors
+    ///
+    /// Returns `FfiModuleError::InvalidDeclaration` if the declaration cannot be parsed
+    /// or is not a valid type name.
+    ///
     /// # Example
     ///
     /// ```ignore
     /// // Simple value type
-    /// module.register_type::<Vec3>("Vec3")
+    /// module.register_type::<Vec3>("Vec3")?
     ///     .value_type()
     ///     .constructor("void f()", || Vec3::default())?
     ///     .method("float length() const", |v: &Vec3| v.length())?
     ///     .build()?;
     ///
     /// // Template type
-    /// module.register_type::<ScriptArray>("array<class T>")
+    /// module.register_type::<ScriptArray>("array<class T>")?
     ///     .reference_type()
     ///     .template_callback(|_| TemplateValidation::valid())?
     ///     .build()?;
     /// ```
-    pub fn register_type<T: NativeType>(&mut self, decl: &str) -> ClassBuilder<'_, 'app, T> {
+    pub fn register_type<T: NativeType>(
+        &mut self,
+        decl: &str,
+    ) -> Result<ClassBuilder<'_, 'app, T>, FfiModuleError> {
         // Parse the type declaration as a TypeExpr (e.g., "array<class T>")
-        let type_expr = Parser::type_expr(decl, &self.arena)
-            .expect("Invalid type declaration"); // TODO: Return Result in future
+        let type_expr = Parser::type_expr(decl, &self.arena).map_err(|errors| {
+            FfiModuleError::InvalidDeclaration(format!("parse error: {}", errors))
+        })?;
 
         // Extract the type name from the base
         let name = match type_expr.base {
             TypeBase::Named(ident) => ident.name.to_string(),
             TypeBase::Primitive(p) => format!("{:?}", p).to_lowercase(),
-            _ => panic!("Invalid type declaration: expected named type"),
+            _ => {
+                return Err(FfiModuleError::InvalidDeclaration(
+                    "expected named type".to_string(),
+                ))
+            }
         };
 
         // Extract template param names from template_args as owned strings.
@@ -378,7 +391,7 @@ impl<'app> Module<'app> {
             })
             .collect();
 
-        ClassBuilder::new(self, name, template_params)
+        Ok(ClassBuilder::new(self, name, template_params))
     }
 
     /// Internal method to add a type definition.
