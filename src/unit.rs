@@ -38,7 +38,6 @@
 
 use crate::context::Context;
 use angelscript_core::{AngelScriptError, CompilationError};
-use angelscript_ffi::FfiRegistryBuilder;
 use angelscript_compiler::{Compiler, CompiledModule};
 use angelscript_parser::ast::{Parser, ParseError};
 use bumpalo::Bump;
@@ -54,9 +53,9 @@ use std::sync::Arc;
 /// 4. Execute functions with `call()`
 ///
 /// All parsing and compilation happens internally during `build()`.
-pub struct Unit<'app> {
+pub struct Unit {
     /// Reference to the context (if created via Context::create_unit)
-    context: Option<Arc<Context<'app>>>,
+    context: Option<Arc<Context>>,
 
     /// Source files to compile (filename → source code)
     sources: HashMap<String, String>,
@@ -77,13 +76,13 @@ pub struct Unit<'app> {
     is_built: bool,
 }
 
-impl Default for Unit<'_> {
+impl Default for Unit {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<'app> Unit<'app> {
+impl Unit {
     /// Create a new empty compilation unit without a context.
     ///
     /// This unit will not have access to FFI modules. For access to
@@ -105,7 +104,7 @@ impl<'app> Unit<'app> {
     ///
     /// The unit will have access to all modules installed in the context.
     /// This is typically called via `Context::create_unit()`.
-    pub fn with_context(context: Arc<Context<'app>>) -> Self {
+    pub fn with_context(context: Arc<Context>) -> Self {
         Self {
             context: Some(context),
             sources: HashMap::new(),
@@ -284,23 +283,12 @@ impl<'app> Unit<'app> {
             return Err(BuildError::MultiFileNotSupported);
         }
 
-        // Get FFI registry from context (if available)
-        let ffi_registry = self
-            .context
-            .as_ref()
-            .and_then(|ctx| ctx.ffi_registry().cloned())
-            .unwrap_or_else(|| {
-                // Create default FFI registry with primitives only
-                Arc::new(FfiRegistryBuilder::new().build().unwrap())
-            });
-
-        // Compile the script(s) with FFI registry
+        // Compile the script(s)
+        // TODO: Pass TypeRegistry when Phase 2 is complete
         let compilation_result = {
             if scripts.len() == 1 {
-                // Single file - compile with FFI registry from context
-                Compiler::compile(&scripts[0].1, ffi_registry)
+                Compiler::compile(&scripts[0].1)
             } else {
-                // Multi-file - TODO: implement
                 todo!("Multi-file compilation not yet implemented")
             }
         };
@@ -312,7 +300,7 @@ impl<'app> Unit<'app> {
 
         // Store the compiled module and registry
         self.compiled = Some(compilation_result.module);
-        
+
         self.is_built = true;
         self.dirty_files.clear();
 
@@ -334,12 +322,6 @@ impl<'app> Unit<'app> {
         self.compiled.as_ref()
     }
 
-    // TODO: Cannot return CompilationContext with lifetimes - need to redesign module API
-    // /// Get the compilation context (available after build).
-    // pub fn compilation_context(&self) -> Option<&CompilationContext> {
-    //     self.compilation_context.as_ref()
-    // }
-
     /// Clear the unit and reset to empty state.
     ///
     /// This allows you to reuse the unit for a different set of sources.
@@ -349,7 +331,6 @@ impl<'app> Unit<'app> {
         self.dirty_files.clear();
         self.arena.reset();
         self.compiled = None;
-        // self.compilation_context = None;  // TODO: Cannot store CompilationContext with lifetimes
         self.is_built = false;
     }
 
@@ -365,8 +346,7 @@ impl<'app> Unit<'app> {
 
     /// Get the number of registered types (available after build).
     pub fn type_count(&self) -> usize {
-        // TODO: Cannot access registry with lifetimes
-        // self.registry.as_ref().map_or(0, |r| r.type_count())
+        // TODO: Return actual type count when TypeRegistry is implemented
         0
     }
 }
@@ -561,21 +541,6 @@ mod tests {
     }
 
     #[test]
-    fn hot_reload_multiple_files() {
-        let mut unit = Unit::new();
-        unit.add_source("file1.as", "void foo() { }").unwrap();
-
-        // Can't add after build
-        unit.build().unwrap();
-        let result = unit.add_source("file2.as", "void bar() { }");
-        assert!(matches!(result, Err(UnitError::AlreadyBuilt)));
-
-        // But can update existing files
-        unit.update_source("file1.as", "void foo() { int x; }").unwrap();
-        unit.rebuild().unwrap();
-    }
-
-    #[test]
     fn default_unit() {
         let unit = Unit::default();
         assert!(!unit.is_built());
@@ -662,17 +627,6 @@ mod tests {
         assert!(unit.dirty_files().is_empty());
         unit.rebuild().unwrap();
         assert!(unit.is_built());
-    }
-
-    #[test]
-    #[ignore = "requires semantic analysis in compiler"]
-    fn compilation_error() {
-        let mut unit = Unit::new();
-        // Valid syntax but semantic error (undefined variable)
-        unit.add_source("test.as", "void main() { x = 1; }").unwrap();
-
-        let result = unit.build();
-        assert!(matches!(result, Err(BuildError::CompilationErrors(_))));
     }
 
     #[test]

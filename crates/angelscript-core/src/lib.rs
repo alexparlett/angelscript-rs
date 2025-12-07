@@ -40,6 +40,13 @@ mod ffi_expr;
 mod span;
 mod error;
 
+// Native function / VM runtime types (moved from angelscript-registry)
+pub mod native_fn;
+pub mod native_error;
+pub mod list_buffer;
+pub mod template;
+pub mod any_type;
+
 // TypeHash and related
 pub use type_hash::{hash_constants, primitives, TypeHash};
 
@@ -93,3 +100,18 @@ pub use error::{
     CompilationError,
     RuntimeError,
 };
+
+// Native function types
+pub use native_fn::{NativeFn, NativeCallable, VmSlot, ObjectHandle, ObjectHeap, CallContext};
+
+// Native error types
+pub use native_error::{ConversionError, NativeError};
+
+// List buffer types
+pub use list_buffer::{ListBuffer, TupleListBuffer, ListPattern};
+
+// Template types
+pub use template::{TemplateInstanceInfo, TemplateValidation};
+
+// Any type support
+pub use any_type::{AnyRef, AnyRefMut};

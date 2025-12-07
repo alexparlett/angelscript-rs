@@ -10,10 +10,7 @@
 //!
 //! 1. **Lexer** - Tokenizes source text ([`lexer`] module)
 //! 2. **Parser** - Builds an AST ([`Parser::parse`] function)
-//! 3. **Semantic Analysis** - 3-pass compilation ([`semantic::Compiler`])
-//!    - Pass 1: Registration (register all global names)
-//!    - Pass 2a: Type Compilation (resolve types)
-//!    - Pass 2b: Function Compilation (compile to bytecode)
+//! 3. **Compiler** - Compiles to bytecode ([`angelscript_compiler`])
 //! 4. **VM** - Executes bytecode (planned)
 //!
 //! # Example: Basic Usage (Recommended)
@@ -71,8 +68,7 @@ mod unit;
 // Re-export compilation unit API (recommended for most users)
 pub use unit::{Unit, BuildError, UnitError};
 
-// Re-export FFI module API directly from crates
-pub use angelscript_module::Module;
+// Re-export context API
 pub use context::{Context, ContextError};
 
 // Re-export error types from core for unified error handling
@@ -88,13 +84,9 @@ pub use angelscript_core::{
     Span,
 };
 
-// Re-export built-in module types directly from crate
-pub use angelscript_modules::{ScriptArray, ScriptDict, ScriptString};
-
-// Re-export built-in module constructors directly from crate
-pub use angelscript_modules::{
-    array_module, default_modules, dictionary_module, math_module, std_module, string_module,
-};
-
 // Re-export common types
 pub use angelscript_core::{ReferenceKind, TypeKind};
+
+// TODO: Re-export Module and stdlib types when Phase 2 is complete
+// pub use angelscript_registry::Module;
+// pub use angelscript_registry::{ScriptArray, ScriptDict, ScriptString};

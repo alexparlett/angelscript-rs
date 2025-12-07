@@ -1,27 +1,8 @@
-//! Core types for FFI registration.
+//! Template instantiation types.
 //!
-//! These types are used during registration to specify type information.
-//! Type specifications use AST primitives parsed from declaration strings.
-//!
-//! IDs are assigned at registration time using the global atomic counters
-//! (`TypeHash::from_name("test_type")` and `TypeHash::from_name("test_func")` for FFI types/functions).
+//! Types used for template validation callbacks.
 
-use angelscript_core::DataType;
-
-use super::list_buffer::ListPattern;
-use super::native_fn::NativeFn;
-
-/// List construction behavior with its pattern.
-///
-/// Used by `list_construct` and `list_factory` to define how initialization
-/// lists are processed.
-#[derive(Debug)]
-pub struct ListBehavior {
-    /// Native function to call with the list data
-    pub native_fn: NativeFn,
-    /// Expected list pattern (repeat, fixed, or repeat-tuple)
-    pub pattern: ListPattern,
-}
+use crate::DataType;
 
 /// Information about a template instantiation for validation callback.
 #[derive(Debug, Clone)]

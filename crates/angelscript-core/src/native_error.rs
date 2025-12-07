@@ -1,9 +1,8 @@
-//! Error types for the FFI system.
+//! Error types for native function execution.
 
-use std::any::TypeId;
 use thiserror::Error;
 
-use angelscript_core::TypeHash;
+use crate::TypeHash;
 
 /// Errors that can occur when converting between Rust and script values.
 #[derive(Debug, Error)]

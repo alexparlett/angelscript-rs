@@ -2,13 +2,15 @@
 //!
 //! This module provides the infrastructure for storing and calling native
 //! Rust functions from the VM.
+//!
+//! Note: Conversion traits (FromScript, ToScript) and type-dependent methods
+//! (arg<T>, set_return<T>, this<T>) are deferred until VM implementation.
 
 use std::any::{Any, TypeId};
 use std::fmt;
 
-use super::error::NativeError;
-use super::traits::{FromScript, NativeType, ToScript};
-use angelscript_core::TypeHash;
+use crate::native_error::NativeError;
+use crate::TypeHash;
 
 /// Type-erased native function.
 ///
@@ -365,18 +367,6 @@ impl<'vm> CallContext<'vm> {
         self.slots.len().saturating_sub(self.arg_offset)
     }
 
-    /// Get a typed argument at the given index.
-    pub fn arg<T: FromScript>(&self, index: usize) -> Result<T, NativeError> {
-        let slot_index = self.arg_offset + index;
-        if slot_index >= self.slots.len() {
-            return Err(NativeError::ArgumentIndexOutOfBounds {
-                index,
-                count: self.arg_count(),
-            });
-        }
-        T::from_vm(&self.slots[slot_index]).map_err(NativeError::from)
-    }
-
     /// Get a raw reference to an argument slot.
     pub fn arg_slot(&self, index: usize) -> Result<&VmSlot, NativeError> {
         let slot_index = self.arg_offset + index;
@@ -396,66 +386,8 @@ impl<'vm> CallContext<'vm> {
         })
     }
 
-    /// Get `this` reference for methods (immutable).
-    ///
-    /// Works with both VmSlot::Object (heap) and VmSlot::Native (inline).
-    pub fn this<T: NativeType>(&self) -> Result<&T, NativeError> {
-        if self.arg_offset == 0 {
-            return Err(NativeError::invalid_this("not a method call"));
-        }
-
-        match &self.slots[0] {
-            VmSlot::Object(handle) => {
-                if handle.type_id != TypeId::of::<T>() {
-                    return Err(NativeError::ThisTypeMismatch {
-                        expected: angelscript_core::TypeHash::of::<T>(),
-                        actual: angelscript_core::TypeHash::of_type_id(handle.type_id),
-                    });
-                }
-                self.heap
-                    .get::<T>(*handle)
-                    .ok_or(NativeError::StaleHandle { index: handle.index })
-            }
-            VmSlot::Native(boxed) => boxed
-                .downcast_ref::<T>()
-                .ok_or_else(|| NativeError::invalid_this("type mismatch for inline value")),
-            _ => Err(NativeError::invalid_this("expected object or native value")),
-        }
-    }
-
-    /// Get `this` reference for methods (mutable).
-    pub fn this_mut<T: NativeType>(&mut self) -> Result<&mut T, NativeError> {
-        if self.arg_offset == 0 {
-            return Err(NativeError::invalid_this("not a method call"));
-        }
-
-        match &mut self.slots[0] {
-            VmSlot::Object(handle) => {
-                if handle.type_id != TypeId::of::<T>() {
-                    return Err(NativeError::ThisTypeMismatch {
-                        expected: angelscript_core::TypeHash::of::<T>(),
-                        actual: angelscript_core::TypeHash::of_type_id(handle.type_id),
-                    });
-                }
-                let handle_copy = *handle;
-                self.heap
-                    .get_mut::<T>(handle_copy)
-                    .ok_or(NativeError::StaleHandle {
-                        index: handle_copy.index,
-                    })
-            }
-            VmSlot::Native(boxed) => boxed
-                .downcast_mut::<T>()
-                .ok_or_else(|| NativeError::invalid_this("type mismatch for inline value")),
-            _ => Err(NativeError::invalid_this("expected object or native value")),
-        }
-    }
-
-    /// Set the return value.
-    pub fn set_return<T: ToScript>(&mut self, value: T) -> Result<(), NativeError> {
-        value.to_vm(self.return_slot).map_err(NativeError::from)?;
-        Ok(())
-    }
+    // Note: this<T>, this_mut<T>, arg<T>, set_return<T> methods are deferred
+    // until VM implementation when conversion traits will be designed.
 
     /// Set the return value from a raw slot.
     pub fn set_return_slot(&mut self, slot: VmSlot) {
@@ -588,126 +520,30 @@ mod tests {
     }
 
     #[test]
-    fn call_context_arg() {
-        let mut slots = vec![VmSlot::Int(42), VmSlot::Bool(true)];
-        let mut ret = VmSlot::Void;
-        let mut heap = ObjectHeap::new();
-
-        let ctx = CallContext::new(&mut slots, 0, &mut ret, &mut heap);
-
-        let arg0: i32 = ctx.arg(0).unwrap();
-        let arg1: bool = ctx.arg(1).unwrap();
-
-        assert_eq!(arg0, 42);
-        assert!(arg1);
-    }
-
-    #[test]
-    fn call_context_arg_out_of_bounds() {
-        let mut slots = vec![VmSlot::Int(42)];
-        let mut ret = VmSlot::Void;
-        let mut heap = ObjectHeap::new();
-
-        let ctx = CallContext::new(&mut slots, 0, &mut ret, &mut heap);
-
-        let result: Result<i32, _> = ctx.arg(5);
-        assert!(matches!(
-            result,
-            Err(NativeError::ArgumentIndexOutOfBounds { .. })
-        ));
-    }
-
-    #[test]
-    fn call_context_set_return() {
-        let mut slots = vec![];
-        let mut ret = VmSlot::Void;
-        let mut heap = ObjectHeap::new();
-
-        let mut ctx = CallContext::new(&mut slots, 0, &mut ret, &mut heap);
-        ctx.set_return(42i32).unwrap();
-
-        assert!(matches!(ret, VmSlot::Int(42)));
-    }
-
-    #[test]
     fn call_context_method_arg_offset() {
         // For methods, slot 0 is `this`, so arg_offset = 1
         let mut slots = vec![
-            VmSlot::Native(Box::new(TestType { value: 10 })),
+            VmSlot::Native(Box::new(42i32)),
             VmSlot::Int(42),
         ];
         let mut ret = VmSlot::Void;
         let mut heap = ObjectHeap::new();
 
         let ctx = CallContext::new(&mut slots, 1, &mut ret, &mut heap);
-
         assert_eq!(ctx.arg_count(), 1);
-        let arg0: i32 = ctx.arg(0).unwrap();
-        assert_eq!(arg0, 42);
-    }
-
-    // Test type for this() tests
-    struct TestType {
-        value: i32,
-    }
-
-    impl NativeType for TestType {
-        const NAME: &'static str = "TestType";
-    }
-
-    #[test]
-    fn call_context_this_inline() {
-        let mut slots = vec![
-            VmSlot::Native(Box::new(TestType { value: 42 })),
-            VmSlot::Int(1),
-        ];
-        let mut ret = VmSlot::Void;
-        let mut heap = ObjectHeap::new();
-
-        let ctx = CallContext::new(&mut slots, 1, &mut ret, &mut heap);
-
-        let this = ctx.this::<TestType>().unwrap();
-        assert_eq!(this.value, 42);
-    }
-
-    #[test]
-    fn call_context_this_mut_inline() {
-        let mut slots = vec![
-            VmSlot::Native(Box::new(TestType { value: 42 })),
-            VmSlot::Int(1),
-        ];
-        let mut ret = VmSlot::Void;
-        let mut heap = ObjectHeap::new();
-
-        let mut ctx = CallContext::new(&mut slots, 1, &mut ret, &mut heap);
-
-        let this = ctx.this_mut::<TestType>().unwrap();
-        this.value = 100;
-
-        // Verify the change
-        let ctx2 = CallContext::new(&mut slots, 1, &mut ret, &mut heap);
-        let this2 = ctx2.this::<TestType>().unwrap();
-        assert_eq!(this2.value, 100);
-    }
-
-    #[test]
-    fn call_context_this_not_method() {
-        let mut slots = vec![VmSlot::Int(42)];
-        let mut ret = VmSlot::Void;
-        let mut heap = ObjectHeap::new();
-
-        let ctx = CallContext::new(&mut slots, 0, &mut ret, &mut heap);
-
-        let result = ctx.this::<TestType>();
-        assert!(matches!(result, Err(NativeError::InvalidThis { .. })));
     }
 
     #[test]
     fn native_fn_call() {
         let native = NativeFn::new(|ctx: &mut CallContext| {
-            let a: i32 = ctx.arg(0)?;
-            let b: i32 = ctx.arg(1)?;
-            ctx.set_return(a + b)?;
+            // Use slot-based access instead of trait-based arg()
+            let slot = ctx.arg_slot(0)?;
+            if let VmSlot::Int(a) = slot {
+                let slot2 = ctx.arg_slot(1)?;
+                if let VmSlot::Int(b) = slot2 {
+                    ctx.set_return_slot(VmSlot::Int(a + b));
+                }
+            }
             Ok(())
         });
 
@@ -956,168 +792,6 @@ mod tests {
         let handle = ctx.heap_mut().allocate(42i32);
 
         assert_eq!(ctx.heap().get::<i32>(handle), Some(&42));
-    }
-
-    #[test]
-    fn call_context_this_from_heap_object() {
-        let mut slots = vec![VmSlot::Void, VmSlot::Int(1)]; // placeholder for this
-        let mut ret = VmSlot::Void;
-        let mut heap = ObjectHeap::new();
-
-        // Allocate object on heap
-        let handle = heap.allocate(TestType { value: 99 });
-        slots[0] = VmSlot::Object(handle);
-
-        let ctx = CallContext::new(&mut slots, 1, &mut ret, &mut heap);
-        let this = ctx.this::<TestType>().unwrap();
-        assert_eq!(this.value, 99);
-    }
-
-    #[test]
-    fn call_context_this_mut_from_heap_object() {
-        let mut slots = vec![VmSlot::Void, VmSlot::Int(1)];
-        let mut ret = VmSlot::Void;
-        let mut heap = ObjectHeap::new();
-
-        let handle = heap.allocate(TestType { value: 99 });
-        slots[0] = VmSlot::Object(handle);
-
-        let mut ctx = CallContext::new(&mut slots, 1, &mut ret, &mut heap);
-        let this = ctx.this_mut::<TestType>().unwrap();
-        this.value = 200;
-
-        // Verify
-        assert_eq!(heap.get::<TestType>(handle).unwrap().value, 200);
-    }
-
-    #[test]
-    fn call_context_this_wrong_slot_type() {
-        let mut slots = vec![VmSlot::Int(42), VmSlot::Int(1)];
-        let mut ret = VmSlot::Void;
-        let mut heap = ObjectHeap::new();
-
-        let ctx = CallContext::new(&mut slots, 1, &mut ret, &mut heap);
-        let result = ctx.this::<TestType>();
-        assert!(matches!(result, Err(NativeError::InvalidThis { .. })));
-    }
-
-    struct OtherType {
-        _data: i32,
-    }
-
-    impl NativeType for OtherType {
-        const NAME: &'static str = "OtherType";
-    }
-
-    #[test]
-    fn call_context_this_type_mismatch_heap() {
-        let mut slots = vec![VmSlot::Void, VmSlot::Int(1)];
-        let mut ret = VmSlot::Void;
-        let mut heap = ObjectHeap::new();
-
-        // Allocate OtherType but try to get TestType
-        let handle = heap.allocate(OtherType { _data: 42 });
-        slots[0] = VmSlot::Object(handle);
-
-        let ctx = CallContext::new(&mut slots, 1, &mut ret, &mut heap);
-        let result = ctx.this::<TestType>();
-        assert!(matches!(result, Err(NativeError::ThisTypeMismatch { .. })));
-    }
-
-    #[test]
-    fn call_context_this_stale_handle() {
-        let mut slots = vec![VmSlot::Void, VmSlot::Int(1)];
-        let mut ret = VmSlot::Void;
-        let mut heap = ObjectHeap::new();
-
-        let handle = heap.allocate(TestType { value: 99 });
-        slots[0] = VmSlot::Object(handle);
-
-        // Free the object
-        heap.free(handle);
-
-        let ctx = CallContext::new(&mut slots, 1, &mut ret, &mut heap);
-        let result = ctx.this::<TestType>();
-        assert!(matches!(result, Err(NativeError::StaleHandle { .. })));
-    }
-
-    #[test]
-    fn call_context_this_mut_stale_handle() {
-        let mut slots = vec![VmSlot::Void, VmSlot::Int(1)];
-        let mut ret = VmSlot::Void;
-        let mut heap = ObjectHeap::new();
-
-        let handle = heap.allocate(TestType { value: 99 });
-        slots[0] = VmSlot::Object(handle);
-        heap.free(handle);
-
-        let mut ctx = CallContext::new(&mut slots, 1, &mut ret, &mut heap);
-        let result = ctx.this_mut::<TestType>();
-        assert!(matches!(result, Err(NativeError::StaleHandle { .. })));
-    }
-
-    #[test]
-    fn call_context_this_native_type_mismatch() {
-        let mut slots = vec![
-            VmSlot::Native(Box::new(OtherType { _data: 42 })),
-            VmSlot::Int(1),
-        ];
-        let mut ret = VmSlot::Void;
-        let mut heap = ObjectHeap::new();
-
-        let ctx = CallContext::new(&mut slots, 1, &mut ret, &mut heap);
-        let result = ctx.this::<TestType>();
-        assert!(matches!(result, Err(NativeError::InvalidThis { .. })));
-    }
-
-    #[test]
-    fn call_context_this_mut_native_type_mismatch() {
-        let mut slots = vec![
-            VmSlot::Native(Box::new(OtherType { _data: 42 })),
-            VmSlot::Int(1),
-        ];
-        let mut ret = VmSlot::Void;
-        let mut heap = ObjectHeap::new();
-
-        let mut ctx = CallContext::new(&mut slots, 1, &mut ret, &mut heap);
-        let result = ctx.this_mut::<TestType>();
-        assert!(matches!(result, Err(NativeError::InvalidThis { .. })));
-    }
-
-    #[test]
-    fn call_context_this_mut_not_method() {
-        let mut slots = vec![VmSlot::Int(42)];
-        let mut ret = VmSlot::Void;
-        let mut heap = ObjectHeap::new();
-
-        let mut ctx = CallContext::new(&mut slots, 0, &mut ret, &mut heap);
-        let result = ctx.this_mut::<TestType>();
-        assert!(matches!(result, Err(NativeError::InvalidThis { .. })));
-    }
-
-    #[test]
-    fn call_context_this_mut_wrong_slot_type() {
-        let mut slots = vec![VmSlot::Int(42), VmSlot::Int(1)];
-        let mut ret = VmSlot::Void;
-        let mut heap = ObjectHeap::new();
-
-        let mut ctx = CallContext::new(&mut slots, 1, &mut ret, &mut heap);
-        let result = ctx.this_mut::<TestType>();
-        assert!(matches!(result, Err(NativeError::InvalidThis { .. })));
-    }
-
-    #[test]
-    fn call_context_this_mut_type_mismatch_heap() {
-        let mut slots = vec![VmSlot::Void, VmSlot::Int(1)];
-        let mut ret = VmSlot::Void;
-        let mut heap = ObjectHeap::new();
-
-        let handle = heap.allocate(OtherType { _data: 42 });
-        slots[0] = VmSlot::Object(handle);
-
-        let mut ctx = CallContext::new(&mut slots, 1, &mut ret, &mut heap);
-        let result = ctx.this_mut::<TestType>();
-        assert!(matches!(result, Err(NativeError::ThisTypeMismatch { .. })));
     }
 
     #[test]

@@ -245,14 +245,15 @@ impl<T> ScriptArray<T> {
 
     #[angelscript::function(instance)]
     pub fn length(&self) -> u64 { self.inner.len() as u64 }
-}
 
-#[angelscript::template_callback(for = "array")]
-pub fn array_callback(info: &TemplateInstanceInfo) -> TemplateValidation {
-    if info.type_arg(0).is_void() {
-        return TemplateValidation::Reject("array cannot hold void");
+    // Template callback - registered as behavior like others
+    #[angelscript::function(template_callback)]
+    pub fn validate(info: &TemplateInstanceInfo) -> TemplateValidation {
+        if info.type_arg(0).is_void() {
+            return TemplateValidation::Reject("array cannot hold void");
+        }
+        TemplateValidation::Accept
     }
-    TemplateValidation::Accept
 }
 ```
 

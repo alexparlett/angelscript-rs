@@ -5,7 +5,7 @@
 
 use std::any::{Any, TypeId};
 
-use super::native_fn::{ObjectHandle, ObjectHeap, VmSlot};
+use crate::native_fn::{ObjectHandle, ObjectHeap, VmSlot};
 
 /// Type-erased reference for `?&in` parameters.
 ///

@@ -23,10 +23,8 @@ version = "0.1.0"
 dependencies = [
  "angelscript-compiler",
  "angelscript-core",
- "angelscript-ffi",
- "angelscript-module",
- "angelscript-modules",
  "angelscript-parser",
+ "angelscript-registry",
  "bitflags",
  "bumpalo",
  "criterion",
@@ -44,8 +42,8 @@ name = "angelscript-compiler"
 version = "0.1.0"
 dependencies = [
  "angelscript-core",
- "angelscript-ffi",
  "angelscript-parser",
+ "angelscript-registry",
  "bumpalo",
  "rustc-hash",
  "thiserror",
@@ -62,45 +60,20 @@ dependencies = [
 ]
 
 [[package]]
-name = "angelscript-ffi"
-version = "0.1.0"
-dependencies = [
- "angelscript-core",
- "angelscript-parser",
- "bitflags",
- "bumpalo",
- "rustc-hash",
- "thiserror",
-]
-
-[[package]]
-name = "angelscript-module"
-version = "0.1.0"
-dependencies = [
- "angelscript-core",
- "angelscript-ffi",
- "angelscript-parser",
- "bumpalo",
- "rustc-hash",
- "thiserror",
-]
-
-[[package]]
-name = "angelscript-modules"
-version = "0.1.0"
-dependencies = [
- "angelscript-core",
- "angelscript-ffi",
- "angelscript-module",
- "ordered-float",
-]
-
-[[package]]
 name = "angelscript-parser"
 version = "0.1.0"
 dependencies = [
  "angelscript-core",
  "bumpalo",
+ "thiserror",
+]
+
+[[package]]
+name = "angelscript-registry"
+version = "0.1.0"
+dependencies = [
+ "angelscript-core",
+ "rustc-hash",
  "thiserror",
 ]
 

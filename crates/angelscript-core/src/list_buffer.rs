@@ -18,8 +18,8 @@
 //! receive list data through these buffer types. The VM populates the buffers
 //! from initialization list expressions before calling the native function.
 
-use super::native_fn::VmSlot;
-use angelscript_core::TypeHash;
+use crate::native_fn::VmSlot;
+use crate::TypeHash;
 
 /// Buffer containing initialization list data.
 ///
@@ -291,7 +291,7 @@ impl ListPattern {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use angelscript_core::primitives as primitive_hashes;
+    use crate::primitives as primitive_hashes;
 
     // ListBuffer tests
     #[test]
