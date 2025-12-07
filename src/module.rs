@@ -25,7 +25,6 @@ use crate::ffi::{
     ClassBuilder, EnumBuilder, FfiRegistryBuilder, GlobalPropertyDef, InterfaceBuilder,
     IntoNativeFn, NativeCallable, NativeFn, NativeType,
 };
-use crate::semantic::types::type_def::TypeId;
 use crate::types::{
     function_param_to_ffi, return_type_to_ffi, FfiDataType, FfiEnumDef, FfiFuncdefDef,
     FfiFunctionDef, FfiInterfaceDef, FfiParam, FfiTypeDef, TypeHash,
@@ -576,7 +575,11 @@ impl<'app> Module<'app> {
         // Convert return type to FfiDataType
         let return_type = return_type_to_ffi(&fd.return_type);
 
-        FfiFuncdefDef::new(TypeId::next_ffi(), fd.name.name.to_string(), params, return_type)
+        // Compute the proper hash from the qualified name
+        let qualified_name = self.qualified_name(fd.name.name);
+        let id = TypeHash::from_name(&qualified_name);
+
+        FfiFuncdefDef::new(id, fd.name.name.to_string(), params, return_type)
     }
 
     /// Internal method to add a funcdef definition.
@@ -752,15 +755,14 @@ impl<'app> Module<'app> {
         let qualified_name = self.qualified_name(&type_def.name);
 
         // Create and register template parameters
-        // Each param gets a unique FFI TypeId and is registered with a name like "array::$T"
+        // Each param gets a unique FFI TypeHash and is registered with a name like "array::$T"
         // The owner_hash is computed from the template's qualified name
         let owner_hash = TypeHash::from_name(&qualified_name);
-        let template_param_ids: Vec<TypeId> = type_def
+        let template_param_ids: Vec<TypeHash> = type_def
             .template_params
             .iter()
             .enumerate()
             .map(|(index, param_name)| {
-                let param_id = TypeId::next_ffi();
                 let param_qualified_name = format!("{}::${}", qualified_name, param_name);
                 // Template param hash: use owner hash XOR'd with param marker
                 let param_hash = TypeHash::from_template_instance(owner_hash, &[TypeHash(index as u64)]);
@@ -772,12 +774,12 @@ impl<'app> Module<'app> {
                     owner: type_def.id,
                     type_hash: param_hash,
                 };
-                builder.register_type_with_id(param_id, param_typedef, Some(&param_qualified_name));
+                builder.register_type_with_id(param_hash, param_typedef, Some(&param_qualified_name));
 
                 // Also register just the param name for simple lookups within template context
-                builder.register_type_alias(param_name, param_id);
+                builder.register_type_alias(param_name, param_hash);
 
-                param_id
+                param_hash
             })
             .collect();
 
@@ -832,13 +834,13 @@ impl<'app> Module<'app> {
     /// Install constructors for a value type.
     fn install_type_constructors(&self, builder: &mut FfiRegistryBuilder, type_def: &FfiTypeDef) {
         for ctor in &type_def.constructors {
+            // owner_type and func_hash already set in ClassBuilder::build()
+            let ctor_func = self.clone_function_def(ctor);
+
             // Add to behaviors
             let behaviors = builder.behaviors_mut(type_def.id);
-            behaviors.constructors.push(ctor.id);
+            behaviors.constructors.push(ctor_func.func_hash);
 
-            // Build a new FfiFunctionDef for registration with owner_type set
-            let mut ctor_func = self.clone_function_def(ctor);
-            ctor_func.owner_type = Some(type_def.id);
             let native_fn = ctor.native_fn.as_ref().map(|nf| nf.clone_arc());
             builder.register_function(ctor_func, native_fn);
         }
@@ -846,37 +848,31 @@ impl<'app> Module<'app> {
 
     /// Install factories for a reference type.
     fn install_type_factories(&self, builder: &mut FfiRegistryBuilder, type_def: &FfiTypeDef) {
-        use crate::semantic::types::type_def::FunctionId;
-
         for factory in &type_def.factories {
+            // owner_type and func_hash already set in ClassBuilder::build()
+            let factory_func = self.clone_function_def(factory);
+
             // Add to behaviors
             let behaviors = builder.behaviors_mut(type_def.id);
-            behaviors.factories.push(factory.id);
+            behaviors.factories.push(factory_func.func_hash);
 
-            // Build a new FfiFunctionDef for registration with owner_type set
-            let mut factory_func = self.clone_function_def(factory);
-            factory_func.owner_type = Some(type_def.id);
             let native_fn = factory.native_fn.as_ref().map(|nf| nf.clone_arc());
             builder.register_function(factory_func, native_fn);
         }
 
         // Install list_factory if present (for init list support like `array<int> a = {1, 2, 3}`)
         if let Some(list_behavior) = &type_def.list_factory {
-            let list_factory_id = FunctionId::next_ffi();
-
             // Create a FfiFunctionDef for the list factory
-            let list_factory_func = FfiFunctionDef::new(
-                list_factory_id,
-                format!("{}$list_factory", type_def.name),
-            )
-            .with_owner_type(type_def.id)
-            .with_native_fn(list_behavior.native_fn.clone_arc());
+            let list_factory_func = FfiFunctionDef::new(format!("{}$list_factory", type_def.name))
+                .with_owner_type(type_def.id)
+                .with_native_fn(list_behavior.native_fn.clone_arc());
 
+            let list_factory_hash = list_factory_func.func_hash;
             builder.register_function(list_factory_func, Some(list_behavior.native_fn.clone_arc()));
 
             // Set the list_factory behavior
             let behaviors = builder.behaviors_mut(type_def.id);
-            behaviors.list_factory = Some(list_factory_id);
+            behaviors.list_factory = Some(list_factory_hash);
         }
     }
 
@@ -884,26 +880,25 @@ impl<'app> Module<'app> {
     fn install_type_methods(&self, builder: &mut FfiRegistryBuilder, type_def: &FfiTypeDef) {
         use crate::semantic::types::type_def::TypeDef;
 
-        // Collect method IDs
-        let method_ids: Vec<_> = type_def.methods.iter().map(|m| m.id).collect();
+        // Register each method function and collect their hashes
+        // owner_type and func_hash already set in ClassBuilder::build()
+        let method_hashes: Vec<_> = type_def.methods.iter().map(|m| m.func_hash).collect();
 
-        // Update the TypeDef with method IDs
-        if let Some(TypeDef::Class { methods, .. }) = builder.get_type_mut(type_def.id) {
-            *methods = method_ids;
-        }
-
-        // Register each method function
         for method in &type_def.methods {
-            let mut method_func = self.clone_function_def(method);
-            method_func.owner_type = Some(type_def.id);
+            let method_func = self.clone_function_def(method);
             let native_fn = method.native_fn.as_ref().map(|nf| nf.clone_arc());
             builder.register_function(method_func, native_fn);
+        }
+
+        // Update the TypeDef with method hashes
+        if let Some(TypeDef::Class { methods, .. }) = builder.get_type_mut(type_def.id) {
+            *methods = method_hashes;
         }
     }
 
     /// Install properties for a type.
     fn install_type_properties(&self, builder: &mut FfiRegistryBuilder, type_def: &FfiTypeDef) {
-        use crate::semantic::types::type_def::{FunctionId, PropertyAccessors, TypeDef, Visibility};
+        use crate::semantic::types::type_def::{PropertyAccessors, TypeDef, Visibility};
 
         if type_def.properties.is_empty() {
             return;
@@ -914,24 +909,26 @@ impl<'app> Module<'app> {
 
         for prop in &type_def.properties {
             // Create getter function
-            let getter_id = FunctionId::next_ffi();
-            let getter_func = FfiFunctionDef::new(getter_id, format!("get_{}", prop.name))
+            let getter_func = FfiFunctionDef::new(format!("get_{}", prop.name))
+                .with_owner_type(type_def.id)
                 .with_return_type(prop.data_type.clone())
                 .with_const(true)
                 .with_native_fn(prop.getter.clone_arc());
 
+            let getter_hash = getter_func.func_hash;
             builder.register_function(getter_func, Some(prop.getter.clone_arc()));
 
             // Create setter function if writable
-            let setter_id = if let Some(setter) = &prop.setter {
-                let setter_id = FunctionId::next_ffi();
-                let setter_func = FfiFunctionDef::new(setter_id, format!("set_{}", prop.name))
+            let setter_hash = if let Some(setter) = &prop.setter {
+                let setter_func = FfiFunctionDef::new(format!("set_{}", prop.name))
+                    .with_owner_type(type_def.id)
                     .with_params(vec![FfiParam::new("value", prop.data_type.clone())])
                     .with_return_type(FfiDataType::void())
                     .with_native_fn(setter.clone_arc());
 
+                let hash = setter_func.func_hash;
                 builder.register_function(setter_func, Some(setter.clone_arc()));
-                Some(setter_id)
+                Some(hash)
             } else {
                 None
             };
@@ -939,8 +936,8 @@ impl<'app> Module<'app> {
             properties_map.insert(
                 prop.name.clone(),
                 PropertyAccessors {
-                    getter: Some(getter_id),
-                    setter: setter_id,
+                    getter: Some(getter_hash),
+                    setter: setter_hash,
                     visibility: Visibility::Public,
                 },
             );
@@ -961,16 +958,14 @@ impl<'app> Module<'app> {
         }
 
         // Build operator methods map
+        // owner_type and func_hash already set in ClassBuilder::build()
         let mut operator_map: rustc_hash::FxHashMap<_, Vec<_>> = rustc_hash::FxHashMap::default();
 
         for func in &type_def.operators {
             // Operators should have their operator field set
             if let Some(operator) = func.operator {
-                let mut op_func = self.clone_function_def(func);
-                op_func.owner_type = Some(type_def.id);
-                op_func.operator = Some(operator);
-
-                operator_map.entry(operator).or_default().push(func.id);
+                let op_func = self.clone_function_def(func);
+                operator_map.entry(operator).or_default().push(op_func.func_hash);
 
                 let native_fn = func.native_fn.as_ref().map(|nf| nf.clone_arc());
                 builder.register_function(op_func, native_fn);
@@ -1027,7 +1022,6 @@ impl<'app> Module<'app> {
     /// Clone a FfiFunctionDef (helper to work around non-Clone NativeFn).
     fn clone_function_def(&self, func: &FfiFunctionDef) -> FfiFunctionDef {
         FfiFunctionDef {
-            id: func.id,
             name: func.name.clone(),
             namespace: func.namespace.clone(),
             params: func.params.clone(),
@@ -1037,6 +1031,7 @@ impl<'app> Module<'app> {
             operator: func.operator,
             visibility: func.visibility,
             native_fn: None, // Native fn handled separately
+            func_hash: func.func_hash,
         }
     }
 }
@@ -1362,7 +1357,7 @@ mod tests {
         let mut module = Module::<'static>::root();
 
         module.add_enum(FfiEnumDef::new(
-            TypeId::next_ffi(),
+            TypeHash::from_name("test_type"),
             "Color".to_string(),
             vec![
                 ("Red".to_string(), 0),
@@ -1407,7 +1402,7 @@ mod tests {
     #[test]
     fn ffi_enum_def_clone() {
         let enum_def = FfiEnumDef::new(
-            TypeId::next_ffi(),
+            TypeHash::from_name("test_type"),
             "Color".to_string(),
             vec![("Red".to_string(), 0)],
         );

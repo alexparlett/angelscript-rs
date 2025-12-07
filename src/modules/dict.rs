@@ -10,7 +10,7 @@ use std::sync::atomic::{AtomicU32, Ordering as AtomicOrdering};
 use ordered_float::OrderedFloat;
 
 use crate::ffi::{ObjectHandle, VmSlot};
-use crate::semantic::TypeId;
+use crate::types::TypeHash;
 
 use super::array::ScriptArray;
 
@@ -107,9 +107,9 @@ pub struct ScriptDict {
     /// Type-erased storage
     entries: HashMap<ScriptKey, VmSlot>,
     /// Key type for runtime checking
-    key_type_id: TypeId,
+    key_type_id: TypeHash,
     /// Value type for runtime checking
-    value_type_id: TypeId,
+    value_type_id: TypeHash,
     /// Reference count (starts at 1)
     ref_count: AtomicU32,
 }
@@ -120,7 +120,7 @@ impl ScriptDict {
     // =========================================================================
 
     /// Create an empty dictionary for given key and value types.
-    pub fn new(key_type_id: TypeId, value_type_id: TypeId) -> Self {
+    pub fn new(key_type_id: TypeHash, value_type_id: TypeHash) -> Self {
         Self {
             entries: HashMap::new(),
             key_type_id,
@@ -130,7 +130,7 @@ impl ScriptDict {
     }
 
     /// Create dictionary with initial capacity.
-    pub fn with_capacity(key_type_id: TypeId, value_type_id: TypeId, capacity: usize) -> Self {
+    pub fn with_capacity(key_type_id: TypeHash, value_type_id: TypeHash, capacity: usize) -> Self {
         Self {
             entries: HashMap::with_capacity(capacity),
             key_type_id,
@@ -141,13 +141,13 @@ impl ScriptDict {
 
     /// Get the key type ID.
     #[inline]
-    pub fn key_type_id(&self) -> TypeId {
+    pub fn key_type_id(&self) -> TypeHash {
         self.key_type_id
     }
 
     /// Get the value type ID.
     #[inline]
-    pub fn value_type_id(&self) -> TypeId {
+    pub fn value_type_id(&self) -> TypeHash {
         self.value_type_id
     }
 
@@ -399,13 +399,13 @@ impl fmt::Debug for ScriptDict {
 // HELPER FUNCTIONS
 // =========================================================================
 
-/// Check if a TypeId represents a hashable type (valid for dictionary keys).
+/// Check if a TypeHash represents a hashable type (valid for dictionary keys).
 ///
 /// For now, we allow all types except void as dictionary keys.
 /// In the future, this should check the type's traits to verify hashability.
-pub fn is_hashable_type(type_id: TypeId) -> bool {
+pub fn is_hashable_type(type_hash: crate::types::TypeHash) -> bool {
     // Void is not hashable
-    type_id.0 != 0
+    !type_hash.is_empty() && type_hash != crate::types::primitive_hashes::VOID
 }
 
 // =========================================================================
@@ -456,7 +456,7 @@ pub fn dictionary_module<'app>() -> Result<Module<'app>, FfiModuleError> {
         // List factory for initialization lists
         // Uses RepeatTuple pattern for {K, V} pairs
         .list_factory(
-            ListPattern::repeat_tuple(vec![TypeId(0), TypeId(0)]),
+            ListPattern::repeat_tuple(vec![TypeHash(0), TypeHash(0)]),
             |ctx: &mut CallContext| {
                 // Placeholder - VM will provide list buffer access
                 let _ = ctx;
@@ -598,7 +598,7 @@ fn validate_dictionary_template(info: &TemplateInstanceInfo) -> TemplateValidati
     }
 
     let key_type = &info.sub_types[0];
-    if is_hashable_type(key_type.type_id) {
+    if is_hashable_type(key_type.type_hash) {
         TemplateValidation::valid()
     } else {
         TemplateValidation::invalid(
@@ -614,13 +614,7 @@ fn validate_dictionary_template(info: &TemplateInstanceInfo) -> TemplateValidati
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    // Type ID constants for tests
-    const INT_TYPE: TypeId = TypeId(4);     // int32
-    const STRING_TYPE: TypeId = TypeId(16);
-    const FLOAT_TYPE: TypeId = TypeId(10);
-    const BOOL_TYPE: TypeId = TypeId(1);
-    const DOUBLE_TYPE: TypeId = TypeId(11);
+    use crate::types::primitive_hashes;
 
     // =========================================================================
     // SCRIPT KEY TESTS
@@ -715,17 +709,17 @@ mod tests {
 
     #[test]
     fn test_new_creates_empty_dict() {
-        let dict = ScriptDict::new(STRING_TYPE, INT_TYPE);
+        let dict = ScriptDict::new(primitive_hashes::STRING, primitive_hashes::INT32);
         assert!(dict.is_empty());
         assert_eq!(dict.len(), 0);
-        assert_eq!(dict.key_type_id(), STRING_TYPE);
-        assert_eq!(dict.value_type_id(), INT_TYPE);
+        assert_eq!(dict.key_type_id(), primitive_hashes::STRING);
+        assert_eq!(dict.value_type_id(), primitive_hashes::INT32);
         assert_eq!(dict.ref_count(), 1);
     }
 
     #[test]
     fn test_with_capacity() {
-        let dict = ScriptDict::with_capacity(STRING_TYPE, INT_TYPE, 100);
+        let dict = ScriptDict::with_capacity(primitive_hashes::STRING, primitive_hashes::INT32, 100);
         assert!(dict.is_empty());
         assert!(dict.capacity() >= 100);
     }
@@ -736,13 +730,13 @@ mod tests {
 
     #[test]
     fn test_ref_count_initial() {
-        let dict = ScriptDict::new(INT_TYPE, INT_TYPE);
+        let dict = ScriptDict::new(primitive_hashes::INT32, primitive_hashes::INT32);
         assert_eq!(dict.ref_count(), 1);
     }
 
     #[test]
     fn test_add_ref() {
-        let dict = ScriptDict::new(INT_TYPE, INT_TYPE);
+        let dict = ScriptDict::new(primitive_hashes::INT32, primitive_hashes::INT32);
         dict.add_ref();
         assert_eq!(dict.ref_count(), 2);
         dict.add_ref();
@@ -751,7 +745,7 @@ mod tests {
 
     #[test]
     fn test_release() {
-        let dict = ScriptDict::new(INT_TYPE, INT_TYPE);
+        let dict = ScriptDict::new(primitive_hashes::INT32, primitive_hashes::INT32);
         dict.add_ref(); // ref_count = 2
         assert!(!dict.release()); // ref_count = 1, not zero
         assert_eq!(dict.ref_count(), 1);
@@ -763,7 +757,7 @@ mod tests {
         use std::sync::Arc;
         use std::thread;
 
-        let dict = Arc::new(ScriptDict::new(INT_TYPE, INT_TYPE));
+        let dict = Arc::new(ScriptDict::new(primitive_hashes::INT32, primitive_hashes::INT32));
         let mut handles = vec![];
 
         for _ in 0..10 {
@@ -788,7 +782,7 @@ mod tests {
 
     #[test]
     fn test_len_and_is_empty() {
-        let mut dict = ScriptDict::new(STRING_TYPE, INT_TYPE);
+        let mut dict = ScriptDict::new(primitive_hashes::STRING, primitive_hashes::INT32);
         assert!(dict.is_empty());
         assert_eq!(dict.len(), 0);
 
@@ -799,14 +793,14 @@ mod tests {
 
     #[test]
     fn test_reserve() {
-        let mut dict = ScriptDict::new(INT_TYPE, INT_TYPE);
+        let mut dict = ScriptDict::new(primitive_hashes::INT32, primitive_hashes::INT32);
         dict.reserve(100);
         assert!(dict.capacity() >= 100);
     }
 
     #[test]
     fn test_shrink_to_fit() {
-        let mut dict = ScriptDict::new(INT_TYPE, INT_TYPE);
+        let mut dict = ScriptDict::new(primitive_hashes::INT32, primitive_hashes::INT32);
         dict.reserve(1000);
         dict.insert(ScriptKey::int(1), VmSlot::Int(1));
         dict.shrink_to_fit();
@@ -820,7 +814,7 @@ mod tests {
 
     #[test]
     fn test_insert_new() {
-        let mut dict = ScriptDict::new(STRING_TYPE, INT_TYPE);
+        let mut dict = ScriptDict::new(primitive_hashes::STRING, primitive_hashes::INT32);
         let old = dict.insert(ScriptKey::string("hello"), VmSlot::Int(42));
         assert!(old.is_none());
         assert_eq!(dict.len(), 1);
@@ -828,7 +822,7 @@ mod tests {
 
     #[test]
     fn test_insert_update() {
-        let mut dict = ScriptDict::new(STRING_TYPE, INT_TYPE);
+        let mut dict = ScriptDict::new(primitive_hashes::STRING, primitive_hashes::INT32);
         dict.insert(ScriptKey::string("hello"), VmSlot::Int(42));
         let old = dict.insert(ScriptKey::string("hello"), VmSlot::Int(100));
         assert!(matches!(old, Some(VmSlot::Int(42))));
@@ -837,7 +831,7 @@ mod tests {
 
     #[test]
     fn test_get_or_insert_new() {
-        let mut dict = ScriptDict::new(STRING_TYPE, INT_TYPE);
+        let mut dict = ScriptDict::new(primitive_hashes::STRING, primitive_hashes::INT32);
         let value = dict.get_or_insert(ScriptKey::string("key"), VmSlot::Int(42));
         assert!(matches!(value, VmSlot::Int(42)));
         assert_eq!(dict.len(), 1);
@@ -845,7 +839,7 @@ mod tests {
 
     #[test]
     fn test_get_or_insert_existing() {
-        let mut dict = ScriptDict::new(STRING_TYPE, INT_TYPE);
+        let mut dict = ScriptDict::new(primitive_hashes::STRING, primitive_hashes::INT32);
         dict.insert(ScriptKey::string("key"), VmSlot::Int(1));
         let value = dict.get_or_insert(ScriptKey::string("key"), VmSlot::Int(42));
         assert!(matches!(value, VmSlot::Int(1))); // Original value
@@ -853,14 +847,14 @@ mod tests {
 
     #[test]
     fn test_try_insert_new() {
-        let mut dict = ScriptDict::new(STRING_TYPE, INT_TYPE);
+        let mut dict = ScriptDict::new(primitive_hashes::STRING, primitive_hashes::INT32);
         assert!(dict.try_insert(ScriptKey::string("key"), VmSlot::Int(42)));
         assert_eq!(dict.len(), 1);
     }
 
     #[test]
     fn test_try_insert_existing() {
-        let mut dict = ScriptDict::new(STRING_TYPE, INT_TYPE);
+        let mut dict = ScriptDict::new(primitive_hashes::STRING, primitive_hashes::INT32);
         dict.insert(ScriptKey::string("key"), VmSlot::Int(1));
         assert!(!dict.try_insert(ScriptKey::string("key"), VmSlot::Int(42)));
         // Value unchanged
@@ -873,7 +867,7 @@ mod tests {
 
     #[test]
     fn test_get() {
-        let mut dict = ScriptDict::new(STRING_TYPE, INT_TYPE);
+        let mut dict = ScriptDict::new(primitive_hashes::STRING, primitive_hashes::INT32);
         dict.insert(ScriptKey::string("hello"), VmSlot::Int(42));
 
         assert!(matches!(dict.get(&ScriptKey::string("hello")), Some(VmSlot::Int(42))));
@@ -882,7 +876,7 @@ mod tests {
 
     #[test]
     fn test_get_mut() {
-        let mut dict = ScriptDict::new(STRING_TYPE, INT_TYPE);
+        let mut dict = ScriptDict::new(primitive_hashes::STRING, primitive_hashes::INT32);
         dict.insert(ScriptKey::string("hello"), VmSlot::Int(42));
 
         if let Some(VmSlot::Int(v)) = dict.get_mut(&ScriptKey::string("hello")) {
@@ -893,7 +887,7 @@ mod tests {
 
     #[test]
     fn test_get_or() {
-        let mut dict = ScriptDict::new(STRING_TYPE, INT_TYPE);
+        let mut dict = ScriptDict::new(primitive_hashes::STRING, primitive_hashes::INT32);
         dict.insert(ScriptKey::string("hello"), VmSlot::Int(42));
 
         let value = dict.get_or(&ScriptKey::string("hello"), VmSlot::Int(0));
@@ -905,7 +899,7 @@ mod tests {
 
     #[test]
     fn test_contains_key() {
-        let mut dict = ScriptDict::new(STRING_TYPE, INT_TYPE);
+        let mut dict = ScriptDict::new(primitive_hashes::STRING, primitive_hashes::INT32);
         dict.insert(ScriptKey::string("hello"), VmSlot::Int(42));
 
         assert!(dict.contains_key(&ScriptKey::string("hello")));
@@ -918,7 +912,7 @@ mod tests {
 
     #[test]
     fn test_remove() {
-        let mut dict = ScriptDict::new(STRING_TYPE, INT_TYPE);
+        let mut dict = ScriptDict::new(primitive_hashes::STRING, primitive_hashes::INT32);
         dict.insert(ScriptKey::string("hello"), VmSlot::Int(42));
 
         let removed = dict.remove(&ScriptKey::string("hello"));
@@ -928,13 +922,13 @@ mod tests {
 
     #[test]
     fn test_remove_missing() {
-        let mut dict = ScriptDict::new(STRING_TYPE, INT_TYPE);
+        let mut dict = ScriptDict::new(primitive_hashes::STRING, primitive_hashes::INT32);
         assert!(dict.remove(&ScriptKey::string("missing")).is_none());
     }
 
     #[test]
     fn test_clear() {
-        let mut dict = ScriptDict::new(STRING_TYPE, INT_TYPE);
+        let mut dict = ScriptDict::new(primitive_hashes::STRING, primitive_hashes::INT32);
         dict.insert(ScriptKey::string("one"), VmSlot::Int(1));
         dict.insert(ScriptKey::string("two"), VmSlot::Int(2));
         dict.clear();
@@ -947,7 +941,7 @@ mod tests {
 
     #[test]
     fn test_keys() {
-        let mut dict = ScriptDict::new(INT_TYPE, INT_TYPE);
+        let mut dict = ScriptDict::new(primitive_hashes::INT32, primitive_hashes::INT32);
         dict.insert(ScriptKey::int(1), VmSlot::Int(10));
         dict.insert(ScriptKey::int(2), VmSlot::Int(20));
 
@@ -959,7 +953,7 @@ mod tests {
 
     #[test]
     fn test_keys_array() {
-        let mut dict = ScriptDict::new(INT_TYPE, INT_TYPE);
+        let mut dict = ScriptDict::new(primitive_hashes::INT32, primitive_hashes::INT32);
         dict.insert(ScriptKey::int(1), VmSlot::Int(10));
         dict.insert(ScriptKey::int(2), VmSlot::Int(20));
 
@@ -969,7 +963,7 @@ mod tests {
 
     #[test]
     fn test_values() {
-        let mut dict = ScriptDict::new(INT_TYPE, INT_TYPE);
+        let mut dict = ScriptDict::new(primitive_hashes::INT32, primitive_hashes::INT32);
         dict.insert(ScriptKey::int(1), VmSlot::Int(10));
         dict.insert(ScriptKey::int(2), VmSlot::Int(20));
 
@@ -979,7 +973,7 @@ mod tests {
 
     #[test]
     fn test_values_array() {
-        let mut dict = ScriptDict::new(INT_TYPE, INT_TYPE);
+        let mut dict = ScriptDict::new(primitive_hashes::INT32, primitive_hashes::INT32);
         dict.insert(ScriptKey::int(1), VmSlot::Int(10));
         dict.insert(ScriptKey::int(2), VmSlot::Int(20));
 
@@ -989,7 +983,7 @@ mod tests {
 
     #[test]
     fn test_iter() {
-        let mut dict = ScriptDict::new(INT_TYPE, INT_TYPE);
+        let mut dict = ScriptDict::new(primitive_hashes::INT32, primitive_hashes::INT32);
         dict.insert(ScriptKey::int(1), VmSlot::Int(10));
         dict.insert(ScriptKey::int(2), VmSlot::Int(20));
 
@@ -1006,10 +1000,10 @@ mod tests {
 
     #[test]
     fn test_extend() {
-        let mut dict1 = ScriptDict::new(INT_TYPE, INT_TYPE);
+        let mut dict1 = ScriptDict::new(primitive_hashes::INT32, primitive_hashes::INT32);
         dict1.insert(ScriptKey::int(1), VmSlot::Int(10));
 
-        let mut dict2 = ScriptDict::new(INT_TYPE, INT_TYPE);
+        let mut dict2 = ScriptDict::new(primitive_hashes::INT32, primitive_hashes::INT32);
         dict2.insert(ScriptKey::int(2), VmSlot::Int(20));
         dict2.insert(ScriptKey::int(3), VmSlot::Int(30));
 
@@ -1019,7 +1013,7 @@ mod tests {
 
     #[test]
     fn test_retain() {
-        let mut dict = ScriptDict::new(INT_TYPE, INT_TYPE);
+        let mut dict = ScriptDict::new(primitive_hashes::INT32, primitive_hashes::INT32);
         dict.insert(ScriptKey::int(1), VmSlot::Int(10));
         dict.insert(ScriptKey::int(2), VmSlot::Int(20));
         dict.insert(ScriptKey::int(3), VmSlot::Int(30));
@@ -1039,7 +1033,7 @@ mod tests {
 
     #[test]
     fn test_clone_dict() {
-        let mut dict = ScriptDict::new(STRING_TYPE, INT_TYPE);
+        let mut dict = ScriptDict::new(primitive_hashes::STRING, primitive_hashes::INT32);
         dict.insert(ScriptKey::string("one"), VmSlot::Int(1));
         dict.insert(ScriptKey::string("two"), VmSlot::Int(2));
 
@@ -1055,7 +1049,7 @@ mod tests {
 
     #[test]
     fn test_contains_value() {
-        let mut dict = ScriptDict::new(INT_TYPE, INT_TYPE);
+        let mut dict = ScriptDict::new(primitive_hashes::INT32, primitive_hashes::INT32);
         dict.insert(ScriptKey::int(1), VmSlot::Int(10));
         dict.insert(ScriptKey::int(2), VmSlot::Int(20));
 
@@ -1065,7 +1059,7 @@ mod tests {
 
     #[test]
     fn test_count_value() {
-        let mut dict = ScriptDict::new(INT_TYPE, INT_TYPE);
+        let mut dict = ScriptDict::new(primitive_hashes::INT32, primitive_hashes::INT32);
         dict.insert(ScriptKey::int(1), VmSlot::Int(10));
         dict.insert(ScriptKey::int(2), VmSlot::Int(10));
         dict.insert(ScriptKey::int(3), VmSlot::Int(20));
@@ -1081,7 +1075,7 @@ mod tests {
 
     #[test]
     fn test_float_keys() {
-        let mut dict = ScriptDict::new(DOUBLE_TYPE, STRING_TYPE);
+        let mut dict = ScriptDict::new(primitive_hashes::DOUBLE, primitive_hashes::STRING);
         dict.insert(ScriptKey::float(3.14), VmSlot::String("pi".into()));
         dict.insert(ScriptKey::float(2.71), VmSlot::String("e".into()));
 
@@ -1093,7 +1087,7 @@ mod tests {
 
     #[test]
     fn test_float_key_precision() {
-        let mut dict = ScriptDict::new(DOUBLE_TYPE, INT_TYPE);
+        let mut dict = ScriptDict::new(primitive_hashes::DOUBLE, primitive_hashes::INT32);
         dict.insert(ScriptKey::float(0.1 + 0.2), VmSlot::Int(1));
 
         // Same floating point computation should find the value
@@ -1106,7 +1100,7 @@ mod tests {
 
     #[test]
     fn test_string_to_int_dict() {
-        let mut dict = ScriptDict::new(STRING_TYPE, INT_TYPE);
+        let mut dict = ScriptDict::new(primitive_hashes::STRING, primitive_hashes::INT32);
         dict.insert(ScriptKey::string("one"), VmSlot::Int(1));
         dict.insert(ScriptKey::string("two"), VmSlot::Int(2));
         dict.insert(ScriptKey::string("three"), VmSlot::Int(3));
@@ -1117,7 +1111,7 @@ mod tests {
 
     #[test]
     fn test_int_to_string_dict() {
-        let mut dict = ScriptDict::new(INT_TYPE, STRING_TYPE);
+        let mut dict = ScriptDict::new(primitive_hashes::INT32, primitive_hashes::STRING);
         dict.insert(ScriptKey::int(1), VmSlot::String("one".into()));
         dict.insert(ScriptKey::int(2), VmSlot::String("two".into()));
 
@@ -1133,7 +1127,7 @@ mod tests {
 
     #[test]
     fn test_debug() {
-        let dict = ScriptDict::new(STRING_TYPE, INT_TYPE);
+        let dict = ScriptDict::new(primitive_hashes::STRING, primitive_hashes::INT32);
         let debug = format!("{:?}", dict);
         assert!(debug.contains("ScriptDict"));
         assert!(debug.contains("len: 0"));
@@ -1146,16 +1140,16 @@ mod tests {
     #[test]
     fn test_is_hashable_type() {
         // Void is not hashable
-        assert!(!is_hashable_type(TypeId(0)));
+        assert!(!is_hashable_type(TypeHash(0)));
 
         // Primitives are hashable
-        assert!(is_hashable_type(TypeId(1)));  // bool
-        assert!(is_hashable_type(TypeId(4)));  // int32
-        assert!(is_hashable_type(TypeId(10))); // float
-        assert!(is_hashable_type(TypeId(11))); // double
+        assert!(is_hashable_type(TypeHash(1)));  // bool
+        assert!(is_hashable_type(TypeHash(4)));  // int32
+        assert!(is_hashable_type(TypeHash(10))); // float
+        assert!(is_hashable_type(TypeHash(11))); // double
 
         // String is hashable
-        assert!(is_hashable_type(TypeId(16)));
+        assert!(is_hashable_type(TypeHash(16)));
     }
 
     // =========================================================================
@@ -1164,7 +1158,7 @@ mod tests {
 
     #[test]
     fn test_operations_on_empty_dict() {
-        let mut dict = ScriptDict::new(INT_TYPE, INT_TYPE);
+        let mut dict = ScriptDict::new(primitive_hashes::INT32, primitive_hashes::INT32);
 
         assert!(dict.get(&ScriptKey::int(1)).is_none());
         assert!(dict.remove(&ScriptKey::int(1)).is_none());
@@ -1177,7 +1171,7 @@ mod tests {
 
     #[test]
     fn test_null_handle_key() {
-        let mut dict = ScriptDict::new(INT_TYPE, INT_TYPE);
+        let mut dict = ScriptDict::new(primitive_hashes::INT32, primitive_hashes::INT32);
         dict.insert(ScriptKey::NullHandle, VmSlot::Int(42));
 
         assert!(matches!(dict.get(&ScriptKey::NullHandle), Some(VmSlot::Int(42))));
@@ -1185,7 +1179,7 @@ mod tests {
 
     #[test]
     fn test_bool_keys() {
-        let mut dict = ScriptDict::new(BOOL_TYPE, STRING_TYPE);
+        let mut dict = ScriptDict::new(primitive_hashes::BOOL, primitive_hashes::STRING);
         dict.insert(ScriptKey::bool(true), VmSlot::String("yes".into()));
         dict.insert(ScriptKey::bool(false), VmSlot::String("no".into()));
 
@@ -1261,19 +1255,19 @@ mod tests {
     #[test]
     fn test_is_hashable_type_primitives() {
         // bool is hashable
-        assert!(is_hashable_type(BOOL_TYPE));
+        assert!(is_hashable_type(primitive_hashes::BOOL));
         // int types are hashable
-        assert!(is_hashable_type(INT_TYPE));
+        assert!(is_hashable_type(primitive_hashes::INT32));
         // float types are hashable
-        assert!(is_hashable_type(FLOAT_TYPE));
-        assert!(is_hashable_type(DOUBLE_TYPE));
+        assert!(is_hashable_type(primitive_hashes::FLOAT));
+        assert!(is_hashable_type(primitive_hashes::DOUBLE));
         // string is hashable
-        assert!(is_hashable_type(STRING_TYPE));
+        assert!(is_hashable_type(primitive_hashes::STRING));
     }
 
     #[test]
     fn test_is_hashable_type_void_not_hashable() {
-        const VOID_TYPE: TypeId = TypeId(0);
+        const VOID_TYPE: TypeHash = TypeHash(0);
         assert!(!is_hashable_type(VOID_TYPE));
     }
 }

@@ -50,7 +50,6 @@ use super::list_buffer::ListPattern;
 use super::native_fn::{CallContext, NativeCallable, NativeFn};
 use super::traits::{FromScript, IntoNativeFn, NativeType, ToScript};
 use super::types::{ListBehavior, TemplateInstanceInfo, TemplateValidation};
-use crate::semantic::types::type_def::TypeId;
 
 /// Builder for registering native types with the FFI system.
 ///
@@ -297,8 +296,8 @@ impl<'m, 'app, T: NativeType> ClassBuilder<'m, 'app, T> {
     /// module.register_type::<ScriptArray>("array<class T>")
     ///     .reference_type()
     ///     .factory_raw("array<T>@ f()", |ctx| {
-    ///         // VM pushes element TypeId as first argument
-    ///         let element_type: TypeId = ctx.arg(0)?;
+    ///         // VM pushes element TypeHash as first argument
+    ///         let element_type: TypeHash = ctx.arg(0)?;
     ///         let arr = ScriptArray::new(element_type);
     ///         ctx.set_return(arr)?;
     ///         Ok(())
@@ -406,7 +405,7 @@ impl<'m, 'app, T: NativeType> ClassBuilder<'m, 'app, T> {
     /// ```ignore
     /// module.register_type::<ScriptArray>("array<class T>")
     ///     .reference_type()
-    ///     .list_factory(ListPattern::repeat(TypeId(0)), |ctx| {
+    ///     .list_factory(ListPattern::repeat(TypeHash(0)), |ctx| {
     ///         // 0 is a placeholder - actual type comes from template instantiation
     ///         // Build array from list buffer...
     ///         Ok(())
@@ -640,15 +639,31 @@ impl<'m, 'app, T: NativeType> ClassBuilder<'m, 'app, T> {
     /// Returns an error if the type configuration is invalid (e.g., reference type
     /// without factory, value type without constructor).
     pub fn build(self) -> Result<(), FfiModuleError> {
+        // Compute the qualified name and type hash
+        let qualified_name = self.module.qualified_name(&self.name);
+        let type_hash = crate::types::TypeHash::from_name(&qualified_name);
+
         // Build the FfiTypeDef
-        let mut type_def = FfiTypeDef::new::<T>(TypeId::next_ffi(), self.name, self.type_kind);
+        let mut type_def = FfiTypeDef::new::<T>(type_hash, self.name, self.type_kind);
 
         // Set template params
         type_def.template_params = self.template_params;
 
+        // Set owner_type on all constructors and recompute their hashes
+        type_def.constructors = self.constructors.into_iter().map(|mut ctor| {
+            ctor.owner_type = Some(type_hash);
+            ctor.recompute_hash_pub();
+            ctor
+        }).collect();
+
+        // Set owner_type on all factories and recompute their hashes
+        type_def.factories = self.factories.into_iter().map(|mut factory| {
+            factory.owner_type = Some(type_hash);
+            factory.recompute_hash_pub();
+            factory
+        }).collect();
+
         // Set behaviors
-        type_def.constructors = self.constructors;
-        type_def.factories = self.factories;
         type_def.addref = self.addref;
         type_def.release = self.release;
         type_def.destruct = self.destruct;
@@ -657,10 +672,21 @@ impl<'m, 'app, T: NativeType> ClassBuilder<'m, 'app, T> {
         type_def.get_weakref_flag = self.get_weakref_flag;
         type_def.template_callback = self.template_callback;
 
-        // Set type members
-        type_def.methods = self.methods;
+        // Set owner_type on all methods and recompute their hashes
+        type_def.methods = self.methods.into_iter().map(|mut method| {
+            method.owner_type = Some(type_hash);
+            method.recompute_hash_pub();
+            method
+        }).collect();
+
         type_def.properties = self.properties;
-        type_def.operators = self.operators;
+
+        // Set owner_type on all operators and recompute their hashes
+        type_def.operators = self.operators.into_iter().map(|mut op| {
+            op.owner_type = Some(type_hash);
+            op.recompute_hash_pub();
+            op
+        }).collect();
 
         // Add to module
         self.module.add_type(type_def);
@@ -785,6 +811,7 @@ impl<'m, 'app, T: NativeType> ClassBuilder<'m, 'app, T> {
 mod tests {
     use super::*;
     use crate::ffi::{ConversionError, ToScript, VmSlot};
+    use crate::types::primitive_hashes;
 
     // Test type for unit tests
     struct TestVec3 {
@@ -1494,14 +1521,14 @@ mod tests {
 
     #[test]
     fn class_builder_with_list_construct() {
-        use crate::semantic::types::type_def::TypeId;
+        ;
 
         let mut module = Module::root();
         module
             .register_type::<TestVec3>("TestVec3")
             .value_type()
             .list_construct(
-                ListPattern::fixed(vec![TypeId(10), TypeId(10), TypeId(10)]), // float, float, float
+                ListPattern::fixed(vec![primitive_hashes::FLOAT, primitive_hashes::FLOAT, primitive_hashes::FLOAT]),
                 |_ctx: &mut CallContext| Ok(()),
             )
             .build()
@@ -1517,14 +1544,14 @@ mod tests {
 
     #[test]
     fn class_builder_with_list_factory() {
-        use crate::semantic::types::type_def::TypeId;
+        ;
 
         let mut module = Module::root();
         module
             .register_type::<TestVec3>("TestVec3")
             .reference_type()
             .list_factory(
-                ListPattern::repeat(TypeId(3)), // int
+                ListPattern::repeat(primitive_hashes::INT32),
                 |_ctx: &mut CallContext| Ok(()),
             )
             .build()
@@ -1540,14 +1567,14 @@ mod tests {
 
     #[test]
     fn class_builder_with_list_factory_repeat_tuple() {
-        use crate::semantic::types::type_def::TypeId;
+        ;
 
         let mut module = Module::root();
         module
             .register_type::<TestVec3>("TestVec3")
             .reference_type()
             .list_factory(
-                ListPattern::repeat_tuple(vec![TypeId(14), TypeId(3)]), // string, int
+                ListPattern::repeat_tuple(vec![primitive_hashes::STRING, primitive_hashes::INT32]),
                 |_ctx: &mut CallContext| Ok(()),
             )
             .build()

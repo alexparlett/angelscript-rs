@@ -14,10 +14,7 @@
 use crate::ast::types::{ParamType, PrimitiveType as AstPrimitiveType, TypeBase, TypeExpr, TypeSuffix};
 use crate::ast::{FunctionParam, FunctionSignatureDecl, RefKind, ReturnType};
 use crate::ffi::NativeFn;
-use crate::semantic::types::type_def::{
-    BOOL_TYPE, DOUBLE_TYPE, FLOAT_TYPE, INT16_TYPE, INT32_TYPE, INT64_TYPE, INT8_TYPE,
-    UINT16_TYPE, UINT32_TYPE, UINT64_TYPE, UINT8_TYPE, VOID_TYPE,
-};
+use crate::types::{primitive_hashes, TypeHash};
 use crate::semantic::types::{DataType, RefModifier};
 use crate::types::{FfiDataType, FfiExpr, FfiFunctionDef, FfiParam};
 
@@ -63,9 +60,9 @@ fn type_expr_to_ffi_with_ref(type_expr: &TypeExpr<'_>, ref_modifier: RefModifier
     // Resolve the base type
     match &type_expr.base {
         TypeBase::Primitive(prim) => {
-            let type_id = primitive_to_type_id(prim);
+            let type_hash = primitive_to_type_hash(prim);
             FfiDataType::Resolved(DataType {
-                type_id,
+                type_hash,
                 is_const,
                 is_handle,
                 is_handle_to_const,
@@ -106,21 +103,21 @@ fn type_expr_to_ffi_with_ref(type_expr: &TypeExpr<'_>, ref_modifier: RefModifier
     }
 }
 
-/// Convert a primitive AST type to its TypeId.
-fn primitive_to_type_id(prim: &AstPrimitiveType) -> crate::semantic::types::TypeId {
+/// Convert a primitive AST type to its TypeHash.
+fn primitive_to_type_hash(prim: &AstPrimitiveType) -> TypeHash {
     match prim {
-        AstPrimitiveType::Void => VOID_TYPE,
-        AstPrimitiveType::Bool => BOOL_TYPE,
-        AstPrimitiveType::Int8 => INT8_TYPE,
-        AstPrimitiveType::Int16 => INT16_TYPE,
-        AstPrimitiveType::Int => INT32_TYPE,
-        AstPrimitiveType::Int64 => INT64_TYPE,
-        AstPrimitiveType::UInt8 => UINT8_TYPE,
-        AstPrimitiveType::UInt16 => UINT16_TYPE,
-        AstPrimitiveType::UInt => UINT32_TYPE,
-        AstPrimitiveType::UInt64 => UINT64_TYPE,
-        AstPrimitiveType::Float => FLOAT_TYPE,
-        AstPrimitiveType::Double => DOUBLE_TYPE,
+        AstPrimitiveType::Void => primitive_hashes::VOID,
+        AstPrimitiveType::Bool => primitive_hashes::BOOL,
+        AstPrimitiveType::Int8 => primitive_hashes::INT8,
+        AstPrimitiveType::Int16 => primitive_hashes::INT16,
+        AstPrimitiveType::Int => primitive_hashes::INT32,
+        AstPrimitiveType::Int64 => primitive_hashes::INT64,
+        AstPrimitiveType::UInt8 => primitive_hashes::UINT8,
+        AstPrimitiveType::UInt16 => primitive_hashes::UINT16,
+        AstPrimitiveType::UInt => primitive_hashes::UINT32,
+        AstPrimitiveType::UInt64 => primitive_hashes::UINT64,
+        AstPrimitiveType::Float => primitive_hashes::FLOAT,
+        AstPrimitiveType::Double => primitive_hashes::DOUBLE,
     }
 }
 
@@ -162,7 +159,7 @@ pub fn function_param_to_ffi(param: &FunctionParam<'_>) -> FfiParam {
 pub fn return_type_to_ffi(return_type: &ReturnType<'_>) -> FfiDataType {
     // Check if the return type is void
     if matches!(return_type.ty.base, TypeBase::Primitive(AstPrimitiveType::Void)) {
-        return FfiDataType::resolved(DataType::simple(VOID_TYPE));
+        return FfiDataType::resolved(DataType::simple(primitive_hashes::VOID));
     }
 
     // Convert the type expression
@@ -184,13 +181,13 @@ pub fn signature_to_ffi_function(
     sig: &FunctionSignatureDecl<'_>,
     native_fn: NativeFn,
 ) -> FfiFunctionDef {
-    use crate::semantic::types::type_def::FunctionId;
+    
 
     let name = sig.name.name.to_string();
     let params: Vec<FfiParam> = sig.params.iter().map(function_param_to_ffi).collect();
     let return_type = return_type_to_ffi(&sig.return_type);
 
-    FfiFunctionDef::new(FunctionId::next_ffi(), name)
+    FfiFunctionDef::new(name)
         .with_params(params)
         .with_return_type(return_type)
         .with_native_fn(native_fn)
@@ -217,7 +214,7 @@ mod tests {
 
         assert!(ffi_type.is_resolved());
         if let FfiDataType::Resolved(dt) = ffi_type {
-            assert_eq!(dt.type_id, INT32_TYPE);
+            assert_eq!(dt.type_hash, primitive_hashes::INT32);
             assert!(!dt.is_const);
             assert!(!dt.is_handle);
         }
@@ -232,7 +229,7 @@ mod tests {
 
         assert!(ffi_type.is_resolved());
         if let FfiDataType::Resolved(dt) = ffi_type {
-            assert_eq!(dt.type_id, INT32_TYPE);
+            assert_eq!(dt.type_hash, primitive_hashes::INT32);
             assert!(dt.is_const);
         }
     }
@@ -339,7 +336,7 @@ mod tests {
 
         assert!(ffi_func.return_type.is_resolved());
         if let FfiDataType::Resolved(dt) = &ffi_func.return_type {
-            assert_eq!(dt.type_id, VOID_TYPE);
+            assert_eq!(dt.type_hash, primitive_hashes::VOID);
         }
     }
 

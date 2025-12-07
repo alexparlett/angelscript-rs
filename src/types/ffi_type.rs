@@ -6,8 +6,7 @@
 //! This is the core type for registering native classes with the FFI system.
 
 use crate::ffi::{ListBehavior, NativeFn, TemplateInstanceInfo, TemplateValidation};
-use crate::semantic::types::type_def::TypeId;
-use crate::types::{FfiFunctionDef, FfiPropertyDef, TypeKind};
+use crate::types::{FfiFunctionDef, FfiPropertyDef, TypeHash, TypeKind};
 use std::sync::Arc;
 
 /// A native type definition.
@@ -21,8 +20,8 @@ use std::sync::Arc;
 /// let type_def = FfiTypeDef::new::<MyClass>("MyClass", TypeKind::Reference);
 /// ```
 pub struct FfiTypeDef {
-    /// Unique FFI type ID (assigned at registration via TypeId::next_ffi())
-    pub id: TypeId,
+    /// Unique FFI type ID (assigned at registration via TypeHash::from_name("test_type"))
+    pub id: TypeHash,
 
     /// Type name (unqualified)
     pub name: String,
@@ -76,13 +75,13 @@ pub struct FfiTypeDef {
     /// Operators
     pub operators: Vec<FfiFunctionDef>,
 
-    /// Rust TypeId for runtime type checking
+    /// Rust TypeHash for runtime type checking
     pub rust_type_id: std::any::TypeId,
 }
 
 impl FfiTypeDef {
     /// Create a new type definition.
-    pub fn new<T: 'static>(id: TypeId, name: impl Into<String>, type_kind: TypeKind) -> Self {
+    pub fn new<T: 'static>(id: TypeHash, name: impl Into<String>, type_kind: TypeKind) -> Self {
         Self {
             id,
             name: name.into(),
@@ -106,7 +105,7 @@ impl FfiTypeDef {
 
     /// Create a new template type definition.
     pub fn new_template<T: 'static>(
-        id: TypeId,
+        id: TypeHash,
         name: impl Into<String>,
         template_params: Vec<String>,
         type_kind: TypeKind,
@@ -255,7 +254,7 @@ mod tests {
     #[test]
     fn type_def_creation() {
         let type_def =
-            FfiTypeDef::new::<TestClass>(TypeId::next_ffi(), "TestClass", TypeKind::reference());
+            FfiTypeDef::new::<TestClass>(TypeHash::from_name("test_type"), "TestClass", TypeKind::reference());
 
         assert_eq!(type_def.name(), "TestClass");
         assert!(!type_def.is_template());
@@ -266,7 +265,7 @@ mod tests {
     #[test]
     fn template_type_def_creation() {
         let type_def = FfiTypeDef::new_template::<TestClass>(
-            TypeId::next_ffi(),
+            TypeHash::from_name("test_type"),
             "Container",
             vec!["T".to_string()],
             TypeKind::reference(),
@@ -281,7 +280,7 @@ mod tests {
     #[test]
     fn value_type_def() {
         let type_def = FfiTypeDef::new::<TestClass>(
-            TypeId::next_ffi(),
+            TypeHash::from_name("test_type"),
             "Vec3",
             TypeKind::Value { size: 12, align: 4, is_pod: false },
         );
@@ -293,7 +292,7 @@ mod tests {
     #[test]
     fn debug_output() {
         let type_def =
-            FfiTypeDef::new::<TestClass>(TypeId::next_ffi(), "TestClass", TypeKind::reference());
+            FfiTypeDef::new::<TestClass>(TypeHash::from_name("test_type"), "TestClass", TypeKind::reference());
         let debug = format!("{:?}", type_def);
         assert!(debug.contains("FfiTypeDef"));
         assert!(debug.contains("TestClass"));

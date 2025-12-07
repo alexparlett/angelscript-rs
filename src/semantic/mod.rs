@@ -51,11 +51,9 @@ pub use const_eval::{eval_const_int, ConstEvaluator, ConstValue};
 pub use error::{SemanticError, SemanticErrorKind, SemanticErrors};
 pub use local_scope::{CapturedVar, LocalScope, LocalVar};
 pub use types::{
-    Conversion, ConversionKind, DataType, FieldDef, FunctionDef, FunctionId, FunctionTraits,
+    Conversion, ConversionKind, DataType, FieldDef, FunctionDef, FunctionTraits,
     GlobalVarDef, MethodSignature, OperatorBehavior, PrimitiveType, PropertyAccessors,
-    RefModifier, ScriptRegistry, TypeDef, TypeId, Visibility, BOOL_TYPE,
-    DOUBLE_TYPE, FIRST_USER_TYPE_ID, FLOAT_TYPE, INT16_TYPE, INT32_TYPE, INT64_TYPE, INT8_TYPE,
-    NULL_TYPE, UINT16_TYPE, UINT32_TYPE, UINT64_TYPE, UINT8_TYPE, VOID_TYPE,
+    RefModifier, ScriptRegistry, TypeDef, Visibility,
 };
 
 // Re-export CompilationContext and FunctionRef

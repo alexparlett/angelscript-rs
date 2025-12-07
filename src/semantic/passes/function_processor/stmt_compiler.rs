@@ -14,10 +14,9 @@ use crate::ast::{
 use crate::codegen::Instruction;
 use crate::semantic::{
     ConstEvaluator, ConstValue, OperatorBehavior,
-    SemanticErrorKind, TypeDef, BOOL_TYPE, DOUBLE_TYPE, FLOAT_TYPE,
-    NULL_TYPE, VOID_TYPE,
+    SemanticErrorKind, TypeDef,
 };
-use crate::semantic::types::type_def::FunctionId;
+use crate::types::{primitive_hashes, TypeHash};
 use rustc_hash::FxHashSet;
 
 use super::{FunctionCompiler, SwitchCategory, SwitchCaseKey};
@@ -73,7 +72,7 @@ impl<'ast> FunctionCompiler<'ast> {
             match self.resolve_type_expr(&var_decl.ty) {
                 Some(ty) => {
                     // Void type cannot be used for variables
-                    if ty.type_id == VOID_TYPE {
+                    if ty.type_hash == primitive_hashes::VOID {
                         self.error(
                             SemanticErrorKind::VoidExpression,
                             var_decl.ty.span,
@@ -110,7 +109,7 @@ impl<'ast> FunctionCompiler<'ast> {
                 };
 
                 // Cannot infer void type
-                if init_ctx.data_type.type_id == VOID_TYPE {
+                if init_ctx.data_type.type_hash == primitive_hashes::VOID {
                     self.error(
                         SemanticErrorKind::VoidExpression,
                         var.span,
@@ -161,7 +160,7 @@ impl<'ast> FunctionCompiler<'ast> {
 
             // Check if variable type is a funcdef (for function handle inference)
             let is_funcdef = matches!(
-                self.context.get_type(var_type.type_id),
+                self.context.get_type(var_type.type_hash),
                 TypeDef::Funcdef { .. }
             );
 
@@ -169,16 +168,16 @@ impl<'ast> FunctionCompiler<'ast> {
             if let Some(init) = var.init {
                 // Set expected funcdef type for function handle inference
                 if is_funcdef && var_type.is_handle {
-                    self.expected_funcdef_type = Some(var_type.type_id);
+                    self.expected_funcdef_type = Some(var_type.type_hash);
                 }
 
                 // Set expected init list target type if it has list behaviors
                 // The target type is the type that has list_factory or list_construct behavior
                 // (e.g., array<int>, StringBuffer, or any type with list initialization support)
-                if self.context.get_behaviors(var_type.type_id)
+                if self.context.get_behaviors(var_type.type_hash)
                     .is_some_and(|b| b.has_list_init())
                 {
-                    self.expected_init_list_target = Some(var_type.type_id);
+                    self.expected_init_list_target = Some(var_type.type_hash);
                 }
 
                 let init_ctx = match self.check_expr(init) {
@@ -243,9 +242,9 @@ impl<'ast> FunctionCompiler<'ast> {
             // Set expected funcdef type if return type is a funcdef
             // This allows lambda inference in return statements
             // Note: funcdef types are always handles, so we just check the type
-            let type_def = self.context.get_type(self.return_type.type_id);
+            let type_def = self.context.get_type(self.return_type.type_hash);
             if matches!(type_def, TypeDef::Funcdef { .. }) {
-                self.expected_funcdef_type = Some(self.return_type.type_id);
+                self.expected_funcdef_type = Some(self.return_type.type_hash);
             }
 
             // Check return value type
@@ -260,7 +259,7 @@ impl<'ast> FunctionCompiler<'ast> {
             self.expected_funcdef_type = None;
 
             // Cannot return a void expression
-            if value_ctx.data_type.type_id == VOID_TYPE {
+            if value_ctx.data_type.type_hash == primitive_hashes::VOID {
                 self.error(
                     SemanticErrorKind::VoidExpression,
                     ret.span,
@@ -300,7 +299,7 @@ impl<'ast> FunctionCompiler<'ast> {
             self.bytecode.emit(Instruction::Return);
         } else {
             // Void return
-            if self.return_type.type_id != VOID_TYPE {
+            if self.return_type.type_hash != primitive_hashes::VOID {
                 self.error(
                     SemanticErrorKind::TypeMismatch,
                     ret.span,
@@ -341,7 +340,7 @@ impl<'ast> FunctionCompiler<'ast> {
     pub(super) fn visit_if(&mut self, if_stmt: &'ast IfStmt<'ast>) {
         // Check condition
         if let Some(cond_ctx) = self.check_expr(if_stmt.condition)
-            && cond_ctx.data_type.type_id != BOOL_TYPE {
+            && cond_ctx.data_type.type_hash != primitive_hashes::BOOL {
                 self.error(
                     SemanticErrorKind::TypeMismatch,
                     if_stmt.condition.span(),
@@ -386,7 +385,7 @@ impl<'ast> FunctionCompiler<'ast> {
 
         // Check condition
         if let Some(cond_ctx) = self.check_expr(while_stmt.condition)
-            && cond_ctx.data_type.type_id != BOOL_TYPE {
+            && cond_ctx.data_type.type_hash != primitive_hashes::BOOL {
                 self.error(
                     SemanticErrorKind::TypeMismatch,
                     while_stmt.condition.span(),
@@ -424,7 +423,7 @@ impl<'ast> FunctionCompiler<'ast> {
 
         // Check condition
         if let Some(cond_ctx) = self.check_expr(do_while.condition)
-            && cond_ctx.data_type.type_id != BOOL_TYPE {
+            && cond_ctx.data_type.type_hash != primitive_hashes::BOOL {
                 self.error(
                     SemanticErrorKind::TypeMismatch,
                     do_while.condition.span(),
@@ -466,7 +465,7 @@ impl<'ast> FunctionCompiler<'ast> {
         // Check condition
         let jump_to_end = if let Some(condition) = for_stmt.condition {
             if let Some(cond_ctx) = self.check_expr(condition)
-                && cond_ctx.data_type.type_id != BOOL_TYPE {
+                && cond_ctx.data_type.type_hash != primitive_hashes::BOOL {
                     self.error(
                         SemanticErrorKind::TypeMismatch,
                         condition.span(),
@@ -514,7 +513,7 @@ impl<'ast> FunctionCompiler<'ast> {
             None => return, // Error already recorded
         };
 
-        let container_type_id = container_ctx.data_type.type_id;
+        let container_type_id = container_ctx.data_type.type_hash;
 
         // Check for required foreach operators
         let begin_func_id = match self.context.find_operator_method(container_type_id, OperatorBehavior::OpForBegin) {
@@ -574,7 +573,7 @@ impl<'ast> FunctionCompiler<'ast> {
         }
 
         let end_func = self.context.get_function(end_func_id);
-        if end_func.param_count() != 1 || end_func.return_type().type_id != BOOL_TYPE {
+        if end_func.param_count() != 1 || end_func.return_type().type_hash != primitive_hashes::BOOL {
             self.error(
                 SemanticErrorKind::InvalidOperation,
                 foreach.expr.span(),
@@ -595,7 +594,7 @@ impl<'ast> FunctionCompiler<'ast> {
 
         // Determine value operators based on number of variables
         let num_vars = foreach.vars.len();
-        let value_func_ids: Vec<FunctionId> = if num_vars == 1 {
+        let value_func_ids: Vec<TypeHash> = if num_vars == 1 {
             // Try opForValue first, fall back to opForValue0
             if let Some(func_id) = self.context.find_operator_method(container_type_id, OperatorBehavior::OpForValue) {
                 vec![func_id]
@@ -707,7 +706,7 @@ impl<'ast> FunctionCompiler<'ast> {
         // Call container.opForBegin() to get initial iterator
         // Stack: [] -> [iterator]
         self.bytecode.emit(Instruction::LoadLocal(container_offset));
-        self.bytecode.emit(Instruction::Call(begin_func_id.as_u32()));
+        self.bytecode.emit(Instruction::Call(begin_func_id.0));
 
         // Store iterator in a local variable
         let iterator_type = begin_func.return_type().clone();
@@ -725,7 +724,7 @@ impl<'ast> FunctionCompiler<'ast> {
         // Stack: [] -> [bool]
         self.bytecode.emit(Instruction::LoadLocal(container_offset));
         self.bytecode.emit(Instruction::LoadLocal(iterator_offset));
-        self.bytecode.emit(Instruction::Call(end_func_id.as_u32()));
+        self.bytecode.emit(Instruction::Call(end_func_id.0));
 
         // If true (iteration done), jump to loop_end
         let end_jump_pos = self.bytecode.emit(Instruction::JumpIfTrue(0)); // Placeholder
@@ -741,7 +740,7 @@ impl<'ast> FunctionCompiler<'ast> {
             // Stack: [] -> [value]
             self.bytecode.emit(Instruction::LoadLocal(container_offset));
             self.bytecode.emit(Instruction::LoadLocal(iterator_offset));
-            self.bytecode.emit(Instruction::Call(value_func_id.as_u32()));
+            self.bytecode.emit(Instruction::Call(value_func_id.0));
 
             // Apply conversion if needed
             if let Some(var_local) = self.local_scope.lookup(var.name.name) {
@@ -766,7 +765,7 @@ impl<'ast> FunctionCompiler<'ast> {
         // Stack: [] -> [new_iterator]
         self.bytecode.emit(Instruction::LoadLocal(container_offset));
         self.bytecode.emit(Instruction::LoadLocal(iterator_offset));
-        self.bytecode.emit(Instruction::Call(next_func_id.as_u32()));
+        self.bytecode.emit(Instruction::Call(next_func_id.0));
         self.bytecode.emit(Instruction::StoreLocal(iterator_offset));
 
         // Jump back to loop start
@@ -955,22 +954,22 @@ impl<'ast> FunctionCompiler<'ast> {
                         // Check type compatibility based on switch category
                         let types_compatible = match switch_category {
                             SwitchCategory::Integer => {
-                                value_ctx.data_type.type_id == switch_ctx.data_type.type_id
+                                value_ctx.data_type.type_hash == switch_ctx.data_type.type_hash
                                     || (self.is_integer(&value_ctx.data_type) && self.is_integer(&switch_ctx.data_type))
                             }
-                            SwitchCategory::Bool => value_ctx.data_type.type_id == BOOL_TYPE,
+                            SwitchCategory::Bool => value_ctx.data_type.type_hash == primitive_hashes::BOOL,
                             SwitchCategory::Float => {
-                                value_ctx.data_type.type_id == FLOAT_TYPE
-                                    || value_ctx.data_type.type_id == DOUBLE_TYPE
+                                value_ctx.data_type.type_hash == primitive_hashes::FLOAT
+                                    || value_ctx.data_type.type_hash == primitive_hashes::DOUBLE
                                     || self.is_integer(&value_ctx.data_type)
                             }
                             SwitchCategory::String => {
-                                self.context.lookup_type("string") == Some(value_ctx.data_type.type_id)
+                                self.context.lookup_type("string") == Some(value_ctx.data_type.type_hash)
                             }
                             SwitchCategory::Handle => {
-                                value_ctx.data_type.type_id == NULL_TYPE
+                                value_ctx.data_type.type_hash == primitive_hashes::NULL
                                     || (value_ctx.data_type.is_handle
-                                        && value_ctx.data_type.type_id == switch_ctx.data_type.type_id)
+                                        && value_ctx.data_type.type_hash == switch_ctx.data_type.type_hash)
                             }
                         };
 
@@ -992,10 +991,10 @@ impl<'ast> FunctionCompiler<'ast> {
                         SwitchCategory::String => {
                             // String comparison via opEquals
                             if let Some(func_id) = self.context.find_operator_method(
-                                switch_ctx.data_type.type_id,
+                                switch_ctx.data_type.type_hash,
                                 OperatorBehavior::OpEquals,
                             ) {
-                                self.bytecode.emit(Instruction::Call(func_id.as_u32()));
+                                self.bytecode.emit(Instruction::Call(func_id.0));
                             } else {
                                 // Fallback to primitive Equal (shouldn't happen for strings)
                                 self.bytecode.emit(Instruction::Equal);

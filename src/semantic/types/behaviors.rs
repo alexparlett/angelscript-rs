@@ -2,13 +2,13 @@
 //!
 //! This module defines `TypeBehaviors`, which stores FunctionIds for various
 //! lifecycle behaviors like construction, destruction, and initialization lists.
-//! Behaviors are stored centrally in the Registry, indexed by TypeId.
+//! Behaviors are stored centrally in the Registry, indexed by TypeHash.
 
-use super::type_def::FunctionId;
+use crate::types::TypeHash;
 
 /// Lifecycle and initialization behaviors for a type.
 ///
-/// Stored centrally in `Registry::behaviors`, indexed by `TypeId`.
+/// Stored centrally in `Registry::behaviors`, indexed by `TypeHash`.
 /// This follows the C++ AngelScript pattern where behaviors are registered
 /// separately from the type definition itself.
 ///
@@ -34,47 +34,47 @@ pub struct TypeBehaviors {
     /// Constructors - initialize in pre-allocated memory (for value types)
     /// Multiple overloads supported: default(), from int, from string, etc.
     /// Corresponds to asBEHAVE_CONSTRUCT
-    pub constructors: Vec<FunctionId>,
+    pub constructors: Vec<TypeHash>,
 
     /// Factories - allocate and return new instance (for reference types)
     /// Multiple overloads supported: default(), from int, with capacity, etc.
     /// Corresponds to asBEHAVE_FACTORY
-    pub factories: Vec<FunctionId>,
+    pub factories: Vec<TypeHash>,
 
     // === Single behaviors (no overloads) ===
     /// Destructor - cleans up before deallocation
     /// Corresponds to asBEHAVE_DESTRUCT
-    pub destruct: Option<FunctionId>,
+    pub destruct: Option<TypeHash>,
 
     // === Reference Counting ===
     /// AddRef - increments reference count (for reference types)
     /// Corresponds to asBEHAVE_ADDREF
-    pub addref: Option<FunctionId>,
+    pub addref: Option<TypeHash>,
 
     /// Release - decrements reference count (for reference types)
     /// Corresponds to asBEHAVE_RELEASE
-    pub release: Option<FunctionId>,
+    pub release: Option<TypeHash>,
 
     // === List Initialization ===
     /// List construct - for value types with init list syntax
     /// Used for types like `MyStruct s = {1, 2, 3}` where the value is constructed in place
     /// Corresponds to asBEHAVE_LIST_CONSTRUCT
-    pub list_construct: Option<FunctionId>,
+    pub list_construct: Option<TypeHash>,
 
     /// List factory - for reference types with init list syntax
     /// Used for types like `array<int> a = {1, 2, 3}` where a handle is returned
     /// Corresponds to asBEHAVE_LIST_FACTORY
-    pub list_factory: Option<FunctionId>,
+    pub list_factory: Option<TypeHash>,
 
     // === Weak References ===
     /// Get weak reference flag - returns a shared weak ref flag object
     /// Corresponds to asBEHAVE_GET_WEAKREF_FLAG
-    pub get_weakref_flag: Option<FunctionId>,
+    pub get_weakref_flag: Option<TypeHash>,
 
     // === Template Support ===
     /// Template callback - validates template instantiation
     /// Corresponds to asBEHAVE_TEMPLATE_CALLBACK
-    pub template_callback: Option<FunctionId>,
+    pub template_callback: Option<TypeHash>,
 }
 
 impl TypeBehaviors {
@@ -128,17 +128,17 @@ impl TypeBehaviors {
 
     /// Get the list initialization function, preferring list_factory over list_construct.
     /// This is the function to call when encountering an init list for this type.
-    pub fn list_init_func(&self) -> Option<FunctionId> {
+    pub fn list_init_func(&self) -> Option<TypeHash> {
         self.list_factory.or(self.list_construct)
     }
 
     /// Add a constructor to this type's behaviors.
-    pub fn add_constructor(&mut self, func_id: FunctionId) {
+    pub fn add_constructor(&mut self, func_id: TypeHash) {
         self.constructors.push(func_id);
     }
 
     /// Add a factory to this type's behaviors.
-    pub fn add_factory(&mut self, func_id: FunctionId) {
+    pub fn add_factory(&mut self, func_id: TypeHash) {
         self.factories.push(func_id);
     }
 }
@@ -160,39 +160,39 @@ mod tests {
     #[test]
     fn type_behaviors_with_list_factory() {
         let mut behaviors = TypeBehaviors::new();
-        behaviors.list_factory = Some(FunctionId::new(42));
+        behaviors.list_factory = Some(TypeHash(42));
 
         assert!(!behaviors.is_empty());
         assert!(behaviors.has_list_init());
         assert!(behaviors.has_list_factory());
-        assert_eq!(behaviors.list_init_func(), Some(FunctionId::new(42)));
+        assert_eq!(behaviors.list_init_func(), Some(TypeHash(42)));
     }
 
     #[test]
     fn type_behaviors_with_list_construct() {
         let mut behaviors = TypeBehaviors::new();
-        behaviors.list_construct = Some(FunctionId::new(100));
+        behaviors.list_construct = Some(TypeHash(100));
 
         assert!(!behaviors.is_empty());
         assert!(behaviors.has_list_init());
-        assert_eq!(behaviors.list_init_func(), Some(FunctionId::new(100)));
+        assert_eq!(behaviors.list_init_func(), Some(TypeHash(100)));
     }
 
     #[test]
     fn type_behaviors_list_factory_preferred_over_construct() {
         let mut behaviors = TypeBehaviors::new();
-        behaviors.list_construct = Some(FunctionId::new(100));
-        behaviors.list_factory = Some(FunctionId::new(42));
+        behaviors.list_construct = Some(TypeHash(100));
+        behaviors.list_factory = Some(TypeHash(42));
 
         // list_factory should be preferred
-        assert_eq!(behaviors.list_init_func(), Some(FunctionId::new(42)));
+        assert_eq!(behaviors.list_init_func(), Some(TypeHash(42)));
     }
 
     #[test]
     fn type_behaviors_with_constructors() {
         let mut behaviors = TypeBehaviors::new();
-        behaviors.add_constructor(FunctionId::new(1));
-        behaviors.add_constructor(FunctionId::new(2));
+        behaviors.add_constructor(TypeHash(1));
+        behaviors.add_constructor(TypeHash(2));
 
         assert!(!behaviors.is_empty());
         assert!(behaviors.has_constructors());
@@ -202,9 +202,9 @@ mod tests {
     #[test]
     fn type_behaviors_with_factories() {
         let mut behaviors = TypeBehaviors::new();
-        behaviors.add_factory(FunctionId::new(10));
-        behaviors.add_factory(FunctionId::new(20));
-        behaviors.add_factory(FunctionId::new(30));
+        behaviors.add_factory(TypeHash(10));
+        behaviors.add_factory(TypeHash(20));
+        behaviors.add_factory(TypeHash(30));
 
         assert!(!behaviors.is_empty());
         assert!(behaviors.has_factories());
@@ -214,10 +214,10 @@ mod tests {
     #[test]
     fn type_behaviors_with_lifecycle() {
         let mut behaviors = TypeBehaviors::new();
-        behaviors.add_constructor(FunctionId::new(1));
-        behaviors.destruct = Some(FunctionId::new(2));
-        behaviors.addref = Some(FunctionId::new(3));
-        behaviors.release = Some(FunctionId::new(4));
+        behaviors.add_constructor(TypeHash(1));
+        behaviors.destruct = Some(TypeHash(2));
+        behaviors.addref = Some(TypeHash(3));
+        behaviors.release = Some(TypeHash(4));
 
         assert!(!behaviors.is_empty());
         assert!(!behaviors.has_list_init());

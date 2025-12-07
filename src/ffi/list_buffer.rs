@@ -19,7 +19,7 @@
 //! from initialization list expressions before calling the native function.
 
 use super::native_fn::VmSlot;
-use crate::semantic::types::type_def::TypeId;
+use crate::types::TypeHash;
 
 /// Buffer containing initialization list data.
 ///
@@ -42,7 +42,7 @@ pub struct ListBuffer<'a> {
     /// Raw element data
     elements: &'a [VmSlot],
     /// Element type (for type checking)
-    element_type: TypeId,
+    element_type: TypeHash,
 }
 
 impl<'a> ListBuffer<'a> {
@@ -52,7 +52,7 @@ impl<'a> ListBuffer<'a> {
     ///
     /// - `elements`: The VmSlot values from the initialization list
     /// - `element_type`: The expected type ID of each element
-    pub fn new(elements: &'a [VmSlot], element_type: TypeId) -> Self {
+    pub fn new(elements: &'a [VmSlot], element_type: TypeHash) -> Self {
         Self {
             elements,
             element_type,
@@ -93,7 +93,7 @@ impl<'a> ListBuffer<'a> {
 
     /// Get the type ID of list elements.
     #[inline]
-    pub fn element_type(&self) -> TypeId {
+    pub fn element_type(&self) -> TypeHash {
         self.element_type
     }
 }
@@ -132,7 +132,7 @@ pub struct TupleListBuffer<'a> {
     /// Number of elements per tuple
     tuple_size: usize,
     /// Types of each tuple element
-    element_types: Vec<TypeId>,
+    element_types: Vec<TypeHash>,
 }
 
 impl<'a> TupleListBuffer<'a> {
@@ -148,7 +148,7 @@ impl<'a> TupleListBuffer<'a> {
     ///
     /// Panics if `element_types.len() != tuple_size` or if `data.len()` is
     /// not divisible by `tuple_size`.
-    pub fn new(data: &'a [VmSlot], tuple_size: usize, element_types: Vec<TypeId>) -> Self {
+    pub fn new(data: &'a [VmSlot], tuple_size: usize, element_types: Vec<TypeHash>) -> Self {
         assert_eq!(
             element_types.len(),
             tuple_size,
@@ -205,13 +205,13 @@ impl<'a> TupleListBuffer<'a> {
     ///
     /// Returns `None` if position is out of bounds.
     #[inline]
-    pub fn element_type(&self, position: usize) -> Option<TypeId> {
+    pub fn element_type(&self, position: usize) -> Option<TypeHash> {
         self.element_types.get(position).copied()
     }
 
     /// Get all element types.
     #[inline]
-    pub fn element_types(&self) -> &[TypeId] {
+    pub fn element_types(&self) -> &[TypeHash] {
         &self.element_types
     }
 
@@ -232,32 +232,32 @@ pub enum ListPattern {
     /// Zero or more elements of type T: `{repeat T}`.
     ///
     /// Example: `array<int> a = {1, 2, 3};`
-    Repeat(TypeId),
+    Repeat(TypeHash),
 
     /// Fixed sequence of types: `{int, string}`.
     ///
     /// Example: `MyStruct s = {42, "hello"};`
-    Fixed(Vec<TypeId>),
+    Fixed(Vec<TypeHash>),
 
     /// Repeated tuples: `{repeat {K, V}}`.
     ///
     /// Example: `dictionary@ d = {{"a", 1}, {"b", 2}};`
-    RepeatTuple(Vec<TypeId>),
+    RepeatTuple(Vec<TypeHash>),
 }
 
 impl ListPattern {
     /// Create a repeat pattern for a single element type.
-    pub fn repeat(element_type: TypeId) -> Self {
+    pub fn repeat(element_type: TypeHash) -> Self {
         ListPattern::Repeat(element_type)
     }
 
     /// Create a fixed sequence pattern.
-    pub fn fixed(types: Vec<TypeId>) -> Self {
+    pub fn fixed(types: Vec<TypeHash>) -> Self {
         ListPattern::Fixed(types)
     }
 
     /// Create a repeat tuple pattern (for dictionary-style init).
-    pub fn repeat_tuple(tuple_types: Vec<TypeId>) -> Self {
+    pub fn repeat_tuple(tuple_types: Vec<TypeHash>) -> Self {
         ListPattern::RepeatTuple(tuple_types)
     }
 
@@ -266,7 +266,7 @@ impl ListPattern {
     /// For `Repeat` patterns, any number of elements is valid.
     /// For `Fixed` patterns, the exact sequence must match.
     /// For `RepeatTuple` patterns, each tuple must match the expected types.
-    pub fn matches(&self, value_types: &[TypeId]) -> bool {
+    pub fn matches(&self, value_types: &[TypeHash]) -> bool {
         match self {
             ListPattern::Repeat(expected) => value_types.iter().all(|t| t == expected),
             ListPattern::Fixed(expected) => {
@@ -291,16 +291,12 @@ impl ListPattern {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    // Type IDs for testing
-    const INT_TYPE: TypeId = TypeId(3);
-    const STRING_TYPE: TypeId = TypeId(14);
-    const FLOAT_TYPE: TypeId = TypeId(10);
+    use crate::types::primitive_hashes;
 
     // ListBuffer tests
     #[test]
     fn test_list_buffer_empty() {
-        let buffer = ListBuffer::new(&[], INT_TYPE);
+        let buffer = ListBuffer::new(&[], primitive_hashes::INT32);
         assert!(buffer.is_empty());
         assert_eq!(buffer.len(), 0);
         assert!(buffer.get(0).is_none());
@@ -309,17 +305,17 @@ mod tests {
     #[test]
     fn test_list_buffer_with_elements() {
         let elements = vec![VmSlot::Int(1), VmSlot::Int(2), VmSlot::Int(3)];
-        let buffer = ListBuffer::new(&elements, INT_TYPE);
+        let buffer = ListBuffer::new(&elements, primitive_hashes::INT32);
 
         assert!(!buffer.is_empty());
         assert_eq!(buffer.len(), 3);
-        assert_eq!(buffer.element_type(), INT_TYPE);
+        assert_eq!(buffer.element_type(), primitive_hashes::INT32);
     }
 
     #[test]
     fn test_list_buffer_get() {
         let elements = vec![VmSlot::Int(10), VmSlot::Int(20), VmSlot::Int(30)];
-        let buffer = ListBuffer::new(&elements, INT_TYPE);
+        let buffer = ListBuffer::new(&elements, primitive_hashes::INT32);
 
         assert!(matches!(buffer.get(0), Some(VmSlot::Int(10))));
         assert!(matches!(buffer.get(1), Some(VmSlot::Int(20))));
@@ -330,7 +326,7 @@ mod tests {
     #[test]
     fn test_list_buffer_iter() {
         let elements = vec![VmSlot::Int(1), VmSlot::Int(2)];
-        let buffer = ListBuffer::new(&elements, INT_TYPE);
+        let buffer = ListBuffer::new(&elements, primitive_hashes::INT32);
 
         let collected: Vec<_> = buffer.iter().collect();
         assert_eq!(collected.len(), 2);
@@ -339,7 +335,7 @@ mod tests {
     #[test]
     fn test_list_buffer_into_iter() {
         let elements = vec![VmSlot::Int(1), VmSlot::Int(2)];
-        let buffer = ListBuffer::new(&elements, INT_TYPE);
+        let buffer = ListBuffer::new(&elements, primitive_hashes::INT32);
 
         let mut count = 0;
         for _slot in &buffer {
@@ -351,7 +347,7 @@ mod tests {
     // TupleListBuffer tests
     #[test]
     fn test_tuple_list_buffer_empty() {
-        let buffer = TupleListBuffer::new(&[], 2, vec![STRING_TYPE, INT_TYPE]);
+        let buffer = TupleListBuffer::new(&[], 2, vec![primitive_hashes::STRING, primitive_hashes::INT32]);
 
         assert!(buffer.is_empty());
         assert_eq!(buffer.len(), 0);
@@ -366,7 +362,7 @@ mod tests {
             VmSlot::String("b".into()),
             VmSlot::Int(2),
         ];
-        let buffer = TupleListBuffer::new(&data, 2, vec![STRING_TYPE, INT_TYPE]);
+        let buffer = TupleListBuffer::new(&data, 2, vec![primitive_hashes::STRING, primitive_hashes::INT32]);
 
         assert!(!buffer.is_empty());
         assert_eq!(buffer.len(), 2);
@@ -381,7 +377,7 @@ mod tests {
             VmSlot::String("key2".into()),
             VmSlot::Int(200),
         ];
-        let buffer = TupleListBuffer::new(&data, 2, vec![STRING_TYPE, INT_TYPE]);
+        let buffer = TupleListBuffer::new(&data, 2, vec![primitive_hashes::STRING, primitive_hashes::INT32]);
 
         let tuple0 = buffer.get_tuple(0).unwrap();
         assert_eq!(tuple0.len(), 2);
@@ -397,12 +393,12 @@ mod tests {
 
     #[test]
     fn test_tuple_list_buffer_element_types() {
-        let buffer = TupleListBuffer::new(&[], 2, vec![STRING_TYPE, INT_TYPE]);
+        let buffer = TupleListBuffer::new(&[], 2, vec![primitive_hashes::STRING, primitive_hashes::INT32]);
 
-        assert_eq!(buffer.element_type(0), Some(STRING_TYPE));
-        assert_eq!(buffer.element_type(1), Some(INT_TYPE));
+        assert_eq!(buffer.element_type(0), Some(primitive_hashes::STRING));
+        assert_eq!(buffer.element_type(1), Some(primitive_hashes::INT32));
         assert_eq!(buffer.element_type(2), None);
-        assert_eq!(buffer.element_types(), &[STRING_TYPE, INT_TYPE]);
+        assert_eq!(buffer.element_types(), &[primitive_hashes::STRING, primitive_hashes::INT32]);
     }
 
     #[test]
@@ -415,7 +411,7 @@ mod tests {
             VmSlot::String("c".into()),
             VmSlot::Int(3),
         ];
-        let buffer = TupleListBuffer::new(&data, 2, vec![STRING_TYPE, INT_TYPE]);
+        let buffer = TupleListBuffer::new(&data, 2, vec![primitive_hashes::STRING, primitive_hashes::INT32]);
 
         let tuples: Vec<_> = buffer.iter().collect();
         assert_eq!(tuples.len(), 3);
@@ -427,79 +423,79 @@ mod tests {
     #[test]
     #[should_panic(expected = "element_types must match tuple_size")]
     fn test_tuple_list_buffer_mismatched_types_panics() {
-        TupleListBuffer::new(&[], 2, vec![STRING_TYPE]); // Only 1 type but tuple_size=2
+        TupleListBuffer::new(&[], 2, vec![primitive_hashes::STRING]); // Only 1 type but tuple_size=2
     }
 
     #[test]
     #[should_panic(expected = "data length must be divisible by tuple_size")]
     fn test_tuple_list_buffer_invalid_data_length_panics() {
         let data = vec![VmSlot::Int(1), VmSlot::Int(2), VmSlot::Int(3)]; // 3 elements
-        TupleListBuffer::new(&data, 2, vec![INT_TYPE, INT_TYPE]); // tuple_size=2
+        TupleListBuffer::new(&data, 2, vec![primitive_hashes::INT32, primitive_hashes::INT32]); // tuple_size=2
     }
 
     // ListPattern tests
     #[test]
     fn test_list_pattern_repeat() {
-        let pattern = ListPattern::repeat(INT_TYPE);
+        let pattern = ListPattern::repeat(primitive_hashes::INT32);
 
         // Empty list matches
         assert!(pattern.matches(&[]));
 
         // Single element matches
-        assert!(pattern.matches(&[INT_TYPE]));
+        assert!(pattern.matches(&[primitive_hashes::INT32]));
 
         // Multiple elements match
-        assert!(pattern.matches(&[INT_TYPE, INT_TYPE, INT_TYPE]));
+        assert!(pattern.matches(&[primitive_hashes::INT32, primitive_hashes::INT32, primitive_hashes::INT32]));
 
         // Different type doesn't match
-        assert!(!pattern.matches(&[STRING_TYPE]));
+        assert!(!pattern.matches(&[primitive_hashes::STRING]));
 
         // Mixed types don't match
-        assert!(!pattern.matches(&[INT_TYPE, STRING_TYPE]));
+        assert!(!pattern.matches(&[primitive_hashes::INT32, primitive_hashes::STRING]));
     }
 
     #[test]
     fn test_list_pattern_fixed() {
-        let pattern = ListPattern::fixed(vec![INT_TYPE, STRING_TYPE]);
+        let pattern = ListPattern::fixed(vec![primitive_hashes::INT32, primitive_hashes::STRING]);
 
         // Exact match
-        assert!(pattern.matches(&[INT_TYPE, STRING_TYPE]));
+        assert!(pattern.matches(&[primitive_hashes::INT32, primitive_hashes::STRING]));
 
         // Empty doesn't match
         assert!(!pattern.matches(&[]));
 
         // Wrong order doesn't match
-        assert!(!pattern.matches(&[STRING_TYPE, INT_TYPE]));
+        assert!(!pattern.matches(&[primitive_hashes::STRING, primitive_hashes::INT32]));
 
         // Too few elements
-        assert!(!pattern.matches(&[INT_TYPE]));
+        assert!(!pattern.matches(&[primitive_hashes::INT32]));
 
         // Too many elements
-        assert!(!pattern.matches(&[INT_TYPE, STRING_TYPE, INT_TYPE]));
+        assert!(!pattern.matches(&[primitive_hashes::INT32, primitive_hashes::STRING, primitive_hashes::INT32]));
     }
 
     #[test]
     fn test_list_pattern_repeat_tuple() {
-        let pattern = ListPattern::repeat_tuple(vec![STRING_TYPE, INT_TYPE]);
+        let pattern = ListPattern::repeat_tuple(vec![primitive_hashes::STRING, primitive_hashes::INT32]);
 
         // Empty list matches
         assert!(pattern.matches(&[]));
 
         // Single tuple matches
-        assert!(pattern.matches(&[STRING_TYPE, INT_TYPE]));
+        assert!(pattern.matches(&[primitive_hashes::STRING, primitive_hashes::INT32]));
 
         // Multiple tuples match
         assert!(pattern.matches(&[
-            STRING_TYPE, INT_TYPE,
-            STRING_TYPE, INT_TYPE,
-            STRING_TYPE, INT_TYPE
+            primitive_hashes::STRING, primitive_hashes::INT32,
+            primitive_hashes::STRING, primitive_hashes::INT32,
+            primitive_hashes::STRING, primitive_hashes::INT32
         ]));
 
         // Wrong tuple size doesn't match
-        assert!(!pattern.matches(&[STRING_TYPE]));
+        assert!(!pattern.matches(&[primitive_hashes::STRING]));
 
         // Wrong types in tuple don't match
-        assert!(!pattern.matches(&[INT_TYPE, STRING_TYPE]));
+        assert!(!pattern.matches(&[primitive_hashes::INT32, primitive_hashes::STRING]));
     }
 
     #[test]
@@ -510,7 +506,7 @@ mod tests {
         assert!(pattern.matches(&[]));
 
         // Non-empty doesn't match
-        assert!(!pattern.matches(&[INT_TYPE]));
+        assert!(!pattern.matches(&[primitive_hashes::INT32]));
     }
 
     #[test]
@@ -526,13 +522,13 @@ mod tests {
 
     #[test]
     fn test_list_pattern_constructors() {
-        let repeat = ListPattern::repeat(FLOAT_TYPE);
-        assert!(matches!(repeat, ListPattern::Repeat(t) if t == FLOAT_TYPE));
+        let repeat = ListPattern::repeat(primitive_hashes::FLOAT);
+        assert!(matches!(repeat, ListPattern::Repeat(t) if t == primitive_hashes::FLOAT));
 
-        let fixed = ListPattern::fixed(vec![INT_TYPE, STRING_TYPE]);
+        let fixed = ListPattern::fixed(vec![primitive_hashes::INT32, primitive_hashes::STRING]);
         assert!(matches!(fixed, ListPattern::Fixed(ref v) if v.len() == 2));
 
-        let tuple = ListPattern::repeat_tuple(vec![STRING_TYPE, INT_TYPE]);
+        let tuple = ListPattern::repeat_tuple(vec![primitive_hashes::STRING, primitive_hashes::INT32]);
         assert!(matches!(tuple, ListPattern::RepeatTuple(ref v) if v.len() == 2));
     }
 }

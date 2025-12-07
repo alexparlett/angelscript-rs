@@ -25,14 +25,14 @@ use crate::semantic::DataType;
 /// # Example
 ///
 /// ```
-/// # use angelscript::semantic::{LocalScope, DataType, TypeId};
+/// # use angelscript::semantic::{LocalScope, DataType, TypeHash};
 /// let mut scope = LocalScope::new();
 ///
 /// // Enter a new scope
 /// scope.enter_scope();
 ///
 /// // Declare a variable
-/// let int_type = DataType::simple(TypeId(4)); // int type
+/// let int_type = DataType::simple(TypeHash(4)); // int type
 /// scope.declare_variable("x".to_string(), int_type.clone(), 0, true);
 ///
 /// // Look up the variable
@@ -137,12 +137,12 @@ impl LocalScope {
     /// # Example
     ///
     /// ```
-    /// # use angelscript::semantic::{LocalScope, DataType, TypeId};
+    /// # use angelscript::semantic::{LocalScope, DataType, TypeHash};
     /// let mut scope = LocalScope::new();
     /// scope.enter_scope();
     ///
     /// // Declare a variable in the inner scope
-    /// let int_type = DataType::simple(TypeId(4));
+    /// let int_type = DataType::simple(TypeHash(4));
     /// scope.declare_variable("x".to_string(), int_type, 0, true);
     /// assert!(scope.lookup("x").is_some());
     ///
@@ -189,11 +189,11 @@ impl LocalScope {
     /// # Example
     ///
     /// ```
-    /// # use angelscript::semantic::{LocalScope, DataType, TypeId};
+    /// # use angelscript::semantic::{LocalScope, DataType, TypeHash};
     /// let mut scope = LocalScope::new();
     /// scope.enter_scope();
     ///
-    /// let int_type = DataType::simple(TypeId(4));
+    /// let int_type = DataType::simple(TypeHash(4));
     /// scope.declare_variable("x".to_string(), int_type.clone(), 0, true);
     ///
     /// let var = scope.lookup("x").unwrap();
@@ -245,15 +245,15 @@ impl LocalScope {
     /// # Example
     ///
     /// ```
-    /// # use angelscript::semantic::{LocalScope, DataType, TypeId};
+    /// # use angelscript::semantic::{LocalScope, DataType, TypeHash};
     /// let mut scope = LocalScope::new();
     /// scope.enter_scope();
     ///
-    /// let int_type = DataType::simple(TypeId(4));
+    /// let int_type = DataType::simple(TypeHash(4));
     /// let offset = scope.declare_variable_auto("x".to_string(), int_type, true);
     /// assert_eq!(offset, 0);
     ///
-    /// let offset2 = scope.declare_variable_auto("y".to_string(), DataType::simple(TypeId(4)), true);
+    /// let offset2 = scope.declare_variable_auto("y".to_string(), DataType::simple(TypeHash(4)), true);
     /// assert_eq!(offset2, 1);
     /// ```
     pub fn declare_variable_auto(
@@ -274,11 +274,11 @@ impl LocalScope {
     /// # Example
     ///
     /// ```
-    /// # use angelscript::semantic::{LocalScope, DataType, TypeId};
+    /// # use angelscript::semantic::{LocalScope, DataType, TypeHash};
     /// let mut scope = LocalScope::new();
     /// scope.enter_scope();
     ///
-    /// let int_type = DataType::simple(TypeId(4));
+    /// let int_type = DataType::simple(TypeHash(4));
     /// scope.declare_variable("x".to_string(), int_type, 0, true);
     ///
     /// assert!(scope.lookup("x").is_some());
@@ -308,9 +308,9 @@ impl LocalScope {
     /// # Example
     ///
     /// ```
-    /// # use angelscript::semantic::{LocalScope, DataType, TypeId};
+    /// # use angelscript::semantic::{LocalScope, DataType, TypeHash};
     /// let mut scope = LocalScope::new();
-    /// let int_type = DataType::simple(TypeId(4));
+    /// let int_type = DataType::simple(TypeHash(4));
     ///
     /// scope.enter_scope();
     /// scope.declare_variable("x".to_string(), int_type.clone(), 0, true);
@@ -377,14 +377,14 @@ impl Default for LocalScope {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::semantic::{FLOAT_TYPE, INT32_TYPE, TypeId};
+    use crate::types::{primitive_hashes, TypeHash};
 
     fn int_type() -> DataType {
-        DataType::simple(INT32_TYPE)
+        DataType::simple(primitive_hashes::INT32)
     }
 
     fn float_type() -> DataType {
-        DataType::simple(FLOAT_TYPE)
+        DataType::simple(primitive_hashes::FLOAT)
     }
 
     #[test]

@@ -23,9 +23,9 @@ use crate::codegen::{BytecodeEmitter, CompiledBytecode, CompiledModule, Instruct
 use crate::lexer::Span;
 use crate::semantic::{
     DataType, LocalScope,
-    SemanticError, SemanticErrorKind, TypeDef, TypeId, VOID_TYPE,
+    SemanticError, SemanticErrorKind, TypeDef,
 };
-use crate::semantic::types::type_def::FunctionId;
+use crate::types::{primitive_hashes, TypeHash};
 use rustc_hash::FxHashMap;
 
 /// Category of switch expression for determining comparison strategy.
@@ -51,7 +51,7 @@ enum SwitchCaseKey {
     Bool(bool),
     String(String),
     Null,
-    Type(TypeId),    // For type pattern matching
+    Type(TypeHash),    // For type pattern matching
 }
 
 /// Expression context - tracks type and lvalue/mutability information.
@@ -112,7 +112,7 @@ pub struct CompiledFunction {
     pub errors: Vec<SemanticError>,
 
     /// Lambda functions compiled within this function
-    pub lambdas: FxHashMap<FunctionId, CompiledBytecode>,
+    pub lambdas: FxHashMap<TypeHash, CompiledBytecode>,
 }
 
 /// Compiles function bodies (type checking + bytecode generation).
@@ -135,7 +135,7 @@ pub struct FunctionCompiler<'ast> {
     return_type: DataType,
 
     /// Compiled functions (only used in module mode)
-    compiled_functions: FxHashMap<FunctionId, CompiledBytecode>,
+    compiled_functions: FxHashMap<TypeHash, CompiledBytecode>,
 
     /// Current namespace path (e.g., ["Game", "World"])
     namespace_path: Vec<String>,
@@ -144,20 +144,20 @@ pub struct FunctionCompiler<'ast> {
     imported_namespaces: Vec<String>,
 
     /// Current class context (when compiling methods)
-    current_class: Option<TypeId>,
+    current_class: Option<TypeHash>,
 
-    /// Global lambda counter for unique FunctionIds (starts at next available ID after regular functions)
-    next_lambda_id: u32,
+    /// Global lambda counter for unique lambda names
+    next_lambda_index: u32,
 
     /// Name of the current function being compiled (optional - for debug/error messages)
     current_function: Option<String>,
 
     /// Expected funcdef type for lambda type inference
-    expected_funcdef_type: Option<TypeId>,
+    expected_funcdef_type: Option<TypeHash>,
 
     /// Expected init list target type (the type that has list_factory or list_construct behavior)
     /// Set when we know the target type for an init list from context (e.g., variable declaration)
-    expected_init_list_target: Option<TypeId>,
+    expected_init_list_target: Option<TypeHash>,
 
     /// Errors encountered during compilation
     errors: Vec<SemanticError>,
@@ -186,11 +186,11 @@ impl<'ast> FunctionCompiler<'ast> {
     /// Creates a new module-level compiler (for compiling all functions).
     fn new_module_compiler(context: &'ast CompilationContext<'ast>) -> Self {
         Self {
-            next_lambda_id: context.function_count() as u32,  // Start after regular functions
+            next_lambda_index: 0,
             context,
             local_scope: LocalScope::new(),
             bytecode: BytecodeEmitter::new(),
-            return_type: DataType::simple(VOID_TYPE),
+            return_type: DataType::simple(primitive_hashes::VOID),
             compiled_functions: FxHashMap::default(),
             namespace_path: Vec::new(),
             imported_namespaces: Vec::new(),
@@ -211,7 +211,7 @@ impl<'ast> FunctionCompiler<'ast> {
     /// - `return_type`: The expected return type for this function
     fn new(context: &'ast CompilationContext<'ast>, return_type: DataType) -> Self {
         Self {
-            next_lambda_id: context.function_count() as u32,  // Start after regular functions
+            next_lambda_index: 0,
             context,
             local_scope: LocalScope::new(),
             bytecode: BytecodeEmitter::new(),
@@ -256,7 +256,7 @@ impl<'ast> FunctionCompiler<'ast> {
         compiler.local_scope.exit_scope();
 
         // Ensure function returns properly
-        if compiler.return_type.type_id != VOID_TYPE {
+        if compiler.return_type.type_hash != primitive_hashes::VOID {
             // Non-void function should have explicit return
             // (In a complete implementation, we'd do control flow analysis)
             compiler.bytecode.emit(Instruction::ReturnVoid);
@@ -280,7 +280,7 @@ impl<'ast> FunctionCompiler<'ast> {
         return_type: DataType,
         params: &[(String, DataType)],
         body: &'ast Block<'ast>,
-        current_class: Option<TypeId>,
+        current_class: Option<TypeHash>,
         namespace_path: Vec<String>,
         imported_namespaces: Vec<String>,
     ) -> CompiledFunction {
@@ -306,7 +306,7 @@ impl<'ast> FunctionCompiler<'ast> {
         compiler.local_scope.exit_scope();
 
         // Ensure function returns properly
-        if compiler.return_type.type_id != VOID_TYPE {
+        if compiler.return_type.type_hash != primitive_hashes::VOID {
             // Non-void function should have explicit return
             // (In a complete implementation, we'd do control flow analysis)
             compiler.bytecode.emit(Instruction::ReturnVoid);
@@ -330,9 +330,9 @@ impl<'ast> FunctionCompiler<'ast> {
     fn compile_field_initializer(
         context: &'ast CompilationContext<'ast>,
         expr: &'ast Expr<'ast>,
-        class_type_id: TypeId,
+        class_type_id: TypeHash,
     ) -> (Vec<Instruction>, Vec<SemanticError>) {
-        let mut compiler = Self::new(context, DataType::simple(VOID_TYPE));
+        let mut compiler = Self::new(context, DataType::simple(primitive_hashes::VOID));
         compiler.current_class = Some(class_type_id);
 
         // Compile the expression - this will emit bytecode to push the value onto the stack
@@ -427,7 +427,7 @@ impl<'ast> FunctionCompiler<'ast> {
         // Compile each method by matching AST to FunctionIds
         for member in class.members {
             if let ClassMember::Method(method_decl) = member {
-                // Find the matching FunctionId for this method
+                // Find the matching TypeHash for this method
                 // Must match by name AND parameter signature for overloaded methods
                 let func_id = method_ids
                     .iter()
@@ -467,7 +467,7 @@ impl<'ast> FunctionCompiler<'ast> {
 
         // Each parameter type must match
         for (ast_param, def_param) in method_decl.params.iter().zip(func_def.params.iter()) {
-            // Resolve AST parameter type to TypeId
+            // Resolve AST parameter type to TypeHash
             let type_name = format!("{}", ast_param.ty.ty.base);
             let ast_type_id = match self.context.lookup_type(&type_name) {
                 Some(id) => id,
@@ -475,7 +475,7 @@ impl<'ast> FunctionCompiler<'ast> {
             };
 
             // Compare base type IDs
-            if ast_type_id != def_param.data_type.type_id {
+            if ast_type_id != def_param.data_type.type_hash {
                 return false;
             }
 
@@ -489,8 +489,8 @@ impl<'ast> FunctionCompiler<'ast> {
         true
     }
 
-    /// Compile a method given its AST and FunctionId
-    fn compile_method(&mut self, func: &'ast FunctionDecl<'ast>, func_id: FunctionId, class: Option<&'ast ClassDecl<'ast>>) {
+    /// Compile a method given its AST and TypeHash
+    fn compile_method(&mut self, func: &'ast FunctionDecl<'ast>, func_id: TypeHash, class: Option<&'ast ClassDecl<'ast>>) {
         // Skip functions without bodies (abstract methods, forward declarations)
         let body = match &func.body {
             Some(body) => body,
@@ -555,7 +555,7 @@ impl<'ast> FunctionCompiler<'ast> {
     /// 1. Initialize fields WITHOUT explicit initializers
     /// 2. Call base class constructor (if base class exists and super() not called in body)
     /// 3. Initialize fields WITH explicit initializers
-    fn compile_constructor_prologue(&mut self, class: &'ast ClassDecl<'ast>, class_type_id: Option<TypeId>, body: &'ast Block<'ast>) -> Vec<Instruction> {
+    fn compile_constructor_prologue(&mut self, class: &'ast ClassDecl<'ast>, class_type_id: Option<TypeHash>, body: &'ast Block<'ast>) -> Vec<Instruction> {
         let mut instructions = Vec::new();
 
         // Get the class type to check for base class
@@ -764,7 +764,7 @@ impl<'ast> FunctionCompiler<'ast> {
     }
 
     /// Visit a function declaration and compile its body
-    fn visit_function_decl(&mut self, func: &'ast FunctionDecl<'ast>, object_type: Option<TypeId>) {
+    fn visit_function_decl(&mut self, func: &'ast FunctionDecl<'ast>, object_type: Option<TypeHash>) {
         // Skip functions without bodies (abstract methods, forward declarations)
         let body = match &func.body {
             Some(body) => body,
@@ -773,7 +773,7 @@ impl<'ast> FunctionCompiler<'ast> {
 
         let qualified_name = self.build_qualified_name(func.name.name);
 
-        // Look up the function in the registry to get its FunctionId and signature
+        // Look up the function in the registry to get its TypeHash and signature
         let func_ids = self.context.lookup_functions(&qualified_name);
 
         if func_ids.is_empty() {
@@ -783,24 +783,18 @@ impl<'ast> FunctionCompiler<'ast> {
 
         // Find the matching function by checking object_type
         // Only check script functions - FFI functions have bodies defined natively
-        let func_id = func_ids
+        let func_def = func_ids
             .iter()
-            .copied()
-            .filter(|id| id.is_script())
-            .find(|&id| {
-                let func_def = self.context.script().get_function(id);
-                func_def.object_type == object_type
-            });
+            .filter_map(|&id| self.context.script().get_function_by_hash(id))
+            .find(|func_def| func_def.object_type == object_type);
 
-        let func_id = match func_id {
-            Some(id) => id,
+        let func_def = match func_def {
+            Some(def) => def,
             None => {
                 // No matching function found - skip
                 return;
             }
         };
-
-        let func_def = self.context.script().get_function(func_id);
 
         // Extract parameters for compilation (pre-allocate capacity)
         let params: Vec<(String, DataType)> = func_def.params.iter().enumerate()
@@ -827,7 +821,7 @@ impl<'ast> FunctionCompiler<'ast> {
         );
 
         // Store the compiled bytecode
-        self.compiled_functions.insert(func_id, compiled.bytecode);
+        self.compiled_functions.insert(func_def.func_hash, compiled.bytecode);
 
         // Collect lambda bytecode from this function
         for (lambda_id, lambda_bytecode) in compiled.lambdas {
@@ -849,10 +843,11 @@ impl<'ast> FunctionCompiler<'ast> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::semantic::{DataType, INT32_TYPE, DOUBLE_TYPE};
+    use crate::semantic::DataType;
+    use crate::types::primitive_hashes;
     use crate::semantic::types::TypeBehaviors;
     use crate::semantic::types::type_def::PrimitiveType;
-    use crate::semantic::FunctionId;
+    use crate::types::TypeHash;
     use crate::semantic::CompilationContext;
     use crate::ffi::FfiRegistryBuilder;
     use std::sync::Arc;
@@ -869,26 +864,27 @@ mod tests {
 
     /// Creates a CompilationContext with an array template registered in FFI.
     /// Returns (context, array_template_id) for use in init list tests.
-    fn create_test_context_with_array() -> (CompilationContext<'static>, TypeId) {
+    fn create_test_context_with_array() -> (CompilationContext<'static>, TypeHash) {
         let mut builder = FfiRegistryBuilder::new();
 
-        // Register template param T first
-        let t_param = TypeId::next_ffi();
-        let template_id = TypeId::next_ffi();
+        // Compute hashes consistently
         let owner_hash = crate::types::TypeHash::from_name("array");
+        // Template param hash: computed from owner + param index
+        let t_param_hash = crate::types::TypeHash::from_template_instance(owner_hash, &[crate::types::TypeHash(0)]);
 
+        // Register template param T
         builder.register_type_with_id(
-            t_param,
+            t_param_hash,
             TypeDef::TemplateParam {
                 name: "T".to_string(),
                 index: 0,
-                owner: template_id,
-                type_hash: crate::types::TypeHash::from_template_instance(owner_hash, &[crate::types::TypeHash(0)]),
+                owner: owner_hash,
+                type_hash: t_param_hash,
             },
             None,
         );
 
-        // Register array template
+        // Register array template - use owner_hash as both its type_hash and registration key
         let array_typedef = TypeDef::Class {
             name: "array".to_string(),
             qualified_name: "array".to_string(),
@@ -901,23 +897,23 @@ mod tests {
             properties: rustc_hash::FxHashMap::default(),
             is_final: false,
             is_abstract: false,
-            template_params: vec![t_param],
+            template_params: vec![t_param_hash],
             template: None,
             type_args: Vec::new(),
             type_kind: crate::types::TypeKind::reference(),
         };
 
-        builder.register_type_with_id(template_id, array_typedef, Some("array"));
+        builder.register_type_with_id(owner_hash, array_typedef, Some("array"));
 
         // Register list_factory behavior for array template
         let mut behaviors = TypeBehaviors::default();
-        behaviors.list_factory = Some(FunctionId::new(9999)); // Dummy function ID
-        builder.set_behaviors(template_id, behaviors);
+        behaviors.list_factory = Some(TypeHash(9999)); // Dummy function ID
+        builder.set_behaviors(owner_hash, behaviors);
 
         let ffi = Arc::new(builder.build().unwrap());
         let ctx = CompilationContext::new(ffi);
 
-        (ctx, template_id)
+        (ctx, owner_hash)
     }
 
     /// Creates an FfiRegistry with the string module installed
@@ -952,11 +948,11 @@ mod tests {
     #[test]
     fn new_compiler_initializes() {
         let ctx = create_test_context();
-        let return_type = DataType::simple(VOID_TYPE);
+        let return_type = DataType::simple(primitive_hashes::VOID);
         let compiler = FunctionCompiler::<'_>::new(&ctx, return_type);
 
         assert_eq!(compiler.errors.len(), 0);
-        assert_eq!(compiler.return_type.type_id, VOID_TYPE);
+        assert_eq!(compiler.return_type.type_hash, primitive_hashes::VOID);
     }
 
     #[test]
@@ -974,11 +970,11 @@ mod tests {
         let _array_int = ctx
             .instantiate_template(
                 array_template,
-                vec![DataType::simple(INT32_TYPE)],
+                vec![DataType::simple(primitive_hashes::INT32)],
             )
             .unwrap();
 
-        let return_type = DataType::simple(VOID_TYPE);
+        let return_type = DataType::simple(primitive_hashes::VOID);
         let mut compiler = FunctionCompiler::new(&ctx, return_type);
 
         // NOTE: Don't set expected_init_list_target - test that we get an error
@@ -1010,11 +1006,11 @@ mod tests {
         let array_int = ctx
             .instantiate_template(
                 array_template,
-                vec![DataType::simple(INT32_TYPE)],
+                vec![DataType::simple(primitive_hashes::INT32)],
             )
             .unwrap();
 
-        let return_type = DataType::simple(VOID_TYPE);
+        let return_type = DataType::simple(primitive_hashes::VOID);
         let mut compiler = FunctionCompiler::new(&ctx, return_type);
 
         // Set expected init list target type (as would be set by var decl)
@@ -1027,7 +1023,7 @@ mod tests {
 
             // Should return array<int>@
             assert!(result_ctx.data_type.is_handle);
-            assert_eq!(result_ctx.data_type.type_id, array_int);
+            assert_eq!(result_ctx.data_type.type_hash, array_int);
             assert_eq!(compiler.errors.len(), 0);
 
             // Check emitted bytecode
@@ -1055,7 +1051,7 @@ mod tests {
         let array_int = ctx
             .instantiate_template(
                 array_template,
-                vec![DataType::simple(INT32_TYPE)],
+                vec![DataType::simple(primitive_hashes::INT32)],
             )
             .unwrap();
 
@@ -1067,7 +1063,7 @@ mod tests {
             )
             .unwrap();
 
-        let return_type = DataType::simple(VOID_TYPE);
+        let return_type = DataType::simple(primitive_hashes::VOID);
         let mut compiler = FunctionCompiler::new(&ctx, return_type);
 
         // Set expected init list target type for outer array
@@ -1080,7 +1076,7 @@ mod tests {
 
             // Should return array<array<int>@>@
             assert!(result_ctx.data_type.is_handle);
-            assert_eq!(result_ctx.data_type.type_id, array_array_int);
+            assert_eq!(result_ctx.data_type.type_hash, array_array_int);
             assert_eq!(compiler.errors.len(), 0);
         } else {
             panic!("Expected InitList expression");
@@ -1102,11 +1098,11 @@ mod tests {
         let array_double = ctx
             .instantiate_template(
                 array_template,
-                vec![DataType::simple(DOUBLE_TYPE)],
+                vec![DataType::simple(primitive_hashes::DOUBLE)],
             )
             .unwrap();
 
-        let return_type = DataType::simple(VOID_TYPE);
+        let return_type = DataType::simple(primitive_hashes::VOID);
         let mut compiler = FunctionCompiler::new(&ctx, return_type);
 
         // Set expected init list target type
@@ -1119,7 +1115,7 @@ mod tests {
 
             // Should return array<double>@
             assert!(result_ctx.data_type.is_handle);
-            assert_eq!(result_ctx.data_type.type_id, array_double);
+            assert_eq!(result_ctx.data_type.type_hash, array_double);
             assert_eq!(compiler.errors.len(), 0);
         } else {
             panic!("Expected InitList expression");

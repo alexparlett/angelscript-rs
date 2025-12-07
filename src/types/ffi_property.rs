@@ -71,7 +71,7 @@ impl FfiPropertyDef {
 mod tests {
     use super::*;
     use crate::ffi::CallContext;
-    use crate::semantic::types::type_def::INT32_TYPE;
+    use crate::types::primitive_hashes;
     use crate::semantic::types::DataType;
 
     fn dummy_native_fn() -> NativeFn {
@@ -82,7 +82,7 @@ mod tests {
     fn read_only_property() {
         let prop = FfiPropertyDef::read_only(
             "value",
-            FfiDataType::resolved(DataType::simple(INT32_TYPE)),
+            FfiDataType::resolved(DataType::simple(primitive_hashes::INT32)),
             dummy_native_fn(),
         );
 
@@ -97,7 +97,7 @@ mod tests {
     fn read_write_property() {
         let prop = FfiPropertyDef::read_write(
             "value",
-            FfiDataType::resolved(DataType::simple(INT32_TYPE)),
+            FfiDataType::resolved(DataType::simple(primitive_hashes::INT32)),
             dummy_native_fn(),
             dummy_native_fn(),
         );
@@ -113,7 +113,7 @@ mod tests {
     fn debug_output() {
         let prop = FfiPropertyDef::read_only(
             "test",
-            FfiDataType::resolved(DataType::simple(INT32_TYPE)),
+            FfiDataType::resolved(DataType::simple(primitive_hashes::INT32)),
             dummy_native_fn(),
         );
         let debug = format!("{:?}", prop);

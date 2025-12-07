@@ -4,7 +4,7 @@
 //! Type specifications use AST primitives parsed from declaration strings.
 //!
 //! IDs are assigned at registration time using the global atomic counters
-//! (`TypeId::next_ffi()` and `FunctionId::next_ffi()` for FFI types/functions).
+//! (`TypeHash::from_name("test_type")` and `TypeHash::from_name("test_func")` for FFI types/functions).
 
 use crate::semantic::types::DataType;
 

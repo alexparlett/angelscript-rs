@@ -15,10 +15,9 @@ use crate::codegen::Instruction;
 use crate::lexer::Span;
 use crate::semantic::{
     Conversion, DataType, MethodSignature, OperatorBehavior,
-    SemanticErrorKind, TypeDef, TypeId, BOOL_TYPE, DOUBLE_TYPE, FLOAT_TYPE,
-    INT32_TYPE, NULL_TYPE, VOID_TYPE,
+    SemanticErrorKind, TypeDef,
 };
-use crate::semantic::types::type_def::FunctionId;
+use crate::types::{primitive_hashes, TypeHash};
 
 use super::{ExprContext, FunctionCompiler};
 
@@ -49,20 +48,20 @@ impl<'ast> FunctionCompiler<'ast> {
     /// Literals are always rvalues (temporary values).
     pub(super) fn check_literal(&mut self, lit: &LiteralExpr) -> Option<ExprContext> {
         let type_id = match &lit.kind {
-            LiteralKind::Int(_) => INT32_TYPE, // Default integer literals to int32 (matches 'int' type)
-            LiteralKind::Float(_) => FLOAT_TYPE,
-            LiteralKind::Double(_) => DOUBLE_TYPE,
-            LiteralKind::Bool(_) => BOOL_TYPE,
+            LiteralKind::Int(_) => primitive_hashes::INT32, // Default integer literals to int32 (matches 'int' type)
+            LiteralKind::Float(_) => primitive_hashes::FLOAT,
+            LiteralKind::Double(_) => primitive_hashes::DOUBLE,
+            LiteralKind::Bool(_) => primitive_hashes::BOOL,
             LiteralKind::String(s) => {
                 let idx = self.bytecode.add_string_constant(s.clone());
                 self.bytecode.emit(Instruction::PushString(idx));
                 // String type is an FFI type, look up by name
-                let string_type = self.context.lookup_type("string").unwrap_or(VOID_TYPE);
+                let string_type = self.context.lookup_type("string").unwrap_or(primitive_hashes::VOID);
                 return Some(ExprContext::rvalue(DataType::simple(string_type)));
             }
             LiteralKind::Null => {
                 self.bytecode.emit(Instruction::PushNull);
-                return Some(ExprContext::rvalue(DataType::simple(NULL_TYPE)));
+                return Some(ExprContext::rvalue(DataType::simple(primitive_hashes::NULL)));
             }
         };
 
@@ -251,7 +250,7 @@ impl<'ast> FunctionCompiler<'ast> {
     /// None otherwise (no error reported - caller should continue with other lookups).
     pub(super) fn try_implicit_member_access(
         &mut self,
-        class_id: TypeId,
+        class_id: TypeHash,
         name: &str,
         span: Span,
     ) -> Option<ExprContext> {
@@ -267,7 +266,7 @@ impl<'ast> FunctionCompiler<'ast> {
 
                         // Emit LoadThis followed by CallMethod for the getter
                         self.bytecode.emit(Instruction::LoadThis);
-                        self.bytecode.emit(Instruction::CallMethod(getter_id.as_u32()));
+                        self.bytecode.emit(Instruction::CallMethod(getter_id.0));
 
                         // Properties accessed via getter are rvalues (unless there's also a setter)
                         // If there's a setter, we could make it an lvalue, but for simplicity
@@ -457,13 +456,13 @@ impl<'ast> FunctionCompiler<'ast> {
             // Comparison operators - try opEquals for ==, !=
             BinaryOp::Equal | BinaryOp::NotEqual => {
                 // Try opEquals first (returns bool)
-                if let Some(func_id) = self.context.find_operator_method(left_ctx.data_type.type_id, OperatorBehavior::OpEquals) {
-                    self.bytecode.emit(Instruction::Call(func_id.as_u32()));
+                if let Some(func_id) = self.context.find_operator_method(left_ctx.data_type.type_hash, OperatorBehavior::OpEquals) {
+                    self.bytecode.emit(Instruction::Call(func_id.0));
                     // For !=, negate the result
                     if binary.op == BinaryOp::NotEqual {
                         self.bytecode.emit(Instruction::Not);
                     }
-                    return Some(ExprContext::rvalue(DataType::simple(BOOL_TYPE)));
+                    return Some(ExprContext::rvalue(DataType::simple(primitive_hashes::BOOL)));
                 }
                 // Fall back to primitive comparison
                 self.check_binary_op(binary.op, &left_ctx.data_type, &right_ctx.data_type, binary.span)?
@@ -473,8 +472,8 @@ impl<'ast> FunctionCompiler<'ast> {
             BinaryOp::Less | BinaryOp::LessEqual
             | BinaryOp::Greater | BinaryOp::GreaterEqual => {
                 // Try opCmp first (returns int: negative/zero/positive)
-                if let Some(func_id) = self.context.find_operator_method(left_ctx.data_type.type_id, OperatorBehavior::OpCmp) {
-                    self.bytecode.emit(Instruction::Call(func_id.as_u32()));
+                if let Some(func_id) = self.context.find_operator_method(left_ctx.data_type.type_hash, OperatorBehavior::OpCmp) {
+                    self.bytecode.emit(Instruction::Call(func_id.0));
                     // Compare result with zero based on operator
                     self.bytecode.emit(Instruction::PushInt(0));
                     let cmp_instr = match binary.op {
@@ -485,7 +484,7 @@ impl<'ast> FunctionCompiler<'ast> {
                         _ => unreachable!(),
                     };
                     self.bytecode.emit(cmp_instr);
-                    return Some(ExprContext::rvalue(DataType::simple(BOOL_TYPE)));
+                    return Some(ExprContext::rvalue(DataType::simple(primitive_hashes::BOOL)));
                 }
                 // Fall back to primitive comparison
                 self.check_binary_op(binary.op, &left_ctx.data_type, &right_ctx.data_type, binary.span)?
@@ -499,8 +498,8 @@ impl<'ast> FunctionCompiler<'ast> {
             // Handle identity comparison operators
             BinaryOp::Is | BinaryOp::NotIs => {
                 // Both operands must be handles or null
-                let left_is_handle = left_ctx.data_type.is_handle || left_ctx.data_type.type_id == NULL_TYPE;
-                let right_is_handle = right_ctx.data_type.is_handle || right_ctx.data_type.type_id == NULL_TYPE;
+                let left_is_handle = left_ctx.data_type.is_handle || left_ctx.data_type.type_hash == primitive_hashes::NULL;
+                let right_is_handle = right_ctx.data_type.is_handle || right_ctx.data_type.type_hash == primitive_hashes::NULL;
 
                 if !left_is_handle {
                     self.error(
@@ -526,7 +525,7 @@ impl<'ast> FunctionCompiler<'ast> {
                     Instruction::NotEqual
                 };
                 self.bytecode.emit(instr);
-                return Some(ExprContext::rvalue(DataType::simple(BOOL_TYPE)));
+                return Some(ExprContext::rvalue(DataType::simple(primitive_hashes::BOOL)));
             }
         };
 
@@ -573,7 +572,7 @@ impl<'ast> FunctionCompiler<'ast> {
         span: Span,
     ) -> Option<DataType> {
         // Void type cannot be used in binary operations
-        if left.type_id == VOID_TYPE {
+        if left.type_hash == primitive_hashes::VOID {
             self.error(
                 SemanticErrorKind::VoidExpression,
                 span,
@@ -581,7 +580,7 @@ impl<'ast> FunctionCompiler<'ast> {
             );
             return None;
         }
-        if right.type_id == VOID_TYPE {
+        if right.type_hash == primitive_hashes::VOID {
             self.error(
                 SemanticErrorKind::VoidExpression,
                 span,
@@ -628,8 +627,8 @@ impl<'ast> FunctionCompiler<'ast> {
             | BinaryOp::ShiftRightUnsigned => {
                 if self.is_bitwise_compatible(left) && self.is_bitwise_compatible(right) {
                     // If either operand is bool, result is int32; otherwise promote
-                    if left.type_id == BOOL_TYPE || right.type_id == BOOL_TYPE {
-                        Some(DataType::simple(INT32_TYPE))
+                    if left.type_hash == primitive_hashes::BOOL || right.type_hash == primitive_hashes::BOOL {
+                        Some(DataType::simple(primitive_hashes::INT32))
                     } else {
                         Some(self.promote_numeric(left, right))
                     }
@@ -650,8 +649,8 @@ impl<'ast> FunctionCompiler<'ast> {
 
             // Logical operators: require bool types
             BinaryOp::LogicalAnd | BinaryOp::LogicalOr | BinaryOp::LogicalXor => {
-                if left.type_id == BOOL_TYPE && right.type_id == BOOL_TYPE {
-                    Some(DataType::simple(BOOL_TYPE))
+                if left.type_hash == primitive_hashes::BOOL && right.type_hash == primitive_hashes::BOOL {
+                    Some(DataType::simple(primitive_hashes::BOOL))
                 } else {
                     self.error(
                         SemanticErrorKind::InvalidOperation,
@@ -675,11 +674,11 @@ impl<'ast> FunctionCompiler<'ast> {
             | BinaryOp::Greater
             | BinaryOp::GreaterEqual => {
                 // Allow comparison of compatible types
-                Some(DataType::simple(BOOL_TYPE))
+                Some(DataType::simple(primitive_hashes::BOOL))
             }
 
             // Type comparison
-            BinaryOp::Is | BinaryOp::NotIs => Some(DataType::simple(BOOL_TYPE)),
+            BinaryOp::Is | BinaryOp::NotIs => Some(DataType::simple(primitive_hashes::BOOL)),
         }
     }
 
@@ -713,7 +712,7 @@ impl<'ast> FunctionCompiler<'ast> {
                     // Try to find a compatible function
                     if let Some(func_id) = self.context.find_compatible_function(&qualified_name, funcdef_type_id) {
                         // Emit FuncPtr instruction
-                        self.bytecode.emit(Instruction::FuncPtr(func_id.as_u32()));
+                        self.bytecode.emit(Instruction::FuncPtr(func_id.0));
                         // Return funcdef handle type
                         return Some(ExprContext::rvalue(DataType::with_handle(funcdef_type_id, false)));
                     }
@@ -721,7 +720,7 @@ impl<'ast> FunctionCompiler<'ast> {
                     // Try without namespace if that failed
                     if !self.namespace_path.is_empty()
                         && let Some(func_id) = self.context.find_compatible_function(name, funcdef_type_id) {
-                            self.bytecode.emit(Instruction::FuncPtr(func_id.as_u32()));
+                            self.bytecode.emit(Instruction::FuncPtr(func_id.0));
                             return Some(ExprContext::rvalue(DataType::with_handle(funcdef_type_id, false)));
                         }
 
@@ -752,7 +751,7 @@ impl<'ast> FunctionCompiler<'ast> {
         let operand_ctx = self.check_expr(unary.operand)?;
 
         // Void type cannot be used in unary operations
-        if operand_ctx.data_type.type_id == VOID_TYPE {
+        if operand_ctx.data_type.type_hash == primitive_hashes::VOID {
             self.error(
                 SemanticErrorKind::VoidExpression,
                 unary.span,
@@ -790,7 +789,7 @@ impl<'ast> FunctionCompiler<'ast> {
 
             UnaryOp::LogicalNot => {
                 // No operator overloading for logical NOT in AngelScript
-                if operand_ctx.data_type.type_id == BOOL_TYPE {
+                if operand_ctx.data_type.type_hash == primitive_hashes::BOOL {
                     self.bytecode.emit(Instruction::Not);
                     Some(ExprContext::rvalue(operand_ctx.data_type))
                 } else {
@@ -986,12 +985,12 @@ impl<'ast> FunctionCompiler<'ast> {
 
                         // Check if target is a funcdef handle (for function reference assignment)
                         let is_funcdef_target = matches!(
-                            self.context.get_type(operand_ctx.data_type.type_id),
+                            self.context.get_type(operand_ctx.data_type.type_hash),
                             TypeDef::Funcdef { .. }
                         );
 
                         if is_funcdef_target {
-                            self.expected_funcdef_type = Some(operand_ctx.data_type.type_id);
+                            self.expected_funcdef_type = Some(operand_ctx.data_type.type_hash);
                         }
 
                         let value_ctx = self.check_expr(assign.value)?;
@@ -1002,7 +1001,7 @@ impl<'ast> FunctionCompiler<'ast> {
                         // For handle assignment, the value must be convertible to the handle type
                         if let Some(conversion) = value_ctx.data_type.can_convert_to(&operand_ctx.data_type, self.context) {
                             self.emit_conversion(&conversion);
-                        } else if value_ctx.data_type.type_id != operand_ctx.data_type.type_id {
+                        } else if value_ctx.data_type.type_hash != operand_ctx.data_type.type_hash {
                             self.error(
                                 SemanticErrorKind::TypeMismatch,
                                 assign.span,
@@ -1029,13 +1028,13 @@ impl<'ast> FunctionCompiler<'ast> {
                 // Check if target is a funcdef handle (for function reference assignment)
                 let is_funcdef_target = target_ctx.data_type.is_handle
                     && matches!(
-                        self.context.get_type(target_ctx.data_type.type_id),
+                        self.context.get_type(target_ctx.data_type.type_hash),
                         TypeDef::Funcdef { .. }
                     );
 
                 // Set expected funcdef type for RHS evaluation
                 if is_funcdef_target {
-                    self.expected_funcdef_type = Some(target_ctx.data_type.type_id);
+                    self.expected_funcdef_type = Some(target_ctx.data_type.type_hash);
                 }
 
                 let value_ctx = self.check_expr(assign.value)?;
@@ -1044,7 +1043,7 @@ impl<'ast> FunctionCompiler<'ast> {
                 self.expected_funcdef_type = None;
 
                 // Cannot assign a void expression
-                if value_ctx.data_type.type_id == VOID_TYPE {
+                if value_ctx.data_type.type_hash == primitive_hashes::VOID {
                     self.error(
                         SemanticErrorKind::VoidExpression,
                         assign.value.span(),
@@ -1072,10 +1071,10 @@ impl<'ast> FunctionCompiler<'ast> {
                 }
 
                 // Try opAssign operator overload first (for user-defined types)
-                if let Some(func_id) = self.context.find_operator_method(target_ctx.data_type.type_id, OperatorBehavior::OpAssign) {
+                if let Some(func_id) = self.context.find_operator_method(target_ctx.data_type.type_hash, OperatorBehavior::OpAssign) {
                     // Call opAssign(value) on target
                     // Stack: [target, value] → target.opAssign(value)
-                    self.bytecode.emit(Instruction::Call(func_id.as_u32()));
+                    self.bytecode.emit(Instruction::Call(func_id.0));
                     let func = self.context.get_function(func_id);
                     return Some(ExprContext::rvalue(func.return_type().clone()));
                 }
@@ -1143,7 +1142,7 @@ impl<'ast> FunctionCompiler<'ast> {
                 let value_ctx = self.check_expr(assign.value)?;
 
                 // Cannot use void expression in compound assignment
-                if value_ctx.data_type.type_id == VOID_TYPE {
+                if value_ctx.data_type.type_hash == primitive_hashes::VOID {
                     self.error(
                         SemanticErrorKind::VoidExpression,
                         assign.value.span(),
@@ -1169,10 +1168,10 @@ impl<'ast> FunctionCompiler<'ast> {
                     _ => unreachable!(),
                 };
 
-                if let Some(func_id) = self.context.find_operator_method(target_ctx.data_type.type_id, compound_op) {
+                if let Some(func_id) = self.context.find_operator_method(target_ctx.data_type.type_hash, compound_op) {
                     // Call opXxxAssign(value) on target
                     // Stack: [target, value] → target.opAddAssign(value)
-                    self.bytecode.emit(Instruction::Call(func_id.as_u32()));
+                    self.bytecode.emit(Instruction::Call(func_id.0));
                     let func = self.context.get_function(func_id);
                     return Some(ExprContext::rvalue(func.return_type().clone()));
                 }
@@ -1247,7 +1246,7 @@ impl<'ast> FunctionCompiler<'ast> {
     pub(super) fn check_ternary(&mut self, ternary: &TernaryExpr<'ast>) -> Option<ExprContext> {
         // Check condition
         let cond_ctx = self.check_expr(ternary.condition)?;
-        if cond_ctx.data_type.type_id != BOOL_TYPE {
+        if cond_ctx.data_type.type_hash != primitive_hashes::BOOL {
             self.error(
                 SemanticErrorKind::TypeMismatch,
                 ternary.condition.span(),
@@ -1263,7 +1262,7 @@ impl<'ast> FunctionCompiler<'ast> {
         let else_ctx = self.check_expr(ternary.else_expr)?;
 
         // Void type cannot be used in ternary branches
-        if then_ctx.data_type.type_id == VOID_TYPE {
+        if then_ctx.data_type.type_hash == primitive_hashes::VOID {
             self.error(
                 SemanticErrorKind::VoidExpression,
                 ternary.then_expr.span(),
@@ -1271,7 +1270,7 @@ impl<'ast> FunctionCompiler<'ast> {
             );
             return None;
         }
-        if else_ctx.data_type.type_id == VOID_TYPE {
+        if else_ctx.data_type.type_hash == primitive_hashes::VOID {
             self.error(
                 SemanticErrorKind::VoidExpression,
                 ternary.else_expr.span(),
@@ -1393,10 +1392,10 @@ impl<'ast> FunctionCompiler<'ast> {
                     }
 
                     // Emit regular Call instruction - base constructor executes with current 'this'
-                    self.bytecode.emit(Instruction::Call(matching_ctor.as_u32()));
+                    self.bytecode.emit(Instruction::Call(matching_ctor.0));
 
                     // Constructors return void
-                    return Some(ExprContext::rvalue(DataType::simple(VOID_TYPE)));
+                    return Some(ExprContext::rvalue(DataType::simple(primitive_hashes::VOID)));
                 }
 
                 // Check for base class method call pattern: BaseClass::method(args)
@@ -1454,7 +1453,7 @@ impl<'ast> FunctionCompiler<'ast> {
                                     }
 
                                     // Emit call instruction
-                                    self.bytecode.emit(Instruction::Call(method_id.as_u32()));
+                                    self.bytecode.emit(Instruction::Call(method_id.0));
 
                                     return Some(ExprContext::rvalue(func_ref.return_type().clone()));
                                 }
@@ -1465,7 +1464,7 @@ impl<'ast> FunctionCompiler<'ast> {
                 if ident_expr.scope.is_none() {  // Only check locals for unqualified names
                     // Extract type info before mutable operations to avoid borrow conflicts
                     let var_info = self.local_scope.lookup(&name).map(|var| {
-                        (var.data_type.type_id, var.data_type.is_handle)
+                        (var.data_type.type_hash, var.data_type.is_handle)
                     });
 
                     if let Some((var_type_id, is_handle)) = var_info {
@@ -1552,7 +1551,7 @@ impl<'ast> FunctionCompiler<'ast> {
                             // Emit conversions for arguments that need conversion
                             for (i, arg_ctx) in arg_contexts.iter().enumerate() {
                                 let param_type = func_ref.param_type(i);
-                                if arg_ctx.data_type.type_id != param_type.type_id {
+                                if arg_ctx.data_type.type_hash != param_type.type_hash {
                                     if let Some(conv) = arg_ctx.data_type.can_convert_to(param_type, self.context) {
                                         if conv.is_implicit {
                                             self.emit_conversion(&conv);
@@ -1578,7 +1577,7 @@ impl<'ast> FunctionCompiler<'ast> {
                                 }
                             }
 
-                            self.bytecode.emit(Instruction::Call(func_id.as_u32()));
+                            self.bytecode.emit(Instruction::Call(func_id.0));
                             return Some(ExprContext::rvalue(func_ref.return_type().clone()));
                         }
                     }
@@ -1592,7 +1591,7 @@ impl<'ast> FunctionCompiler<'ast> {
                     let mut arg_names: Vec<&str> = Vec::with_capacity(ident_expr.type_args.len());
                     for arg in ident_expr.type_args {
                         if let Some(dt) = self.resolve_type_expr(arg) {
-                            let typedef = self.context.get_type(dt.type_id);
+                            let typedef = self.context.get_type(dt.type_hash);
                             arg_names.push(typedef.name());
                         } else {
                             return None; // Error already reported
@@ -1660,7 +1659,7 @@ impl<'ast> FunctionCompiler<'ast> {
                 // 1. Current namespace
                 // 2. Global scope
                 // 3. Imported namespaces
-                let candidates: Vec<FunctionId> = if !is_absolute_scope && ident_expr.scope.is_none() {
+                let candidates: Vec<TypeHash> = if !is_absolute_scope && ident_expr.scope.is_none() {
                     // Try namespace-qualified name first
                     if !self.namespace_path.is_empty() {
                         let qualified_name = self.build_qualified_name(&name);
@@ -1741,7 +1740,7 @@ impl<'ast> FunctionCompiler<'ast> {
                                 && i < func_ref.param_count() {
                                     let param_type = func_ref.param_type(i);
                                     // Check if types are compatible (exact match or implicit conversion)
-                                    if arg_type.type_id != param_type.type_id
+                                    if arg_type.type_hash != param_type.type_hash
                                         && arg_type.can_convert_to(param_type, self.context).is_none_or(|c| !c.is_implicit) {
                                             matches = false;
                                             break;
@@ -1771,9 +1770,9 @@ impl<'ast> FunctionCompiler<'ast> {
                                 && i < params.len() {
                                     let param_type = &params[i];
                                     if param_type.is_handle {
-                                        let type_def = self.context.get_type(param_type.type_id);
+                                        let type_def = self.context.get_type(param_type.type_hash);
                                         if matches!(type_def, TypeDef::Funcdef { .. }) {
-                                            self.expected_funcdef_type = Some(param_type.type_id);
+                                            self.expected_funcdef_type = Some(param_type.type_hash);
                                         }
                                     }
                                 }
@@ -1802,9 +1801,9 @@ impl<'ast> FunctionCompiler<'ast> {
                             && i < params.len() {
                                 let param_type = &params[i];
                                 if param_type.is_handle {
-                                    let type_def = self.context.get_type(param_type.type_id);
+                                    let type_def = self.context.get_type(param_type.type_hash);
                                     if matches!(type_def, TypeDef::Funcdef { .. }) {
-                                        self.expected_funcdef_type = Some(param_type.type_id);
+                                        self.expected_funcdef_type = Some(param_type.type_hash);
                                     }
                                 }
                             }
@@ -1878,7 +1877,7 @@ impl<'ast> FunctionCompiler<'ast> {
                 }
 
                 // Emit call instruction
-                self.bytecode.emit(Instruction::Call(matching_func.as_u32()));
+                self.bytecode.emit(Instruction::Call(matching_func.0));
 
                 // Function calls produce rvalues
                 Some(ExprContext::rvalue(func_ref.return_type().clone()))
@@ -1895,7 +1894,7 @@ impl<'ast> FunctionCompiler<'ast> {
                 }
 
                 // Try opCall operator overload (allows objects to be called like functions)
-                if let Some(func_id) = self.context.find_operator_method(callee_ctx.data_type.type_id, OperatorBehavior::OpCall) {
+                if let Some(func_id) = self.context.find_operator_method(callee_ctx.data_type.type_hash, OperatorBehavior::OpCall) {
                     // Call opCall(args) on callee
                     // Stack: [callee, arg1, arg2, ...] → callee.opCall(arg1, arg2, ...)
 
@@ -1918,7 +1917,7 @@ impl<'ast> FunctionCompiler<'ast> {
                     // Emit conversions for arguments that need conversion
                     for (i, arg_ctx) in arg_contexts.iter().enumerate() {
                         let param_type = func_ref.param_type(i);
-                        if arg_ctx.data_type.type_id != param_type.type_id {
+                        if arg_ctx.data_type.type_hash != param_type.type_hash {
                             if let Some(conv) = arg_ctx.data_type.can_convert_to(param_type, self.context) {
                                 if conv.is_implicit {
                                     self.emit_conversion(&conv);
@@ -1944,13 +1943,13 @@ impl<'ast> FunctionCompiler<'ast> {
                         }
                     }
 
-                    self.bytecode.emit(Instruction::Call(func_id.as_u32()));
+                    self.bytecode.emit(Instruction::Call(func_id.0));
                     return Some(ExprContext::rvalue(func_ref.return_type().clone()));
                 }
 
                 // No opCall found - check if it's a funcdef/function pointer
                 if callee_ctx.data_type.is_handle {
-                    let type_def = self.context.get_type(callee_ctx.data_type.type_id);
+                    let type_def = self.context.get_type(callee_ctx.data_type.type_hash);
 
                     if let TypeDef::Funcdef { params, return_type, .. } = type_def {
                         // This is a funcdef handle - validate arguments
@@ -2005,7 +2004,7 @@ impl<'ast> FunctionCompiler<'ast> {
     /// - Value and ScriptObject: use constructors
     pub(super) fn check_constructor_call(
         &mut self,
-        type_id: TypeId,
+        type_id: TypeHash,
         arg_contexts: &[ExprContext],
         span: Span,
     ) -> Option<ExprContext> {
@@ -2047,13 +2046,13 @@ impl<'ast> FunctionCompiler<'ast> {
         // Emit constructor or factory call instruction
         if use_factory {
             self.bytecode.emit(Instruction::CallFactory {
-                type_id: type_id.as_u32(),
-                func_id: matching_func.as_u32(),
+                type_id: type_id.0,
+                func_id: matching_func.0,
             });
         } else {
             self.bytecode.emit(Instruction::CallConstructor {
-                type_id: type_id.as_u32(),
-                func_id: matching_func.as_u32(),
+                type_id: type_id.0,
+                func_id: matching_func.0,
             });
         }
 
@@ -2093,7 +2092,7 @@ impl<'ast> FunctionCompiler<'ast> {
         }
 
         // Try to find opIndex for the object type (priority 1)
-        if let Some(func_id) = self.context.find_operator_method(current_ctx.data_type.type_id, OperatorBehavior::OpIndex) {
+        if let Some(func_id) = self.context.find_operator_method(current_ctx.data_type.type_hash, OperatorBehavior::OpIndex) {
             let func = self.context.get_function(func_id);
 
             // Check parameter count matches
@@ -2146,7 +2145,7 @@ impl<'ast> FunctionCompiler<'ast> {
 
             // Call opIndex on current object
             // Stack: [object, idx1, idx2, ...] → object.opIndex(idx1, idx2, ...)
-            self.bytecode.emit(Instruction::Call(func_id.as_u32()));
+            self.bytecode.emit(Instruction::Call(func_id.0));
 
             // opIndex returns a reference, so result is an lvalue
             let is_mutable = current_ctx.is_mutable && !func.return_type().is_const;
@@ -2154,7 +2153,7 @@ impl<'ast> FunctionCompiler<'ast> {
         }
 
         // Try get_opIndex accessor (priority 2)
-        if let Some(func_id) = self.context.find_operator_method(current_ctx.data_type.type_id, OperatorBehavior::OpIndexGet) {
+        if let Some(func_id) = self.context.find_operator_method(current_ctx.data_type.type_hash, OperatorBehavior::OpIndexGet) {
             let func = self.context.get_function(func_id);
 
             // Check parameter count matches
@@ -2206,7 +2205,7 @@ impl<'ast> FunctionCompiler<'ast> {
             }
 
             // Call get_opIndex on current object
-            self.bytecode.emit(Instruction::Call(func_id.as_u32()));
+            self.bytecode.emit(Instruction::Call(func_id.0));
 
             // get_opIndex returns a value (read-only), so result is an rvalue
             return Some(ExprContext::rvalue(func.return_type().clone()));
@@ -2246,7 +2245,7 @@ impl<'ast> FunctionCompiler<'ast> {
             if i < last_idx {
                 // Not the final index - use regular opIndex/get_opIndex (read context)
                 // This is the same logic as check_index
-                if let Some(func_id) = self.context.find_operator_method(current_ctx.data_type.type_id, OperatorBehavior::OpIndex) {
+                if let Some(func_id) = self.context.find_operator_method(current_ctx.data_type.type_hash, OperatorBehavior::OpIndex) {
                     let func = self.context.get_function(func_id);
 
                     if func.param_count() != 1 {
@@ -2286,10 +2285,10 @@ impl<'ast> FunctionCompiler<'ast> {
                         return None;
                     }
 
-                    self.bytecode.emit(Instruction::Call(func_id.as_u32()));
+                    self.bytecode.emit(Instruction::Call(func_id.0));
                     let is_mutable = current_ctx.is_mutable && !func.return_type().is_const;
                     current_ctx = ExprContext::lvalue(func.return_type().clone(), is_mutable);
-                } else if let Some(func_id) = self.context.find_operator_method(current_ctx.data_type.type_id, OperatorBehavior::OpIndexGet) {
+                } else if let Some(func_id) = self.context.find_operator_method(current_ctx.data_type.type_hash, OperatorBehavior::OpIndexGet) {
                     let func = self.context.get_function(func_id);
 
                     if func.param_count() != 1 {
@@ -2329,7 +2328,7 @@ impl<'ast> FunctionCompiler<'ast> {
                         return None;
                     }
 
-                    self.bytecode.emit(Instruction::Call(func_id.as_u32()));
+                    self.bytecode.emit(Instruction::Call(func_id.0));
                     current_ctx = ExprContext::rvalue(func.return_type().clone());
                 } else {
                     self.error(
@@ -2342,7 +2341,7 @@ impl<'ast> FunctionCompiler<'ast> {
             } else {
                 // Final index - try opIndex first (returns reference), then set_opIndex
                 // For assignment, we prefer the non-const opIndex if available
-                if let Some(func_id) = self.context.find_operator_method_with_mutability(current_ctx.data_type.type_id, OperatorBehavior::OpIndex, true) {
+                if let Some(func_id) = self.context.find_operator_method_with_mutability(current_ctx.data_type.type_hash, OperatorBehavior::OpIndex, true) {
                     // opIndex exists - use regular assignment through reference
                     let func = self.context.get_function(func_id);
 
@@ -2383,7 +2382,7 @@ impl<'ast> FunctionCompiler<'ast> {
                         return None;
                     }
 
-                    self.bytecode.emit(Instruction::Call(func_id.as_u32()));
+                    self.bytecode.emit(Instruction::Call(func_id.0));
                     let is_mutable = current_ctx.is_mutable && !func.return_type().is_const;
                     current_ctx = ExprContext::lvalue(func.return_type().clone(), is_mutable);
 
@@ -2438,7 +2437,7 @@ impl<'ast> FunctionCompiler<'ast> {
                     // Emit store instruction (handled by VM based on lvalue on stack)
                     return Some(ExprContext::rvalue(current_ctx.data_type));
 
-                } else if let Some(func_id) = self.context.find_operator_method(current_ctx.data_type.type_id, OperatorBehavior::OpIndexSet) {
+                } else if let Some(func_id) = self.context.find_operator_method(current_ctx.data_type.type_hash, OperatorBehavior::OpIndexSet) {
                     // No opIndex, but set_opIndex exists
                     let func = self.context.get_function(func_id);
 
@@ -2514,7 +2513,7 @@ impl<'ast> FunctionCompiler<'ast> {
 
                     // Call set_opIndex(index, value) on current object
                     // Stack: [object, index, value] → object.set_opIndex(index, value)
-                    self.bytecode.emit(Instruction::Call(func_id.as_u32()));
+                    self.bytecode.emit(Instruction::Call(func_id.0));
 
                     // Assignment expression returns the assigned value as rvalue
                     return Some(ExprContext::rvalue(value_ctx.data_type));
@@ -2550,7 +2549,7 @@ impl<'ast> FunctionCompiler<'ast> {
         let object_ctx = self.check_expr(member.object)?;
 
         // Check if the object type has a property with this name
-        let property = self.context.find_property(object_ctx.data_type.type_id, property_name)?;
+        let property = self.context.find_property(object_ctx.data_type.type_hash, property_name)?;
 
         // Property exists - check for setter
         let setter_id = match property.setter {
@@ -2566,19 +2565,19 @@ impl<'ast> FunctionCompiler<'ast> {
                         self.type_name(&object_ctx.data_type)
                     ),
                 );
-                return Some(ExprContext::rvalue(DataType::simple(VOID_TYPE))); // Return Some to prevent fallback
+                return Some(ExprContext::rvalue(DataType::simple(primitive_hashes::VOID))); // Return Some to prevent fallback
             }
         };
 
         // Check visibility access for the property
-        if !self.check_visibility_access(property.visibility, object_ctx.data_type.type_id) {
+        if !self.check_visibility_access(property.visibility, object_ctx.data_type.type_hash) {
             self.report_access_violation(
                 property.visibility,
                 property_name,
                 &self.type_name(&object_ctx.data_type),
                 span,
             );
-            return Some(ExprContext::rvalue(DataType::simple(VOID_TYPE))); // Return Some to prevent fallback
+            return Some(ExprContext::rvalue(DataType::simple(primitive_hashes::VOID))); // Return Some to prevent fallback
         }
 
         // Get setter function to validate value type
@@ -2595,7 +2594,7 @@ impl<'ast> FunctionCompiler<'ast> {
                     setter_func.param_count()
                 ),
             );
-            return Some(ExprContext::rvalue(DataType::simple(VOID_TYPE)));
+            return Some(ExprContext::rvalue(DataType::simple(primitive_hashes::VOID)));
         }
 
         let value_param_type = setter_func.param_type(0);
@@ -2604,13 +2603,13 @@ impl<'ast> FunctionCompiler<'ast> {
         let value_ctx = self.check_expr(value)?;
 
         // Cannot assign a void expression
-        if value_ctx.data_type.type_id == VOID_TYPE {
+        if value_ctx.data_type.type_hash == primitive_hashes::VOID {
             self.error(
                 SemanticErrorKind::VoidExpression,
                 value.span(),
                 "cannot use void expression as property value",
             );
-            return Some(ExprContext::rvalue(DataType::simple(VOID_TYPE)));
+            return Some(ExprContext::rvalue(DataType::simple(primitive_hashes::VOID)));
         }
 
         // Check type conversion for value
@@ -2626,7 +2625,7 @@ impl<'ast> FunctionCompiler<'ast> {
                         property_name
                     ),
                 );
-                return Some(ExprContext::rvalue(DataType::simple(VOID_TYPE)));
+                return Some(ExprContext::rvalue(DataType::simple(primitive_hashes::VOID)));
             }
             self.emit_conversion(&conversion);
         } else {
@@ -2640,11 +2639,11 @@ impl<'ast> FunctionCompiler<'ast> {
                     self.type_name(&value_ctx.data_type)
                 ),
             );
-            return Some(ExprContext::rvalue(DataType::simple(VOID_TYPE)));
+            return Some(ExprContext::rvalue(DataType::simple(primitive_hashes::VOID)));
         }
 
         // Call setter method: object.set_prop(value)
-        self.bytecode.emit(Instruction::CallMethod(setter_id.as_u32()));
+        self.bytecode.emit(Instruction::CallMethod(setter_id.0));
 
         // Property assignment returns the assigned value as rvalue
         Some(ExprContext::rvalue(value_ctx.data_type))
@@ -2657,7 +2656,7 @@ impl<'ast> FunctionCompiler<'ast> {
         let object_ctx = self.check_expr(member.object)?;
 
         // Check that the object is a class/interface type
-        let typedef = self.context.get_type(object_ctx.data_type.type_id);
+        let typedef = self.context.get_type(object_ctx.data_type.type_hash);
 
         match &member.member {
             MemberAccess::Field(field_name) => {
@@ -2666,10 +2665,10 @@ impl<'ast> FunctionCompiler<'ast> {
                     TypeDef::Class { .. } => {
                         // First check for property accessor (get_X pattern)
                         // Property accessors take precedence over direct field access
-                        if let Some(property) = self.context.find_property(object_ctx.data_type.type_id, field_name.name) {
+                        if let Some(property) = self.context.find_property(object_ctx.data_type.type_hash, field_name.name) {
                             if let Some(getter_id) = property.getter {
                                 // Check visibility access for the property
-                                if !self.check_visibility_access(property.visibility, object_ctx.data_type.type_id) {
+                                if !self.check_visibility_access(property.visibility, object_ctx.data_type.type_hash) {
                                     self.report_access_violation(
                                         property.visibility,
                                         field_name.name,
@@ -2696,7 +2695,7 @@ impl<'ast> FunctionCompiler<'ast> {
                                 }
 
                                 // Emit method call to getter
-                                self.bytecode.emit(Instruction::CallMethod(getter_id.as_u32()));
+                                self.bytecode.emit(Instruction::CallMethod(getter_id.0));
 
                                 // Property getter returns rvalue (can't assign to it directly)
                                 // This is a property accessor, not a reference
@@ -2719,7 +2718,7 @@ impl<'ast> FunctionCompiler<'ast> {
                         // No property accessor found, try field lookup
                         // Find the field by name, checking class hierarchy
                         if let Some((field_index, field_def, defining_class_id)) =
-                            self.find_field_in_hierarchy(object_ctx.data_type.type_id, field_name.name)
+                            self.find_field_in_hierarchy(object_ctx.data_type.type_hash, field_name.name)
                         {
                             // Check visibility access (use defining class for visibility check)
                             if !self.check_visibility_access(field_def.visibility, defining_class_id) {
@@ -2776,7 +2775,7 @@ impl<'ast> FunctionCompiler<'ast> {
                 match typedef {
                     TypeDef::Class { .. } => {
                         // Look up methods with this name on the type
-                        let candidates = self.context.find_methods_by_name(object_ctx.data_type.type_id, name.name);
+                        let candidates = self.context.find_methods_by_name(object_ctx.data_type.type_hash, name.name);
 
                         if candidates.is_empty() {
                             self.error(
@@ -2838,9 +2837,9 @@ impl<'ast> FunctionCompiler<'ast> {
                                 && i < params.len() {
                                     let param_type = &params[i];
                                     if param_type.is_handle {
-                                        let type_def = self.context.get_type(param_type.type_id);
+                                        let type_def = self.context.get_type(param_type.type_hash);
                                         if matches!(type_def, TypeDef::Funcdef { .. }) {
-                                            self.expected_funcdef_type = Some(param_type.type_id);
+                                            self.expected_funcdef_type = Some(param_type.type_hash);
                                         }
                                     }
                                 }
@@ -2867,7 +2866,7 @@ impl<'ast> FunctionCompiler<'ast> {
                         let func_ref = self.context.get_function(matching_method);
 
                         // Check visibility access
-                        if !self.check_visibility_access(func_ref.visibility(), object_ctx.data_type.type_id) {
+                        if !self.check_visibility_access(func_ref.visibility(), object_ctx.data_type.type_hash) {
                             self.report_access_violation(
                                 func_ref.visibility(),
                                 func_ref.name(),
@@ -2886,7 +2885,7 @@ impl<'ast> FunctionCompiler<'ast> {
                         }
 
                         // Emit method call instruction
-                        self.bytecode.emit(Instruction::CallMethod(matching_method.as_u32()));
+                        self.bytecode.emit(Instruction::CallMethod(matching_method.0));
 
                         // Method calls return rvalues
                         Some(ExprContext::rvalue(func_ref.return_type().clone()))
@@ -2975,7 +2974,7 @@ impl<'ast> FunctionCompiler<'ast> {
 
                         // Emit interface method call instruction
                         self.bytecode.emit(Instruction::CallInterfaceMethod(
-                            object_ctx.data_type.type_id.as_u32(),
+                            object_ctx.data_type.type_hash.0,
                             method_index as u32,
                         ));
 
@@ -3079,7 +3078,7 @@ impl<'ast> FunctionCompiler<'ast> {
 
         // The cast<> syntax in AngelScript is a handle cast operation.
         // If the target type is a class or interface, it's implicitly a handle.
-        let target_typedef = self.context.get_type(target_type.type_id);
+        let target_typedef = self.context.get_type(target_type.type_hash);
         if matches!(target_typedef, TypeDef::Class { .. } | TypeDef::Interface { .. }) {
             target_type.is_handle = true;
         }
@@ -3093,7 +3092,7 @@ impl<'ast> FunctionCompiler<'ast> {
             // Handle-to-handle casts are always allowed at compile time.
             // At runtime, they return null if the object doesn't implement the target type.
             // This supports patterns like: cast<IDamageable>(entity)
-            self.bytecode.emit(Instruction::Cast(target_type.type_id));
+            self.bytecode.emit(Instruction::Cast(target_type.type_hash));
             Some(ExprContext::rvalue(target_type))
         } else {
             self.error(
@@ -3119,14 +3118,14 @@ impl<'ast> FunctionCompiler<'ast> {
         }
 
         // Source must be a class or interface
-        let source_typedef = self.context.get_type(source.type_id);
+        let source_typedef = self.context.get_type(source.type_hash);
         let source_is_object = matches!(
             source_typedef,
             TypeDef::Class { .. } | TypeDef::Interface { .. }
         );
 
         // Target must be a class or interface
-        let target_typedef = self.context.get_type(target.type_id);
+        let target_typedef = self.context.get_type(target.type_hash);
         let target_is_object = matches!(
             target_typedef,
             TypeDef::Class { .. } | TypeDef::Interface { .. }
@@ -3196,7 +3195,7 @@ impl<'ast> FunctionCompiler<'ast> {
                 };
 
                 // Validate base type matches
-                if explicit_type.type_id != expected_param.type_id {
+                if explicit_type.type_hash != expected_param.type_hash {
                     self.error(
                         SemanticErrorKind::TypeMismatch,
                         lambda_param.span,
@@ -3233,7 +3232,7 @@ impl<'ast> FunctionCompiler<'ast> {
         // Validate return type if specified
         if let Some(ret_ty) = &lambda.return_type {
             let explicit_return = self.resolve_type_expr(&ret_ty.ty)?;
-            if explicit_return.type_id != expected_return.type_id {
+            if explicit_return.type_hash != expected_return.type_hash {
                 self.error(
                     SemanticErrorKind::TypeMismatch,
                     lambda.span,
@@ -3243,9 +3242,12 @@ impl<'ast> FunctionCompiler<'ast> {
             }
         }
 
-        // Allocate FunctionId for this lambda
-        let lambda_id = self.next_lambda_id;
-        self.next_lambda_id += 1;
+        // Generate a unique TypeHash for this lambda based on its index and parameter types
+        let lambda_index = self.next_lambda_index;
+        self.next_lambda_index += 1;
+        let lambda_name = format!("$lambda${}", lambda_index);
+        let param_hashes: Vec<TypeHash> = expected_params.iter().map(|p| p.type_hash).collect();
+        let lambda_hash = TypeHash::from_function(&lambda_name, &param_hashes);
 
         // Capture all variables in current scope
         let captured_vars = self.local_scope.capture_all_variables();
@@ -3271,13 +3273,13 @@ impl<'ast> FunctionCompiler<'ast> {
         );
 
         // Store compiled bytecode in compiled_functions map
-        self.compiled_functions.insert(FunctionId(lambda_id), compiled.bytecode);
+        self.compiled_functions.insert(lambda_hash, compiled.bytecode);
 
         // Merge errors from lambda compilation
         self.errors.extend(compiled.errors);
 
         // Emit FuncPtr instruction to push lambda handle onto stack
-        self.bytecode.emit(Instruction::FuncPtr(lambda_id));
+        self.bytecode.emit(Instruction::FuncPtr(lambda_hash.0));
 
         // Return funcdef handle type (rvalue)
         Some(ExprContext::rvalue(DataType::with_handle(
@@ -3368,8 +3370,8 @@ impl<'ast> FunctionCompiler<'ast> {
         // List factory/constructor pops count + elements and pushes result.
         self.bytecode.emit(Instruction::PushInt(element_types.len() as i64));
         self.bytecode.emit(Instruction::CallConstructor {
-            type_id: target_type_id.as_u32(),
-            func_id: list_func_id.as_u32(),
+            type_id: target_type_id.0,
+            func_id: list_func_id.0,
         });
 
         // Return the appropriate type

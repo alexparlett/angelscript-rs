@@ -3,7 +3,7 @@
 //! This module provides `FfiEnumDef`, an owned enum definition
 //! that can be stored in `Arc<FfiRegistry>` without arena lifetimes.
 
-use crate::semantic::types::type_def::TypeId;
+use crate::types::TypeHash;
 
 /// A native enum type definition.
 ///
@@ -14,7 +14,7 @@ use crate::semantic::types::type_def::TypeId;
 ///
 /// ```ignore
 /// let enum_def = FfiEnumDef::new(
-///     TypeId::next_ffi(),
+///     TypeHash::from_name("test_type"),
 ///     "Color",
 ///     vec![
 ///         ("Red".to_string(), 0),
@@ -25,8 +25,8 @@ use crate::semantic::types::type_def::TypeId;
 /// ```
 #[derive(Debug, Clone)]
 pub struct FfiEnumDef {
-    /// Unique FFI type ID (assigned at registration via TypeId::next_ffi())
-    pub id: TypeId,
+    /// Unique FFI type ID (assigned at registration via TypeHash::from_name("test_type"))
+    pub id: TypeHash,
 
     /// Enum name
     pub name: String,
@@ -37,7 +37,7 @@ pub struct FfiEnumDef {
 
 impl FfiEnumDef {
     /// Create a new enum definition.
-    pub fn new(id: TypeId, name: impl Into<String>, values: Vec<(String, i64)>) -> Self {
+    pub fn new(id: TypeHash, name: impl Into<String>, values: Vec<(String, i64)>) -> Self {
         Self {
             id,
             name: name.into(),
@@ -84,7 +84,7 @@ mod tests {
     #[test]
     fn enum_creation() {
         let enum_def = FfiEnumDef::new(
-            TypeId::next_ffi(),
+            TypeHash::from_name("test_type"),
             "Color",
             vec![
                 ("Red".to_string(), 0),
@@ -100,7 +100,7 @@ mod tests {
     #[test]
     fn get_value() {
         let enum_def = FfiEnumDef::new(
-            TypeId::next_ffi(),
+            TypeHash::from_name("test_type"),
             "Color",
             vec![
                 ("Red".to_string(), 0),
@@ -118,7 +118,7 @@ mod tests {
     #[test]
     fn get_name() {
         let enum_def = FfiEnumDef::new(
-            TypeId::next_ffi(),
+            TypeHash::from_name("test_type"),
             "Color",
             vec![
                 ("Red".to_string(), 0),
@@ -136,7 +136,7 @@ mod tests {
     #[test]
     fn negative_values() {
         let enum_def = FfiEnumDef::new(
-            TypeId::next_ffi(),
+            TypeHash::from_name("test_type"),
             "ErrorCode",
             vec![
                 ("Success".to_string(), 0),
@@ -151,7 +151,7 @@ mod tests {
 
     #[test]
     fn debug_output() {
-        let enum_def = FfiEnumDef::new(TypeId::next_ffi(), "Test", vec![]);
+        let enum_def = FfiEnumDef::new(TypeHash::from_name("test_type"), "Test", vec![]);
         let debug = format!("{:?}", enum_def);
         assert!(debug.contains("FfiEnumDef"));
         assert!(debug.contains("Test"));
@@ -160,7 +160,7 @@ mod tests {
     #[test]
     fn clone() {
         let original = FfiEnumDef::new(
-            TypeId::next_ffi(),
+            TypeHash::from_name("test_type"),
             "Direction",
             vec![
                 ("North".to_string(), 0),
