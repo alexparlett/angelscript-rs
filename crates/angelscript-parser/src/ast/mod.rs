@@ -30,7 +30,6 @@
 //! ```
 
 // Core types
-pub mod error;
 pub mod node;
 pub mod ops;
 
@@ -49,8 +48,10 @@ mod decl_parser;
 
 pub mod visitor;
 
+// Re-export error types from core
+pub use angelscript_core::{ParseError, ParseErrorKind, ParseErrors};
+
 pub use decl::*;
-pub use error::*;
 pub use expr::*;
 pub use node::*;
 pub use ops::*;

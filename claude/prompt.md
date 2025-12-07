@@ -46,6 +46,34 @@ See `/claude/tasks/26_compiler_rewrite.md` for full details.
 
 **Task 26.8: Pass 1: RegistrationPass** - Type + function registration with complete signatures
 
+---
+
+## Task 28: Unified Error Types
+
+See `/claude/tasks/28_unified_error_types.md` for full details.
+
+### Completed Tasks
+
+| # | Task | Description | Status |
+|---|------|-------------|--------|
+| 1 | Move Span to core | Moved `Span` from parser to angelscript-core | ✅ Complete |
+| 2 | Create core error types | Defined `AngelScriptError` and phase-specific errors in core | ✅ Complete |
+| 3 | Migrate parser errors | Parser now uses `LexError`, `ParseError`, `ParseErrorKind`, `ParseErrors` from core | ✅ Complete |
+
+### Task 28.3 Summary (Just Completed)
+
+**Migrated parser errors to use unified types from core:**
+- Updated lexer to use `LexError` enum variants from core (replaced `LexerError` struct)
+- Deleted `crates/angelscript-parser/src/lexer/error.rs`
+- Deleted `crates/angelscript-parser/src/ast/error.rs`
+- Re-exported `LexError`, `ParseError`, `ParseErrorKind`, `ParseErrors` from core
+- Added `display_with_source()` method to core's `ParseError`
+- All 588 parser tests pass
+
+### Next Task
+
+**Task 28.4: Consolidate registration errors** - Merge `FfiRegistryError` + `ModuleError` → `RegistrationError`
+
 ### Deferred
 
 **Task 19: FFI Default Args** - Deferred until after new compiler passes (Tasks 8-15) are built.

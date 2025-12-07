@@ -52,7 +52,7 @@ pub use data_type::{DataType, RefModifier};
 // TypeDef and supporting types
 pub use type_def::{
     TypeDef,
-    PrimitiveType,
+    PrimitiveKind,
     Visibility,
     TypeKind,
     ReferenceKind,

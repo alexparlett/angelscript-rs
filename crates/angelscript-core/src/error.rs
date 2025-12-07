@@ -289,6 +289,51 @@ impl ParseError {
             format!("expected type, found {found}"),
         )
     }
+
+    /// Format the error with source context for display.
+    ///
+    /// This provides a rich error message with the relevant source line
+    /// and a caret pointing to the error location.
+    pub fn display_with_source(&self, source: &str) -> String {
+        let mut output = String::new();
+
+        // Use line and column directly from span
+        let line = self.span.line;
+        let column = self.span.col;
+
+        // Error header
+        output.push_str(&format!("Error at {}:{}: {}\n", line, column, self.kind));
+
+        // Add custom message if present
+        if !self.message.is_empty() {
+            output.push_str(&format!("  {}\n", self.message));
+        }
+
+        // Show the relevant source line
+        if let Some(line_text) = Self::get_line(source, line) {
+            output.push_str("  |\n");
+            output.push_str(&format!("{:>3} | {}\n", line, line_text));
+
+            // Add a caret pointer
+            let indent = " ".repeat(column as usize - 1);
+            let pointer = if self.span.len <= 1 {
+                "^".to_string()
+            } else {
+                "^".to_string() + &"~".repeat((self.span.len - 1) as usize)
+            };
+            output.push_str(&format!("  | {}{}\n", indent, pointer));
+        }
+
+        output
+    }
+
+    /// Get the text of a specific line (1-indexed).
+    fn get_line(source: &str, line_num: u32) -> Option<String> {
+        source
+            .lines()
+            .nth(line_num as usize - 1)
+            .map(|s| s.to_string())
+    }
 }
 
 /// A collection of parse errors.

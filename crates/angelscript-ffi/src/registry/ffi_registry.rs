@@ -55,7 +55,7 @@ use crate::{NativeFn, TemplateInstanceInfo, TemplateValidation};
 use angelscript_core::TypeBehaviors;
 use angelscript_core::{
     FunctionDef, MethodSignature, OperatorBehavior, Param, PropertyAccessors, TypeDef,
-    PrimitiveType, FunctionTraits, Visibility,
+    PrimitiveKind, FunctionTraits, Visibility,
 };
 use angelscript_core::primitives;
 use angelscript_core::DataType;
@@ -717,18 +717,18 @@ impl FfiRegistryBuilder {
         };
 
         // Pre-register primitive types (both TypeDef and name lookup)
-        builder.register_primitive(PrimitiveType::Void, primitives::VOID);
-        builder.register_primitive(PrimitiveType::Bool, primitives::BOOL);
-        builder.register_primitive(PrimitiveType::Int8, primitives::INT8);
-        builder.register_primitive(PrimitiveType::Int16, primitives::INT16);
-        builder.register_primitive(PrimitiveType::Int32, primitives::INT32);
-        builder.register_primitive(PrimitiveType::Int64, primitives::INT64);
-        builder.register_primitive(PrimitiveType::Uint8, primitives::UINT8);
-        builder.register_primitive(PrimitiveType::Uint16, primitives::UINT16);
-        builder.register_primitive(PrimitiveType::Uint32, primitives::UINT32);
-        builder.register_primitive(PrimitiveType::Uint64, primitives::UINT64);
-        builder.register_primitive(PrimitiveType::Float, primitives::FLOAT);
-        builder.register_primitive(PrimitiveType::Double, primitives::DOUBLE);
+        builder.register_primitive(PrimitiveKind::Void, primitives::VOID);
+        builder.register_primitive(PrimitiveKind::Bool, primitives::BOOL);
+        builder.register_primitive(PrimitiveKind::Int8, primitives::INT8);
+        builder.register_primitive(PrimitiveKind::Int16, primitives::INT16);
+        builder.register_primitive(PrimitiveKind::Int32, primitives::INT32);
+        builder.register_primitive(PrimitiveKind::Int64, primitives::INT64);
+        builder.register_primitive(PrimitiveKind::Uint8, primitives::UINT8);
+        builder.register_primitive(PrimitiveKind::Uint16, primitives::UINT16);
+        builder.register_primitive(PrimitiveKind::Uint32, primitives::UINT32);
+        builder.register_primitive(PrimitiveKind::Uint64, primitives::UINT64);
+        builder.register_primitive(PrimitiveKind::Float, primitives::FLOAT);
+        builder.register_primitive(PrimitiveKind::Double, primitives::DOUBLE);
 
         // Register type aliases for primitives
         builder.type_names.insert("int".to_string(), primitives::INT32);
@@ -743,7 +743,7 @@ impl FfiRegistryBuilder {
     }
 
     /// Register a primitive type with its TypeDef and name lookup.
-    fn register_primitive(&mut self, kind: PrimitiveType, type_id: TypeHash) {
+    fn register_primitive(&mut self, kind: PrimitiveKind, type_id: TypeHash) {
         let type_hash = angelscript_core::TypeHash::from_name(kind.name());
         self.types.insert(type_id, TypeDef::Primitive { kind, type_hash });
         self.type_names.insert(kind.name().to_string(), type_id);

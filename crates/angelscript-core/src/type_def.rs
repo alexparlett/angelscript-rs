@@ -6,11 +6,11 @@
 //! # Example
 //!
 //! ```
-//! use angelscript_core::{TypeDef, TypeHash, PrimitiveType};
+//! use angelscript_core::{TypeDef, TypeHash, PrimitiveKind};
 //!
 //! // Create a primitive type
 //! let int_type = TypeDef::Primitive {
-//!     kind: PrimitiveType::Int32,
+//!     kind: PrimitiveKind::Int32,
 //!     type_hash: TypeHash::from_name("int"),
 //! };
 //! assert!(int_type.is_primitive());
@@ -27,7 +27,7 @@ use crate::{DataType, TypeHash};
 ///
 /// These are the built-in numeric and boolean types in AngelScript.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum PrimitiveType {
+pub enum PrimitiveKind {
     Void,
     Bool,
     Int8,
@@ -42,46 +42,46 @@ pub enum PrimitiveType {
     Double,
 }
 
-impl PrimitiveType {
+impl PrimitiveKind {
     /// Get the TypeHash for this primitive type.
     pub const fn type_hash(self) -> TypeHash {
         use crate::primitives;
         match self {
-            PrimitiveType::Void => primitives::VOID,
-            PrimitiveType::Bool => primitives::BOOL,
-            PrimitiveType::Int8 => primitives::INT8,
-            PrimitiveType::Int16 => primitives::INT16,
-            PrimitiveType::Int32 => primitives::INT32,
-            PrimitiveType::Int64 => primitives::INT64,
-            PrimitiveType::Uint8 => primitives::UINT8,
-            PrimitiveType::Uint16 => primitives::UINT16,
-            PrimitiveType::Uint32 => primitives::UINT32,
-            PrimitiveType::Uint64 => primitives::UINT64,
-            PrimitiveType::Float => primitives::FLOAT,
-            PrimitiveType::Double => primitives::DOUBLE,
+            PrimitiveKind::Void => primitives::VOID,
+            PrimitiveKind::Bool => primitives::BOOL,
+            PrimitiveKind::Int8 => primitives::INT8,
+            PrimitiveKind::Int16 => primitives::INT16,
+            PrimitiveKind::Int32 => primitives::INT32,
+            PrimitiveKind::Int64 => primitives::INT64,
+            PrimitiveKind::Uint8 => primitives::UINT8,
+            PrimitiveKind::Uint16 => primitives::UINT16,
+            PrimitiveKind::Uint32 => primitives::UINT32,
+            PrimitiveKind::Uint64 => primitives::UINT64,
+            PrimitiveKind::Float => primitives::FLOAT,
+            PrimitiveKind::Double => primitives::DOUBLE,
         }
     }
 
     /// Get the name of this primitive type.
     pub const fn name(self) -> &'static str {
         match self {
-            PrimitiveType::Void => "void",
-            PrimitiveType::Bool => "bool",
-            PrimitiveType::Int8 => "int8",
-            PrimitiveType::Int16 => "int16",
-            PrimitiveType::Int32 => "int",
-            PrimitiveType::Int64 => "int64",
-            PrimitiveType::Uint8 => "uint8",
-            PrimitiveType::Uint16 => "uint16",
-            PrimitiveType::Uint32 => "uint",
-            PrimitiveType::Uint64 => "uint64",
-            PrimitiveType::Float => "float",
-            PrimitiveType::Double => "double",
+            PrimitiveKind::Void => "void",
+            PrimitiveKind::Bool => "bool",
+            PrimitiveKind::Int8 => "int8",
+            PrimitiveKind::Int16 => "int16",
+            PrimitiveKind::Int32 => "int",
+            PrimitiveKind::Int64 => "int64",
+            PrimitiveKind::Uint8 => "uint8",
+            PrimitiveKind::Uint16 => "uint16",
+            PrimitiveKind::Uint32 => "uint",
+            PrimitiveKind::Uint64 => "uint64",
+            PrimitiveKind::Float => "float",
+            PrimitiveKind::Double => "double",
         }
     }
 }
 
-impl fmt::Display for PrimitiveType {
+impl fmt::Display for PrimitiveKind {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.name())
     }
@@ -690,7 +690,7 @@ impl OperatorBehavior {
 pub enum TypeDef {
     /// Primitive type (int, float, bool, etc.)
     Primitive {
-        kind: PrimitiveType,
+        kind: PrimitiveKind,
         type_hash: TypeHash,
     },
 
@@ -904,33 +904,33 @@ mod tests {
     use crate::primitives;
 
     #[test]
-    fn primitive_type_names() {
-        assert_eq!(PrimitiveType::Void.name(), "void");
-        assert_eq!(PrimitiveType::Bool.name(), "bool");
-        assert_eq!(PrimitiveType::Int8.name(), "int8");
-        assert_eq!(PrimitiveType::Int16.name(), "int16");
-        assert_eq!(PrimitiveType::Int32.name(), "int");
-        assert_eq!(PrimitiveType::Int64.name(), "int64");
-        assert_eq!(PrimitiveType::Uint8.name(), "uint8");
-        assert_eq!(PrimitiveType::Uint16.name(), "uint16");
-        assert_eq!(PrimitiveType::Uint32.name(), "uint");
-        assert_eq!(PrimitiveType::Uint64.name(), "uint64");
-        assert_eq!(PrimitiveType::Float.name(), "float");
-        assert_eq!(PrimitiveType::Double.name(), "double");
+    fn primitive_kind_names() {
+        assert_eq!(PrimitiveKind::Void.name(), "void");
+        assert_eq!(PrimitiveKind::Bool.name(), "bool");
+        assert_eq!(PrimitiveKind::Int8.name(), "int8");
+        assert_eq!(PrimitiveKind::Int16.name(), "int16");
+        assert_eq!(PrimitiveKind::Int32.name(), "int");
+        assert_eq!(PrimitiveKind::Int64.name(), "int64");
+        assert_eq!(PrimitiveKind::Uint8.name(), "uint8");
+        assert_eq!(PrimitiveKind::Uint16.name(), "uint16");
+        assert_eq!(PrimitiveKind::Uint32.name(), "uint");
+        assert_eq!(PrimitiveKind::Uint64.name(), "uint64");
+        assert_eq!(PrimitiveKind::Float.name(), "float");
+        assert_eq!(PrimitiveKind::Double.name(), "double");
     }
 
     #[test]
-    fn primitive_type_hashes() {
-        assert_eq!(PrimitiveType::Void.type_hash(), primitives::VOID);
-        assert_eq!(PrimitiveType::Bool.type_hash(), primitives::BOOL);
-        assert_eq!(PrimitiveType::Int32.type_hash(), primitives::INT32);
-        assert_eq!(PrimitiveType::Float.type_hash(), primitives::FLOAT);
+    fn primitive_kind_hashes() {
+        assert_eq!(PrimitiveKind::Void.type_hash(), primitives::VOID);
+        assert_eq!(PrimitiveKind::Bool.type_hash(), primitives::BOOL);
+        assert_eq!(PrimitiveKind::Int32.type_hash(), primitives::INT32);
+        assert_eq!(PrimitiveKind::Float.type_hash(), primitives::FLOAT);
     }
 
     #[test]
-    fn primitive_type_display() {
-        assert_eq!(format!("{}", PrimitiveType::Int32), "int");
-        assert_eq!(format!("{}", PrimitiveType::Float), "float");
+    fn primitive_kind_display() {
+        assert_eq!(format!("{}", PrimitiveKind::Int32), "int");
+        assert_eq!(format!("{}", PrimitiveKind::Float), "float");
     }
 
     #[test]
@@ -1045,7 +1045,7 @@ mod tests {
     #[test]
     fn typedef_primitive() {
         let typedef = TypeDef::Primitive {
-            kind: PrimitiveType::Int32,
+            kind: PrimitiveKind::Int32,
             type_hash: primitives::INT32,
         };
         assert_eq!(typedef.name(), "int");
@@ -1197,7 +1197,7 @@ mod tests {
     #[test]
     fn typedef_display() {
         let typedef = TypeDef::Primitive {
-            kind: PrimitiveType::Int32,
+            kind: PrimitiveKind::Int32,
             type_hash: primitives::INT32,
         };
         assert_eq!(format!("{}", typedef), "int");
