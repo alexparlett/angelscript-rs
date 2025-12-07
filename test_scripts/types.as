@@ -16,7 +16,6 @@ const int constInt = 42;
 const string constString = "immutable";
 
 // Array types
-int[] simpleArray;
 array<int> arrayTemplate;
 array<array<int>> nestedArray;
 

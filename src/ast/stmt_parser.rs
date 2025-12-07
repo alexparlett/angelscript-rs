@@ -10,12 +10,12 @@ use crate::lexer::TokenKind;
 use super::parser::Parser;
 use bumpalo::collections::Vec as BVec;
 
-impl<'src, 'ast> Parser<'src, 'ast> {
+impl<'ast> Parser<'ast> {
     /// Parse a statement.
     ///
     /// This is the main entry point for statement parsing and dispatches
     /// to specific statement parsers based on the current token.
-    pub fn parse_statement(&mut self) -> Result<Stmt<'src, 'ast>, ParseError> {
+    pub fn parse_statement(&mut self) -> Result<Stmt<'ast>, ParseError> {
         let token = *self.peek();
 
         match token.kind {
@@ -56,7 +56,7 @@ impl<'src, 'ast> Parser<'src, 'ast> {
     /// Parse an expression statement.
     ///
     /// Grammar: `ASSIGN? ';'`
-    pub fn parse_expr_stmt(&mut self) -> Result<Stmt<'src, 'ast>, ParseError> {
+    pub fn parse_expr_stmt(&mut self) -> Result<Stmt<'ast>, ParseError> {
         let start_span = self.peek().span;
 
         // Check for empty statement (just semicolon)
@@ -78,7 +78,7 @@ impl<'src, 'ast> Parser<'src, 'ast> {
     /// Parse a variable declaration statement.
     ///
     /// Grammar: `TYPE IDENTIFIER ('=' EXPR)? (',' IDENTIFIER ('=' EXPR)?)* ';'`
-    pub fn parse_var_decl(&mut self) -> Result<Stmt<'src, 'ast>, ParseError> {
+    pub fn parse_var_decl(&mut self) -> Result<Stmt<'ast>, ParseError> {
         let start_span = self.peek().span;
 
         // Parse type
@@ -103,7 +103,7 @@ impl<'src, 'ast> Parser<'src, 'ast> {
     }
 
     /// Parse a variable declarator (name with optional initializer).
-    fn parse_var_declarator(&mut self, var_type: &crate::ast::types::TypeExpr<'src, 'ast>) -> Result<VarDeclarator<'src, 'ast>, ParseError> {
+    fn parse_var_declarator(&mut self, var_type: &crate::ast::types::TypeExpr<'ast>) -> Result<VarDeclarator<'ast>, ParseError> {
         let name_token = self.expect(TokenKind::Identifier)?;
         let name = Ident::new(name_token.lexeme, name_token.span);
 
@@ -132,7 +132,7 @@ impl<'src, 'ast> Parser<'src, 'ast> {
 
     /// Parse constructor call arguments for variable initialization.
     /// This handles: `Point p(1, 2);` as a call expression.
-    fn parse_constructor_call(&mut self, ty: &crate::ast::types::TypeExpr<'src, 'ast>) -> Result<&'ast Expr<'src, 'ast>, ParseError> {
+    fn parse_constructor_call(&mut self, ty: &crate::ast::types::TypeExpr<'ast>) -> Result<&'ast Expr<'ast>, ParseError> {
         use crate::ast::expr::{CallExpr, Argument, IdentExpr};
 
         let start_span = self.expect(TokenKind::LeftParen)?.span;
@@ -204,7 +204,7 @@ impl<'src, 'ast> Parser<'src, 'ast> {
     /// Parse a return statement.
     ///
     /// Grammar: `'return' ASSIGN? ';'`
-    pub fn parse_return(&mut self) -> Result<Stmt<'src, 'ast>, ParseError> {
+    pub fn parse_return(&mut self) -> Result<Stmt<'ast>, ParseError> {
         let start_span = self.expect(TokenKind::Return)?.span;
 
         // Optional return value
@@ -225,7 +225,7 @@ impl<'src, 'ast> Parser<'src, 'ast> {
     /// Parse a break statement.
     ///
     /// Grammar: `'break' ';'`
-    pub fn parse_break(&mut self) -> Result<Stmt<'src, 'ast>, ParseError> {
+    pub fn parse_break(&mut self) -> Result<Stmt<'ast>, ParseError> {
         let start_span = self.expect(TokenKind::Break)?.span;
         let end_span = self.expect(TokenKind::Semicolon)?.span;
 
@@ -237,7 +237,7 @@ impl<'src, 'ast> Parser<'src, 'ast> {
     /// Parse a continue statement.
     ///
     /// Grammar: `'continue' ';'`
-    pub fn parse_continue(&mut self) -> Result<Stmt<'src, 'ast>, ParseError> {
+    pub fn parse_continue(&mut self) -> Result<Stmt<'ast>, ParseError> {
         let start_span = self.expect(TokenKind::Continue)?.span;
         let end_span = self.expect(TokenKind::Semicolon)?.span;
 
@@ -249,7 +249,7 @@ impl<'src, 'ast> Parser<'src, 'ast> {
     /// Parse a block statement.
     ///
     /// Grammar: `'{' STATEMENT* '}'`
-    pub fn parse_block(&mut self) -> Result<Block<'src, 'ast>, ParseError> {
+    pub fn parse_block(&mut self) -> Result<Block<'ast>, ParseError> {
         let start_span = self.expect(TokenKind::LeftBrace)?.span;
 
         let mut stmts = BVec::new_in(self.arena);
@@ -280,15 +280,15 @@ impl<'src, 'ast> Parser<'src, 'ast> {
     /// Parse an if statement.
     ///
     /// Grammar: `'if' '(' ASSIGN ')' STATEMENT ('else' STATEMENT)?`
-    pub fn parse_if(&mut self) -> Result<Stmt<'src, 'ast>, ParseError> {
+    pub fn parse_if(&mut self) -> Result<Stmt<'ast>, ParseError> {
         let start_span = self.expect(TokenKind::If)?.span;
         self.expect(TokenKind::LeftParen)?;
         let condition = self.parse_expr(0)?;
         self.expect(TokenKind::RightParen)?;
 
-        let then_stmt: &'ast Stmt<'src, 'ast> = self.arena.alloc(self.parse_statement()?);
+        let then_stmt: &'ast Stmt<'ast> = self.arena.alloc(self.parse_statement()?);
 
-        let else_stmt: Option<&'ast Stmt<'src, 'ast>> = if self.eat(TokenKind::Else).is_some() {
+        let else_stmt: Option<&'ast Stmt<'ast>> = if self.eat(TokenKind::Else).is_some() {
             Some(self.arena.alloc(self.parse_statement()?))
         } else {
             None
@@ -311,13 +311,13 @@ impl<'src, 'ast> Parser<'src, 'ast> {
     /// Parse a while loop.
     ///
     /// Grammar: `'while' '(' ASSIGN ')' STATEMENT`
-    pub fn parse_while(&mut self) -> Result<Stmt<'src, 'ast>, ParseError> {
+    pub fn parse_while(&mut self) -> Result<Stmt<'ast>, ParseError> {
         let start_span = self.expect(TokenKind::While)?.span;
         self.expect(TokenKind::LeftParen)?;
         let condition = self.parse_expr(0)?;
         self.expect(TokenKind::RightParen)?;
 
-        let body: &'ast Stmt<'src, 'ast> = self.arena.alloc(self.parse_statement()?);
+        let body: &'ast Stmt<'ast> = self.arena.alloc(self.parse_statement()?);
         let span = start_span.merge(body.span());
 
         Ok(Stmt::While(self.arena.alloc(WhileStmt {
@@ -330,9 +330,9 @@ impl<'src, 'ast> Parser<'src, 'ast> {
     /// Parse a do-while loop.
     ///
     /// Grammar: `'do' STATEMENT 'while' '(' ASSIGN ')' ';'`
-    pub fn parse_do_while(&mut self) -> Result<Stmt<'src, 'ast>, ParseError> {
+    pub fn parse_do_while(&mut self) -> Result<Stmt<'ast>, ParseError> {
         let start_span = self.expect(TokenKind::Do)?.span;
-        let body: &'ast Stmt<'src, 'ast> = self.arena.alloc(self.parse_statement()?);
+        let body: &'ast Stmt<'ast> = self.arena.alloc(self.parse_statement()?);
         self.expect(TokenKind::While)?;
         self.expect(TokenKind::LeftParen)?;
         let condition = self.parse_expr(0)?;
@@ -349,7 +349,7 @@ impl<'src, 'ast> Parser<'src, 'ast> {
     /// Parse a for loop.
     ///
     /// Grammar: `'for' '(' (VAR | EXPRSTAT) EXPRSTAT (ASSIGN (',' ASSIGN)*)? ')' STATEMENT`
-    pub fn parse_for(&mut self) -> Result<Stmt<'src, 'ast>, ParseError> {
+    pub fn parse_for(&mut self) -> Result<Stmt<'ast>, ParseError> {
         let start_span = self.expect(TokenKind::For)?.span;
         self.expect(TokenKind::LeftParen)?;
 
@@ -395,7 +395,7 @@ impl<'src, 'ast> Parser<'src, 'ast> {
 
         self.expect(TokenKind::RightParen)?;
 
-        let body: &'ast Stmt<'src, 'ast> = self.arena.alloc(self.parse_statement()?);
+        let body: &'ast Stmt<'ast> = self.arena.alloc(self.parse_statement()?);
         let span = start_span.merge(body.span());
 
         Ok(Stmt::For(self.arena.alloc(ForStmt {
@@ -410,7 +410,7 @@ impl<'src, 'ast> Parser<'src, 'ast> {
     /// Parse a foreach loop.
     ///
     /// Grammar: `'foreach' '(' TYPE IDENTIFIER (',' TYPE IDENTIFIER)* ':' ASSIGN ')' STATEMENT`
-    pub fn parse_foreach(&mut self) -> Result<Stmt<'src, 'ast>, ParseError> {
+    pub fn parse_foreach(&mut self) -> Result<Stmt<'ast>, ParseError> {
         let start_span = self.eat_contextual("foreach")
             .ok_or_else(|| {
                 let span = self.peek().span;
@@ -469,7 +469,7 @@ impl<'src, 'ast> Parser<'src, 'ast> {
 
         self.expect(TokenKind::RightParen)?;
 
-        let body: &'ast Stmt<'src, 'ast> = self.arena.alloc(self.parse_statement()?);
+        let body: &'ast Stmt<'ast> = self.arena.alloc(self.parse_statement()?);
         let span = start_span.merge(body.span());
 
         Ok(Stmt::Foreach(self.arena.alloc(ForeachStmt {
@@ -481,7 +481,7 @@ impl<'src, 'ast> Parser<'src, 'ast> {
     }
 
     /// Parse a foreach iteration variable.
-    fn parse_foreach_var(&mut self) -> Result<ForeachVar<'src, 'ast>, ParseError> {
+    fn parse_foreach_var(&mut self) -> Result<ForeachVar<'ast>, ParseError> {
         let ty = self.parse_type()?;
         let name_token = self.expect(TokenKind::Identifier)?;
         let name = Ident::new(name_token.lexeme, name_token.span);
@@ -493,7 +493,7 @@ impl<'src, 'ast> Parser<'src, 'ast> {
     /// Parse a switch statement.
     ///
     /// Grammar: `'switch' '(' ASSIGN ')' '{' CASE* '}'`
-    pub fn parse_switch(&mut self) -> Result<Stmt<'src, 'ast>, ParseError> {
+    pub fn parse_switch(&mut self) -> Result<Stmt<'ast>, ParseError> {
         let start_span = self.expect(TokenKind::Switch)?.span;
         self.expect(TokenKind::LeftParen)?;
         let expr = self.parse_expr(0)?;
@@ -519,7 +519,7 @@ impl<'src, 'ast> Parser<'src, 'ast> {
     /// Parse a switch case.
     ///
     /// Grammar: `(('case' EXPR) | 'default') ':' STATEMENT*`
-    fn parse_switch_case(&mut self) -> Result<SwitchCase<'src, 'ast>, ParseError> {
+    fn parse_switch_case(&mut self) -> Result<SwitchCase<'ast>, ParseError> {
         let start_span = self.peek().span;
         let mut values = BVec::new_in(self.arena);
 
@@ -585,7 +585,7 @@ impl<'src, 'ast> Parser<'src, 'ast> {
     /// Parse a try-catch statement.
     ///
     /// Grammar: `'try' STATBLOCK 'catch' STATBLOCK`
-    pub fn parse_try_catch(&mut self) -> Result<Stmt<'src, 'ast>, ParseError> {
+    pub fn parse_try_catch(&mut self) -> Result<Stmt<'ast>, ParseError> {
         let start_span = self.expect(TokenKind::Try)?.span;
         let try_block = self.parse_block()?;
         self.expect(TokenKind::Catch)?;

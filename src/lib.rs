@@ -9,7 +9,7 @@
 //! The implementation follows a traditional compiler pipeline:
 //!
 //! 1. **Lexer** - Tokenizes source text ([`lexer`] module)
-//! 2. **Parser** - Builds an AST ([`parse_lenient`] function)
+//! 2. **Parser** - Builds an AST ([`Parser::parse`] function)
 //! 3. **Semantic Analysis** - 3-pass compilation ([`semantic::Compiler`])
 //!    - Pass 1: Registration (register all global names)
 //!    - Pass 2a: Type Compilation (resolve types)
@@ -19,54 +19,60 @@
 //! # Example: Basic Usage (Recommended)
 //!
 //! ```
-//! use angelscript::ScriptModule;
+//! use angelscript::Unit;
 //!
-//! let mut module = ScriptModule::new();
+//! let mut unit = Unit::new();
 //!
 //! // Add source files
-//! module.add_source("player.as", r#"
+//! unit.add_source("player.as", r#"
 //!     class Player {
 //!         int health;
 //!         Player(int h) { }
 //!     }
 //! "#).unwrap();
 //!
-//! module.add_source("main.as", r#"
+//! unit.add_source("main.as", r#"
 //!     void main() {
 //!         Player p = Player(100);
 //!     }
 //! "#).unwrap();
 //!
 //! // Build (parse + compile)
-//! module.build().unwrap();
+//! unit.build().unwrap();
 //!
-//! // Module is now ready for execution
-//! println!("Compiled {} functions", module.function_count());
-//! println!("Registered {} types", module.type_count());
+//! // Unit is now ready for execution
+//! println!("Compiled {} functions", unit.function_count());
+//! println!("Registered {} types", unit.type_count());
 //! ```
 //!
 //! # Example: Parse Only
 //!
 //! ```
-//! use angelscript::parse_lenient;
+//! use angelscript::Parser;
 //! use bumpalo::Bump;
 //!
 //! let arena = Bump::new();
 //! let source = "int add(int a, int b) { return a + b; }";
 //!
-//! let (script, errors) = parse_lenient(source, &arena);
+//! let (script, errors) = Parser::parse_lenient(source, &arena);
 //! if errors.is_empty() {
 //!     println!("Successfully parsed {} items", script.items().len());
 //! }
 //! ```
 
 mod ast;
+mod context;
+pub mod ffi;
 mod lexer;
 mod module;
+pub mod modules;
 pub mod semantic;
 pub mod codegen;
+pub mod types;
+mod unit;
 
-pub use ast::{parse, parse_expression, parse_lenient, parse_statement, parse_type_expr};
+// Re-export Parser as the primary parsing interface
+pub use ast::Parser;
 
 // Re-export visitor for AST traversal
 pub use ast::visitor;
@@ -77,7 +83,7 @@ pub use ast::{
     Script, Item,
 
     // Declarations
-    FunctionDecl, FunctionParam,
+    FunctionDecl, FunctionParam, FunctionSignatureDecl, PropertyDecl,
     ClassDecl, ClassMember, FieldDecl, VirtualPropertyDecl, PropertyAccessor,
     InterfaceDecl, InterfaceMember, InterfaceMethod,
     EnumDecl, Enumerator,
@@ -134,8 +140,17 @@ pub use ast::{
     ParseError, ParseErrorKind, ParseErrors,
 };
 
-// Re-export high-level module API (recommended for most users)
-pub use module::{ScriptModule, BuildError, ModuleError};
+// Re-export compilation unit API (recommended for most users)
+pub use unit::{Unit, BuildError, UnitError};
+
+// Re-export FFI module and context API
+pub use module::{Module, FfiModuleError};
+pub use types::FfiEnumDef;
+pub use context::{Context, ContextError};
+
+// Backwards compatibility alias (deprecated)
+#[deprecated(since = "0.2.0", note = "Use `Unit` instead")]
+pub type ScriptModule<'app> = Unit<'app>;
 
 // Re-export semantic compiler (for advanced use cases)
 pub use semantic::Compiler;
@@ -147,3 +162,14 @@ pub use semantic::{
 
 // Re-export codegen types
 pub use codegen::{BytecodeEmitter, CompiledBytecode, Instruction};
+
+// Re-export built-in module types
+pub use modules::{ScriptArray, ScriptDict, ScriptString};
+
+// Re-export built-in module constructors
+pub use modules::{
+    array_module, default_modules, dictionary_module, math_module, std_module, string_module,
+};
+
+// Re-export common types
+pub use types::{ReferenceKind, TypeKind};

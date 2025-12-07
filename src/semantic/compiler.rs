@@ -8,8 +8,9 @@
 //! # Example
 //!
 //! ```ignore
-//! use angelscript::{parse_lenient, Compiler};
+//! use angelscript::{Parser::parse_lenient, Compiler};
 //! use bumpalo::Bump;
+//! use std::sync::Arc;
 //!
 //! let arena = Bump::new();
 //! let source = r#"
@@ -23,31 +24,35 @@
 //!     }
 //! "#;
 //!
-//! let (script, _) = parse_lenient(source, &arena);
-//! let compiled = Compiler::compile(&script);
+//! let (script, _) = Parser::parse_lenient(source, &arena);
+//! let ffi = Arc::new(FfiRegistryBuilder::new().build().unwrap());
+//! let compiled = Compiler::compile(&script, ffi);
 //!
 //! if compiled.errors.is_empty() {
 //!     println!("Compiled {} functions", compiled.module.functions.len());
 //! }
 //! ```
 
+use std::sync::Arc;
+
 use super::{
-    CompiledModule, FunctionCompiler, Registrar, Registry, SemanticError,
+    CompiledModule, CompilationContext, FunctionCompiler, Registrar, SemanticError,
     TypeCompiler,
 };
 use crate::ast::Script;
+use crate::ffi::{FfiRegistry, FfiRegistryBuilder};
 use rustc_hash::FxHashMap;
 
 /// Result of compiling a complete script.
 ///
 /// This contains all the artifacts from the three compilation passes.
 #[derive(Debug)]
-pub struct CompilationResult<'src, 'ast> {
+pub struct CompilationResult<'ast> {
     /// The compiled module with all function bytecode (including lambdas)
     pub module: CompiledModule,
 
-    /// The complete type registry with all type information
-    pub registry: Registry<'src, 'ast>,
+    /// The complete compilation context with all type information (FFI + Script)
+    pub context: CompilationContext<'ast>,
 
     /// Type resolution map (AST span → resolved DataType)
     pub type_map: FxHashMap<crate::lexer::Span, super::DataType>,
@@ -56,7 +61,7 @@ pub struct CompilationResult<'src, 'ast> {
     pub errors: Vec<SemanticError>,
 }
 
-impl<'src, 'ast> CompilationResult<'src, 'ast> {
+impl<'ast> CompilationResult<'ast> {
     /// Check if compilation succeeded (no errors)
     pub fn is_success(&self) -> bool {
         self.errors.is_empty()
@@ -67,9 +72,9 @@ impl<'src, 'ast> CompilationResult<'src, 'ast> {
         self.module.functions.len()
     }
 
-    /// Get the number of types registered
+    /// Get the number of types registered (FFI + Script)
     pub fn type_count(&self) -> usize {
-        self.registry.type_count()
+        self.context.type_count()
     }
 }
 
@@ -81,58 +86,85 @@ pub struct Compiler;
 impl Compiler {
     /// Compile a complete script through all three passes.
     ///
-    /// This performs:
-    /// 1. Pass 1: Registration - Register all global names (types, functions, variables)
-    /// 2. Pass 2a: Type Compilation - Resolve types and fill in type details
-    /// 3. Pass 2b: Function Compilation - Compile all function bodies to bytecode
+    /// This is the main compilation entry point. It:
+    /// 1. Creates a `CompilationContext` from the FFI registry
+    /// 2. Pass 1: Registration - Register all script-defined names
+    /// 3. Pass 2a: Type Compilation - Resolve types and fill in type details
+    /// 4. Pass 2b: Function Compilation - Compile all function bodies to bytecode
     ///
-    /// Returns a `CompilationResult` containing all compiled artifacts and any errors.
+    /// # Arguments
+    /// - `script`: The parsed AST to compile
+    /// - `ffi`: An FFI registry containing primitives and any registered FFI types
+    ///
+    /// # Returns
+    /// A `CompilationResult` containing all compiled artifacts and any errors.
     #[cfg_attr(feature = "profiling", profiling::function)]
-    pub fn compile<'src, 'ast>(script: &'ast Script<'src, 'ast>) -> CompilationResult<'src, 'ast> {
+    pub fn compile<'ast>(
+        script: &'ast Script<'ast>,
+        ffi: Arc<FfiRegistry>,
+    ) -> CompilationResult<'ast> {
+        // Create CompilationContext from FfiRegistry
+        let context = CompilationContext::new(ffi);
+
         // Pass 1: Registration
-        let registration = Registrar::register(script);
+        let registration = Registrar::register_with_context(script, context);
 
         // Collect Pass 1 errors
         let mut all_errors = registration.errors;
 
         // Pass 2a: Type Compilation
-        let type_compilation = TypeCompiler::compile(script, registration.registry);
+        let type_compilation = TypeCompiler::compile(script, registration.context);
 
         // Collect Pass 2a errors
         all_errors.extend(type_compilation.errors);
 
         // Pass 2b: Function Compilation
-        let mut function_compilation = FunctionCompiler::compile(script, &type_compilation.registry);
+        let mut function_compilation = FunctionCompiler::compile(script, &type_compilation.context);
 
         // Collect Pass 2b errors
         all_errors.append(&mut function_compilation.errors);
 
         CompilationResult {
             module: function_compilation,
-            registry: type_compilation.registry,
+            context: type_compilation.context,
             type_map: type_compilation.type_map,
             errors: all_errors,
         }
     }
 
-    /// Compile a script and return only the registry (for testing or type-only compilation).
+    /// Compile a script and return only the context (for testing or type-only compilation).
     ///
     /// This performs Pass 1 and Pass 2a only, skipping function body compilation.
-    pub fn compile_types<'src, 'ast>(script: &'ast Script<'src, 'ast>) -> TypeCompilationResult<'src, 'ast> {
+    pub fn compile_types<'ast>(script: &'ast Script<'ast>) -> TypeCompilationResult<'ast> {
+        // Create default FfiRegistry with primitives
+        let ffi = Arc::new(FfiRegistryBuilder::new().build().unwrap());
+        Self::compile_types_with_ffi(script, ffi)
+    }
+
+    /// Compile types only with an FFI registry.
+    ///
+    /// This performs Pass 1 and Pass 2a only, skipping function body compilation.
+    pub fn compile_types_with_ffi<'ast>(
+        script: &'ast Script<'ast>,
+        ffi: Arc<FfiRegistry>,
+    ) -> TypeCompilationResult<'ast> {
+        // Create CompilationContext from FfiRegistry
+        let context = CompilationContext::new(ffi);
+
         // Pass 1: Registration
-        let registration = Registrar::register(script);
+        let registration = Registrar::register_with_context(script, context);
 
         // Collect Pass 1 errors
         let mut all_errors = registration.errors;
 
         // Pass 2a: Type Compilation
-        let type_compilation = TypeCompiler::compile(script, registration.registry);
+        let type_compilation = TypeCompiler::compile(script, registration.context);
 
         // Collect Pass 2a errors
         all_errors.extend(type_compilation.errors);
 
         TypeCompilationResult {
-            registry: type_compilation.registry,
+            context: type_compilation.context,
             type_map: type_compilation.type_map,
             errors: all_errors,
         }
@@ -143,9 +175,9 @@ impl Compiler {
 ///
 /// Useful for tools that only need type information without function bodies.
 #[derive(Debug)]
-pub struct TypeCompilationResult<'src, 'ast> {
-    /// The complete type registry
-    pub registry: Registry<'src, 'ast>,
+pub struct TypeCompilationResult<'ast> {
+    /// The complete compilation context with all type information (FFI + Script)
+    pub context: CompilationContext<'ast>,
 
     /// Type resolution map
     pub type_map: FxHashMap<crate::lexer::Span, super::DataType>,
@@ -154,7 +186,7 @@ pub struct TypeCompilationResult<'src, 'ast> {
     pub errors: Vec<SemanticError>,
 }
 
-impl<'src, 'ast> TypeCompilationResult<'src, 'ast> {
+impl<'ast> TypeCompilationResult<'ast> {
     /// Check if compilation succeeded (no errors)
     pub fn is_success(&self) -> bool {
         self.errors.is_empty()
@@ -164,15 +196,20 @@ impl<'src, 'ast> TypeCompilationResult<'src, 'ast> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::parse_lenient;
+    use crate::Parser;
     use bumpalo::Bump;
+
+    /// Create a default FFI registry with primitives for tests
+    fn default_ffi() -> Arc<FfiRegistry> {
+        Arc::new(FfiRegistryBuilder::new().build().unwrap())
+    }
 
     #[test]
     fn compile_empty_script() {
         let arena = Bump::new();
-        let (script, _) = parse_lenient("", &arena);
+        let (script, _) = Parser::parse_lenient("", &arena);
 
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
         assert!(result.is_success());
         assert_eq!(result.function_count(), 0);
     }
@@ -181,9 +218,9 @@ mod tests {
     fn compile_simple_function() {
         let arena = Bump::new();
         let source = "void main() { }";
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
 
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
         assert!(result.is_success(), "Errors: {:?}", result.errors);
         assert_eq!(result.function_count(), 1);
     }
@@ -197,9 +234,9 @@ mod tests {
                 Player(int h) { }
             }
         "#;
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
 
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
 
         assert!(result.is_success(), "Errors: {:?}", result.errors);
 
@@ -207,7 +244,7 @@ mod tests {
         assert!(result.function_count() >= 1, "Expected at least 1 function, got {}", result.function_count());
 
         // Should have registered the Player type
-        assert!(result.registry.lookup_type("Player").is_some());
+        assert!(result.context.lookup_type("Player").is_some());
     }
 
     #[test]
@@ -223,9 +260,9 @@ mod tests {
                 Player p = Player(100);
             }
         "#;
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
 
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
         assert!(result.is_success(), "Errors: {:?}", result.errors);
 
         // Should have compiled constructor + main
@@ -241,13 +278,13 @@ mod tests {
                 Player(int h) { }
             }
         "#;
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
 
         let result = Compiler::compile_types(&script);
         assert!(result.is_success(), "Errors: {:?}", result.errors);
 
         // Should have registered the Player type
-        assert!(result.registry.lookup_type("Player").is_some());
+        assert!(result.context.lookup_type("Player").is_some());
     }
 
     // ========== Visibility Enforcement Tests ==========
@@ -270,9 +307,9 @@ mod tests {
                 }
             }
         "#;
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
 
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
         assert!(result.is_success(), "Expected success, got errors: {:?}", result.errors);
     }
 
@@ -289,9 +326,9 @@ mod tests {
                 int h = p.health;  // ERROR: private access
             }
         "#;
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
 
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
         assert!(!result.is_success(), "Expected error for private field access");
         assert!(result.errors.iter().any(|e|
             e.message.contains("private") && e.message.contains("health")
@@ -310,9 +347,9 @@ mod tests {
                 }
             }
         "#;
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
 
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
         assert!(result.is_success(), "Expected success, got errors: {:?}", result.errors);
     }
 
@@ -329,9 +366,9 @@ mod tests {
                 p.secretMethod();  // ERROR: private access
             }
         "#;
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
 
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
         assert!(!result.is_success(), "Expected error for private method access");
         assert!(result.errors.iter().any(|e|
             e.message.contains("private") && e.message.contains("secretMethod")
@@ -352,9 +389,9 @@ mod tests {
                 }
             }
         "#;
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
 
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
         assert!(result.is_success(), "Expected success, got errors: {:?}", result.errors);
     }
 
@@ -371,9 +408,9 @@ mod tests {
                 int h = p.health;  // ERROR: protected access from outside
             }
         "#;
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
 
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
         assert!(!result.is_success(), "Expected error for protected field access");
         assert!(result.errors.iter().any(|e|
             e.message.contains("protected") && e.message.contains("health")
@@ -393,9 +430,9 @@ mod tests {
                 int h = p.health;  // OK: public access
             }
         "#;
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
 
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
         assert!(result.is_success(), "Expected success, got errors: {:?}", result.errors);
     }
 
@@ -412,9 +449,9 @@ mod tests {
                 p.update();  // OK: public access
             }
         "#;
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
 
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
         assert!(result.is_success(), "Expected success, got errors: {:?}", result.errors);
     }
 
@@ -432,9 +469,9 @@ mod tests {
                 }
             }
         "#;
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
 
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
         assert!(result.is_success(), "Expected success, got errors: {:?}", result.errors);
     }
 
@@ -458,9 +495,9 @@ mod tests {
                 }
             }
         "#;
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
 
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
         assert!(result.is_success(), "Expected success, got errors: {:?}", result.errors);
     }
 
@@ -480,9 +517,9 @@ mod tests {
                 }
             }
         "#;
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
 
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
         assert!(result.is_success(), "Expected success, got errors: {:?}", result.errors);
     }
 
@@ -498,9 +535,9 @@ mod tests {
                 }
             }
         "#;
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
 
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
         assert!(result.is_success(), "Expected success, got errors: {:?}", result.errors);
     }
 
@@ -512,9 +549,9 @@ mod tests {
                 int x = this;  // ERROR: not in a class method
             }
         "#;
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
 
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
         assert!(!result.is_success(), "Expected error for 'this' outside class");
         assert!(result.errors.iter().any(|e|
             e.message.contains("this") && e.message.contains("class")
@@ -533,9 +570,9 @@ mod tests {
                 }
             }
         "#;
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
 
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
         assert!(result.is_success(), "Expected success, got errors: {:?}", result.errors);
     }
 
@@ -553,9 +590,9 @@ mod tests {
                 }
             }
         "#;
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
 
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
         assert!(result.is_success(), "Expected success, got errors: {:?}", result.errors);
     }
 
@@ -571,9 +608,9 @@ mod tests {
                 }
             }
         "#;
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
 
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
         assert!(result.is_success(), "Expected success, got errors: {:?}", result.errors);
     }
 
@@ -590,9 +627,9 @@ mod tests {
                 }
             }
         "#;
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
 
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
         assert!(result.is_success(), "Expected success, got errors: {:?}", result.errors);
     }
 
@@ -618,9 +655,9 @@ mod tests {
                 }
             }
         "#;
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
 
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
         assert!(result.is_success(), "Expected success, got errors: {:?}", result.errors);
     }
 
@@ -644,9 +681,9 @@ mod tests {
                 }
             }
         "#;
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
 
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
         assert!(result.is_success(), "Expected success, got errors: {:?}", result.errors);
     }
 
@@ -669,9 +706,9 @@ mod tests {
                 }
             }
         "#;
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
 
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
         assert!(result.is_success(), "Expected success, got errors: {:?}", result.errors);
     }
 
@@ -692,9 +729,9 @@ mod tests {
                 }
             }
         "#;
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
 
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
         assert!(result.is_success(), "Expected success, got errors: {:?}", result.errors);
     }
 
@@ -723,9 +760,9 @@ mod tests {
                 }
             }
         "#;
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
 
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
         assert!(result.is_success(), "Expected success, got errors: {:?}", result.errors);
     }
 
@@ -751,9 +788,9 @@ mod tests {
                 }
             }
         "#;
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
 
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
         assert!(result.is_success(), "Expected success, got errors: {:?}", result.errors);
     }
 
@@ -771,9 +808,9 @@ mod tests {
                 }
             }
         "#;
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
 
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
         assert!(!result.is_success(), "Expected error for duplicate case values");
         assert!(result.errors.iter().any(|e|
             format!("{:?}", e).contains("duplicate case value")),
@@ -796,9 +833,9 @@ mod tests {
                 }
             }
         "#;
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
 
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
         assert!(!result.is_success(), "Expected error for duplicate default");
         assert!(result.errors.iter().any(|e|
             format!("{:?}", e).contains("one default case")),
@@ -821,9 +858,9 @@ mod tests {
                 }
             }
         "#;
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
 
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
         assert!(!result.is_success(), "Expected error for unsupported switch type");
     }
 
@@ -839,9 +876,9 @@ mod tests {
                 }
             }
         "#;
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
 
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
         assert!(!result.is_success(), "Expected error for type mismatch");
         assert!(result.errors.iter().any(|e|
             format!("{:?}", e).contains("does not match switch type")),
@@ -866,9 +903,9 @@ mod tests {
                 // After switch, result should be 10 (not 30 from fallthrough)
             }
         "#;
-        let (script, _) = parse_lenient(source, &arena);
+        let (script, _) = Parser::parse_lenient(source, &arena);
 
-        let result = Compiler::compile(&script);
+        let result = Compiler::compile(&script, default_ffi());
         assert!(result.is_success(), "Expected success, got errors: {:?}", result.errors);
     }
 }

@@ -7,20 +7,24 @@ use super::span::Span;
 use std::fmt;
 
 /// A token from the source code.
+///
+/// The `'ast` lifetime refers to the arena where the lexeme string is allocated.
+/// This allows the source string to be freed after lexing, since all string
+/// content is copied into the arena.
 #[derive(Clone, Copy, PartialEq)]
-pub struct Token<'src> {
+pub struct Token<'ast> {
     /// The type of token.
     pub kind: TokenKind,
-    /// The source text of this token.
-    pub lexeme: &'src str,
+    /// The source text of this token (allocated in arena).
+    pub lexeme: &'ast str,
     /// Location in source.
     pub span: Span,
 }
 
-impl<'src> Token<'src> {
+impl<'ast> Token<'ast> {
     /// Create a new token.
     #[inline]
-    pub fn new(kind: TokenKind, lexeme: &'src str, span: Span) -> Self {
+    pub fn new(kind: TokenKind, lexeme: &'ast str, span: Span) -> Self {
         Self { kind, lexeme, span }
     }
 }

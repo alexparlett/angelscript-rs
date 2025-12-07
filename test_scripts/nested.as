@@ -1,8 +1,5 @@
 // Test nested classes and namespaces
 
-// FFI placeholder - will be replaced with proper FFI bindings
-void print(const string &in msg) {}
-
 namespace Game {
     class Entity {
         protected int id;

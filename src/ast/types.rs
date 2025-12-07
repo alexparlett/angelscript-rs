@@ -35,28 +35,28 @@ use std::fmt;
 /// - `const array<int>[]` - const template with array suffix
 /// - `MyClass@ const` - const handle
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct TypeExpr<'src, 'ast> {
+pub struct TypeExpr<'ast> {
     /// Leading const (makes the object const, not the handle)
     pub is_const: bool,
     /// Optional namespace scope
-    pub scope: Option<Scope<'src, 'ast>>,
+    pub scope: Option<Scope<'ast>>,
     /// The base type
-    pub base: TypeBase<'src>,
+    pub base: TypeBase<'ast>,
     /// Template arguments if this is a template type
-    pub template_args: &'ast [TypeExpr<'src, 'ast>],
+    pub template_args: &'ast [TypeExpr<'ast>],
     /// Type suffixes (arrays, handles)
     pub suffixes: &'ast [TypeSuffix],
     /// Source location
     pub span: Span,
 }
 
-impl<'src, 'ast> TypeExpr<'src, 'ast> {
+impl<'ast> TypeExpr<'ast> {
     /// Create a new type expression.
     pub fn new(
         is_const: bool,
-        scope: Option<Scope<'src, 'ast>>,
-        base: TypeBase<'src>,
-        template_args: &'ast [TypeExpr<'src, 'ast>],
+        scope: Option<Scope<'ast>>,
+        base: TypeBase<'ast>,
+        template_args: &'ast [TypeExpr<'ast>],
         suffixes: &'ast [TypeSuffix],
         span: Span,
     ) -> Self {
@@ -83,7 +83,7 @@ impl<'src, 'ast> TypeExpr<'src, 'ast> {
     }
 
     /// Create a simple named type.
-    pub fn named(name: Ident<'src>) -> Self {
+    pub fn named(name: Ident<'ast>) -> Self {
         let span = name.span;
         Self {
             is_const: false,
@@ -100,11 +100,6 @@ impl<'src, 'ast> TypeExpr<'src, 'ast> {
         self.suffixes.iter().any(|s| matches!(s, TypeSuffix::Handle { .. }))
     }
 
-    /// Check if this type has any arrays ([]).
-    pub fn has_array(&self) -> bool {
-        self.suffixes.iter().any(|s| matches!(s, TypeSuffix::Array))
-    }
-
     /// Check if this type is a reference type (has @ handle).
     pub fn is_reference_type(&self) -> bool {
         self.has_handle()
@@ -116,7 +111,7 @@ impl<'src, 'ast> TypeExpr<'src, 'ast> {
     }
 }
 
-impl<'src, 'ast> fmt::Display for TypeExpr<'src, 'ast> {
+impl<'ast> fmt::Display for TypeExpr<'ast> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         if self.is_const {
             write!(f, "const ")?;
@@ -144,22 +139,26 @@ impl<'src, 'ast> fmt::Display for TypeExpr<'src, 'ast> {
 
 /// The base type without modifiers or suffixes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TypeBase<'src> {
+pub enum TypeBase<'ast> {
     /// Primitive type (int, float, void, etc.)
     Primitive(PrimitiveType),
     /// Named user-defined type or identifier
-    Named(Ident<'src>),
+    Named(Ident<'ast>),
+    /// Template parameter declaration (e.g., `class T` in `array<class T>`)
+    /// Used in FFI type registration to declare type parameters.
+    TemplateParam(Ident<'ast>),
     /// Auto type (compiler infers)
     Auto,
     /// Unknown/placeholder type (?)
     Unknown,
 }
 
-impl<'src> fmt::Display for TypeBase<'src> {
+impl<'ast> fmt::Display for TypeBase<'ast> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Primitive(p) => write!(f, "{}", p),
             Self::Named(name) => write!(f, "{}", name),
+            Self::TemplateParam(name) => write!(f, "class {}", name),
             Self::Auto => write!(f, "auto"),
             Self::Unknown => write!(f, "?"),
         }
@@ -261,10 +260,8 @@ impl fmt::Display for PrimitiveType {
 /// Type suffixes that modify the base type.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TypeSuffix {
-    /// Array suffix: `[]`
-    Array,
     /// Handle suffix: `@` with optional trailing const
-    /// 
+    ///
     /// Examples:
     /// - `MyClass@` - handle (is_const = false)
     /// - `MyClass@ const` - const handle (is_const = true)
@@ -277,7 +274,6 @@ pub enum TypeSuffix {
 impl fmt::Display for TypeSuffix {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Array => write!(f, "[]"),
             Self::Handle { is_const: false } => write!(f, "@"),
             Self::Handle { is_const: true } => write!(f, "@ const"),
         }
@@ -291,23 +287,23 @@ impl fmt::Display for TypeSuffix {
 /// - `int&` - return by reference
 /// - `const string&` - return const reference
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct ReturnType<'src, 'ast> {
+pub struct ReturnType<'ast> {
     /// The base type
-    pub ty: TypeExpr<'src, 'ast>,
+    pub ty: TypeExpr<'ast>,
     /// Whether this is returned by reference (&)
     pub is_ref: bool,
     /// Source location
     pub span: Span,
 }
 
-impl<'src, 'ast> ReturnType<'src, 'ast> {
+impl<'ast> ReturnType<'ast> {
     /// Create a new return type.
-    pub fn new(ty: TypeExpr<'src, 'ast>, is_ref: bool, span: Span) -> Self {
+    pub fn new(ty: TypeExpr<'ast>, is_ref: bool, span: Span) -> Self {
         Self { ty, is_ref, span }
     }
 }
 
-impl<'src, 'ast> fmt::Display for ReturnType<'src, 'ast> {
+impl<'ast> fmt::Display for ReturnType<'ast> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.ty)?;
         if self.is_ref {
@@ -327,18 +323,18 @@ impl<'src, 'ast> fmt::Display for ReturnType<'src, 'ast> {
 /// - `int& out` - output reference
 /// - `int& inout` - input/output reference
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct ParamType<'src, 'ast> {
+pub struct ParamType<'ast> {
     /// The base type
-    pub ty: TypeExpr<'src, 'ast>,
+    pub ty: TypeExpr<'ast>,
     /// Reference kind (None, Ref, RefIn, RefOut, RefInOut)
     pub ref_kind: crate::ast::RefKind,
     /// Source location
     pub span: Span,
 }
 
-impl<'src, 'ast> ParamType<'src, 'ast> {
+impl<'ast> ParamType<'ast> {
     /// Create a new parameter type.
-    pub fn new(ty: TypeExpr<'src, 'ast>, ref_kind: crate::ast::RefKind, span: Span) -> Self {
+    pub fn new(ty: TypeExpr<'ast>, ref_kind: crate::ast::RefKind, span: Span) -> Self {
         Self { ty, ref_kind, span }
     }
 
@@ -348,7 +344,7 @@ impl<'src, 'ast> ParamType<'src, 'ast> {
     }
 }
 
-impl<'src, 'ast> fmt::Display for ParamType<'src, 'ast> {
+impl<'ast> fmt::Display for ParamType<'ast> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.ty)?;
         if self.ref_kind.is_ref() {
@@ -434,22 +430,6 @@ mod tests {
     }
 
     #[test]
-    fn array_type_display() {
-        use bumpalo::Bump;
-        let arena = Bump::new();
-        let suffixes = arena.alloc_slice_copy(&[TypeSuffix::Array]);
-        let ty = TypeExpr::new(
-            false,
-            None,
-            TypeBase::Primitive(PrimitiveType::Int),
-            &[],
-            suffixes,
-            Span::new(1, 0 + 1, 5 - 0),
-        );
-        assert_eq!(format!("{}", ty), "int[]");
-    }
-
-    #[test]
     fn template_type_display() {
         use bumpalo::Bump;
         let arena = Bump::new();
@@ -475,7 +455,6 @@ mod tests {
             TypeExpr::primitive(PrimitiveType::Int, Span::new(1, 12 + 1, 15 - 12))
         ]);
         let suffixes = arena.alloc_slice_copy(&[
-            TypeSuffix::Array,
             TypeSuffix::Handle { is_const: true }
         ]);
         let ty = TypeExpr::new(
@@ -486,7 +465,7 @@ mod tests {
             suffixes,
             Span::new(1, 6 + 1, 26 - 6),
         );
-        assert_eq!(format!("{}", ty), "const array<int>[]@ const");
+        assert_eq!(format!("{}", ty), "const array<int>@ const");
     }
 
     #[test]
@@ -494,7 +473,7 @@ mod tests {
         use bumpalo::Bump;
         let arena = Bump::new();
 
-        // First test: just handle
+        // Test: just handle
         let suffixes = arena.alloc_slice_copy(&[TypeSuffix::Handle { is_const: false }]);
         let ty = TypeExpr::new(
             false,
@@ -507,22 +486,6 @@ mod tests {
 
         assert!(ty.has_handle());
         assert!(ty.is_reference_type());
-        assert!(!ty.has_array());
-
-        // Second test: handle and array
-        let suffixes2 = arena.alloc_slice_copy(&[
-            TypeSuffix::Handle { is_const: false },
-            TypeSuffix::Array
-        ]);
-        let ty2 = TypeExpr::new(
-            false,
-            None,
-            TypeBase::Named(Ident::new("MyClass", Span::new(1, 0 + 1, 7 - 0))),
-            &[],
-            suffixes2,
-            Span::new(1, 0 + 1, 10 - 0),
-        );
-        assert!(ty2.has_array());
     }
 
     #[test]
@@ -612,7 +575,6 @@ mod tests {
 
     #[test]
     fn type_suffix_display() {
-        assert_eq!(format!("{}", TypeSuffix::Array), "[]");
         assert_eq!(format!("{}", TypeSuffix::Handle { is_const: false }), "@");
         assert_eq!(format!("{}", TypeSuffix::Handle { is_const: true }), "@ const");
     }

@@ -10,9 +10,9 @@ use std::fs;
 use std::path::PathBuf;
 
 /// Test result that includes parsed AST and any errors
-pub struct TestResult<'src, 'ast> {
+pub struct TestResult<'ast> {
     pub arena: Bump,
-    pub script: Script<'src, 'ast>,
+    pub script: Script<'ast>,
     pub errors: Vec<ParseError>,
     pub source: String,
 }
@@ -30,9 +30,7 @@ impl TestHarness {
     }
 
     /// Load and parse an AngelScript file
-    pub fn load_and_parse<'src, 'ast>(&self, filename: &str) -> TestResult<'src, 'ast>
-    where
-        'src: 'ast,
+    pub fn load_and_parse<'ast>(&self, filename: &str) -> TestResult<'ast>
     {
         let arena = Bump::new();
         let path = self.test_scripts_dir.join(filename);
@@ -43,7 +41,7 @@ impl TestHarness {
         // The arena is owned by TestResult, so the script remains valid.
         let (script, errors) = unsafe {
             let src_ptr = source.as_str() as *const str;
-            let (s, e) = parse_lenient(&*src_ptr, &arena);
+            let (s, e) = Parser::parse_lenient(&*src_ptr, &arena);
             (std::mem::transmute(s), e)
         };
 
@@ -56,7 +54,7 @@ impl TestHarness {
     }
 }
 
-impl<'src, 'ast> TestResult<'src, 'ast> {
+impl<'ast> TestResult<'ast> {
     /// Assert that parsing succeeded with no errors
     pub fn assert_success(&self) {
         if !self.errors.is_empty() {
@@ -73,7 +71,7 @@ impl<'src, 'ast> TestResult<'src, 'ast> {
     }
 
     /// Get items of a specific type
-    pub fn get_functions(&self) -> Vec<&FunctionDecl<'_, '_>> {
+    pub fn get_functions(&self) -> Vec<&FunctionDecl<'_>> {
         self.script
             .items()
             .iter()
@@ -87,7 +85,7 @@ impl<'src, 'ast> TestResult<'src, 'ast> {
             .collect()
     }
 
-    pub fn get_classes(&self) -> Vec<&ClassDecl<'_, '_>> {
+    pub fn get_classes(&self) -> Vec<&ClassDecl<'_>> {
         self.script
             .items()
             .iter()
@@ -101,7 +99,7 @@ impl<'src, 'ast> TestResult<'src, 'ast> {
             .collect()
     }
 
-    pub fn get_interfaces(&self) -> Vec<&InterfaceDecl<'_, '_>> {
+    pub fn get_interfaces(&self) -> Vec<&InterfaceDecl<'_>> {
         self.script
             .items()
             .iter()
@@ -115,7 +113,7 @@ impl<'src, 'ast> TestResult<'src, 'ast> {
             .collect()
     }
 
-    pub fn get_enums(&self) -> Vec<&EnumDecl<'_, '_>> {
+    pub fn get_enums(&self) -> Vec<&EnumDecl<'_>> {
         self.script
             .items()
             .iter()
@@ -129,7 +127,7 @@ impl<'src, 'ast> TestResult<'src, 'ast> {
             .collect()
     }
 
-    pub fn get_global_vars(&self) -> Vec<&GlobalVarDecl<'_, '_>> {
+    pub fn get_global_vars(&self) -> Vec<&GlobalVarDecl<'_>> {
         self.script
             .items()
             .iter()

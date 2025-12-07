@@ -13,7 +13,7 @@ use crate::ast::types::*;
 use crate::lexer::{self, Span, TokenKind};
 use super::parser::Parser;
 
-impl<'src, 'ast> Parser<'src, 'ast> {
+impl<'ast> Parser<'ast> {
     /// Parse a complete type expression.
     ///
     /// Grammar: `'const'? SCOPE DATATYPE TEMPLTYPELIST? ( ('[' ']') | ('@' 'const'?) )*`
@@ -23,7 +23,7 @@ impl<'src, 'ast> Parser<'src, 'ast> {
     /// - `const array<int>[]`
     /// - `Namespace::MyClass@`
     /// - `const MyClass@ const`
-    pub fn parse_type(&mut self) -> Result<TypeExpr<'src, 'ast>, ParseError> {
+    pub fn parse_type(&mut self) -> Result<TypeExpr<'ast>, ParseError> {
         let start_span = self.peek().span;
 
         // Leading const (makes the object const, not the handle)
@@ -72,7 +72,7 @@ impl<'src, 'ast> Parser<'src, 'ast> {
     /// - `void`
     /// - `int&`
     /// - `const string&`
-    pub fn parse_return_type(&mut self) -> Result<ReturnType<'src, 'ast>, ParseError> {
+    pub fn parse_return_type(&mut self) -> Result<ReturnType<'ast>, ParseError> {
         let ty = self.parse_type()?;
         let is_ref = self.eat(TokenKind::Amp).is_some();
         let span = if is_ref {
@@ -96,7 +96,7 @@ impl<'src, 'ast> Parser<'src, 'ast> {
     /// - `int& in`
     /// - `int& out`
     /// - `int& inout`
-    pub fn parse_param_type(&mut self) -> Result<ParamType<'src, 'ast>, ParseError> {
+    pub fn parse_param_type(&mut self) -> Result<ParamType<'ast>, ParseError> {
         let ty = self.parse_type()?;
 
         let ref_kind = if self.eat(TokenKind::Amp).is_some() {
@@ -132,7 +132,7 @@ impl<'src, 'ast> Parser<'src, 'ast> {
     /// - `Namespace::`
     /// - `::Namespace::SubSpace::`
     /// - `Container<T>::`
-    pub fn parse_optional_scope(&mut self) -> Result<Option<Scope<'src, 'ast>>, ParseError> {
+    pub fn parse_optional_scope(&mut self) -> Result<Option<Scope<'ast>>, ParseError> {
         let start_span = self.peek().span;
 
         // Check for leading ::
@@ -194,7 +194,7 @@ impl<'src, 'ast> Parser<'src, 'ast> {
             // SAFETY: Scope borrows from the arena which outlives the parser.
             // We transmute the lifetime from the local borrow to 'ast which is sound
             // because the arena (&'ast Bump) lives for 'ast.
-            let scope = unsafe { std::mem::transmute::<Scope<'_, '_>, Scope<'src, 'ast>>(scope) };
+            // The scope is already allocated in the arena, so no transmute needed
             Ok(Some(scope))
         } else {
             Ok(None)
@@ -203,8 +203,11 @@ impl<'src, 'ast> Parser<'src, 'ast> {
 
     /// Parse the base type (primitive, identifier, auto, or ?).
     ///
-    /// Grammar: `IDENTIFIER | PRIMTYPE | '?' | 'auto'`
-    fn parse_type_base(&mut self) -> Result<TypeBase<'src>, ParseError> {
+    /// Grammar: `'class'? IDENTIFIER | PRIMTYPE | '?' | 'auto'`
+    ///
+    /// The optional `class` keyword is used in FFI template parameter declarations
+    /// like `array<class T>` where `class T` declares a type parameter named `T`.
+    fn parse_type_base(&mut self) -> Result<TypeBase<'ast>, ParseError> {
         let token = *self.peek();
 
         match token.kind {
@@ -270,6 +273,14 @@ impl<'src, 'ast> Parser<'src, 'ast> {
                 Ok(TypeBase::Unknown)
             }
 
+            // Optional 'class' keyword before identifier (for FFI template params)
+            // e.g., `array<class T>` where `class T` is a type parameter declaration
+            TokenKind::Class => {
+                self.advance();
+                let ident_token = self.expect(TokenKind::Identifier)?;
+                Ok(TypeBase::TemplateParam(Ident::new(ident_token.lexeme, ident_token.span)))
+            }
+
             // User-defined type (identifier)
             TokenKind::Identifier => {
                 let ident_token = self.advance();
@@ -291,7 +302,7 @@ impl<'src, 'ast> Parser<'src, 'ast> {
     /// Grammar: `'<' TYPE (',' TYPE)* '>'`
     ///
     /// Note: Handles >> splitting for nested templates.
-    fn parse_template_args(&mut self) -> Result<&'ast [TypeExpr<'src, 'ast>], ParseError> {
+    fn parse_template_args(&mut self) -> Result<&'ast [TypeExpr<'ast>], ParseError> {
         self.expect(TokenKind::Less)?;
 
         let mut args = bumpalo::collections::Vec::new_in(self.arena);
@@ -422,12 +433,7 @@ impl<'src, 'ast> Parser<'src, 'ast> {
         let mut suffixes = bumpalo::collections::Vec::new_in(self.arena);
 
         loop {
-            if self.check(TokenKind::LeftBracket) {
-                // Array suffix: []
-                self.advance();
-                self.expect(TokenKind::RightBracket)?;
-                suffixes.push(TypeSuffix::Array);
-            } else if self.check(TokenKind::At) {
+            if self.check(TokenKind::At) {
                 // Handle suffix: @ or @ const
                 self.advance();
                 let is_const = self.eat(TokenKind::Const).is_some();
@@ -492,25 +498,6 @@ mod tests {
     }
 
     #[test]
-    fn parse_array() {
-        let arena = bumpalo::Bump::new();
-        let mut parser = Parser::new("int[]", &arena);
-        let ty = parser.parse_type().unwrap();
-        assert_eq!(ty.suffixes.len(), 1);
-        assert!(matches!(ty.suffixes[0], TypeSuffix::Array));
-    }
-
-    #[test]
-    fn parse_array_handle() {
-        let arena = bumpalo::Bump::new();
-        let mut parser = Parser::new("int[]@", &arena);
-        let ty = parser.parse_type().unwrap();
-        assert_eq!(ty.suffixes.len(), 2);
-        assert!(matches!(ty.suffixes[0], TypeSuffix::Array));
-        assert!(matches!(ty.suffixes[1], TypeSuffix::Handle { is_const: false }));
-    }
-
-    #[test]
     fn parse_template_type() {
         let arena = bumpalo::Bump::new();
         let mut parser = Parser::new("array<int>", &arena);
@@ -522,13 +509,12 @@ mod tests {
     #[test]
     fn parse_complex_type() {
         let arena = bumpalo::Bump::new();
-        let mut parser = Parser::new("const array<int>[]@ const", &arena);
+        let mut parser = Parser::new("const array<int>@ const", &arena);
         let ty = parser.parse_type().unwrap();
         assert!(ty.is_const);
         assert_eq!(ty.template_args.len(), 1);
-        assert_eq!(ty.suffixes.len(), 2);
-        assert!(matches!(ty.suffixes[0], TypeSuffix::Array));
-        assert!(matches!(ty.suffixes[1], TypeSuffix::Handle { is_const: true }));
+        assert_eq!(ty.suffixes.len(), 1);
+        assert!(matches!(ty.suffixes[0], TypeSuffix::Handle { is_const: true }));
     }
 
     #[test]
@@ -799,51 +785,6 @@ mod tests {
     }
 
     // ========================================================================
-    // Suffix Combination Tests
-    // ========================================================================
-
-    #[test]
-    fn parse_multiple_array_suffixes() {
-        let arena = bumpalo::Bump::new();
-        let mut parser = Parser::new("int[][]", &arena);
-        let ty = parser.parse_type().unwrap();
-        assert_eq!(ty.suffixes.len(), 2);
-        assert!(matches!(ty.suffixes[0], TypeSuffix::Array));
-        assert!(matches!(ty.suffixes[1], TypeSuffix::Array));
-    }
-
-    #[test]
-    fn parse_handle_then_array() {
-        let arena = bumpalo::Bump::new();
-        let mut parser = Parser::new("int@[]", &arena);
-        let ty = parser.parse_type().unwrap();
-        assert_eq!(ty.suffixes.len(), 2);
-        assert!(matches!(ty.suffixes[0], TypeSuffix::Handle { .. }));
-        assert!(matches!(ty.suffixes[1], TypeSuffix::Array));
-    }
-
-    #[test]
-    fn parse_const_handle_array() {
-        let arena = bumpalo::Bump::new();
-        let mut parser = Parser::new("int@ const[]", &arena);
-        let ty = parser.parse_type().unwrap();
-        assert_eq!(ty.suffixes.len(), 2);
-        match &ty.suffixes[0] {
-            TypeSuffix::Handle { is_const } => assert!(*is_const),
-            _ => panic!("Expected const handle"),
-        }
-        assert!(matches!(ty.suffixes[1], TypeSuffix::Array));
-    }
-
-    #[test]
-    fn parse_complex_suffix_chain() {
-        let arena = bumpalo::Bump::new();
-        let mut parser = Parser::new("int[]@[]@ const", &arena);
-        let ty = parser.parse_type().unwrap();
-        assert_eq!(ty.suffixes.len(), 4);
-    }
-
-    // ========================================================================
     // Template Tests
     // ========================================================================
 
@@ -884,7 +825,7 @@ mod tests {
     #[test]
     fn parse_template_complex_args() {
         let arena = bumpalo::Bump::new();
-        let mut parser = Parser::new("map<const string@, array<int>[]>", &arena);
+        let mut parser = Parser::new("map<const string@, array<int>>", &arena);
         let ty = parser.parse_type().unwrap();
         assert_eq!(ty.template_args.len(), 2);
     }
@@ -979,9 +920,9 @@ mod tests {
     }
 
     #[test]
-    fn parse_global_scoped_template_array() {
+    fn parse_global_scoped_template() {
         let arena = bumpalo::Bump::new();
-        let mut parser = Parser::new("::std::vector<string>[]", &arena);
+        let mut parser = Parser::new("::std::vector<string>@", &arena);
         let ty = parser.parse_type().unwrap();
         let scope = ty.scope.unwrap();
         assert!(scope.is_absolute);
@@ -992,12 +933,12 @@ mod tests {
     #[test]
     fn parse_all_features_combined() {
         let arena = bumpalo::Bump::new();
-        let mut parser = Parser::new("const ::A::B::map<string, int>[]@ const", &arena);
+        let mut parser = Parser::new("const ::A::B::map<string, int>@ const", &arena);
         let ty = parser.parse_type().unwrap();
         assert!(ty.is_const);
         assert!(ty.scope.is_some());
         assert_eq!(ty.template_args.len(), 2);
-        assert_eq!(ty.suffixes.len(), 2);
+        assert_eq!(ty.suffixes.len(), 1);
     }
 
     // ========================================================================

@@ -10,7 +10,7 @@ use crate::ast::{
 use crate::lexer::Span;
 use crate::semantic::{
     DataType, FieldDef, SemanticErrorKind, TypeDef, TypeId, Visibility,
-    BOOL_TYPE, DOUBLE_TYPE, FLOAT_TYPE, STRING_TYPE, VOID_TYPE,
+    BOOL_TYPE, DOUBLE_TYPE, FLOAT_TYPE, VOID_TYPE,
     INT8_TYPE, INT16_TYPE, INT32_TYPE, INT64_TYPE,
     UINT8_TYPE, UINT16_TYPE, UINT32_TYPE, UINT64_TYPE,
 };
@@ -18,13 +18,13 @@ use crate::semantic::types::type_def::FunctionId;
 
 use super::{FunctionCompiler, SwitchCategory};
 
-impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
+impl<'ast> FunctionCompiler<'ast> {
     pub(super) fn build_qualified_name(&self, name: &str) -> String {
         Self::build_qualified_name_from_path(&self.namespace_path, name)
     }
 
     /// Build a scoped name from a Scope (without intermediate Vec allocation)
-    pub(super) fn build_scope_name(scope: &crate::ast::Scope<'src, 'ast>) -> String {
+    pub(super) fn build_scope_name(scope: &crate::ast::Scope<'ast>) -> String {
         if scope.segments.is_empty() {
             return String::new();
         }
@@ -65,7 +65,7 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
     pub(super) fn lookup_function_in_imports(&self, name: &str) -> Vec<FunctionId> {
         for ns in &self.imported_namespaces {
             let qualified = format!("{}::{}", ns, name);
-            let candidates = self.registry.lookup_functions(&qualified);
+            let candidates = self.context.lookup_functions(&qualified);
             if !candidates.is_empty() {
                 return candidates.to_vec();
             }
@@ -77,7 +77,7 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
 
 
 
-    pub(super) fn resolve_type_expr(&mut self, type_expr: &TypeExpr<'src, 'ast>) -> Option<DataType> {
+    pub(super) fn resolve_type_expr(&mut self, type_expr: &TypeExpr<'ast>) -> Option<DataType> {
         // Resolve the base type, considering scope/namespace
         let base_type_id = self.resolve_base_type(&type_expr.base, type_expr.scope.as_ref(), type_expr.span)?;
 
@@ -86,14 +86,14 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
             // Build template instance name like "array<int>" or "array<array<int>>"
             // For nested templates, we need to recursively resolve the inner type first
             // to get its registered name (which uses canonical type names like "int" not "int32")
-            let base_name = self.registry.get_type(base_type_id).name();
+            let base_name = self.context.get_type(base_type_id).name();
 
             // Collect arg names and calculate capacity
             let mut arg_names: Vec<&str> = Vec::with_capacity(type_expr.template_args.len());
             for arg in type_expr.template_args {
                 // Recursively resolve the template argument to get its canonical name
                 if let Some(resolved) = self.resolve_type_expr(arg) {
-                    let typedef = self.registry.get_type(resolved.type_id);
+                    let typedef = self.context.get_type(resolved.type_id);
                     arg_names.push(typedef.name());
                 } else {
                     return None; // Error already reported
@@ -115,7 +115,7 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
             template_name.push('>');
 
             // Look up the instantiated template type
-            if let Some(id) = self.registry.lookup_type(&template_name) {
+            if let Some(id) = self.context.lookup_type(&template_name) {
                 id
             } else {
                 self.error(
@@ -133,12 +133,14 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
         let mut data_type = DataType::simple(type_id);
 
         // Check if this is an array template instance - arrays are always reference types (handles)
-        let typedef = self.registry.get_type(type_id);
-        if let TypeDef::TemplateInstance { template, .. } = typedef
-            && *template == self.registry.array_template {
-                // Arrays are reference types, so they're implicitly handles
-                data_type.is_handle = true;
-            }
+        // Note: Template instances are Class types with template: Some(...)
+        let typedef = self.context.get_type(type_id);
+        if let TypeDef::Class { template: Some(tmpl), .. } = typedef
+            && let Some(array_template) = self.context.lookup_type("array")
+                && *tmpl == array_template {
+                    // Arrays are reference types, so they're implicitly handles
+                    data_type.is_handle = true;
+                }
 
         // Apply leading const
         if type_expr.is_const {
@@ -170,12 +172,6 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
                         }
                     }
                 }
-                TypeSuffix::Array => {
-                    // Array suffix - the type should be looked up as array<base>
-                    // This is a complex case that would need template instantiation
-                    // For now, we handle it by noting arrays are always handles
-                    data_type.is_handle = true;
-                }
             }
         }
 
@@ -185,8 +181,8 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
     /// Resolve a base type (primitive or named) to a TypeId, considering scope and namespaces.
     pub(super) fn resolve_base_type(
         &mut self,
-        base: &TypeBase<'src>,
-        scope: Option<&crate::ast::Scope<'src, 'ast>>,
+        base: &TypeBase<'ast>,
+        scope: Option<&crate::ast::Scope<'ast>>,
         span: Span,
     ) -> Option<TypeId> {
         use crate::ast::types::TypeBase;
@@ -199,7 +195,7 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
                 if let Some(scope) = scope {
                     // Scoped type: Namespace::Type
                     let type_name = self.build_scoped_name(scope, ident.name);
-                    if let Some(type_id) = self.registry.lookup_type(&type_name) {
+                    if let Some(type_id) = self.context.lookup_type(&type_name) {
                         return Some(type_id);
                     }
                     self.error(
@@ -217,7 +213,7 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
                     let qualified = self.build_qualified_name(ident.name);
 
                     // Look up in registry
-                    if let Some(type_id) = self.registry.lookup_type(&qualified) {
+                    if let Some(type_id) = self.context.lookup_type(&qualified) {
                         return Some(type_id);
                     }
 
@@ -229,14 +225,14 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
                                 &self.namespace_path[..prefix_len],
                                 ident.name,
                             );
-                            if let Some(type_id) = self.registry.lookup_type(&ancestor_qualified) {
+                            if let Some(type_id) = self.context.lookup_type(&ancestor_qualified) {
                                 return Some(type_id);
                             }
                         }
                     }
 
                     // Try global scope
-                    if let Some(type_id) = self.registry.lookup_type(ident.name) {
+                    if let Some(type_id) = self.context.lookup_type(ident.name) {
                         return Some(type_id);
                     }
 
@@ -244,7 +240,7 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
                     let mut found_in_import: Option<TypeId> = None;
                     for ns in &self.imported_namespaces {
                         let imported_qualified = format!("{}::{}", ns, ident.name);
-                        if let Some(type_id) = self.registry.lookup_type(&imported_qualified) {
+                        if let Some(type_id) = self.context.lookup_type(&imported_qualified) {
                             if found_in_import.is_some() {
                                 // Ambiguous - found in multiple imported namespaces
                                 self.error(
@@ -289,6 +285,15 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
                 );
                 None
             }
+
+            TypeBase::TemplateParam(_) => {
+                // Template parameters (e.g., "class T" in "array<class T>") are placeholders
+                // used in FFI template type declarations. They are not resolved to a TypeId;
+                // instead, they are captured separately as template parameter names.
+                // Returning None here allows concrete types in mixed declarations like
+                // "stringmap<string, class T>" to be resolved normally.
+                None
+            }
         }
     }
 
@@ -313,8 +318,8 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
     }
 
     /// Build a scoped name from a Scope and a name (no intermediate Vec allocation)
-    pub(super) fn build_scoped_name(&self, scope: &crate::ast::Scope<'src, 'ast>, name: &str) -> String {
-        let scope_name = Self::build_scope_name(&scope);
+    pub(super) fn build_scoped_name(&self, scope: &crate::ast::Scope<'ast>, name: &str) -> String {
+        let scope_name = Self::build_scope_name(scope);
         let mut result = String::with_capacity(scope_name.len() + 2 + name.len());
         result.push_str(&scope_name);
         result.push_str("::");
@@ -328,7 +333,7 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
     /// - Types are identical, OR
     /// - An implicit conversion exists from value to target
     pub(super) fn is_assignable(&self, value: &DataType, target: &DataType) -> bool {
-        if let Some(conversion) = value.can_convert_to(target, self.registry) {
+        if let Some(conversion) = value.can_convert_to(target, self.context) {
             conversion.is_implicit
         } else {
             false
@@ -346,7 +351,7 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
             return true;
         }
         // Enum types are also numeric (int32 values)
-        self.registry.get_type(ty.type_id).is_enum()
+        self.context.get_type(ty.type_id).is_enum()
     }
 
     /// Checks if a type is an integer type (includes enums since they're int32 underneath).
@@ -359,7 +364,7 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
             return true;
         }
         // Enum types are also integers (int32 values)
-        self.registry.get_type(ty.type_id).is_enum()
+        self.context.get_type(ty.type_id).is_enum()
     }
 
     /// Checks if a type can be used in bitwise operations (integers and bool).
@@ -382,7 +387,7 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
         }
 
         // Enum types (treated as integers)
-        let typedef = self.registry.get_type(ty.type_id);
+        let typedef = self.context.get_type(ty.type_id);
         if typedef.is_enum() {
             return Some(SwitchCategory::Integer);
         }
@@ -398,9 +403,10 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
         }
 
         // String
-        if ty.type_id == STRING_TYPE {
-            return Some(SwitchCategory::String);
-        }
+        if let Some(string_type) = self.context.lookup_type("string")
+            && ty.type_id == string_type {
+                return Some(SwitchCategory::String);
+            }
 
         None
     }
@@ -411,8 +417,8 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
         // Only identifiers can be type patterns
         if let Expr::Ident(ident) = expr {
             // Look up as type name, not variable
-            if let Some(type_id) = self.registry.lookup_type(ident.ident.name) {
-                let typedef = self.registry.get_type(type_id);
+            if let Some(type_id) = self.context.lookup_type(ident.ident.name) {
+                let typedef = self.context.get_type(type_id);
                 // Only classes and interfaces are valid type patterns
                 if typedef.is_class() || typedef.is_interface() {
                     return Some(type_id);
@@ -438,7 +444,7 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
 
     /// Gets a human-readable name for a type.
     pub(super) fn type_name(&self, ty: &DataType) -> String {
-        let type_def = self.registry.get_type(ty.type_id);
+        let type_def = self.context.get_type(ty.type_id);
         type_def.name().to_string()
     }
 
@@ -467,7 +473,7 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
                             return true;
                         }
                         // Check if current class is derived from member_class
-                        self.registry.is_subclass_of(current_class_id, member_class)
+                        self.context.is_subclass_of(current_class_id, member_class)
                     }
                 }
             }
@@ -489,7 +495,7 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
         let mut current_class_id = Some(class_id);
 
         while let Some(cid) = current_class_id {
-            let typedef = self.registry.get_type(cid);
+            let typedef = self.context.get_type(cid);
             match typedef {
                 TypeDef::Class { fields, base_class, .. } => {
                     // Check fields in this class
@@ -531,10 +537,10 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
     }
 
     pub(super) fn get_base_class_by_name(&self, class_id: TypeId, name: &str) -> Option<TypeId> {
-        let class_def = self.registry.get_type(class_id);
-        if let TypeDef::Class { base_class, .. } = class_def {
-            if let Some(base_id) = base_class {
-                let base_def = self.registry.get_type(*base_id);
+        let class_def = self.context.get_type(class_id);
+        if let TypeDef::Class { base_class, .. } = class_def
+            && let Some(base_id) = base_class {
+                let base_def = self.context.get_type(*base_id);
                 // Check if the base class name matches (short name only)
                 if base_def.name() == name {
                     return Some(*base_id);
@@ -542,7 +548,6 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
                 // Recursively check further up the chain
                 return self.get_base_class_by_name(*base_id, name);
             }
-        }
         None
     }
 }

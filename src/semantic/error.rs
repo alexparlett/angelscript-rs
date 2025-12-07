@@ -128,12 +128,16 @@ pub enum SemanticErrorKind {
     NotATemplate,
     /// Wrong number of template arguments.
     WrongTemplateArgCount,
+    /// Template instantiation rejected by validation callback.
+    InvalidTemplateInstantiation,
 
     // Inheritance errors
     /// Class inherits from itself (directly or indirectly).
     CircularInheritance,
     /// Class inherits from a final class.
     CannotInheritFromFinal,
+    /// Script class tries to extend a native/FFI class.
+    CannotExtendNativeClass,
     /// Class does not implement a required interface method.
     MissingInterfaceMethod,
     /// Method marked with 'override' but no matching base method exists.
@@ -163,6 +167,18 @@ pub enum SemanticErrorKind {
     /// Cannot call a non-function value.
     NotCallable,
 
+    // Behavior errors
+    /// Type is missing a required behavior (e.g., list_factory for init lists).
+    MissingListBehavior,
+
+    // Import errors
+    /// Failed to import an FFI module.
+    ImportError,
+
+    // FFI errors
+    /// Script entity shadows an FFI entity with the same name.
+    FfiNameShadowing,
+
     // Other
     /// An internal semantic analyzer error (bug in analyzer).
     InternalError,
@@ -187,8 +203,10 @@ impl fmt::Display for SemanticErrorKind {
             InvalidCast => "invalid cast",
             NotATemplate => "not a template",
             WrongTemplateArgCount => "wrong number of template arguments",
+            InvalidTemplateInstantiation => "invalid template instantiation",
             CircularInheritance => "circular inheritance",
             CannotInheritFromFinal => "cannot inherit from final class",
+            CannotExtendNativeClass => "cannot extend native class",
             MissingInterfaceMethod => "missing interface method",
             OverrideWithoutBase => "override without base method",
             CannotOverrideFinal => "cannot override final method",
@@ -199,6 +217,9 @@ impl fmt::Display for SemanticErrorKind {
             AccessViolation => "access violation",
             WrongArgumentCount => "wrong number of arguments",
             NotCallable => "not callable",
+            MissingListBehavior => "missing list initialization behavior",
+            ImportError => "failed to import module",
+            FfiNameShadowing => "script entity shadows FFI name",
             InternalError => "internal semantic analyzer error",
         };
         write!(f, "{}", msg)

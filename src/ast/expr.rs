@@ -32,38 +32,38 @@ use crate::lexer::Span;
 
 /// An expression.
 #[derive(Debug, Clone, PartialEq)]
-pub enum Expr<'src, 'ast> {
+pub enum Expr<'ast> {
     /// Literal value
     Literal(LiteralExpr),
     /// Identifier reference
-    Ident(IdentExpr<'src, 'ast>),
+    Ident(IdentExpr<'ast>),
     /// Binary operation
-    Binary(&'ast BinaryExpr<'src, 'ast>),
+    Binary(&'ast BinaryExpr<'ast>),
     /// Unary prefix operation
-    Unary(&'ast UnaryExpr<'src, 'ast>),
+    Unary(&'ast UnaryExpr<'ast>),
     /// Assignment
-    Assign(&'ast AssignExpr<'src, 'ast>),
+    Assign(&'ast AssignExpr<'ast>),
     /// Ternary conditional (? :)
-    Ternary(&'ast TernaryExpr<'src, 'ast>),
+    Ternary(&'ast TernaryExpr<'ast>),
     /// Function call
-    Call(&'ast CallExpr<'src, 'ast>),
+    Call(&'ast CallExpr<'ast>),
     /// Array/object indexing
-    Index(&'ast IndexExpr<'src, 'ast>),
+    Index(&'ast IndexExpr<'ast>),
     /// Member access (.)
-    Member(&'ast MemberExpr<'src, 'ast>),
+    Member(&'ast MemberExpr<'ast>),
     /// Postfix operation (++ or --)
-    Postfix(&'ast PostfixExpr<'src, 'ast>),
+    Postfix(&'ast PostfixExpr<'ast>),
     /// Cast expression
-    Cast(&'ast CastExpr<'src, 'ast>),
+    Cast(&'ast CastExpr<'ast>),
     /// Lambda (anonymous function)
-    Lambda(&'ast LambdaExpr<'src, 'ast>),
+    Lambda(&'ast LambdaExpr<'ast>),
     /// Initializer list
-    InitList(InitListExpr<'src, 'ast>),
+    InitList(InitListExpr<'ast>),
     /// Parenthesized expression
-    Paren(&'ast ParenExpr<'src, 'ast>),
+    Paren(&'ast ParenExpr<'ast>),
 }
 
-impl<'src, 'ast> Expr<'src, 'ast> {
+impl<'ast> Expr<'ast> {
     /// Get the span of this expression.
     pub fn span(&self) -> Span {
         match self {
@@ -113,136 +113,136 @@ pub enum LiteralKind {
 
 /// An identifier expression.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct IdentExpr<'src, 'ast> {
+pub struct IdentExpr<'ast> {
     /// Optional scope
-    pub scope: Option<Scope<'src, 'ast>>,
+    pub scope: Option<Scope<'ast>>,
     /// The identifier
-    pub ident: Ident<'src>,
+    pub ident: Ident<'ast>,
     /// Type arguments for generic types/functions (e.g., `array<int>`, `Map<K,V>`)
-    pub type_args: &'ast [crate::ast::types::TypeExpr<'src, 'ast>],
+    pub type_args: &'ast [crate::ast::types::TypeExpr<'ast>],
     /// Source location
     pub span: Span,
 }
 
 /// A binary operation.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct BinaryExpr<'src, 'ast> {
+pub struct BinaryExpr<'ast> {
     /// Left operand
-    pub left: &'ast Expr<'src, 'ast>,
+    pub left: &'ast Expr<'ast>,
     /// Operator
     pub op: BinaryOp,
     /// Right operand
-    pub right: &'ast Expr<'src, 'ast>,
+    pub right: &'ast Expr<'ast>,
     /// Source location
     pub span: Span,
 }
 
 /// A unary prefix operation.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct UnaryExpr<'src, 'ast> {
+pub struct UnaryExpr<'ast> {
     /// Operator
     pub op: UnaryOp,
     /// Operand
-    pub operand: &'ast Expr<'src, 'ast>,
+    pub operand: &'ast Expr<'ast>,
     /// Source location
     pub span: Span,
 }
 
 /// An assignment expression.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct AssignExpr<'src, 'ast> {
+pub struct AssignExpr<'ast> {
     /// Left-hand side (target)
-    pub target: &'ast Expr<'src, 'ast>,
+    pub target: &'ast Expr<'ast>,
     /// Assignment operator
     pub op: AssignOp,
     /// Right-hand side (value)
-    pub value: &'ast Expr<'src, 'ast>,
+    pub value: &'ast Expr<'ast>,
     /// Source location
     pub span: Span,
 }
 
 /// A ternary conditional expression (condition ? then : else).
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct TernaryExpr<'src, 'ast> {
+pub struct TernaryExpr<'ast> {
     /// Condition
-    pub condition: &'ast Expr<'src, 'ast>,
+    pub condition: &'ast Expr<'ast>,
     /// Then branch (if condition is true)
-    pub then_expr: &'ast Expr<'src, 'ast>,
+    pub then_expr: &'ast Expr<'ast>,
     /// Else branch (if condition is false)
-    pub else_expr: &'ast Expr<'src, 'ast>,
+    pub else_expr: &'ast Expr<'ast>,
     /// Source location
     pub span: Span,
 }
 
 /// A function call.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct CallExpr<'src, 'ast> {
+pub struct CallExpr<'ast> {
     /// The function being called (can be any expression)
-    pub callee: &'ast Expr<'src, 'ast>,
+    pub callee: &'ast Expr<'ast>,
     /// Arguments
-    pub args: &'ast [Argument<'src, 'ast>],
+    pub args: &'ast [Argument<'ast>],
     /// Source location
     pub span: Span,
 }
 
 /// A function call argument.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct Argument<'src, 'ast> {
+pub struct Argument<'ast> {
     /// Optional named argument
-    pub name: Option<Ident<'src>>,
+    pub name: Option<Ident<'ast>>,
     /// Argument value
-    pub value: &'ast Expr<'src, 'ast>,
+    pub value: &'ast Expr<'ast>,
     /// Source location
     pub span: Span,
 }
 
 /// Array or object indexing.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct IndexExpr<'src, 'ast> {
+pub struct IndexExpr<'ast> {
     /// The object being indexed
-    pub object: &'ast Expr<'src, 'ast>,
+    pub object: &'ast Expr<'ast>,
     /// Indices (can be multiple for multi-dimensional access)
-    pub indices: &'ast [IndexItem<'src, 'ast>],
+    pub indices: &'ast [IndexItem<'ast>],
     /// Source location
     pub span: Span,
 }
 
 /// A single index item (can be named).
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct IndexItem<'src, 'ast> {
+pub struct IndexItem<'ast> {
     /// Optional name for associative arrays
-    pub name: Option<Ident<'src>>,
+    pub name: Option<Ident<'ast>>,
     /// Index expression
-    pub index: &'ast Expr<'src, 'ast>,
+    pub index: &'ast Expr<'ast>,
     /// Source location
     pub span: Span,
 }
 
 /// Member access (dot operator).
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct MemberExpr<'src, 'ast> {
+pub struct MemberExpr<'ast> {
     /// The object
-    pub object: &'ast Expr<'src, 'ast>,
+    pub object: &'ast Expr<'ast>,
     /// The member being accessed
-    pub member: MemberAccess<'src, 'ast>,
+    pub member: MemberAccess<'ast>,
     /// Source location
     pub span: Span,
 }
 
 /// What is being accessed via the dot operator.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub enum MemberAccess<'src, 'ast> {
+pub enum MemberAccess<'ast> {
     /// Field access: obj.field
-    Field(Ident<'src>),
+    Field(Ident<'ast>),
     /// Method call: obj.method(args)
-    Method { name: Ident<'src>, args: &'ast [Argument<'src, 'ast>] },
+    Method { name: Ident<'ast>, args: &'ast [Argument<'ast>] },
 }
 
 /// A postfix operation (++ or --).
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct PostfixExpr<'src, 'ast> {
+pub struct PostfixExpr<'ast> {
     /// The operand
-    pub operand: &'ast Expr<'src, 'ast>,
+    pub operand: &'ast Expr<'ast>,
     /// The operator
     pub op: PostfixOp,
     /// Source location
@@ -251,64 +251,64 @@ pub struct PostfixExpr<'src, 'ast> {
 
 /// A cast expression.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct CastExpr<'src, 'ast> {
+pub struct CastExpr<'ast> {
     /// The target type
-    pub target_type: TypeExpr<'src, 'ast>,
+    pub target_type: TypeExpr<'ast>,
     /// The expression being cast
-    pub expr: &'ast Expr<'src, 'ast>,
+    pub expr: &'ast Expr<'ast>,
     /// Source location
     pub span: Span,
 }
 
 /// A lambda (anonymous function).
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct LambdaExpr<'src, 'ast> {
+pub struct LambdaExpr<'ast> {
     /// Parameters
-    pub params: &'ast [LambdaParam<'src, 'ast>],
+    pub params: &'ast [LambdaParam<'ast>],
     /// Return type (if specified)
-    pub return_type: Option<ReturnType<'src, 'ast>>,
+    pub return_type: Option<ReturnType<'ast>>,
     /// Body (statement block)
-    pub body: &'ast super::stmt::Block<'src, 'ast>,
+    pub body: &'ast super::stmt::Block<'ast>,
     /// Source location
     pub span: Span,
 }
 
 /// A lambda parameter.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct LambdaParam<'src, 'ast> {
+pub struct LambdaParam<'ast> {
     /// Parameter type (optional)
-    pub ty: Option<ParamType<'src, 'ast>>,
+    pub ty: Option<ParamType<'ast>>,
     /// Parameter name (optional for unused params)
-    pub name: Option<Ident<'src>>,
+    pub name: Option<Ident<'ast>>,
     /// Source location
     pub span: Span,
 }
 
 /// An initializer list.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct InitListExpr<'src, 'ast> {
+pub struct InitListExpr<'ast> {
     /// Optional type annotation
-    pub ty: Option<TypeExpr<'src, 'ast>>,
+    pub ty: Option<TypeExpr<'ast>>,
     /// Elements
-    pub elements: &'ast [InitElement<'src, 'ast>],
+    pub elements: &'ast [InitElement<'ast>],
     /// Source location
     pub span: Span,
 }
 
 /// An element in an initializer list.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub enum InitElement<'src, 'ast> {
+pub enum InitElement<'ast> {
     /// Expression element
-    Expr(&'ast Expr<'src, 'ast>),
+    Expr(&'ast Expr<'ast>),
     /// Nested initializer list
-    InitList(InitListExpr<'src, 'ast>),
+    InitList(InitListExpr<'ast>),
 }
 
 /// A parenthesized expression.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct ParenExpr<'src, 'ast> {
+pub struct ParenExpr<'ast> {
     /// The inner expression
-    pub expr: &'ast Expr<'src, 'ast>,
+    pub expr: &'ast Expr<'ast>,
     /// Source location
     pub span: Span,
 }

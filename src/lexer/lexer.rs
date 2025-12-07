@@ -2,8 +2,13 @@
 //!
 //! The [`Lexer`] converts source text into a stream of [`Token`]s.
 //! It uses direct dispatch based on the first character for performance.
+//!
+//! The lexer copies all string content (identifiers, literals) into the arena,
+//! allowing the source string to be freed after lexing completes.
 
 use std::collections::VecDeque;
+
+use bumpalo::Bump;
 
 use super::cursor::{is_ident_continue, is_ident_start, Cursor};
 use super::error::LexerError;
@@ -14,20 +19,29 @@ use super::token::{lookup_keyword, Token, TokenKind};
 ///
 /// Converts source text into a stream of tokens. Provides lookahead
 /// via [`peek`](Self::peek) and [`peek_nth`](Self::peek_nth).
-pub struct Lexer<'src> {
+///
+/// The `'src` lifetime is the source string being lexed (temporary).
+/// The `'ast` lifetime is the arena where token lexemes are allocated (persists).
+pub struct Lexer<'src, 'ast> {
     /// Low-level character cursor.
     cursor: Cursor<'src>,
+    /// Arena for allocating token lexemes.
+    arena: &'ast Bump,
     /// Lookahead buffer for peeking.
-    lookahead: VecDeque<Token<'src>>,
+    lookahead: VecDeque<Token<'ast>>,
     /// Accumulated errors.
     errors: Vec<LexerError>,
 }
 
-impl<'src> Lexer<'src> {
+impl<'src, 'ast> Lexer<'src, 'ast> {
     /// Create a new lexer for the given source text.
-    pub fn new(source: &'src str) -> Self {
+    ///
+    /// Token lexemes will be allocated in the provided arena, allowing
+    /// the source string to be freed after lexing completes.
+    pub fn new(source: &'src str, arena: &'ast Bump) -> Self {
         Self {
             cursor: Cursor::new(source),
+            arena,
             lookahead: VecDeque::with_capacity(4),
             errors: Vec::new(),
         }
@@ -44,7 +58,7 @@ impl<'src> Lexer<'src> {
     }
 
     /// Consume and return the next token.
-    pub fn next_token(&mut self) -> Token<'src> {
+    pub fn next_token(&mut self) -> Token<'ast> {
         if let Some(token) = self.lookahead.pop_front() {
             return token;
         }
@@ -56,7 +70,7 @@ impl<'src> Lexer<'src> {
     // =========================================
 
     /// Scan the next token from source.
-    fn scan_token(&mut self) -> Token<'src> {
+    fn scan_token(&mut self) -> Token<'ast> {
         // Skip whitespace
         self.skip_whitespace();
 
@@ -110,26 +124,30 @@ impl<'src> Lexer<'src> {
     }
 
     /// Create an EOF token.
-    fn make_eof(&self) -> Token<'src> {
+    fn make_eof(&self) -> Token<'ast> {
         let line = self.cursor.line();
         let col = self.cursor.column();
-        Token::new(TokenKind::Eof, "", Span::point(line, col))
+        // Empty string for EOF - use a static empty string allocated in arena
+        let lexeme = self.arena.alloc_str("");
+        Token::new(TokenKind::Eof, lexeme, Span::point(line, col))
     }
 
     /// Create a token from start position to current position.
-    fn make_token(&self, kind: TokenKind, start_line: u32, start_col: u32, start_offset: u32) -> Token<'src> {
+    /// Copies the lexeme into the arena.
+    fn make_token(&self, kind: TokenKind, start_line: u32, start_col: u32, start_offset: u32) -> Token<'ast> {
         let len = self.cursor.offset() - start_offset;
         let span = Span::new(start_line, start_col, len);
-        let lexeme = &self.cursor.source()[start_offset as usize..self.cursor.offset() as usize];
+        let src_lexeme = &self.cursor.source()[start_offset as usize..self.cursor.offset() as usize];
+        // Copy lexeme into arena
+        let lexeme = self.arena.alloc_str(src_lexeme);
         Token::new(kind, lexeme, span)
     }
 
     /// Create an error token and record the error.
-    fn make_error(&mut self, error: LexerError) -> Token<'src> {
+    fn make_error(&mut self, error: LexerError) -> Token<'ast> {
         let span = error.span;
-        // We need to extract lexeme using the span's line/col info
-        // For now, we'll use empty string for errors as we don't have byte offsets
-        let lexeme = "";
+        // Use empty string for errors
+        let lexeme = self.arena.alloc_str("");
         self.errors.push(error);
         Token::new(TokenKind::Error, lexeme, span)
     }
@@ -139,7 +157,7 @@ impl<'src> Lexer<'src> {
     // =========================================
 
     /// Scan a slash, which could be `/`, `//`, `/*`, `/=`.
-    fn scan_slash(&mut self, start_line: u32, start_col: u32, start_offset: u32) -> Token<'src> {
+    fn scan_slash(&mut self, start_line: u32, start_col: u32, start_offset: u32) -> Token<'ast> {
         self.cursor.advance(); // consume '/'
 
         match self.cursor.peek() {
@@ -175,7 +193,7 @@ impl<'src> Lexer<'src> {
     }
 
     /// Scan a block comment `/* ... */`.
-    fn scan_block_comment(&mut self, start_line: u32, start_col: u32, start_offset: u32) -> Token<'src> {
+    fn scan_block_comment(&mut self, start_line: u32, start_col: u32, start_offset: u32) -> Token<'ast> {
         loop {
             match self.cursor.peek() {
                 None => {
@@ -203,7 +221,7 @@ impl<'src> Lexer<'src> {
     // =========================================
 
     /// Scan a string literal starting with the given quote character.
-    fn scan_string(&mut self, quote: char, start_line: u32, start_col: u32, start_offset: u32) -> Token<'src> {
+    fn scan_string(&mut self, quote: char, start_line: u32, start_col: u32, start_offset: u32) -> Token<'ast> {
         self.cursor.advance(); // consume opening quote
 
         // Check for heredoc `"""`
@@ -256,7 +274,7 @@ impl<'src> Lexer<'src> {
     }
 
     /// Scan a heredoc string `"""..."""`.
-    fn scan_heredoc(&mut self, start_line: u32, start_col: u32, start_offset: u32) -> Token<'src> {
+    fn scan_heredoc(&mut self, start_line: u32, start_col: u32, start_offset: u32) -> Token<'ast> {
         loop {
             match self.cursor.peek() {
                 None => {
@@ -283,7 +301,7 @@ impl<'src> Lexer<'src> {
     // =========================================
 
     /// Scan a number literal.
-    fn scan_number(&mut self, start_line: u32, start_col: u32, start_offset: u32) -> Token<'src> {
+    fn scan_number(&mut self, start_line: u32, start_col: u32, start_offset: u32) -> Token<'ast> {
         // Check for radix prefix
         if self.cursor.peek() == Some('0')
             && let Some(radix_char) = self.cursor.peek_nth(1) {
@@ -305,7 +323,7 @@ impl<'src> Lexer<'src> {
     }
 
     /// Scan a number with an explicit radix prefix (0x, 0b, 0o, 0d).
-    fn scan_radix_number(&mut self, start_line: u32, start_col: u32, start_offset: u32, radix: u32) -> Token<'src> {
+    fn scan_radix_number(&mut self, start_line: u32, start_col: u32, start_offset: u32, radix: u32) -> Token<'ast> {
         self.cursor.advance(); // '0'
         self.cursor.advance(); // radix letter
 
@@ -336,7 +354,7 @@ impl<'src> Lexer<'src> {
     }
 
     /// Scan a decimal number (integer or floating-point).
-    fn scan_decimal_number(&mut self, start_line: u32, start_col: u32, start_offset: u32) -> Token<'src> {
+    fn scan_decimal_number(&mut self, start_line: u32, start_col: u32, start_offset: u32) -> Token<'ast> {
         // Integer part (may be empty for `.5`)
         self.consume_decimal_digits();
 
@@ -394,7 +412,7 @@ impl<'src> Lexer<'src> {
     // =========================================
 
     /// Scan an identifier or keyword.
-    fn scan_identifier(&mut self, start_line: u32, start_col: u32, start_offset: u32) -> Token<'src> {
+    fn scan_identifier(&mut self, start_line: u32, start_col: u32, start_offset: u32) -> Token<'ast> {
         self.cursor.eat_while(is_ident_continue);
 
         let lexeme = self.cursor.slice_from(start_offset);
@@ -412,7 +430,7 @@ impl<'src> Lexer<'src> {
     /// Scan an operator or punctuation token.
     ///
     /// Uses tuple matching on (first_char, peek) to minimize repeated peek() calls.
-    fn scan_operator(&mut self, start_line: u32, start_col: u32, start_offset: u32) -> Token<'src> {
+    fn scan_operator(&mut self, start_line: u32, start_col: u32, start_offset: u32) -> Token<'ast> {
         let c = self.cursor.advance().unwrap();
         let next = self.cursor.peek();
 
@@ -530,8 +548,8 @@ impl<'src> Lexer<'src> {
 }
 
 /// Implement Iterator for convenient token streaming.
-impl<'src> Iterator for Lexer<'src> {
-    type Item = Token<'src>;
+impl<'src, 'ast> Iterator for Lexer<'src, 'ast> {
+    type Item = Token<'ast>;
 
     fn next(&mut self) -> Option<Self::Item> {
         let token = self.next_token();
@@ -559,15 +577,17 @@ mod tests {
     use super::*;
 
     /// Helper to collect all tokens from source.
-    fn tokenize(source: &str) -> Vec<(TokenKind, &str)> {
-        Lexer::new(source)
-            .map(|t| (t.kind, t.lexeme))
+    fn tokenize(source: &str) -> Vec<(TokenKind, String)> {
+        let arena = Bump::new();
+        Lexer::new(source, &arena)
+            .map(|t| (t.kind, t.lexeme.to_string()))
             .collect()
     }
 
     /// Helper to get token kinds only.
     fn token_kinds(source: &str) -> Vec<TokenKind> {
-        Lexer::new(source).map(|t| t.kind).collect()
+        let arena = Bump::new();
+        Lexer::new(source, &arena).map(|t| t.kind).collect()
     }
 
     // =========================================
@@ -576,13 +596,15 @@ mod tests {
 
     #[test]
     fn empty_source() {
-        let mut lexer = Lexer::new("");
+        let arena = Bump::new();
+        let mut lexer = Lexer::new("", &arena);
         assert_eq!(lexer.next_token().kind, TokenKind::Eof);
     }
 
     #[test]
     fn whitespace_only() {
-        let mut lexer = Lexer::new("   \t\n\r  ");
+        let arena = Bump::new();
+        let mut lexer = Lexer::new("   \t\n\r  ", &arena);
         assert_eq!(lexer.next_token().kind, TokenKind::Eof);
     }
 
@@ -590,7 +612,7 @@ mod tests {
     fn bom_handling() {
         let source = "\u{FEFF}hello";
         let tokens = tokenize(source);
-        assert_eq!(tokens, vec![(TokenKind::Identifier, "hello")]);
+        assert_eq!(tokens, vec![(TokenKind::Identifier, "hello".to_string())]);
     }
 
     // =========================================
@@ -602,10 +624,10 @@ mod tests {
         assert_eq!(
             tokenize("hello world _foo bar123"),
             vec![
-                (TokenKind::Identifier, "hello"),
-                (TokenKind::Identifier, "world"),
-                (TokenKind::Identifier, "_foo"),
-                (TokenKind::Identifier, "bar123"),
+                (TokenKind::Identifier, "hello".to_string()),
+                (TokenKind::Identifier, "world".to_string()),
+                (TokenKind::Identifier, "_foo".to_string()),
+                (TokenKind::Identifier, "bar123".to_string()),
             ]
         );
     }
@@ -642,7 +664,7 @@ mod tests {
     #[test]
     fn keyword_vs_identifier() {
         // "iffy" should be identifier, not "if" + "fy"
-        assert_eq!(tokenize("iffy"), vec![(TokenKind::Identifier, "iffy")]);
+        assert_eq!(tokenize("iffy"), vec![(TokenKind::Identifier, "iffy".to_string())]);
     }
 
     // =========================================
@@ -654,9 +676,9 @@ mod tests {
         assert_eq!(
             tokenize("42 0 12345"),
             vec![
-                (TokenKind::IntLiteral, "42"),
-                (TokenKind::IntLiteral, "0"),
-                (TokenKind::IntLiteral, "12345"),
+                (TokenKind::IntLiteral, "42".to_string()),
+                (TokenKind::IntLiteral, "0".to_string()),
+                (TokenKind::IntLiteral, "12345".to_string()),
             ]
         );
     }
@@ -666,9 +688,9 @@ mod tests {
         assert_eq!(
             tokenize("3.14 1.0f 2.5F"),
             vec![
-                (TokenKind::DoubleLiteral, "3.14"),
-                (TokenKind::FloatLiteral, "1.0f"),
-                (TokenKind::FloatLiteral, "2.5F"),
+                (TokenKind::DoubleLiteral, "3.14".to_string()),
+                (TokenKind::FloatLiteral, "1.0f".to_string()),
+                (TokenKind::FloatLiteral, "2.5F".to_string()),
             ]
         );
     }
@@ -678,9 +700,9 @@ mod tests {
         assert_eq!(
             tokenize("1e10 2.5e-3 3E+4f"),
             vec![
-                (TokenKind::DoubleLiteral, "1e10"),
-                (TokenKind::DoubleLiteral, "2.5e-3"),
-                (TokenKind::FloatLiteral, "3E+4f"),
+                (TokenKind::DoubleLiteral, "1e10".to_string()),
+                (TokenKind::DoubleLiteral, "2.5e-3".to_string()),
+                (TokenKind::FloatLiteral, "3E+4f".to_string()),
             ]
         );
     }
@@ -690,10 +712,10 @@ mod tests {
         assert_eq!(
             tokenize("0xFF 0b1010 0o77 0d99"),
             vec![
-                (TokenKind::BitsLiteral, "0xFF"),
-                (TokenKind::BitsLiteral, "0b1010"),
-                (TokenKind::BitsLiteral, "0o77"),
-                (TokenKind::BitsLiteral, "0d99"),
+                (TokenKind::BitsLiteral, "0xFF".to_string()),
+                (TokenKind::BitsLiteral, "0b1010".to_string()),
+                (TokenKind::BitsLiteral, "0o77".to_string()),
+                (TokenKind::BitsLiteral, "0d99".to_string()),
             ]
         );
     }
@@ -701,15 +723,15 @@ mod tests {
     #[test]
     fn number_with_dot() {
         // .5 is a valid float
-        assert_eq!(tokenize(".5"), vec![(TokenKind::DoubleLiteral, ".5")]);
+        assert_eq!(tokenize(".5"), vec![(TokenKind::DoubleLiteral, ".5".to_string())]);
 
         // 1. followed by non-digit is int then dot
         assert_eq!(
             tokenize("1.x"),
             vec![
-                (TokenKind::IntLiteral, "1"),
-                (TokenKind::Dot, "."),
-                (TokenKind::Identifier, "x"),
+                (TokenKind::IntLiteral, "1".to_string()),
+                (TokenKind::Dot, ".".to_string()),
+                (TokenKind::Identifier, "x".to_string()),
             ]
         );
     }
@@ -723,8 +745,8 @@ mod tests {
         assert_eq!(
             tokenize(r#""hello" 'a'"#),
             vec![
-                (TokenKind::StringLiteral, r#""hello""#),
-                (TokenKind::StringLiteral, "'a'"),
+                (TokenKind::StringLiteral, r#""hello""#.to_string()),
+                (TokenKind::StringLiteral, "'a'".to_string()),
             ]
         );
     }
@@ -734,8 +756,8 @@ mod tests {
         assert_eq!(
             tokenize(r#""hello\nworld" "tab\there""#),
             vec![
-                (TokenKind::StringLiteral, r#""hello\nworld""#),
-                (TokenKind::StringLiteral, r#""tab\there""#),
+                (TokenKind::StringLiteral, r#""hello\nworld""#.to_string()),
+                (TokenKind::StringLiteral, r#""tab\there""#.to_string()),
             ]
         );
     }
@@ -753,7 +775,8 @@ string
 
     #[test]
     fn unterminated_string() {
-        let mut lexer = Lexer::new(r#""hello"#);
+        let arena = Bump::new();
+        let mut lexer = Lexer::new(r#""hello"#, &arena);
         let token = lexer.next_token();
         assert_eq!(token.kind, TokenKind::Error);
         assert!(lexer.has_errors());
@@ -768,8 +791,8 @@ string
         assert_eq!(
             tokenize("a // comment\nb"),
             vec![
-                (TokenKind::Identifier, "a"),
-                (TokenKind::Identifier, "b"),
+                (TokenKind::Identifier, "a".to_string()),
+                (TokenKind::Identifier, "b".to_string()),
             ]
         );
     }
@@ -779,8 +802,8 @@ string
         assert_eq!(
             tokenize("a /* comment */ b"),
             vec![
-                (TokenKind::Identifier, "a"),
-                (TokenKind::Identifier, "b"),
+                (TokenKind::Identifier, "a".to_string()),
+                (TokenKind::Identifier, "b".to_string()),
             ]
         );
     }
@@ -790,15 +813,16 @@ string
         assert_eq!(
             tokenize("a /* multi\nline\ncomment */ b"),
             vec![
-                (TokenKind::Identifier, "a"),
-                (TokenKind::Identifier, "b"),
+                (TokenKind::Identifier, "a".to_string()),
+                (TokenKind::Identifier, "b".to_string()),
             ]
         );
     }
 
     #[test]
     fn unterminated_comment() {
-        let mut lexer = Lexer::new("a /* unterminated");
+        let arena = Bump::new();
+        let mut lexer = Lexer::new("a /* unterminated", &arena);
         let _ = lexer.next_token(); // 'a'
         let token = lexer.next_token();
         assert_eq!(token.kind, TokenKind::Error);
@@ -971,7 +995,8 @@ string
 
     #[test]
     fn unexpected_character() {
-        let mut lexer = Lexer::new("a $ b");
+        let arena = Bump::new();
+        let mut lexer = Lexer::new("a $ b", &arena);
         let tokens: Vec<_> = lexer.by_ref().collect();
 
         assert_eq!(tokens.len(), 3);
@@ -993,7 +1018,8 @@ string
             }
         "#;
 
-        let tokens: Vec<_> = Lexer::new(source).collect();
+        let arena = Bump::new();
+        let tokens: Vec<_> = Lexer::new(source, &arena).collect();
         let kinds: Vec<_> = tokens.iter().map(|t| t.kind).collect();
 
         assert_eq!(
@@ -1030,7 +1056,8 @@ string
             }
         "#;
 
-        let mut lexer = Lexer::new(source);
+        let arena = Bump::new();
+        let mut lexer = Lexer::new(source, &arena);
         let tokens: Vec<_> = lexer.by_ref().collect();
 
         assert!(!lexer.has_errors());
@@ -1043,13 +1070,15 @@ string
 
     #[test]
     fn has_errors_method() {
-        let mut lexer = Lexer::new("int x = 42;");
+        let arena = Bump::new();
+        let mut lexer = Lexer::new("int x = 42;", &arena);
         assert!(!lexer.has_errors());
 
         while lexer.next_token().kind != TokenKind::Eof {}
         assert!(!lexer.has_errors());
 
-        let mut lexer_with_error = Lexer::new("$");
+        let arena2 = Bump::new();
+        let mut lexer_with_error = Lexer::new("$", &arena2);
         assert!(!lexer_with_error.has_errors());
 
         lexer_with_error.next_token();

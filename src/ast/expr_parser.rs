@@ -8,12 +8,12 @@ use crate::ast::expr::*;
 use crate::lexer::TokenKind;
 use super::parser::Parser;
 
-impl<'src, 'ast> Parser<'src, 'ast> {
+impl<'ast> Parser<'ast> {
     /// Parse an expression with a minimum binding power.
     ///
     /// This is the core of the Pratt parser. It handles operator precedence
     /// by only consuming operators with sufficient binding power.
-    pub fn parse_expr(&mut self, min_bp: u8) -> Result<&'ast Expr<'src, 'ast>, ParseError> {
+    pub fn parse_expr(&mut self, min_bp: u8) -> Result<&'ast Expr<'ast>, ParseError> {
         // Parse the prefix expression (literals, identifiers, unary ops, etc.)
         let mut lhs = self.parse_prefix()?;
         
@@ -121,7 +121,7 @@ impl<'src, 'ast> Parser<'src, 'ast> {
     }
 
     /// Parse a prefix expression (the start of an expression).
-    fn parse_prefix(&mut self) -> Result<&'ast Expr<'src, 'ast>, ParseError> {
+    fn parse_prefix(&mut self) -> Result<&'ast Expr<'ast>, ParseError> {
         let token = *self.peek();
 
         match token.kind {
@@ -312,7 +312,7 @@ impl<'src, 'ast> Parser<'src, 'ast> {
     }
 
     /// Parse member access (dot operator).
-    fn parse_member_access(&mut self, object: &'ast Expr<'src, 'ast>) -> Result<&'ast Expr<'src, 'ast>, ParseError> {
+    fn parse_member_access(&mut self, object: &'ast Expr<'ast>) -> Result<&'ast Expr<'ast>, ParseError> {
         let dot_span = self.expect(TokenKind::Dot)?.span;
 
         // The member must be an identifier
@@ -348,7 +348,7 @@ impl<'src, 'ast> Parser<'src, 'ast> {
     }
 
     /// Parse function call.
-    fn parse_call(&mut self, callee: &'ast Expr<'src, 'ast>) -> Result<&'ast Expr<'src, 'ast>, ParseError> {
+    fn parse_call(&mut self, callee: &'ast Expr<'ast>) -> Result<&'ast Expr<'ast>, ParseError> {
         let args = self.parse_arguments()?;
         let span = callee.span().merge(
             self.buffer.get(self.position.saturating_sub(1))
@@ -364,7 +364,7 @@ impl<'src, 'ast> Parser<'src, 'ast> {
     }
 
     /// Parse array indexing.
-    fn parse_index(&mut self, object: &'ast Expr<'src, 'ast>) -> Result<&'ast Expr<'src, 'ast>, ParseError> {
+    fn parse_index(&mut self, object: &'ast Expr<'ast>) -> Result<&'ast Expr<'ast>, ParseError> {
         self.expect(TokenKind::LeftBracket)?;
 
         let mut indices = bumpalo::collections::Vec::new_in(self.arena);
@@ -390,7 +390,7 @@ impl<'src, 'ast> Parser<'src, 'ast> {
     }
 
     /// Parse a single index item (can be named).
-    fn parse_index_item(&mut self) -> Result<IndexItem<'src, 'ast>, ParseError> {
+    fn parse_index_item(&mut self) -> Result<IndexItem<'ast>, ParseError> {
         let start_span = self.peek().span;
 
         // Check for named index: identifier :
@@ -409,7 +409,7 @@ impl<'src, 'ast> Parser<'src, 'ast> {
     }
 
     /// Parse ternary conditional (condition ? then : else).
-    fn parse_ternary(&mut self, condition: &'ast Expr<'src, 'ast>) -> Result<&'ast Expr<'src, 'ast>, ParseError> {
+    fn parse_ternary(&mut self, condition: &'ast Expr<'ast>) -> Result<&'ast Expr<'ast>, ParseError> {
         self.expect(TokenKind::Question)?;
         let then_expr = self.parse_expr(0)?;
         self.expect(TokenKind::Colon)?;
@@ -425,7 +425,7 @@ impl<'src, 'ast> Parser<'src, 'ast> {
     }
 
     /// Parse cast expression: cast<Type>(expr)
-    fn parse_cast(&mut self) -> Result<&'ast Expr<'src, 'ast>, ParseError> {
+    fn parse_cast(&mut self) -> Result<&'ast Expr<'ast>, ParseError> {
         let start_span = self.expect(TokenKind::Cast)?.span;
         self.expect(TokenKind::Less)?;
         let target_type = self.parse_type()?;
@@ -442,7 +442,7 @@ impl<'src, 'ast> Parser<'src, 'ast> {
     }
 
     /// Parse lambda expression: function(params) { body }
-    fn parse_lambda(&mut self) -> Result<&'ast Expr<'src, 'ast>, ParseError> {
+    fn parse_lambda(&mut self) -> Result<&'ast Expr<'ast>, ParseError> {
         let start_span = self.eat_contextual("function")
             .ok_or_else(|| {
                 let span = self.peek().span;
@@ -483,7 +483,7 @@ impl<'src, 'ast> Parser<'src, 'ast> {
     }
 
     /// Parse a lambda parameter.
-    fn parse_lambda_param(&mut self) -> Result<LambdaParam<'src, 'ast>, ParseError> {
+    fn parse_lambda_param(&mut self) -> Result<LambdaParam<'ast>, ParseError> {
         let start_span = self.peek().span;
 
         // Disambiguate between:
@@ -544,7 +544,7 @@ impl<'src, 'ast> Parser<'src, 'ast> {
     }
 
     /// Parse initializer list: { elements }
-    fn parse_init_list(&mut self) -> Result<&'ast Expr<'src, 'ast>, ParseError> {
+    fn parse_init_list(&mut self) -> Result<&'ast Expr<'ast>, ParseError> {
         let start_span = self.expect(TokenKind::LeftBrace)?.span;
 
         let mut elements = bumpalo::collections::Vec::new_in(self.arena);
@@ -571,7 +571,7 @@ impl<'src, 'ast> Parser<'src, 'ast> {
     }
 
     /// Parse an initializer list element.
-    fn parse_init_element(&mut self) -> Result<InitElement<'src, 'ast>, ParseError> {
+    fn parse_init_element(&mut self) -> Result<InitElement<'ast>, ParseError> {
         if self.check(TokenKind::LeftBrace) {
             // Nested initializer list
             if let Expr::InitList(init_list) = *self.parse_init_list()? {
@@ -598,7 +598,7 @@ impl<'src, 'ast> Parser<'src, 'ast> {
     /// - Scoped identifier: `Namespace::foo`
     /// - Type call (constructor or cast): `MyClass(args)`
     /// - Scoped type call: `Namespace::MyClass(args)`
-    fn parse_ident_or_constructor(&mut self) -> Result<&'ast Expr<'src, 'ast>, ParseError> {
+    fn parse_ident_or_constructor(&mut self) -> Result<&'ast Expr<'ast>, ParseError> {
         let start_span = self.peek().span;
 
         // First check if this looks like a type call using lookahead
@@ -818,7 +818,7 @@ impl<'src, 'ast> Parser<'src, 'ast> {
     }
 
     /// Parse function arguments: (arg1, arg2, ...)
-    fn parse_arguments(&mut self) -> Result<&'ast [Argument<'src, 'ast>], ParseError> {
+    fn parse_arguments(&mut self) -> Result<&'ast [Argument<'ast>], ParseError> {
         self.expect(TokenKind::LeftParen)?;
 
         let mut args = bumpalo::collections::Vec::new_in(self.arena);
@@ -836,7 +836,7 @@ impl<'src, 'ast> Parser<'src, 'ast> {
     }
 
     /// Parse a single argument (can be named).
-    fn parse_argument(&mut self) -> Result<Argument<'src, 'ast>, ParseError> {
+    fn parse_argument(&mut self) -> Result<Argument<'ast>, ParseError> {
         let start_span = self.peek().span;
 
         // Check for named argument: identifier :

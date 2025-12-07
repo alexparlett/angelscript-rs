@@ -1,7 +1,7 @@
 //! Semantic analysis module for AngelScript.
 //!
 //! This module provides semantic analysis functionality following a 2-pass model:
-//! - Pass 1: Registration (register all global names in Registry)
+//! - Pass 1: Registration (register all global names in ScriptRegistry)
 //! - Pass 2: Compilation & Codegen (type compilation + function compilation)
 //!   - Pass 2a: Type Compilation (fill in type details, resolve TypeExpr → DataType)
 //!   - Pass 2b: Function Compilation (type check function bodies, emit bytecode)
@@ -11,23 +11,27 @@
 //! For most use cases, use the unified `Compiler` interface:
 //!
 //! ```ignore
-//! use angelscript::{parse_lenient, Compiler};
+//! use angelscript::{parse_lenient, Compiler, FfiRegistryBuilder};
 //! use bumpalo::Bump;
+//! use std::sync::Arc;
 //!
 //! let arena = Bump::new();
 //! let (script, _) = parse_lenient(source, &arena);
-//! let compiled = Compiler::compile(&script);
+//! let ffi = Arc::new(FfiRegistryBuilder::new().build().unwrap());
+//! let compiled = Compiler::compile(&script, ffi);
 //!
 //! if compiled.is_success() {
-//!     // Use compiled.module, compiled.registry, etc.
+//!     // Use compiled.module, compiled.context, etc.
 //! }
 //! ```
 
+pub mod compilation_context;
 pub mod compiler;
 pub mod const_eval;
 pub mod error;
 pub mod local_scope;
 pub mod passes;
+pub mod template_instantiator;
 pub mod types;
 
 // Unified compiler interface (recommended for most users)
@@ -35,8 +39,8 @@ pub use compiler::{CompilationResult, Compiler, TypeCompilationResult};
 
 // Individual pass results (for advanced use cases)
 pub use passes::{
-    CompiledFunction, FunctionCompiler, RegistrationData, Registrar, TypeCompilationData,
-    TypeCompiler,
+    CompiledFunction, FunctionCompiler, RegistrationData, RegistrationDataWithContext,
+    Registrar, TypeCompilationData, TypeCompiler,
 };
 
 // Re-export CompiledModule from codegen (it's the output of FunctionCompiler)
@@ -48,8 +52,11 @@ pub use error::{SemanticError, SemanticErrorKind, SemanticErrors};
 pub use local_scope::{CapturedVar, LocalScope, LocalVar};
 pub use types::{
     Conversion, ConversionKind, DataType, FieldDef, FunctionDef, FunctionId, FunctionTraits,
-    GlobalVarDef, MethodSignature, OperatorBehavior, PrimitiveType, PropertyAccessors, RefModifier,
-    Registry, TypeDef, TypeId, Visibility, ARRAY_TEMPLATE, BOOL_TYPE, DICT_TEMPLATE, DOUBLE_TYPE,
-    FIRST_USER_TYPE_ID, FLOAT_TYPE, INT16_TYPE, INT32_TYPE, INT64_TYPE, INT8_TYPE, NULL_TYPE,
-    STRING_TYPE, UINT16_TYPE, UINT32_TYPE, UINT64_TYPE, UINT8_TYPE, VOID_TYPE,
+    GlobalVarDef, MethodSignature, OperatorBehavior, PrimitiveType, PropertyAccessors,
+    RefModifier, ScriptRegistry, TypeDef, TypeId, Visibility, BOOL_TYPE,
+    DOUBLE_TYPE, FIRST_USER_TYPE_ID, FLOAT_TYPE, INT16_TYPE, INT32_TYPE, INT64_TYPE, INT8_TYPE,
+    NULL_TYPE, UINT16_TYPE, UINT32_TYPE, UINT64_TYPE, UINT8_TYPE, VOID_TYPE,
 };
+
+// Re-export CompilationContext and FunctionRef
+pub use compilation_context::{CompilationContext, FunctionRef};

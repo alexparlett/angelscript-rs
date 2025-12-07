@@ -15,15 +15,15 @@ use crate::codegen::Instruction;
 use crate::semantic::{
     ConstEvaluator, ConstValue, OperatorBehavior,
     SemanticErrorKind, TypeDef, BOOL_TYPE, DOUBLE_TYPE, FLOAT_TYPE,
-    NULL_TYPE, VOID_TYPE, STRING_TYPE,
+    NULL_TYPE, VOID_TYPE,
 };
 use crate::semantic::types::type_def::FunctionId;
 use rustc_hash::FxHashSet;
 
 use super::{FunctionCompiler, SwitchCategory, SwitchCaseKey};
 
-impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
-    pub(super) fn visit_block(&mut self, block: &'ast Block<'src, 'ast>) {
+impl<'ast> FunctionCompiler<'ast> {
+    pub(super) fn visit_block(&mut self, block: &'ast Block<'ast>) {
         self.local_scope.enter_scope();
 
         for stmt in block.stmts {
@@ -34,7 +34,7 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
     }
 
     /// Visits a statement.
-    pub(super) fn visit_stmt(&mut self, stmt: &'ast Stmt<'src, 'ast>) {
+    pub(super) fn visit_stmt(&mut self, stmt: &'ast Stmt<'ast>) {
         match stmt {
             Stmt::Expr(expr_stmt) => self.visit_expr_stmt(expr_stmt),
             Stmt::VarDecl(var_decl) => self.visit_var_decl(var_decl),
@@ -53,7 +53,7 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
     }
 
     /// Visits an expression statement.
-    pub(super) fn visit_expr_stmt(&mut self, expr_stmt: &ExprStmt<'src, 'ast>) {
+    pub(super) fn visit_expr_stmt(&mut self, expr_stmt: &ExprStmt<'ast>) {
         if let Some(expr) = expr_stmt.expr {
             let _ = self.check_expr(expr);
             // Expression result is discarded
@@ -62,7 +62,7 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
     }
 
     /// Visits a variable declaration statement.
-    pub(super) fn visit_var_decl(&mut self, var_decl: &VarDeclStmt<'src, 'ast>) {
+    pub(super) fn visit_var_decl(&mut self, var_decl: &VarDeclStmt<'ast>) {
         // Check if this is an auto type declaration
         let is_auto = matches!(var_decl.ty.base, TypeBase::Auto);
 
@@ -140,15 +140,6 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
                                 inferred_type.is_const = true;
                             }
                         }
-                        TypeSuffix::Array => {
-                            // auto[] doesn't make sense - the array type should come from initializer
-                            self.error(
-                                SemanticErrorKind::TypeMismatch,
-                                var_decl.ty.span,
-                                "cannot use array suffix with 'auto'; type is inferred from initializer",
-                            );
-                            continue;
-                        }
                     }
                 }
 
@@ -170,7 +161,7 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
 
             // Check if variable type is a funcdef (for function handle inference)
             let is_funcdef = matches!(
-                self.registry.get_type(var_type.type_id),
+                self.context.get_type(var_type.type_id),
                 TypeDef::Funcdef { .. }
             );
 
@@ -181,28 +172,30 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
                     self.expected_funcdef_type = Some(var_type.type_id);
                 }
 
-                // Set expected init list type for empty init lists
-                // If the target is an array<T>, the element type is T
-                if let TypeDef::TemplateInstance { template, sub_types, .. } = self.registry.get_type(var_type.type_id)
-                    && *template == self.registry.array_template && !sub_types.is_empty() {
-                        self.expected_init_list_type = Some(sub_types[0].clone());
-                    }
+                // Set expected init list target type if it has list behaviors
+                // The target type is the type that has list_factory or list_construct behavior
+                // (e.g., array<int>, StringBuffer, or any type with list initialization support)
+                if self.context.get_behaviors(var_type.type_id)
+                    .is_some_and(|b| b.has_list_init())
+                {
+                    self.expected_init_list_target = Some(var_type.type_id);
+                }
 
                 let init_ctx = match self.check_expr(init) {
                     Some(ctx) => ctx,
                     None => {
                         self.expected_funcdef_type = None;
-                        self.expected_init_list_type = None;
+                        self.expected_init_list_target = None;
                         continue; // Error already recorded
                     }
                 };
 
                 // Clear expected types
                 self.expected_funcdef_type = None;
-                self.expected_init_list_type = None;
+                self.expected_init_list_target = None;
 
                 // Check if initializer can be converted to variable type and emit conversion if needed
-                if let Some(conversion) = init_ctx.data_type.can_convert_to(&var_type, self.registry) {
+                if let Some(conversion) = init_ctx.data_type.can_convert_to(&var_type, self.context) {
                     if !conversion.is_implicit {
                         self.error(
                             SemanticErrorKind::TypeMismatch,
@@ -245,12 +238,12 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
     }
 
     /// Visits a return statement.
-    pub(super) fn visit_return(&mut self, ret: &ReturnStmt<'src, 'ast>) {
+    pub(super) fn visit_return(&mut self, ret: &ReturnStmt<'ast>) {
         if let Some(value) = ret.value {
             // Set expected funcdef type if return type is a funcdef
             // This allows lambda inference in return statements
             // Note: funcdef types are always handles, so we just check the type
-            let type_def = self.registry.get_type(self.return_type.type_id);
+            let type_def = self.context.get_type(self.return_type.type_id);
             if matches!(type_def, TypeDef::Funcdef { .. }) {
                 self.expected_funcdef_type = Some(self.return_type.type_id);
             }
@@ -277,7 +270,7 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
             }
 
             // Check if value can be converted to return type and emit conversion if needed
-            if let Some(conversion) = value_ctx.data_type.can_convert_to(&self.return_type, self.registry) {
+            if let Some(conversion) = value_ctx.data_type.can_convert_to(&self.return_type, self.context) {
                 if !conversion.is_implicit {
                     self.error(
                         SemanticErrorKind::TypeMismatch,
@@ -345,7 +338,7 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
     }
 
     /// Visits an if statement.
-    pub(super) fn visit_if(&mut self, if_stmt: &'ast IfStmt<'src, 'ast>) {
+    pub(super) fn visit_if(&mut self, if_stmt: &'ast IfStmt<'ast>) {
         // Check condition
         if let Some(cond_ctx) = self.check_expr(if_stmt.condition)
             && cond_ctx.data_type.type_id != BOOL_TYPE {
@@ -387,7 +380,7 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
     }
 
     /// Visits a while loop.
-    pub(super) fn visit_while(&mut self, while_stmt: &'ast WhileStmt<'src, 'ast>) {
+    pub(super) fn visit_while(&mut self, while_stmt: &'ast WhileStmt<'ast>) {
         let loop_start = self.bytecode.current_position();
         self.bytecode.enter_loop(loop_start);
 
@@ -422,7 +415,7 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
     }
 
     /// Visits a do-while loop.
-    pub(super) fn visit_do_while(&mut self, do_while: &'ast DoWhileStmt<'src, 'ast>) {
+    pub(super) fn visit_do_while(&mut self, do_while: &'ast DoWhileStmt<'ast>) {
         let loop_start = self.bytecode.current_position();
         self.bytecode.enter_loop(loop_start);
 
@@ -452,7 +445,7 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
     }
 
     /// Visits a for loop.
-    pub(super) fn visit_for(&mut self, for_stmt: &'ast ForStmt<'src, 'ast>) {
+    pub(super) fn visit_for(&mut self, for_stmt: &'ast ForStmt<'ast>) {
         // Enter scope for loop (init variables live in loop scope)
         self.local_scope.enter_scope();
 
@@ -514,7 +507,7 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
     }
 
     /// Visits a foreach loop.
-    pub(super) fn visit_foreach(&mut self, foreach: &'ast ForeachStmt<'src, 'ast>) {
+    pub(super) fn visit_foreach(&mut self, foreach: &'ast ForeachStmt<'ast>) {
         // Type check the container expression
         let container_ctx = match self.check_expr(foreach.expr) {
             Some(ctx) => ctx,
@@ -524,7 +517,7 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
         let container_type_id = container_ctx.data_type.type_id;
 
         // Check for required foreach operators
-        let begin_func_id = match self.registry.find_operator_method(container_type_id, OperatorBehavior::OpForBegin) {
+        let begin_func_id = match self.context.find_operator_method(container_type_id, OperatorBehavior::OpForBegin) {
             Some(func_id) => func_id,
             None => {
                 self.error(
@@ -539,7 +532,7 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
             }
         };
 
-        let end_func_id = match self.registry.find_operator_method(container_type_id, OperatorBehavior::OpForEnd) {
+        let end_func_id = match self.context.find_operator_method(container_type_id, OperatorBehavior::OpForEnd) {
             Some(func_id) => func_id,
             None => {
                 self.error(
@@ -554,7 +547,7 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
             }
         };
 
-        let next_func_id = match self.registry.find_operator_method(container_type_id, OperatorBehavior::OpForNext) {
+        let next_func_id = match self.context.find_operator_method(container_type_id, OperatorBehavior::OpForNext) {
             Some(func_id) => func_id,
             None => {
                 self.error(
@@ -570,18 +563,18 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
         };
 
         // Validate operator signatures
-        let begin_func = self.registry.get_function(begin_func_id);
-        if !begin_func.params.is_empty() {
+        let begin_func = self.context.get_function(begin_func_id);
+        if begin_func.param_count() != 0 {
             self.error(
                 SemanticErrorKind::InvalidOperation,
                 foreach.expr.span(),
-                format!("opForBegin must have no parameters, found {}", begin_func.params.len()),
+                format!("opForBegin must have no parameters, found {}", begin_func.param_count()),
             );
             return;
         }
 
-        let end_func = self.registry.get_function(end_func_id);
-        if end_func.params.len() != 1 || end_func.return_type.type_id != self.registry.bool_type {
+        let end_func = self.context.get_function(end_func_id);
+        if end_func.param_count() != 1 || end_func.return_type().type_id != BOOL_TYPE {
             self.error(
                 SemanticErrorKind::InvalidOperation,
                 foreach.expr.span(),
@@ -590,8 +583,8 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
             return;
         }
 
-        let next_func = self.registry.get_function(next_func_id);
-        if next_func.params.len() != 1 {
+        let next_func = self.context.get_function(next_func_id);
+        if next_func.param_count() != 1 {
             self.error(
                 SemanticErrorKind::InvalidOperation,
                 foreach.expr.span(),
@@ -604,9 +597,9 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
         let num_vars = foreach.vars.len();
         let value_func_ids: Vec<FunctionId> = if num_vars == 1 {
             // Try opForValue first, fall back to opForValue0
-            if let Some(func_id) = self.registry.find_operator_method(container_type_id, OperatorBehavior::OpForValue) {
+            if let Some(func_id) = self.context.find_operator_method(container_type_id, OperatorBehavior::OpForValue) {
                 vec![func_id]
-            } else if let Some(func_id) = self.registry.find_operator_method(container_type_id, OperatorBehavior::OpForValue0) {
+            } else if let Some(func_id) = self.context.find_operator_method(container_type_id, OperatorBehavior::OpForValue0) {
                 vec![func_id]
             } else {
                 self.error(
@@ -635,7 +628,7 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
                     }
                 };
 
-                if let Some(func_id) = self.registry.find_operator_method(container_type_id, op_behavior) {
+                if let Some(func_id) = self.context.find_operator_method(container_type_id, op_behavior) {
                     operators.push(func_id);
                 } else {
                     self.error(
@@ -654,9 +647,9 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
 
         // Declare and type-check loop variables
         for (i, var) in foreach.vars.iter().enumerate() {
-            let value_func = self.registry.get_function(value_func_ids[i]);
+            let value_func = self.context.get_function(value_func_ids[i]);
 
-            if value_func.params.len() != 1 {
+            if value_func.param_count() != 1 {
                 self.error(
                     SemanticErrorKind::InvalidOperation,
                     var.span,
@@ -665,12 +658,12 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
                 continue;
             }
 
-            let element_type = value_func.return_type.clone();
+            let element_type = value_func.return_type().clone();
 
             // Resolve the variable's type
             if let Some(var_type) = self.resolve_type_expr(&var.ty) {
                 // Check if element type can be converted to variable type
-                if let Some(_conversion) = element_type.can_convert_to(&var_type, self.registry) {
+                if let Some(_conversion) = element_type.can_convert_to(&var_type, self.context) {
                     // Type is compatible
                 } else {
                     self.error(
@@ -717,7 +710,7 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
         self.bytecode.emit(Instruction::Call(begin_func_id.as_u32()));
 
         // Store iterator in a local variable
-        let iterator_type = begin_func.return_type.clone();
+        let iterator_type = begin_func.return_type().clone();
         let iterator_offset = self.local_scope.declare_variable_auto(
             format!("$it_{}_{}", foreach.span.line, foreach.span.col),
             iterator_type,
@@ -742,7 +735,7 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
         // Load values into loop variables
         for (i, var) in foreach.vars.iter().enumerate() {
             let value_func_id = value_func_ids[i];
-            let value_func = self.registry.get_function(value_func_id);
+            let value_func = self.context.get_function(value_func_id);
 
             // Call container.opForValue#(iterator)
             // Stack: [] -> [value]
@@ -752,11 +745,11 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
 
             // Apply conversion if needed
             if let Some(var_local) = self.local_scope.lookup(var.name.name) {
-                let element_type = value_func.return_type.clone();
+                let element_type = value_func.return_type().clone();
                 let var_offset = var_local.stack_offset; // Extract offset before mutable borrow
                 let var_type = var_local.data_type.clone();
 
-                if let Some(conversion) = element_type.can_convert_to(&var_type, self.registry)
+                if let Some(conversion) = element_type.can_convert_to(&var_type, self.context)
                     && conversion.is_implicit {
                         self.emit_conversion(&conversion);
                     }
@@ -803,7 +796,7 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
     ///
     /// Supports: integers, enums, bool, float, double, string, and handle types.
     /// Handle types support type pattern matching (case ClassName:) and null checks.
-    pub(super) fn visit_switch(&mut self, switch: &'ast SwitchStmt<'src, 'ast>) {
+    pub(super) fn visit_switch(&mut self, switch: &'ast SwitchStmt<'ast>) {
         // Type check the switch expression
         let switch_ctx = match self.check_expr(switch.expr) {
             Some(ctx) => ctx,
@@ -856,11 +849,11 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
             } else {
                 for value_expr in case.values {
                     // Check for type pattern (only valid for Handle category)
-                    if switch_category == SwitchCategory::Handle {
-                        if let Some(type_id) = self.try_resolve_type_pattern(value_expr) {
+                    if switch_category == SwitchCategory::Handle
+                        && let Some(type_id) = self.try_resolve_type_pattern(value_expr) {
                             let key = SwitchCaseKey::Type(type_id);
                             if !case_values.insert(key) {
-                                let type_name = self.registry.get_type(type_id).name();
+                                let type_name = self.context.get_type(type_id).name();
                                 self.error(
                                     SemanticErrorKind::DuplicateDeclaration,
                                     value_expr.span(),
@@ -869,11 +862,10 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
                             }
                             continue;
                         }
-                    }
 
                     // Check for null literal
-                    if let Expr::Literal(lit) = value_expr {
-                        if matches!(lit.kind, LiteralKind::Null) {
+                    if let Expr::Literal(lit) = value_expr
+                        && matches!(lit.kind, LiteralKind::Null) {
                             if switch_category != SwitchCategory::Handle {
                                 self.error(
                                     SemanticErrorKind::TypeMismatch,
@@ -889,10 +881,9 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
                             }
                             continue;
                         }
-                    }
 
                     // Evaluate constant value for duplicate detection
-                    let evaluator = ConstEvaluator::new(self.registry);
+                    let evaluator = ConstEvaluator::new(self.context);
                     if let Some(const_value) = evaluator.eval(value_expr) {
                         let key = match &const_value {
                             ConstValue::Int(i) => SwitchCaseKey::Int(*i),
@@ -934,8 +925,8 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
                 // For each case value (handles case 1: case 2: ... syntax)
                 for value_expr in case.values {
                     // Check for type pattern (only valid for Handle category)
-                    if switch_category == SwitchCategory::Handle {
-                        if let Some(type_id) = self.try_resolve_type_pattern(value_expr) {
+                    if switch_category == SwitchCategory::Handle
+                        && let Some(type_id) = self.try_resolve_type_pattern(value_expr) {
                             // Emit: LoadLocal(switch_offset), IsInstanceOf(type_id), JumpIfTrue
                             self.bytecode.emit(Instruction::LoadLocal(switch_offset));
                             self.bytecode.emit(Instruction::IsInstanceOf(type_id));
@@ -943,11 +934,10 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
                             case_jumps.push((case_idx, jump_pos));
                             continue;
                         }
-                    }
 
                     // Check for null literal
-                    if let Expr::Literal(lit) = value_expr {
-                        if matches!(lit.kind, LiteralKind::Null) {
+                    if let Expr::Literal(lit) = value_expr
+                        && matches!(lit.kind, LiteralKind::Null) {
                             // Emit: LoadLocal(switch_offset), PushNull, Equal, JumpIfTrue
                             self.bytecode.emit(Instruction::LoadLocal(switch_offset));
                             self.bytecode.emit(Instruction::PushNull);
@@ -956,7 +946,6 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
                             case_jumps.push((case_idx, jump_pos));
                             continue;
                         }
-                    }
 
                     // Load switch value
                     self.bytecode.emit(Instruction::LoadLocal(switch_offset));
@@ -975,7 +964,9 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
                                     || value_ctx.data_type.type_id == DOUBLE_TYPE
                                     || self.is_integer(&value_ctx.data_type)
                             }
-                            SwitchCategory::String => value_ctx.data_type.type_id == STRING_TYPE,
+                            SwitchCategory::String => {
+                                self.context.lookup_type("string") == Some(value_ctx.data_type.type_id)
+                            }
                             SwitchCategory::Handle => {
                                 value_ctx.data_type.type_id == NULL_TYPE
                                     || (value_ctx.data_type.is_handle
@@ -1000,7 +991,7 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
                     match switch_category {
                         SwitchCategory::String => {
                             // String comparison via opEquals
-                            if let Some(func_id) = self.registry.find_operator_method(
+                            if let Some(func_id) = self.context.find_operator_method(
                                 switch_ctx.data_type.type_id,
                                 OperatorBehavior::OpEquals,
                             ) {
@@ -1068,7 +1059,7 @@ impl<'src, 'ast> FunctionCompiler<'src, 'ast> {
     }
 
     /// Visits a try-catch statement.
-    pub(super) fn visit_try_catch(&mut self, try_catch: &'ast TryCatchStmt<'src, 'ast>) {
+    pub(super) fn visit_try_catch(&mut self, try_catch: &'ast TryCatchStmt<'ast>) {
         // Emit try block start (marks exception handler boundary)
         let _try_start = self.bytecode.current_position();
         self.bytecode.emit(Instruction::TryStart);

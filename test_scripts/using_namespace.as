@@ -1,9 +1,6 @@
 // Test using namespace directive
 // Tests importing namespace symbols into current scope
 
-// FFI placeholder - will be replaced with proper FFI bindings
-void print(const string &in msg) {}
-
 // Define some namespaces with types and functions
 namespace test {
     void func() {}

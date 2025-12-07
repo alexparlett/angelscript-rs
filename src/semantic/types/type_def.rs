@@ -6,13 +6,23 @@
 use rustc_hash::FxHashMap;
 
 use super::data_type::DataType;
+use crate::types::{TypeHash, TypeKind};
 use std::fmt;
 use std::sync::atomic::{AtomicU32, Ordering};
 
-/// Global atomic counter for generating unique TypeIds
-static TYPE_ID_COUNTER: AtomicU32 = AtomicU32::new(0);
+/// High bit used to distinguish FFI types/functions from script types/functions.
+/// - FFI types have this bit SET (0x8000_0000 | index)
+/// - Script types have this bit CLEAR (just index)
+pub const FFI_BIT: u32 = 0x8000_0000;
 
-/// Global atomic counter for generating unique FunctionIds
+/// Global atomic counter for generating unique TypeIds.
+/// Starts at 32 to avoid conflicting with reserved primitive types (0-13)
+/// and reserved special types (14-31).
+/// Both FFI and script types share this counter; the FFI_BIT distinguishes them.
+static TYPE_ID_COUNTER: AtomicU32 = AtomicU32::new(32);
+
+/// Global atomic counter for generating unique FunctionIds.
+/// Both FFI and script functions share this counter; the FFI_BIT distinguishes them.
 static FUNCTION_ID_COUNTER: AtomicU32 = AtomicU32::new(0);
 
 /// A unique identifier for a type in the type system.
@@ -30,9 +40,36 @@ impl TypeId {
     }
 
     /// Generate the next unique TypeId using the global atomic counter.
+    /// This is a legacy method - prefer `next_ffi()` or `next_script()`.
     #[inline]
     pub fn next() -> Self {
         TypeId(TYPE_ID_COUNTER.fetch_add(1, Ordering::Relaxed))
+    }
+
+    /// Generate the next unique FFI TypeId (with FFI_BIT set).
+    /// Use this for types registered through the FFI system.
+    #[inline]
+    pub fn next_ffi() -> Self {
+        TypeId(TYPE_ID_COUNTER.fetch_add(1, Ordering::Relaxed) | FFI_BIT)
+    }
+
+    /// Generate the next unique script TypeId (without FFI_BIT).
+    /// Use this for types defined in AngelScript code.
+    #[inline]
+    pub fn next_script() -> Self {
+        TypeId(TYPE_ID_COUNTER.fetch_add(1, Ordering::Relaxed))
+    }
+
+    /// Check if this is an FFI type (high bit set).
+    #[inline]
+    pub const fn is_ffi(self) -> bool {
+        (self.0 & FFI_BIT) != 0
+    }
+
+    /// Check if this is a script type (high bit clear).
+    #[inline]
+    pub const fn is_script(self) -> bool {
+        (self.0 & FFI_BIT) == 0
     }
 
     /// Get the underlying u32 value.
@@ -56,33 +93,34 @@ impl fmt::Display for TypeId {
     }
 }
 
-// Fixed TypeIds for primitive types (0-11)
-pub const VOID_TYPE: TypeId = TypeId(0);
-pub const BOOL_TYPE: TypeId = TypeId(1);
-pub const INT8_TYPE: TypeId = TypeId(2);
-pub const INT16_TYPE: TypeId = TypeId(3);
-pub const INT32_TYPE: TypeId = TypeId(4);   // "int" alias
-pub const INT64_TYPE: TypeId = TypeId(5);
-pub const UINT8_TYPE: TypeId = TypeId(6);
-pub const UINT16_TYPE: TypeId = TypeId(7);
-pub const UINT32_TYPE: TypeId = TypeId(8);  // "uint" alias
-pub const UINT64_TYPE: TypeId = TypeId(9);
-pub const FLOAT_TYPE: TypeId = TypeId(10);
-pub const DOUBLE_TYPE: TypeId = TypeId(11);
+// Fixed TypeIds for primitive types (0-11) - all FFI types have FFI_BIT set
+pub const VOID_TYPE: TypeId = TypeId(FFI_BIT);
+pub const BOOL_TYPE: TypeId = TypeId(FFI_BIT | 1);
+pub const INT8_TYPE: TypeId = TypeId(FFI_BIT | 2);
+pub const INT16_TYPE: TypeId = TypeId(FFI_BIT | 3);
+pub const INT32_TYPE: TypeId = TypeId(FFI_BIT | 4);   // "int" alias
+pub const INT64_TYPE: TypeId = TypeId(FFI_BIT | 5);
+pub const UINT8_TYPE: TypeId = TypeId(FFI_BIT | 6);
+pub const UINT16_TYPE: TypeId = TypeId(FFI_BIT | 7);
+pub const UINT32_TYPE: TypeId = TypeId(FFI_BIT | 8);  // "uint" alias
+pub const UINT64_TYPE: TypeId = TypeId(FFI_BIT | 9);
+pub const FLOAT_TYPE: TypeId = TypeId(FFI_BIT | 10);
+pub const DOUBLE_TYPE: TypeId = TypeId(FFI_BIT | 11);
 
-// Special types (12-15)
-pub const NULL_TYPE: TypeId = TypeId(12);  // Null literal type (converts to any handle)
+// Special types (12-15) - also FFI types
+pub const NULL_TYPE: TypeId = TypeId(FFI_BIT | 12);  // Null literal type (converts to any handle)
+pub const VARIABLE_PARAM_TYPE: TypeId = TypeId(FFI_BIT | 13);  // ? type - accepts any value (for generic FFI functions)
 
-// Gap: TypeIds 13-15 reserved for future special types
+/// Placeholder for self-referential template types during FFI import.
+/// Used for methods like `array<T> opAssign(const array<T> &in)` where the
+/// return/param type is the template itself with its own params.
+/// At instantiation time, this is replaced with the actual instance TypeId.
+/// Uses FFI_BIT since it's used in FFI template definitions.
+pub const SELF_TYPE: TypeId = TypeId(FFI_BIT | ((u32::MAX & !FFI_BIT) - 1));
 
-// Built-in types (16-18)
-pub const STRING_TYPE: TypeId = TypeId(16);
-pub const ARRAY_TEMPLATE: TypeId = TypeId(17);
-pub const DICT_TEMPLATE: TypeId = TypeId(18);
+// Gap: TypeIds 14-31 reserved for future special types
 
-// Gap: TypeIds 19-31 reserved for future built-in types
-
-/// First TypeId available for user-defined types
+/// First TypeId available for user-defined types (including FFI types like array, string)
 pub const FIRST_USER_TYPE_ID: u32 = 32;
 
 /// Primitive type kinds
@@ -238,9 +276,36 @@ impl FunctionId {
     }
 
     /// Generate the next unique FunctionId using the global atomic counter.
+    /// This is a legacy method - prefer `next_ffi()` or `next_script()`.
     #[inline]
     pub fn next() -> Self {
         FunctionId(FUNCTION_ID_COUNTER.fetch_add(1, Ordering::Relaxed))
+    }
+
+    /// Generate the next unique FFI FunctionId (with FFI_BIT set).
+    /// Use this for functions registered through the FFI system.
+    #[inline]
+    pub fn next_ffi() -> Self {
+        FunctionId(FFI_BIT | FUNCTION_ID_COUNTER.fetch_add(1, Ordering::Relaxed))
+    }
+
+    /// Generate the next unique script FunctionId (without FFI_BIT).
+    /// Use this for functions defined in AngelScript code.
+    #[inline]
+    pub fn next_script() -> Self {
+        FunctionId(FUNCTION_ID_COUNTER.fetch_add(1, Ordering::Relaxed))
+    }
+
+    /// Check if this is an FFI function (high bit set).
+    #[inline]
+    pub const fn is_ffi(self) -> bool {
+        (self.0 & FFI_BIT) != 0
+    }
+
+    /// Check if this is a script function (high bit clear).
+    #[inline]
+    pub const fn is_script(self) -> bool {
+        (self.0 & FFI_BIT) == 0
     }
 
     /// Get the underlying u32 value
@@ -573,6 +638,8 @@ pub struct MethodSignature {
     pub params: Vec<DataType>,
     /// Return type
     pub return_type: DataType,
+    /// Whether the method is const
+    pub is_const: bool,
 }
 
 impl MethodSignature {
@@ -582,6 +649,17 @@ impl MethodSignature {
             name,
             params,
             return_type,
+            is_const: false,
+        }
+    }
+
+    /// Create a new const method signature
+    pub fn new_const(name: String, params: Vec<DataType>, return_type: DataType) -> Self {
+        Self {
+            name,
+            params,
+            return_type,
+            is_const: true,
         }
     }
 }
@@ -701,20 +779,34 @@ pub enum TypeDef {
     /// Primitive type (int, float, bool, etc.)
     Primitive {
         kind: PrimitiveType,
+        /// Deterministic hash for this type (computed from name)
+        type_hash: TypeHash,
     },
 
-    /// User-defined class
+    /// User-defined class, template definition, or template instance
+    ///
+    /// Templates (e.g., `array<T>`) are represented as Class with `template_params`
+    /// containing the TypeIds of TemplateParam entries for T, K, V, etc.
+    ///
+    /// Template instances (e.g., `array<int>`) are represented as Class with
+    /// the `template` field set to the template's TypeId and `type_args`
+    /// containing the type arguments.
+    ///
+    /// Note: Lifecycle behaviors (list_construct, list_factory, etc.) are stored
+    /// separately in `Registry::behaviors`, not on the TypeDef.
     Class {
         name: String,
         qualified_name: String,
+        /// Deterministic hash for this type (computed from qualified_name)
+        type_hash: TypeHash,
         fields: Vec<FieldDef>,
         methods: Vec<FunctionId>,
         base_class: Option<TypeId>,
         interfaces: Vec<TypeId>,
         /// Operator methods mapped by behavior (opConv, opImplConv, etc.)
-        /// Each operator behavior maps to exactly one function
-        /// (e.g., opConv returning int, opImplConv returning float, etc.)
-        operator_methods: FxHashMap<OperatorBehavior, FunctionId>,
+        /// Each operator behavior can have multiple overloads (e.g., const and non-const opIndex)
+        /// Overload resolution picks the best match based on const-ness and parameter types
+        operator_methods: FxHashMap<OperatorBehavior, Vec<FunctionId>>,
         /// Property accessors mapped by property name
         /// Maps property name to (optional getter FunctionId, optional setter FunctionId)
         /// Both virtual properties (int prop { get { } set { } }) and explicit methods
@@ -724,12 +816,29 @@ pub enum TypeDef {
         is_final: bool,
         /// Class is marked 'abstract' (cannot be instantiated, can defer interface implementation)
         is_abstract: bool,
+        /// Template parameter TypeIds (non-empty = this is a template definition)
+        /// For `array<T>`, this contains the TypeId of the TemplateParam for T
+        /// Empty for regular classes and template instances
+        template_params: Vec<TypeId>,
+        /// Template this class was instantiated from (None for regular classes and templates)
+        /// Set for template instances like `array<int>` which point to `array<T>`
+        template: Option<TypeId>,
+        /// Type arguments used to instantiate the template (empty for regular classes and templates)
+        /// For `array<int>`, this would be `[int]`
+        type_args: Vec<DataType>,
+        /// Type kind - determines memory semantics and instantiation method.
+        /// - Value: stack-allocated, uses constructors
+        /// - Reference: FFI heap-allocated, uses factories
+        /// - ScriptObject: VM-managed, uses constructors (default for script classes)
+        type_kind: TypeKind,
     },
 
     /// Interface definition
     Interface {
         name: String,
         qualified_name: String,
+        /// Deterministic hash for this type (computed from qualified_name)
+        type_hash: TypeHash,
         methods: Vec<MethodSignature>,
     },
 
@@ -737,6 +846,8 @@ pub enum TypeDef {
     Enum {
         name: String,
         qualified_name: String,
+        /// Deterministic hash for this type (computed from qualified_name)
+        type_hash: TypeHash,
         values: Vec<(String, i64)>,
     },
 
@@ -744,29 +855,27 @@ pub enum TypeDef {
     Funcdef {
         name: String,
         qualified_name: String,
+        /// Deterministic hash for this type (computed from qualified_name)
+        type_hash: TypeHash,
         params: Vec<DataType>,
         return_type: DataType,
     },
 
-    /// Template definition (array, dictionary, etc.)
-    Template {
+    /// Template parameter placeholder (e.g., T in array<T>)
+    ///
+    /// Each template registers its own template parameter TypeDefs when imported.
+    /// These are used during method signature resolution to identify placeholder types
+    /// that need substitution during template instantiation.
+    TemplateParam {
+        /// Parameter name (e.g., "T", "K", "V")
         name: String,
-        param_count: usize,
-    },
-
-    /// Template instantiation (array<int>, etc.)
-    TemplateInstance {
-        /// The instance name (e.g., "array<int>")
-        name: String,
-        template: TypeId,
-        sub_types: Vec<DataType>,
-        /// Methods for this template instance (constructors, opIndex, etc.)
-        /// These are typically FFI-registered behaviors
-        methods: Vec<FunctionId>,
-        /// Operator methods mapped by behavior
-        operator_methods: FxHashMap<OperatorBehavior, FunctionId>,
-        /// Property accessors mapped by property name
-        properties: FxHashMap<String, PropertyAccessors>,
+        /// Parameter index within the template (0, 1, 2...)
+        index: usize,
+        /// The template TypeId this parameter belongs to
+        owner: TypeId,
+        /// Deterministic hash for this template parameter
+        /// Computed as: owner_hash ^ (PARAM_MARKER[index])
+        type_hash: TypeHash,
     },
 }
 
@@ -774,26 +883,39 @@ impl TypeDef {
     /// Get the name of this type (unqualified)
     pub fn name(&self) -> &str {
         match self {
-            TypeDef::Primitive { kind } => kind.name(),
+            TypeDef::Primitive { kind, .. } => kind.name(),
             TypeDef::Class { name, .. } => name,
             TypeDef::Interface { name, .. } => name,
             TypeDef::Enum { name, .. } => name,
             TypeDef::Funcdef { name, .. } => name,
-            TypeDef::Template { name, .. } => name,
-            TypeDef::TemplateInstance { name, .. } => name,
+            TypeDef::TemplateParam { name, .. } => name,
         }
     }
 
     /// Get the qualified name of this type (with namespace)
     pub fn qualified_name(&self) -> &str {
         match self {
-            TypeDef::Primitive { kind } => kind.name(),
+            TypeDef::Primitive { kind, .. } => kind.name(),
             TypeDef::Class { qualified_name, .. } => qualified_name,
             TypeDef::Interface { qualified_name, .. } => qualified_name,
             TypeDef::Enum { qualified_name, .. } => qualified_name,
             TypeDef::Funcdef { qualified_name, .. } => qualified_name,
-            TypeDef::Template { name, .. } => name,
-            TypeDef::TemplateInstance { name, .. } => name,
+            TypeDef::TemplateParam { name, .. } => name,
+        }
+    }
+
+    /// Get the deterministic type hash for this type.
+    ///
+    /// This hash is computed from the qualified type name and can be used
+    /// for hash-based lookups. Same name = same hash, always.
+    pub fn type_hash(&self) -> TypeHash {
+        match self {
+            TypeDef::Primitive { type_hash, .. } => *type_hash,
+            TypeDef::Class { type_hash, .. } => *type_hash,
+            TypeDef::Interface { type_hash, .. } => *type_hash,
+            TypeDef::Enum { type_hash, .. } => *type_hash,
+            TypeDef::Funcdef { type_hash, .. } => *type_hash,
+            TypeDef::TemplateParam { type_hash, .. } => *type_hash,
         }
     }
 
@@ -802,7 +924,7 @@ impl TypeDef {
         matches!(self, TypeDef::Primitive { .. })
     }
 
-    /// Check if this is a class type
+    /// Check if this is a class type (includes template instances)
     pub fn is_class(&self) -> bool {
         matches!(self, TypeDef::Class { .. })
     }
@@ -822,14 +944,70 @@ impl TypeDef {
         matches!(self, TypeDef::Funcdef { .. })
     }
 
-    /// Check if this is a template
-    pub fn is_template(&self) -> bool {
-        matches!(self, TypeDef::Template { .. })
+    /// Check if this is a template parameter placeholder
+    pub fn is_template_param(&self) -> bool {
+        matches!(self, TypeDef::TemplateParam { .. })
     }
 
-    /// Check if this is a template instance
+    /// Check if this is a template definition (a Class with template parameters)
+    pub fn is_template(&self) -> bool {
+        matches!(self, TypeDef::Class { template_params, .. } if !template_params.is_empty())
+    }
+
+    /// Check if this is a template instance (a Class instantiated from a Template)
     pub fn is_template_instance(&self) -> bool {
-        matches!(self, TypeDef::TemplateInstance { .. })
+        matches!(self, TypeDef::Class { template: Some(_), .. })
+    }
+
+    /// Get the template parameter TypeIds if this is a template definition
+    pub fn get_template_params(&self) -> Option<&[TypeId]> {
+        match self {
+            TypeDef::Class { template_params, .. } if !template_params.is_empty() => Some(template_params),
+            _ => None,
+        }
+    }
+
+    /// Get the template TypeId this class was instantiated from (if any)
+    pub fn template_origin(&self) -> Option<TypeId> {
+        match self {
+            TypeDef::Class { template, .. } => *template,
+            _ => None,
+        }
+    }
+
+    /// Get the type arguments used to instantiate this template (empty for non-template classes)
+    pub fn type_arguments(&self) -> &[DataType] {
+        match self {
+            TypeDef::Class { type_args, .. } => type_args,
+            _ => &[],
+        }
+    }
+
+    /// Get the type kind for this type.
+    /// Returns Value for primitives, the stored type_kind for classes, and Reference for interfaces.
+    pub fn type_kind(&self) -> &TypeKind {
+        // Static default for non-class types
+        static VALUE_TYPE: TypeKind = TypeKind::Value { size: 0, align: 0, is_pod: true };
+        static REFERENCE_TYPE: TypeKind = TypeKind::Reference { kind: crate::types::ReferenceKind::Standard };
+
+        match self {
+            TypeDef::Primitive { .. } => &VALUE_TYPE,
+            TypeDef::Class { type_kind, .. } => type_kind,
+            TypeDef::Interface { .. } => &REFERENCE_TYPE,
+            TypeDef::Enum { .. } => &VALUE_TYPE,
+            TypeDef::Funcdef { .. } => &REFERENCE_TYPE,
+            TypeDef::TemplateParam { .. } => &REFERENCE_TYPE, // Template params default to reference
+        }
+    }
+
+    /// Check if this type is a value type (uses constructors).
+    pub fn is_value_type(&self) -> bool {
+        self.type_kind().is_value()
+    }
+
+    /// Check if this type is a reference type (uses factories).
+    pub fn is_reference_type(&self) -> bool {
+        self.type_kind().is_reference()
     }
 }
 
@@ -868,25 +1046,38 @@ mod tests {
 
     #[test]
     fn primitive_type_constants() {
-        assert_eq!(VOID_TYPE, TypeId(0));
-        assert_eq!(BOOL_TYPE, TypeId(1));
-        assert_eq!(INT8_TYPE, TypeId(2));
-        assert_eq!(INT16_TYPE, TypeId(3));
-        assert_eq!(INT32_TYPE, TypeId(4));
-        assert_eq!(INT64_TYPE, TypeId(5));
-        assert_eq!(UINT8_TYPE, TypeId(6));
-        assert_eq!(UINT16_TYPE, TypeId(7));
-        assert_eq!(UINT32_TYPE, TypeId(8));
-        assert_eq!(UINT64_TYPE, TypeId(9));
-        assert_eq!(FLOAT_TYPE, TypeId(10));
-        assert_eq!(DOUBLE_TYPE, TypeId(11));
+        // All primitives have FFI_BIT set
+        assert_eq!(VOID_TYPE, TypeId(FFI_BIT | 0));
+        assert_eq!(BOOL_TYPE, TypeId(FFI_BIT | 1));
+        assert_eq!(INT8_TYPE, TypeId(FFI_BIT | 2));
+        assert_eq!(INT16_TYPE, TypeId(FFI_BIT | 3));
+        assert_eq!(INT32_TYPE, TypeId(FFI_BIT | 4));
+        assert_eq!(INT64_TYPE, TypeId(FFI_BIT | 5));
+        assert_eq!(UINT8_TYPE, TypeId(FFI_BIT | 6));
+        assert_eq!(UINT16_TYPE, TypeId(FFI_BIT | 7));
+        assert_eq!(UINT32_TYPE, TypeId(FFI_BIT | 8));
+        assert_eq!(UINT64_TYPE, TypeId(FFI_BIT | 9));
+        assert_eq!(FLOAT_TYPE, TypeId(FFI_BIT | 10));
+        assert_eq!(DOUBLE_TYPE, TypeId(FFI_BIT | 11));
     }
 
     #[test]
-    fn builtin_type_constants() {
-        assert_eq!(STRING_TYPE, TypeId(16));
-        assert_eq!(ARRAY_TEMPLATE, TypeId(17));
-        assert_eq!(DICT_TEMPLATE, TypeId(18));
+    fn primitive_types_are_ffi() {
+        assert!(VOID_TYPE.is_ffi());
+        assert!(BOOL_TYPE.is_ffi());
+        assert!(INT32_TYPE.is_ffi());
+        assert!(FLOAT_TYPE.is_ffi());
+        assert!(DOUBLE_TYPE.is_ffi());
+
+        assert!(!VOID_TYPE.is_script());
+        assert!(!INT32_TYPE.is_script());
+    }
+
+    #[test]
+    fn special_types_are_ffi() {
+        assert!(NULL_TYPE.is_ffi());
+        assert!(VARIABLE_PARAM_TYPE.is_ffi());
+        assert!(SELF_TYPE.is_ffi());
     }
 
     #[test]
@@ -1020,7 +1211,7 @@ mod tests {
 
     #[test]
     fn typedef_primitive() {
-        let typedef = TypeDef::Primitive { kind: PrimitiveType::Int32 };
+        let typedef = TypeDef::Primitive { kind: PrimitiveType::Int32, type_hash: crate::types::TypeHash::from_name(PrimitiveType::Int32.name()) };
         assert_eq!(typedef.name(), "int");
         assert_eq!(typedef.qualified_name(), "int");
         assert!(typedef.is_primitive());
@@ -1032,6 +1223,7 @@ mod tests {
         let typedef = TypeDef::Class {
             name: "Player".to_string(),
             qualified_name: "Game::Player".to_string(),
+            type_hash: crate::types::TypeHash::from_name("Game::Player"),
             fields: vec![],
             methods: vec![],
             base_class: None,
@@ -1040,11 +1232,16 @@ mod tests {
             properties: rustc_hash::FxHashMap::default(),
             is_final: false,
             is_abstract: false,
-        };
+            template_params: vec![],
+            template: None,
+            type_args: vec![],
+        type_kind: crate::types::TypeKind::reference(),
+            };
         assert_eq!(typedef.name(), "Player");
         assert_eq!(typedef.qualified_name(), "Game::Player");
         assert!(typedef.is_class());
         assert!(!typedef.is_primitive());
+        assert!(!typedef.is_template_instance());
     }
 
     #[test]
@@ -1052,6 +1249,7 @@ mod tests {
         let typedef = TypeDef::Class {
             name: "Player".to_string(),
             qualified_name: "Player".to_string(),
+            type_hash: crate::types::TypeHash::from_name("Player"),
             fields: vec![
                 FieldDef::new(
                     "health".to_string(),
@@ -1066,7 +1264,11 @@ mod tests {
             properties: rustc_hash::FxHashMap::default(),
             is_final: false,
             is_abstract: false,
-        };
+            template_params: vec![],
+            template: None,
+            type_args: vec![],
+        type_kind: crate::types::TypeKind::reference(),
+            };
 
         if let TypeDef::Class { fields, methods, base_class, interfaces, .. } = typedef {
             assert_eq!(fields.len(), 1);
@@ -1083,6 +1285,7 @@ mod tests {
         let typedef = TypeDef::Interface {
             name: "IDrawable".to_string(),
             qualified_name: "Graphics::IDrawable".to_string(),
+            type_hash: crate::types::TypeHash::from_name("Graphics::IDrawable"),
             methods: vec![],
         };
         assert_eq!(typedef.name(), "IDrawable");
@@ -1096,6 +1299,7 @@ mod tests {
         let typedef = TypeDef::Enum {
             name: "Color".to_string(),
             qualified_name: "Color".to_string(),
+            type_hash: crate::types::TypeHash::from_name("Color"),
             values: vec![
                 ("Red".to_string(), 0),
                 ("Green".to_string(), 1),
@@ -1117,6 +1321,7 @@ mod tests {
         let typedef = TypeDef::Funcdef {
             name: "Callback".to_string(),
             qualified_name: "Callback".to_string(),
+            type_hash: crate::types::TypeHash::from_name("Callback"),
             params: vec![DataType::simple(INT32_TYPE)],
             return_type: DataType::simple(VOID_TYPE),
         };
@@ -1131,37 +1336,82 @@ mod tests {
 
     #[test]
     fn typedef_template() {
-        let typedef = TypeDef::Template {
+        // Template param for T
+        let t_param_id = TypeId::new(100);
+        let typedef = TypeDef::Class {
             name: "array".to_string(),
-            param_count: 1,
-        };
+            qualified_name: "array".to_string(),
+            type_hash: crate::types::TypeHash::from_name("array"),
+            fields: vec![],
+            methods: vec![],
+            base_class: None,
+            interfaces: vec![],
+            operator_methods: FxHashMap::default(),
+            properties: FxHashMap::default(),
+            is_final: false,
+            is_abstract: false,
+            template_params: vec![t_param_id],  // Has template params = is a template
+            template: None,
+            type_args: vec![],
+        type_kind: crate::types::TypeKind::reference(),
+            };
         assert_eq!(typedef.name(), "array");
         assert!(typedef.is_template());
         assert!(!typedef.is_template_instance());
+        assert!(typedef.is_class());
+        assert_eq!(typedef.get_template_params(), Some(&[t_param_id][..]));
+    }
+
+    #[test]
+    fn typedef_template_param() {
+        let owner = TypeId::new(200);
+        let owner_hash = crate::types::TypeHash::from_name("TestTemplate");
+        let typedef = TypeDef::TemplateParam {
+            name: "T".to_string(),
+            index: 0,
+            owner,
+            type_hash: crate::types::TypeHash::from_template_instance(owner_hash, &[crate::types::TypeHash(0)]),
+        };
+        assert_eq!(typedef.name(), "T");
+        assert_eq!(typedef.qualified_name(), "T");
+        assert!(typedef.is_template_param());
+        assert!(!typedef.is_class());
+        assert!(!typedef.is_template());
     }
 
     #[test]
     fn typedef_template_instance() {
-        let typedef = TypeDef::TemplateInstance {
-            name: "array<int>".to_string(),
-            template: ARRAY_TEMPLATE,
-            sub_types: vec![DataType::simple(INT32_TYPE)],
+        // Use a test-local template TypeId
+        let test_template = TypeId(100);
+
+        let typedef = TypeDef::Class {
+            name: "Container<int>".to_string(),
+            qualified_name: "Container<int>".to_string(),
+            type_hash: crate::types::TypeHash::from_name("Container<int>"),
+            fields: vec![],
             methods: Vec::new(),
+            base_class: None,
+            interfaces: vec![],
             operator_methods: FxHashMap::default(),
             properties: FxHashMap::default(),
+            is_final: false,
+            is_abstract: false,
+            template_params: vec![],  // Instance has empty template_params
+            template: Some(test_template),
+            type_args: vec![DataType::simple(INT32_TYPE)],
+            type_kind: TypeKind::reference(),
         };
         assert!(typedef.is_template_instance());
         assert!(!typedef.is_template());
+        assert!(typedef.is_class());
 
-        if let TypeDef::TemplateInstance { template, sub_types, .. } = typedef {
-            assert_eq!(template, ARRAY_TEMPLATE);
-            assert_eq!(sub_types.len(), 1);
-        }
+        assert_eq!(typedef.template_origin(), Some(test_template));
+        assert_eq!(typedef.type_arguments().len(), 1);
     }
 
     #[test]
     fn typedef_all_type_checks() {
-        let primitive = TypeDef::Primitive { kind: PrimitiveType::Int32 };
+        let primitive = TypeDef::Primitive { kind: PrimitiveType::Int32, type_hash: crate::types::TypeHash::from_name(PrimitiveType::Int32.name()) };
         assert!(primitive.is_primitive());
         assert!(!primitive.is_class());
         assert!(!primitive.is_interface());
@@ -1581,24 +1831,51 @@ mod tests {
     // TypeDef name and qualified_name tests for template instance
     #[test]
     fn typedef_template_instance_name() {
-        let typedef = TypeDef::TemplateInstance {
-            name: "array<int>".to_string(),
-            template: ARRAY_TEMPLATE,
-            sub_types: vec![DataType::simple(INT32_TYPE)],
+        // Use a test-local template TypeId
+        let test_template = TypeId(100);
+
+        let typedef = TypeDef::Class {
+            name: "Container<int>".to_string(),
+            qualified_name: "Container<int>".to_string(),
+            type_hash: crate::types::TypeHash::from_name("Container<int>"),
+            fields: vec![],
             methods: Vec::new(),
+            base_class: None,
+            interfaces: vec![],
             operator_methods: FxHashMap::default(),
             properties: FxHashMap::default(),
+            is_final: false,
+            is_abstract: false,
+            template_params: vec![],
+            template: Some(test_template),
+            type_args: vec![DataType::simple(INT32_TYPE)],
+            type_kind: TypeKind::reference(),
         };
-        assert_eq!(typedef.name(), "array<int>");
-        assert_eq!(typedef.qualified_name(), "array<int>");
+        assert_eq!(typedef.name(), "Container<int>");
+        assert_eq!(typedef.qualified_name(), "Container<int>");
     }
 
     #[test]
     fn typedef_template_qualified_name() {
-        let typedef = TypeDef::Template {
+        // Template defined as Class with template_params
+        let t_param_id = TypeId::new(100);
+        let typedef = TypeDef::Class {
             name: "array".to_string(),
-            param_count: 1,
-        };
+            qualified_name: "array".to_string(),
+            type_hash: crate::types::TypeHash::from_name("array"),
+            fields: vec![],
+            methods: vec![],
+            base_class: None,
+            interfaces: vec![],
+            operator_methods: FxHashMap::default(),
+            properties: FxHashMap::default(),
+            is_final: false,
+            is_abstract: false,
+            template_params: vec![t_param_id],
+            template: None,
+            type_args: vec![],
+        type_kind: crate::types::TypeKind::reference(),
+            };
         assert_eq!(typedef.qualified_name(), "array");
     }
 
@@ -1632,6 +1909,32 @@ mod tests {
     // NULL_TYPE constant test
     #[test]
     fn null_type_constant() {
-        assert_eq!(NULL_TYPE, TypeId(12));
+        assert_eq!(NULL_TYPE, TypeId(FFI_BIT | 12));
+    }
+
+    #[test]
+    fn type_id_ffi_vs_script() {
+        // FFI type has high bit set
+        let ffi_id = TypeId::new(FFI_BIT | 42);
+        assert!(ffi_id.is_ffi());
+        assert!(!ffi_id.is_script());
+
+        // Script type has high bit clear
+        let script_id = TypeId::new(42);
+        assert!(!script_id.is_ffi());
+        assert!(script_id.is_script());
+    }
+
+    #[test]
+    fn function_id_ffi_vs_script() {
+        // FFI function has high bit set
+        let ffi_id = FunctionId::new(FFI_BIT | 100);
+        assert!(ffi_id.is_ffi());
+        assert!(!ffi_id.is_script());
+
+        // Script function has high bit clear
+        let script_id = FunctionId::new(100);
+        assert!(!script_id.is_ffi());
+        assert!(script_id.is_script());
     }
 }

@@ -305,7 +305,7 @@ impl DataType {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::semantic::types::type_def::{INT32_TYPE, BOOL_TYPE, FLOAT_TYPE, STRING_TYPE};
+    use crate::semantic::types::type_def::{INT32_TYPE, BOOL_TYPE, FLOAT_TYPE};
     use std::collections::HashSet;
 
     #[test]
@@ -545,12 +545,6 @@ mod tests {
     }
 
     #[test]
-    fn works_with_string_type() {
-        let dt = DataType::simple(STRING_TYPE);
-        assert_eq!(dt.type_id, STRING_TYPE);
-    }
-
-    #[test]
     fn works_with_bool_type() {
         let dt = DataType::with_const(BOOL_TYPE);
         assert_eq!(dt.type_id, BOOL_TYPE);
@@ -577,8 +571,8 @@ mod tests {
 
     #[test]
     fn ref_inout_creation() {
-        let dt = DataType::with_ref_inout(STRING_TYPE);
-        assert_eq!(dt.type_id, STRING_TYPE);
+        let dt = DataType::with_ref_inout(INT32_TYPE);
+        assert_eq!(dt.type_id, INT32_TYPE);
         assert_eq!(dt.ref_modifier, RefModifier::InOut);
         assert!(!dt.is_const);
         assert!(!dt.is_handle);

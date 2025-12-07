@@ -4,18 +4,23 @@
 //! classes, interfaces, enums, and namespaces.
 
 use crate::ast::{DeclModifiers, FuncAttr, Ident, ParseError, ParseErrorKind, PropertyAccessorKind as PropAccessorKind, Visibility};
-use crate::ast::decl::*;
+use crate::ast::decl::{
+    ClassDecl, ClassMember, EnumDecl, Enumerator, FieldDecl, FuncdefDecl, FunctionDecl,
+    FunctionParam, FunctionSignatureDecl, GlobalVarDecl, ImportDecl, InterfaceDecl,
+    InterfaceMember, InterfaceMethod, Item, MixinDecl, NamespaceDecl, PropertyAccessor,
+    PropertyDecl, TypedefDecl, UsingNamespaceDecl, VirtualPropertyDecl,
+};
 use crate::ast::expr::IdentExpr;
 use crate::ast::types::ParamType;
 use crate::lexer::TokenKind;
 use super::parser::Parser;
 
-impl<'src, 'ast> Parser<'src, 'ast> {
+impl<'ast> Parser<'ast> {
     /// Parse a complete script.
     ///
     /// This is the main entry point for parsing AngelScript source code.
     /// Returns the items slice and span for the entire script.
-    pub fn parse_script(&mut self) -> Result<(&'ast [Item<'src, 'ast>], crate::lexer::Span), ParseError> {
+    pub fn parse_script(&mut self) -> Result<(&'ast [Item<'ast>], crate::lexer::Span), ParseError> {
         let start_span = self.peek().span;
         let mut items = Vec::new();
 
@@ -47,7 +52,7 @@ impl<'src, 'ast> Parser<'src, 'ast> {
     }
 
     /// Parse a top-level item.
-    pub fn parse_item(&mut self) -> Result<Item<'src, 'ast>, ParseError> {
+    pub fn parse_item(&mut self) -> Result<Item<'ast>, ParseError> {
         // Skip empty statements
         if self.eat(TokenKind::Semicolon).is_some() {
             return self.parse_item();
@@ -63,7 +68,7 @@ impl<'src, 'ast> Parser<'src, 'ast> {
             TokenKind::Class => self.parse_class(modifiers, visibility),
             TokenKind::Interface => self.parse_interface(modifiers),
             TokenKind::Enum => self.parse_enum(modifiers),
-            TokenKind::FuncDef => self.parse_funcdef(modifiers),
+            TokenKind::FuncDef => self.parse_funcdef(modifiers, TokenKind::Semicolon),
             TokenKind::Namespace => self.parse_namespace(),
             TokenKind::Using => self.parse_using_namespace(),
             TokenKind::Typedef => self.parse_typedef(),
@@ -217,7 +222,7 @@ impl<'src, 'ast> Parser<'src, 'ast> {
     /// Parse function parameters.
     ///
     /// Grammar: `'(' ('void' | (TYPE TYPEMOD ('...' | IDENTIFIER? ('=' EXPR)?) (',' TYPE TYPEMOD ('...' | IDENTIFIER? ('=' EXPR)?))*))? ')'`
-    pub fn parse_function_params(&mut self) -> Result<&'ast [FunctionParam<'src, 'ast>], ParseError> {
+    pub fn parse_function_params(&mut self) -> Result<&'ast [FunctionParam<'ast>], ParseError> {
         self.expect(TokenKind::LeftParen)?;
 
         // Check for void or empty parameter list
@@ -247,7 +252,7 @@ impl<'src, 'ast> Parser<'src, 'ast> {
     }
 
     /// Parse a single function parameter.
-    fn parse_function_param(&mut self) -> Result<FunctionParam<'src, 'ast>, ParseError> {
+    fn parse_function_param(&mut self) -> Result<FunctionParam<'ast>, ParseError> {
         let start_span = self.peek().span;
 
         // Check for variadic parameter (...)
@@ -328,7 +333,7 @@ impl<'src, 'ast> Parser<'src, 'ast> {
         &mut self,
         modifiers: DeclModifiers,
         visibility: Visibility,
-    ) -> Result<Item<'src, 'ast>, ParseError> {
+    ) -> Result<Item<'ast>, ParseError> {
         let start_span = self.peek().span;
 
         // Check for destructor (~ClassName)
@@ -425,6 +430,102 @@ impl<'src, 'ast> Parser<'src, 'ast> {
                 span: start_span.merge(end_span),
             }))
         }
+    }
+
+    // =========================================================================
+    // Declaration Parsing
+    // =========================================================================
+
+    /// Parse an function signature declaration.
+    ///
+    /// This parses a function signature without modifiers, visibility, or body.
+    /// It's designed for registration strings like:
+    /// - `"int add(int a, int b)"`
+    /// - `"void print(const string& in msg)"`
+    /// - `"int getValue() const"`
+    ///
+    /// # Returns
+    ///
+    /// Returns a `FunctionSignatureDecl` containing the parsed signature.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - The declaration string is malformed
+    /// - There are trailing tokens after the signature
+    pub fn parse_function_signature(
+        &mut self,
+    ) -> Result<FunctionSignatureDecl<'ast>, ParseError> {
+        let start_span = self.peek().span;
+
+        // Parse return type
+        let return_type = self.parse_return_type()?;
+
+        // Parse name
+        let name_token = self.expect(TokenKind::Identifier)?;
+        let name = Ident::new(name_token.lexeme, name_token.span);
+
+        // Parse parameters
+        let params = self.parse_function_params()?;
+
+        // Check for const method
+        let is_const = self.eat(TokenKind::Const).is_some();
+
+        // Parse function attributes
+        let attrs = self.parse_func_attrs()?;
+
+        // Expect end of input (no body, no semicolon required)
+        self.expect_eof()?;
+
+        let span = start_span.merge(
+            self.buffer.get(self.position.saturating_sub(1))
+                .map(|t| t.span)
+                .unwrap_or(start_span)
+        );
+
+        Ok(FunctionSignatureDecl {
+            return_type,
+            name,
+            params,
+            is_const,
+            attrs,
+            span,
+        })
+    }
+
+    /// Parse a property declaration.
+    ///
+    /// This parses a property signature without initializer.
+    /// It's designed for registration strings like:
+    /// - `"int score"`
+    /// - `"const string name"`
+    /// - `"MyClass@ obj"`
+    ///
+    /// # Returns
+    ///
+    /// Returns a `PropertyDecl` containing the parsed property.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - The declaration string is malformed
+    /// - There are trailing tokens after the property
+    pub fn parse_property_decl(&mut self) -> Result<PropertyDecl<'ast>, ParseError> {
+        let start_span = self.peek().span;
+
+        // Parse the type expression
+        let ty = self.parse_type()?;
+
+        // Parse the identifier name
+        let name_token = self.expect(TokenKind::Identifier)?;
+        let name = Ident::new(name_token.lexeme, name_token.span);
+
+        // Expect end of input
+        self.expect_eof()?;
+
+        let span = start_span.merge(name_token.span);
+
+        Ok(PropertyDecl { ty, name, span })
     }
 }
 
@@ -1953,7 +2054,7 @@ mod tests {
     }
 }
 
-impl<'src, 'ast> Parser<'src, 'ast> {
+impl<'ast> Parser<'ast> {
     /// Parse a class declaration.
     ///
     /// Grammar: `'class' IDENTIFIER ((':' IDENTIFIER (',' IDENTIFIER)*)? '{' (VIRTPROP | FUNC | VAR | FUNCDEF)* '}')?`
@@ -1961,7 +2062,7 @@ impl<'src, 'ast> Parser<'src, 'ast> {
         &mut self,
         modifiers: DeclModifiers,
         _visibility: Visibility,
-    ) -> Result<Item<'src, 'ast>, ParseError> {
+    ) -> Result<Item<'ast>, ParseError> {
         let start_span = self.expect(TokenKind::Class)?.span;
 
         let name_token = self.expect(TokenKind::Identifier)?;
@@ -1971,7 +2072,7 @@ impl<'src, 'ast> Parser<'src, 'ast> {
         // Example: class Container<T> { }
         // Note: Scripts cannot define template classes, but parser accepts them
         // Semantic analyzer will reject template class definitions in scripts
-        let template_params_vec: Vec<Ident<'src>> = if self.check(TokenKind::Less) {
+        let template_params_vec: Vec<Ident<'ast>> = if self.check(TokenKind::Less) {
             let result = self.parse_template_param_names()?;
             result.to_vec()
         } else {
@@ -2048,14 +2149,14 @@ impl<'src, 'ast> Parser<'src, 'ast> {
     }
 
     /// Parse a class member.
-    fn parse_class_member(&mut self) -> Result<ClassMember<'src, 'ast>, ParseError> {
+    fn parse_class_member(&mut self) -> Result<ClassMember<'ast>, ParseError> {
         // Parse visibility and modifiers
         let visibility = self.parse_visibility()?;
         let modifiers = self.parse_modifiers()?;
 
         // Check for funcdef
         if self.check(TokenKind::FuncDef) {
-            let funcdef = self.parse_funcdef(modifiers)?;
+            let funcdef = self.parse_funcdef(modifiers, TokenKind::Semicolon)?;
             if let Item::Funcdef(fd) = funcdef {
                 return Ok(ClassMember::Funcdef(fd));
             } else {
@@ -2208,7 +2309,7 @@ impl<'src, 'ast> Parser<'src, 'ast> {
     }
 
     /// Parse a property accessor (get or set).
-    fn parse_property_accessor(&mut self) -> Result<PropertyAccessor<'src, 'ast>, ParseError> {
+    fn parse_property_accessor(&mut self) -> Result<PropertyAccessor<'ast>, ParseError> {
         let start_span = self.peek().span;
 
         // Parse accessor kind
@@ -2257,7 +2358,7 @@ impl<'src, 'ast> Parser<'src, 'ast> {
     }
 
     /// Parse an interface declaration.
-    pub fn parse_interface(&mut self, modifiers: DeclModifiers) -> Result<Item<'src, 'ast>, ParseError> {
+    pub fn parse_interface(&mut self, modifiers: DeclModifiers) -> Result<Item<'ast>, ParseError> {
         let start_span = self.expect(TokenKind::Interface)?.span;
 
         let name_token = self.expect(TokenKind::Identifier)?;
@@ -2329,7 +2430,7 @@ impl<'src, 'ast> Parser<'src, 'ast> {
     }
 
     /// Parse an interface member.
-    fn parse_interface_member(&mut self) -> Result<InterfaceMember<'src, 'ast>, ParseError> {
+    fn parse_interface_member(&mut self) -> Result<InterfaceMember<'ast>, ParseError> {
         let start_span = self.peek().span;
 
         let return_type = self.parse_return_type()?;
@@ -2372,7 +2473,7 @@ impl<'src, 'ast> Parser<'src, 'ast> {
     }
 
     /// Parse an enum declaration.
-    pub fn parse_enum(&mut self, modifiers: DeclModifiers) -> Result<Item<'src, 'ast>, ParseError> {
+    pub fn parse_enum(&mut self, modifiers: DeclModifiers) -> Result<Item<'ast>, ParseError> {
         let start_span = self.expect(TokenKind::Enum)?.span;
 
         let name_token = self.expect(TokenKind::Identifier)?;
@@ -2421,7 +2522,7 @@ impl<'src, 'ast> Parser<'src, 'ast> {
     }
 
     /// Parse an enumerator.
-    fn parse_enumerator(&mut self) -> Result<Enumerator<'src, 'ast>, ParseError> {
+    fn parse_enumerator(&mut self) -> Result<Enumerator<'ast>, ParseError> {
         let name_token = self.expect(TokenKind::Identifier)?;
         let name = Ident::new(name_token.lexeme, name_token.span);
 
@@ -2441,7 +2542,7 @@ impl<'src, 'ast> Parser<'src, 'ast> {
     }
 
     /// Parse a namespace declaration.
-    pub fn parse_namespace(&mut self) -> Result<Item<'src, 'ast>, ParseError> {
+    pub fn parse_namespace(&mut self) -> Result<Item<'ast>, ParseError> {
         let start_span = self.expect(TokenKind::Namespace)?.span;
 
         // Parse namespace path (can be nested: A::B::C)
@@ -2478,7 +2579,7 @@ impl<'src, 'ast> Parser<'src, 'ast> {
     /// Parse a using namespace directive.
     ///
     /// Syntax: `using namespace A::B::C;`
-    pub fn parse_using_namespace(&mut self) -> Result<Item<'src, 'ast>, ParseError> {
+    pub fn parse_using_namespace(&mut self) -> Result<Item<'ast>, ParseError> {
         let start_span = self.expect(TokenKind::Using)?.span;
         self.expect(TokenKind::Namespace)?;
 
@@ -2495,7 +2596,7 @@ impl<'src, 'ast> Parser<'src, 'ast> {
     }
 
     /// Parse a typedef declaration.
-    pub fn parse_typedef(&mut self) -> Result<Item<'src, 'ast>, ParseError> {
+    pub fn parse_typedef(&mut self) -> Result<Item<'ast>, ParseError> {
         let start_span = self.expect(TokenKind::Typedef)?.span;
 
         let base_type = self.parse_type()?;
@@ -2511,7 +2612,15 @@ impl<'src, 'ast> Parser<'src, 'ast> {
     }
 
     /// Parse a funcdef declaration.
-    pub fn parse_funcdef(&mut self, modifiers: DeclModifiers) -> Result<Item<'src, 'ast>, ParseError> {
+    ///
+    /// The `end_token` parameter specifies what token terminates the declaration:
+    /// - `TokenKind::Semicolon` for script parsing (e.g., `funcdef void Callback();`)
+    /// - `TokenKind::Eof` for FFI parsing (e.g., `funcdef void Callback()`)
+    pub fn parse_funcdef(
+        &mut self,
+        modifiers: DeclModifiers,
+        end_token: TokenKind,
+    ) -> Result<Item<'ast>, ParseError> {
         let start_span = self.expect(TokenKind::FuncDef)?.span;
 
         let return_type = self.parse_return_type()?;
@@ -2528,7 +2637,7 @@ impl<'src, 'ast> Parser<'src, 'ast> {
         };
 
         let params = self.parse_function_params()?;
-        let end_span = self.expect(TokenKind::Semicolon)?.span;
+        let end_span = self.expect(end_token)?.span;
 
         Ok(Item::Funcdef(FuncdefDecl {
             modifiers,
@@ -2541,7 +2650,7 @@ impl<'src, 'ast> Parser<'src, 'ast> {
     }
 
     /// Parse a mixin declaration.
-    pub fn parse_mixin(&mut self, modifiers: DeclModifiers) -> Result<Item<'src, 'ast>, ParseError> {
+    pub fn parse_mixin(&mut self, modifiers: DeclModifiers) -> Result<Item<'ast>, ParseError> {
         let start_span = self.eat(TokenKind::Mixin)
             .ok_or_else(|| {
                 let span = self.peek().span;
@@ -2570,7 +2679,7 @@ impl<'src, 'ast> Parser<'src, 'ast> {
     }
 
     /// Parse an import declaration.
-    pub fn parse_import(&mut self) -> Result<Item<'src, 'ast>, ParseError> {
+    pub fn parse_import(&mut self) -> Result<Item<'ast>, ParseError> {
         let start_span = self.expect(TokenKind::Import)?.span;
 
         let return_type = self.parse_return_type()?;
@@ -2611,7 +2720,7 @@ impl<'src, 'ast> Parser<'src, 'ast> {
     }
 
     /// Parse a comma-separated list of identifiers.
-    fn parse_ident_list(&mut self) -> Result<Vec<Ident<'src>>, ParseError> {
+    fn parse_ident_list(&mut self) -> Result<Vec<Ident<'ast>>, ParseError> {
         let mut tokens = Vec::new();
         loop {
             let token = self.expect(TokenKind::Identifier)?;
@@ -2627,7 +2736,7 @@ impl<'src, 'ast> Parser<'src, 'ast> {
 
     /// Parse a comma-separated list of scoped identifiers (for inheritance lists).
     /// Supports scoped names like `Namespace::Interface`.
-    fn parse_scoped_ident_list(&mut self) -> Result<Vec<IdentExpr<'src, 'ast>>, ParseError> {
+    fn parse_scoped_ident_list(&mut self) -> Result<Vec<IdentExpr<'ast>>, ParseError> {
         let mut idents = Vec::new();
         loop {
             let ident_expr = self.parse_scoped_ident()?;
@@ -2641,7 +2750,7 @@ impl<'src, 'ast> Parser<'src, 'ast> {
     }
 
     /// Parse a scoped identifier like `Namespace::Type` or just `Type`.
-    fn parse_scoped_ident(&mut self) -> Result<IdentExpr<'src, 'ast>, ParseError> {
+    fn parse_scoped_ident(&mut self) -> Result<IdentExpr<'ast>, ParseError> {
         use crate::ast::Scope;
 
         let start_span = self.peek().span;
@@ -2691,7 +2800,7 @@ impl<'src, 'ast> Parser<'src, 'ast> {
     }
 
     /// Parse a ::-separated list of identifiers (namespace path).
-    fn parse_namespace_path(&mut self) -> Result<Vec<Ident<'src>>, ParseError> {
+    fn parse_namespace_path(&mut self) -> Result<Vec<Ident<'ast>>, ParseError> {
         let mut tokens = Vec::new();
         let token = self.expect(TokenKind::Identifier)?;
         tokens.push((token.lexeme, token.span));
@@ -2709,7 +2818,7 @@ impl<'src, 'ast> Parser<'src, 'ast> {
     /// Scripts cannot define template classes/functions, but the parser accepts them.
     ///
     /// Example: `<T>`, `<T, U>`, `<K, V>`
-    fn parse_template_param_names(&mut self) -> Result<&'ast [Ident<'src>], ParseError> {
+    fn parse_template_param_names(&mut self) -> Result<&'ast [Ident<'ast>], ParseError> {
         self.expect(TokenKind::Less)?;
 
         let mut tokens = Vec::new();
@@ -2727,7 +2836,7 @@ impl<'src, 'ast> Parser<'src, 'ast> {
         self.expect(TokenKind::Greater)?;
 
         // Convert tokens to Idents after all parsing is done
-        let params: Vec<Ident<'src>> = tokens.into_iter().map(|(name, span)| Ident::new(name, span)).collect();
+        let params: Vec<Ident<'ast>> = tokens.into_iter().map(|(name, span)| Ident::new(name, span)).collect();
         let result = self.arena.alloc_slice_copy(&params);
         Ok(result)
     }

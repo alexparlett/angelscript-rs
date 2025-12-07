@@ -1,50 +1,79 @@
-//! Global registry for types, functions, and variables.
+//! Script-only registry for types, functions, and variables.
 //!
-//! The Registry is the central storage for all global declarations in an AngelScript
-//! program. It stores types (primitives, classes, interfaces, enums), functions
+//! The ScriptRegistry is storage for script-defined declarations in an AngelScript
+//! program. It stores script-defined types (classes, interfaces, enums), functions
 //! (with overloading support), and global variables.
+//!
+//! FFI types (including primitives) are stored in `FfiRegistry` and accessed via
+//! `CompilationContext` which provides a unified lookup interface.
 //!
 //! # Architecture
 //!
-//! - **Types**: Stored in a Vec with TypeId as index, plus a name→TypeId map
-//! - **Functions**: Stored in a Vec with FunctionId as index, plus a name→[FunctionId] map for overloading
-//! - **Template Cache**: Memoizes template instantiations to avoid duplicates
+//! - **Types**: Stored in HashMap with TypeId as key (script TypeIds don't have FFI_BIT)
+//! - **Functions**: Stored in HashMap with FunctionId as key, plus a name→[FunctionId] map for overloading
+//! - **Behaviors**: Stored separately from TypeDef for lifecycle callbacks
 //!
 //! # Example
 //!
-//! ```
-//! use angelscript::semantic::{Registry, TypeDef, PrimitiveType, INT32_TYPE};
+//! ```ignore
+//! use angelscript::semantic::ScriptRegistry;
 //!
-//! let registry = Registry::new();
-//!
-//! // Built-in types are pre-registered
-//! let int_type = registry.get_type(INT32_TYPE);
-//! assert!(int_type.is_primitive());
+//! let registry = ScriptRegistry::new();
+//! // Script registry starts empty - no primitives
+//! // Primitives are in FfiRegistry, accessed via CompilationContext
 //! ```
 
-use super::data_type::{DataType, RefModifier};
+use super::data_type::DataType;
 use super::type_def::{
-    TypeId, TypeDef, FunctionId, OperatorBehavior, PrimitiveType, FunctionTraits, PropertyAccessors,
-    Visibility, VOID_TYPE, BOOL_TYPE, INT8_TYPE, INT16_TYPE, INT32_TYPE, INT64_TYPE,
-    UINT8_TYPE, UINT16_TYPE, UINT32_TYPE, UINT64_TYPE, FLOAT_TYPE, DOUBLE_TYPE,
-    STRING_TYPE, ARRAY_TEMPLATE, DICT_TEMPLATE, FIRST_USER_TYPE_ID,
+    FunctionId, FunctionTraits, OperatorBehavior,
+    PropertyAccessors, TypeDef, TypeId, Visibility,
 };
-use crate::semantic::error::{SemanticError, SemanticErrorKind};
-use crate::lexer::Span;
+use crate::types::TypeHash;
 use crate::ast::expr::Expr;
 use rustc_hash::FxHashMap;
 
+/// A script function parameter with type and optional default value.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ScriptParam<'ast> {
+    /// Parameter name
+    pub name: String,
+    /// Parameter type
+    pub data_type: DataType,
+    /// Default value expression (if any)
+    pub default: Option<&'ast Expr<'ast>>,
+}
+
+impl<'ast> ScriptParam<'ast> {
+    /// Create a new parameter with no default.
+    pub fn new(name: impl Into<String>, data_type: DataType) -> Self {
+        Self {
+            name: name.into(),
+            data_type,
+            default: None,
+        }
+    }
+
+    /// Create a new parameter with a default value.
+    pub fn with_default(name: impl Into<String>, data_type: DataType, default: &'ast Expr<'ast>) -> Self {
+        Self {
+            name: name.into(),
+            data_type,
+            default: Some(default),
+        }
+    }
+}
+
 /// Function definition with complete signature
 #[derive(Debug, Clone, PartialEq)]
-pub struct FunctionDef<'src, 'ast> {
+pub struct FunctionDef<'ast> {
     /// Function identifier
     pub id: FunctionId,
     /// Function name (unqualified)
     pub name: String,
     /// Namespace path (e.g., ["Game", "Player"])
     pub namespace: Vec<String>,
-    /// Parameter types
-    pub params: Vec<DataType>,
+    /// Parameters with types and optional defaults
+    pub params: Vec<ScriptParam<'ast>>,
     /// Return type
     pub return_type: DataType,
     /// Object type if this is a method
@@ -53,16 +82,17 @@ pub struct FunctionDef<'src, 'ast> {
     pub traits: FunctionTraits,
     /// True if this is a native (FFI) function
     pub is_native: bool,
-    /// Default argument expressions (one per parameter, None if no default)
-    pub default_args: Vec<Option<&'ast Expr<'src, 'ast>>>,
     /// Visibility (public, private, protected) - only meaningful for methods
     pub visibility: Visibility,
     /// Whether the function signature has been filled in by Pass 2a
     /// Functions are registered with empty signatures in Pass 1, then filled in Pass 2a
     pub signature_filled: bool,
+    /// Deterministic hash for identity across compilation units
+    /// This is computed from the qualified name and parameter types
+    pub func_hash: TypeHash,
 }
 
-impl<'src, 'ast> FunctionDef<'src, 'ast> {
+impl<'ast> FunctionDef<'ast> {
     /// Get the qualified name of this function
     pub fn qualified_name(&self) -> String {
         if self.namespace.is_empty() {
@@ -101,7 +131,7 @@ impl GlobalVarDef {
 /// They are not real types and cannot be instantiated. When a class includes a mixin,
 /// the mixin's methods and properties are copied into the class.
 #[derive(Debug, Clone)]
-pub struct MixinDef<'src, 'ast> {
+pub struct MixinDef<'ast> {
     /// Mixin name (unqualified)
     pub name: String,
     /// Qualified name with namespace
@@ -112,476 +142,89 @@ pub struct MixinDef<'src, 'ast> {
     pub required_interfaces: Vec<String>,
     /// Members of the mixin class (methods and fields)
     /// This is a slice into arena-allocated memory
-    pub members: &'ast [crate::ast::decl::ClassMember<'src, 'ast>],
+    pub members: &'ast [crate::ast::decl::ClassMember<'ast>],
 }
 
-impl<'src, 'ast> MixinDef<'src, 'ast> {
+impl<'ast> MixinDef<'ast> {
     /// Get the qualified name of this mixin
     pub fn qualified_name(&self) -> &str {
         &self.qualified_name
     }
 }
 
-/// Global registry for all types, functions, and variables
-#[derive(Debug, Clone)]
-pub struct Registry<'src, 'ast> {
-    // Type storage
-    types: Vec<TypeDef>,
+/// Script-only registry for all script-defined types, functions, and variables.
+///
+/// This registry only holds script-defined items. FFI types (including primitives)
+/// are stored in `FfiRegistry`. Use `CompilationContext` for unified access to both.
+#[derive(Clone)]
+pub struct ScriptRegistry<'ast> {
+    // Type storage - HashMap for O(1) lookup by TypeId (script TypeIds don't have FFI_BIT)
+    types: FxHashMap<TypeId, TypeDef>,
     type_by_name: FxHashMap<String, TypeId>,
 
+    // Type behaviors (lifecycle, initialization) - stored separately from TypeDef
+    // This follows the C++ AngelScript pattern where behaviors are registered separately
+    behaviors: FxHashMap<TypeId, super::behaviors::TypeBehaviors>,
+
     // Function storage
-    functions: FxHashMap<FunctionId, FunctionDef<'src, 'ast>>,
+    functions: FxHashMap<FunctionId, FunctionDef<'ast>>,
     func_by_name: FxHashMap<String, Vec<FunctionId>>,
 
     // Global variable storage
     global_vars: FxHashMap<String, GlobalVarDef>,
 
     // Mixin storage (mixins are not types, stored separately)
-    mixins: FxHashMap<String, MixinDef<'src, 'ast>>,
+    mixins: FxHashMap<String, MixinDef<'ast>>,
 
-    // Template instantiation cache (Template TypeId + arg TypeIds → Instance TypeId)
-    // Note: Uses TypeId not DataType so array<int> and array<const int> share the same instance
-    template_cache: FxHashMap<(TypeId, Vec<TypeId>), TypeId>,
-
-    // Fixed TypeIds for quick access
-    pub void_type: TypeId,
-    pub bool_type: TypeId,
-    pub int8_type: TypeId,
-    pub int16_type: TypeId,
-    pub int32_type: TypeId,
-    pub int64_type: TypeId,
-    pub uint8_type: TypeId,
-    pub uint16_type: TypeId,
-    pub uint32_type: TypeId,
-    pub uint64_type: TypeId,
-    pub float_type: TypeId,
-    pub double_type: TypeId,
-    pub string_type: TypeId,
-    pub array_template: TypeId,
-    pub dict_template: TypeId,
+    // === Hash-Based Lookups (Phase 2 TypeHash Migration) ===
+    /// Types indexed by TypeHash (secondary index)
+    types_by_hash: FxHashMap<TypeHash, TypeId>,
+    /// Functions indexed by TypeHash (secondary index)
+    functions_by_hash: FxHashMap<TypeHash, FunctionId>,
 }
 
-impl<'src, 'ast> Registry<'src, 'ast> {
-    /// Create a new registry with all built-in types pre-registered
+impl<'ast> std::fmt::Debug for ScriptRegistry<'ast> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ScriptRegistry")
+            .field("types", &self.types)
+            .field("type_by_name", &self.type_by_name)
+            .field("behaviors", &self.behaviors)
+            .field("functions", &self.functions)
+            .field("func_by_name", &self.func_by_name)
+            .field("global_vars", &self.global_vars)
+            .field("mixins", &self.mixins)
+            .field("types_by_hash", &format!("<{} entries>", self.types_by_hash.len()))
+            .field("functions_by_hash", &format!("<{} entries>", self.functions_by_hash.len()))
+            .finish()
+    }
+}
+
+impl<'ast> ScriptRegistry<'ast> {
+    /// Create a new empty script registry.
+    ///
+    /// The registry starts empty - primitives and FFI types are stored in `FfiRegistry`
+    /// and accessed via `CompilationContext`.
     pub fn new() -> Self {
-        let mut registry = Self {
-            types: Vec::with_capacity(32),
+        Self {
+            types: FxHashMap::default(),
             type_by_name: FxHashMap::default(),
+            behaviors: FxHashMap::default(),
             functions: FxHashMap::default(),
             func_by_name: FxHashMap::default(),
             global_vars: FxHashMap::default(),
             mixins: FxHashMap::default(),
-            template_cache: FxHashMap::default(),
-            void_type: VOID_TYPE,
-            bool_type: BOOL_TYPE,
-            int8_type: INT8_TYPE,
-            int16_type: INT16_TYPE,
-            int32_type: INT32_TYPE,
-            int64_type: INT64_TYPE,
-            uint8_type: UINT8_TYPE,
-            uint16_type: UINT16_TYPE,
-            uint32_type: UINT32_TYPE,
-            uint64_type: UINT64_TYPE,
-            float_type: FLOAT_TYPE,
-            double_type: DOUBLE_TYPE,
-            string_type: STRING_TYPE,
-            array_template: ARRAY_TEMPLATE,
-            dict_template: DICT_TEMPLATE,
-        };
-
-        // Pre-register primitives at fixed indices (0-11)
-        registry.register_primitive(PrimitiveType::Void, VOID_TYPE);
-        registry.register_primitive(PrimitiveType::Bool, BOOL_TYPE);
-        registry.register_primitive(PrimitiveType::Int8, INT8_TYPE);
-        registry.register_primitive(PrimitiveType::Int16, INT16_TYPE);
-        registry.register_primitive(PrimitiveType::Int32, INT32_TYPE);
-        registry.register_primitive(PrimitiveType::Int64, INT64_TYPE);
-        registry.register_primitive(PrimitiveType::Uint8, UINT8_TYPE);
-        registry.register_primitive(PrimitiveType::Uint16, UINT16_TYPE);
-        registry.register_primitive(PrimitiveType::Uint32, UINT32_TYPE);
-        registry.register_primitive(PrimitiveType::Uint64, UINT64_TYPE);
-        registry.register_primitive(PrimitiveType::Float, FLOAT_TYPE);
-        registry.register_primitive(PrimitiveType::Double, DOUBLE_TYPE);
-
-        // Fill gap 12-15 with placeholders
-        while registry.types.len() < 16 {
-            registry.types.push(TypeDef::Primitive { kind: PrimitiveType::Void });
+            types_by_hash: FxHashMap::default(),
+            functions_by_hash: FxHashMap::default(),
         }
-
-        // Pre-register built-in types (16-18)
-        registry.register_builtin_string(STRING_TYPE);
-        registry.register_builtin_template("array", 1, ARRAY_TEMPLATE);
-        registry.register_builtin_template("dictionary", 2, DICT_TEMPLATE);
-
-        // Fill gap 19-31 with placeholders
-        while registry.types.len() < FIRST_USER_TYPE_ID as usize {
-            registry.types.push(TypeDef::Primitive { kind: PrimitiveType::Void });
-        }
-
-        registry
     }
 
-    /// Register a primitive type at a fixed index
-    fn register_primitive(&mut self, kind: PrimitiveType, type_id: TypeId) {
-        let index = type_id.as_u32() as usize;
-
-        // Ensure vector is large enough
-        while self.types.len() <= index {
-            self.types.push(TypeDef::Primitive { kind: PrimitiveType::Void });
-        }
-
-        self.types[index] = TypeDef::Primitive { kind };
-        self.type_by_name.insert(kind.name().to_string(), type_id);
-    }
-
-    /// Register built-in string type with methods and operators
-    fn register_builtin_string(&mut self, type_id: TypeId) {
-        let index = type_id.as_u32() as usize;
-
-        while self.types.len() <= index {
-            self.types.push(TypeDef::Primitive { kind: PrimitiveType::Void });
-        }
-
-        let default_traits = FunctionTraits {
-            is_constructor: false,
-            is_destructor: false,
-            is_final: false,
-            is_virtual: false,
-            is_abstract: false,
-            is_const: false,
-            is_explicit: false,
-            auto_generated: None,
-        };
-
-        let mut method_ids = Vec::new();
-        let mut operator_methods = FxHashMap::default();
-
-        // String parameter type (const string &in)
-        let string_param = DataType {
-            type_id,
-            is_handle: false,
-            is_handle_to_const: false,
-            is_const: true,
-            ref_modifier: RefModifier::In,
-        };
-
-        // 1. Register length(): uint
-        let length_func_id = FunctionId::next();
-        let length_func_def = FunctionDef {
-            id: length_func_id,
-            name: "length".to_string(),
-            namespace: Vec::new(),
-            params: vec![],
-            return_type: DataType::simple(self.uint32_type),
-            object_type: Some(type_id),
-            traits: FunctionTraits {
-                is_const: true,
-                ..default_traits
-            },
-            is_native: true,
-            default_args: Vec::new(),
-            visibility: Visibility::Public,
-            signature_filled: true,
-        };
-        self.functions.insert(length_func_id, length_func_def);
-        method_ids.push(length_func_id);
-
-        // 2. Register substr(uint start, int count = -1): string
-        let substr_func_id = FunctionId::next();
-        let substr_func_def = FunctionDef {
-            id: substr_func_id,
-            name: "substr".to_string(),
-            namespace: Vec::new(),
-            params: vec![
-                DataType::simple(self.uint32_type),
-                DataType::simple(self.int32_type),
-            ],
-            return_type: DataType::simple(type_id),
-            object_type: Some(type_id),
-            traits: FunctionTraits {
-                is_const: true,
-                ..default_traits
-            },
-            is_native: true,
-            default_args: Vec::new(),
-            visibility: Visibility::Public,
-            signature_filled: true,
-        };
-        self.functions.insert(substr_func_id, substr_func_def);
-        method_ids.push(substr_func_id);
-
-        // 2b. Register substr(uint start): string (single-arg overload)
-        let substr1_func_id = FunctionId::next();
-        let substr1_func_def = FunctionDef {
-            id: substr1_func_id,
-            name: "substr".to_string(),
-            namespace: Vec::new(),
-            params: vec![DataType::simple(self.uint32_type)],
-            return_type: DataType::simple(type_id),
-            object_type: Some(type_id),
-            traits: FunctionTraits {
-                is_const: true,
-                ..default_traits
-            },
-            is_native: true,
-            default_args: Vec::new(),
-            visibility: Visibility::Public,
-            signature_filled: true,
-        };
-        self.functions.insert(substr1_func_id, substr1_func_def);
-        method_ids.push(substr1_func_id);
-
-        // 3a. Register findFirst(const string &in): int - searches from start
-        let find_first_func_id = FunctionId::next();
-        let find_first_func_def = FunctionDef {
-            id: find_first_func_id,
-            name: "findFirst".to_string(),
-            namespace: Vec::new(),
-            params: vec![string_param.clone()],
-            return_type: DataType::simple(self.int32_type),
-            object_type: Some(type_id),
-            traits: FunctionTraits {
-                is_const: true,
-                ..default_traits
-            },
-            is_native: true,
-            default_args: Vec::new(),
-            visibility: Visibility::Public,
-            signature_filled: true,
-        };
-        self.functions.insert(find_first_func_id, find_first_func_def);
-        method_ids.push(find_first_func_id);
-
-        // 3b. Register findFirst(const string &in, uint start): int - searches from position
-        let find_first2_func_id = FunctionId::next();
-        let find_first2_func_def = FunctionDef {
-            id: find_first2_func_id,
-            name: "findFirst".to_string(),
-            namespace: Vec::new(),
-            params: vec![string_param.clone(), DataType::simple(self.uint32_type)],
-            return_type: DataType::simple(self.int32_type),
-            object_type: Some(type_id),
-            traits: FunctionTraits {
-                is_const: true,
-                ..default_traits
-            },
-            is_native: true,
-            default_args: Vec::new(),
-            visibility: Visibility::Public,
-            signature_filled: true,
-        };
-        self.functions.insert(find_first2_func_id, find_first2_func_def);
-        method_ids.push(find_first2_func_id);
-
-        // 4. Register findLast(const string &in, int start = -1): int
-        let find_last_func_id = FunctionId::next();
-        let find_last_func_def = FunctionDef {
-            id: find_last_func_id,
-            name: "findLast".to_string(),
-            namespace: Vec::new(),
-            params: vec![string_param.clone(), DataType::simple(self.int32_type)],
-            return_type: DataType::simple(self.int32_type),
-            object_type: Some(type_id),
-            traits: FunctionTraits {
-                is_const: true,
-                ..default_traits
-            },
-            is_native: true,
-            default_args: Vec::new(),
-            visibility: Visibility::Public,
-            signature_filled: true,
-        };
-        self.functions.insert(find_last_func_id, find_last_func_def);
-        method_ids.push(find_last_func_id);
-
-        // 5. Register isEmpty(): bool
-        let is_empty_func_id = FunctionId::next();
-        let is_empty_func_def = FunctionDef {
-            id: is_empty_func_id,
-            name: "isEmpty".to_string(),
-            namespace: Vec::new(),
-            params: vec![],
-            return_type: DataType::simple(self.bool_type),
-            object_type: Some(type_id),
-            traits: FunctionTraits {
-                is_const: true,
-                ..default_traits
-            },
-            is_native: true,
-            default_args: Vec::new(),
-            visibility: Visibility::Public,
-            signature_filled: true,
-        };
-        self.functions.insert(is_empty_func_id, is_empty_func_def);
-        method_ids.push(is_empty_func_id);
-
-        // 6. Register opAdd(const string &in): string - for string concatenation
-        let op_add_func_id = FunctionId::next();
-        let op_add_func_def = FunctionDef {
-            id: op_add_func_id,
-            name: "opAdd".to_string(),
-            namespace: Vec::new(),
-            params: vec![string_param.clone()],
-            return_type: DataType::simple(type_id),
-            object_type: Some(type_id),
-            traits: FunctionTraits {
-                is_const: true,
-                ..default_traits
-            },
-            is_native: true,
-            default_args: Vec::new(),
-            visibility: Visibility::Public,
-            signature_filled: true,
-        };
-        self.functions.insert(op_add_func_id, op_add_func_def);
-        method_ids.push(op_add_func_id);
-        operator_methods.insert(OperatorBehavior::OpAdd, op_add_func_id);
-
-        // 7. Register opAdd(int): string - for string + int
-        let op_add_int_func_id = FunctionId::next();
-        let op_add_int_func_def = FunctionDef {
-            id: op_add_int_func_id,
-            name: "opAdd".to_string(),
-            namespace: Vec::new(),
-            params: vec![DataType::simple(self.int32_type)],
-            return_type: DataType::simple(type_id),
-            object_type: Some(type_id),
-            traits: FunctionTraits {
-                is_const: true,
-                ..default_traits
-            },
-            is_native: true,
-            default_args: Vec::new(),
-            visibility: Visibility::Public,
-            signature_filled: true,
-        };
-        self.functions.insert(op_add_int_func_id, op_add_int_func_def);
-        method_ids.push(op_add_int_func_id);
-
-        // 8. Register opAdd(float): string - for string + float
-        let op_add_float_func_id = FunctionId::next();
-        let op_add_float_func_def = FunctionDef {
-            id: op_add_float_func_id,
-            name: "opAdd".to_string(),
-            namespace: Vec::new(),
-            params: vec![DataType::simple(self.float_type)],
-            return_type: DataType::simple(type_id),
-            object_type: Some(type_id),
-            traits: FunctionTraits {
-                is_const: true,
-                ..default_traits
-            },
-            is_native: true,
-            default_args: Vec::new(),
-            visibility: Visibility::Public,
-            signature_filled: true,
-        };
-        self.functions.insert(op_add_float_func_id, op_add_float_func_def);
-        method_ids.push(op_add_float_func_id);
-
-        // 9. Register opAddAssign(const string &in): string& - for string +=
-        let op_add_assign_func_id = FunctionId::next();
-        let op_add_assign_func_def = FunctionDef {
-            id: op_add_assign_func_id,
-            name: "opAddAssign".to_string(),
-            namespace: Vec::new(),
-            params: vec![string_param.clone()],
-            return_type: DataType {
-                type_id,
-                is_handle: false,
-                is_handle_to_const: false,
-                is_const: false,
-                ref_modifier: RefModifier::InOut,
-            },
-            object_type: Some(type_id),
-            traits: default_traits,
-            is_native: true,
-            default_args: Vec::new(),
-            visibility: Visibility::Public,
-            signature_filled: true,
-        };
-        self.functions.insert(op_add_assign_func_id, op_add_assign_func_def);
-        method_ids.push(op_add_assign_func_id);
-        operator_methods.insert(OperatorBehavior::OpAddAssign, op_add_assign_func_id);
-
-        // 10. Register opEquals(const string &in): bool - for string comparison
-        let op_equals_func_id = FunctionId::next();
-        let op_equals_func_def = FunctionDef {
-            id: op_equals_func_id,
-            name: "opEquals".to_string(),
-            namespace: Vec::new(),
-            params: vec![string_param.clone()],
-            return_type: DataType::simple(self.bool_type),
-            object_type: Some(type_id),
-            traits: FunctionTraits {
-                is_const: true,
-                ..default_traits
-            },
-            is_native: true,
-            default_args: Vec::new(),
-            visibility: Visibility::Public,
-            signature_filled: true,
-        };
-        self.functions.insert(op_equals_func_id, op_equals_func_def);
-        method_ids.push(op_equals_func_id);
-        operator_methods.insert(OperatorBehavior::OpEquals, op_equals_func_id);
-
-        // 11. Register opIndex(uint): uint8 - for character access
-        let op_index_func_id = FunctionId::next();
-        let op_index_func_def = FunctionDef {
-            id: op_index_func_id,
-            name: "opIndex".to_string(),
-            namespace: Vec::new(),
-            params: vec![DataType::simple(self.uint32_type)],
-            return_type: DataType::simple(self.uint8_type),
-            object_type: Some(type_id),
-            traits: FunctionTraits {
-                is_const: true,
-                ..default_traits
-            },
-            is_native: true,
-            default_args: Vec::new(),
-            visibility: Visibility::Public,
-            signature_filled: true,
-        };
-        self.functions.insert(op_index_func_id, op_index_func_def);
-        method_ids.push(op_index_func_id);
-        operator_methods.insert(OperatorBehavior::OpIndex, op_index_func_id);
-
-        self.types[index] = TypeDef::Class {
-            name: "string".to_string(),
-            qualified_name: "string".to_string(),
-            fields: Vec::new(),
-            methods: method_ids,
-            base_class: None,
-            interfaces: Vec::new(),
-            operator_methods,
-            properties: FxHashMap::default(),
-            is_final: false,
-            is_abstract: false,
-        };
-        self.type_by_name.insert("string".to_string(), type_id);
-    }
-
-    /// Register a built-in template
-    fn register_builtin_template(&mut self, name: &str, param_count: usize, type_id: TypeId) {
-        let index = type_id.as_u32() as usize;
-
-        while self.types.len() <= index {
-            self.types.push(TypeDef::Primitive { kind: PrimitiveType::Void });
-        }
-
-        self.types[index] = TypeDef::Template {
-            name: name.to_string(),
-            param_count,
-        };
-        self.type_by_name.insert(name.to_string(), type_id);
-    }
-
-    /// Register a new type and return its TypeId
+    /// Register a new type and return its TypeId.
+    /// Uses `TypeId::next_script()` since ScriptRegistry holds script-defined types.
     pub fn register_type(&mut self, typedef: TypeDef, name: Option<&str>) -> TypeId {
-        let type_id = TypeId::new(self.types.len() as u32);
-        self.types.push(typedef);
+        let type_id = TypeId::next_script();
+        let type_hash = typedef.type_hash();
+        self.types.insert(type_id, typedef);
+        self.types_by_hash.insert(type_hash, type_id);
 
         if let Some(name) = name {
             self.type_by_name.insert(name.to_string(), type_id);
@@ -595,7 +238,8 @@ impl<'src, 'ast> Registry<'src, 'ast> {
     /// This creates an alias name that points to an existing type.
     /// For example, `typedef float real;` would call `register_type_alias("real", FLOAT_TYPE)`.
     pub fn register_type_alias(&mut self, alias_name: &str, target_type: TypeId) {
-        self.type_by_name.insert(alias_name.to_string(), target_type);
+        self.type_by_name
+            .insert(alias_name.to_string(), target_type);
     }
 
     /// Look up a type by name (returns None if not found)
@@ -610,12 +254,47 @@ impl<'src, 'ast> Registry<'src, 'ast> {
 
     /// Get a type definition by TypeId
     pub fn get_type(&self, type_id: TypeId) -> &TypeDef {
-        &self.types[type_id.as_u32() as usize]
+        self.types.get(&type_id).expect("TypeId not found in registry")
     }
 
     /// Get a mutable type definition by TypeId
     pub fn get_type_mut(&mut self, type_id: TypeId) -> &mut TypeDef {
-        &mut self.types[type_id.as_u32() as usize]
+        self.types.get_mut(&type_id).expect("TypeId not found in registry")
+    }
+
+    /// Get a type definition by TypeHash.
+    pub fn get_type_by_hash(&self, hash: TypeHash) -> Option<&TypeDef> {
+        self.types_by_hash
+            .get(&hash)
+            .and_then(|id| self.types.get(id))
+    }
+
+    /// Get the TypeId for a TypeHash.
+    pub fn get_type_id_by_hash(&self, hash: TypeHash) -> Option<TypeId> {
+        self.types_by_hash.get(&hash).copied()
+    }
+
+    /// Get the behaviors for a type, if any are registered.
+    pub fn get_behaviors(&self, type_id: TypeId) -> Option<&super::behaviors::TypeBehaviors> {
+        self.behaviors.get(&type_id)
+    }
+
+    /// Get mutable behaviors for a type, if any are registered.
+    pub fn get_behaviors_mut(
+        &mut self,
+        type_id: TypeId,
+    ) -> Option<&mut super::behaviors::TypeBehaviors> {
+        self.behaviors.get_mut(&type_id)
+    }
+
+    /// Set behaviors for a type. Overwrites any existing behaviors.
+    pub fn set_behaviors(&mut self, type_id: TypeId, behaviors: super::behaviors::TypeBehaviors) {
+        self.behaviors.insert(type_id, behaviors);
+    }
+
+    /// Get or create behaviors for a type (for incremental registration).
+    pub fn behaviors_mut(&mut self, type_id: TypeId) -> &mut super::behaviors::TypeBehaviors {
+        self.behaviors.entry(type_id).or_default()
     }
 
     /// Look up an enum value by enum type ID and value name
@@ -623,7 +302,8 @@ impl<'src, 'ast> Registry<'src, 'ast> {
     pub fn lookup_enum_value(&self, type_id: TypeId, value_name: &str) -> Option<i64> {
         let typedef = self.get_type(type_id);
         if let TypeDef::Enum { values, .. } = typedef {
-            values.iter()
+            values
+                .iter()
                 .find(|(name, _)| name == value_name)
                 .map(|(_, val)| *val)
         } else {
@@ -631,544 +311,32 @@ impl<'src, 'ast> Registry<'src, 'ast> {
         }
     }
 
-    /// Instantiate a template with the given arguments
+    /// Stub: Template instantiation has moved to CompilationContext.
+    ///
+    /// TODO(Phase 6.4): This stub exists only to allow tests to compile during transition.
+    /// Once CompilationContext is implemented, tests should be updated to use it instead,
+    /// and this method should be removed.
+    #[deprecated(note = "Use CompilationContext::instantiate_template instead - Phase 6.4")]
     pub fn instantiate_template(
         &mut self,
-        template_id: TypeId,
-        args: Vec<DataType>,
-    ) -> Result<TypeId, SemanticError> {
-        // Check if this is actually a template
-        let template_def = self.get_type(template_id);
-        let (template_name, param_count) = match template_def {
-            TypeDef::Template { name, param_count } => (name.clone(), *param_count),
-            _ => {
-                return Err(SemanticError::new(
-                    SemanticErrorKind::NotATemplate,
-                    Span::default(),
-                    format!("Type {:?} is not a template", template_id),
-                ));
-            }
-        };
-
-        // Check argument count
-        if args.len() != param_count {
-            return Err(SemanticError::new(
-                SemanticErrorKind::WrongTemplateArgCount,
-                Span::default(),
-                format!(
-                    "Template expects {} arguments, got {}",
-                    param_count,
-                    args.len()
-                ),
-            ));
-        }
-
-        // Check cache - use only TypeIds for cache key so const qualifiers don't cause misses
-        let cache_key_type_ids: Vec<TypeId> = args.iter().map(|dt| dt.type_id).collect();
-        let cache_key = (template_id, cache_key_type_ids);
-        if let Some(&cached_id) = self.template_cache.get(&cache_key) {
-            return Ok(cached_id);
-        }
-
-        // Build instance name like "array<int32>" or "dict<string, int32>"
-        let arg_names: Vec<String> = args
-            .iter()
-            .map(|arg| self.get_type(arg.type_id).name().to_string())
-            .collect();
-        let instance_name = format!("{}<{}>", template_name, arg_names.join(", "));
-
-        // Create new instance
-        let instance = TypeDef::TemplateInstance {
-            name: instance_name.clone(),
-            template: template_id,
-            sub_types: args.clone(),
-            methods: Vec::new(),
-            operator_methods: FxHashMap::default(),
-            properties: FxHashMap::default(),
-        };
-
-        let instance_id = self.register_type(instance, Some(&instance_name));
-        // Use the same cache key type as when checking
-        let insert_cache_key: Vec<TypeId> = args.iter().map(|dt| dt.type_id).collect();
-        self.template_cache.insert((template_id, insert_cache_key), instance_id);
-
-        // For array templates, register placeholder methods
-        // This will be implemented via FFI - the compiler just needs a FunctionId to emit
-        if template_id == self.array_template {
-            self.register_array_methods(instance_id, args.clone());
-        }
-
-        // For dictionary templates, register placeholder methods
-        if template_id == self.dict_template {
-            self.register_dictionary_methods(instance_id, args);
-        }
-
-        Ok(instance_id)
-    }
-
-    /// Register placeholder methods for an array<T> type
-    /// The actual implementations will be provided via FFI
-    fn register_array_methods(&mut self, array_type_id: TypeId, sub_types: Vec<DataType>) {
-        // Get the element type (T in array<T>)
-        let element_type = sub_types.first().cloned().unwrap_or_else(|| DataType::simple(self.void_type));
-
-        let default_traits = FunctionTraits {
-            is_constructor: false,
-            is_destructor: false,
-            is_final: false,
-            is_virtual: false,
-            is_abstract: false,
-            is_const: false,
-            is_explicit: false,
-            auto_generated: None,
-        };
-
-        let mut method_ids = Vec::new();
-
-        // 1. Register default constructor (no args)
-        let default_ctor_id = FunctionId::next();
-        let default_ctor_def = FunctionDef {
-            id: default_ctor_id,
-            name: "$array_default".to_string(),
-            namespace: Vec::new(),
-            params: vec![],
-            return_type: DataType::simple(self.void_type),
-            object_type: Some(array_type_id),
-            traits: FunctionTraits {
-                is_constructor: true,
-                ..default_traits
-            },
-            is_native: true,
-            default_args: Vec::new(),
-            visibility: Visibility::Public,
-            signature_filled: true,
-        };
-        self.functions.insert(default_ctor_id, default_ctor_def);
-        method_ids.push(default_ctor_id);
-
-        // 2. Register $array_init constructor (with count)
-        let init_func_id = FunctionId::next();
-        let init_func_def = FunctionDef {
-            id: init_func_id,
-            name: "$array_init".to_string(),
-            namespace: Vec::new(),
-            params: vec![DataType::simple(self.int32_type)], // count parameter
-            return_type: DataType::simple(self.void_type),
-            object_type: Some(array_type_id),
-            traits: FunctionTraits {
-                is_constructor: true,
-                ..default_traits
-            },
-            is_native: true,
-            default_args: Vec::new(),
-            visibility: Visibility::Public,
-            signature_filled: true,
-        };
-        self.functions.insert(init_func_id, init_func_def);
-        method_ids.push(init_func_id);
-
-        // 2. Register opIndex: T& opIndex(int index)
-        // Returns a reference to the element, allowing both read and write
-        let opindex_func_id = FunctionId::next();
-        let opindex_return_type = DataType {
-            type_id: element_type.type_id,
-            is_handle: element_type.is_handle,
-            is_handle_to_const: false,
-            is_const: false,
-            ref_modifier: RefModifier::InOut, // Returns a reference
-        };
-        let opindex_func_def = FunctionDef {
-            id: opindex_func_id,
-            name: "opIndex".to_string(),
-            namespace: Vec::new(),
-            params: vec![DataType::simple(self.int32_type)], // index parameter
-            return_type: opindex_return_type,
-            object_type: Some(array_type_id),
-            traits: default_traits,
-            is_native: true,
-            default_args: Vec::new(),
-            visibility: Visibility::Public,
-            signature_filled: true,
-        };
-        self.functions.insert(opindex_func_id, opindex_func_def);
-        method_ids.push(opindex_func_id);
-
-        // 3. Register opIndex with uint: T& opIndex(uint index)
-        let opindex_uint_func_id = FunctionId::next();
-        let opindex_uint_return_type = DataType {
-            type_id: element_type.type_id,
-            is_handle: element_type.is_handle,
-            is_handle_to_const: false,
-            is_const: false,
-            ref_modifier: RefModifier::InOut,
-        };
-        let opindex_uint_func_def = FunctionDef {
-            id: opindex_uint_func_id,
-            name: "opIndex".to_string(),
-            namespace: Vec::new(),
-            params: vec![DataType::simple(self.uint32_type)], // uint index parameter
-            return_type: opindex_uint_return_type,
-            object_type: Some(array_type_id),
-            traits: default_traits,
-            is_native: true,
-            default_args: Vec::new(),
-            visibility: Visibility::Public,
-            signature_filled: true,
-        };
-        self.functions.insert(opindex_uint_func_id, opindex_uint_func_def);
-        method_ids.push(opindex_uint_func_id);
-
-        // 4. Register length(): uint
-        let length_func_id = FunctionId::next();
-        let length_func_def = FunctionDef {
-            id: length_func_id,
-            name: "length".to_string(),
-            namespace: Vec::new(),
-            params: vec![],
-            return_type: DataType::simple(self.uint32_type),
-            object_type: Some(array_type_id),
-            traits: FunctionTraits {
-                is_const: true,
-                ..default_traits
-            },
-            is_native: true,
-            default_args: Vec::new(),
-            visibility: Visibility::Public,
-            signature_filled: true,
-        };
-        self.functions.insert(length_func_id, length_func_def);
-        method_ids.push(length_func_id);
-
-        // 5. Register resize(uint): void
-        let resize_func_id = FunctionId::next();
-        let resize_func_def = FunctionDef {
-            id: resize_func_id,
-            name: "resize".to_string(),
-            namespace: Vec::new(),
-            params: vec![DataType::simple(self.uint32_type)],
-            return_type: DataType::simple(self.void_type),
-            object_type: Some(array_type_id),
-            traits: default_traits,
-            is_native: true,
-            default_args: Vec::new(),
-            visibility: Visibility::Public,
-            signature_filled: true,
-        };
-        self.functions.insert(resize_func_id, resize_func_def);
-        method_ids.push(resize_func_id);
-
-        // 6. Register insertLast(const T &in): void
-        let insert_last_func_id = FunctionId::next();
-        let insert_param = DataType {
-            type_id: element_type.type_id,
-            is_handle: element_type.is_handle,
-            is_handle_to_const: false,
-            is_const: true,
-            ref_modifier: RefModifier::In,
-        };
-        let insert_last_func_def = FunctionDef {
-            id: insert_last_func_id,
-            name: "insertLast".to_string(),
-            namespace: Vec::new(),
-            params: vec![insert_param],
-            return_type: DataType::simple(self.void_type),
-            object_type: Some(array_type_id),
-            traits: default_traits,
-            is_native: true,
-            default_args: Vec::new(),
-            visibility: Visibility::Public,
-            signature_filled: true,
-        };
-        self.functions.insert(insert_last_func_id, insert_last_func_def);
-        method_ids.push(insert_last_func_id);
-
-        // 7. Register removeLast(): void
-        let remove_last_func_id = FunctionId::next();
-        let remove_last_func_def = FunctionDef {
-            id: remove_last_func_id,
-            name: "removeLast".to_string(),
-            namespace: Vec::new(),
-            params: vec![],
-            return_type: DataType::simple(self.void_type),
-            object_type: Some(array_type_id),
-            traits: default_traits,
-            is_native: true,
-            default_args: Vec::new(),
-            visibility: Visibility::Public,
-            signature_filled: true,
-        };
-        self.functions.insert(remove_last_func_id, remove_last_func_def);
-        method_ids.push(remove_last_func_id);
-
-        // 8. Register insertAt(uint, const T &in): void
-        let insert_at_func_id = FunctionId::next();
-        let insert_at_param = DataType {
-            type_id: element_type.type_id,
-            is_handle: element_type.is_handle,
-            is_handle_to_const: false,
-            is_const: true,
-            ref_modifier: RefModifier::In,
-        };
-        let insert_at_func_def = FunctionDef {
-            id: insert_at_func_id,
-            name: "insertAt".to_string(),
-            namespace: Vec::new(),
-            params: vec![DataType::simple(self.uint32_type), insert_at_param],
-            return_type: DataType::simple(self.void_type),
-            object_type: Some(array_type_id),
-            traits: default_traits,
-            is_native: true,
-            default_args: Vec::new(),
-            visibility: Visibility::Public,
-            signature_filled: true,
-        };
-        self.functions.insert(insert_at_func_id, insert_at_func_def);
-        method_ids.push(insert_at_func_id);
-
-        // 9. Register removeAt(uint): void
-        let remove_at_func_id = FunctionId::next();
-        let remove_at_func_def = FunctionDef {
-            id: remove_at_func_id,
-            name: "removeAt".to_string(),
-            namespace: Vec::new(),
-            params: vec![DataType::simple(self.uint32_type)],
-            return_type: DataType::simple(self.void_type),
-            object_type: Some(array_type_id),
-            traits: default_traits,
-            is_native: true,
-            default_args: Vec::new(),
-            visibility: Visibility::Public,
-            signature_filled: true,
-        };
-        self.functions.insert(remove_at_func_id, remove_at_func_def);
-        method_ids.push(remove_at_func_id);
-
-        // Add to the template instance's methods and operator_methods
-        let typedef = self.get_type_mut(array_type_id);
-        if let TypeDef::TemplateInstance { methods, operator_methods, .. } = typedef {
-            methods.extend(method_ids);
-            operator_methods.insert(OperatorBehavior::OpIndex, opindex_func_id);
-        }
-    }
-
-    /// Register placeholder methods for a dictionary<K, V> type
-    /// The actual implementations will be provided via FFI
-    fn register_dictionary_methods(&mut self, dict_type_id: TypeId, sub_types: Vec<DataType>) {
-        // Get the key type (K) and value type (V) from dictionary<K, V>
-        let key_type = sub_types.first().cloned().unwrap_or_else(|| DataType::simple(self.void_type));
-        let value_type = sub_types.get(1).cloned().unwrap_or_else(|| DataType::simple(self.void_type));
-
-        let default_traits = FunctionTraits {
-            is_constructor: false,
-            is_destructor: false,
-            is_final: false,
-            is_virtual: false,
-            is_abstract: false,
-            is_const: false,
-            is_explicit: false,
-            auto_generated: None,
-        };
-
-        let mut method_ids = Vec::new();
-
-        // 1. Register set(const K &in, const V &in): void
-        let set_func_id = FunctionId::next();
-        let key_param = DataType {
-            type_id: key_type.type_id,
-            is_handle: key_type.is_handle,
-            is_handle_to_const: false,
-            is_const: true,
-            ref_modifier: RefModifier::In,
-        };
-        let value_param = DataType {
-            type_id: value_type.type_id,
-            is_handle: value_type.is_handle,
-            is_handle_to_const: false,
-            is_const: true,
-            ref_modifier: RefModifier::In,
-        };
-        let set_func_def = FunctionDef {
-            id: set_func_id,
-            name: "set".to_string(),
-            namespace: Vec::new(),
-            params: vec![key_param.clone(), value_param.clone()],
-            return_type: DataType::simple(self.void_type),
-            object_type: Some(dict_type_id),
-            traits: default_traits,
-            is_native: true,
-            default_args: Vec::new(),
-            visibility: Visibility::Public,
-            signature_filled: true,
-        };
-        self.functions.insert(set_func_id, set_func_def);
-        method_ids.push(set_func_id);
-
-        // 2. Register get(const K &in, V &out): bool
-        let get_func_id = FunctionId::next();
-        let value_out_param = DataType {
-            type_id: value_type.type_id,
-            is_handle: value_type.is_handle,
-            is_handle_to_const: false,
-            is_const: false,
-            ref_modifier: RefModifier::Out,
-        };
-        let get_func_def = FunctionDef {
-            id: get_func_id,
-            name: "get".to_string(),
-            namespace: Vec::new(),
-            params: vec![key_param.clone(), value_out_param],
-            return_type: DataType::simple(self.bool_type),
-            object_type: Some(dict_type_id),
-            traits: FunctionTraits {
-                is_const: true,
-                ..default_traits
-            },
-            is_native: true,
-            default_args: Vec::new(),
-            visibility: Visibility::Public,
-            signature_filled: true,
-        };
-        self.functions.insert(get_func_id, get_func_def);
-        method_ids.push(get_func_id);
-
-        // 3. Register exists(const K &in): bool
-        let exists_func_id = FunctionId::next();
-        let exists_func_def = FunctionDef {
-            id: exists_func_id,
-            name: "exists".to_string(),
-            namespace: Vec::new(),
-            params: vec![key_param.clone()],
-            return_type: DataType::simple(self.bool_type),
-            object_type: Some(dict_type_id),
-            traits: FunctionTraits {
-                is_const: true,
-                ..default_traits
-            },
-            is_native: true,
-            default_args: Vec::new(),
-            visibility: Visibility::Public,
-            signature_filled: true,
-        };
-        self.functions.insert(exists_func_id, exists_func_def);
-        method_ids.push(exists_func_id);
-
-        // 4. Register delete(const K &in): bool
-        let delete_func_id = FunctionId::next();
-        let delete_func_def = FunctionDef {
-            id: delete_func_id,
-            name: "delete".to_string(),
-            namespace: Vec::new(),
-            params: vec![key_param.clone()],
-            return_type: DataType::simple(self.bool_type),
-            object_type: Some(dict_type_id),
-            traits: default_traits,
-            is_native: true,
-            default_args: Vec::new(),
-            visibility: Visibility::Public,
-            signature_filled: true,
-        };
-        self.functions.insert(delete_func_id, delete_func_def);
-        method_ids.push(delete_func_id);
-
-        // 5. Register isEmpty(): bool
-        let is_empty_func_id = FunctionId::next();
-        let is_empty_func_def = FunctionDef {
-            id: is_empty_func_id,
-            name: "isEmpty".to_string(),
-            namespace: Vec::new(),
-            params: vec![],
-            return_type: DataType::simple(self.bool_type),
-            object_type: Some(dict_type_id),
-            traits: FunctionTraits {
-                is_const: true,
-                ..default_traits
-            },
-            is_native: true,
-            default_args: Vec::new(),
-            visibility: Visibility::Public,
-            signature_filled: true,
-        };
-        self.functions.insert(is_empty_func_id, is_empty_func_def);
-        method_ids.push(is_empty_func_id);
-
-        // 6. Register getSize(): uint
-        let get_size_func_id = FunctionId::next();
-        let get_size_func_def = FunctionDef {
-            id: get_size_func_id,
-            name: "getSize".to_string(),
-            namespace: Vec::new(),
-            params: vec![],
-            return_type: DataType::simple(self.uint32_type),
-            object_type: Some(dict_type_id),
-            traits: FunctionTraits {
-                is_const: true,
-                ..default_traits
-            },
-            is_native: true,
-            default_args: Vec::new(),
-            visibility: Visibility::Public,
-            signature_filled: true,
-        };
-        self.functions.insert(get_size_func_id, get_size_func_def);
-        method_ids.push(get_size_func_id);
-
-        // 7. Register deleteAll(): void
-        let delete_all_func_id = FunctionId::next();
-        let delete_all_func_def = FunctionDef {
-            id: delete_all_func_id,
-            name: "deleteAll".to_string(),
-            namespace: Vec::new(),
-            params: vec![],
-            return_type: DataType::simple(self.void_type),
-            object_type: Some(dict_type_id),
-            traits: default_traits,
-            is_native: true,
-            default_args: Vec::new(),
-            visibility: Visibility::Public,
-            signature_filled: true,
-        };
-        self.functions.insert(delete_all_func_id, delete_all_func_def);
-        method_ids.push(delete_all_func_id);
-
-        // 8. Register opIndex(const K &in): V& - for dictionary[key] access
-        let opindex_func_id = FunctionId::next();
-        let opindex_return_type = DataType {
-            type_id: value_type.type_id,
-            is_handle: value_type.is_handle,
-            is_handle_to_const: false,
-            is_const: false,
-            ref_modifier: RefModifier::InOut,
-        };
-        let opindex_func_def = FunctionDef {
-            id: opindex_func_id,
-            name: "opIndex".to_string(),
-            namespace: Vec::new(),
-            params: vec![key_param],
-            return_type: opindex_return_type,
-            object_type: Some(dict_type_id),
-            traits: default_traits,
-            is_native: true,
-            default_args: Vec::new(),
-            visibility: Visibility::Public,
-            signature_filled: true,
-        };
-        self.functions.insert(opindex_func_id, opindex_func_def);
-        method_ids.push(opindex_func_id);
-
-        // Add to the template instance's methods and operator_methods
-        let typedef = self.get_type_mut(dict_type_id);
-        if let TypeDef::TemplateInstance { methods, operator_methods, .. } = typedef {
-            methods.extend(method_ids);
-            operator_methods.insert(OperatorBehavior::OpIndex, opindex_func_id);
-        }
+        _template_id: TypeId,
+        _args: Vec<DataType>,
+    ) -> Result<TypeId, crate::semantic::error::SemanticError> {
+        Err(crate::semantic::error::SemanticError::new(
+            crate::semantic::error::SemanticErrorKind::NotATemplate,
+            crate::lexer::Span::default(),
+            "instantiate_template() has moved to CompilationContext (Phase 6.4)".to_string(),
+        ))
     }
 
     /// Register a function and return its FunctionId
-    pub fn register_function(&mut self, def: FunctionDef<'src, 'ast>) -> FunctionId {
+    pub fn register_function(&mut self, def: FunctionDef<'ast>) -> FunctionId {
         let func_id = def.id;
         let qualified_name = def.qualified_name();
+        let func_hash = def.func_hash;
 
         self.functions.insert(func_id, def);
+        self.functions_by_hash.insert(func_hash, func_id);
 
         // Add to overload map
         self.func_by_name
@@ -1188,18 +356,34 @@ impl<'src, 'ast> Registry<'src, 'ast> {
     }
 
     /// Get a function definition by FunctionId
-    pub fn get_function(&self, func_id: FunctionId) -> &FunctionDef<'src, 'ast> {
-        self.functions.get(&func_id).expect("FunctionId not found in registry")
+    pub fn get_function(&self, func_id: FunctionId) -> &FunctionDef<'ast> {
+        self.functions
+            .get(&func_id)
+            .expect("FunctionId not found in registry")
     }
 
     /// Get a mutable function definition by FunctionId
-    pub fn get_function_mut(&mut self, func_id: FunctionId) -> &mut FunctionDef<'src, 'ast> {
-        self.functions.get_mut(&func_id).expect("FunctionId not found in registry")
+    pub fn get_function_mut(&mut self, func_id: FunctionId) -> &mut FunctionDef<'ast> {
+        self.functions
+            .get_mut(&func_id)
+            .expect("FunctionId not found in registry")
     }
 
     /// Get the count of registered functions
     pub fn function_count(&self) -> usize {
         self.functions.len()
+    }
+
+    /// Get a function definition by TypeHash.
+    pub fn get_function_by_hash(&self, hash: TypeHash) -> Option<&FunctionDef<'ast>> {
+        self.functions_by_hash
+            .get(&hash)
+            .and_then(|id| self.functions.get(id))
+    }
+
+    /// Get the FunctionId for a TypeHash.
+    pub fn get_function_id_by_hash(&self, hash: TypeHash) -> Option<FunctionId> {
+        self.functions_by_hash.get(&hash).copied()
     }
 
     /// Get the next available function ID
@@ -1222,7 +406,12 @@ impl<'src, 'ast> Registry<'src, 'ast> {
     }
 
     /// Register a global variable
-    pub fn register_global_var(&mut self, name: String, namespace: Vec<String>, data_type: DataType) {
+    pub fn register_global_var(
+        &mut self,
+        name: String,
+        namespace: Vec<String>,
+        data_type: DataType,
+    ) {
         let qualified_name = if namespace.is_empty() {
             name.clone()
         } else {
@@ -1245,13 +434,13 @@ impl<'src, 'ast> Registry<'src, 'ast> {
     }
 
     /// Register a mixin class
-    pub fn register_mixin(&mut self, mixin: MixinDef<'src, 'ast>) {
+    pub fn register_mixin(&mut self, mixin: MixinDef<'ast>) {
         let qualified_name = mixin.qualified_name.clone();
         self.mixins.insert(qualified_name, mixin);
     }
 
     /// Look up a mixin by qualified name
-    pub fn lookup_mixin(&self, name: &str) -> Option<&MixinDef<'src, 'ast>> {
+    pub fn lookup_mixin(&self, name: &str) -> Option<&MixinDef<'ast>> {
         self.mixins.get(name)
     }
 
@@ -1268,7 +457,7 @@ impl<'src, 'ast> Registry<'src, 'ast> {
         methods: Vec<FunctionId>,
         base_class: Option<TypeId>,
         interfaces: Vec<TypeId>,
-        operator_methods: FxHashMap<super::type_def::OperatorBehavior, FunctionId>,
+        operator_methods: FxHashMap<super::type_def::OperatorBehavior, Vec<FunctionId>>,
         properties: FxHashMap<String, super::type_def::PropertyAccessors>,
     ) {
         let typedef = self.get_type_mut(type_id);
@@ -1330,7 +519,12 @@ impl<'src, 'ast> Registry<'src, 'ast> {
     /// Returns (params, return_type) or None if not a funcdef
     pub fn get_funcdef_signature(&self, type_id: TypeId) -> Option<(&[DataType], &DataType)> {
         let typedef = self.get_type(type_id);
-        if let TypeDef::Funcdef { params, return_type, .. } = typedef {
+        if let TypeDef::Funcdef {
+            params,
+            return_type,
+            ..
+        } = typedef
+        {
             Some((params.as_slice(), return_type))
         } else {
             None
@@ -1369,15 +563,15 @@ impl<'src, 'ast> Registry<'src, 'ast> {
         // Check each parameter type matches
         for (func_param, funcdef_param) in func.params.iter().zip(funcdef_params.iter()) {
             // Base type must match
-            if func_param.type_id != funcdef_param.type_id {
+            if func_param.data_type.type_id != funcdef_param.type_id {
                 return false;
             }
             // Reference modifier must match
-            if func_param.ref_modifier != funcdef_param.ref_modifier {
+            if func_param.data_type.ref_modifier != funcdef_param.ref_modifier {
                 return false;
             }
             // Handle modifier must match
-            if func_param.is_handle != funcdef_param.is_handle {
+            if func_param.data_type.is_handle != funcdef_param.is_handle {
                 return false;
             }
         }
@@ -1387,11 +581,18 @@ impl<'src, 'ast> Registry<'src, 'ast> {
 
     /// Find a function by name that is compatible with a funcdef type
     /// Returns the FunctionId if found and compatible, None otherwise
-    pub fn find_compatible_function(&self, name: &str, funcdef_type_id: TypeId) -> Option<FunctionId> {
+    pub fn find_compatible_function(
+        &self,
+        name: &str,
+        funcdef_type_id: TypeId,
+    ) -> Option<FunctionId> {
         let func_ids = self.func_by_name.get(name)?;
 
         // Find the first function that matches the funcdef signature
-        func_ids.iter().find(|&&func_id| self.is_function_compatible_with_funcdef(func_id, funcdef_type_id)).copied()
+        func_ids
+            .iter()
+            .find(|&&func_id| self.is_function_compatible_with_funcdef(func_id, funcdef_type_id))
+            .copied()
     }
 
     /// Update a function's signature
@@ -1402,11 +603,10 @@ impl<'src, 'ast> Registry<'src, 'ast> {
     pub fn update_function_signature(
         &mut self,
         qualified_name: &str,
-        params: Vec<DataType>,
+        params: Vec<ScriptParam<'ast>>,
         return_type: DataType,
         object_type: Option<TypeId>,
         traits: FunctionTraits,
-        default_args: Vec<Option<&'ast Expr<'src, 'ast>>>,
     ) {
         // Find the function(s) with this name
         if let Some(func_ids) = self.func_by_name.get(qualified_name).cloned() {
@@ -1425,7 +625,6 @@ impl<'src, 'ast> Registry<'src, 'ast> {
                             func_mut.params = params;
                             func_mut.return_type = return_type;
                             func_mut.traits = traits;
-                            func_mut.default_args = default_args;
                             func_mut.signature_filled = true;
                         }
                         return; // Only update one function
@@ -1437,7 +636,7 @@ impl<'src, 'ast> Registry<'src, 'ast> {
 
     /// Update a function's parameters directly by FunctionId
     /// Used to fill in params for auto-generated constructors
-    pub fn update_function_params(&mut self, func_id: FunctionId, params: Vec<DataType>) {
+    pub fn update_function_params(&mut self, func_id: FunctionId, params: Vec<ScriptParam<'ast>>) {
         if let Some(func) = self.functions.get_mut(&func_id) {
             func.params = params;
         }
@@ -1478,7 +677,7 @@ impl<'src, 'ast> Registry<'src, 'ast> {
                     .params
                     .iter()
                     .zip(arg_types.iter())
-                    .all(|(param_type, arg_type)| param_type == arg_type);
+                    .all(|(param, arg_type)| &param.data_type == arg_type);
 
                 if all_match {
                     return Some(method_id);
@@ -1489,28 +688,24 @@ impl<'src, 'ast> Registry<'src, 'ast> {
         None
     }
 
-    /// Find all constructors for a given type
+    /// Find all constructors for a given type (value types)
     /// Returns a vector of FunctionIds for all constructors
     pub fn find_constructors(&self, type_id: TypeId) -> Vec<FunctionId> {
-        // Get the type definition
-        let typedef = self.get_type(type_id);
+        // Look up constructors from behaviors registry
+        self.behaviors
+            .get(&type_id)
+            .map(|b| b.constructors.clone())
+            .unwrap_or_default()
+    }
 
-        // Classes and template instances have constructors - get the methods list
-        let method_ids = match typedef {
-            TypeDef::Class { methods, .. } => methods,
-            TypeDef::TemplateInstance { methods, .. } => methods,
-            _ => return Vec::new(),
-        };
-
-        // Filter to only constructors
-        method_ids
-            .iter()
-            .copied()
-            .filter(|&id| {
-                let func = self.get_function(id);
-                func.traits.is_constructor
-            })
-            .collect()
+    /// Find all factories for a given type (reference types)
+    /// Returns a vector of FunctionIds for all factories
+    pub fn find_factories(&self, type_id: TypeId) -> Vec<FunctionId> {
+        // Look up factories from behaviors registry
+        self.behaviors
+            .get(&type_id)
+            .map(|b| b.factories.clone())
+            .unwrap_or_default()
     }
 
     /// Check if a constructor is marked as explicit
@@ -1538,12 +733,15 @@ impl<'src, 'ast> Registry<'src, 'ast> {
             let param = &func.params[0];
 
             // Parameter must be a reference (&in or &inout)
-            if !matches!(param.ref_modifier, crate::semantic::RefModifier::In | crate::semantic::RefModifier::InOut) {
+            if !matches!(
+                param.data_type.ref_modifier,
+                crate::semantic::RefModifier::In | crate::semantic::RefModifier::InOut
+            ) {
                 continue;
             }
 
             // Parameter type must match the class type (ignoring const/ref modifiers)
-            if param.type_id == type_id {
+            if param.data_type.type_id == type_id {
                 return Some(ctor_id);
             }
         }
@@ -1551,15 +749,12 @@ impl<'src, 'ast> Registry<'src, 'ast> {
         None
     }
 
-    /// Add a method to a class or template instance's methods list
+    /// Add a method to a class's methods list
     /// This is used when auto-generating constructors in Pass 1
+    /// Works for both regular classes and template instances (which are also Classes)
     pub fn add_method_to_class(&mut self, type_id: TypeId, func_id: FunctionId) {
         let typedef = self.get_type_mut(type_id);
-        match typedef {
-            TypeDef::Class { methods, .. } => methods.push(func_id),
-            TypeDef::TemplateInstance { methods, .. } => methods.push(func_id),
-            _ => {}
-        }
+        if let TypeDef::Class { methods, .. } = typedef { methods.push(func_id) }
     }
 
     /// Find an operator method on a type.
@@ -1583,20 +778,73 @@ impl<'src, 'ast> Registry<'src, 'ast> {
         type_id: TypeId,
         operator: OperatorBehavior,
     ) -> Option<FunctionId> {
+        self.find_operator_methods(type_id, operator).first().copied()
+    }
+
+    /// Find all overloads of an operator method for a type.
+    ///
+    /// Returns all registered operator methods for the given behavior.
+    /// Use this when you need to do overload resolution based on const-ness
+    /// or parameter types.
+    pub fn find_operator_methods(
+        &self,
+        type_id: TypeId,
+        operator: OperatorBehavior,
+    ) -> &[FunctionId] {
         let typedef = self.get_type(type_id);
         match typedef {
             TypeDef::Class {
                 operator_methods, ..
-            } => operator_methods.get(&operator).copied(),
-            TypeDef::TemplateInstance {
-                operator_methods, ..
-            } => operator_methods.get(&operator).copied(),
-            _ => None,
+            } => operator_methods.get(&operator).map(|v| v.as_slice()).unwrap_or(&[]),
+            _ => &[],
+        }
+    }
+
+    /// Find the best operator method for a type based on desired mutability.
+    ///
+    /// When `prefer_mutable` is true, prefers non-const methods (for assignment targets).
+    /// When `prefer_mutable` is false, prefers const methods (for read-only access).
+    /// Falls back to any available method if the preferred type isn't available.
+    pub fn find_operator_method_with_mutability(
+        &self,
+        type_id: TypeId,
+        operator: OperatorBehavior,
+        prefer_mutable: bool,
+    ) -> Option<FunctionId> {
+        let overloads = self.find_operator_methods(type_id, operator);
+        if overloads.is_empty() {
+            return None;
+        }
+
+        // If only one overload, return it
+        if overloads.len() == 1 {
+            return Some(overloads[0]);
+        }
+
+        // Multiple overloads - find the one matching our preference
+        // For mutable access, we want the one with non-const return type
+        // For const access, we want the const one
+        let mut mutable_method = None;
+        let mut const_method = None;
+
+        for &func_id in overloads {
+            let func = self.get_function(func_id);
+            if func.return_type.is_const {
+                const_method = Some(func_id);
+            } else {
+                mutable_method = Some(func_id);
+            }
+        }
+
+        if prefer_mutable {
+            mutable_method.or(const_method)
+        } else {
+            const_method.or(mutable_method)
         }
     }
 
     /// Get the base class of a type (if any)
-    fn get_base_class(&self, type_id: TypeId) -> Option<TypeId> {
+    pub fn get_base_class(&self, type_id: TypeId) -> Option<TypeId> {
         let typedef = self.get_type(type_id);
         if let TypeDef::Class { base_class, .. } = typedef {
             *base_class
@@ -1651,7 +899,8 @@ impl<'src, 'ast> Registry<'src, 'ast> {
     fn find_direct_method(&self, type_id: TypeId, name: &str) -> Option<FunctionId> {
         let typedef = self.get_type(type_id);
         if let TypeDef::Class { methods, .. } = typedef {
-            methods.iter()
+            methods
+                .iter()
                 .copied()
                 .find(|&id| self.get_function(id).name == name)
         } else {
@@ -1680,7 +929,12 @@ impl<'src, 'ast> Registry<'src, 'ast> {
         self.find_method_impl(type_id, name, &mut visited)
     }
 
-    fn find_method_impl(&self, type_id: TypeId, name: &str, visited: &mut rustc_hash::FxHashSet<TypeId>) -> Option<FunctionId> {
+    fn find_method_impl(
+        &self,
+        type_id: TypeId,
+        name: &str,
+        visited: &mut rustc_hash::FxHashSet<TypeId>,
+    ) -> Option<FunctionId> {
         // Cycle protection
         if self.has_visited_in_chain(type_id, visited) {
             return None;
@@ -1710,7 +964,12 @@ impl<'src, 'ast> Registry<'src, 'ast> {
         self.find_methods_by_name_impl(type_id, name, &mut visited)
     }
 
-    fn find_methods_by_name_impl(&self, type_id: TypeId, name: &str, visited: &mut rustc_hash::FxHashSet<TypeId>) -> Vec<FunctionId> {
+    fn find_methods_by_name_impl(
+        &self,
+        type_id: TypeId,
+        name: &str,
+        visited: &mut rustc_hash::FxHashSet<TypeId>,
+    ) -> Vec<FunctionId> {
         // Cycle protection
         if self.has_visited_in_chain(type_id, visited) {
             return Vec::new();
@@ -1719,11 +978,23 @@ impl<'src, 'ast> Registry<'src, 'ast> {
         let typedef = self.get_type(type_id);
 
         match typedef {
-            TypeDef::Class { methods, base_class, .. } => {
-                // Get all methods with matching name from this class
-                let mut matching_methods: Vec<FunctionId> = methods.iter()
+            TypeDef::Class {
+                methods,
+                base_class,
+                ..
+            } => {
+                // Get all methods with matching name from this class (or template instance)
+                let mut matching_methods: Vec<FunctionId> = methods
+                    .iter()
                     .copied()
-                    .filter(|&id| self.get_function(id).name == name)
+                    .filter(|&id| {
+                        // Debug: print which ID we're looking up
+                        if !self.functions.contains_key(&id) {
+                            eprintln!("DEBUG: FunctionId {:?} not found in ScriptRegistry (is_ffi={}, methods={:?})",
+                                id, id.is_ffi(), methods);
+                        }
+                        self.get_function(id).name == name
+                    })
                     .collect();
 
                 // Recursively add matching methods from base class
@@ -1733,13 +1004,6 @@ impl<'src, 'ast> Registry<'src, 'ast> {
                 }
 
                 matching_methods
-            }
-            TypeDef::TemplateInstance { methods, .. } => {
-                // Get all methods with matching name from this template instance
-                methods.iter()
-                    .copied()
-                    .filter(|&id| self.get_function(id).name == name)
-                    .collect()
             }
             _ => Vec::new(),
         }
@@ -1757,7 +1021,11 @@ impl<'src, 'ast> Registry<'src, 'ast> {
         self.get_all_methods_impl(type_id, &mut visited)
     }
 
-    fn get_all_methods_impl(&self, type_id: TypeId, visited: &mut rustc_hash::FxHashSet<TypeId>) -> Vec<FunctionId> {
+    fn get_all_methods_impl(
+        &self,
+        type_id: TypeId,
+        visited: &mut rustc_hash::FxHashSet<TypeId>,
+    ) -> Vec<FunctionId> {
         // Cycle protection
         if self.has_visited_in_chain(type_id, visited) {
             return Vec::new();
@@ -1766,7 +1034,11 @@ impl<'src, 'ast> Registry<'src, 'ast> {
         let typedef = self.get_type(type_id);
 
         match typedef {
-            TypeDef::Class { methods, base_class, .. } => {
+            TypeDef::Class {
+                methods,
+                base_class,
+                ..
+            } => {
                 let mut all_methods = methods.clone();
 
                 // Recursively add base class methods
@@ -1790,7 +1062,11 @@ impl<'src, 'ast> Registry<'src, 'ast> {
         self.get_all_properties_impl(type_id, &mut visited)
     }
 
-    fn get_all_properties_impl(&self, type_id: TypeId, visited: &mut rustc_hash::FxHashSet<TypeId>) -> FxHashMap<String, PropertyAccessors> {
+    fn get_all_properties_impl(
+        &self,
+        type_id: TypeId,
+        visited: &mut rustc_hash::FxHashSet<TypeId>,
+    ) -> FxHashMap<String, PropertyAccessors> {
         // Cycle protection
         if self.has_visited_in_chain(type_id, visited) {
             return FxHashMap::default();
@@ -1799,7 +1075,11 @@ impl<'src, 'ast> Registry<'src, 'ast> {
         let typedef = self.get_type(type_id);
 
         match typedef {
-            TypeDef::Class { properties, base_class, .. } => {
+            TypeDef::Class {
+                properties,
+                base_class,
+                ..
+            } => {
                 let mut all_properties = FxHashMap::default();
 
                 // First, add base class properties (if any)
@@ -1840,7 +1120,10 @@ impl<'src, 'ast> Registry<'src, 'ast> {
     ///
     /// Returns the list of MethodSignature for an interface, or None if not an interface.
     /// Used for validating that classes implement all interface methods.
-    pub fn get_interface_methods(&self, type_id: TypeId) -> Option<&[super::type_def::MethodSignature]> {
+    pub fn get_interface_methods(
+        &self,
+        type_id: TypeId,
+    ) -> Option<&[super::type_def::MethodSignature]> {
         let typedef = self.get_type(type_id);
         if let TypeDef::Interface { methods, .. } = typedef {
             Some(methods.as_slice())
@@ -1857,7 +1140,11 @@ impl<'src, 'ast> Registry<'src, 'ast> {
         self.get_all_interfaces_impl(type_id, &mut visited)
     }
 
-    fn get_all_interfaces_impl(&self, type_id: TypeId, visited: &mut rustc_hash::FxHashSet<TypeId>) -> Vec<TypeId> {
+    fn get_all_interfaces_impl(
+        &self,
+        type_id: TypeId,
+        visited: &mut rustc_hash::FxHashSet<TypeId>,
+    ) -> Vec<TypeId> {
         // Cycle protection
         if self.has_visited_in_chain(type_id, visited) {
             return Vec::new();
@@ -1866,7 +1153,11 @@ impl<'src, 'ast> Registry<'src, 'ast> {
         let typedef = self.get_type(type_id);
 
         match typedef {
-            TypeDef::Class { interfaces, base_class, .. } => {
+            TypeDef::Class {
+                interfaces,
+                base_class,
+                ..
+            } => {
                 let mut all_interfaces = interfaces.clone();
 
                 // Add interfaces from base class
@@ -1932,9 +1223,11 @@ impl<'src, 'ast> Registry<'src, 'ast> {
             }
 
             // Check parameter types
-            let params_match = func.params.iter()
+            let params_match = func
+                .params
+                .iter()
                 .zip(params.iter())
-                .all(|(a, b)| a.type_id == b.type_id && a.ref_modifier == b.ref_modifier);
+                .all(|(a, b)| a.data_type.type_id == b.type_id && a.data_type.ref_modifier == b.ref_modifier);
 
             if params_match {
                 return Some(method_id);
@@ -1970,13 +1263,13 @@ impl<'src, 'ast> Registry<'src, 'ast> {
             }
 
             // Check parameter types match
-            let params_match = func.params.iter()
-                .zip(interface_method.params.iter())
-                .all(|(func_param, iface_param)| {
-                    func_param.type_id == iface_param.type_id
-                        && func_param.ref_modifier == iface_param.ref_modifier
-                        && func_param.is_handle == iface_param.is_handle
-                });
+            let params_match = func.params.iter().zip(interface_method.params.iter()).all(
+                |(func_param, iface_param)| {
+                    func_param.data_type.type_id == iface_param.type_id
+                        && func_param.data_type.ref_modifier == iface_param.ref_modifier
+                        && func_param.data_type.is_handle == iface_param.is_handle
+                },
+            );
 
             if params_match {
                 return true;
@@ -2015,7 +1308,11 @@ impl<'src, 'ast> Registry<'src, 'ast> {
     /// // When processing class A and B already exists with base class A:
     /// registry.would_create_circular_inheritance(type_a, type_b) // true
     /// ```
-    pub fn would_create_circular_inheritance(&self, type_id: TypeId, proposed_base_id: TypeId) -> bool {
+    pub fn would_create_circular_inheritance(
+        &self,
+        type_id: TypeId,
+        proposed_base_id: TypeId,
+    ) -> bool {
         // Direct self-inheritance
         if type_id == proposed_base_id {
             return true;
@@ -2048,16 +1345,21 @@ impl<'src, 'ast> Registry<'src, 'ast> {
     ///
     /// This is used by recursive methods to protect against infinite loops
     /// if circular inheritance somehow exists in the registry.
-    fn has_visited_in_chain(&self, type_id: TypeId, visited: &mut rustc_hash::FxHashSet<TypeId>) -> bool {
+    fn has_visited_in_chain(
+        &self,
+        type_id: TypeId,
+        visited: &mut rustc_hash::FxHashSet<TypeId>,
+    ) -> bool {
         if visited.contains(&type_id) {
             return true;
         }
         visited.insert(type_id);
         false
     }
+
 }
 
-impl<'src, 'ast> Default for Registry<'src, 'ast> {
+impl<'ast> Default for ScriptRegistry<'ast> {
     fn default() -> Self {
         Self::new()
     }
@@ -2066,120 +1368,45 @@ impl<'src, 'ast> Default for Registry<'src, 'ast> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::semantic::types::type_def::Visibility;
+    use crate::semantic::types::data_type::RefModifier;
+    use crate::semantic::types::type_def::{Visibility, INT32_TYPE, VOID_TYPE, FLOAT_TYPE};
+    use crate::types::TypeHash;
 
-    #[test]
-    fn registry_new_has_primitives() {
-        let registry = Registry::new();
-        assert_eq!(registry.types.len(), 32);
+    /// Test helper to create a ScriptParam from a DataType with an auto-generated name
+    fn param(data_type: DataType) -> ScriptParam<'static> {
+        ScriptParam {
+            name: String::new(),
+            data_type,
+            default: None,
+        }
+    }
+
+    /// Test helper to create a placeholder func_hash for test FunctionDefs
+    fn test_func_hash() -> TypeHash {
+        TypeHash::EMPTY
     }
 
     #[test]
-    fn registry_void_type() {
-        let registry = Registry::new();
-        let typedef = registry.get_type(VOID_TYPE);
-        assert!(typedef.is_primitive());
-        assert_eq!(typedef.name(), "void");
-    }
-
-    #[test]
-    fn registry_bool_type() {
-        let registry = Registry::new();
-        let typedef = registry.get_type(BOOL_TYPE);
-        assert!(typedef.is_primitive());
-        assert_eq!(typedef.name(), "bool");
-    }
-
-    #[test]
-    fn registry_int_types() {
-        let registry = Registry::new();
-
-        assert_eq!(registry.get_type(INT8_TYPE).name(), "int8");
-        assert_eq!(registry.get_type(INT16_TYPE).name(), "int16");
-        assert_eq!(registry.get_type(INT32_TYPE).name(), "int");
-        assert_eq!(registry.get_type(INT64_TYPE).name(), "int64");
-    }
-
-    #[test]
-    fn registry_uint_types() {
-        let registry = Registry::new();
-
-        assert_eq!(registry.get_type(UINT8_TYPE).name(), "uint8");
-        assert_eq!(registry.get_type(UINT16_TYPE).name(), "uint16");
-        assert_eq!(registry.get_type(UINT32_TYPE).name(), "uint");
-        assert_eq!(registry.get_type(UINT64_TYPE).name(), "uint64");
-    }
-
-    #[test]
-    fn registry_float_types() {
-        let registry = Registry::new();
-
-        assert_eq!(registry.get_type(FLOAT_TYPE).name(), "float");
-        assert_eq!(registry.get_type(DOUBLE_TYPE).name(), "double");
-    }
-
-    #[test]
-    fn registry_string_type() {
-        let registry = Registry::new();
-        let typedef = registry.get_type(STRING_TYPE);
-        assert!(typedef.is_class());
-        assert_eq!(typedef.name(), "string");
-    }
-
-    #[test]
-    fn registry_array_template() {
-        let registry = Registry::new();
-        let typedef = registry.get_type(ARRAY_TEMPLATE);
-        assert!(typedef.is_template());
-        assert_eq!(typedef.name(), "array");
-    }
-
-    #[test]
-    fn registry_dict_template() {
-        let registry = Registry::new();
-        let typedef = registry.get_type(DICT_TEMPLATE);
-        assert!(typedef.is_template());
-        assert_eq!(typedef.name(), "dictionary");
-    }
-
-    #[test]
-    fn lookup_primitive_by_name() {
-        let registry = Registry::new();
-
-        assert_eq!(registry.lookup_type("void"), Some(VOID_TYPE));
-        assert_eq!(registry.lookup_type("bool"), Some(BOOL_TYPE));
-        assert_eq!(registry.lookup_type("int"), Some(INT32_TYPE));
-        assert_eq!(registry.lookup_type("uint"), Some(UINT32_TYPE));
-        assert_eq!(registry.lookup_type("float"), Some(FLOAT_TYPE));
-        assert_eq!(registry.lookup_type("double"), Some(DOUBLE_TYPE));
-    }
-
-    #[test]
-    fn lookup_string_by_name() {
-        let registry = Registry::new();
-        assert_eq!(registry.lookup_type("string"), Some(STRING_TYPE));
-    }
-
-    #[test]
-    fn lookup_template_by_name() {
-        let registry = Registry::new();
-        assert_eq!(registry.lookup_type("array"), Some(ARRAY_TEMPLATE));
-        assert_eq!(registry.lookup_type("dictionary"), Some(DICT_TEMPLATE));
+    fn script_registry_new_is_empty() {
+        let registry = ScriptRegistry::new();
+        // ScriptRegistry starts empty - primitives are in FfiRegistry
+        assert_eq!(registry.types.len(), 0);
     }
 
     #[test]
     fn lookup_nonexistent_type() {
-        let registry = Registry::new();
+        let registry = ScriptRegistry::new();
         assert_eq!(registry.lookup_type("NonExistent"), None);
     }
 
     #[test]
     fn register_simple_class() {
-        let mut registry = Registry::new();
+        let mut registry = ScriptRegistry::new();
 
         let typedef = TypeDef::Class {
             name: "Player".to_string(),
             qualified_name: "Player".to_string(),
+            type_hash: crate::types::TypeHash::from_name("Player"),
             fields: Vec::new(),
             methods: Vec::new(),
             base_class: None,
@@ -2188,7 +1415,11 @@ mod tests {
             properties: rustc_hash::FxHashMap::default(),
             is_final: false,
             is_abstract: false,
-        };
+            template_params: Vec::new(),
+            template: None,
+            type_args: Vec::new(),
+        type_kind: crate::types::TypeKind::reference(),
+            };
 
         let type_id = registry.register_type(typedef, Some("Player"));
         assert_eq!(registry.lookup_type("Player"), Some(type_id));
@@ -2197,11 +1428,12 @@ mod tests {
 
     #[test]
     fn register_qualified_class() {
-        let mut registry = Registry::new();
+        let mut registry = ScriptRegistry::new();
 
         let typedef = TypeDef::Class {
             name: "Player".to_string(),
             qualified_name: "Game::Player".to_string(),
+            type_hash: crate::types::TypeHash::from_name("Game::Player"),
             fields: Vec::new(),
             methods: Vec::new(),
             base_class: None,
@@ -2210,7 +1442,11 @@ mod tests {
             properties: rustc_hash::FxHashMap::default(),
             is_final: false,
             is_abstract: false,
-        };
+            template_params: Vec::new(),
+            template: None,
+            type_args: Vec::new(),
+        type_kind: crate::types::TypeKind::reference(),
+            };
 
         let type_id = registry.register_type(typedef, Some("Game::Player"));
         assert_eq!(registry.lookup_type("Game::Player"), Some(type_id));
@@ -2218,11 +1454,12 @@ mod tests {
 
     #[test]
     fn register_interface() {
-        let mut registry = Registry::new();
+        let mut registry = ScriptRegistry::new();
 
         let typedef = TypeDef::Interface {
             name: "IDrawable".to_string(),
             qualified_name: "IDrawable".to_string(),
+            type_hash: crate::types::TypeHash::from_name("IDrawable"),
             methods: Vec::new(),
         };
 
@@ -2233,11 +1470,12 @@ mod tests {
 
     #[test]
     fn register_enum() {
-        let mut registry = Registry::new();
+        let mut registry = ScriptRegistry::new();
 
         let typedef = TypeDef::Enum {
             name: "Color".to_string(),
             qualified_name: "Color".to_string(),
+            type_hash: crate::types::TypeHash::from_name("Color"),
             values: vec![
                 ("Red".to_string(), 0),
                 ("Green".to_string(), 1),
@@ -2252,11 +1490,12 @@ mod tests {
 
     #[test]
     fn register_funcdef() {
-        let mut registry = Registry::new();
+        let mut registry = ScriptRegistry::new();
 
         let typedef = TypeDef::Funcdef {
             name: "Callback".to_string(),
             qualified_name: "Callback".to_string(),
+            type_hash: crate::types::TypeHash::from_name("Callback"),
             params: vec![DataType::simple(INT32_TYPE)],
             return_type: DataType::simple(VOID_TYPE),
         };
@@ -2268,11 +1507,12 @@ mod tests {
 
     #[test]
     fn get_type_mut() {
-        let mut registry = Registry::new();
+        let mut registry = ScriptRegistry::new();
 
         let typedef = TypeDef::Class {
             name: "Player".to_string(),
             qualified_name: "Player".to_string(),
+            type_hash: crate::types::TypeHash::from_name("Player"),
             fields: Vec::new(),
             methods: Vec::new(),
             base_class: None,
@@ -2281,7 +1521,11 @@ mod tests {
             properties: rustc_hash::FxHashMap::default(),
             is_final: false,
             is_abstract: false,
-        };
+            template_params: Vec::new(),
+            template: None,
+            type_args: Vec::new(),
+        type_kind: crate::types::TypeKind::reference(),
+            };
 
         let type_id = registry.register_type(typedef, Some("Player"));
 
@@ -2302,119 +1546,119 @@ mod tests {
         }
     }
 
-    #[test]
-    fn instantiate_array_template() {
-        let mut registry = Registry::new();
-
-        let instance_id = registry
-            .instantiate_template(ARRAY_TEMPLATE, vec![DataType::simple(INT32_TYPE)])
-            .unwrap();
-
-        let typedef = registry.get_type(instance_id);
-        assert!(typedef.is_template_instance());
-    }
 
     #[test]
-    fn instantiate_template_caching() {
-        let mut registry = Registry::new();
+    fn find_operator_method_with_mutability_prefers_non_const() {
+        let mut registry = ScriptRegistry::new();
 
-        let instance1 = registry
-            .instantiate_template(ARRAY_TEMPLATE, vec![DataType::simple(INT32_TYPE)])
-            .unwrap();
+        // Create two opIndex methods - one const, one non-const
+        let const_method_id = FunctionId::next();
+        let const_method = FunctionDef {
+            id: const_method_id,
+            name: "opIndex".to_string(),
+            namespace: Vec::new(),
+            params: vec![param(DataType::simple(INT32_TYPE))],
+            return_type: DataType {
+                type_id: INT32_TYPE,
+                is_const: true, // const return
+                is_handle: false,
+                is_handle_to_const: false,
+                ref_modifier: RefModifier::In,
+            },
+            object_type: None,
+            traits: FunctionTraits { is_const: true, ..FunctionTraits::new() },
+            is_native: true,
 
-        let instance2 = registry
-            .instantiate_template(ARRAY_TEMPLATE, vec![DataType::simple(INT32_TYPE)])
-            .unwrap();
+            visibility: Visibility::Public,
+            signature_filled: true,
+            func_hash: test_func_hash(),
+        };
+        registry.register_function(const_method);
 
-        assert_eq!(instance1, instance2);
-    }
+        let mutable_method_id = FunctionId::next();
+        let mutable_method = FunctionDef {
+            id: mutable_method_id,
+            name: "opIndex".to_string(),
+            namespace: Vec::new(),
+            params: vec![param(DataType::simple(INT32_TYPE))],
+            return_type: DataType {
+                type_id: INT32_TYPE,
+                is_const: false, // non-const return
+                is_handle: false,
+                is_handle_to_const: false,
+                ref_modifier: RefModifier::In,
+            },
+            object_type: None,
+            traits: FunctionTraits::new(),
+            is_native: true,
 
-    #[test]
-    fn instantiate_template_different_args() {
-        let mut registry = Registry::new();
+            visibility: Visibility::Public,
+            signature_filled: true,
+            func_hash: test_func_hash(),
+        };
+        registry.register_function(mutable_method);
 
-        let instance1 = registry
-            .instantiate_template(ARRAY_TEMPLATE, vec![DataType::simple(INT32_TYPE)])
-            .unwrap();
-
-        let instance2 = registry
-            .instantiate_template(ARRAY_TEMPLATE, vec![DataType::simple(FLOAT_TYPE)])
-            .unwrap();
-
-        assert_ne!(instance1, instance2);
-    }
-
-    #[test]
-    fn instantiate_dict_template() {
-        let mut registry = Registry::new();
-
-        let instance_id = registry
-            .instantiate_template(
-                DICT_TEMPLATE,
-                vec![DataType::simple(STRING_TYPE), DataType::simple(INT32_TYPE)],
-            )
-            .unwrap();
-
-        let typedef = registry.get_type(instance_id);
-        assert!(typedef.is_template_instance());
-    }
-
-    #[test]
-    fn instantiate_nested_template() {
-        let mut registry = Registry::new();
-
-        // array<int>
-        let inner = registry
-            .instantiate_template(ARRAY_TEMPLATE, vec![DataType::simple(INT32_TYPE)])
-            .unwrap();
-
-        // array<array<int>>
-        let outer = registry
-            .instantiate_template(ARRAY_TEMPLATE, vec![DataType::simple(inner)])
-            .unwrap();
-
-        let typedef = registry.get_type(outer);
-        assert!(typedef.is_template_instance());
-    }
-
-    #[test]
-    fn instantiate_non_template_fails() {
-        let mut registry = Registry::new();
-
-        let result = registry.instantiate_template(INT32_TYPE, vec![DataType::simple(INT32_TYPE)]);
-        assert!(result.is_err());
-        assert_eq!(result.unwrap_err().kind, SemanticErrorKind::NotATemplate);
-    }
-
-    #[test]
-    fn instantiate_wrong_arg_count_fails() {
-        let mut registry = Registry::new();
-
-        // array expects 1 arg, give it 2
-        let result = registry.instantiate_template(
-            ARRAY_TEMPLATE,
-            vec![DataType::simple(INT32_TYPE), DataType::simple(FLOAT_TYPE)],
+        // Create a class with both opIndex methods
+        let class_id = TypeId::next_script();
+        let mut operator_methods: FxHashMap<OperatorBehavior, Vec<FunctionId>> = FxHashMap::default();
+        operator_methods.insert(
+            OperatorBehavior::OpIndex,
+            vec![const_method_id, mutable_method_id],
         );
-        assert!(result.is_err());
-        assert_eq!(result.unwrap_err().kind, SemanticErrorKind::WrongTemplateArgCount);
+
+        registry.types.insert(class_id, TypeDef::Class {
+            name: "TestClass".to_string(),
+            qualified_name: "TestClass".to_string(),
+            type_hash: crate::types::TypeHash::from_name("TestClass"),
+            fields: Vec::new(),
+            methods: vec![const_method_id, mutable_method_id],
+            base_class: None,
+            interfaces: Vec::new(),
+            operator_methods,
+            properties: FxHashMap::default(),
+            is_final: false,
+            is_abstract: false,
+            template_params: Vec::new(),
+            template: None,
+            type_args: Vec::new(),
+            type_kind: crate::types::TypeKind::reference(),
+        });
+        registry.type_by_name.insert("TestClass".to_string(), class_id);
+
+        // When prefer_mutable=true, should return the non-const method
+        let result = registry.find_operator_method_with_mutability(
+            class_id,
+            OperatorBehavior::OpIndex,
+            true,
+        );
+        assert_eq!(result, Some(mutable_method_id), "Should prefer mutable method for assignment");
+
+        // When prefer_mutable=false, should return the const method
+        let result = registry.find_operator_method_with_mutability(
+            class_id,
+            OperatorBehavior::OpIndex,
+            false,
+        );
+        assert_eq!(result, Some(const_method_id), "Should prefer const method for read");
     }
 
     #[test]
     fn register_function() {
-        let mut registry = Registry::new();
+        let mut registry = ScriptRegistry::new();
 
         let func = FunctionDef {
             id: FunctionId::new(0),
             name: "foo".to_string(),
             namespace: Vec::new(),
-            params: vec![DataType::simple(INT32_TYPE)],
+            params: vec![param(DataType::simple(INT32_TYPE))],
             return_type: DataType::simple(VOID_TYPE),
             object_type: None,
             traits: FunctionTraits::new(),
             is_native: false,
-            default_args: Vec::new(),
+
             visibility: Visibility::Public,
-        signature_filled: true,
+            signature_filled: true,
+            func_hash: test_func_hash(),
         };
 
         let func_id = registry.register_function(func);
@@ -2423,20 +1667,21 @@ mod tests {
 
     #[test]
     fn lookup_function_by_name() {
-        let mut registry = Registry::new();
+        let mut registry = ScriptRegistry::new();
 
         let func = FunctionDef {
             id: FunctionId::new(0),
             name: "foo".to_string(),
             namespace: Vec::new(),
-            params: vec![DataType::simple(INT32_TYPE)],
+            params: vec![param(DataType::simple(INT32_TYPE))],
             return_type: DataType::simple(VOID_TYPE),
             object_type: None,
             traits: FunctionTraits::new(),
             is_native: false,
-            default_args: Vec::new(),
+
             visibility: Visibility::Public,
-        signature_filled: true,
+            signature_filled: true,
+            func_hash: test_func_hash(),
         };
 
         registry.register_function(func);
@@ -2448,28 +1693,29 @@ mod tests {
 
     #[test]
     fn lookup_nonexistent_function() {
-        let registry = Registry::new();
+        let registry = ScriptRegistry::new();
         let functions = registry.lookup_functions("nonexistent");
         assert_eq!(functions.len(), 0);
     }
 
     #[test]
     fn function_overloading() {
-        let mut registry = Registry::new();
+        let mut registry = ScriptRegistry::new();
 
         // foo(int)
         let func1 = FunctionDef {
             id: FunctionId::new(0),
             name: "foo".to_string(),
             namespace: Vec::new(),
-            params: vec![DataType::simple(INT32_TYPE)],
+            params: vec![param(DataType::simple(INT32_TYPE))],
             return_type: DataType::simple(VOID_TYPE),
             object_type: None,
             traits: FunctionTraits::new(),
             is_native: false,
-            default_args: Vec::new(),
+
             visibility: Visibility::Public,
-        signature_filled: true,
+            signature_filled: true,
+            func_hash: test_func_hash(),
         };
 
         // foo(float)
@@ -2477,14 +1723,15 @@ mod tests {
             id: FunctionId::new(1),
             name: "foo".to_string(),
             namespace: Vec::new(),
-            params: vec![DataType::simple(FLOAT_TYPE)],
+            params: vec![param(DataType::simple(FLOAT_TYPE))],
             return_type: DataType::simple(VOID_TYPE),
             object_type: None,
             traits: FunctionTraits::new(),
             is_native: false,
-            default_args: Vec::new(),
+
             visibility: Visibility::Public,
-        signature_filled: true,
+            signature_filled: true,
+            func_hash: test_func_hash(),
         };
 
         registry.register_function(func1);
@@ -2505,9 +1752,10 @@ mod tests {
             object_type: None,
             traits: FunctionTraits::new(),
             is_native: false,
-            default_args: Vec::new(),
+
             visibility: Visibility::Public,
-        signature_filled: true,
+            signature_filled: true,
+            func_hash: test_func_hash(),
         };
 
         assert_eq!(func.qualified_name(), "Game::Player::update");
@@ -2524,9 +1772,10 @@ mod tests {
             object_type: None,
             traits: FunctionTraits::new(),
             is_native: false,
-            default_args: Vec::new(),
+
             visibility: Visibility::Public,
-        signature_filled: true,
+            signature_filled: true,
+            func_hash: test_func_hash(),
         };
 
         assert_eq!(func.qualified_name(), "foo");
@@ -2534,20 +1783,21 @@ mod tests {
 
     #[test]
     fn get_function() {
-        let mut registry = Registry::new();
+        let mut registry = ScriptRegistry::new();
 
         let func = FunctionDef {
             id: FunctionId::new(0),
             name: "foo".to_string(),
             namespace: Vec::new(),
-            params: vec![DataType::simple(INT32_TYPE)],
+            params: vec![param(DataType::simple(INT32_TYPE))],
             return_type: DataType::simple(VOID_TYPE),
             object_type: None,
             traits: FunctionTraits::new(),
             is_native: false,
-            default_args: Vec::new(),
+
             visibility: Visibility::Public,
-        signature_filled: true,
+            signature_filled: true,
+            func_hash: test_func_hash(),
         };
 
         let func_id = registry.register_function(func.clone());
@@ -2557,7 +1807,7 @@ mod tests {
 
     #[test]
     fn get_methods_for_type() {
-        let mut registry = Registry::new();
+        let mut registry = ScriptRegistry::new();
 
         let player_type = TypeId::new(100);
 
@@ -2571,9 +1821,10 @@ mod tests {
             object_type: Some(player_type),
             traits: FunctionTraits::new(),
             is_native: false,
-            default_args: Vec::new(),
+
             visibility: Visibility::Public,
-        signature_filled: true,
+            signature_filled: true,
+            func_hash: test_func_hash(),
         };
 
         // Another method for Player
@@ -2586,9 +1837,10 @@ mod tests {
             object_type: Some(player_type),
             traits: FunctionTraits::new(),
             is_native: false,
-            default_args: Vec::new(),
+
             visibility: Visibility::Public,
-        signature_filled: true,
+            signature_filled: true,
+            func_hash: test_func_hash(),
         };
 
         // Global function (not a method)
@@ -2601,9 +1853,10 @@ mod tests {
             object_type: None,
             traits: FunctionTraits::new(),
             is_native: false,
-            default_args: Vec::new(),
+
             visibility: Visibility::Public,
-        signature_filled: true,
+            signature_filled: true,
+            func_hash: test_func_hash(),
         };
 
         registry.register_function(method1);
@@ -2619,17 +1872,20 @@ mod tests {
 
     #[test]
     fn registry_default() {
-        let registry = Registry::default();
-        assert_eq!(registry.types.len(), 32);
+        let registry = ScriptRegistry::default();
+        // ScriptRegistry no longer contains primitives (they're in FfiRegistry)
+        // ScriptRegistry::default() starts empty
+        assert_eq!(registry.types.len(), 0);
     }
 
     #[test]
     fn registry_clone() {
-        let mut registry = Registry::new();
+        let mut registry = ScriptRegistry::new();
 
         let typedef = TypeDef::Class {
             name: "Player".to_string(),
             qualified_name: "Player".to_string(),
+            type_hash: crate::types::TypeHash::from_name("Player"),
             fields: Vec::new(),
             methods: Vec::new(),
             base_class: None,
@@ -2638,7 +1894,11 @@ mod tests {
             properties: rustc_hash::FxHashMap::default(),
             is_final: false,
             is_abstract: false,
-        };
+            template_params: Vec::new(),
+            template: None,
+            type_args: Vec::new(),
+        type_kind: crate::types::TypeKind::reference(),
+            };
 
         let type_id = registry.register_type(typedef, Some("Player"));
 
@@ -2652,12 +1912,13 @@ mod tests {
 
     #[test]
     fn find_constructor_exact_match() {
-        let mut registry = Registry::new();
+        let mut registry = ScriptRegistry::new();
 
         // Register a class
         let typedef = TypeDef::Class {
             name: "Vector3".to_string(),
             qualified_name: "Vector3".to_string(),
+            type_hash: crate::types::TypeHash::from_name("Vector3"),
             fields: Vec::new(),
             methods: Vec::new(),
             base_class: None,
@@ -2666,7 +1927,11 @@ mod tests {
             properties: rustc_hash::FxHashMap::default(),
             is_final: false,
             is_abstract: false,
-        };
+            template_params: Vec::new(),
+            template: None,
+            type_args: Vec::new(),
+        type_kind: crate::types::TypeKind::reference(),
+            };
         let type_id = registry.register_type(typedef, Some("Vector3"));
 
         // Register a constructor: Vector3(int, int, int)
@@ -2675,8 +1940,8 @@ mod tests {
             id: FunctionId(0), // Will be reassigned by register_function
             name: "Vector3".to_string(),
             namespace: Vec::new(),
-            params: vec![int_type.clone(), int_type.clone(), int_type.clone()],
-            return_type: DataType::simple(registry.void_type),
+            params: vec![param(int_type.clone()), param(int_type.clone()), param(int_type.clone())],
+            return_type: DataType::simple(VOID_TYPE),
             object_type: Some(type_id),
             traits: FunctionTraits {
                 is_constructor: true,
@@ -2689,9 +1954,10 @@ mod tests {
                 auto_generated: None,
             },
             is_native: false,
-            default_args: Vec::new(),
+
             visibility: Visibility::Public,
-        signature_filled: true,
+            signature_filled: true,
+            func_hash: test_func_hash(),
         };
 
         let func_id = registry.register_function(func_def);
@@ -2711,12 +1977,13 @@ mod tests {
 
     #[test]
     fn find_constructor_no_match() {
-        let mut registry = Registry::new();
+        let mut registry = ScriptRegistry::new();
 
         // Register a class
         let typedef = TypeDef::Class {
             name: "Vector3".to_string(),
             qualified_name: "Vector3".to_string(),
+            type_hash: crate::types::TypeHash::from_name("Vector3"),
             fields: Vec::new(),
             methods: Vec::new(),
             base_class: None,
@@ -2725,7 +1992,11 @@ mod tests {
             properties: rustc_hash::FxHashMap::default(),
             is_final: false,
             is_abstract: false,
-        };
+            template_params: Vec::new(),
+            template: None,
+            type_args: Vec::new(),
+        type_kind: crate::types::TypeKind::reference(),
+            };
         let type_id = registry.register_type(typedef, Some("Vector3"));
 
         // Register constructor: Vector3(int, int, int)
@@ -2734,8 +2005,8 @@ mod tests {
             id: FunctionId(0),
             name: "Vector3".to_string(),
             namespace: Vec::new(),
-            params: vec![int_type.clone(), int_type.clone(), int_type.clone()],
-            return_type: DataType::simple(registry.void_type),
+            params: vec![param(int_type.clone()), param(int_type.clone()), param(int_type.clone())],
+            return_type: DataType::simple(VOID_TYPE),
             object_type: Some(type_id),
             traits: FunctionTraits {
                 is_constructor: true,
@@ -2748,9 +2019,10 @@ mod tests {
                 auto_generated: None,
             },
             is_native: false,
-            default_args: Vec::new(),
+
             visibility: Visibility::Public,
-        signature_filled: true,
+            signature_filled: true,
+            func_hash: test_func_hash(),
         };
 
         registry.register_function(func_def);
@@ -2767,12 +2039,13 @@ mod tests {
 
     #[test]
     fn is_constructor_explicit() {
-        let mut registry = Registry::new();
+        let mut registry = ScriptRegistry::new();
 
         // Register a class
         let typedef = TypeDef::Class {
             name: "Vector3".to_string(),
             qualified_name: "Vector3".to_string(),
+            type_hash: crate::types::TypeHash::from_name("Vector3"),
             fields: Vec::new(),
             methods: Vec::new(),
             base_class: None,
@@ -2781,7 +2054,11 @@ mod tests {
             properties: rustc_hash::FxHashMap::default(),
             is_final: false,
             is_abstract: false,
-        };
+            template_params: Vec::new(),
+            template: None,
+            type_args: Vec::new(),
+        type_kind: crate::types::TypeKind::reference(),
+            };
         let type_id = registry.register_type(typedef, Some("Vector3"));
 
         // Register explicit constructor: Vector3(int) explicit
@@ -2790,8 +2067,8 @@ mod tests {
             id: FunctionId(0),
             name: "Vector3".to_string(),
             namespace: Vec::new(),
-            params: vec![int_type.clone()],
-            return_type: DataType::simple(registry.void_type),
+            params: vec![param(int_type.clone())],
+            return_type: DataType::simple(VOID_TYPE),
             object_type: Some(type_id),
             traits: FunctionTraits {
                 is_constructor: true,
@@ -2804,9 +2081,10 @@ mod tests {
                 auto_generated: None,
             },
             is_native: false,
-            default_args: Vec::new(),
+
             visibility: Visibility::Public,
-        signature_filled: true,
+            signature_filled: true,
+            func_hash: test_func_hash(),
         };
 
         let func_id = registry.register_function(func_def);
@@ -2817,12 +2095,13 @@ mod tests {
 
     #[test]
     fn find_all_constructors() {
-        let mut registry = Registry::new();
+        let mut registry = ScriptRegistry::new();
 
         // Register a class
         let typedef = TypeDef::Class {
             name: "Vector3".to_string(),
             qualified_name: "Vector3".to_string(),
+            type_hash: crate::types::TypeHash::from_name("Vector3"),
             fields: Vec::new(),
             methods: Vec::new(),
             base_class: None,
@@ -2831,7 +2110,11 @@ mod tests {
             properties: rustc_hash::FxHashMap::default(),
             is_final: false,
             is_abstract: false,
-        };
+            template_params: Vec::new(),
+            template: None,
+            type_args: Vec::new(),
+        type_kind: crate::types::TypeKind::reference(),
+            };
         let type_id = registry.register_type(typedef, Some("Vector3"));
 
         let int_type = DataType::simple(INT32_TYPE);
@@ -2842,7 +2125,7 @@ mod tests {
             name: "Vector3".to_string(),
             namespace: Vec::new(),
             params: Vec::new(),
-            return_type: DataType::simple(registry.void_type),
+            return_type: DataType::simple(VOID_TYPE),
             object_type: Some(type_id),
             traits: FunctionTraits {
                 is_constructor: true,
@@ -2855,9 +2138,10 @@ mod tests {
                 auto_generated: None,
             },
             is_native: false,
-            default_args: Vec::new(),
+
             visibility: Visibility::Public,
-        signature_filled: true,
+            signature_filled: true,
+            func_hash: test_func_hash(),
         };
 
         // Register single-param constructor
@@ -2865,8 +2149,8 @@ mod tests {
             id: FunctionId(0),
             name: "Vector3".to_string(),
             namespace: Vec::new(),
-            params: vec![int_type.clone()],
-            return_type: DataType::simple(registry.void_type),
+            params: vec![param(int_type.clone())],
+            return_type: DataType::simple(VOID_TYPE),
             object_type: Some(type_id),
             traits: FunctionTraits {
                 is_constructor: true,
@@ -2879,9 +2163,10 @@ mod tests {
                 auto_generated: None,
             },
             is_native: false,
-            default_args: Vec::new(),
+
             visibility: Visibility::Public,
-        signature_filled: true,
+            signature_filled: true,
+            func_hash: test_func_hash(),
         };
 
         let func_id1 = registry.register_function(func_def1);
@@ -2890,6 +2175,10 @@ mod tests {
         // Add the constructors to the class's methods list
         registry.add_method_to_class(type_id, func_id1);
         registry.add_method_to_class(type_id, func_id2);
+
+        // Add constructors to behaviors
+        registry.behaviors_mut(type_id).add_constructor(func_id1);
+        registry.behaviors_mut(type_id).add_constructor(func_id2);
 
         // Find all constructors
         let constructors = registry.find_constructors(type_id);
@@ -2901,12 +2190,13 @@ mod tests {
 
     #[test]
     fn find_copy_constructor_with_in_ref() {
-        let mut registry = Registry::new();
+        let mut registry = ScriptRegistry::new();
 
         // Register a class
         let typedef = TypeDef::Class {
             name: "Player".to_string(),
             qualified_name: "Player".to_string(),
+            type_hash: crate::types::TypeHash::from_name("Player"),
             base_class: None,
             interfaces: Vec::new(),
             fields: Vec::new(),
@@ -2915,7 +2205,11 @@ mod tests {
             properties: rustc_hash::FxHashMap::default(),
             is_final: false,
             is_abstract: false,
-        };
+            template_params: Vec::new(),
+            template: None,
+            type_args: Vec::new(),
+        type_kind: crate::types::TypeKind::reference(),
+            };
         let type_id = registry.register_type(typedef, Some("Player"));
 
         // Create copy constructor with &in: Player(const Player&in)
@@ -2924,8 +2218,8 @@ mod tests {
             id: FunctionId(0),
             name: "Player".to_string(),
             namespace: Vec::new(),
-            params: vec![copy_ctor_param],
-            return_type: DataType::simple(registry.void_type),
+            params: vec![param(copy_ctor_param)],
+            return_type: DataType::simple(VOID_TYPE),
             object_type: Some(type_id),
             traits: FunctionTraits {
                 is_constructor: true,
@@ -2935,16 +2229,22 @@ mod tests {
                 is_abstract: false,
                 is_const: false,
                 is_explicit: false,
-                auto_generated: Some(crate::semantic::types::type_def::AutoGeneratedMethod::CopyConstructor),
+                auto_generated: Some(
+                    crate::semantic::types::type_def::AutoGeneratedMethod::CopyConstructor,
+                ),
             },
             is_native: false,
-            default_args: Vec::new(),
+
             visibility: Visibility::Public,
-        signature_filled: true,
+            signature_filled: true,
+            func_hash: test_func_hash(),
         };
 
         let copy_ctor_id = registry.register_function(copy_ctor);
         registry.add_method_to_class(type_id, copy_ctor_id);
+        registry
+            .behaviors_mut(type_id)
+            .add_constructor(copy_ctor_id);
 
         // Should find the copy constructor
         let found = registry.find_copy_constructor(type_id);
@@ -2953,12 +2253,13 @@ mod tests {
 
     #[test]
     fn find_copy_constructor_with_inout_ref() {
-        let mut registry = Registry::new();
+        let mut registry = ScriptRegistry::new();
 
         // Register a class
         let typedef = TypeDef::Class {
             name: "Player".to_string(),
             qualified_name: "Player".to_string(),
+            type_hash: crate::types::TypeHash::from_name("Player"),
             base_class: None,
             interfaces: Vec::new(),
             fields: Vec::new(),
@@ -2967,7 +2268,11 @@ mod tests {
             properties: rustc_hash::FxHashMap::default(),
             is_final: false,
             is_abstract: false,
-        };
+            template_params: Vec::new(),
+            template: None,
+            type_args: Vec::new(),
+        type_kind: crate::types::TypeKind::reference(),
+            };
         let type_id = registry.register_type(typedef, Some("Player"));
 
         // Create copy constructor with &inout: Player(const Player&inout)
@@ -2976,8 +2281,8 @@ mod tests {
             id: FunctionId(0),
             name: "Player".to_string(),
             namespace: Vec::new(),
-            params: vec![copy_ctor_param],
-            return_type: DataType::simple(registry.void_type),
+            params: vec![param(copy_ctor_param)],
+            return_type: DataType::simple(VOID_TYPE),
             object_type: Some(type_id),
             traits: FunctionTraits {
                 is_constructor: true,
@@ -2987,16 +2292,22 @@ mod tests {
                 is_abstract: false,
                 is_const: false,
                 is_explicit: false,
-                auto_generated: Some(crate::semantic::types::type_def::AutoGeneratedMethod::CopyConstructor),
+                auto_generated: Some(
+                    crate::semantic::types::type_def::AutoGeneratedMethod::CopyConstructor,
+                ),
             },
             is_native: false,
-            default_args: Vec::new(),
+
             visibility: Visibility::Public,
-        signature_filled: true,
+            signature_filled: true,
+            func_hash: test_func_hash(),
         };
 
         let copy_ctor_id = registry.register_function(copy_ctor);
         registry.add_method_to_class(type_id, copy_ctor_id);
+        registry
+            .behaviors_mut(type_id)
+            .add_constructor(copy_ctor_id);
 
         // Should find the copy constructor
         let found = registry.find_copy_constructor(type_id);
@@ -3005,12 +2316,13 @@ mod tests {
 
     #[test]
     fn find_copy_constructor_not_found_wrong_param_count() {
-        let mut registry = Registry::new();
+        let mut registry = ScriptRegistry::new();
 
         // Register a class
         let typedef = TypeDef::Class {
             name: "Player".to_string(),
             qualified_name: "Player".to_string(),
+            type_hash: crate::types::TypeHash::from_name("Player"),
             base_class: None,
             interfaces: Vec::new(),
             fields: Vec::new(),
@@ -3019,7 +2331,11 @@ mod tests {
             properties: rustc_hash::FxHashMap::default(),
             is_final: false,
             is_abstract: false,
-        };
+            template_params: Vec::new(),
+            template: None,
+            type_args: Vec::new(),
+        type_kind: crate::types::TypeKind::reference(),
+            };
         let type_id = registry.register_type(typedef, Some("Player"));
 
         // Create constructor with two parameters (not a copy constructor)
@@ -3029,8 +2345,8 @@ mod tests {
             id: FunctionId(0),
             name: "Player".to_string(),
             namespace: Vec::new(),
-            params: vec![param1, param2],
-            return_type: DataType::simple(registry.void_type),
+            params: vec![param(param1), param(param2)],
+            return_type: DataType::simple(VOID_TYPE),
             object_type: Some(type_id),
             traits: FunctionTraits {
                 is_constructor: true,
@@ -3043,9 +2359,10 @@ mod tests {
                 auto_generated: None,
             },
             is_native: false,
-            default_args: Vec::new(),
+
             visibility: Visibility::Public,
-        signature_filled: true,
+            signature_filled: true,
+            func_hash: test_func_hash(),
         };
 
         let ctor_id = registry.register_function(ctor);
@@ -3058,12 +2375,13 @@ mod tests {
 
     #[test]
     fn find_copy_constructor_not_found_wrong_ref_modifier() {
-        let mut registry = Registry::new();
+        let mut registry = ScriptRegistry::new();
 
         // Register a class
         let typedef = TypeDef::Class {
             name: "Player".to_string(),
             qualified_name: "Player".to_string(),
+            type_hash: crate::types::TypeHash::from_name("Player"),
             base_class: None,
             interfaces: Vec::new(),
             fields: Vec::new(),
@@ -3072,17 +2390,21 @@ mod tests {
             properties: rustc_hash::FxHashMap::default(),
             is_final: false,
             is_abstract: false,
-        };
+            template_params: Vec::new(),
+            template: None,
+            type_args: Vec::new(),
+        type_kind: crate::types::TypeKind::reference(),
+            };
         let type_id = registry.register_type(typedef, Some("Player"));
 
         // Create constructor with &out (wrong for copy constructor)
-        let param = DataType::with_ref_out(type_id);
+        let param_type = DataType::with_ref_out(type_id);
         let ctor = FunctionDef {
             id: FunctionId(0),
             name: "Player".to_string(),
             namespace: Vec::new(),
-            params: vec![param],
-            return_type: DataType::simple(registry.void_type),
+            params: vec![param(param_type)],
+            return_type: DataType::simple(VOID_TYPE),
             object_type: Some(type_id),
             traits: FunctionTraits {
                 is_constructor: true,
@@ -3095,9 +2417,10 @@ mod tests {
                 auto_generated: None,
             },
             is_native: false,
-            default_args: Vec::new(),
+
             visibility: Visibility::Public,
-        signature_filled: true,
+            signature_filled: true,
+            func_hash: test_func_hash(),
         };
 
         let ctor_id = registry.register_function(ctor);
@@ -3110,12 +2433,13 @@ mod tests {
 
     #[test]
     fn find_copy_constructor_not_found_wrong_type() {
-        let mut registry = Registry::new();
+        let mut registry = ScriptRegistry::new();
 
         // Register a class
         let typedef = TypeDef::Class {
             name: "Player".to_string(),
             qualified_name: "Player".to_string(),
+            type_hash: crate::types::TypeHash::from_name("Player"),
             base_class: None,
             interfaces: Vec::new(),
             fields: Vec::new(),
@@ -3124,17 +2448,21 @@ mod tests {
             properties: rustc_hash::FxHashMap::default(),
             is_final: false,
             is_abstract: false,
-        };
+            template_params: Vec::new(),
+            template: None,
+            type_args: Vec::new(),
+        type_kind: crate::types::TypeKind::reference(),
+            };
         let type_id = registry.register_type(typedef, Some("Player"));
 
         // Create constructor with different type parameter (not same class)
-        let param = DataType::with_ref_in(INT32_TYPE);
+        let param_type = DataType::with_ref_in(INT32_TYPE);
         let ctor = FunctionDef {
             id: FunctionId(0),
             name: "Player".to_string(),
             namespace: Vec::new(),
-            params: vec![param],
-            return_type: DataType::simple(registry.void_type),
+            params: vec![param(param_type)],
+            return_type: DataType::simple(VOID_TYPE),
             object_type: Some(type_id),
             traits: FunctionTraits {
                 is_constructor: true,
@@ -3147,9 +2475,10 @@ mod tests {
                 auto_generated: None,
             },
             is_native: false,
-            default_args: Vec::new(),
+
             visibility: Visibility::Public,
-        signature_filled: true,
+            signature_filled: true,
+            func_hash: test_func_hash(),
         };
 
         let ctor_id = registry.register_function(ctor);
@@ -3162,12 +2491,13 @@ mod tests {
 
     #[test]
     fn find_copy_constructor_no_constructors() {
-        let mut registry = Registry::new();
+        let mut registry = ScriptRegistry::new();
 
         // Register a class with no constructors
         let typedef = TypeDef::Class {
             name: "Player".to_string(),
             qualified_name: "Player".to_string(),
+            type_hash: crate::types::TypeHash::from_name("Player"),
             base_class: None,
             interfaces: Vec::new(),
             fields: Vec::new(),
@@ -3176,7 +2506,11 @@ mod tests {
             properties: rustc_hash::FxHashMap::default(),
             is_final: false,
             is_abstract: false,
-        };
+            template_params: Vec::new(),
+            template: None,
+            type_args: Vec::new(),
+        type_kind: crate::types::TypeKind::reference(),
+            };
         let type_id = registry.register_type(typedef, Some("Player"));
 
         // Should NOT find a copy constructor
@@ -3186,12 +2520,13 @@ mod tests {
 
     #[test]
     fn get_all_methods_with_inheritance() {
-        let mut registry = Registry::new();
+        let mut registry = ScriptRegistry::new();
 
         // Create base class with a method
         let base_typedef = TypeDef::Class {
             name: "Base".to_string(),
             qualified_name: "Base".to_string(),
+            type_hash: crate::types::TypeHash::from_name("Base"),
             base_class: None,
             interfaces: Vec::new(),
             fields: Vec::new(),
@@ -3200,13 +2535,18 @@ mod tests {
             properties: rustc_hash::FxHashMap::default(),
             is_final: false,
             is_abstract: false,
-        };
+            template_params: Vec::new(),
+            template: None,
+            type_args: Vec::new(),
+        type_kind: crate::types::TypeKind::reference(),
+            };
         let base_id = registry.register_type(base_typedef, Some("Base"));
 
         // Create derived class with a method
         let derived_typedef = TypeDef::Class {
             name: "Derived".to_string(),
             qualified_name: "Derived".to_string(),
+            type_hash: crate::types::TypeHash::from_name("Derived"),
             base_class: Some(base_id),
             interfaces: Vec::new(),
             fields: Vec::new(),
@@ -3215,7 +2555,11 @@ mod tests {
             properties: rustc_hash::FxHashMap::default(),
             is_final: false,
             is_abstract: false,
-        };
+            template_params: Vec::new(),
+            template: None,
+            type_args: Vec::new(),
+        type_kind: crate::types::TypeKind::reference(),
+            };
         let derived_id = registry.register_type(derived_typedef, Some("Derived"));
 
         // Get all methods for derived class
@@ -3229,7 +2573,7 @@ mod tests {
 
     #[test]
     fn get_all_properties_with_inheritance() {
-        let mut registry = Registry::new();
+        let mut registry = ScriptRegistry::new();
 
         // Create base class with a property
         let mut base_props = rustc_hash::FxHashMap::default();
@@ -3241,6 +2585,7 @@ mod tests {
         let base_typedef = TypeDef::Class {
             name: "Base".to_string(),
             qualified_name: "Base".to_string(),
+            type_hash: crate::types::TypeHash::from_name("Base"),
             base_class: None,
             interfaces: Vec::new(),
             fields: Vec::new(),
@@ -3249,7 +2594,11 @@ mod tests {
             properties: base_props,
             is_final: false,
             is_abstract: false,
-        };
+            template_params: Vec::new(),
+            template: None,
+            type_args: Vec::new(),
+        type_kind: crate::types::TypeKind::reference(),
+            };
         let base_id = registry.register_type(base_typedef, Some("Base"));
 
         // Create derived class with a property
@@ -3262,6 +2611,7 @@ mod tests {
         let derived_typedef = TypeDef::Class {
             name: "Derived".to_string(),
             qualified_name: "Derived".to_string(),
+            type_hash: crate::types::TypeHash::from_name("Derived"),
             base_class: Some(base_id),
             interfaces: Vec::new(),
             fields: Vec::new(),
@@ -3270,7 +2620,11 @@ mod tests {
             properties: derived_props,
             is_final: false,
             is_abstract: false,
-        };
+            template_params: Vec::new(),
+            template: None,
+            type_args: Vec::new(),
+        type_kind: crate::types::TypeKind::reference(),
+            };
         let derived_id = registry.register_type(derived_typedef, Some("Derived"));
 
         // Get all properties for derived class
@@ -3279,12 +2633,12 @@ mod tests {
         // Should have both derived and base properties
         assert_eq!(all_props.len(), 2);
         assert!(all_props.contains_key("health")); // base
-        assert!(all_props.contains_key("score"));  // derived
+        assert!(all_props.contains_key("score")); // derived
     }
 
     #[test]
     fn find_method_walks_inheritance_chain() {
-        let mut registry = Registry::new();
+        let mut registry = ScriptRegistry::new();
 
         // Register the base method first (gets FunctionId(0))
         let base_method = FunctionDef {
@@ -3293,12 +2647,13 @@ mod tests {
             namespace: vec!["Base".to_string()],
             params: Vec::new(),
             return_type: DataType::simple(VOID_TYPE),
-            object_type: None,  // Set later
+            object_type: None, // Set later
             traits: FunctionTraits::new(),
             is_native: false,
-            default_args: Vec::new(),
+
             visibility: Visibility::Public,
             signature_filled: true,
+            func_hash: test_func_hash(),
         };
         let base_method_id = registry.register_function(base_method);
 
@@ -3306,6 +2661,7 @@ mod tests {
         let base_typedef = TypeDef::Class {
             name: "Base".to_string(),
             qualified_name: "Base".to_string(),
+            type_hash: crate::types::TypeHash::from_name("Base"),
             base_class: None,
             interfaces: Vec::new(),
             fields: Vec::new(),
@@ -3314,22 +2670,31 @@ mod tests {
             properties: rustc_hash::FxHashMap::default(),
             is_final: false,
             is_abstract: false,
-        };
+            template_params: Vec::new(),
+            template: None,
+            type_args: Vec::new(),
+        type_kind: crate::types::TypeKind::reference(),
+            };
         let base_id = registry.register_type(base_typedef, Some("Base"));
 
         // Create derived class WITHOUT overriding the method
         let derived_typedef = TypeDef::Class {
             name: "Derived".to_string(),
             qualified_name: "Derived".to_string(),
+            type_hash: crate::types::TypeHash::from_name("Derived"),
             base_class: Some(base_id),
             interfaces: Vec::new(),
             fields: Vec::new(),
-            methods: Vec::new(),  // No methods in derived
+            methods: Vec::new(), // No methods in derived
             operator_methods: rustc_hash::FxHashMap::default(),
             properties: rustc_hash::FxHashMap::default(),
             is_final: false,
             is_abstract: false,
-        };
+            template_params: Vec::new(),
+            template: None,
+            type_args: Vec::new(),
+        type_kind: crate::types::TypeKind::reference(),
+            };
         let derived_id = registry.register_type(derived_typedef, Some("Derived"));
 
         // Should find base class method
@@ -3339,7 +2704,7 @@ mod tests {
 
     #[test]
     fn find_method_returns_most_derived() {
-        let mut registry = Registry::new();
+        let mut registry = ScriptRegistry::new();
 
         // Register the base method
         let base_method = FunctionDef {
@@ -3351,9 +2716,10 @@ mod tests {
             object_type: None,
             traits: FunctionTraits::new(),
             is_native: false,
-            default_args: Vec::new(),
+
             visibility: Visibility::Public,
             signature_filled: true,
+            func_hash: test_func_hash(),
         };
         let base_method_id = registry.register_function(base_method);
 
@@ -3361,6 +2727,7 @@ mod tests {
         let base_typedef = TypeDef::Class {
             name: "Base".to_string(),
             qualified_name: "Base".to_string(),
+            type_hash: crate::types::TypeHash::from_name("Base"),
             base_class: None,
             interfaces: Vec::new(),
             fields: Vec::new(),
@@ -3369,7 +2736,11 @@ mod tests {
             properties: rustc_hash::FxHashMap::default(),
             is_final: false,
             is_abstract: false,
-        };
+            template_params: Vec::new(),
+            template: None,
+            type_args: Vec::new(),
+        type_kind: crate::types::TypeKind::reference(),
+            };
         let base_id = registry.register_type(base_typedef, Some("Base"));
 
         // Register the derived method (same name, overrides base)
@@ -3382,9 +2753,10 @@ mod tests {
             object_type: None,
             traits: FunctionTraits::new(),
             is_native: false,
-            default_args: Vec::new(),
+
             visibility: Visibility::Public,
             signature_filled: true,
+            func_hash: test_func_hash(),
         };
         let derived_method_id = registry.register_function(derived_method);
 
@@ -3392,15 +2764,20 @@ mod tests {
         let derived_typedef = TypeDef::Class {
             name: "Derived".to_string(),
             qualified_name: "Derived".to_string(),
+            type_hash: crate::types::TypeHash::from_name("Derived"),
             base_class: Some(base_id),
             interfaces: Vec::new(),
             fields: Vec::new(),
-            methods: vec![derived_method_id],  // Override
+            methods: vec![derived_method_id], // Override
             operator_methods: rustc_hash::FxHashMap::default(),
             properties: rustc_hash::FxHashMap::default(),
             is_final: false,
             is_abstract: false,
-        };
+            template_params: Vec::new(),
+            template: None,
+            type_args: Vec::new(),
+        type_kind: crate::types::TypeKind::reference(),
+            };
         let derived_id = registry.register_type(derived_typedef, Some("Derived"));
 
         // Should find derived class method (most derived wins)
@@ -3414,7 +2791,7 @@ mod tests {
 
     #[test]
     fn find_method_multi_level_inheritance() {
-        let mut registry = Registry::new();
+        let mut registry = ScriptRegistry::new();
 
         // Register the base method
         let base_method = FunctionDef {
@@ -3426,9 +2803,10 @@ mod tests {
             object_type: None,
             traits: FunctionTraits::new(),
             is_native: false,
-            default_args: Vec::new(),
+
             visibility: Visibility::Public,
             signature_filled: true,
+            func_hash: test_func_hash(),
         };
         let base_method_id = registry.register_function(base_method);
 
@@ -3436,6 +2814,7 @@ mod tests {
         let base_typedef = TypeDef::Class {
             name: "Base".to_string(),
             qualified_name: "Base".to_string(),
+            type_hash: crate::types::TypeHash::from_name("Base"),
             base_class: None,
             interfaces: Vec::new(),
             fields: Vec::new(),
@@ -3444,13 +2823,18 @@ mod tests {
             properties: rustc_hash::FxHashMap::default(),
             is_final: false,
             is_abstract: false,
-        };
+            template_params: Vec::new(),
+            template: None,
+            type_args: Vec::new(),
+        type_kind: crate::types::TypeKind::reference(),
+            };
         let base_id = registry.register_type(base_typedef, Some("Base"));
 
         // Create middle class (no override)
         let middle_typedef = TypeDef::Class {
             name: "Middle".to_string(),
             qualified_name: "Middle".to_string(),
+            type_hash: crate::types::TypeHash::from_name("Middle"),
             base_class: Some(base_id),
             interfaces: Vec::new(),
             fields: Vec::new(),
@@ -3459,13 +2843,18 @@ mod tests {
             properties: rustc_hash::FxHashMap::default(),
             is_final: false,
             is_abstract: false,
-        };
+            template_params: Vec::new(),
+            template: None,
+            type_args: Vec::new(),
+        type_kind: crate::types::TypeKind::reference(),
+            };
         let middle_id = registry.register_type(middle_typedef, Some("Middle"));
 
         // Create most derived class (no override)
         let most_derived_typedef = TypeDef::Class {
             name: "MostDerived".to_string(),
             qualified_name: "MostDerived".to_string(),
+            type_hash: crate::types::TypeHash::from_name("MostDerived"),
             base_class: Some(middle_id),
             interfaces: Vec::new(),
             fields: Vec::new(),
@@ -3474,7 +2863,11 @@ mod tests {
             properties: rustc_hash::FxHashMap::default(),
             is_final: false,
             is_abstract: false,
-        };
+            template_params: Vec::new(),
+            template: None,
+            type_args: Vec::new(),
+        type_kind: crate::types::TypeKind::reference(),
+            };
         let most_derived_id = registry.register_type(most_derived_typedef, Some("MostDerived"));
 
         // Should walk through Middle to Base and find method
@@ -3484,11 +2877,12 @@ mod tests {
 
     #[test]
     fn find_method_not_found_returns_none() {
-        let mut registry = Registry::new();
+        let mut registry = ScriptRegistry::new();
 
         let typedef = TypeDef::Class {
             name: "MyClass".to_string(),
             qualified_name: "MyClass".to_string(),
+            type_hash: crate::types::TypeHash::from_name("MyClass"),
             base_class: None,
             interfaces: Vec::new(),
             fields: Vec::new(),
@@ -3497,7 +2891,11 @@ mod tests {
             properties: rustc_hash::FxHashMap::default(),
             is_final: false,
             is_abstract: false,
-        };
+            template_params: Vec::new(),
+            template: None,
+            type_args: Vec::new(),
+        type_kind: crate::types::TypeKind::reference(),
+            };
         let type_id = registry.register_type(typedef, Some("MyClass"));
 
         // Should return None for non-existent method
@@ -3507,7 +2905,7 @@ mod tests {
 
     #[test]
     fn find_property_in_base_class() {
-        let mut registry = Registry::new();
+        let mut registry = ScriptRegistry::new();
 
         // Create base class with a property
         let mut base_props = rustc_hash::FxHashMap::default();
@@ -3519,6 +2917,7 @@ mod tests {
         let base_typedef = TypeDef::Class {
             name: "Base".to_string(),
             qualified_name: "Base".to_string(),
+            type_hash: crate::types::TypeHash::from_name("Base"),
             base_class: None,
             interfaces: Vec::new(),
             fields: Vec::new(),
@@ -3527,13 +2926,18 @@ mod tests {
             properties: base_props,
             is_final: false,
             is_abstract: false,
-        };
+            template_params: Vec::new(),
+            template: None,
+            type_args: Vec::new(),
+        type_kind: crate::types::TypeKind::reference(),
+            };
         let base_id = registry.register_type(base_typedef, Some("Base"));
 
         // Create derived class without that property
         let derived_typedef = TypeDef::Class {
             name: "Derived".to_string(),
             qualified_name: "Derived".to_string(),
+            type_hash: crate::types::TypeHash::from_name("Derived"),
             base_class: Some(base_id),
             interfaces: Vec::new(),
             fields: Vec::new(),
@@ -3542,7 +2946,11 @@ mod tests {
             properties: rustc_hash::FxHashMap::default(),
             is_final: false,
             is_abstract: false,
-        };
+            template_params: Vec::new(),
+            template: None,
+            type_args: Vec::new(),
+        type_kind: crate::types::TypeKind::reference(),
+            };
         let derived_id = registry.register_type(derived_typedef, Some("Derived"));
 
         // Should find property from base class
@@ -3550,4 +2958,5 @@ mod tests {
         assert!(found.is_some());
         assert!(found.unwrap().is_read_only());
     }
+
 }

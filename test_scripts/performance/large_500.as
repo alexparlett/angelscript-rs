@@ -8,12 +8,12 @@
 // - Expression parsing
 // - Templates and handles
 
-// FFI placeholders - will be replaced with proper FFI bindings
-float sqrt(float x) { return x; }
-float sin(float x) { return x; }
-float cos(float x) { return x; }
+// Import math functions from FFI
+using namespace math;
+
+// TODO: Task 24 - Add random functions to standard library
+// Placeholder stub until we implement proper random support
 float random() { return 0.5; }
-void print(const string &in msg) {}
 
 // ============================================================================
 // Core Data Types
