@@ -7,12 +7,14 @@
 //! - [`TypeDef`]: Type definitions (primitives, classes, interfaces, enums, funcdefs)
 //! - [`FunctionDef`]: Function definitions with complete signatures
 //! - [`ExprInfo`]: Expression type checking results
+//! - [`TypeBehaviors`]: Lifecycle behaviors for types (constructors, factories, etc.)
 
 pub mod type_hash;
 mod data_type;
 mod type_def;
 mod function_def;
 mod expr_info;
+mod behaviors;
 
 // TypeHash and related
 pub use type_hash::{hash_constants, primitives, TypeHash};
@@ -43,3 +45,6 @@ pub use function_def::{
 
 // Expression info
 pub use expr_info::ExprInfo;
+
+// Type behaviors
+pub use behaviors::TypeBehaviors;
