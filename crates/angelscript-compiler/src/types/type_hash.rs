@@ -348,7 +348,8 @@ pub mod primitives {
     pub const DOUBLE: TypeHash = TypeHash(0xeb125587f6c2a79b);
 
     /// Hash for `string` type
-    pub const STRING: TypeHash = TypeHash(0x2fac10b5e60d02b2);
+    /// Note: string is a registered type (not a true primitive), so this matches TypeHash::from_name("string")
+    pub const STRING: TypeHash = TypeHash(0x7a8d5fb1ba695978);
 
     /// Hash for null literal type (converts to any handle)
     pub const NULL: TypeHash = TypeHash(0x1165f1b6597b5a46);
@@ -567,6 +568,8 @@ mod tests {
         assert_eq!(primitives::FLOAT, TypeHash::from_name("float"));
         assert_eq!(primitives::DOUBLE, TypeHash::from_name("double"));
         assert_eq!(primitives::NULL, TypeHash::from_name("null"));
+        // String is a registered type (not a true primitive) so it also uses from_name
+        assert_eq!(primitives::STRING, TypeHash::from_name("string"));
     }
 
     #[test]

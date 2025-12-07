@@ -25,8 +25,9 @@ use crate::ffi::{
     ClassBuilder, EnumBuilder, FfiRegistryBuilder, GlobalPropertyDef, InterfaceBuilder,
     IntoNativeFn, NativeCallable, NativeFn, NativeType,
 };
+use crate::semantic::types::DataType;
 use crate::types::{
-    function_param_to_ffi, return_type_to_ffi, FfiDataType, FfiEnumDef, FfiFuncdefDef,
+    function_param_to_ffi, primitive_hashes, return_type_to_data_type, FfiEnumDef, FfiFuncdefDef,
     FfiFunctionDef, FfiInterfaceDef, FfiParam, FfiTypeDef, TypeHash,
 };
 
@@ -572,8 +573,8 @@ impl<'app> Module<'app> {
         // Convert params to owned FfiParam
         let params: Vec<FfiParam> = fd.params.iter().map(function_param_to_ffi).collect();
 
-        // Convert return type to FfiDataType
-        let return_type = return_type_to_ffi(&fd.return_type);
+        // Convert return type to DataType
+        let return_type = return_type_to_data_type(&fd.return_type);
 
         // Compute the proper hash from the qualified name
         let qualified_name = self.qualified_name(fd.name.name);
@@ -758,6 +759,12 @@ impl<'app> Module<'app> {
         // Each param gets a unique FFI TypeHash and is registered with a name like "array::$T"
         // The owner_hash is computed from the template's qualified name
         let owner_hash = TypeHash::from_name(&qualified_name);
+
+        // Build mapping from TypeHash::from_name(param_name) to actual param hash
+        // This is needed because ffi_convert uses from_name() for template params,
+        // but the actual param hash is computed differently
+        let mut template_param_map: FxHashMap<TypeHash, TypeHash> = FxHashMap::default();
+
         let template_param_ids: Vec<TypeHash> = type_def
             .template_params
             .iter()
@@ -766,6 +773,10 @@ impl<'app> Module<'app> {
                 let param_qualified_name = format!("{}::${}", qualified_name, param_name);
                 // Template param hash: use owner hash XOR'd with param marker
                 let param_hash = TypeHash::from_template_instance(owner_hash, &[TypeHash(index as u64)]);
+
+                // Map from_name("T") to actual param hash for substitution
+                let name_hash = TypeHash::from_name(param_name);
+                template_param_map.insert(name_hash, param_hash);
 
                 // Register the template param as a TypeDef
                 let param_typedef = TypeDef::TemplateParam {
@@ -813,29 +824,37 @@ impl<'app> Module<'app> {
         // Install behaviors
         if matches!(type_def.type_kind, TypeKind::Value { .. }) {
             // For value types, register constructors
-            self.install_type_constructors(builder, type_def);
+            self.install_type_constructors(builder, type_def, &template_param_map);
         } else {
             // For reference types, register factories
-            self.install_type_factories(builder, type_def);
+            self.install_type_factories(builder, type_def, &template_param_map);
         }
 
         // Install methods
-        self.install_type_methods(builder, type_def);
+        self.install_type_methods(builder, type_def, &template_param_map);
 
         // Install properties
-        self.install_type_properties(builder, type_def);
+        self.install_type_properties(builder, type_def, &template_param_map);
 
         // Install operators
-        self.install_type_operators(builder, type_def);
+        self.install_type_operators(builder, type_def, &template_param_map);
 
         Ok(())
     }
 
     /// Install constructors for a value type.
-    fn install_type_constructors(&self, builder: &mut FfiRegistryBuilder, type_def: &FfiTypeDef) {
+    fn install_type_constructors(
+        &self,
+        builder: &mut FfiRegistryBuilder,
+        type_def: &FfiTypeDef,
+        template_param_map: &rustc_hash::FxHashMap<TypeHash, TypeHash>,
+    ) {
         for ctor in &type_def.constructors {
             // owner_type and func_hash already set in ClassBuilder::build()
-            let ctor_func = self.clone_function_def(ctor);
+            let mut ctor_func = self.clone_function_def(ctor);
+
+            // Substitute template param hashes
+            Self::substitute_template_params(&mut ctor_func, template_param_map);
 
             // Add to behaviors
             let behaviors = builder.behaviors_mut(type_def.id);
@@ -847,10 +866,18 @@ impl<'app> Module<'app> {
     }
 
     /// Install factories for a reference type.
-    fn install_type_factories(&self, builder: &mut FfiRegistryBuilder, type_def: &FfiTypeDef) {
+    fn install_type_factories(
+        &self,
+        builder: &mut FfiRegistryBuilder,
+        type_def: &FfiTypeDef,
+        template_param_map: &rustc_hash::FxHashMap<TypeHash, TypeHash>,
+    ) {
         for factory in &type_def.factories {
             // owner_type and func_hash already set in ClassBuilder::build()
-            let factory_func = self.clone_function_def(factory);
+            let mut factory_func = self.clone_function_def(factory);
+
+            // Substitute template param hashes
+            Self::substitute_template_params(&mut factory_func, template_param_map);
 
             // Add to behaviors
             let behaviors = builder.behaviors_mut(type_def.id);
@@ -877,15 +904,25 @@ impl<'app> Module<'app> {
     }
 
     /// Install methods for a type.
-    fn install_type_methods(&self, builder: &mut FfiRegistryBuilder, type_def: &FfiTypeDef) {
+    fn install_type_methods(
+        &self,
+        builder: &mut FfiRegistryBuilder,
+        type_def: &FfiTypeDef,
+        template_param_map: &rustc_hash::FxHashMap<TypeHash, TypeHash>,
+    ) {
         use crate::semantic::types::type_def::TypeDef;
 
         // Register each method function and collect their hashes
-        // owner_type and func_hash already set in ClassBuilder::build()
-        let method_hashes: Vec<_> = type_def.methods.iter().map(|m| m.func_hash).collect();
+        // Note: hashes are recalculated after substitution
+        let mut method_hashes = Vec::with_capacity(type_def.methods.len());
 
         for method in &type_def.methods {
-            let method_func = self.clone_function_def(method);
+            let mut method_func = self.clone_function_def(method);
+
+            // Substitute template param hashes
+            Self::substitute_template_params(&mut method_func, template_param_map);
+
+            method_hashes.push(method_func.func_hash);
             let native_fn = method.native_fn.as_ref().map(|nf| nf.clone_arc());
             builder.register_function(method_func, native_fn);
         }
@@ -897,7 +934,12 @@ impl<'app> Module<'app> {
     }
 
     /// Install properties for a type.
-    fn install_type_properties(&self, builder: &mut FfiRegistryBuilder, type_def: &FfiTypeDef) {
+    fn install_type_properties(
+        &self,
+        builder: &mut FfiRegistryBuilder,
+        type_def: &FfiTypeDef,
+        template_param_map: &rustc_hash::FxHashMap<TypeHash, TypeHash>,
+    ) {
         use crate::semantic::types::type_def::{PropertyAccessors, TypeDef, Visibility};
 
         if type_def.properties.is_empty() {
@@ -908,10 +950,13 @@ impl<'app> Module<'app> {
         let mut properties_map = rustc_hash::FxHashMap::default();
 
         for prop in &type_def.properties {
+            // Substitute template params in property type
+            let prop_type = Self::substitute_data_type(&prop.data_type, template_param_map);
+
             // Create getter function
             let getter_func = FfiFunctionDef::new(format!("get_{}", prop.name))
                 .with_owner_type(type_def.id)
-                .with_return_type(prop.data_type.clone())
+                .with_return_type(prop_type.clone())
                 .with_const(true)
                 .with_native_fn(prop.getter.clone_arc());
 
@@ -922,8 +967,8 @@ impl<'app> Module<'app> {
             let setter_hash = if let Some(setter) = &prop.setter {
                 let setter_func = FfiFunctionDef::new(format!("set_{}", prop.name))
                     .with_owner_type(type_def.id)
-                    .with_params(vec![FfiParam::new("value", prop.data_type.clone())])
-                    .with_return_type(FfiDataType::void())
+                    .with_params(vec![FfiParam::new("value", prop_type.clone())])
+                    .with_return_type(DataType::simple(primitive_hashes::VOID))
                     .with_native_fn(setter.clone_arc());
 
                 let hash = setter_func.func_hash;
@@ -950,7 +995,12 @@ impl<'app> Module<'app> {
     }
 
     /// Install operators for a type.
-    fn install_type_operators(&self, builder: &mut FfiRegistryBuilder, type_def: &FfiTypeDef) {
+    fn install_type_operators(
+        &self,
+        builder: &mut FfiRegistryBuilder,
+        type_def: &FfiTypeDef,
+        template_param_map: &rustc_hash::FxHashMap<TypeHash, TypeHash>,
+    ) {
         use crate::semantic::types::type_def::TypeDef;
 
         if type_def.operators.is_empty() {
@@ -958,13 +1008,17 @@ impl<'app> Module<'app> {
         }
 
         // Build operator methods map
-        // owner_type and func_hash already set in ClassBuilder::build()
+        // Note: hashes are recalculated after substitution
         let mut operator_map: rustc_hash::FxHashMap<_, Vec<_>> = rustc_hash::FxHashMap::default();
 
         for func in &type_def.operators {
             // Operators should have their operator field set
             if let Some(operator) = func.operator {
-                let op_func = self.clone_function_def(func);
+                let mut op_func = self.clone_function_def(func);
+
+                // Substitute template param hashes
+                Self::substitute_template_params(&mut op_func, template_param_map);
+
                 operator_map.entry(operator).or_default().push(op_func.func_hash);
 
                 let native_fn = func.native_fn.as_ref().map(|nf| nf.clone_arc());
@@ -1033,6 +1087,50 @@ impl<'app> Module<'app> {
             native_fn: None, // Native fn handled separately
             func_hash: func.func_hash,
         }
+    }
+
+    /// Substitute template parameter hashes in a DataType.
+    ///
+    /// Replaces TypeHash::from_name(param_name) with the actual template param hash.
+    fn substitute_data_type(
+        data_type: &DataType,
+        template_param_map: &rustc_hash::FxHashMap<TypeHash, TypeHash>,
+    ) -> DataType {
+        if let Some(&actual_hash) = template_param_map.get(&data_type.type_hash) {
+            DataType {
+                type_hash: actual_hash,
+                is_const: data_type.is_const,
+                is_handle: data_type.is_handle,
+                is_handle_to_const: data_type.is_handle_to_const,
+                ref_modifier: data_type.ref_modifier,
+            }
+        } else {
+            data_type.clone()
+        }
+    }
+
+    /// Substitute template parameter hashes in a function definition.
+    ///
+    /// This updates params and return_type, then recomputes the func_hash.
+    fn substitute_template_params(
+        func: &mut FfiFunctionDef,
+        template_param_map: &rustc_hash::FxHashMap<TypeHash, TypeHash>,
+    ) {
+        // Skip if no template params to substitute
+        if template_param_map.is_empty() {
+            return;
+        }
+
+        // Substitute in params
+        for param in &mut func.params {
+            param.data_type = Self::substitute_data_type(&param.data_type, template_param_map);
+        }
+
+        // Substitute in return type
+        func.return_type = Self::substitute_data_type(&func.return_type, template_param_map);
+
+        // Recompute func_hash since param types changed
+        func.recompute_hash_pub();
     }
 }
 

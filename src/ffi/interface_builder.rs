@@ -21,7 +21,7 @@
 
 use crate::ast::Parser;
 use crate::module::{FfiModuleError, Module};
-use crate::types::{function_param_to_ffi, return_type_to_ffi, FfiInterfaceDef, FfiInterfaceMethod};
+use crate::types::{function_param_to_ffi, return_type_to_data_type, FfiInterfaceDef, FfiInterfaceMethod};
 
 /// Builder for registering native interface types.
 ///
@@ -145,7 +145,7 @@ impl<'m, 'app> InterfaceBuilder<'m, 'app> {
 
         // Convert to owned FfiInterfaceMethod
         let params = sig.params.iter().map(function_param_to_ffi).collect();
-        let return_type = return_type_to_ffi(&sig.return_type);
+        let return_type = return_type_to_data_type(&sig.return_type);
 
         Ok(FfiInterfaceMethod::new(
             sig.name.name.to_string(),

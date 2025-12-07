@@ -629,11 +629,14 @@ impl<'ast> ScriptRegistry<'ast> {
         }
     }
 
-    /// Find a constructor for a given type with specific argument types
-    /// Returns the TypeHash of the best matching constructor, if any
+    /// Find a constructor for a given type with specific argument types.
+    /// Returns the TypeHash of the best matching constructor, if any.
+    ///
+    /// Returns None if the type doesn't exist in this registry (allowing
+    /// CompilationContext to try other registries via or_else).
     pub fn find_constructor(&self, type_id: TypeHash, arg_types: &[DataType]) -> Option<TypeHash> {
-        // Get the type definition
-        let typedef = self.get_type(type_id);
+        // Get the type definition - return None if not in this registry
+        let typedef = self.try_get_type(type_id)?;
 
         // Only classes have constructors - get the methods list
         let method_ids = match typedef {
@@ -1995,6 +1998,23 @@ mod tests {
             &[float_type.clone(), float_type.clone(), float_type.clone()],
         );
 
+        assert!(found.is_none());
+    }
+
+    #[test]
+    fn find_constructor_type_not_in_registry() {
+        // Test that find_constructor returns None (doesn't panic) when the type
+        // doesn't exist in this registry. This is important for the or_else chain
+        // in CompilationContext::find_constructor.
+        let registry = ScriptRegistry::new();
+
+        // Try to find constructor for a type that was never registered
+        let nonexistent_type = crate::types::TypeHash::from_name("NonExistent");
+        let int_type = DataType::simple(primitive_hashes::INT32);
+
+        let found = registry.find_constructor(nonexistent_type, &[int_type]);
+
+        // Should return None, not panic
         assert!(found.is_none());
     }
 

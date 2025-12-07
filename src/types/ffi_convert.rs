@@ -5,10 +5,10 @@
 //!
 //! # Conversion Functions
 //!
-//! - `type_expr_to_ffi` - Convert `TypeExpr<'ast>` to `FfiDataType`
-//! - `param_type_to_ffi` - Convert `ParamType<'ast>` to `FfiDataType`
+//! - `type_expr_to_data_type` - Convert `TypeExpr<'ast>` to `DataType`
+//! - `param_type_to_data_type` - Convert `ParamType<'ast>` to `DataType`
 //! - `function_param_to_ffi` - Convert `FunctionParam<'ast>` to `FfiParam`
-//! - `return_type_to_ffi` - Convert `ReturnType<'ast>` to `FfiDataType`
+//! - `return_type_to_data_type` - Convert `ReturnType<'ast>` to `DataType`
 //! - `signature_to_ffi_function` - Convert `FunctionSignatureDecl<'ast>` to `FfiFunctionDef`
 
 use crate::ast::types::{ParamType, PrimitiveType as AstPrimitiveType, TypeBase, TypeExpr, TypeSuffix};
@@ -16,21 +16,23 @@ use crate::ast::{FunctionParam, FunctionSignatureDecl, RefKind, ReturnType};
 use crate::ffi::NativeFn;
 use crate::types::{primitive_hashes, TypeHash};
 use crate::semantic::types::{DataType, RefModifier};
-use crate::types::{FfiDataType, FfiExpr, FfiFunctionDef, FfiParam};
+use crate::types::{FfiExpr, FfiFunctionDef, FfiParam};
 
-/// Convert an AST TypeExpr to FfiDataType.
+/// Convert an AST TypeExpr to DataType.
 ///
-/// Primitive types are resolved immediately. User-defined types become
-/// unresolved and will be resolved during the install phase.
+/// All types are resolved immediately using deterministic TypeHash:
+/// - Primitives use their well-known hashes
+/// - User types use `TypeHash::from_name()`
+/// - Template parameters use `TypeHash::SELF`
 ///
 /// Note: This function does not handle reference modifiers (they are on ParamType).
-/// Use `param_type_to_ffi` for parameters with reference modifiers.
-pub fn type_expr_to_ffi(type_expr: &TypeExpr<'_>) -> FfiDataType {
-    type_expr_to_ffi_with_ref(type_expr, RefModifier::None)
+/// Use `param_type_to_data_type` for parameters with reference modifiers.
+pub fn type_expr_to_data_type(type_expr: &TypeExpr<'_>) -> DataType {
+    type_expr_to_data_type_with_ref(type_expr, RefModifier::None)
 }
 
-/// Convert an AST TypeExpr to FfiDataType with a specific reference modifier.
-fn type_expr_to_ffi_with_ref(type_expr: &TypeExpr<'_>, ref_modifier: RefModifier) -> FfiDataType {
+/// Convert an AST TypeExpr to DataType with a specific reference modifier.
+fn type_expr_to_data_type_with_ref(type_expr: &TypeExpr<'_>, ref_modifier: RefModifier) -> DataType {
     // Start with the is_const from the leading const qualifier
     let is_const = type_expr.is_const;
     let mut is_handle = false;
@@ -58,48 +60,38 @@ fn type_expr_to_ffi_with_ref(type_expr: &TypeExpr<'_>, ref_modifier: RefModifier
     };
 
     // Resolve the base type
-    match &type_expr.base {
-        TypeBase::Primitive(prim) => {
-            let type_hash = primitive_to_type_hash(prim);
-            FfiDataType::Resolved(DataType {
-                type_hash,
-                is_const,
-                is_handle,
-                is_handle_to_const,
-                ref_modifier,
-            })
-        }
+    let type_hash = match &type_expr.base {
+        TypeBase::Primitive(prim) => primitive_to_type_hash(prim),
         TypeBase::Named(ident) => {
             let name = build_name(ident.name);
-
-            // Check if it has template arguments
+            // Template instantiations (e.g., array<int>) happen at compile time.
+            // For FFI method signatures on template types, use SELF.
             if !type_expr.template_args.is_empty() {
-                let args: Vec<FfiDataType> = type_expr
-                    .template_args
-                    .iter()
-                    .map(|arg| type_expr_to_ffi(arg))
-                    .collect();
-                FfiDataType::unresolved_template(
-                    name,
-                    args,
-                    is_const,
-                    is_handle,
-                    is_handle_to_const,
-                    ref_modifier,
-                )
+                // This is a template instantiation like array<T> in a method signature.
+                // Use SELF since the actual instantiation happens at compile time.
+                primitive_hashes::SELF
             } else {
-                FfiDataType::unresolved(name, is_const, is_handle, is_handle_to_const, ref_modifier)
+                TypeHash::from_name(&name)
             }
         }
         TypeBase::TemplateParam(ident) => {
             // Template parameter like "T" in array<class T>
-            let name = build_name(ident.name);
-            FfiDataType::unresolved(name, is_const, is_handle, is_handle_to_const, ref_modifier)
+            // Use TypeHash::from_name() for the param name.
+            // This will be remapped to the actual template param hash during install_type.
+            TypeHash::from_name(ident.name)
         }
         TypeBase::Auto | TypeBase::Unknown => {
-            // Auto/unknown types shouldn't appear in FFI declarations
-            FfiDataType::unresolved("auto", is_const, is_handle, is_handle_to_const, ref_modifier)
+            // Auto/unknown types use VARIABLE_PARAM (?)
+            primitive_hashes::VARIABLE_PARAM
         }
+    };
+
+    DataType {
+        type_hash,
+        is_const,
+        is_handle,
+        is_handle_to_const,
+        ref_modifier,
     }
 }
 
@@ -132,17 +124,17 @@ fn ref_kind_to_modifier(ref_kind: RefKind) -> RefModifier {
     }
 }
 
-/// Convert an AST ParamType to FfiDataType.
+/// Convert an AST ParamType to DataType.
 ///
 /// This handles the reference modifier from the parameter type.
-pub fn param_type_to_ffi(param_type: &ParamType<'_>) -> FfiDataType {
+pub fn param_type_to_data_type(param_type: &ParamType<'_>) -> DataType {
     let ref_modifier = ref_kind_to_modifier(param_type.ref_kind);
-    type_expr_to_ffi_with_ref(&param_type.ty, ref_modifier)
+    type_expr_to_data_type_with_ref(&param_type.ty, ref_modifier)
 }
 
 /// Convert an AST FunctionParam to FfiParam.
 pub fn function_param_to_ffi(param: &FunctionParam<'_>) -> FfiParam {
-    let data_type = param_type_to_ffi(&param.ty);
+    let data_type = param_type_to_data_type(&param.ty);
     let default_value = param.default.and_then(|expr| FfiExpr::from_ast(expr));
     let name = param.name.map(|n| n.name.to_string()).unwrap_or_default();
 
@@ -152,14 +144,14 @@ pub fn function_param_to_ffi(param: &FunctionParam<'_>) -> FfiParam {
     }
 }
 
-/// Convert an AST ReturnType to FfiDataType.
+/// Convert an AST ReturnType to DataType.
 ///
 /// ReturnType is a struct containing a TypeExpr and an is_ref flag.
 /// If is_ref is true, we apply the InOut reference modifier.
-pub fn return_type_to_ffi(return_type: &ReturnType<'_>) -> FfiDataType {
+pub fn return_type_to_data_type(return_type: &ReturnType<'_>) -> DataType {
     // Check if the return type is void
     if matches!(return_type.ty.base, TypeBase::Primitive(AstPrimitiveType::Void)) {
-        return FfiDataType::resolved(DataType::simple(primitive_hashes::VOID));
+        return DataType::simple(primitive_hashes::VOID);
     }
 
     // Convert the type expression
@@ -169,7 +161,7 @@ pub fn return_type_to_ffi(return_type: &ReturnType<'_>) -> FfiDataType {
         RefModifier::None
     };
 
-    type_expr_to_ffi_with_ref(&return_type.ty, ref_modifier)
+    type_expr_to_data_type_with_ref(&return_type.ty, ref_modifier)
 }
 
 /// Convert a FunctionSignatureDecl to FfiFunctionDef.
@@ -181,11 +173,9 @@ pub fn signature_to_ffi_function(
     sig: &FunctionSignatureDecl<'_>,
     native_fn: NativeFn,
 ) -> FfiFunctionDef {
-    
-
     let name = sig.name.name.to_string();
     let params: Vec<FfiParam> = sig.params.iter().map(function_param_to_ffi).collect();
-    let return_type = return_type_to_ffi(&sig.return_type);
+    let return_type = return_type_to_data_type(&sig.return_type);
 
     FfiFunctionDef::new(name)
         .with_params(params)
@@ -210,14 +200,11 @@ mod tests {
         let arena = Bump::new();
 
         let type_expr = Parser::type_expr("int", &arena).unwrap();
-        let ffi_type = type_expr_to_ffi(&type_expr);
+        let dt = type_expr_to_data_type(&type_expr);
 
-        assert!(ffi_type.is_resolved());
-        if let FfiDataType::Resolved(dt) = ffi_type {
-            assert_eq!(dt.type_hash, primitive_hashes::INT32);
-            assert!(!dt.is_const);
-            assert!(!dt.is_handle);
-        }
+        assert_eq!(dt.type_hash, primitive_hashes::INT32);
+        assert!(!dt.is_const);
+        assert!(!dt.is_handle);
     }
 
     #[test]
@@ -225,23 +212,21 @@ mod tests {
         let arena = Bump::new();
 
         let type_expr = Parser::type_expr("const int", &arena).unwrap();
-        let ffi_type = type_expr_to_ffi(&type_expr);
+        let dt = type_expr_to_data_type(&type_expr);
 
-        assert!(ffi_type.is_resolved());
-        if let FfiDataType::Resolved(dt) = ffi_type {
-            assert_eq!(dt.type_hash, primitive_hashes::INT32);
-            assert!(dt.is_const);
-        }
+        assert_eq!(dt.type_hash, primitive_hashes::INT32);
+        assert!(dt.is_const);
     }
 
     #[test]
-    fn user_type_unresolved() {
+    fn user_type_resolved() {
         let arena = Bump::new();
 
         let type_expr = Parser::type_expr("MyClass", &arena).unwrap();
-        let ffi_type = type_expr_to_ffi(&type_expr);
+        let dt = type_expr_to_data_type(&type_expr);
 
-        assert!(ffi_type.is_unresolved());
+        // User types are now resolved immediately with TypeHash::from_name()
+        assert_eq!(dt.type_hash, TypeHash::from_name("MyClass"));
     }
 
     #[test]
@@ -249,31 +234,22 @@ mod tests {
         let arena = Bump::new();
 
         let type_expr = Parser::type_expr("MyClass@", &arena).unwrap();
-        let ffi_type = type_expr_to_ffi(&type_expr);
+        let dt = type_expr_to_data_type(&type_expr);
 
-        assert!(ffi_type.is_unresolved());
-        if let FfiDataType::Unresolved { is_handle, .. } = ffi_type {
-            assert!(is_handle);
-        }
+        assert_eq!(dt.type_hash, TypeHash::from_name("MyClass"));
+        assert!(dt.is_handle);
     }
 
     #[test]
-    fn template_type() {
+    fn template_type_uses_self() {
         let arena = Bump::new();
 
+        // Template instantiations in FFI method signatures use SELF
         let type_expr = Parser::type_expr("array<int>", &arena).unwrap();
-        let ffi_type = type_expr_to_ffi(&type_expr);
+        let dt = type_expr_to_data_type(&type_expr);
 
-        assert!(ffi_type.is_unresolved());
-        if let FfiDataType::Unresolved { base, .. } = ffi_type {
-            if let crate::types::UnresolvedBaseType::Template { name, args } = base {
-                assert_eq!(name, "array");
-                assert_eq!(args.len(), 1);
-                assert!(args[0].is_resolved()); // int is resolved
-            } else {
-                panic!("Expected template base type");
-            }
-        }
+        // Template instantiations use SELF since actual instantiation happens at compile time
+        assert_eq!(dt.type_hash, primitive_hashes::SELF);
     }
 
     #[test]
@@ -284,7 +260,7 @@ mod tests {
 
         let param1 = function_param_to_ffi(&sig.params[0]);
         assert_eq!(param1.name, "x");
-        assert!(param1.data_type.is_resolved());
+        assert_eq!(param1.data_type.type_hash, primitive_hashes::INT32);
         assert!(param1.default_value.is_none());
 
         let param2 = function_param_to_ffi(&sig.params[1]);
@@ -299,19 +275,13 @@ mod tests {
         let sig = Parser::function_decl("void foo(int &in x, int &out y, int &inout z)", &arena).unwrap();
 
         let param1 = function_param_to_ffi(&sig.params[0]);
-        if let FfiDataType::Resolved(dt) = &param1.data_type {
-            assert_eq!(dt.ref_modifier, RefModifier::In);
-        }
+        assert_eq!(param1.data_type.ref_modifier, RefModifier::In);
 
         let param2 = function_param_to_ffi(&sig.params[1]);
-        if let FfiDataType::Resolved(dt) = &param2.data_type {
-            assert_eq!(dt.ref_modifier, RefModifier::Out);
-        }
+        assert_eq!(param2.data_type.ref_modifier, RefModifier::Out);
 
         let param3 = function_param_to_ffi(&sig.params[2]);
-        if let FfiDataType::Resolved(dt) = &param3.data_type {
-            assert_eq!(dt.ref_modifier, RefModifier::InOut);
-        }
+        assert_eq!(param3.data_type.ref_modifier, RefModifier::InOut);
     }
 
     #[test]
@@ -324,7 +294,7 @@ mod tests {
         assert_eq!(ffi_func.name, "getValue");
         assert!(ffi_func.params.is_empty());
         assert!(ffi_func.is_const());
-        assert!(ffi_func.return_type.is_resolved());
+        assert_eq!(ffi_func.return_type.type_hash, primitive_hashes::INT32);
     }
 
     #[test]
@@ -334,10 +304,7 @@ mod tests {
         let sig = Parser::function_decl("void doSomething()", &arena).unwrap();
         let ffi_func = signature_to_ffi_function(&sig, dummy_native_fn());
 
-        assert!(ffi_func.return_type.is_resolved());
-        if let FfiDataType::Resolved(dt) = &ffi_func.return_type {
-            assert_eq!(dt.type_hash, primitive_hashes::VOID);
-        }
+        assert_eq!(ffi_func.return_type.type_hash, primitive_hashes::VOID);
     }
 
     #[test]
@@ -345,16 +312,10 @@ mod tests {
         let arena = Bump::new();
 
         let type_expr = Parser::type_expr("Game::Entity", &arena).unwrap();
-        let ffi_type = type_expr_to_ffi(&type_expr);
+        let dt = type_expr_to_data_type(&type_expr);
 
-        assert!(ffi_type.is_unresolved());
-        if let FfiDataType::Unresolved { base, .. } = ffi_type {
-            if let crate::types::UnresolvedBaseType::Simple(name) = base {
-                assert_eq!(name, "Game::Entity");
-            } else {
-                panic!("Expected simple base type");
-            }
-        }
+        // Scoped types are resolved with their full qualified name
+        assert_eq!(dt.type_hash, TypeHash::from_name("Game::Entity"));
     }
 
     #[test]
@@ -364,5 +325,25 @@ mod tests {
         assert_eq!(ref_kind_to_modifier(RefKind::RefOut), RefModifier::Out);
         assert_eq!(ref_kind_to_modifier(RefKind::RefInOut), RefModifier::InOut);
         assert_eq!(ref_kind_to_modifier(RefKind::Ref), RefModifier::InOut);
+    }
+
+    #[test]
+    fn auto_type_uses_variable_param() {
+        let arena = Bump::new();
+
+        let type_expr = Parser::type_expr("auto", &arena).unwrap();
+        let dt = type_expr_to_data_type(&type_expr);
+
+        assert_eq!(dt.type_hash, primitive_hashes::VARIABLE_PARAM);
+    }
+
+    #[test]
+    fn unknown_type_uses_variable_param() {
+        let arena = Bump::new();
+
+        let type_expr = Parser::type_expr("?", &arena).unwrap();
+        let dt = type_expr_to_data_type(&type_expr);
+
+        assert_eq!(dt.type_hash, primitive_hashes::VARIABLE_PARAM);
     }
 }

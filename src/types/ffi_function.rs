@@ -4,59 +4,42 @@
 //! function definitions that can be stored in `Arc<FfiRegistry>` without
 //! arena lifetimes.
 //!
-//! # Problem
-//!
-//! The current `FunctionDef<'ast>` has arena lifetimes because:
-//! - `default_args: Vec<Option<&'ast Expr<'ast>>>` - default argument expressions
-//!
-//! For FFI functions to be stored in a shared registry, we need fully owned types.
-//!
-//! # Solution
-//!
-//! - `FfiParam` uses `FfiDataType` for deferred type resolution
-//! - `FfiParam` uses `FfiExpr` for default argument values
-//! - `FfiFunctionDef` holds owned data that can be resolved later
+//! All types are resolved immediately using deterministic `TypeHash`:
+//! - Primitives use their well-known hashes
+//! - User types use `TypeHash::from_name()`
+//! - Template parameters use `TypeHash::SELF`
 //!
 //! # Example
 //!
 //! ```ignore
-//! // Create an FFI function definition
-//! let func = FfiFunctionDef {
-//!     name: "process".to_string(),
-//!     params: vec![
-//!         FfiParam {
-//!             name: "obj".to_string(),
-//!             data_type: FfiDataType::unresolved_handle("MyClass", false),
-//!             default_value: None,
-//!         },
-//!     ],
-//!     return_type: FfiDataType::resolved(DataType::simple(primitive_hashes::VOID)),
-//!     ..Default::default()
-//! };
+//! // Create an FFI function definition with already-resolved types
+//! let func = FfiFunctionDef::new("process")
+//!     .with_params(vec![
+//!         FfiParam::new("obj", DataType::handle(TypeHash::from_name("MyClass"))),
+//!     ])
+//!     .with_return_type(DataType::simple(primitive_hashes::VOID));
 //!
-//! // Resolve during Context sealing - func_hash is computed from name + params
-//! let resolved = func.resolve(&lookup, &mut instantiate)?;
-//! // resolved.func_hash is the function's identity
+//! // func_hash is computed from name + params
 //! ```
 
 use crate::ffi::NativeFn;
 use crate::semantic::types::type_def::{FunctionTraits, OperatorBehavior, Visibility};
 use crate::semantic::types::DataType;
-use crate::types::{FfiDataType, TypeHash};
+use crate::types::TypeHash;
 
 use super::ffi_expr::FfiExpr;
 
 /// A parameter in an FFI function definition.
 ///
-/// Uses `FfiDataType` for deferred type resolution and `FfiExpr` for
+/// Uses `DataType` for resolved types and `FfiExpr` for
 /// owned default argument values.
 #[derive(Debug, Clone, PartialEq)]
 pub struct FfiParam {
     /// Parameter name
     pub name: String,
 
-    /// Parameter type (may be unresolved)
-    pub data_type: FfiDataType,
+    /// Parameter type (always resolved)
+    pub data_type: DataType,
 
     /// Default value expression (if any)
     pub default_value: Option<FfiExpr>,
@@ -64,7 +47,7 @@ pub struct FfiParam {
 
 impl FfiParam {
     /// Create a new parameter with no default value.
-    pub fn new(name: impl Into<String>, data_type: FfiDataType) -> Self {
+    pub fn new(name: impl Into<String>, data_type: DataType) -> Self {
         Self {
             name: name.into(),
             data_type,
@@ -75,7 +58,7 @@ impl FfiParam {
     /// Create a new parameter with a default value.
     pub fn with_default(
         name: impl Into<String>,
-        data_type: FfiDataType,
+        data_type: DataType,
         default_value: FfiExpr,
     ) -> Self {
         Self {
@@ -96,8 +79,7 @@ impl FfiParam {
 /// This is the FFI equivalent of `FunctionDef<'ast>`, but fully owned
 /// so it can be stored in `Arc<FfiRegistry>`.
 ///
-/// Type references are stored as `FfiDataType` which may be unresolved
-/// during registration and resolved during Context sealing.
+/// All type references use `DataType` with deterministic `TypeHash` values.
 #[derive(Debug)]
 pub struct FfiFunctionDef {
     /// Function name (unqualified)
@@ -109,8 +91,8 @@ pub struct FfiFunctionDef {
     /// Parameters with types and optional defaults
     pub params: Vec<FfiParam>,
 
-    /// Return type (may be unresolved)
-    pub return_type: FfiDataType,
+    /// Return type (always resolved)
+    pub return_type: DataType,
 
     /// Function traits (const, virtual, constructor, etc.)
     pub traits: FunctionTraits,
@@ -140,9 +122,7 @@ impl FfiFunctionDef {
             name,
             namespace: Vec::new(),
             params: Vec::new(),
-            return_type: FfiDataType::resolved(DataType::simple(
-                crate::types::primitive_hashes::VOID,
-            )),
+            return_type: DataType::simple(crate::types::primitive_hashes::VOID),
             traits: FunctionTraits::new(),
             owner_type: None,
             operator: None,
@@ -162,9 +142,9 @@ impl FfiFunctionDef {
 
     /// Recompute the function hash based on current name, params, and owner.
     fn recompute_hash(&mut self) {
-        let param_hashes: Vec<TypeHash> = self.params.iter().map(|p| p.data_type.type_hash()).collect();
+        let param_hashes: Vec<TypeHash> = self.params.iter().map(|p| p.data_type.type_hash).collect();
         let is_const = self.traits.is_const;
-        let return_is_const = self.return_type.is_const();
+        let return_is_const = self.return_type.is_const;
 
         self.func_hash = if let Some(owner) = self.owner_type {
             if self.traits.is_constructor {
@@ -243,7 +223,7 @@ impl FfiFunctionDef {
     }
 
     /// Set the return type for this function.
-    pub fn with_return_type(mut self, return_type: FfiDataType) -> Self {
+    pub fn with_return_type(mut self, return_type: DataType) -> Self {
         self.return_type = return_type;
         self
     }
@@ -287,81 +267,32 @@ impl FfiFunctionDef {
         self
     }
 
-    /// Resolve all `FfiDataType` references to concrete `DataType`.
+    /// Convert to a ResolvedFfiFunctionDef.
     ///
-    /// This is called during Context sealing when all types are known.
-    ///
-    /// # Arguments
-    ///
-    /// * `lookup` - Function to look up a TypeHash by name
-    /// * `instantiate` - Function to instantiate templates
-    /// * `type_hash_lookup` - Function to get a TypeHash for a TypeHash
-    ///
-    /// # Returns
-    ///
-    /// A `ResolvedFfiFunctionDef` with all types resolved, or an error.
-    pub fn resolve<L, I, H>(
-        &self,
-        lookup: &L,
-        instantiate: &mut I,
-        _type_hash_lookup: &H,
-    ) -> Result<ResolvedFfiFunctionDef, FfiResolutionError>
-    where
-        L: Fn(&str) -> Option<TypeHash>,
-        I: FnMut(TypeHash, Vec<DataType>) -> Result<TypeHash, String>,
-        H: Fn(TypeHash) -> TypeHash,
-    {
-        // Resolve return type
-        let return_type = self
-            .return_type
-            .resolve(lookup, instantiate)
-            .map_err(|e| FfiResolutionError::ReturnType {
-                function: self.qualified_name(),
-                error: e,
-            })?;
-
-        // Resolve parameter types
-        let mut params = Vec::with_capacity(self.params.len());
-        for (i, param) in self.params.iter().enumerate() {
-            let resolved_type =
-                param
-                    .data_type
-                    .resolve(lookup, instantiate)
-                    .map_err(|e| FfiResolutionError::Parameter {
-                        function: self.qualified_name(),
-                        param_name: param.name.clone(),
-                        param_index: i,
-                        error: e,
-                    })?;
-
-            params.push(ResolvedFfiParam {
-                name: param.name.clone(),
-                data_type: resolved_type,
-                default_value: param.default_value.clone(),
-            });
-        }
-
-        // Preserve the original func_hash which was computed in recompute_hash()
-        // with the correct type hashes (including template param hashes).
-        // Recomputing here can produce different hashes if type_hash_lookup
-        // can't find template param types in the registry.
-        let func_hash = self.func_hash;
-
-        Ok(ResolvedFfiFunctionDef {
+    /// Since all types are now resolved immediately, this is just a conversion
+    /// that strips the native_fn field (stored separately in the registry).
+    pub fn to_resolved(&self) -> ResolvedFfiFunctionDef {
+        ResolvedFfiFunctionDef {
             name: self.name.clone(),
             namespace: self.namespace.clone(),
-            params,
-            return_type,
+            params: self.params.iter().map(|p| ResolvedFfiParam {
+                name: p.name.clone(),
+                data_type: p.data_type.clone(),
+                default_value: p.default_value.clone(),
+            }).collect(),
+            return_type: self.return_type.clone(),
             traits: self.traits,
             owner_type: self.owner_type,
             operator: self.operator,
             visibility: self.visibility,
-            func_hash,
-        })
+            func_hash: self.func_hash,
+        }
     }
 }
 
 /// A resolved FFI parameter with concrete `DataType`.
+///
+/// Now identical to `FfiParam` since all types are resolved immediately.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ResolvedFfiParam {
     /// Parameter name
@@ -377,8 +308,8 @@ pub struct ResolvedFfiParam {
 
 /// A fully resolved FFI function definition.
 ///
-/// This is produced by `FfiFunctionDef::resolve()` and contains concrete
-/// `DataType` references that can be used for type checking.
+/// Now essentially identical to `FfiFunctionDef` (minus `native_fn` which is
+/// stored separately). Kept for API compatibility.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ResolvedFfiFunctionDef {
     /// Function name (unqualified)
@@ -425,45 +356,14 @@ impl ResolvedFfiFunctionDef {
     }
 }
 
-/// Errors that can occur during FFI function resolution.
-#[derive(Debug, Clone, PartialEq, thiserror::Error)]
-pub enum FfiResolutionError {
-    /// Failed to resolve return type
-    #[error("failed to resolve return type of function '{function}': {error}")]
-    ReturnType {
-        /// The function name
-        function: String,
-        /// The error message
-        error: String,
-    },
-
-    /// Failed to resolve parameter type
-    #[error("failed to resolve parameter '{param_name}' (index {param_index}) of function '{function}': {error}")]
-    Parameter {
-        /// The function name
-        function: String,
-        /// The parameter name
-        param_name: String,
-        /// The parameter index
-        param_index: usize,
-        /// The error message
-        error: String,
-    },
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::types::primitive_hashes;
 
-    /// Simple type hash lookup for tests - just uses the type_id as the hash
-    fn test_type_hash_lookup(type_id: TypeHash) -> TypeHash {
-        TypeHash::from_name(&format!("type_{}", type_id.0))
-    }
-
     #[test]
     fn ffi_param_new() {
-        let param = FfiParam::new("x", FfiDataType::resolved(DataType::simple(primitive_hashes::INT32)));
+        let param = FfiParam::new("x", DataType::simple(primitive_hashes::INT32));
         assert_eq!(param.name, "x");
         assert!(!param.has_default());
     }
@@ -472,7 +372,7 @@ mod tests {
     fn ffi_param_with_default() {
         let param = FfiParam::with_default(
             "x",
-            FfiDataType::resolved(DataType::simple(primitive_hashes::INT32)),
+            DataType::simple(primitive_hashes::INT32),
             FfiExpr::int(42),
         );
         assert_eq!(param.name, "x");
@@ -503,10 +403,10 @@ mod tests {
     fn ffi_function_def_with_params() {
         let func = FfiFunctionDef::new("add")
             .with_params(vec![
-                FfiParam::new("a", FfiDataType::resolved(DataType::simple(primitive_hashes::INT32))),
-                FfiParam::new("b", FfiDataType::resolved(DataType::simple(primitive_hashes::INT32))),
+                FfiParam::new("a", DataType::simple(primitive_hashes::INT32)),
+                FfiParam::new("b", DataType::simple(primitive_hashes::INT32)),
             ])
-            .with_return_type(FfiDataType::resolved(DataType::simple(primitive_hashes::INT32)));
+            .with_return_type(DataType::simple(primitive_hashes::INT32));
 
         assert_eq!(func.param_count(), 2);
         assert_eq!(func.required_param_count(), 2);
@@ -516,10 +416,10 @@ mod tests {
     fn ffi_function_def_with_defaults() {
         let func = FfiFunctionDef::new("greet")
             .with_params(vec![
-                FfiParam::new("name", FfiDataType::unresolved_simple("string")),
+                FfiParam::new("name", DataType::simple(primitive_hashes::STRING)),
                 FfiParam::with_default(
                     "greeting",
-                    FfiDataType::unresolved_simple("string"),
+                    DataType::simple(primitive_hashes::STRING),
                     FfiExpr::string("Hello"),
                 ),
             ]);
@@ -570,20 +470,15 @@ mod tests {
     }
 
     #[test]
-    fn ffi_function_def_resolve_simple() {
+    fn ffi_function_def_to_resolved() {
         let func = FfiFunctionDef::new("add")
             .with_params(vec![
-                FfiParam::new("a", FfiDataType::resolved(DataType::simple(primitive_hashes::INT32))),
-                FfiParam::new("b", FfiDataType::resolved(DataType::simple(primitive_hashes::INT32))),
+                FfiParam::new("a", DataType::simple(primitive_hashes::INT32)),
+                FfiParam::new("b", DataType::simple(primitive_hashes::INT32)),
             ])
-            .with_return_type(FfiDataType::resolved(DataType::simple(primitive_hashes::INT32)));
+            .with_return_type(DataType::simple(primitive_hashes::INT32));
 
-        let lookup = |_: &str| -> Option<TypeHash> { None };
-        let mut instantiate = |_: TypeHash, _: Vec<DataType>| -> Result<TypeHash, String> {
-            Err("no templates".to_string())
-        };
-
-        let resolved = func.resolve(&lookup, &mut instantiate, &test_type_hash_lookup).unwrap();
+        let resolved = func.to_resolved();
 
         assert_eq!(resolved.name, "add");
         assert_eq!(resolved.params.len(), 2);
@@ -593,72 +488,21 @@ mod tests {
     }
 
     #[test]
-    fn ffi_function_def_resolve_with_unresolved() {
-        let my_class_id = TypeHash(100);
+    fn ffi_function_def_with_user_type() {
+        // User types are resolved immediately using TypeHash::from_name()
+        let my_class_hash = TypeHash::from_name("MyClass");
 
         let func = FfiFunctionDef::new("process")
             .with_params(vec![FfiParam::new(
                 "obj",
-                FfiDataType::unresolved_handle("MyClass", false),
+                DataType::with_handle(my_class_hash, false),
             )])
-            .with_return_type(FfiDataType::resolved(DataType::simple(primitive_hashes::VOID)));
+            .with_return_type(DataType::simple(primitive_hashes::VOID));
 
-        let lookup = |name: &str| -> Option<TypeHash> {
-            if name == "MyClass" {
-                Some(my_class_id)
-            } else {
-                None
-            }
-        };
-        let mut instantiate = |_: TypeHash, _: Vec<DataType>| -> Result<TypeHash, String> {
-            Err("no templates".to_string())
-        };
+        let resolved = func.to_resolved();
 
-        let resolved = func.resolve(&lookup, &mut instantiate, &test_type_hash_lookup).unwrap();
-
-        assert_eq!(resolved.params[0].data_type.type_hash, my_class_id);
+        assert_eq!(resolved.params[0].data_type.type_hash, my_class_hash);
         assert!(resolved.params[0].data_type.is_handle);
-    }
-
-    #[test]
-    fn ffi_function_def_resolve_error_unknown_type() {
-        let func = FfiFunctionDef::new("process")
-            .with_params(vec![FfiParam::new(
-                "obj",
-                FfiDataType::unresolved_simple("UnknownType"),
-            )]);
-
-        let lookup = |_: &str| -> Option<TypeHash> { None };
-        let mut instantiate = |_: TypeHash, _: Vec<DataType>| -> Result<TypeHash, String> {
-            Err("no templates".to_string())
-        };
-
-        let result = func.resolve(&lookup, &mut instantiate, &test_type_hash_lookup);
-        assert!(result.is_err());
-
-        let err = result.unwrap_err();
-        assert!(matches!(err, FfiResolutionError::Parameter { .. }));
-
-        let err_str = format!("{}", err);
-        assert!(err_str.contains("obj"));
-        assert!(err_str.contains("UnknownType"));
-    }
-
-    #[test]
-    fn ffi_function_def_resolve_return_type_error() {
-        let func = FfiFunctionDef::new("create")
-            .with_return_type(FfiDataType::unresolved_simple("UnknownType"));
-
-        let lookup = |_: &str| -> Option<TypeHash> { None };
-        let mut instantiate = |_: TypeHash, _: Vec<DataType>| -> Result<TypeHash, String> {
-            Err("no templates".to_string())
-        };
-
-        let result = func.resolve(&lookup, &mut instantiate, &test_type_hash_lookup);
-        assert!(result.is_err());
-
-        let err = result.unwrap_err();
-        assert!(matches!(err, FfiResolutionError::ReturnType { .. }));
     }
 
     #[test]
@@ -683,7 +527,7 @@ mod tests {
             owner_type: None,
             operator: None,
             visibility: Visibility::Public,
-            func_hash: TypeHash::from_function("add", &[test_type_hash_lookup(primitive_hashes::INT32), test_type_hash_lookup(primitive_hashes::INT32)]),
+            func_hash: TypeHash::from_function("add", &[primitive_hashes::INT32, primitive_hashes::INT32]),
         };
 
         let param_types = resolved.param_types();
@@ -710,26 +554,10 @@ mod tests {
     }
 
     #[test]
-    fn ffi_resolution_error_display() {
-        let err = FfiResolutionError::Parameter {
-            function: "process".to_string(),
-            param_name: "obj".to_string(),
-            param_index: 0,
-            error: "Unknown type: MyClass".to_string(),
-        };
-
-        let msg = format!("{}", err);
-        assert!(msg.contains("process"));
-        assert!(msg.contains("obj"));
-        assert!(msg.contains("0"));
-        assert!(msg.contains("MyClass"));
-    }
-
-    #[test]
     fn ffi_param_clone() {
         let param = FfiParam::with_default(
             "x",
-            FfiDataType::resolved(DataType::simple(primitive_hashes::INT32)),
+            DataType::simple(primitive_hashes::INT32),
             FfiExpr::int(42),
         );
 
