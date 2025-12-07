@@ -68,7 +68,7 @@ pub struct Unit<'app> {
     dirty_files: HashSet<String>,
 
     /// Memory arena for AST allocation (created during build)
-    arena: Option<Bump>,
+    arena: Bump,
 
     /// Compiled module (available after build)
     compiled: Option<CompiledModule>,
@@ -95,9 +95,8 @@ impl<'app> Unit<'app> {
             sources: HashMap::new(),
             source_hashes: HashMap::new(),
             dirty_files: HashSet::new(),
-            arena: None,
+            arena: Bump::new(),
             compiled: None,
-            // context: None,
             is_built: false,
         }
     }
@@ -112,9 +111,8 @@ impl<'app> Unit<'app> {
             sources: HashMap::new(),
             source_hashes: HashMap::new(),
             dirty_files: HashSet::new(),
-            arena: None,
+            arena: Bump::new(),
             compiled: None,
-            // context: None,
             is_built: false,
         }
     }
@@ -257,16 +255,13 @@ impl<'app> Unit<'app> {
             return Err(BuildError::NoSources);
         }
 
-        // Create arena for AST allocation
-        let arena = Bump::new();
-
         // Parse all sources
         let (scripts, all_parse_errors) = {
             let mut all_parse_errors = Vec::new();
             let mut scripts = Vec::new();
 
             for (filename, source) in &self.sources {
-                let (script, parse_errors) = Parser::parse_lenient(source, &arena);
+                let (script, parse_errors) = Parser::parse_lenient(source, &self.arena);
 
                 if !parse_errors.is_empty() {
                     all_parse_errors.push((filename.clone(), parse_errors));
@@ -317,8 +312,7 @@ impl<'app> Unit<'app> {
 
         // Store the compiled module and registry
         self.compiled = Some(compilation_result.module);
-        // self.compilation_context = Some(compilation_result.context);  // TODO: Cannot store CompilationContext with lifetimes
-        self.arena = Some(arena);
+        
         self.is_built = true;
         self.dirty_files.clear();
 
@@ -353,7 +347,7 @@ impl<'app> Unit<'app> {
         self.sources.clear();
         self.source_hashes.clear();
         self.dirty_files.clear();
-        self.arena = None;
+        self.arena.reset();
         self.compiled = None;
         // self.compilation_context = None;  // TODO: Cannot store CompilationContext with lifetimes
         self.is_built = false;

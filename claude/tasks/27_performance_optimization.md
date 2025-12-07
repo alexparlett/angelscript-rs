@@ -1,6 +1,6 @@
 # Task 27: Performance Optimization
 
-## Status: Pending Review
+## Status: In Progress
 
 This task was identified during the FFI/compiler refactor (Task 26). Review after crate restructuring is complete.
 
@@ -17,7 +17,7 @@ This task was identified during the FFI/compiler refactor (Task 26). Review afte
 
 ## Phase A: FFI Performance Fixes (~4ms recovery)
 
-### A1: Fix O(n²) in FfiRegistryBuilder.build() - CRITICAL
+### A1: Fix O(n²) in FfiRegistryBuilder.build() - ✅ COMPLETE
 
 **File:** `crates/angelscript-ffi/src/registry/ffi_registry.rs`
 **Lines:** ~1011-1028
@@ -46,7 +46,7 @@ let behaviors: FxHashMap<TypeHash, TypeBehaviors> = self.behaviors
 
 ---
 
-### A2: Cache type_by_name in FfiRegistry
+### A2: Cache type_by_name in FfiRegistry - ✅ COMPLETE
 
 **File:** `crates/angelscript-ffi/src/registry/ffi_registry.rs`
 **Lines:** ~146-151
@@ -62,7 +62,7 @@ pub fn type_by_name(&self) -> FxHashMap<String, TypeHash> {
 
 Called from CompilationContext init (once per Unit). Allocates string for every FFI type.
 
-**Fix:** Cache this map in FfiRegistry at build time as a field.
+**Fix:** Cache this map in FfiRegistry at build time as a field. Returns `&FxHashMap` instead of owned map.
 
 **Impact:** 0.5-1ms
 
@@ -83,23 +83,6 @@ pub fn func_by_name(&self) -> FxHashMap<String, Vec<TypeHash>> {
 ```
 
 **Fix:** Return `&FxHashMap<String, Vec<TypeHash>>` reference instead of cloning.
-
-**Impact:** 0.5-1ms
-
----
-
-### A4: Store Arc refs in CompilationContext
-
-**File:** `src/semantic/compilation_context.rs`
-**Lines:** ~258-259
-
-**Problem:**
-```rust
-type_by_name: ffi.type_by_name().clone(),
-func_by_name: ffi.func_by_name().clone(),
-```
-
-**Fix:** Store Arc references to pre-built maps, not cloned copies.
 
 **Impact:** 0.5-1ms
 
@@ -252,24 +235,24 @@ Add `unit/build_only` benchmark that measures just compilation without Unit crea
 
 ### Phase A: FFI Fixes (do first - recover 4ms)
 
-| # | Task | Est. Impact | Effort |
-|---|------|-------------|--------|
-| A1 | Fix O(n²) in build() | 1-2ms | Easy |
-| A2 | Cache type_by_name | 0.5-1ms | Medium |
-| A3 | Return ref from func_by_name | 0.5-1ms | Easy |
-| A4 | Arc refs in CompilationContext | 0.5-1ms | Medium |
+| # | Task | Est. Impact | Effort | Status |
+|---|------|-------------|--------|--------|
+| A1 | Fix O(n²) in build() | 1-2ms | Easy | ✅ Complete |
+| A2 | Cache type_by_name | 0.5-1ms | Medium | ✅ Complete |
+| A3 | Return ref from func_by_name | 0.5-1ms | Easy | ✅ Complete |
+| A4 | Arc refs in CompilationContext | 0.5-1ms | Medium | Pending |
 
 ### Phase B: Script Optimizations (1.31ms → <1ms)
 
-| # | Task | Est. Impact | Effort |
-|---|------|-------------|--------|
-| B1 | Lexer cursor optimization | 10-15% | Medium |
-| B2 | Cache qualified_name | 8% | Easy |
-| B3 | Avoid namespace_path cloning | 3-4% | Medium |
-| B4 | Avoid format!() for TypeHash | 2% | Easy |
-| B5 | Remove types_by_hash | 2-4% | Easy |
-| B6 | Unit.clear() API | N/A | Easy |
-| B7 | Benchmark restructuring | N/A | Easy |
+| # | Task | Est. Impact | Effort | Status |
+|---|------|-------------|--------|--------|
+| B1 | Lexer cursor optimization | 10-15% | Medium | ✅ Complete |
+| B2 | Cache qualified_name | 8% | Easy | ✅ Complete |
+| B3 | Avoid namespace_path cloning | 3-4% | Medium | Pending |
+| B4 | Avoid format!() for TypeHash | 2% | Easy | Pending |
+| B5 | Remove types_by_hash | 2-4% | Easy | Pending |
+| B6 | Unit.clear() API | N/A | Easy | Pending |
+| B7 | Benchmark restructuring | N/A | Easy | Pending |
 
 ---
 
@@ -280,8 +263,8 @@ Add `unit/build_only` benchmark that measures just compilation without Unit crea
 - `src/semantic/compilation_context.rs`
 
 ### Phase B
-- `src/lexer/cursor.rs`
-- `src/lexer/lexer.rs`
+- `crates/angelscript-parser/src/lexer/cursor.rs`
+- `crates/angelscript-parser/src/lexer/lexer.rs`
 - `src/semantic/types/registry.rs`
 - `src/semantic/passes/registration.rs`
 - `src/semantic/passes/function_processor/mod.rs`

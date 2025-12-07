@@ -10,24 +10,25 @@
 //! use angelscript_core::{FunctionDef, FunctionTraits, Param, DataType, TypeHash, Visibility, primitives};
 //!
 //! // Create a simple function: int add(int a, int b)
-//! let func = FunctionDef {
-//!     func_hash: TypeHash::from_function("add", &[primitives::INT32, primitives::INT32]),
-//!     name: "add".to_string(),
-//!     namespace: vec![],
-//!     params: vec![
+//! let func = FunctionDef::new(
+//!     TypeHash::from_function("add", &[primitives::INT32, primitives::INT32]),
+//!     "add".to_string(),
+//!     vec![],
+//!     vec![
 //!         Param::new("a", DataType::simple(primitives::INT32)),
 //!         Param::new("b", DataType::simple(primitives::INT32)),
 //!     ],
-//!     return_type: DataType::simple(primitives::INT32),
-//!     object_type: None,
-//!     traits: FunctionTraits::default(),
-//!     is_native: false,
-//!     visibility: Visibility::Public,
-//! };
+//!     DataType::simple(primitives::INT32),
+//!     None,
+//!     FunctionTraits::default(),
+//!     false,
+//!     Visibility::Public,
+//! );
 //! assert_eq!(func.name, "add");
 //! assert_eq!(func.params.len(), 2);
 //! ```
 
+use std::cell::OnceCell;
 use std::fmt;
 
 use crate::{DataType, TypeHash};
@@ -197,7 +198,7 @@ impl FunctionTraits {
 /// In the 2-pass compiler architecture, functions are always registered with
 /// complete signatures. There is no `signature_filled` field because functions
 /// are never in an incomplete state.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub struct FunctionDef {
     /// Deterministic hash for identity - computed from qualified name and parameter types.
     pub func_hash: TypeHash,
@@ -217,35 +218,83 @@ pub struct FunctionDef {
     pub is_native: bool,
     /// Visibility (public, private, protected) - only meaningful for methods.
     pub visibility: Visibility,
+    /// Cached qualified name (computed on first access).
+    cached_qualified_name: OnceCell<String>,
+}
+
+impl PartialEq for FunctionDef {
+    fn eq(&self, other: &Self) -> bool {
+        // Exclude cached_qualified_name from equality comparison
+        self.func_hash == other.func_hash
+            && self.name == other.name
+            && self.namespace == other.namespace
+            && self.params == other.params
+            && self.return_type == other.return_type
+            && self.object_type == other.object_type
+            && self.traits == other.traits
+            && self.is_native == other.is_native
+            && self.visibility == other.visibility
+    }
 }
 
 impl FunctionDef {
+    /// Create a new function definition.
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        func_hash: TypeHash,
+        name: String,
+        namespace: Vec<String>,
+        params: Vec<Param>,
+        return_type: DataType,
+        object_type: Option<TypeHash>,
+        traits: FunctionTraits,
+        is_native: bool,
+        visibility: Visibility,
+    ) -> Self {
+        Self {
+            func_hash,
+            name,
+            namespace,
+            params,
+            return_type,
+            object_type,
+            traits,
+            is_native,
+            visibility,
+            cached_qualified_name: OnceCell::new(),
+        }
+    }
+
     /// Get the qualified name of this function.
+    ///
+    /// The result is cached on first access to avoid repeated allocations.
     ///
     /// # Example
     ///
     /// ```
     /// use angelscript_core::{FunctionDef, FunctionTraits, DataType, TypeHash, Visibility};
     ///
-    /// let func = FunctionDef {
-    ///     func_hash: TypeHash::from_name("Game::Player::update"),
-    ///     name: "update".to_string(),
-    ///     namespace: vec!["Game".to_string(), "Player".to_string()],
-    ///     params: vec![],
-    ///     return_type: DataType::void(),
-    ///     object_type: None,
-    ///     traits: FunctionTraits::default(),
-    ///     is_native: false,
-    ///     visibility: Visibility::Public,
-    /// };
+    /// let func = FunctionDef::new(
+    ///     TypeHash::from_name("Game::Player::update"),
+    ///     "update".to_string(),
+    ///     vec!["Game".to_string(), "Player".to_string()],
+    ///     vec![],
+    ///     DataType::void(),
+    ///     None,
+    ///     FunctionTraits::default(),
+    ///     false,
+    ///     Visibility::Public,
+    /// );
     /// assert_eq!(func.qualified_name(), "Game::Player::update");
     /// ```
-    pub fn qualified_name(&self) -> String {
-        if self.namespace.is_empty() {
-            self.name.clone()
-        } else {
-            format!("{}::{}", self.namespace.join("::"), self.name)
-        }
+    pub fn qualified_name(&self) -> &str {
+        self.cached_qualified_name.get_or_init(|| {
+            if self.namespace.is_empty() {
+                self.name.clone()
+            } else {
+                format!("{}::{}", self.namespace.join("::"), self.name)
+            }
+        })
     }
 
     /// Check if this function is a method (belongs to an object type).
@@ -403,20 +452,20 @@ mod tests {
 
     #[test]
     fn function_def_creation() {
-        let func = FunctionDef {
-            func_hash: TypeHash::from_function("add", &[primitives::INT32, primitives::INT32]),
-            name: "add".to_string(),
-            namespace: vec![],
-            params: vec![
+        let func = FunctionDef::new(
+            TypeHash::from_function("add", &[primitives::INT32, primitives::INT32]),
+            "add".to_string(),
+            vec![],
+            vec![
                 Param::new("a", DataType::simple(primitives::INT32)),
                 Param::new("b", DataType::simple(primitives::INT32)),
             ],
-            return_type: DataType::simple(primitives::INT32),
-            object_type: None,
-            traits: FunctionTraits::default(),
-            is_native: false,
-            visibility: Visibility::Public,
-        };
+            DataType::simple(primitives::INT32),
+            None,
+            FunctionTraits::default(),
+            false,
+            Visibility::Public,
+        );
         assert_eq!(func.name, "add");
         assert_eq!(func.params.len(), 2);
         assert!(!func.is_method());
@@ -424,34 +473,34 @@ mod tests {
 
     #[test]
     fn function_def_qualified_name() {
-        let func = FunctionDef {
-            func_hash: TypeHash::from_name("Game::update"),
-            name: "update".to_string(),
-            namespace: vec!["Game".to_string()],
-            params: vec![],
-            return_type: DataType::void(),
-            object_type: None,
-            traits: FunctionTraits::default(),
-            is_native: false,
-            visibility: Visibility::Public,
-        };
+        let func = FunctionDef::new(
+            TypeHash::from_name("Game::update"),
+            "update".to_string(),
+            vec!["Game".to_string()],
+            vec![],
+            DataType::void(),
+            None,
+            FunctionTraits::default(),
+            false,
+            Visibility::Public,
+        );
         assert_eq!(func.qualified_name(), "Game::update");
     }
 
     #[test]
     fn function_def_method() {
         let player_hash = TypeHash::from_name("Player");
-        let func = FunctionDef {
-            func_hash: TypeHash::from_name("Player::update"),
-            name: "update".to_string(),
-            namespace: vec![],
-            params: vec![Param::new("dt", DataType::simple(primitives::FLOAT))],
-            return_type: DataType::void(),
-            object_type: Some(player_hash),
-            traits: FunctionTraits::virtual_method(),
-            is_native: false,
-            visibility: Visibility::Public,
-        };
+        let func = FunctionDef::new(
+            TypeHash::from_name("Player::update"),
+            "update".to_string(),
+            vec![],
+            vec![Param::new("dt", DataType::simple(primitives::FLOAT))],
+            DataType::void(),
+            Some(player_hash),
+            FunctionTraits::virtual_method(),
+            false,
+            Visibility::Public,
+        );
         assert!(func.is_method());
         assert!(func.is_virtual());
         assert!(!func.is_const());
@@ -460,55 +509,55 @@ mod tests {
     #[test]
     fn function_def_constructor() {
         let player_hash = TypeHash::from_name("Player");
-        let func = FunctionDef {
-            func_hash: TypeHash::from_name("Player::Player"),
-            name: "Player".to_string(),
-            namespace: vec![],
-            params: vec![],
-            return_type: DataType::void(),
-            object_type: Some(player_hash),
-            traits: FunctionTraits::constructor(),
-            is_native: false,
-            visibility: Visibility::Public,
-        };
+        let func = FunctionDef::new(
+            TypeHash::from_name("Player::Player"),
+            "Player".to_string(),
+            vec![],
+            vec![],
+            DataType::void(),
+            Some(player_hash),
+            FunctionTraits::constructor(),
+            false,
+            Visibility::Public,
+        );
         assert!(func.is_constructor());
         assert!(func.is_method());
     }
 
     #[test]
     fn function_def_required_param_count() {
-        let func = FunctionDef {
-            func_hash: TypeHash::from_name("test"),
-            name: "test".to_string(),
-            namespace: vec![],
-            params: vec![
+        let func = FunctionDef::new(
+            TypeHash::from_name("test"),
+            "test".to_string(),
+            vec![],
+            vec![
                 Param::new("a", DataType::simple(primitives::INT32)),
                 Param::new("b", DataType::simple(primitives::INT32)),
                 Param::with_default("c", DataType::simple(primitives::INT32)),
             ],
-            return_type: DataType::void(),
-            object_type: None,
-            traits: FunctionTraits::default(),
-            is_native: false,
-            visibility: Visibility::Public,
-        };
+            DataType::void(),
+            None,
+            FunctionTraits::default(),
+            false,
+            Visibility::Public,
+        );
         assert_eq!(func.params.len(), 3);
         assert_eq!(func.required_param_count(), 2);
     }
 
     #[test]
     fn function_def_display() {
-        let func = FunctionDef {
-            func_hash: TypeHash::from_name("update"),
-            name: "update".to_string(),
-            namespace: vec![],
-            params: vec![Param::new("dt", DataType::simple(primitives::FLOAT))],
-            return_type: DataType::void(),
-            object_type: None,
-            traits: FunctionTraits::const_method(),
-            is_native: false,
-            visibility: Visibility::Public,
-        };
+        let func = FunctionDef::new(
+            TypeHash::from_name("update"),
+            "update".to_string(),
+            vec![],
+            vec![Param::new("dt", DataType::simple(primitives::FLOAT))],
+            DataType::void(),
+            None,
+            FunctionTraits::const_method(),
+            false,
+            Visibility::Public,
+        );
         let s = format!("{}", func);
         assert!(s.contains("update"));
         assert!(s.contains("const"));

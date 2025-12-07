@@ -79,6 +79,8 @@ pub struct FfiRegistry {
     // === Type Storage (TypeHash primary key) ===
     /// All FFI types indexed by TypeHash
     types: FxHashMap<TypeHash, TypeDef>,
+    /// Cached type name → TypeHash mapping (built once during registry creation)
+    type_by_name: FxHashMap<String, TypeHash>,
 
     // === Function Storage (TypeHash primary key) ===
     /// All FFI functions indexed by TypeHash (resolved, non-template)
@@ -106,6 +108,7 @@ impl std::fmt::Debug for FfiRegistry {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("FfiRegistry")
             .field("types", &format!("<{} types>", self.types.len()))
+            .field("type_by_name", &format!("<{} names>", self.type_by_name.len()))
             .field("functions", &format!("<{} functions>", self.functions.len()))
             .field("function_overloads", &format!("<{} names>", self.function_overloads.len()))
             .field("native_fns", &format!("<{} native fns>", self.native_fns.len()))
@@ -142,12 +145,10 @@ impl FfiRegistry {
 
     /// Get access to the type name → TypeHash map for iteration.
     ///
+    /// This map is cached at registry build time for O(1) access.
     /// Used by CompilationContext for initializing its unified name maps.
-    pub fn type_by_name(&self) -> FxHashMap<String, TypeHash> {
-        self.types
-            .iter()
-            .map(|(hash, def)| (def.qualified_name().to_string(), *hash))
-            .collect()
+    pub fn type_by_name(&self) -> &FxHashMap<String, TypeHash> {
+        &self.type_by_name
     }
 
     /// Get the number of registered types.
@@ -220,15 +221,9 @@ impl FfiRegistry {
 
     /// Get access to the function name → func_hashes map for iteration.
     ///
-    /// Returns the TypeHash (func_hash) for each overload.
-    pub fn func_by_name(&self) -> FxHashMap<String, Vec<TypeHash>> {
-        self.function_overloads
-            .iter()
-            .map(|(name, hashes)| {
-                // func_hash IS the identity now, just return the hashes
-                (name.clone(), hashes.clone())
-            })
-            .collect()
+    /// Returns a reference to the internal map of function names to TypeHashes.
+    pub fn func_by_name(&self) -> &FxHashMap<String, Vec<TypeHash>> {
+        &self.function_overloads
     }
 
     /// Get a function definition by TypeHash.
@@ -964,9 +959,8 @@ impl FfiRegistryBuilder {
             let func_hash = func_def.func_hash;
 
             // Add to function name map
-            let qualified_name = func_def.qualified_name();
             function_names
-                .entry(qualified_name)
+                .entry(func_def.qualified_name().to_string())
                 .or_default()
                 .push(func_hash);
 
@@ -988,6 +982,12 @@ impl FfiRegistryBuilder {
             .map(|(_, def)| (def.type_hash(), def))
             .collect();
 
+        // Build type name → TypeHash cache (O(1) lookup instead of O(n) iteration)
+        let type_by_name: FxHashMap<String, TypeHash> = types
+            .iter()
+            .map(|(hash, def)| (def.qualified_name().to_string(), *hash))
+            .collect();
+
         // Functions are keyed by func_hash
         let functions: FxHashMap<TypeHash, FunctionDef> = resolved_functions
             .into_iter()
@@ -998,7 +998,7 @@ impl FfiRegistryBuilder {
         let function_overloads: FxHashMap<String, Vec<TypeHash>> = {
             let mut map: FxHashMap<String, Vec<TypeHash>> = FxHashMap::default();
             for func in functions.values() {
-                map.entry(func.qualified_name())
+                map.entry(func.qualified_name().to_string())
                     .or_default()
                     .push(func.func_hash);
             }
@@ -1007,28 +1007,21 @@ impl FfiRegistryBuilder {
 
         // Native functions are already keyed by func_hash from the resolution loop above
 
-        // Behaviors are keyed by type_hash
+        // Behaviors are keyed by type_hash - O(1) lookup instead of O(n) scan
         let behaviors: FxHashMap<TypeHash, TypeBehaviors> = self.behaviors
             .into_iter()
-            .filter_map(|(type_id, behaviors)| {
-                types.values()
-                    .find(|def| def.type_hash() == type_id)
-                    .map(|def| (def.type_hash(), behaviors))
-            })
+            .filter(|(type_id, _)| types.contains_key(type_id))
             .collect();
 
-        // Template callbacks are keyed by type_hash
+        // Template callbacks are keyed by type_hash - O(1) lookup instead of O(n) scan
         let template_callbacks: FxHashMap<TypeHash, Arc<dyn Fn(&TemplateInstanceInfo) -> TemplateValidation + Send + Sync>> = self.template_callbacks
             .into_iter()
-            .filter_map(|(type_id, callback)| {
-                types.values()
-                    .find(|def| def.type_hash() == type_id)
-                    .map(|def| (def.type_hash(), callback))
-            })
+            .filter(|(type_id, _)| types.contains_key(type_id))
             .collect();
 
         Ok(FfiRegistry {
             types,
+            type_by_name,
             functions,
             function_overloads,
             native_fns,
@@ -1166,20 +1159,20 @@ mod tests {
     fn builder_build_with_function() {
         let mut builder = FfiRegistryBuilder::new();
 
-        let func = FunctionDef {
-            func_hash: TypeHash::from_function("add", &[primitives::INT32, primitives::INT32]),
-            name: "add".to_string(),
-            namespace: vec![],
-            params: vec![
+        let func = FunctionDef::new(
+            TypeHash::from_function("add", &[primitives::INT32, primitives::INT32]),
+            "add".to_string(),
+            vec![],
+            vec![
                 Param::new("a", DataType::simple(primitives::INT32)),
                 Param::new("b", DataType::simple(primitives::INT32)),
             ],
-            return_type: DataType::simple(primitives::INT32),
-            object_type: None,
-            traits: FunctionTraits::default(),
-            is_native: true,
-            visibility: Visibility::Public,
-        };
+            DataType::simple(primitives::INT32),
+            None,
+            FunctionTraits::default(),
+            true,
+            Visibility::Public,
+        );
 
         builder.register_function(func, None);
 
@@ -1223,20 +1216,20 @@ mod tests {
         );
 
         // Register function with user type (using TypeHash::from_name directly)
-        let func = FunctionDef {
-            func_hash: TypeHash::from_function("process", &[my_class_hash]),
-            name: "process".to_string(),
-            namespace: vec![],
-            params: vec![Param::new(
+        let func = FunctionDef::new(
+            TypeHash::from_function("process", &[my_class_hash]),
+            "process".to_string(),
+            vec![],
+            vec![Param::new(
                 "obj",
                 DataType::with_handle(my_class_hash, false),
             )],
-            return_type: DataType::simple(primitives::VOID),
-            object_type: None,
-            traits: FunctionTraits::default(),
-            is_native: true,
-            visibility: Visibility::Public,
-        };
+            DataType::simple(primitives::VOID),
+            None,
+            FunctionTraits::default(),
+            true,
+            Visibility::Public,
+        );
 
         builder.register_function(func, None);
 

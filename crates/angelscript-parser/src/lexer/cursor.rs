@@ -58,9 +58,18 @@ impl<'src> Cursor<'src> {
     }
 
     /// Peek at the current character without consuming it.
+    ///
+    /// Optimized with an ASCII fast path to avoid iterator creation
+    /// for the common case of ASCII characters.
     #[inline]
     pub fn peek(&self) -> Option<char> {
-        self.rest.chars().next()
+        let bytes = self.rest.as_bytes();
+        let first = *bytes.first()?;
+        if first < 128 {
+            Some(first as char) // No iterator creation for ASCII
+        } else {
+            self.rest.chars().next() // UTF-8 path unchanged
+        }
     }
 
     /// Peek at the nth character ahead (0 = current).
@@ -171,6 +180,30 @@ impl<'src> Cursor<'src> {
         &self.source[start..self.offset as usize]
     }
 
+    /// Consume ASCII characters while the predicate matches.
+    ///
+    /// This is faster than `eat_while` for ASCII-only content (identifiers, numbers)
+    /// because it operates directly on bytes without creating char iterators.
+    ///
+    /// # Note
+    /// Does NOT handle newlines - use only for single-line content like identifiers
+    /// and numbers where newlines are not expected.
+    #[inline]
+    pub fn eat_while_ascii(&mut self, f: impl Fn(u8) -> bool) -> &'src str {
+        let start = self.offset as usize;
+        let bytes = self.rest.as_bytes();
+        let mut i = 0;
+        while i < bytes.len() && bytes[i] < 128 && f(bytes[i]) {
+            i += 1;
+        }
+        if i > 0 {
+            self.rest = &self.rest[i..];
+            self.offset += i as u32;
+            self.column += i as u32;
+        }
+        &self.source[start..self.offset as usize]
+    }
+
     /// Get a slice of source from a starting offset to current position.
     #[inline]
     pub fn slice_from(&self, start: u32) -> &'src str {
@@ -188,6 +221,15 @@ pub fn is_ident_start(c: char) -> bool {
 #[inline]
 pub fn is_ident_continue(c: char) -> bool {
     c.is_ascii_alphanumeric() || c == '_'
+}
+
+/// Check if a byte can continue an identifier (ASCII-only version).
+///
+/// This is faster than `is_ident_continue` when working with raw bytes
+/// in performance-critical loops.
+#[inline]
+pub fn is_ident_continue_ascii(b: u8) -> bool {
+    b.is_ascii_alphanumeric() || b == b'_'
 }
 
 #[cfg(test)]
@@ -369,5 +411,65 @@ mod tests {
         cursor.advance_bytes(3); // "ab\n"
         assert_eq!(cursor.line(), 2);
         assert_eq!(cursor.column(), 1);
+    }
+
+    #[test]
+    fn cursor_peek_ascii_fast_path() {
+        // ASCII characters should work via fast path
+        let cursor = Cursor::new("hello");
+        assert_eq!(cursor.peek(), Some('h'));
+
+        // UTF-8 characters should fall back to iterator path
+        let utf8_cursor = Cursor::new("héllo");
+        assert_eq!(utf8_cursor.peek(), Some('h'));
+
+        // Multi-byte character at start
+        let multi_byte = Cursor::new("éllo");
+        assert_eq!(multi_byte.peek(), Some('é'));
+    }
+
+    #[test]
+    fn cursor_eat_while_ascii() {
+        let mut cursor = Cursor::new("hello123 world");
+
+        let ident = cursor.eat_while_ascii(|b| b.is_ascii_alphanumeric());
+        assert_eq!(ident, "hello123");
+        assert_eq!(cursor.offset(), 8);
+        assert_eq!(cursor.column(), 9); // 1-indexed
+
+        // Should stop at space
+        assert_eq!(cursor.peek(), Some(' '));
+    }
+
+    #[test]
+    fn cursor_eat_while_ascii_empty() {
+        let mut cursor = Cursor::new(" hello");
+
+        // Should return empty slice when first char doesn't match
+        let result = cursor.eat_while_ascii(|b| b.is_ascii_alphanumeric());
+        assert_eq!(result, "");
+        assert_eq!(cursor.offset(), 0);
+    }
+
+    #[test]
+    fn cursor_eat_while_ascii_stops_at_non_ascii() {
+        let mut cursor = Cursor::new("helloéworld");
+
+        // Should stop at the multi-byte 'é' character
+        let result = cursor.eat_while_ascii(|b| b.is_ascii_alphanumeric() || b == b'\xc3');
+        assert_eq!(result, "hello");
+        assert_eq!(cursor.offset(), 5);
+    }
+
+    #[test]
+    fn is_ident_continue_ascii_works() {
+        assert!(is_ident_continue_ascii(b'a'));
+        assert!(is_ident_continue_ascii(b'Z'));
+        assert!(is_ident_continue_ascii(b'0'));
+        assert!(is_ident_continue_ascii(b'9'));
+        assert!(is_ident_continue_ascii(b'_'));
+        assert!(!is_ident_continue_ascii(b' '));
+        assert!(!is_ident_continue_ascii(b'-'));
+        assert!(!is_ident_continue_ascii(b'.'));
     }
 }
