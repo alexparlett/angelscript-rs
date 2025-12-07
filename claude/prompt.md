@@ -76,9 +76,31 @@ See `/claude/tasks/01_unified-type-registry.md` for full details.
 
 **Tests:** 326 unit tests passing (314 core + 12 registry)
 
+### Phase 4 Summary (Just Completed)
+
+**Implemented `angelscript-macros` crate with proc macros:**
+
+- `#[derive(Any)]` - Generates `Any` trait + `ClassMeta` with properties
+- `#[angelscript::function]` - Generates `FunctionMeta` with behaviors/operators
+- `#[angelscript::interface]` - Generates `InterfaceMeta` from traits
+- `#[angelscript::funcdef]` - Generates `FuncdefMeta` from type aliases
+
+**Added meta types to `angelscript-core`:**
+- `ClassMeta`, `PropertyMeta` - For class registration
+- `FunctionMeta`, `ParamMeta`, `Behavior` - For function registration
+- `InterfaceMeta`, `InterfaceMethodMeta` - For interface definitions
+- `FuncdefMeta` - For function pointer types
+
+**Deferred (need VM/runtime):**
+- `#[angelscript::param]` - Generic calling convention
+- `#[angelscript::template_callback]` - Template validation
+- `#[angelscript::list_pattern]` - List initialization
+
+**Tests:** 20 macro integration tests passing
+
 ### Next Phase
 
-**Phase 4: Create angelscript-macros** - Macros must be implemented before Module builder because `Module.ty::<T>()` depends on macro-generated metadata.
+**Phase 5: Module Builder** - Create Module builder in angelscript-registry that consumes macro-generated metadata.
 
 ---
 
