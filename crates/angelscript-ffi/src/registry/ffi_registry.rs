@@ -1007,24 +1007,16 @@ impl FfiRegistryBuilder {
 
         // Native functions are already keyed by func_hash from the resolution loop above
 
-        // Behaviors are keyed by type_hash
+        // Behaviors are keyed by type_hash - O(1) lookup instead of O(n) scan
         let behaviors: FxHashMap<TypeHash, TypeBehaviors> = self.behaviors
             .into_iter()
-            .filter_map(|(type_id, behaviors)| {
-                types.values()
-                    .find(|def| def.type_hash() == type_id)
-                    .map(|def| (def.type_hash(), behaviors))
-            })
+            .filter(|(type_id, _)| types.contains_key(type_id))
             .collect();
 
-        // Template callbacks are keyed by type_hash
+        // Template callbacks are keyed by type_hash - O(1) lookup instead of O(n) scan
         let template_callbacks: FxHashMap<TypeHash, Arc<dyn Fn(&TemplateInstanceInfo) -> TemplateValidation + Send + Sync>> = self.template_callbacks
             .into_iter()
-            .filter_map(|(type_id, callback)| {
-                types.values()
-                    .find(|def| def.type_hash() == type_id)
-                    .map(|def| (def.type_hash(), callback))
-            })
+            .filter(|(type_id, _)| types.contains_key(type_id))
             .collect();
 
         Ok(FfiRegistry {

@@ -1,6 +1,6 @@
 # Task 27: Performance Optimization
 
-## Status: Pending Review
+## Status: In Progress
 
 This task was identified during the FFI/compiler refactor (Task 26). Review after crate restructuring is complete.
 
@@ -17,7 +17,7 @@ This task was identified during the FFI/compiler refactor (Task 26). Review afte
 
 ## Phase A: FFI Performance Fixes (~4ms recovery)
 
-### A1: Fix O(n²) in FfiRegistryBuilder.build() - CRITICAL
+### A1: Fix O(n²) in FfiRegistryBuilder.build() - ✅ COMPLETE
 
 **File:** `crates/angelscript-ffi/src/registry/ffi_registry.rs`
 **Lines:** ~1011-1028
@@ -252,12 +252,12 @@ Add `unit/build_only` benchmark that measures just compilation without Unit crea
 
 ### Phase A: FFI Fixes (do first - recover 4ms)
 
-| # | Task | Est. Impact | Effort |
-|---|------|-------------|--------|
-| A1 | Fix O(n²) in build() | 1-2ms | Easy |
-| A2 | Cache type_by_name | 0.5-1ms | Medium |
-| A3 | Return ref from func_by_name | 0.5-1ms | Easy |
-| A4 | Arc refs in CompilationContext | 0.5-1ms | Medium |
+| # | Task | Est. Impact | Effort | Status |
+|---|------|-------------|--------|--------|
+| A1 | Fix O(n²) in build() | 1-2ms | Easy | ✅ Complete |
+| A2 | Cache type_by_name | 0.5-1ms | Medium | Pending |
+| A3 | Return ref from func_by_name | 0.5-1ms | Easy | Pending |
+| A4 | Arc refs in CompilationContext | 0.5-1ms | Medium | Pending |
 
 ### Phase B: Script Optimizations (1.31ms → <1ms)
 
