@@ -470,7 +470,7 @@ impl<'ast> Parser<'ast> {
     /// # Example
     ///
     /// ```
-    /// use angelscript::Parser;
+    /// use angelscript_parser::Parser;
     /// use bumpalo::Bump;
     ///
     /// let arena = Bump::new();
@@ -529,7 +529,7 @@ impl<'ast> Parser<'ast> {
     /// # Example
     ///
     /// ```
-    /// use angelscript::Parser;
+    /// use angelscript_parser::Parser;
     /// use bumpalo::Bump;
     ///
     /// let arena = Bump::new();
@@ -578,11 +578,11 @@ impl<'ast> Parser<'ast> {
     /// # Example
     ///
     /// ```
-    /// use angelscript::Parser;
+    /// use angelscript_parser::Parser;
     /// use bumpalo::Bump;
     ///
     /// let arena = Bump::new();
-    /// match Parser::parse_expression("1 + 2 * 3", &arena) {
+    /// match Parser::expression("1 + 2 * 3", &arena) {
     ///     Ok(expr) => println!("Parsed expression successfully"),
     ///     Err(errors) => eprintln!("Errors: {}", errors),
     /// }
@@ -615,7 +615,7 @@ impl<'ast> Parser<'ast> {
     /// # Example
     ///
     /// ```
-    /// use angelscript::Parser;
+    /// use angelscript_parser::Parser;
     /// use bumpalo::Bump;
     ///
     /// let arena = Bump::new();
@@ -652,11 +652,11 @@ impl<'ast> Parser<'ast> {
     /// # Example
     ///
     /// ```
-    /// use angelscript::Parser;
+    /// use angelscript_parser::Parser;
     /// use bumpalo::Bump;
     ///
     /// let arena = Bump::new();
-    /// match Parser::parse_type_expr("const array<int>@", &arena) {
+    /// match Parser::type_expr("const array<int>@", &arena) {
     ///     Ok(ty) => println!("Parsed type successfully"),
     ///     Err(errors) => eprintln!("Errors: {}", errors),
     /// }
@@ -689,7 +689,7 @@ impl<'ast> Parser<'ast> {
     /// # Examples
     ///
     /// ```
-    /// use angelscript::Parser;
+    /// use angelscript_parser::Parser;
     /// use bumpalo::Bump;
     ///
     /// let arena = Bump::new();
@@ -734,7 +734,7 @@ impl<'ast> Parser<'ast> {
     /// # Examples
     ///
     /// ```
-    /// use angelscript::Parser;
+    /// use angelscript_parser::Parser;
     /// use bumpalo::Bump;
     ///
     /// let arena = Bump::new();
@@ -789,7 +789,7 @@ impl<'ast> Parser<'ast> {
     /// # Example
     ///
     /// ```
-    /// use angelscript::Parser;
+    /// use angelscript_parser::Parser;
     /// use bumpalo::Bump;
     ///
     /// let arena = Bump::new();

@@ -63,7 +63,7 @@ use std::sync::Arc;
 
 use rustc_hash::FxHashMap;
 
-use crate::module::FfiRegistry;
+use angelscript_ffi::FfiRegistry;
 use crate::semantic::error::SemanticError;
 use crate::semantic::template_instantiator::TemplateInstantiator;
 use crate::semantic::types::behaviors::TypeBehaviors;
@@ -131,8 +131,8 @@ impl<'a, 'ast> FunctionRef<'a, 'ast> {
     /// Get the parameter types as DataTypes.
     pub fn param_types(&self) -> Vec<DataType> {
         match self {
-            FunctionRef::Script(f) => f.params.iter().map(|p| p.data_type.clone()).collect(),
-            FunctionRef::Ffi(f) => f.params.iter().map(|p| p.data_type.clone()).collect(),
+            FunctionRef::Script(f) => f.params.iter().map(|p| p.data_type).collect(),
+            FunctionRef::Ffi(f) => f.params.iter().map(|p| p.data_type).collect(),
         }
     }
 
@@ -872,7 +872,7 @@ impl<'ast> CompilationContext<'ast> {
 impl<'ast> Default for CompilationContext<'ast> {
     fn default() -> Self {
         Self::new(Arc::new(
-            crate::module::FfiRegistryBuilder::new().build().unwrap(),
+            angelscript_ffi::FfiRegistryBuilder::new().build().unwrap(),
         ))
     }
 }
@@ -880,7 +880,7 @@ impl<'ast> Default for CompilationContext<'ast> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::module::FfiRegistryBuilder;
+    use angelscript_ffi::FfiRegistryBuilder;
     use angelscript_core::primitives as primitive_hashes;
     use angelscript_core::TypeKind;
 

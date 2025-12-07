@@ -23,9 +23,8 @@ use std::cmp::Ordering;
 use std::fmt;
 use std::ops::{Deref, DerefMut};
 
-use crate::module::NativeType;
-use crate::module::FfiModuleError;
-use crate::Module;
+use angelscript_ffi::{CallContext, NativeType};
+use angelscript_module::{ModuleError, Module};
 
 /// AngelScript string type backed by Rust String.
 ///
@@ -620,7 +619,7 @@ impl AsRef<[u8]> for ScriptString {
 /// let module = string_module().expect("failed to create string module");
 /// // Register with engine...
 /// ```
-pub fn string_module<'app>() -> Result<Module<'app>, FfiModuleError> {
+pub fn string_module<'app>() -> Result<Module<'app>, ModuleError> {
     let mut module = Module::root();
 
     // =========================================================================
@@ -632,19 +631,19 @@ pub fn string_module<'app>() -> Result<Module<'app>, FfiModuleError> {
     module
         .register_type::<ScriptString>("string")?
         .value_type()
-        .method_raw("uint length() const", |ctx: &mut crate::module::CallContext| {
+        .method_raw("uint length() const", |ctx: &mut CallContext| {
             let s: &ScriptString = ctx.this()?;
             ctx.set_return(s.len())?;
             Ok(())
         })?
-        .method_raw("bool isEmpty() const", |ctx: &mut crate::module::CallContext| {
+        .method_raw("bool isEmpty() const", |ctx: &mut CallContext| {
             let s: &ScriptString = ctx.this()?;
             ctx.set_return(s.is_empty())?;
             Ok(())
         })?
         .operator_raw(
             "uint8 opIndex(uint idx) const",
-            |ctx: &mut crate::module::CallContext| {
+            |ctx: &mut CallContext| {
                 let idx: u32 = ctx.arg(0)?;
                 let s: &ScriptString = ctx.this()?;
                 ctx.set_return(s.byte_at(idx))?;
@@ -653,35 +652,35 @@ pub fn string_module<'app>() -> Result<Module<'app>, FfiModuleError> {
         )?
         .operator_raw(
             "string &opAssign(const string &in other)",
-            |_ctx: &mut crate::module::CallContext| {
+            |_ctx: &mut CallContext| {
                 // Placeholder - VM handles assignment
                 Ok(())
             },
         )?
         .operator_raw(
             "string opAdd(const string &in other) const",
-            |_ctx: &mut crate::module::CallContext| {
+            |_ctx: &mut CallContext| {
                 // Placeholder - VM handles concatenation
                 Ok(())
             },
         )?
         .operator_raw(
             "bool opEquals(const string &in other) const",
-            |_ctx: &mut crate::module::CallContext| {
+            |_ctx: &mut CallContext| {
                 // Placeholder - VM handles comparison
                 Ok(())
             },
         )?
         .operator_raw(
             "int opCmp(const string &in other) const",
-            |_ctx: &mut crate::module::CallContext| {
+            |_ctx: &mut CallContext| {
                 // Placeholder - VM handles comparison
                 Ok(())
             },
         )?
         .operator_raw(
             "string &opAddAssign(const string &in other)",
-            |ctx: &mut crate::module::CallContext| {
+            |ctx: &mut CallContext| {
                 // Get the other string argument
                 let other: String = ctx.arg(0)?;
                 let s: &mut ScriptString = ctx.this_mut()?;
@@ -690,19 +689,19 @@ pub fn string_module<'app>() -> Result<Module<'app>, FfiModuleError> {
             },
         )?
         // === Modification methods ===
-        .method_raw("void clear()", |ctx: &mut crate::module::CallContext| {
+        .method_raw("void clear()", |ctx: &mut CallContext| {
             let s: &mut ScriptString = ctx.this_mut()?;
             s.clear();
             Ok(())
         })?
-        .method_raw("void insert(uint pos, const string &in str)", |ctx: &mut crate::module::CallContext| {
+        .method_raw("void insert(uint pos, const string &in str)", |ctx: &mut CallContext| {
             let pos: u32 = ctx.arg(0)?;
             let str_val: String = ctx.arg(1)?;
             let s: &mut ScriptString = ctx.this_mut()?;
             s.insert(pos, &ScriptString::from(str_val));
             Ok(())
         })?
-        .method_raw("void erase(uint pos, int count = -1)", |ctx: &mut crate::module::CallContext| {
+        .method_raw("void erase(uint pos, int count = -1)", |ctx: &mut CallContext| {
             let pos: u32 = ctx.arg(0)?;
             let count: i32 = ctx.arg(1)?;
             let s: &mut ScriptString = ctx.this_mut()?;
@@ -710,7 +709,7 @@ pub fn string_module<'app>() -> Result<Module<'app>, FfiModuleError> {
             Ok(())
         })?
         // === Substring methods ===
-        .method_raw("string substr(uint start, int count = -1) const", |ctx: &mut crate::module::CallContext| {
+        .method_raw("string substr(uint start, int count = -1) const", |ctx: &mut CallContext| {
             let start: u32 = ctx.arg(0)?;
             let count: i32 = ctx.arg(1)?;
             let s: &ScriptString = ctx.this()?;
@@ -719,7 +718,7 @@ pub fn string_module<'app>() -> Result<Module<'app>, FfiModuleError> {
             Ok(())
         })?
         // === Search methods ===
-        .method_raw("int findFirst(const string &in str, uint start = 0) const", |ctx: &mut crate::module::CallContext| {
+        .method_raw("int findFirst(const string &in str, uint start = 0) const", |ctx: &mut CallContext| {
             let str_val: String = ctx.arg(0)?;
             let start: u32 = ctx.arg(1)?;
             let s: &ScriptString = ctx.this()?;
@@ -727,7 +726,7 @@ pub fn string_module<'app>() -> Result<Module<'app>, FfiModuleError> {
             ctx.set_return(result as i64)?;
             Ok(())
         })?
-        .method_raw("int findLast(const string &in str, int start = -1) const", |ctx: &mut crate::module::CallContext| {
+        .method_raw("int findLast(const string &in str, int start = -1) const", |ctx: &mut CallContext| {
             let str_val: String = ctx.arg(0)?;
             let start: i32 = ctx.arg(1)?;
             let s: &ScriptString = ctx.this()?;
@@ -736,19 +735,19 @@ pub fn string_module<'app>() -> Result<Module<'app>, FfiModuleError> {
             Ok(())
         })?
         // === Predicate methods ===
-        .method_raw("bool startsWith(const string &in str) const", |ctx: &mut crate::module::CallContext| {
+        .method_raw("bool startsWith(const string &in str) const", |ctx: &mut CallContext| {
             let str_val: String = ctx.arg(0)?;
             let s: &ScriptString = ctx.this()?;
             ctx.set_return(s.starts_with(&ScriptString::from(str_val)))?;
             Ok(())
         })?
-        .method_raw("bool endsWith(const string &in str) const", |ctx: &mut crate::module::CallContext| {
+        .method_raw("bool endsWith(const string &in str) const", |ctx: &mut CallContext| {
             let str_val: String = ctx.arg(0)?;
             let s: &ScriptString = ctx.this()?;
             ctx.set_return(s.ends_with(&ScriptString::from(str_val)))?;
             Ok(())
         })?
-        .method_raw("bool contains(const string &in str) const", |ctx: &mut crate::module::CallContext| {
+        .method_raw("bool contains(const string &in str) const", |ctx: &mut CallContext| {
             let str_val: String = ctx.arg(0)?;
             let s: &ScriptString = ctx.this()?;
             ctx.set_return(s.contains(&ScriptString::from(str_val)))?;

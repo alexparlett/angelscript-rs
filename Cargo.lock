@@ -24,6 +24,8 @@ dependencies = [
  "angelscript-compiler",
  "angelscript-core",
  "angelscript-ffi",
+ "angelscript-module",
+ "angelscript-modules",
  "angelscript-parser",
  "bitflags",
  "bumpalo",
@@ -68,6 +70,28 @@ dependencies = [
  "bumpalo",
  "rustc-hash",
  "thiserror",
+]
+
+[[package]]
+name = "angelscript-module"
+version = "0.1.0"
+dependencies = [
+ "angelscript-core",
+ "angelscript-ffi",
+ "angelscript-parser",
+ "bumpalo",
+ "rustc-hash",
+ "thiserror",
+]
+
+[[package]]
+name = "angelscript-modules"
+version = "0.1.0"
+dependencies = [
+ "angelscript-core",
+ "angelscript-ffi",
+ "angelscript-module",
+ "ordered-float",
 ]
 
 [[package]]

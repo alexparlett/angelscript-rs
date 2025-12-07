@@ -361,7 +361,7 @@ impl LocalScope {
             .values()
             .map(|var| CapturedVar {
                 name: var.name.clone(),
-                data_type: var.data_type.clone(),
+                data_type: var.data_type,
                 stack_offset: var.stack_offset,
             })
             .collect()
@@ -377,7 +377,7 @@ impl Default for LocalScope {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use angelscript_core::{primitives, TypeHash};
+    use angelscript_core::primitives;
 
     fn int_type() -> DataType {
         DataType::simple(primitives::INT32)

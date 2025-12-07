@@ -5,8 +5,8 @@
 //!
 //! # Example: Using the Visitor Pattern
 //!
-//! ```
-//! use angelscript::{parse_lenient, visitor::Visitor, FunctionDecl, Item, Script};
+//! ```ignore
+//! use angelscript_parser::{Parser, ast::{visitor::Visitor, FunctionDecl, Item, Script}};
 //! use bumpalo::Bump;
 //!
 //! struct FunctionCounter {

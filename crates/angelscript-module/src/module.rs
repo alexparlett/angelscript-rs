@@ -20,17 +20,16 @@
 use bumpalo::Bump;
 use thiserror::Error;
 
-use crate::module::{
-    ClassBuilder, EnumBuilder, FfiRegistryBuilder, GlobalPropertyDef, InterfaceBuilder,
-    IntoNativeFn, NativeCallable, NativeFn, NativeType,
+use crate::{
+    ClassBuilder, EnumBuilder, GlobalPropertyBuilder, InterfaceBuilder,
+    FunctionBuilder,
 };
-use crate::semantic::types::DataType;
-use angelscript_core::{primitives, FunctionDef, Param, TypeHash};
+use angelscript_core::{DataType, primitives, FunctionDef, Param, TypeHash};
 use angelscript_ffi::{
-    FfiEnumDef, FfiFuncdefDef, FfiInterfaceDef, FfiTypeDef,
+    FfiEnumDef, FfiFuncdefDef, FfiInterfaceDef, FfiRegistryBuilder, FfiTypeDef,
+    IntoNativeFn, NativeCallable, NativeFn, NativeType,
     function_param_to_ffi, return_type_to_data_type,
 };
-use crate::module::FunctionBuilder;
 use angelscript_parser::ast::{FuncdefDecl, FunctionSignatureDecl, Parser, PropertyDecl, TypeBase};
 
 /// A namespaced collection of native functions, types, and global properties.
@@ -89,7 +88,7 @@ pub struct Module<'app> {
 
     /// Global properties (app-owned references)
     /// The lifetime is tied to the module's arena via a transmute in register_global_property
-    global_properties: Vec<GlobalPropertyDef<'static, 'app>>,
+    global_properties: Vec<GlobalPropertyBuilder<'static, 'app>>,
 }
 
 impl<'app> Module<'app> {
@@ -196,20 +195,20 @@ impl<'app> Module<'app> {
     ///     Ok(())
     /// })?;
     /// ```
-    pub fn register_fn_raw<F>(&mut self, decl: &str, f: F) -> Result<&mut Self, FfiModuleError>
+    pub fn register_fn_raw<F>(&mut self, decl: &str, f: F) -> Result<&mut Self, ModuleError>
     where
         F: NativeCallable + Send + Sync + 'static,
     {
         let decl = decl.trim();
         if decl.is_empty() {
-            return Err(FfiModuleError::InvalidDeclaration(
+            return Err(ModuleError::InvalidDeclaration(
                 "empty declaration".to_string(),
             ));
         }
 
         // Parse the declaration using the module's arena
         let sig = Parser::function_decl(decl, &self.arena).map_err(|errors| {
-            FfiModuleError::InvalidDeclaration(format!("parse error: {}", errors))
+            ModuleError::InvalidDeclaration(format!("parse error: {}", errors))
         })?;
 
         // Build the function definition
@@ -260,20 +259,20 @@ impl<'app> Module<'app> {
         &mut self,
         decl: &str,
         f: F,
-    ) -> Result<&mut Self, FfiModuleError>
+    ) -> Result<&mut Self, ModuleError>
     where
         F: IntoNativeFn<Args, Ret>,
     {
         let decl = decl.trim();
         if decl.is_empty() {
-            return Err(FfiModuleError::InvalidDeclaration(
+            return Err(ModuleError::InvalidDeclaration(
                 "empty declaration".to_string(),
             ));
         }
 
         // Parse the declaration using the module's arena
         let sig = Parser::function_decl(decl, &self.arena).map_err(|errors| {
-            FfiModuleError::InvalidDeclaration(format!("parse error: {}", errors))
+            ModuleError::InvalidDeclaration(format!("parse error: {}", errors))
         })?;
 
         // Convert the closure to NativeFn
@@ -313,7 +312,7 @@ impl<'app> Module<'app> {
         &self,
         prop: PropertyDecl<'_>,
         value: &'app mut T,
-    ) -> GlobalPropertyDef<'static, 'app> {
+    ) -> GlobalPropertyBuilder<'static, 'app> {
         // SAFETY: The arena is owned by self and lives as long as self.
         // We transmute the lifetime to 'static for storage, but the actual
         // lifetime is tied to the module. This is safe because:
@@ -323,7 +322,7 @@ impl<'app> Module<'app> {
         let ty = unsafe { std::mem::transmute(prop.ty) };
         let name = unsafe { std::mem::transmute(prop.name) };
 
-        GlobalPropertyDef::new(name, ty, value)
+        GlobalPropertyBuilder::new(name, ty, value)
     }
 
     /// Get the registered functions.
@@ -368,10 +367,10 @@ impl<'app> Module<'app> {
     pub fn register_type<T: NativeType>(
         &mut self,
         decl: &str,
-    ) -> Result<ClassBuilder<'_, 'app, T>, FfiModuleError> {
+    ) -> Result<ClassBuilder<'_, 'app, T>, ModuleError> {
         // Parse the type declaration as a TypeExpr (e.g., "array<class T>")
         let type_expr = Parser::type_expr(decl, &self.arena).map_err(|errors| {
-            FfiModuleError::InvalidDeclaration(format!("parse error: {}", errors))
+            ModuleError::InvalidDeclaration(format!("parse error: {}", errors))
         })?;
 
         // Extract the type name from the base
@@ -379,7 +378,7 @@ impl<'app> Module<'app> {
             TypeBase::Named(ident) => ident.name.to_string(),
             TypeBase::Primitive(p) => format!("{:?}", p).to_lowercase(),
             _ => {
-                return Err(FfiModuleError::InvalidDeclaration(
+                return Err(ModuleError::InvalidDeclaration(
                     "expected named type".to_string(),
                 ))
             }
@@ -569,17 +568,17 @@ impl<'app> Module<'app> {
     /// // Comparator function
     /// module.register_funcdef("funcdef int Comparator(const string &in a, const string &in b)")?;
     /// ```
-    pub fn register_funcdef(&mut self, decl: &str) -> Result<&mut Self, FfiModuleError> {
+    pub fn register_funcdef(&mut self, decl: &str) -> Result<&mut Self, ModuleError> {
         let decl = decl.trim();
         if decl.is_empty() {
-            return Err(FfiModuleError::InvalidDeclaration(
+            return Err(ModuleError::InvalidDeclaration(
                 "empty declaration".to_string(),
             ));
         }
 
         // Parse the funcdef declaration using the module's arena
         let fd = Parser::funcdef_decl(decl, &self.arena).map_err(|errors| {
-            FfiModuleError::InvalidDeclaration(format!("parse error: {}", errors))
+            ModuleError::InvalidDeclaration(format!("parse error: {}", errors))
         })?;
 
         // Build the funcdef definition
@@ -657,17 +656,17 @@ impl<'app> Module<'app> {
         &mut self,
         decl: &str,
         value: &'app mut T,
-    ) -> Result<(), FfiModuleError> {
+    ) -> Result<(), ModuleError> {
         let decl = decl.trim();
         if decl.is_empty() {
-            return Err(FfiModuleError::InvalidDeclaration(
+            return Err(ModuleError::InvalidDeclaration(
                 "empty declaration".to_string(),
             ));
         }
 
         // Parse the declaration using the module's arena
         let prop = Parser::property_decl(decl, &self.arena).map_err(|errors| {
-            FfiModuleError::InvalidDeclaration(format!("parse error: {}", errors))
+            ModuleError::InvalidDeclaration(format!("parse error: {}", errors))
         })?;
 
         // Build the property definition
@@ -678,12 +677,12 @@ impl<'app> Module<'app> {
     }
 
     /// Get the registered global properties.
-    pub fn global_properties(&self) -> &[GlobalPropertyDef<'static, 'app>] {
+    pub fn global_properties(&self) -> &[GlobalPropertyBuilder<'static, 'app>] {
         &self.global_properties
     }
 
     /// Get mutable access to the registered global properties.
-    pub fn global_properties_mut(&mut self) -> &mut [GlobalPropertyDef<'static, 'app>] {
+    pub fn global_properties_mut(&mut self) -> &mut [GlobalPropertyBuilder<'static, 'app>] {
         &mut self.global_properties
     }
 
@@ -730,7 +729,7 @@ impl<'app> Module<'app> {
     ///
     /// let registry = builder.build()?;
     /// ```
-    pub fn install_into(&self, builder: &mut FfiRegistryBuilder) -> Result<(), FfiModuleError> {
+    pub fn install_into(&self, builder: &mut FfiRegistryBuilder) -> Result<(), ModuleError> {
         // Register namespace if not root
         if !self.namespace.is_empty() {
             builder.register_namespace(&self.namespace.join("::"));
@@ -769,8 +768,8 @@ impl<'app> Module<'app> {
         &self,
         builder: &mut FfiRegistryBuilder,
         type_def: &FfiTypeDef,
-    ) -> Result<(), FfiModuleError> {
-        use crate::semantic::types::type_def::TypeDef;
+    ) -> Result<(), ModuleError> {
+        use angelscript_core::TypeDef;
         use angelscript_ffi::TypeKind;
         use rustc_hash::FxHashMap;
 
@@ -932,7 +931,7 @@ impl<'app> Module<'app> {
         type_def: &FfiTypeDef,
         template_param_map: &rustc_hash::FxHashMap<TypeHash, TypeHash>,
     ) {
-        use crate::semantic::types::type_def::TypeDef;
+        use angelscript_core::TypeDef;
 
         // Register each method function and collect their hashes
         // Note: hashes are recalculated after substitution
@@ -960,7 +959,7 @@ impl<'app> Module<'app> {
         type_def: &FfiTypeDef,
         template_param_map: &rustc_hash::FxHashMap<TypeHash, TypeHash>,
     ) {
-        use crate::semantic::types::type_def::{PropertyAccessors, TypeDef, Visibility};
+        use angelscript_core::{PropertyAccessors, TypeDef, Visibility};
 
         if type_def.properties.is_empty() {
             return;
@@ -1019,7 +1018,7 @@ impl<'app> Module<'app> {
         type_def: &FfiTypeDef,
         template_param_map: &rustc_hash::FxHashMap<TypeHash, TypeHash>,
     ) {
-        use crate::semantic::types::type_def::TypeDef;
+        use angelscript_core::TypeDef;
 
         if type_def.operators.is_empty() {
             return;
@@ -1056,7 +1055,7 @@ impl<'app> Module<'app> {
 
     /// Install an enum definition into the builder.
     fn install_enum(&self, builder: &mut FfiRegistryBuilder, enum_def: &FfiEnumDef) {
-        use crate::semantic::types::type_def::TypeDef;
+        use angelscript_core::TypeDef;
 
         let qualified_name = self.qualified_name(&enum_def.name);
 
@@ -1167,7 +1166,7 @@ impl std::fmt::Debug for Module<'_> {
 
 /// Errors that can occur during FFI module operations.
 #[derive(Debug, Clone, Error)]
-pub enum FfiModuleError {
+pub enum ModuleError {
     /// Invalid declaration string
     #[error("invalid declaration: {0}")]
     InvalidDeclaration(String),
@@ -1521,21 +1520,21 @@ mod tests {
 
     #[test]
     fn ffi_module_error_display() {
-        let err = FfiModuleError::InvalidDeclaration("bad decl".to_string());
+        let err = ModuleError::InvalidDeclaration("bad decl".to_string());
         assert!(err.to_string().contains("invalid declaration"));
         assert!(err.to_string().contains("bad decl"));
 
-        let err = FfiModuleError::DuplicateRegistration {
+        let err = ModuleError::DuplicateRegistration {
             name: "foo".to_string(),
             kind: "function".to_string(),
         };
         assert!(err.to_string().contains("duplicate registration"));
         assert!(err.to_string().contains("foo"));
 
-        let err = FfiModuleError::TypeNotFound("Bar".to_string());
+        let err = ModuleError::TypeNotFound("Bar".to_string());
         assert!(err.to_string().contains("type not found"));
 
-        let err = FfiModuleError::InvalidType("bad type".to_string());
+        let err = ModuleError::InvalidType("bad type".to_string());
         assert!(err.to_string().contains("invalid type"));
     }
 
@@ -1623,7 +1622,7 @@ mod tests {
 
     #[test]
     fn register_fn_raw_simple() {
-        use crate::module::CallContext;
+        use angelscript_ffi::CallContext;
 
         let mut module = Module::<'static>::root();
 
@@ -1659,7 +1658,7 @@ mod tests {
 
     #[test]
     fn register_fn_raw_invalid_decl_empty() {
-        use crate::module::CallContext;
+        use angelscript_ffi::CallContext;
 
         let mut module = Module::<'static>::root();
 

@@ -9,7 +9,7 @@ use std::sync::atomic::{AtomicU32, Ordering as AtomicOrdering};
 
 use ordered_float::OrderedFloat;
 
-use crate::module::{ObjectHandle, VmSlot};
+use angelscript_ffi::{ObjectHandle, VmSlot};
 use angelscript_core::TypeHash;
 
 use super::array::ScriptArray;
@@ -412,9 +412,10 @@ pub fn is_hashable_type(type_hash: angelscript_core::TypeHash) -> bool {
 // FFI REGISTRATION
 // =========================================================================
 
-use crate::module::{CallContext, ListPattern, NativeType, TemplateInstanceInfo, TemplateValidation};
-use crate::module::FfiModuleError;
-use crate::Module;
+use angelscript_ffi::{
+    CallContext, ListPattern, NativeType, TemplateInstanceInfo, TemplateValidation,
+};
+use angelscript_module::{Module, ModuleError};
 
 impl NativeType for ScriptDict {
     const NAME: &'static str = "dictionary";
@@ -440,7 +441,7 @@ impl NativeType for ScriptDict {
 /// let module = dictionary_module().expect("failed to create dictionary module");
 /// // Register with engine...
 /// ```
-pub fn dictionary_module<'app>() -> Result<Module<'app>, FfiModuleError> {
+pub fn dictionary_module<'app>() -> Result<Module<'app>, ModuleError> {
     let mut module = Module::root();
 
     module

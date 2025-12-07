@@ -939,8 +939,8 @@ impl<'ast> Registrar<'ast> {
 mod tests {
     use super::*;
     use angelscript_parser::ast::Parser;
-    use crate::module::FfiRegistryBuilder;
-    use crate::semantic::types::type_def::OperatorBehavior;
+    use angelscript_ffi::FfiRegistryBuilder;
+    
     use std::sync::Arc;
     use bumpalo::Bump;
 
@@ -1090,7 +1090,7 @@ mod tests {
         assert!(data.errors.is_empty());
         let functions = data.context.lookup_functions("foo");
         // Both registered (actual overload resolution happens in Pass 2a)
-        assert!(functions.len() >= 1);
+        assert!(!functions.is_empty());
     }
 
     #[test]

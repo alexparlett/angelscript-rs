@@ -38,8 +38,7 @@
 //! Most functions have both double (f64) and float (f32) variants.
 //! Float variants end with 'f': `sinf`, `cosf`, `sqrtf`, etc.
 
-use crate::module::FfiModuleError;
-use crate::Module;
+use angelscript_module::{ModuleError, Module};
 
 /// Creates the math module with constants and functions.
 ///
@@ -53,7 +52,7 @@ use crate::Module;
 /// let module = math_module().expect("failed to create math module");
 /// // Register with engine...
 /// ```
-pub fn math_module<'app>() -> Result<Module<'app>, FfiModuleError> {
+pub fn math_module<'app>() -> Result<Module<'app>, ModuleError> {
     let mut module = Module::new(&["math"]);
 
     // =========================================================================
@@ -109,7 +108,7 @@ pub fn math_module<'app>() -> Result<Module<'app>, FfiModuleError> {
     Ok(module)
 }
 
-fn register_constants(module: &mut Module) -> Result<(), FfiModuleError> {
+fn register_constants(module: &mut Module) -> Result<(), ModuleError> {
     // Mathematical constants (f64) - implemented as functions
     module.register_fn("double PI()", || std::f64::consts::PI)?;
     module.register_fn("double E()", || std::f64::consts::E)?;
@@ -152,7 +151,7 @@ fn register_constants(module: &mut Module) -> Result<(), FfiModuleError> {
     Ok(())
 }
 
-fn register_trig(module: &mut Module) -> Result<(), FfiModuleError> {
+fn register_trig(module: &mut Module) -> Result<(), ModuleError> {
     // Basic trig (f64)
     module.register_fn("double sin(double x)", |x: f64| x.sin())?;
     module.register_fn("double cos(double x)", |x: f64| x.cos())?;
@@ -178,7 +177,7 @@ fn register_trig(module: &mut Module) -> Result<(), FfiModuleError> {
     Ok(())
 }
 
-fn register_hyperbolic(module: &mut Module) -> Result<(), FfiModuleError> {
+fn register_hyperbolic(module: &mut Module) -> Result<(), ModuleError> {
     // Hyperbolic (f64)
     module.register_fn("double sinh(double x)", |x: f64| x.sinh())?;
     module.register_fn("double cosh(double x)", |x: f64| x.cosh())?;
@@ -202,7 +201,7 @@ fn register_hyperbolic(module: &mut Module) -> Result<(), FfiModuleError> {
     Ok(())
 }
 
-fn register_exp_log(module: &mut Module) -> Result<(), FfiModuleError> {
+fn register_exp_log(module: &mut Module) -> Result<(), ModuleError> {
     // Exponential (f64)
     module.register_fn("double exp(double x)", |x: f64| x.exp())?;
     module.register_fn("double exp2(double x)", |x: f64| x.exp2())?;
@@ -232,7 +231,7 @@ fn register_exp_log(module: &mut Module) -> Result<(), FfiModuleError> {
     Ok(())
 }
 
-fn register_power(module: &mut Module) -> Result<(), FfiModuleError> {
+fn register_power(module: &mut Module) -> Result<(), ModuleError> {
     // Power (f64)
     module.register_fn("double pow(double base, double exp)", |base: f64, exp: f64| {
         base.powf(exp)
@@ -256,7 +255,7 @@ fn register_power(module: &mut Module) -> Result<(), FfiModuleError> {
     Ok(())
 }
 
-fn register_rounding(module: &mut Module) -> Result<(), FfiModuleError> {
+fn register_rounding(module: &mut Module) -> Result<(), ModuleError> {
     // Rounding (f64)
     module.register_fn("double floor(double x)", |x: f64| x.floor())?;
     module.register_fn("double ceil(double x)", |x: f64| x.ceil())?;
@@ -274,7 +273,7 @@ fn register_rounding(module: &mut Module) -> Result<(), FfiModuleError> {
     Ok(())
 }
 
-fn register_abs_sign(module: &mut Module) -> Result<(), FfiModuleError> {
+fn register_abs_sign(module: &mut Module) -> Result<(), ModuleError> {
     // Absolute value
     module.register_fn("double abs(double x)", |x: f64| x.abs())?;
     module.register_fn("float absf(float x)", |x: f32| x.abs())?;
@@ -294,7 +293,7 @@ fn register_abs_sign(module: &mut Module) -> Result<(), FfiModuleError> {
     Ok(())
 }
 
-fn register_minmax(module: &mut Module) -> Result<(), FfiModuleError> {
+fn register_minmax(module: &mut Module) -> Result<(), ModuleError> {
     // Min
     module.register_fn("double min(double a, double b)", |a: f64, b: f64| a.min(b))?;
     module.register_fn("float minf(float a, float b)", |a: f32, b: f32| a.min(b))?;
@@ -339,7 +338,7 @@ fn register_minmax(module: &mut Module) -> Result<(), FfiModuleError> {
     Ok(())
 }
 
-fn register_classification(module: &mut Module) -> Result<(), FfiModuleError> {
+fn register_classification(module: &mut Module) -> Result<(), ModuleError> {
     // Classification (f64)
     module.register_fn("bool is_nan(double x)", |x: f64| x.is_nan())?;
     module.register_fn("bool is_infinite(double x)", |x: f64| x.is_infinite())?;
@@ -361,7 +360,7 @@ fn register_classification(module: &mut Module) -> Result<(), FfiModuleError> {
     Ok(())
 }
 
-fn register_misc(module: &mut Module) -> Result<(), FfiModuleError> {
+fn register_misc(module: &mut Module) -> Result<(), ModuleError> {
     // Fused multiply-add
     module.register_fn(
         "double mul_add(double x, double a, double b)",

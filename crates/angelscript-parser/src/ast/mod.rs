@@ -9,7 +9,7 @@
 //! # Example
 //!
 //! ```
-//! use angelscript::Parser;
+//! use angelscript_parser::Parser;
 //! use bumpalo::Bump;
 //!
 //! let arena = Bump::new();
@@ -23,7 +23,7 @@
 //!     }
 //! "#;
 //!
-//! match Parser::Parser::parse(source, &arena) {
+//! match Parser::parse(source, &arena) {
 //!     Ok(script) => println!("Parsed successfully: {} items", script.items().len()),
 //!     Err(errors) => eprintln!("Parse errors: {}", errors),
 //! }

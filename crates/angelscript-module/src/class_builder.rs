@@ -39,20 +39,16 @@ use std::marker::PhantomData;
 use std::sync::Arc;
 
 use angelscript_parser::ast::Parser;
-use crate::module::FfiModuleError;
-use crate::module::FunctionBuilder;
+use angelscript_core::{Param, ReferenceKind};
 use angelscript_ffi::{
     type_expr_to_data_type, function_param_to_ffi, return_type_to_data_type,
     FfiPropertyDef, FfiTypeDef, TypeKind,
+    ListPattern, ListBehavior, TemplateInstanceInfo, TemplateValidation,
+    CallContext, NativeCallable, NativeFn,
+    FromScript, IntoNativeFn, NativeType, ToScript,
 };
-use angelscript_core::Param;
-use angelscript_core::ReferenceKind;
-use crate::Module;
 
-use angelscript_ffi::ListPattern;
-use angelscript_ffi::{CallContext, NativeCallable, NativeFn};
-use angelscript_ffi::{FromScript, IntoNativeFn, NativeType, ToScript};
-use angelscript_ffi::{ListBehavior, TemplateInstanceInfo, TemplateValidation};
+use crate::{ModuleError, FunctionBuilder, Module};
 
 /// Builder for registering native types with the FFI system.
 ///
@@ -252,7 +248,7 @@ impl<'m, 'app, T: NativeType> ClassBuilder<'m, 'app, T> {
     ///     .constructor("void f(float x, float y, float z)", Vec3::new)?
     ///     .build()?;
     /// ```
-    pub fn constructor<F, Args>(mut self, decl: &str, f: F) -> Result<Self, FfiModuleError>
+    pub fn constructor<F, Args>(mut self, decl: &str, f: F) -> Result<Self, ModuleError>
     where
         F: IntoNativeFn<Args, T>,
     {
@@ -279,7 +275,7 @@ impl<'m, 'app, T: NativeType> ClassBuilder<'m, 'app, T> {
     ///     .factory("Entity@ f(const string &in name)", Entity::with_name)?
     ///     .build()?;
     /// ```
-    pub fn factory<F, Args>(mut self, decl: &str, f: F) -> Result<Self, FfiModuleError>
+    pub fn factory<F, Args>(mut self, decl: &str, f: F) -> Result<Self, ModuleError>
     where
         F: IntoNativeFn<Args, T>,
     {
@@ -307,7 +303,7 @@ impl<'m, 'app, T: NativeType> ClassBuilder<'m, 'app, T> {
     ///     })?
     ///     .build()?;
     /// ```
-    pub fn factory_raw<F>(mut self, decl: &str, f: F) -> Result<Self, FfiModuleError>
+    pub fn factory_raw<F>(mut self, decl: &str, f: F) -> Result<Self, ModuleError>
     where
         F: NativeCallable + Send + Sync + 'static,
     {
@@ -440,7 +436,7 @@ impl<'m, 'app, T: NativeType> ClassBuilder<'m, 'app, T> {
     ///     .method("float dot(const Vec3 &in) const", |v: &Vec3, other: ???| v.dot(other))?
     ///     .build()?;
     /// ```
-    pub fn method<F, Args, Ret>(mut self, decl: &str, f: F) -> Result<Self, FfiModuleError>
+    pub fn method<F, Args, Ret>(mut self, decl: &str, f: F) -> Result<Self, ModuleError>
     where
         F: IntoNativeFn<Args, Ret>,
     {
@@ -462,7 +458,7 @@ impl<'m, 'app, T: NativeType> ClassBuilder<'m, 'app, T> {
     ///     .method_mut("void normalize()", |v: &mut Vec3| v.normalize())?
     ///     .build()?;
     /// ```
-    pub fn method_mut<F, Args, Ret>(mut self, decl: &str, f: F) -> Result<Self, FfiModuleError>
+    pub fn method_mut<F, Args, Ret>(mut self, decl: &str, f: F) -> Result<Self, ModuleError>
     where
         F: IntoNativeFn<Args, Ret>,
     {
@@ -489,7 +485,7 @@ impl<'m, 'app, T: NativeType> ClassBuilder<'m, 'app, T> {
     ///     })?
     ///     .build()?;
     /// ```
-    pub fn method_raw<F>(mut self, decl: &str, f: F) -> Result<Self, FfiModuleError>
+    pub fn method_raw<F>(mut self, decl: &str, f: F) -> Result<Self, ModuleError>
     where
         F: NativeCallable + Send + Sync + 'static,
     {
@@ -515,7 +511,7 @@ impl<'m, 'app, T: NativeType> ClassBuilder<'m, 'app, T> {
     ///     .property_get("float lengthSq", |v| v.length_squared())?
     ///     .build()?;
     /// ```
-    pub fn property_get<V, F>(mut self, decl: &str, getter: F) -> Result<Self, FfiModuleError>
+    pub fn property_get<V, F>(mut self, decl: &str, getter: F) -> Result<Self, ModuleError>
     where
         V: ToScript + 'static,
         F: Fn(&T) -> V + Send + Sync + 'static,
@@ -549,7 +545,7 @@ impl<'m, 'app, T: NativeType> ClassBuilder<'m, 'app, T> {
         decl: &str,
         getter: G,
         setter: S,
-    ) -> Result<Self, FfiModuleError>
+    ) -> Result<Self, ModuleError>
     where
         V: ToScript + FromScript + 'static,
         G: Fn(&T) -> V + Send + Sync + 'static,
@@ -581,7 +577,7 @@ impl<'m, 'app, T: NativeType> ClassBuilder<'m, 'app, T> {
     ///     .operator("bool opEquals(const Vec3 &in)", |a, b| a == b)?
     ///     .build()?;
     /// ```
-    pub fn operator<F, Args, Ret>(mut self, decl: &str, f: F) -> Result<Self, FfiModuleError>
+    pub fn operator<F, Args, Ret>(mut self, decl: &str, f: F) -> Result<Self, ModuleError>
     where
         F: IntoNativeFn<Args, Ret>,
     {
@@ -616,7 +612,7 @@ impl<'m, 'app, T: NativeType> ClassBuilder<'m, 'app, T> {
     ///     })?
     ///     .build()?;
     /// ```
-    pub fn operator_raw<F>(mut self, decl: &str, f: F) -> Result<Self, FfiModuleError>
+    pub fn operator_raw<F>(mut self, decl: &str, f: F) -> Result<Self, ModuleError>
     where
         F: NativeCallable + Send + Sync + 'static,
     {
@@ -641,7 +637,7 @@ impl<'m, 'app, T: NativeType> ClassBuilder<'m, 'app, T> {
     ///
     /// Returns an error if the type configuration is invalid (e.g., reference type
     /// without factory, value type without constructor).
-    pub fn build(self) -> Result<(), FfiModuleError> {
+    pub fn build(self) -> Result<(), ModuleError> {
         // Compute the qualified name and type hash
         let qualified_name = self.module.qualified_name(&self.name);
         let type_hash = angelscript_core::TypeHash::from_name(&qualified_name);
@@ -720,17 +716,17 @@ impl<'m, 'app, T: NativeType> ClassBuilder<'m, 'app, T> {
     // =========================================================================
 
     /// Parse a method declaration and convert to FunctionBuilder.
-    fn parse_method_decl(&self, decl: &str, native_fn: NativeFn) -> Result<FunctionBuilder, FfiModuleError> {
+    fn parse_method_decl(&self, decl: &str, native_fn: NativeFn) -> Result<FunctionBuilder, ModuleError> {
         let decl = decl.trim();
         if decl.is_empty() {
-            return Err(FfiModuleError::InvalidDeclaration(
+            return Err(ModuleError::InvalidDeclaration(
                 "empty declaration".to_string(),
             ));
         }
 
         // Parse the declaration using the module's arena
         let sig = Parser::function_decl(decl, self.module.arena()).map_err(|errors| {
-            FfiModuleError::InvalidDeclaration(format!("parse error: {}", errors))
+            ModuleError::InvalidDeclaration(format!("parse error: {}", errors))
         })?;
 
         // Convert params
@@ -752,21 +748,21 @@ impl<'m, 'app, T: NativeType> ClassBuilder<'m, 'app, T> {
         &self,
         decl: &str,
         getter: G,
-    ) -> Result<FfiPropertyDef, FfiModuleError>
+    ) -> Result<FfiPropertyDef, ModuleError>
     where
         V: ToScript + 'static,
         G: Fn(&T) -> V + Send + Sync + 'static,
     {
         let decl = decl.trim();
         if decl.is_empty() {
-            return Err(FfiModuleError::InvalidDeclaration(
+            return Err(ModuleError::InvalidDeclaration(
                 "empty declaration".to_string(),
             ));
         }
 
         // Parse the declaration using the module's arena
         let prop = Parser::property_decl(decl, self.module.arena()).map_err(|errors| {
-            FfiModuleError::InvalidDeclaration(format!("parse error: {}", errors))
+            ModuleError::InvalidDeclaration(format!("parse error: {}", errors))
         })?;
 
         // Convert the type expression to DataType
@@ -793,7 +789,7 @@ impl<'m, 'app, T: NativeType> ClassBuilder<'m, 'app, T> {
         decl: &str,
         getter: G,
         setter: S,
-    ) -> Result<FfiPropertyDef, FfiModuleError>
+    ) -> Result<FfiPropertyDef, ModuleError>
     where
         V: ToScript + FromScript + 'static,
         G: Fn(&T) -> V + Send + Sync + 'static,
@@ -801,14 +797,14 @@ impl<'m, 'app, T: NativeType> ClassBuilder<'m, 'app, T> {
     {
         let decl = decl.trim();
         if decl.is_empty() {
-            return Err(FfiModuleError::InvalidDeclaration(
+            return Err(ModuleError::InvalidDeclaration(
                 "empty declaration".to_string(),
             ));
         }
 
         // Parse the declaration using the module's arena
         let prop = Parser::property_decl(decl, self.module.arena()).map_err(|errors| {
-            FfiModuleError::InvalidDeclaration(format!("parse error: {}", errors))
+            ModuleError::InvalidDeclaration(format!("parse error: {}", errors))
         })?;
 
         // Convert the type expression to DataType
@@ -842,7 +838,7 @@ impl<'m, 'app, T: NativeType> ClassBuilder<'m, 'app, T> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::module::{ConversionError, ToScript, VmSlot};
+    use angelscript_ffi::{ConversionError, ToScript, VmSlot};
     use angelscript_core::primitives;
 
     // Test type for unit tests

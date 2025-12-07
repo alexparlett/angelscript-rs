@@ -4,7 +4,6 @@
 //! This module provides utilities for loading and testing AngelScript files,
 //! validating parse results, and checking error conditions.
 
-use angelscript::*;
 use angelscript_parser::ast::{
     Block, ClassDecl, ClassMember, EnumDecl, Expr, ForInit, FunctionDecl,
     GlobalVarDecl, InterfaceDecl, Item, Parser, ParseError, Script, Stmt,
@@ -24,6 +23,12 @@ pub struct TestResult<'ast> {
 /// Test harness for loading and parsing AngelScript files
 pub struct TestHarness {
     test_scripts_dir: PathBuf,
+}
+
+impl Default for TestHarness {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl TestHarness {
@@ -163,6 +168,12 @@ pub struct AstCounter {
     pub lambda_expr_count: usize,
 }
 
+impl Default for AstCounter {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl AstCounter {
     pub fn new() -> Self {
         Self {
@@ -224,16 +235,16 @@ impl AstCounter {
         match stmt {
             Stmt::If(s) => {
                 self.if_count += 1;
-                self.count_expr(&s.condition);
-                self.count_stmt(&s.then_stmt);
+                self.count_expr(s.condition);
+                self.count_stmt(s.then_stmt);
                 if let Some(else_stmt) = &s.else_stmt {
                     self.count_stmt(else_stmt);
                 }
             }
             Stmt::While(s) => {
                 self.while_count += 1;
-                self.count_expr(&s.condition);
-                self.count_stmt(&s.body);
+                self.count_expr(s.condition);
+                self.count_stmt(s.body);
             }
             Stmt::For(s) => {
                 self.for_count += 1;
@@ -255,7 +266,7 @@ impl AstCounter {
                 for update in s.update {
                     self.count_expr(update);
                 }
-                self.count_stmt(&s.body);
+                self.count_stmt(s.body);
             }
             Stmt::Expr(e) => {
                 if let Some(expr) = &e.expr {
@@ -278,36 +289,36 @@ impl AstCounter {
         match expr {
             Expr::Binary(b) => {
                 self.binary_expr_count += 1;
-                self.count_expr(&b.left);
-                self.count_expr(&b.right);
+                self.count_expr(b.left);
+                self.count_expr(b.right);
             }
             Expr::Call(c) => {
                 self.call_count += 1;
-                self.count_expr(&c.callee);
+                self.count_expr(c.callee);
                 for arg in c.args {
-                    self.count_expr(&arg.value);
+                    self.count_expr(arg.value);
                 }
             }
-            Expr::Unary(u) => self.count_expr(&u.operand),
+            Expr::Unary(u) => self.count_expr(u.operand),
             Expr::Index(i) => {
-                self.count_expr(&i.object);
+                self.count_expr(i.object);
                 for idx in i.indices {
-                    self.count_expr(&idx.index);
+                    self.count_expr(idx.index);
                 }
             }
-            Expr::Member(m) => self.count_expr(&m.object),
+            Expr::Member(m) => self.count_expr(m.object),
             Expr::Ternary(t) => {
-                self.count_expr(&t.condition);
-                self.count_expr(&t.then_expr);
-                self.count_expr(&t.else_expr);
+                self.count_expr(t.condition);
+                self.count_expr(t.then_expr);
+                self.count_expr(t.else_expr);
             }
             Expr::Assign(a) => {
-                self.count_expr(&a.target);
-                self.count_expr(&a.value);
+                self.count_expr(a.target);
+                self.count_expr(a.value);
             }
-            Expr::Postfix(p) => self.count_expr(&p.operand),
-            Expr::Cast(c) => self.count_expr(&c.expr),
-            Expr::Paren(p) => self.count_expr(&p.expr),
+            Expr::Postfix(p) => self.count_expr(p.operand),
+            Expr::Cast(c) => self.count_expr(c.expr),
+            Expr::Paren(p) => self.count_expr(p.expr),
             Expr::Lambda(l) => {
                 self.lambda_expr_count += 1;
                 // Count expressions in lambda body

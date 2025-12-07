@@ -1911,7 +1911,7 @@ mod tests {
             func_hash: test_func_hash(),
             name: "Vector3".to_string(),
             namespace: Vec::new(),
-            params: vec![param(int_type.clone()), param(int_type.clone()), param(int_type.clone())],
+            params: vec![param(int_type), param(int_type), param(int_type)],
             return_type: DataType::simple(primitives::VOID),
             object_type: Some(type_id),
             traits: FunctionTraits {
@@ -1937,7 +1937,7 @@ mod tests {
         // Find constructor with matching args
         let found = registry.find_constructor(
             type_id,
-            &[int_type.clone(), int_type.clone(), int_type.clone()],
+            &[int_type, int_type, int_type],
         );
 
         assert!(found.is_some());
@@ -1973,7 +1973,7 @@ mod tests {
         let func_def = FunctionDef {
             name: "Vector3".to_string(),
             namespace: Vec::new(),
-            params: vec![param(int_type.clone()), param(int_type.clone()), param(int_type.clone())],
+            params: vec![param(int_type), param(int_type), param(int_type)],
             return_type: DataType::simple(primitives::VOID),
             object_type: Some(type_id),
             traits: FunctionTraits {
@@ -1999,7 +1999,7 @@ mod tests {
         let float_type = DataType::simple(primitives::FLOAT);
         let found = registry.find_constructor(
             type_id,
-            &[float_type.clone(), float_type.clone(), float_type.clone()],
+            &[float_type, float_type, float_type],
         );
 
         assert!(found.is_none());
@@ -2051,7 +2051,7 @@ mod tests {
         let func_def = FunctionDef {
             name: "Vector3".to_string(),
             namespace: Vec::new(),
-            params: vec![param(int_type.clone())],
+            params: vec![param(int_type)],
             return_type: DataType::simple(primitives::VOID),
             object_type: Some(type_id),
             traits: FunctionTraits {
@@ -2131,7 +2131,7 @@ mod tests {
         let func_def2 = FunctionDef {
             name: "Vector3".to_string(),
             namespace: Vec::new(),
-            params: vec![param(int_type.clone())],
+            params: vec![param(int_type)],
             return_type: DataType::simple(primitives::VOID),
             object_type: Some(type_id),
             traits: FunctionTraits {

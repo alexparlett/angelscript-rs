@@ -246,7 +246,7 @@ impl<'ast> FunctionCompiler<'ast> {
         for (name, param_type) in params {
             compiler
                 .local_scope
-                .declare_variable_auto(name.clone(), param_type.clone(), true);
+                .declare_variable_auto(name.clone(), *param_type, true);
         }
 
         // Compile the function body
@@ -296,7 +296,7 @@ impl<'ast> FunctionCompiler<'ast> {
         for (name, param_type) in params {
             compiler
                 .local_scope
-                .declare_variable_auto(name.clone(), param_type.clone(), true);
+                .declare_variable_auto(name.clone(), *param_type, true);
         }
 
         // Compile the function body
@@ -508,7 +508,7 @@ impl<'ast> FunctionCompiler<'ast> {
                 } else {
                     param.name.clone()
                 };
-                (name, param.data_type.clone())
+                (name, param.data_type)
             })
             .collect();
 
@@ -521,7 +521,7 @@ impl<'ast> FunctionCompiler<'ast> {
         // Compile the function body with class and namespace context
         let mut compiled = Self::compile_block_with_context(
             self.context,
-            func_def.return_type.clone(),
+            func_def.return_type,
             &params,
             body,
             func_def.object_type,
@@ -805,14 +805,14 @@ impl<'ast> FunctionCompiler<'ast> {
                 } else {
                     param.name.clone()
                 };
-                (name, param.data_type.clone())
+                (name, param.data_type)
             })
             .collect();
 
         // Compile the function body with namespace context
         let compiled = Self::compile_block_with_context(
             self.context,
-            func_def.return_type.clone(),
+            func_def.return_type,
             &params,
             body,
             None,
@@ -846,14 +846,14 @@ mod tests {
     use crate::semantic::DataType;
     use angelscript_core::primitives;
     use crate::semantic::types::TypeBehaviors;
-    use crate::semantic::types::type_def::PrimitiveType;
+    
     use angelscript_core::TypeHash;
     use crate::semantic::CompilationContext;
-    use crate::module::FfiRegistryBuilder;
+    use angelscript_ffi::FfiRegistryBuilder;
     use std::sync::Arc;
 
     /// Create a default FFI registry with primitives for tests
-    fn default_ffi() -> Arc<crate::module::FfiRegistry> {
+    fn default_ffi() -> Arc<angelscript_ffi::FfiRegistry> {
         Arc::new(FfiRegistryBuilder::new().build().unwrap())
     }
 
@@ -917,8 +917,8 @@ mod tests {
     }
 
     /// Creates an FfiRegistry with the string module installed
-    fn create_ffi_with_string() -> Arc<crate::module::FfiRegistry> {
-        use crate::module::stdlib::string_module;
+    fn create_ffi_with_string() -> Arc<angelscript_ffi::FfiRegistry> {
+        use angelscript_modules::string_module;
         let mut builder = FfiRegistryBuilder::new();
         let string_mod = string_module().expect("Failed to create string module");
         string_mod.install_into(&mut builder).expect("Failed to install string module");
@@ -926,8 +926,8 @@ mod tests {
     }
 
     /// Creates an FfiRegistry with the array module installed
-    fn create_ffi_with_array() -> Arc<crate::module::FfiRegistry> {
-        use crate::module::stdlib::array_module;
+    fn create_ffi_with_array() -> Arc<angelscript_ffi::FfiRegistry> {
+        use angelscript_modules::array_module;
         let mut builder = FfiRegistryBuilder::new();
         let array_mod = array_module().expect("Failed to create array module");
         array_mod.install_into(&mut builder).expect("Failed to install array module");
@@ -935,8 +935,8 @@ mod tests {
     }
 
     /// Creates an FfiRegistry with string and array modules installed
-    fn create_ffi_with_string_and_array() -> Arc<crate::module::FfiRegistry> {
-        use crate::module::stdlib::{array_module, string_module};
+    fn create_ffi_with_string_and_array() -> Arc<angelscript_ffi::FfiRegistry> {
+        use angelscript_modules::{array_module, string_module};
         let mut builder = FfiRegistryBuilder::new();
         let string_mod = string_module().expect("Failed to create string module");
         string_mod.install_into(&mut builder).expect("Failed to install string module");
@@ -1280,7 +1280,7 @@ mod tests {
 
         // The lambda body should reference the captured variable
         // (exact bytecode depends on implementation details)
-        assert!(lambda_bytecode.instructions.len() > 0,
+        assert!(!lambda_bytecode.instructions.is_empty(),
             "Lambda should have non-empty bytecode");
     }
 
@@ -3373,7 +3373,7 @@ mod tests {
     fn string_literal_usage() {
         use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
-        use crate::module::stdlib::string_module;
+        use angelscript_modules::string_module;
         use bumpalo::Bump;
 
         let arena = Bump::new();
@@ -4623,7 +4623,7 @@ mod tests {
     fn init_list_basic() {
         use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
-        use crate::module::stdlib::array_module;
+        use angelscript_modules::array_module;
         use bumpalo::Bump;
 
         let arena = Bump::new();
@@ -5414,7 +5414,7 @@ mod tests {
     fn super_call_in_index_expr() {
         use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
-        use crate::module::stdlib::array_module;
+        use angelscript_modules::array_module;
         use bumpalo::Bump;
 
         let arena = Bump::new();
@@ -5925,7 +5925,7 @@ mod tests {
     fn init_list_empty() {
         use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
-        use crate::module::stdlib::array_module;
+        use angelscript_modules::array_module;
         use bumpalo::Bump;
 
         let arena = Bump::new();
@@ -5947,7 +5947,7 @@ mod tests {
     fn init_list_multidimensional() {
         use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
-        use crate::module::stdlib::array_module;
+        use angelscript_modules::array_module;
         use bumpalo::Bump;
 
         let arena = Bump::new();
@@ -5970,7 +5970,7 @@ mod tests {
         // Test that template types are instantiated when used in nested blocks
         use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
-        use crate::module::stdlib::array_module;
+        use angelscript_modules::array_module;
         use bumpalo::Bump;
 
         let arena = Bump::new();
@@ -5995,7 +5995,7 @@ mod tests {
         // Test that template types are instantiated when used in for loop body
         use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
-        use crate::module::stdlib::array_module;
+        use angelscript_modules::array_module;
         use bumpalo::Bump;
 
         let arena = Bump::new();
@@ -6020,7 +6020,7 @@ mod tests {
         // Test that template types are instantiated when used in while loop body
         use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
-        use crate::module::stdlib::array_module;
+        use angelscript_modules::array_module;
         use bumpalo::Bump;
 
         let arena = Bump::new();
@@ -6047,7 +6047,7 @@ mod tests {
         // Test template instantiation in deeply nested control structures
         use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
-        use crate::module::stdlib::array_module;
+        use angelscript_modules::array_module;
         use bumpalo::Bump;
 
         let arena = Bump::new();
@@ -6077,7 +6077,7 @@ mod tests {
         // Test template instantiation in switch case blocks
         use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
-        use crate::module::stdlib::array_module;
+        use angelscript_modules::array_module;
         use bumpalo::Bump;
 
         let arena = Bump::new();
@@ -6108,7 +6108,7 @@ mod tests {
         // Test template instantiation in try/catch blocks
         use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
-        use crate::module::stdlib::array_module;
+        use angelscript_modules::array_module;
         use bumpalo::Bump;
 
         let arena = Bump::new();
@@ -6136,7 +6136,7 @@ mod tests {
         // Test multiple different template instantiations in same function
         use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
-        use crate::module::stdlib::array_module;
+        use angelscript_modules::array_module;
         use bumpalo::Bump;
 
         let arena = Bump::new();
@@ -6194,7 +6194,7 @@ mod tests {
     fn super_detection_in_init_list() {
         use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
-        use crate::module::stdlib::array_module;
+        use angelscript_modules::array_module;
         use bumpalo::Bump;
 
         let arena = Bump::new();
@@ -6379,7 +6379,7 @@ mod tests {
     fn overloaded_function_call_exact_match() {
         use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
-        use crate::module::stdlib::string_module;
+        use angelscript_modules::string_module;
         use bumpalo::Bump;
 
         let arena = Bump::new();
@@ -6473,7 +6473,7 @@ mod tests {
     fn function_with_default_args() {
         use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
-        use crate::module::stdlib::string_module;
+        use angelscript_modules::string_module;
         use bumpalo::Bump;
 
         let arena = Bump::new();
@@ -11643,7 +11643,7 @@ mod tests {
     fn string_assignment() {
         use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
-        use crate::module::stdlib::string_module;
+        use angelscript_modules::string_module;
         use bumpalo::Bump;
 
         let arena = Bump::new();
@@ -12115,7 +12115,7 @@ mod tests {
     fn switch_on_string() {
         use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
-        use crate::module::stdlib::string_module;
+        use angelscript_modules::string_module;
         use bumpalo::Bump;
 
         let arena = Bump::new();
@@ -12145,7 +12145,7 @@ mod tests {
     fn switch_on_string_duplicate_error() {
         use angelscript_parser::ast::Parser;
         use crate::semantic::Compiler;
-        use crate::module::stdlib::string_module;
+        use angelscript_modules::string_module;
         use bumpalo::Bump;
 
         let arena = Bump::new();

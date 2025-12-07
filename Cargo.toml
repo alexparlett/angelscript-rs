@@ -3,6 +3,8 @@ members = [
     "crates/angelscript-core",
     "crates/angelscript-parser",
     "crates/angelscript-ffi",
+    "crates/angelscript-module",
+    "crates/angelscript-modules",
     "crates/angelscript-compiler",
     ".",
 ]
@@ -30,6 +32,8 @@ angelscript-core = { path = "crates/angelscript-core" }
 angelscript-compiler = { path = "crates/angelscript-compiler" }
 angelscript-parser = { path = "crates/angelscript-parser" }
 angelscript-ffi = { path = "crates/angelscript-ffi" }
+angelscript-module = { path = "crates/angelscript-module" }
+angelscript-modules = { path = "crates/angelscript-modules" }
 thiserror.workspace = true
 bitflags.workspace = true
 num_enum.workspace = true

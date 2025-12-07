@@ -622,7 +622,7 @@ impl<'ast> TypeCompiler<'ast> {
                                 let getter_id = *getter_ids;
 
                                 // Update getter return type to match property type
-                                self.context.update_function_return_type(getter_id, prop_type.clone());
+                                self.context.update_function_return_type(getter_id, prop_type);
 
                                 prop_accessors.getter = Some(getter_id);
                             }
@@ -640,7 +640,7 @@ impl<'ast> TypeCompiler<'ast> {
                                 use crate::semantic::types::ScriptParam;
                                 self.context.update_function_params(setter_id, vec![ScriptParam {
                                     name: "value".to_string(),
-                                    data_type: prop_type.clone(),
+                                    data_type: prop_type,
                                     default: None,
                                 }]);
 
@@ -1036,7 +1036,7 @@ impl<'ast> TypeCompiler<'ast> {
         }
 
         // Step 4: Store in type_map for later reference
-        self.type_map.insert(expr.span, data_type.clone());
+        self.type_map.insert(expr.span, data_type);
 
         Some(data_type)
     }
@@ -1375,7 +1375,7 @@ impl<'ast> TypeCompiler<'ast> {
             name: method.name.name.to_string(),
             namespace: self.namespace_path.clone(),
             params,
-            return_type: return_type.clone(),
+            return_type,
             object_type: Some(type_id),
             traits,
             is_native: false,
@@ -1733,7 +1733,7 @@ impl<'ast> TypeCompiler<'ast> {
 mod tests {
     use super::*;
     use angelscript_parser::ast::Parser;
-    use crate::module::FfiRegistryBuilder;
+    use angelscript_ffi::FfiRegistryBuilder;
     use crate::semantic::{OperatorBehavior, TypeDef, Registrar};
     use std::sync::Arc;
     use bumpalo::Bump;

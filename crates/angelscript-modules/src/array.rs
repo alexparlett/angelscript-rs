@@ -7,7 +7,7 @@ use std::cmp::Ordering;
 use std::fmt;
 use std::sync::atomic::{AtomicU32, Ordering as AtomicOrdering};
 
-use crate::module::VmSlot;
+use angelscript_ffi::VmSlot;
 use angelscript_core::TypeHash;
 
 /// Type-erased array for AngelScript `array<T>` template.
@@ -601,9 +601,8 @@ impl fmt::Debug for ScriptArray {
 // FFI REGISTRATION
 // =========================================================================
 
-use crate::module::{CallContext, ListPattern, NativeType, TemplateValidation};
-use crate::module::FfiModuleError;
-use crate::Module;
+use angelscript_ffi::{CallContext, ListPattern, NativeError, NativeType, TemplateValidation};
+use angelscript_module::{ModuleError, Module};
 
 impl NativeType for ScriptArray {
     const NAME: &'static str = "array";
@@ -629,7 +628,7 @@ impl NativeType for ScriptArray {
 /// let module = array_module().expect("failed to create array module");
 /// // Register with engine...
 /// ```
-pub fn array_module<'app>() -> Result<Module<'app>, FfiModuleError> {
+pub fn array_module<'app>() -> Result<Module<'app>, ModuleError> {
     let mut module = Module::root();
 
     module
@@ -667,7 +666,7 @@ pub fn array_module<'app>() -> Result<Module<'app>, FfiModuleError> {
                     ctx.set_return_slot(cloned);
                 }
             } else {
-                return Err(crate::module::NativeError::other(format!(
+                return Err(NativeError::other(format!(
                     "Array index {} out of bounds (length {})",
                     index,
                     arr.len()
@@ -684,7 +683,7 @@ pub fn array_module<'app>() -> Result<Module<'app>, FfiModuleError> {
                     ctx.set_return_slot(cloned);
                 }
             } else {
-                return Err(crate::module::NativeError::other(format!(
+                return Err(NativeError::other(format!(
                     "Array index {} out of bounds (length {})",
                     index,
                     arr.len()
