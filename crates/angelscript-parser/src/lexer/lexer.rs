@@ -10,7 +10,7 @@ use std::collections::VecDeque;
 
 use bumpalo::Bump;
 
-use super::cursor::{is_ident_continue, is_ident_start, Cursor};
+use super::cursor::{is_ident_continue, is_ident_continue_ascii, is_ident_start, Cursor};
 use angelscript_core::{LexError, Span};
 use super::token::{lookup_keyword, Token, TokenKind};
 
@@ -405,13 +405,8 @@ impl<'src, 'ast> Lexer<'src, 'ast> {
 
     /// Consume decimal digits (including underscores as separators).
     fn consume_decimal_digits(&mut self) {
-        while let Some(c) = self.cursor.peek() {
-            if c.is_ascii_digit() || c == '_' {
-                self.cursor.advance();
-            } else {
-                break;
-            }
-        }
+        // Use ASCII-optimized path since digits are always ASCII
+        self.cursor.eat_while_ascii(|b| b.is_ascii_digit() || b == b'_');
     }
 
     // =========================================
@@ -420,7 +415,8 @@ impl<'src, 'ast> Lexer<'src, 'ast> {
 
     /// Scan an identifier or keyword.
     fn scan_identifier(&mut self, start_line: u32, start_col: u32, start_offset: u32) -> Token<'ast> {
-        self.cursor.eat_while(is_ident_continue);
+        // Use ASCII-optimized path since identifiers are always ASCII
+        self.cursor.eat_while_ascii(is_ident_continue_ascii);
 
         let lexeme = self.cursor.slice_from(start_offset);
 

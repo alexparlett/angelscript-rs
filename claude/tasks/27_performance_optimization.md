@@ -88,23 +88,6 @@ pub fn func_by_name(&self) -> FxHashMap<String, Vec<TypeHash>> {
 
 ---
 
-### A4: Store Arc refs in CompilationContext
-
-**File:** `src/semantic/compilation_context.rs`
-**Lines:** ~258-259
-
-**Problem:**
-```rust
-type_by_name: ffi.type_by_name().clone(),
-func_by_name: ffi.func_by_name().clone(),
-```
-
-**Fix:** Store Arc references to pre-built maps, not cloned copies.
-
-**Impact:** 0.5-1ms
-
----
-
 ## Phase B: Script Compilation Optimizations (1.31ms → <1ms)
 
 ### B1: Lexer Cursor Optimization (10-15%)
@@ -261,15 +244,15 @@ Add `unit/build_only` benchmark that measures just compilation without Unit crea
 
 ### Phase B: Script Optimizations (1.31ms → <1ms)
 
-| # | Task | Est. Impact | Effort |
-|---|------|-------------|--------|
-| B1 | Lexer cursor optimization | 10-15% | Medium |
-| B2 | Cache qualified_name | 8% | Easy |
-| B3 | Avoid namespace_path cloning | 3-4% | Medium |
-| B4 | Avoid format!() for TypeHash | 2% | Easy |
-| B5 | Remove types_by_hash | 2-4% | Easy |
-| B6 | Unit.clear() API | N/A | Easy |
-| B7 | Benchmark restructuring | N/A | Easy |
+| # | Task | Est. Impact | Effort | Status |
+|---|------|-------------|--------|--------|
+| B1 | Lexer cursor optimization | 10-15% | Medium | ✅ Complete |
+| B2 | Cache qualified_name | 8% | Easy | Pending |
+| B3 | Avoid namespace_path cloning | 3-4% | Medium | Pending |
+| B4 | Avoid format!() for TypeHash | 2% | Easy | Pending |
+| B5 | Remove types_by_hash | 2-4% | Easy | Pending |
+| B6 | Unit.clear() API | N/A | Easy | Pending |
+| B7 | Benchmark restructuring | N/A | Easy | Pending |
 
 ---
 
@@ -280,8 +263,8 @@ Add `unit/build_only` benchmark that measures just compilation without Unit crea
 - `src/semantic/compilation_context.rs`
 
 ### Phase B
-- `src/lexer/cursor.rs`
-- `src/lexer/lexer.rs`
+- `crates/angelscript-parser/src/lexer/cursor.rs`
+- `crates/angelscript-parser/src/lexer/lexer.rs`
 - `src/semantic/types/registry.rs`
 - `src/semantic/passes/registration.rs`
 - `src/semantic/passes/function_processor/mod.rs`
