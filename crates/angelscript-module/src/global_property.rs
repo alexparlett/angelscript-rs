@@ -78,7 +78,7 @@ impl std::fmt::Debug for GlobalPropertyBuilder<'_, '_> {
 mod tests {
     use super::*;
     use angelscript_parser::ast::{PrimitiveType, TypeBase};
-    use angelscript_parser::lexer::Span;
+    use angelscript_core::Span;
 
     fn make_ident(name: &str) -> Ident<'_> {
         Ident::new(name, Span::new(1, 1, name.len() as u32))

@@ -13,7 +13,7 @@ use crate::ast::{DeclModifiers, FuncAttr, Ident, Visibility};
 use crate::ast::expr::{Expr, IdentExpr};
 use crate::ast::stmt::Block;
 use crate::ast::types::{ParamType, ReturnType, TypeExpr};
-use crate::lexer::Span;
+use angelscript_core::Span;
 
 /// A top-level item in a script.
 #[derive(Debug, Clone, PartialEq)]

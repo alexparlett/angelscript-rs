@@ -30,7 +30,6 @@
 //! ```
 
 // Core types
-pub mod error;
 pub mod node;
 pub mod ops;
 
@@ -49,8 +48,10 @@ mod decl_parser;
 
 pub mod visitor;
 
+// Re-export error types from core
+pub use angelscript_core::{ParseError, ParseErrorKind, ParseErrors};
+
 pub use decl::*;
-pub use error::*;
 pub use expr::*;
 pub use node::*;
 pub use ops::*;
@@ -68,12 +69,12 @@ pub use types::*;
 #[derive(Debug)]
 pub struct Script<'ast> {
     items: &'ast [Item<'ast>],
-    span: crate::lexer::Span,
+    span: angelscript_core::Span,
 }
 
 impl<'ast> Script<'ast> {
     /// Create a new script from parsed items.
-    pub(crate) fn new(items: &'ast [Item<'ast>], span: crate::lexer::Span) -> Self {
+    pub(crate) fn new(items: &'ast [Item<'ast>], span: angelscript_core::Span) -> Self {
         Self { items, span }
     }
 
@@ -83,7 +84,7 @@ impl<'ast> Script<'ast> {
     }
 
     /// Get the source location span of this script.
-    pub fn span(&self) -> crate::lexer::Span {
+    pub fn span(&self) -> angelscript_core::Span {
         self.span
     }
 }

@@ -24,7 +24,7 @@ use std::fmt;
 use std::ops::{Deref, DerefMut};
 
 use angelscript_ffi::{CallContext, NativeType};
-use angelscript_module::{ModuleError, Module};
+use angelscript_module::{RegistrationError, Module};
 
 /// AngelScript string type backed by Rust String.
 ///
@@ -619,7 +619,7 @@ impl AsRef<[u8]> for ScriptString {
 /// let module = string_module().expect("failed to create string module");
 /// // Register with engine...
 /// ```
-pub fn string_module<'app>() -> Result<Module<'app>, ModuleError> {
+pub fn string_module<'app>() -> Result<Module<'app>, RegistrationError> {
     let mut module = Module::root();
 
     // =========================================================================

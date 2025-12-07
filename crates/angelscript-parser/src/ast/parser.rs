@@ -52,8 +52,8 @@ impl<'ast> Parser<'ast> {
                 for lexer_error in lexer.take_errors() {
                     let parse_error = ParseError::new(
                         ParseErrorKind::InvalidSyntax,
-                        lexer_error.span,
-                        format!("lexer error: {}", lexer_error.message),
+                        lexer_error.span(),
+                        format!("lexer error: {}", lexer_error),
                     );
                     errors.push(parse_error);
                 }

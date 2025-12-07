@@ -37,8 +37,9 @@
 //! ```
 
 use crate::context::Context;
+use angelscript_core::{AngelScriptError, CompilationError};
 use angelscript_ffi::FfiRegistryBuilder;
-use angelscript_compiler::{Compiler, CompiledModule, SemanticError};
+use angelscript_compiler::{Compiler, CompiledModule};
 use angelscript_parser::ast::{Parser, ParseError};
 use bumpalo::Bump;
 use std::collections::{HashMap, HashSet};
@@ -406,11 +407,56 @@ pub enum BuildError {
 
     /// Compilation errors occurred
     #[error("Compilation errors: {0:?}")]
-    CompilationErrors(Vec<SemanticError>),
+    CompilationErrors(Vec<CompilationError>),
 
     /// Multi-file compilation not yet supported
     #[error("Multi-file compilation not yet implemented")]
     MultiFileNotSupported,
+}
+
+impl BuildError {
+    /// Convert to a vector of `AngelScriptError`.
+    ///
+    /// This extracts the underlying parse or compilation errors, enabling
+    /// unified error handling with the top-level `AngelScriptError` type.
+    ///
+    /// For variants that don't contain underlying errors (NoSources, AlreadyBuilt,
+    /// MultiFileNotSupported), this returns an empty vector.
+    pub fn into_errors(self) -> Vec<AngelScriptError> {
+        match self {
+            BuildError::ParseErrors(file_errors) => {
+                file_errors
+                    .into_iter()
+                    .flat_map(|(_, errors)| errors)
+                    .map(AngelScriptError::from)
+                    .collect()
+            }
+            BuildError::CompilationErrors(errors) => {
+                errors.into_iter().map(AngelScriptError::from).collect()
+            }
+            _ => Vec::new(),
+        }
+    }
+
+    /// Get the first error as an `AngelScriptError`, if any.
+    ///
+    /// This is useful when you only need to report a single error.
+    pub fn first_error(&self) -> Option<AngelScriptError> {
+        match self {
+            BuildError::ParseErrors(file_errors) => {
+                file_errors
+                    .iter()
+                    .flat_map(|(_, errors)| errors)
+                    .next()
+                    .cloned()
+                    .map(AngelScriptError::from)
+            }
+            BuildError::CompilationErrors(errors) => {
+                errors.first().cloned().map(AngelScriptError::from)
+            }
+            _ => None,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -654,5 +700,80 @@ mod tests {
 
         let err = BuildError::MultiFileNotSupported;
         assert!(err.to_string().contains("not yet implemented"));
+    }
+
+    #[test]
+    fn build_error_into_errors_parse() {
+        use angelscript_core::{ParseErrorKind, Span};
+
+        let parse_err = ParseError::new(
+            ParseErrorKind::ExpectedToken,
+            Span::new(1, 5, 3),
+            "expected ';'".to_string(),
+        );
+        let err = BuildError::ParseErrors(vec![
+            ("test.as".to_string(), vec![parse_err]),
+        ]);
+
+        let errors = err.into_errors();
+        assert_eq!(errors.len(), 1);
+        assert!(errors[0].is_parse());
+    }
+
+    #[test]
+    fn build_error_into_errors_compilation() {
+        use angelscript_core::Span;
+
+        let comp_err = CompilationError::UnknownType {
+            name: "Foo".to_string(),
+            span: Span::new(1, 1, 3),
+        };
+        let err = BuildError::CompilationErrors(vec![comp_err]);
+
+        let errors = err.into_errors();
+        assert_eq!(errors.len(), 1);
+        assert!(errors[0].is_compilation());
+    }
+
+    #[test]
+    fn build_error_into_errors_empty() {
+        let err = BuildError::NoSources;
+        let errors = err.into_errors();
+        assert!(errors.is_empty());
+
+        let err = BuildError::AlreadyBuilt;
+        let errors = err.into_errors();
+        assert!(errors.is_empty());
+
+        let err = BuildError::MultiFileNotSupported;
+        let errors = err.into_errors();
+        assert!(errors.is_empty());
+    }
+
+    #[test]
+    fn build_error_first_error() {
+        use angelscript_core::{ParseErrorKind, Span};
+
+        let parse_err1 = ParseError::new(
+            ParseErrorKind::ExpectedToken,
+            Span::new(1, 5, 3),
+            "first".to_string(),
+        );
+        let parse_err2 = ParseError::new(
+            ParseErrorKind::UnexpectedToken,
+            Span::new(2, 10, 5),
+            "second".to_string(),
+        );
+        let err = BuildError::ParseErrors(vec![
+            ("test.as".to_string(), vec![parse_err1, parse_err2]),
+        ]);
+
+        let first = err.first_error();
+        assert!(first.is_some());
+        assert!(first.unwrap().is_parse());
+
+        // Empty errors return None
+        let err = BuildError::NoSources;
+        assert!(err.first_error().is_none());
     }
 }

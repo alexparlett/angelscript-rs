@@ -3,7 +3,7 @@
 //! Provides fundamental types like identifiers, scopes, visibility modifiers,
 //! and other shared structures.
 
-use crate::lexer::Span;
+use angelscript_core::Span;
 use std::fmt;
 
 /// An identifier with source location.

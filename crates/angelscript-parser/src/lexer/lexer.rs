@@ -11,8 +11,7 @@ use std::collections::VecDeque;
 use bumpalo::Bump;
 
 use super::cursor::{is_ident_continue, is_ident_start, Cursor};
-use super::error::LexerError;
-use super::span::Span;
+use angelscript_core::{LexError, Span};
 use super::token::{lookup_keyword, Token, TokenKind};
 
 /// Lexer for AngelScript source code.
@@ -30,7 +29,7 @@ pub struct Lexer<'src, 'ast> {
     /// Lookahead buffer for peeking.
     lookahead: VecDeque<Token<'ast>>,
     /// Accumulated errors.
-    errors: Vec<LexerError>,
+    errors: Vec<LexError>,
 }
 
 impl<'src, 'ast> Lexer<'src, 'ast> {
@@ -48,7 +47,7 @@ impl<'src, 'ast> Lexer<'src, 'ast> {
     }
 
     /// Take accumulated errors, leaving an empty vec.
-    pub fn take_errors(&mut self) -> Vec<LexerError> {
+    pub fn take_errors(&mut self) -> Vec<LexError> {
         std::mem::take(&mut self.errors)
     }
 
@@ -144,8 +143,8 @@ impl<'src, 'ast> Lexer<'src, 'ast> {
     }
 
     /// Create an error token and record the error.
-    fn make_error(&mut self, error: LexerError) -> Token<'ast> {
-        let span = error.span;
+    fn make_error(&mut self, error: LexError) -> Token<'ast> {
+        let span = error.span();
         // Use empty string for errors
         let lexeme = self.arena.alloc_str("");
         self.errors.push(error);
@@ -199,7 +198,9 @@ impl<'src, 'ast> Lexer<'src, 'ast> {
                 None => {
                     // Unterminated comment
                     let len = self.cursor.offset() - start_offset;
-                    let error = LexerError::unterminated_comment(Span::new(start_line, start_col, len));
+                    let error = LexError::UnterminatedComment {
+                        span: Span::new(start_line, start_col, len),
+                    };
                     return self.make_error(error);
                 }
                 Some('*') => {
@@ -238,12 +239,16 @@ impl<'src, 'ast> Lexer<'src, 'ast> {
                 None | Some('\r') | Some('\n') if quote == '\'' => {
                     // Single-quoted strings don't span lines
                     let len = self.cursor.offset() - start_offset;
-                    let error = LexerError::unterminated_string(Span::new(start_line, start_col, len));
+                    let error = LexError::UnterminatedString {
+                        span: Span::new(start_line, start_col, len),
+                    };
                     return self.make_error(error);
                 }
                 None => {
                     let len = self.cursor.offset() - start_offset;
-                    let error = LexerError::unterminated_string(Span::new(start_line, start_col, len));
+                    let error = LexError::UnterminatedString {
+                        span: Span::new(start_line, start_col, len),
+                    };
                     return self.make_error(error);
                 }
                 Some('\n') => {
@@ -279,7 +284,9 @@ impl<'src, 'ast> Lexer<'src, 'ast> {
             match self.cursor.peek() {
                 None => {
                     let len = self.cursor.offset() - start_offset;
-                    let error = LexerError::unterminated_heredoc(Span::new(start_line, start_col, len));
+                    let error = LexError::UnterminatedHeredoc {
+                        span: Span::new(start_line, start_col, len),
+                    };
                     return self.make_error(error);
                 }
                 Some('"') => {
@@ -343,10 +350,10 @@ impl<'src, 'ast> Lexer<'src, 'ast> {
 
         if !has_digits {
             let len = self.cursor.offset() - start_offset;
-            let error = LexerError::invalid_number(
-                Span::new(start_line, start_col, len),
-                "expected digits after radix prefix",
-            );
+            let error = LexError::InvalidNumber {
+                span: Span::new(start_line, start_col, len),
+                detail: "expected digits after radix prefix".to_string(),
+            };
             return self.make_error(error);
         }
 
@@ -538,7 +545,10 @@ impl<'src, 'ast> Lexer<'src, 'ast> {
             // Unrecognized character
             _ => {
                 let len = self.cursor.offset() - start_offset;
-                let error = LexerError::unexpected_char(c, Span::new(start_line, start_col, len));
+                let error = LexError::UnexpectedChar {
+                    ch: c,
+                    span: Span::new(start_line, start_col, len),
+                };
                 return self.make_error(error);
             }
         };

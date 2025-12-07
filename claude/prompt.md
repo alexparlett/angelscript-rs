@@ -46,6 +46,44 @@ See `/claude/tasks/26_compiler_rewrite.md` for full details.
 
 **Task 26.8: Pass 1: RegistrationPass** - Type + function registration with complete signatures
 
+---
+
+## Task 28: Unified Error Types - COMPLETE
+
+See `/claude/tasks/28_unified_error_types.md` for full details.
+
+### Completed Tasks
+
+| # | Task | Description | Status |
+|---|------|-------------|--------|
+| 1 | Move Span to core | Moved `Span` from parser to angelscript-core | ✅ Complete |
+| 2 | Create core error types | Defined `AngelScriptError` and phase-specific errors in core | ✅ Complete |
+| 3 | Migrate parser errors | Parser now uses `LexError`, `ParseError`, `ParseErrorKind`, `ParseErrors` from core | ✅ Complete |
+| 4 | Consolidate registration errors | Merged `FfiRegistryError` + `ModuleError` → `RegistrationError` | ✅ Complete |
+| 5 | Migrate compiler errors | Compiler now uses `CompilationError` from core | ✅ Complete |
+| 6 | Migrate main crate errors | Updated `ContextError`, `BuildError` with helper methods | ✅ Complete |
+| 7 | Update public API | Exposed all error types in public API | ✅ Complete |
+
+### Task 28.6 & 28.7 Summary (Just Completed)
+
+**Updated public API exports in `src/lib.rs`:**
+- Exported `AngelScriptError`, `LexError`, `ParseError`, `ParseErrorKind`, `ParseErrors`
+- Exported `RegistrationError`, `CompilationError`, `RuntimeError`, `Span`
+
+**Added helper methods to `BuildError`:**
+- `into_errors()` - Converts to `Vec<AngelScriptError>` for unified handling
+- `first_error()` - Gets first error as `AngelScriptError`
+
+**Added helper methods to `ContextError`:**
+- `into_errors()` - Converts to `Vec<AngelScriptError>` for unified handling
+- `first_error()` - Gets first error as `AngelScriptError`
+
+**Tests:** 47 library tests passing
+
+### Next Task
+
+**Task 26.8: Pass 1: RegistrationPass** - Type + function registration with complete signatures
+
 ### Deferred
 
 **Task 19: FFI Default Args** - Deferred until after new compiler passes (Tasks 8-15) are built.

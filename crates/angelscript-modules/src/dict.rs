@@ -415,7 +415,7 @@ pub fn is_hashable_type(type_hash: angelscript_core::TypeHash) -> bool {
 use angelscript_ffi::{
     CallContext, ListPattern, NativeType, TemplateInstanceInfo, TemplateValidation,
 };
-use angelscript_module::{Module, ModuleError};
+use angelscript_module::{Module, RegistrationError};
 
 impl NativeType for ScriptDict {
     const NAME: &'static str = "dictionary";
@@ -441,7 +441,7 @@ impl NativeType for ScriptDict {
 /// let module = dictionary_module().expect("failed to create dictionary module");
 /// // Register with engine...
 /// ```
-pub fn dictionary_module<'app>() -> Result<Module<'app>, ModuleError> {
+pub fn dictionary_module<'app>() -> Result<Module<'app>, RegistrationError> {
     let mut module = Module::root();
 
     module

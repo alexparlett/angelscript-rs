@@ -26,4 +26,7 @@ pub use enum_builder::EnumBuilder;
 pub use function_builder::FunctionBuilder;
 pub use global_property::GlobalPropertyBuilder;
 pub use interface_builder::InterfaceBuilder;
-pub use module::{Module, ModuleError};
+pub use module::Module;
+
+// Re-export RegistrationError from core for convenience
+pub use angelscript_core::RegistrationError;

@@ -20,7 +20,7 @@ impl<'ast> Parser<'ast> {
     ///
     /// This is the main entry point for parsing AngelScript source code.
     /// Returns the items slice and span for the entire script.
-    pub fn parse_script(&mut self) -> Result<(&'ast [Item<'ast>], crate::lexer::Span), ParseError> {
+    pub fn parse_script(&mut self) -> Result<(&'ast [Item<'ast>], angelscript_core::Span), ParseError> {
         let start_span = self.peek().span;
         let mut items = Vec::new();
 

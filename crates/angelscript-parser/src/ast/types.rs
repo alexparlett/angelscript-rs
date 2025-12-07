@@ -25,7 +25,7 @@
 //! ```
 
 use crate::ast::{Ident, Scope};
-use crate::lexer::Span;
+use angelscript_core::Span;
 use std::fmt;
 
 /// A complete type expression.

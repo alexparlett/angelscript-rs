@@ -21,8 +21,9 @@
 use std::sync::Arc;
 use thiserror::Error;
 
-use angelscript_ffi::{FfiRegistry, FfiRegistryBuilder, FfiRegistryError};
-use angelscript_module::{ModuleError, Module};
+use angelscript_core::AngelScriptError;
+use angelscript_ffi::{FfiRegistry, FfiRegistryBuilder, RegistrationError};
+use angelscript_module::Module;
 use angelscript_modules::default_modules;
 use crate::unit::Unit;
 
@@ -232,7 +233,7 @@ pub enum ContextError {
 
     /// Failed to build a default module
     #[error("failed to build module: {0}")]
-    ModuleBuildFailed(#[from] ModuleError),
+    ModuleBuildFailed(#[from] RegistrationError),
 
     /// Context is already sealed - cannot install modules
     #[error("context is already sealed - cannot install modules after seal() or create_unit()")]
@@ -244,7 +245,39 @@ pub enum ContextError {
 
     /// Failed to build FFI registry
     #[error("failed to build FFI registry: {0:?}")]
-    RegistryBuildFailed(Vec<FfiRegistryError>),
+    RegistryBuildFailed(Vec<RegistrationError>),
+}
+
+impl ContextError {
+    /// Convert to a vector of `AngelScriptError`.
+    ///
+    /// This extracts the underlying registration errors, enabling unified
+    /// error handling with the top-level `AngelScriptError` type.
+    ///
+    /// For variants that don't contain underlying errors (ModuleNotFound,
+    /// ApplyFailed, AlreadySealed, NotSealed), this returns an empty vector.
+    pub fn into_errors(self) -> Vec<AngelScriptError> {
+        match self {
+            ContextError::ModuleBuildFailed(err) => vec![AngelScriptError::from(err)],
+            ContextError::RegistryBuildFailed(errors) => {
+                errors.into_iter().map(AngelScriptError::from).collect()
+            }
+            _ => Vec::new(),
+        }
+    }
+
+    /// Get the first error as an `AngelScriptError`, if any.
+    ///
+    /// This is useful when you only need to report a single error.
+    pub fn first_error(&self) -> Option<AngelScriptError> {
+        match self {
+            ContextError::ModuleBuildFailed(err) => Some(AngelScriptError::from(err.clone())),
+            ContextError::RegistryBuildFailed(errors) => {
+                errors.first().cloned().map(AngelScriptError::from)
+            }
+            _ => None,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -427,5 +460,60 @@ mod tests {
 
         let err = ContextError::AlreadySealed;
         assert!(err.to_string().contains("already sealed"));
+    }
+
+    #[test]
+    fn context_error_into_errors_module_build() {
+        let err = ContextError::ModuleBuildFailed(
+            RegistrationError::TypeNotFound("Foo".to_string())
+        );
+
+        let errors = err.into_errors();
+        assert_eq!(errors.len(), 1);
+        assert!(errors[0].is_registration());
+    }
+
+    #[test]
+    fn context_error_into_errors_registry_build() {
+        let err = ContextError::RegistryBuildFailed(vec![
+            RegistrationError::TypeNotFound("Foo".to_string()),
+            RegistrationError::DuplicateType("Bar".to_string()),
+        ]);
+
+        let errors = err.into_errors();
+        assert_eq!(errors.len(), 2);
+        assert!(errors[0].is_registration());
+        assert!(errors[1].is_registration());
+    }
+
+    #[test]
+    fn context_error_into_errors_empty() {
+        let err = ContextError::ModuleNotFound("foo".to_string());
+        let errors = err.into_errors();
+        assert!(errors.is_empty());
+
+        let err = ContextError::AlreadySealed;
+        let errors = err.into_errors();
+        assert!(errors.is_empty());
+
+        let err = ContextError::NotSealed;
+        let errors = err.into_errors();
+        assert!(errors.is_empty());
+    }
+
+    #[test]
+    fn context_error_first_error() {
+        let err = ContextError::RegistryBuildFailed(vec![
+            RegistrationError::TypeNotFound("First".to_string()),
+            RegistrationError::DuplicateType("Second".to_string()),
+        ]);
+
+        let first = err.first_error();
+        assert!(first.is_some());
+        assert!(first.unwrap().is_registration());
+
+        // Empty errors return None
+        let err = ContextError::AlreadySealed;
+        assert!(err.first_error().is_none());
     }
 }

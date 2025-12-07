@@ -57,6 +57,7 @@ name = "angelscript-core"
 version = "0.1.0"
 dependencies = [
  "rustc-hash",
+ "thiserror",
  "xxhash-rust",
 ]
 
@@ -98,6 +99,7 @@ dependencies = [
 name = "angelscript-parser"
 version = "0.1.0"
 dependencies = [
+ "angelscript-core",
  "bumpalo",
  "thiserror",
 ]

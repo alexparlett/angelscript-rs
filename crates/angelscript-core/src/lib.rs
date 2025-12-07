@@ -12,11 +12,22 @@
 //! - [`ExprInfo`]: Expression type checking results
 //! - [`TypeBehaviors`]: Lifecycle behaviors for types
 //! - [`FfiExpr`]: Owned expressions for FFI default arguments
+//! - [`Span`]: Source location tracking for error reporting
 //!
 //! ## Operators
 //!
 //! - [`BinaryOp`]: Binary operators (arithmetic, logical, comparison)
 //! - [`UnaryOp`]: Unary operators (negation, not, increment)
+//!
+//! ## Error Types
+//!
+//! - [`AngelScriptError`]: Unified error type for all phases
+//! - [`LexError`]: Lexer/tokenization errors
+//! - [`ParseError`]: Parser errors with [`ParseErrorKind`]
+//! - [`ParseErrors`]: Collection of parse errors
+//! - [`RegistrationError`]: Type/function registration errors
+//! - [`CompilationError`]: Semantic analysis and compilation errors
+//! - [`RuntimeError`]: Execution/runtime errors
 
 pub mod ops;
 pub mod type_hash;
@@ -26,6 +37,8 @@ mod function_def;
 mod expr_info;
 mod behaviors;
 mod ffi_expr;
+mod span;
+mod error;
 
 // TypeHash and related
 pub use type_hash::{hash_constants, primitives, TypeHash};
@@ -39,7 +52,7 @@ pub use data_type::{DataType, RefModifier};
 // TypeDef and supporting types
 pub use type_def::{
     TypeDef,
-    PrimitiveType,
+    PrimitiveKind,
     Visibility,
     TypeKind,
     ReferenceKind,
@@ -65,3 +78,18 @@ pub use behaviors::TypeBehaviors;
 
 // FFI expressions
 pub use ffi_expr::FfiExpr;
+
+// Source location tracking
+pub use span::Span;
+
+// Error types
+pub use error::{
+    AngelScriptError,
+    LexError,
+    ParseError,
+    ParseErrorKind,
+    ParseErrors,
+    RegistrationError,
+    CompilationError,
+    RuntimeError,
+};

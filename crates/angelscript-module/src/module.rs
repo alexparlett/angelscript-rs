@@ -18,13 +18,12 @@
 //! ```
 
 use bumpalo::Bump;
-use thiserror::Error;
 
 use crate::{
     ClassBuilder, EnumBuilder, GlobalPropertyBuilder, InterfaceBuilder,
     FunctionBuilder,
 };
-use angelscript_core::{DataType, primitives, FunctionDef, Param, TypeHash};
+use angelscript_core::{DataType, primitives, FunctionDef, Param, TypeHash, RegistrationError};
 use angelscript_ffi::{
     FfiEnumDef, FfiFuncdefDef, FfiInterfaceDef, FfiRegistryBuilder, FfiTypeDef,
     IntoNativeFn, NativeCallable, NativeFn, NativeType,
@@ -195,20 +194,20 @@ impl<'app> Module<'app> {
     ///     Ok(())
     /// })?;
     /// ```
-    pub fn register_fn_raw<F>(&mut self, decl: &str, f: F) -> Result<&mut Self, ModuleError>
+    pub fn register_fn_raw<F>(&mut self, decl: &str, f: F) -> Result<&mut Self, RegistrationError>
     where
         F: NativeCallable + Send + Sync + 'static,
     {
         let decl = decl.trim();
         if decl.is_empty() {
-            return Err(ModuleError::InvalidDeclaration(
+            return Err(RegistrationError::InvalidDeclaration(
                 "empty declaration".to_string(),
             ));
         }
 
         // Parse the declaration using the module's arena
         let sig = Parser::function_decl(decl, &self.arena).map_err(|errors| {
-            ModuleError::InvalidDeclaration(format!("parse error: {}", errors))
+            RegistrationError::InvalidDeclaration(format!("parse error: {}", errors))
         })?;
 
         // Build the function definition
@@ -259,20 +258,20 @@ impl<'app> Module<'app> {
         &mut self,
         decl: &str,
         f: F,
-    ) -> Result<&mut Self, ModuleError>
+    ) -> Result<&mut Self, RegistrationError>
     where
         F: IntoNativeFn<Args, Ret>,
     {
         let decl = decl.trim();
         if decl.is_empty() {
-            return Err(ModuleError::InvalidDeclaration(
+            return Err(RegistrationError::InvalidDeclaration(
                 "empty declaration".to_string(),
             ));
         }
 
         // Parse the declaration using the module's arena
         let sig = Parser::function_decl(decl, &self.arena).map_err(|errors| {
-            ModuleError::InvalidDeclaration(format!("parse error: {}", errors))
+            RegistrationError::InvalidDeclaration(format!("parse error: {}", errors))
         })?;
 
         // Convert the closure to NativeFn
@@ -345,7 +344,7 @@ impl<'app> Module<'app> {
     ///
     /// # Errors
     ///
-    /// Returns `FfiModuleError::InvalidDeclaration` if the declaration cannot be parsed
+    /// Returns `FfiRegistrationError::InvalidDeclaration` if the declaration cannot be parsed
     /// or is not a valid type name.
     ///
     /// # Example
@@ -367,10 +366,10 @@ impl<'app> Module<'app> {
     pub fn register_type<T: NativeType>(
         &mut self,
         decl: &str,
-    ) -> Result<ClassBuilder<'_, 'app, T>, ModuleError> {
+    ) -> Result<ClassBuilder<'_, 'app, T>, RegistrationError> {
         // Parse the type declaration as a TypeExpr (e.g., "array<class T>")
         let type_expr = Parser::type_expr(decl, &self.arena).map_err(|errors| {
-            ModuleError::InvalidDeclaration(format!("parse error: {}", errors))
+            RegistrationError::InvalidDeclaration(format!("parse error: {}", errors))
         })?;
 
         // Extract the type name from the base
@@ -378,7 +377,7 @@ impl<'app> Module<'app> {
             TypeBase::Named(ident) => ident.name.to_string(),
             TypeBase::Primitive(p) => format!("{:?}", p).to_lowercase(),
             _ => {
-                return Err(ModuleError::InvalidDeclaration(
+                return Err(RegistrationError::InvalidDeclaration(
                     "expected named type".to_string(),
                 ))
             }
@@ -568,17 +567,17 @@ impl<'app> Module<'app> {
     /// // Comparator function
     /// module.register_funcdef("funcdef int Comparator(const string &in a, const string &in b)")?;
     /// ```
-    pub fn register_funcdef(&mut self, decl: &str) -> Result<&mut Self, ModuleError> {
+    pub fn register_funcdef(&mut self, decl: &str) -> Result<&mut Self, RegistrationError> {
         let decl = decl.trim();
         if decl.is_empty() {
-            return Err(ModuleError::InvalidDeclaration(
+            return Err(RegistrationError::InvalidDeclaration(
                 "empty declaration".to_string(),
             ));
         }
 
         // Parse the funcdef declaration using the module's arena
         let fd = Parser::funcdef_decl(decl, &self.arena).map_err(|errors| {
-            ModuleError::InvalidDeclaration(format!("parse error: {}", errors))
+            RegistrationError::InvalidDeclaration(format!("parse error: {}", errors))
         })?;
 
         // Build the funcdef definition
@@ -656,17 +655,17 @@ impl<'app> Module<'app> {
         &mut self,
         decl: &str,
         value: &'app mut T,
-    ) -> Result<(), ModuleError> {
+    ) -> Result<(), RegistrationError> {
         let decl = decl.trim();
         if decl.is_empty() {
-            return Err(ModuleError::InvalidDeclaration(
+            return Err(RegistrationError::InvalidDeclaration(
                 "empty declaration".to_string(),
             ));
         }
 
         // Parse the declaration using the module's arena
         let prop = Parser::property_decl(decl, &self.arena).map_err(|errors| {
-            ModuleError::InvalidDeclaration(format!("parse error: {}", errors))
+            RegistrationError::InvalidDeclaration(format!("parse error: {}", errors))
         })?;
 
         // Build the property definition
@@ -729,7 +728,7 @@ impl<'app> Module<'app> {
     ///
     /// let registry = builder.build()?;
     /// ```
-    pub fn install_into(&self, builder: &mut FfiRegistryBuilder) -> Result<(), ModuleError> {
+    pub fn install_into(&self, builder: &mut FfiRegistryBuilder) -> Result<(), RegistrationError> {
         // Register namespace if not root
         if !self.namespace.is_empty() {
             builder.register_namespace(&self.namespace.join("::"));
@@ -768,7 +767,7 @@ impl<'app> Module<'app> {
         &self,
         builder: &mut FfiRegistryBuilder,
         type_def: &FfiTypeDef,
-    ) -> Result<(), ModuleError> {
+    ) -> Result<(), RegistrationError> {
         use angelscript_core::TypeDef;
         use angelscript_ffi::TypeKind;
         use rustc_hash::FxHashMap;
@@ -1164,33 +1163,6 @@ impl std::fmt::Debug for Module<'_> {
     }
 }
 
-/// Errors that can occur during FFI module operations.
-#[derive(Debug, Clone, Error)]
-pub enum ModuleError {
-    /// Invalid declaration string
-    #[error("invalid declaration: {0}")]
-    InvalidDeclaration(String),
-
-    /// Duplicate registration
-    #[error("duplicate registration: {name} already registered as {kind}")]
-    DuplicateRegistration { name: String, kind: String },
-
-    /// Duplicate enum value name
-    #[error("duplicate enum value: '{value_name}' already exists in enum '{enum_name}'")]
-    DuplicateEnumValue {
-        enum_name: String,
-        value_name: String,
-    },
-
-    /// Type not found
-    #[error("type not found: {0}")]
-    TypeNotFound(String),
-
-    /// Invalid type for operation
-    #[error("invalid type: {0}")]
-    InvalidType(String),
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1520,21 +1492,21 @@ mod tests {
 
     #[test]
     fn ffi_module_error_display() {
-        let err = ModuleError::InvalidDeclaration("bad decl".to_string());
+        let err = RegistrationError::InvalidDeclaration("bad decl".to_string());
         assert!(err.to_string().contains("invalid declaration"));
         assert!(err.to_string().contains("bad decl"));
 
-        let err = ModuleError::DuplicateRegistration {
+        let err = RegistrationError::DuplicateRegistration {
             name: "foo".to_string(),
             kind: "function".to_string(),
         };
         assert!(err.to_string().contains("duplicate registration"));
         assert!(err.to_string().contains("foo"));
 
-        let err = ModuleError::TypeNotFound("Bar".to_string());
+        let err = RegistrationError::TypeNotFound("Bar".to_string());
         assert!(err.to_string().contains("type not found"));
 
-        let err = ModuleError::InvalidType("bad type".to_string());
+        let err = RegistrationError::InvalidType("bad type".to_string());
         assert!(err.to_string().contains("invalid type"));
     }
 
