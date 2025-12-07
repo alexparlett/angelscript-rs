@@ -16,8 +16,8 @@
 //! - Enum value references (EnumName::VALUE)
 //! - Constant variable references (future: when const tracking is added)
 
-use crate::ast::expr::{Expr, LiteralKind};
-use crate::ast::{BinaryOp, UnaryOp};
+use angelscript_parser::ast::expr::{Expr, LiteralKind};
+use angelscript_parser::ast::{BinaryOp, UnaryOp};
 use crate::semantic::CompilationContext;
 use crate::semantic::types::TypeDef;
 
@@ -274,7 +274,7 @@ impl<'a, 'ast> ConstEvaluator<'a, 'ast> {
         }
     }
 
-    fn eval_ident(&self, ident: &crate::ast::expr::IdentExpr<'ast>) -> Option<ConstValue> {
+    fn eval_ident(&self, ident: &angelscript_parser::ast::expr::IdentExpr<'ast>) -> Option<ConstValue> {
         // Check if this is a qualified name like EnumName::VALUE
         if let Some(scope) = &ident.scope {
             // Build the qualified enum name from scope segments
@@ -606,9 +606,9 @@ fn eval_const_int_simple(expr: &Expr) -> Option<i64> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ast::decl::Item;
-    use crate::ast::stmt::Stmt;
-    use crate::Parser;
+    use angelscript_parser::ast::decl::Item;
+    use angelscript_parser::ast::stmt::Stmt;
+    use angelscript_parser::Parser;
     use crate::semantic::Compiler;
     use bumpalo::Bump;
 
@@ -1636,7 +1636,7 @@ mod tests {
                         for stmt in body.stmts {
                             if let Stmt::Expr(expr_stmt) = stmt {
                                 if let Some(Expr::Binary(bin)) = expr_stmt.expr {
-                                    if matches!(bin.op, crate::ast::BinaryOp::Is | crate::ast::BinaryOp::NotIs) {
+                                    if matches!(bin.op, angelscript_parser::ast::BinaryOp::Is | angelscript_parser::ast::BinaryOp::NotIs) {
                                         let result = evaluator.eval(expr_stmt.expr.unwrap());
                                         assert!(result.is_none());
                                         return;

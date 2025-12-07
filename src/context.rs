@@ -21,9 +21,9 @@
 use std::sync::Arc;
 use thiserror::Error;
 
-use crate::ffi::{FfiRegistry, FfiRegistryBuilder, FfiRegistryError};
+use crate::module::{FfiRegistry, FfiRegistryBuilder, FfiRegistryError};
 use crate::module::{FfiModuleError, Module};
-use crate::modules::default_modules;
+use crate::module::stdlib::default_modules;
 use crate::unit::Unit;
 
 /// Execution context that owns installed modules.

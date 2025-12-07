@@ -4,11 +4,11 @@
 //! including finding the best matching function for given argument types.
 
 use crate::codegen::Instruction;
-use crate::lexer::Span;
+use angelscript_parser::lexer::Span;
 use crate::semantic::{
     DataType, DataTypeExt, OperatorBehavior, SemanticErrorKind,
 };
-use crate::types::{primitive_hashes, TypeHash};
+use angelscript_core::{primitives, TypeHash};
 
 use super::{ExprContext, FunctionCompiler};
 
@@ -68,7 +68,7 @@ impl<'ast> FunctionCompiler<'ast> {
         &mut self,
         func_def: &crate::semantic::types::registry::FunctionDef,
         arg_contexts: &[ExprContext],
-        call_args: &[crate::ast::expr::Argument<'ast>],
+        call_args: &[angelscript_parser::ast::expr::Argument<'ast>],
         _span: Span,
     ) -> Option<()> {
         use crate::semantic::types::RefModifier;
@@ -83,7 +83,7 @@ impl<'ast> FunctionCompiler<'ast> {
             let arg_ctx = &arg_contexts[i];
 
             // Void expressions cannot be passed as arguments
-            if arg_ctx.data_type.type_hash == primitive_hashes::VOID {
+            if arg_ctx.data_type.type_hash == primitives::VOID {
                 self.error(
                     SemanticErrorKind::VoidExpression,
                     call_args[i].span,
@@ -142,7 +142,7 @@ impl<'ast> FunctionCompiler<'ast> {
         &mut self,
         func_ref: &crate::semantic::FunctionRef,
         arg_contexts: &[ExprContext],
-        call_args: &[crate::ast::expr::Argument<'ast>],
+        call_args: &[angelscript_parser::ast::expr::Argument<'ast>],
         _span: Span,
     ) -> Option<()> {
         use crate::semantic::types::RefModifier;
@@ -158,7 +158,7 @@ impl<'ast> FunctionCompiler<'ast> {
             let param_type = func_ref.param_type(i);
 
             // Void expressions cannot be passed as arguments
-            if arg_ctx.data_type.type_hash == primitive_hashes::VOID {
+            if arg_ctx.data_type.type_hash == primitives::VOID {
                 self.error(
                     SemanticErrorKind::VoidExpression,
                     call_args[i].span,

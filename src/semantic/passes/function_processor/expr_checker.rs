@@ -3,7 +3,7 @@
 //! This module contains all `check_*` methods for type-checking expressions
 //! and emitting bytecode.
 
-use crate::ast::{
+use angelscript_parser::ast::{
     AssignOp, BinaryOp, PostfixOp, UnaryOp,
     expr::{
         AssignExpr, BinaryExpr, CallExpr, CastExpr, Expr, IdentExpr, IndexExpr, InitListExpr,
@@ -12,12 +12,12 @@ use crate::ast::{
     },
 };
 use crate::codegen::Instruction;
-use crate::lexer::Span;
+use angelscript_parser::lexer::Span;
 use crate::semantic::{
     Conversion, DataType, DataTypeExt, MethodSignature, OperatorBehavior,
     SemanticErrorKind, TypeDef,
 };
-use crate::types::{primitive_hashes, TypeHash};
+use angelscript_core::{primitives, TypeHash};
 
 use super::{ExprContext, FunctionCompiler};
 
@@ -48,20 +48,20 @@ impl<'ast> FunctionCompiler<'ast> {
     /// Literals are always rvalues (temporary values).
     pub(super) fn check_literal(&mut self, lit: &LiteralExpr) -> Option<ExprContext> {
         let type_id = match &lit.kind {
-            LiteralKind::Int(_) => primitive_hashes::INT32, // Default integer literals to int32 (matches 'int' type)
-            LiteralKind::Float(_) => primitive_hashes::FLOAT,
-            LiteralKind::Double(_) => primitive_hashes::DOUBLE,
-            LiteralKind::Bool(_) => primitive_hashes::BOOL,
+            LiteralKind::Int(_) => primitives::INT32, // Default integer literals to int32 (matches 'int' type)
+            LiteralKind::Float(_) => primitives::FLOAT,
+            LiteralKind::Double(_) => primitives::DOUBLE,
+            LiteralKind::Bool(_) => primitives::BOOL,
             LiteralKind::String(s) => {
                 let idx = self.bytecode.add_string_constant(s.clone());
                 self.bytecode.emit(Instruction::PushString(idx));
                 // String type is an FFI type, look up by name
-                let string_type = self.context.lookup_type("string").unwrap_or(primitive_hashes::VOID);
+                let string_type = self.context.lookup_type("string").unwrap_or(primitives::VOID);
                 return Some(ExprContext::rvalue(DataType::simple(string_type)));
             }
             LiteralKind::Null => {
                 self.bytecode.emit(Instruction::PushNull);
-                return Some(ExprContext::rvalue(DataType::simple(primitive_hashes::NULL)));
+                return Some(ExprContext::rvalue(DataType::simple(primitives::NULL)));
             }
         };
 
@@ -462,7 +462,7 @@ impl<'ast> FunctionCompiler<'ast> {
                     if binary.op == BinaryOp::NotEqual {
                         self.bytecode.emit(Instruction::Not);
                     }
-                    return Some(ExprContext::rvalue(DataType::simple(primitive_hashes::BOOL)));
+                    return Some(ExprContext::rvalue(DataType::simple(primitives::BOOL)));
                 }
                 // Fall back to primitive comparison
                 self.check_binary_op(binary.op, &left_ctx.data_type, &right_ctx.data_type, binary.span)?
@@ -484,7 +484,7 @@ impl<'ast> FunctionCompiler<'ast> {
                         _ => unreachable!(),
                     };
                     self.bytecode.emit(cmp_instr);
-                    return Some(ExprContext::rvalue(DataType::simple(primitive_hashes::BOOL)));
+                    return Some(ExprContext::rvalue(DataType::simple(primitives::BOOL)));
                 }
                 // Fall back to primitive comparison
                 self.check_binary_op(binary.op, &left_ctx.data_type, &right_ctx.data_type, binary.span)?
@@ -498,8 +498,8 @@ impl<'ast> FunctionCompiler<'ast> {
             // Handle identity comparison operators
             BinaryOp::Is | BinaryOp::NotIs => {
                 // Both operands must be handles or null
-                let left_is_handle = left_ctx.data_type.is_handle || left_ctx.data_type.type_hash == primitive_hashes::NULL;
-                let right_is_handle = right_ctx.data_type.is_handle || right_ctx.data_type.type_hash == primitive_hashes::NULL;
+                let left_is_handle = left_ctx.data_type.is_handle || left_ctx.data_type.type_hash == primitives::NULL;
+                let right_is_handle = right_ctx.data_type.is_handle || right_ctx.data_type.type_hash == primitives::NULL;
 
                 if !left_is_handle {
                     self.error(
@@ -525,7 +525,7 @@ impl<'ast> FunctionCompiler<'ast> {
                     Instruction::NotEqual
                 };
                 self.bytecode.emit(instr);
-                return Some(ExprContext::rvalue(DataType::simple(primitive_hashes::BOOL)));
+                return Some(ExprContext::rvalue(DataType::simple(primitives::BOOL)));
             }
         };
 
@@ -572,7 +572,7 @@ impl<'ast> FunctionCompiler<'ast> {
         span: Span,
     ) -> Option<DataType> {
         // Void type cannot be used in binary operations
-        if left.type_hash == primitive_hashes::VOID {
+        if left.type_hash == primitives::VOID {
             self.error(
                 SemanticErrorKind::VoidExpression,
                 span,
@@ -580,7 +580,7 @@ impl<'ast> FunctionCompiler<'ast> {
             );
             return None;
         }
-        if right.type_hash == primitive_hashes::VOID {
+        if right.type_hash == primitives::VOID {
             self.error(
                 SemanticErrorKind::VoidExpression,
                 span,
@@ -627,8 +627,8 @@ impl<'ast> FunctionCompiler<'ast> {
             | BinaryOp::ShiftRightUnsigned => {
                 if self.is_bitwise_compatible(left) && self.is_bitwise_compatible(right) {
                     // If either operand is bool, result is int32; otherwise promote
-                    if left.type_hash == primitive_hashes::BOOL || right.type_hash == primitive_hashes::BOOL {
-                        Some(DataType::simple(primitive_hashes::INT32))
+                    if left.type_hash == primitives::BOOL || right.type_hash == primitives::BOOL {
+                        Some(DataType::simple(primitives::INT32))
                     } else {
                         Some(self.promote_numeric(left, right))
                     }
@@ -649,8 +649,8 @@ impl<'ast> FunctionCompiler<'ast> {
 
             // Logical operators: require bool types
             BinaryOp::LogicalAnd | BinaryOp::LogicalOr | BinaryOp::LogicalXor => {
-                if left.type_hash == primitive_hashes::BOOL && right.type_hash == primitive_hashes::BOOL {
-                    Some(DataType::simple(primitive_hashes::BOOL))
+                if left.type_hash == primitives::BOOL && right.type_hash == primitives::BOOL {
+                    Some(DataType::simple(primitives::BOOL))
                 } else {
                     self.error(
                         SemanticErrorKind::InvalidOperation,
@@ -674,11 +674,11 @@ impl<'ast> FunctionCompiler<'ast> {
             | BinaryOp::Greater
             | BinaryOp::GreaterEqual => {
                 // Allow comparison of compatible types
-                Some(DataType::simple(primitive_hashes::BOOL))
+                Some(DataType::simple(primitives::BOOL))
             }
 
             // Type comparison
-            BinaryOp::Is | BinaryOp::NotIs => Some(DataType::simple(primitive_hashes::BOOL)),
+            BinaryOp::Is | BinaryOp::NotIs => Some(DataType::simple(primitives::BOOL)),
         }
     }
 
@@ -751,7 +751,7 @@ impl<'ast> FunctionCompiler<'ast> {
         let operand_ctx = self.check_expr(unary.operand)?;
 
         // Void type cannot be used in unary operations
-        if operand_ctx.data_type.type_hash == primitive_hashes::VOID {
+        if operand_ctx.data_type.type_hash == primitives::VOID {
             self.error(
                 SemanticErrorKind::VoidExpression,
                 unary.span,
@@ -789,7 +789,7 @@ impl<'ast> FunctionCompiler<'ast> {
 
             UnaryOp::LogicalNot => {
                 // No operator overloading for logical NOT in AngelScript
-                if operand_ctx.data_type.type_hash == primitive_hashes::BOOL {
+                if operand_ctx.data_type.type_hash == primitives::BOOL {
                     self.bytecode.emit(Instruction::Not);
                     Some(ExprContext::rvalue(operand_ctx.data_type))
                 } else {
@@ -1043,7 +1043,7 @@ impl<'ast> FunctionCompiler<'ast> {
                 self.expected_funcdef_type = None;
 
                 // Cannot assign a void expression
-                if value_ctx.data_type.type_hash == primitive_hashes::VOID {
+                if value_ctx.data_type.type_hash == primitives::VOID {
                     self.error(
                         SemanticErrorKind::VoidExpression,
                         assign.value.span(),
@@ -1142,7 +1142,7 @@ impl<'ast> FunctionCompiler<'ast> {
                 let value_ctx = self.check_expr(assign.value)?;
 
                 // Cannot use void expression in compound assignment
-                if value_ctx.data_type.type_hash == primitive_hashes::VOID {
+                if value_ctx.data_type.type_hash == primitives::VOID {
                     self.error(
                         SemanticErrorKind::VoidExpression,
                         assign.value.span(),
@@ -1246,7 +1246,7 @@ impl<'ast> FunctionCompiler<'ast> {
     pub(super) fn check_ternary(&mut self, ternary: &TernaryExpr<'ast>) -> Option<ExprContext> {
         // Check condition
         let cond_ctx = self.check_expr(ternary.condition)?;
-        if cond_ctx.data_type.type_hash != primitive_hashes::BOOL {
+        if cond_ctx.data_type.type_hash != primitives::BOOL {
             self.error(
                 SemanticErrorKind::TypeMismatch,
                 ternary.condition.span(),
@@ -1262,7 +1262,7 @@ impl<'ast> FunctionCompiler<'ast> {
         let else_ctx = self.check_expr(ternary.else_expr)?;
 
         // Void type cannot be used in ternary branches
-        if then_ctx.data_type.type_hash == primitive_hashes::VOID {
+        if then_ctx.data_type.type_hash == primitives::VOID {
             self.error(
                 SemanticErrorKind::VoidExpression,
                 ternary.then_expr.span(),
@@ -1270,7 +1270,7 @@ impl<'ast> FunctionCompiler<'ast> {
             );
             return None;
         }
-        if else_ctx.data_type.type_hash == primitive_hashes::VOID {
+        if else_ctx.data_type.type_hash == primitives::VOID {
             self.error(
                 SemanticErrorKind::VoidExpression,
                 ternary.else_expr.span(),
@@ -1395,7 +1395,7 @@ impl<'ast> FunctionCompiler<'ast> {
                     self.bytecode.emit(Instruction::Call(matching_ctor.0));
 
                     // Constructors return void
-                    return Some(ExprContext::rvalue(DataType::simple(primitive_hashes::VOID)));
+                    return Some(ExprContext::rvalue(DataType::simple(primitives::VOID)));
                 }
 
                 // Check for base class method call pattern: BaseClass::method(args)
@@ -2565,7 +2565,7 @@ impl<'ast> FunctionCompiler<'ast> {
                         self.type_name(&object_ctx.data_type)
                     ),
                 );
-                return Some(ExprContext::rvalue(DataType::simple(primitive_hashes::VOID))); // Return Some to prevent fallback
+                return Some(ExprContext::rvalue(DataType::simple(primitives::VOID))); // Return Some to prevent fallback
             }
         };
 
@@ -2577,7 +2577,7 @@ impl<'ast> FunctionCompiler<'ast> {
                 &self.type_name(&object_ctx.data_type),
                 span,
             );
-            return Some(ExprContext::rvalue(DataType::simple(primitive_hashes::VOID))); // Return Some to prevent fallback
+            return Some(ExprContext::rvalue(DataType::simple(primitives::VOID))); // Return Some to prevent fallback
         }
 
         // Get setter function to validate value type
@@ -2594,7 +2594,7 @@ impl<'ast> FunctionCompiler<'ast> {
                     setter_func.param_count()
                 ),
             );
-            return Some(ExprContext::rvalue(DataType::simple(primitive_hashes::VOID)));
+            return Some(ExprContext::rvalue(DataType::simple(primitives::VOID)));
         }
 
         let value_param_type = setter_func.param_type(0);
@@ -2603,13 +2603,13 @@ impl<'ast> FunctionCompiler<'ast> {
         let value_ctx = self.check_expr(value)?;
 
         // Cannot assign a void expression
-        if value_ctx.data_type.type_hash == primitive_hashes::VOID {
+        if value_ctx.data_type.type_hash == primitives::VOID {
             self.error(
                 SemanticErrorKind::VoidExpression,
                 value.span(),
                 "cannot use void expression as property value",
             );
-            return Some(ExprContext::rvalue(DataType::simple(primitive_hashes::VOID)));
+            return Some(ExprContext::rvalue(DataType::simple(primitives::VOID)));
         }
 
         // Check type conversion for value
@@ -2625,7 +2625,7 @@ impl<'ast> FunctionCompiler<'ast> {
                         property_name
                     ),
                 );
-                return Some(ExprContext::rvalue(DataType::simple(primitive_hashes::VOID)));
+                return Some(ExprContext::rvalue(DataType::simple(primitives::VOID)));
             }
             self.emit_conversion(&conversion);
         } else {
@@ -2639,7 +2639,7 @@ impl<'ast> FunctionCompiler<'ast> {
                     self.type_name(&value_ctx.data_type)
                 ),
             );
-            return Some(ExprContext::rvalue(DataType::simple(primitive_hashes::VOID)));
+            return Some(ExprContext::rvalue(DataType::simple(primitives::VOID)));
         }
 
         // Call setter method: object.set_prop(value)
@@ -3187,11 +3187,11 @@ impl<'ast> FunctionCompiler<'ast> {
 
                 // Apply ref modifier from parameter declaration
                 explicit_type.ref_modifier = match param_ty.ref_kind {
-                    crate::ast::RefKind::None => crate::semantic::RefModifier::None,
-                    crate::ast::RefKind::Ref => crate::semantic::RefModifier::InOut, // Plain & defaults to inout
-                    crate::ast::RefKind::RefIn => crate::semantic::RefModifier::In,
-                    crate::ast::RefKind::RefOut => crate::semantic::RefModifier::Out,
-                    crate::ast::RefKind::RefInOut => crate::semantic::RefModifier::InOut,
+                    angelscript_parser::ast::RefKind::None => crate::semantic::RefModifier::None,
+                    angelscript_parser::ast::RefKind::Ref => crate::semantic::RefModifier::InOut, // Plain & defaults to inout
+                    angelscript_parser::ast::RefKind::RefIn => crate::semantic::RefModifier::In,
+                    angelscript_parser::ast::RefKind::RefOut => crate::semantic::RefModifier::Out,
+                    angelscript_parser::ast::RefKind::RefInOut => crate::semantic::RefModifier::InOut,
                 };
 
                 // Validate base type matches
@@ -3300,7 +3300,7 @@ impl<'ast> FunctionCompiler<'ast> {
     /// - `StringBuffer sb = {"hello", "world"}` - target is StringBuffer, uses list behavior
     /// - `MyVec3 v = {1.0, 2.0, 3.0}` - target is MyVec3 (value type), uses list_construct
     pub(super) fn check_init_list(&mut self, init_list: &InitListExpr<'ast>) -> Option<ExprContext> {
-        use crate::ast::InitElement;
+        use angelscript_parser::ast::InitElement;
 
         // Init lists require an explicit target type from context
         let target_type_id = match self.expected_init_list_target {

@@ -1,6 +1,8 @@
 [workspace]
 members = [
     "crates/angelscript-core",
+    "crates/angelscript-parser",
+    "crates/angelscript-ffi",
     "crates/angelscript-compiler",
     ".",
 ]
@@ -26,6 +28,8 @@ edition = "2024"
 [dependencies]
 angelscript-core = { path = "crates/angelscript-core" }
 angelscript-compiler = { path = "crates/angelscript-compiler" }
+angelscript-parser = { path = "crates/angelscript-parser" }
+angelscript-ffi = { path = "crates/angelscript-ffi" }
 thiserror.workspace = true
 bitflags.workspace = true
 num_enum.workspace = true

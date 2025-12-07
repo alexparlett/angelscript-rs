@@ -3,7 +3,7 @@
 //! This module defines the instruction set for the AngelScript bytecode.
 //! The bytecode is a simple stack-based instruction set.
 
-use crate::types::TypeHash;
+use angelscript_core::TypeHash;
 
 /// A bytecode instruction.
 ///

@@ -14,7 +14,7 @@
 //!
 //! Types are identified by `TypeHash` - a deterministic 64-bit hash computed
 //! from the type's qualified name. Primitive type hashes are available in
-//! `crate::types::primitive_hashes`.
+//! `angelscript_core::primitive_hashes`.
 
 pub mod conversion;
 pub mod registry;

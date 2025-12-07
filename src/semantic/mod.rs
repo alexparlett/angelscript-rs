@@ -57,7 +57,7 @@ pub use types::{
 };
 
 // Re-export TypeHash from crate::types for backward compatibility
-pub use crate::types::TypeHash;
+pub use angelscript_core::TypeHash;
 
 // Re-export CompilationContext and FunctionRef
 pub use compilation_context::{CompilationContext, FunctionRef};

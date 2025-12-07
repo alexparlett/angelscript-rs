@@ -1,0 +1,12 @@
+[package]
+name = "angelscript-ffi"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+angelscript-core = { path = "../angelscript-core" }
+angelscript-parser = { path = "../angelscript-parser" }
+thiserror.workspace = true
+bitflags.workspace = true
+rustc-hash.workspace = true
+bumpalo.workspace = true

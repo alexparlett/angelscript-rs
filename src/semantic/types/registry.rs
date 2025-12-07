@@ -26,8 +26,8 @@
 use super::{
     DataType, FunctionTraits, OperatorBehavior, PropertyAccessors, TypeDef, Visibility,
 };
-use crate::types::TypeHash;
-use crate::ast::expr::Expr;
+use angelscript_core::TypeHash;
+use angelscript_parser::ast::expr::Expr;
 use rustc_hash::FxHashMap;
 
 /// A script function parameter with type and optional default value.
@@ -138,7 +138,7 @@ pub struct MixinDef<'ast> {
     pub required_interfaces: Vec<String>,
     /// Members of the mixin class (methods and fields)
     /// This is a slice into arena-allocated memory
-    pub members: &'ast [crate::ast::decl::ClassMember<'ast>],
+    pub members: &'ast [angelscript_parser::ast::decl::ClassMember<'ast>],
 }
 
 impl<'ast> MixinDef<'ast> {
@@ -227,7 +227,7 @@ impl<'ast> ScriptRegistry<'ast> {
     /// Register a type alias (typedef)
     ///
     /// This creates an alias name that points to an existing type.
-    /// For example, `typedef float real;` would call `register_type_alias("real", primitive_hashes::FLOAT)`.
+    /// For example, `typedef float real;` would call `register_type_alias("real", primitives::FLOAT)`.
     pub fn register_type_alias(&mut self, alias_name: &str, target_type: TypeHash) {
         self.type_by_name
             .insert(alias_name.to_string(), target_type);
@@ -321,7 +321,7 @@ impl<'ast> ScriptRegistry<'ast> {
     ) -> Result<TypeHash, crate::semantic::error::SemanticError> {
         Err(crate::semantic::error::SemanticError::new(
             crate::semantic::error::SemanticErrorKind::NotATemplate,
-            crate::lexer::Span::default(),
+            angelscript_parser::lexer::Span::default(),
             "instantiate_template() has moved to CompilationContext (Phase 6.4)".to_string(),
         ))
     }
@@ -1353,7 +1353,7 @@ mod tests {
     use super::*;
     use crate::semantic::types::data_type::RefModifier;
     use crate::semantic::types::type_def::Visibility;
-    use crate::types::{primitive_hashes, TypeHash};
+    use angelscript_core::{primitives, TypeHash};
 
     /// Test helper to create a ScriptParam from a DataType with an auto-generated name
     fn param(data_type: DataType) -> ScriptParam<'static> {
@@ -1389,7 +1389,7 @@ mod tests {
         let typedef = TypeDef::Class {
             name: "Player".to_string(),
             qualified_name: "Player".to_string(),
-            type_hash: crate::types::TypeHash::from_name("Player"),
+            type_hash: angelscript_core::TypeHash::from_name("Player"),
             fields: Vec::new(),
             methods: Vec::new(),
             base_class: None,
@@ -1401,7 +1401,7 @@ mod tests {
             template_params: Vec::new(),
             template: None,
             type_args: Vec::new(),
-        type_kind: crate::types::TypeKind::reference(),
+        type_kind: angelscript_core::TypeKind::reference(),
             };
 
         let type_id = registry.register_type(typedef, Some("Player"));
@@ -1416,7 +1416,7 @@ mod tests {
         let typedef = TypeDef::Class {
             name: "Player".to_string(),
             qualified_name: "Game::Player".to_string(),
-            type_hash: crate::types::TypeHash::from_name("Game::Player"),
+            type_hash: angelscript_core::TypeHash::from_name("Game::Player"),
             fields: Vec::new(),
             methods: Vec::new(),
             base_class: None,
@@ -1428,7 +1428,7 @@ mod tests {
             template_params: Vec::new(),
             template: None,
             type_args: Vec::new(),
-        type_kind: crate::types::TypeKind::reference(),
+        type_kind: angelscript_core::TypeKind::reference(),
             };
 
         let type_id = registry.register_type(typedef, Some("Game::Player"));
@@ -1442,7 +1442,7 @@ mod tests {
         let typedef = TypeDef::Interface {
             name: "IDrawable".to_string(),
             qualified_name: "IDrawable".to_string(),
-            type_hash: crate::types::TypeHash::from_name("IDrawable"),
+            type_hash: angelscript_core::TypeHash::from_name("IDrawable"),
             methods: Vec::new(),
         };
 
@@ -1458,7 +1458,7 @@ mod tests {
         let typedef = TypeDef::Enum {
             name: "Color".to_string(),
             qualified_name: "Color".to_string(),
-            type_hash: crate::types::TypeHash::from_name("Color"),
+            type_hash: angelscript_core::TypeHash::from_name("Color"),
             values: vec![
                 ("Red".to_string(), 0),
                 ("Green".to_string(), 1),
@@ -1478,9 +1478,9 @@ mod tests {
         let typedef = TypeDef::Funcdef {
             name: "Callback".to_string(),
             qualified_name: "Callback".to_string(),
-            type_hash: crate::types::TypeHash::from_name("Callback"),
-            params: vec![DataType::simple(primitive_hashes::INT32)],
-            return_type: DataType::simple(primitive_hashes::VOID),
+            type_hash: angelscript_core::TypeHash::from_name("Callback"),
+            params: vec![DataType::simple(primitives::INT32)],
+            return_type: DataType::simple(primitives::VOID),
         };
 
         let type_id = registry.register_type(typedef, Some("Callback"));
@@ -1495,7 +1495,7 @@ mod tests {
         let typedef = TypeDef::Class {
             name: "Player".to_string(),
             qualified_name: "Player".to_string(),
-            type_hash: crate::types::TypeHash::from_name("Player"),
+            type_hash: angelscript_core::TypeHash::from_name("Player"),
             fields: Vec::new(),
             methods: Vec::new(),
             base_class: None,
@@ -1507,7 +1507,7 @@ mod tests {
             template_params: Vec::new(),
             template: None,
             type_args: Vec::new(),
-        type_kind: crate::types::TypeKind::reference(),
+        type_kind: angelscript_core::TypeKind::reference(),
             };
 
         let type_id = registry.register_type(typedef, Some("Player"));
@@ -1516,7 +1516,7 @@ mod tests {
         if let TypeDef::Class { fields, .. } = registry.get_type_mut(type_id) {
             fields.push(super::super::type_def::FieldDef::new(
                 "health".to_string(),
-                DataType::simple(primitive_hashes::INT32),
+                DataType::simple(primitives::INT32),
                 Visibility::Public,
             ));
         }
@@ -1536,14 +1536,14 @@ mod tests {
 
         // Create two opIndex methods - one const, one non-const
         let class_id = TypeHash::from_name("TestClass");
-        let const_method_hash = TypeHash::from_method(class_id, "opIndex", &[primitive_hashes::INT32], true, true);
+        let const_method_hash = TypeHash::from_method(class_id, "opIndex", &[primitives::INT32], true, true);
         let const_method = FunctionDef {
             func_hash: const_method_hash,
             name: "opIndex".to_string(),
             namespace: Vec::new(),
-            params: vec![param(DataType::simple(primitive_hashes::INT32))],
+            params: vec![param(DataType::simple(primitives::INT32))],
             return_type: DataType {
-                type_hash: primitive_hashes::INT32,
+                type_hash: primitives::INT32,
                 is_const: true, // const return
                 is_handle: false,
                 is_handle_to_const: false,
@@ -1557,14 +1557,14 @@ mod tests {
         };
         registry.register_function(const_method);
 
-        let mutable_method_hash = TypeHash::from_method(class_id, "opIndex", &[primitive_hashes::INT32], false, false);
+        let mutable_method_hash = TypeHash::from_method(class_id, "opIndex", &[primitives::INT32], false, false);
         let mutable_method = FunctionDef {
             func_hash: mutable_method_hash,
             name: "opIndex".to_string(),
             namespace: Vec::new(),
-            params: vec![param(DataType::simple(primitive_hashes::INT32))],
+            params: vec![param(DataType::simple(primitives::INT32))],
             return_type: DataType {
-                type_hash: primitive_hashes::INT32,
+                type_hash: primitives::INT32,
                 is_const: false, // non-const return
                 is_handle: false,
                 is_handle_to_const: false,
@@ -1588,7 +1588,7 @@ mod tests {
         registry.types.insert(class_id, TypeDef::Class {
             name: "TestClass".to_string(),
             qualified_name: "TestClass".to_string(),
-            type_hash: crate::types::TypeHash::from_name("TestClass"),
+            type_hash: angelscript_core::TypeHash::from_name("TestClass"),
             fields: Vec::new(),
             methods: vec![const_method_hash, mutable_method_hash],
             base_class: None,
@@ -1600,7 +1600,7 @@ mod tests {
             template_params: Vec::new(),
             template: None,
             type_args: Vec::new(),
-            type_kind: crate::types::TypeKind::reference(),
+            type_kind: angelscript_core::TypeKind::reference(),
         });
         registry.type_by_name.insert("TestClass".to_string(), class_id);
 
@@ -1629,8 +1629,8 @@ mod tests {
             func_hash: test_func_hash(),
             name: "foo".to_string(),
             namespace: Vec::new(),
-            params: vec![param(DataType::simple(primitive_hashes::INT32))],
-            return_type: DataType::simple(primitive_hashes::VOID),
+            params: vec![param(DataType::simple(primitives::INT32))],
+            return_type: DataType::simple(primitives::VOID),
             object_type: None,
             traits: FunctionTraits::new(),
             is_native: false,
@@ -1649,8 +1649,8 @@ mod tests {
         let func = FunctionDef {
             name: "foo".to_string(),
             namespace: Vec::new(),
-            params: vec![param(DataType::simple(primitive_hashes::INT32))],
-            return_type: DataType::simple(primitive_hashes::VOID),
+            params: vec![param(DataType::simple(primitives::INT32))],
+            return_type: DataType::simple(primitives::VOID),
             object_type: None,
             traits: FunctionTraits::new(),
             is_native: false,
@@ -1682,8 +1682,8 @@ mod tests {
         let func1 = FunctionDef {
             name: "foo".to_string(),
             namespace: Vec::new(),
-            params: vec![param(DataType::simple(primitive_hashes::INT32))],
-            return_type: DataType::simple(primitive_hashes::VOID),
+            params: vec![param(DataType::simple(primitives::INT32))],
+            return_type: DataType::simple(primitives::VOID),
             object_type: None,
             traits: FunctionTraits::new(),
             is_native: false,
@@ -1697,8 +1697,8 @@ mod tests {
         let func2 = FunctionDef {
             name: "foo".to_string(),
             namespace: Vec::new(),
-            params: vec![param(DataType::simple(primitive_hashes::FLOAT))],
-            return_type: DataType::simple(primitive_hashes::VOID),
+            params: vec![param(DataType::simple(primitives::FLOAT))],
+            return_type: DataType::simple(primitives::VOID),
             object_type: None,
             traits: FunctionTraits::new(),
             is_native: false,
@@ -1721,7 +1721,7 @@ mod tests {
             name: "update".to_string(),
             namespace: vec!["Game".to_string(), "Player".to_string()],
             params: Vec::new(),
-            return_type: DataType::simple(primitive_hashes::VOID),
+            return_type: DataType::simple(primitives::VOID),
             object_type: None,
             traits: FunctionTraits::new(),
             is_native: false,
@@ -1740,7 +1740,7 @@ mod tests {
             name: "foo".to_string(),
             namespace: Vec::new(),
             params: Vec::new(),
-            return_type: DataType::simple(primitive_hashes::VOID),
+            return_type: DataType::simple(primitives::VOID),
             object_type: None,
             traits: FunctionTraits::new(),
             is_native: false,
@@ -1760,8 +1760,8 @@ mod tests {
         let func = FunctionDef {
             name: "foo".to_string(),
             namespace: Vec::new(),
-            params: vec![param(DataType::simple(primitive_hashes::INT32))],
-            return_type: DataType::simple(primitive_hashes::VOID),
+            params: vec![param(DataType::simple(primitives::INT32))],
+            return_type: DataType::simple(primitives::VOID),
             object_type: None,
             traits: FunctionTraits::new(),
             is_native: false,
@@ -1788,7 +1788,7 @@ mod tests {
             name: "update".to_string(),
             namespace: Vec::new(),
             params: Vec::new(),
-            return_type: DataType::simple(primitive_hashes::VOID),
+            return_type: DataType::simple(primitives::VOID),
             object_type: Some(player_type),
             traits: FunctionTraits::new(),
             is_native: false,
@@ -1804,7 +1804,7 @@ mod tests {
             name: "draw".to_string(),
             namespace: Vec::new(),
             params: Vec::new(),
-            return_type: DataType::simple(primitive_hashes::VOID),
+            return_type: DataType::simple(primitives::VOID),
             object_type: Some(player_type),
             traits: FunctionTraits::new(),
             is_native: false,
@@ -1820,7 +1820,7 @@ mod tests {
             name: "main".to_string(),
             namespace: Vec::new(),
             params: Vec::new(),
-            return_type: DataType::simple(primitive_hashes::VOID),
+            return_type: DataType::simple(primitives::VOID),
             object_type: None,
             traits: FunctionTraits::new(),
             is_native: false,
@@ -1856,7 +1856,7 @@ mod tests {
         let typedef = TypeDef::Class {
             name: "Player".to_string(),
             qualified_name: "Player".to_string(),
-            type_hash: crate::types::TypeHash::from_name("Player"),
+            type_hash: angelscript_core::TypeHash::from_name("Player"),
             fields: Vec::new(),
             methods: Vec::new(),
             base_class: None,
@@ -1868,7 +1868,7 @@ mod tests {
             template_params: Vec::new(),
             template: None,
             type_args: Vec::new(),
-        type_kind: crate::types::TypeKind::reference(),
+        type_kind: angelscript_core::TypeKind::reference(),
             };
 
         let type_id = registry.register_type(typedef, Some("Player"));
@@ -1889,7 +1889,7 @@ mod tests {
         let typedef = TypeDef::Class {
             name: "Vector3".to_string(),
             qualified_name: "Vector3".to_string(),
-            type_hash: crate::types::TypeHash::from_name("Vector3"),
+            type_hash: angelscript_core::TypeHash::from_name("Vector3"),
             fields: Vec::new(),
             methods: Vec::new(),
             base_class: None,
@@ -1901,18 +1901,18 @@ mod tests {
             template_params: Vec::new(),
             template: None,
             type_args: Vec::new(),
-        type_kind: crate::types::TypeKind::reference(),
+        type_kind: angelscript_core::TypeKind::reference(),
             };
         let type_id = registry.register_type(typedef, Some("Vector3"));
 
         // Register a constructor: Vector3(int, int, int)
-        let int_type = DataType::simple(primitive_hashes::INT32);
+        let int_type = DataType::simple(primitives::INT32);
         let func_def = FunctionDef {
             func_hash: test_func_hash(),
             name: "Vector3".to_string(),
             namespace: Vec::new(),
             params: vec![param(int_type.clone()), param(int_type.clone()), param(int_type.clone())],
-            return_type: DataType::simple(primitive_hashes::VOID),
+            return_type: DataType::simple(primitives::VOID),
             object_type: Some(type_id),
             traits: FunctionTraits {
                 is_constructor: true,
@@ -1952,7 +1952,7 @@ mod tests {
         let typedef = TypeDef::Class {
             name: "Vector3".to_string(),
             qualified_name: "Vector3".to_string(),
-            type_hash: crate::types::TypeHash::from_name("Vector3"),
+            type_hash: angelscript_core::TypeHash::from_name("Vector3"),
             fields: Vec::new(),
             methods: Vec::new(),
             base_class: None,
@@ -1964,17 +1964,17 @@ mod tests {
             template_params: Vec::new(),
             template: None,
             type_args: Vec::new(),
-        type_kind: crate::types::TypeKind::reference(),
+        type_kind: angelscript_core::TypeKind::reference(),
             };
         let type_id = registry.register_type(typedef, Some("Vector3"));
 
         // Register constructor: Vector3(int, int, int)
-        let int_type = DataType::simple(primitive_hashes::INT32);
+        let int_type = DataType::simple(primitives::INT32);
         let func_def = FunctionDef {
             name: "Vector3".to_string(),
             namespace: Vec::new(),
             params: vec![param(int_type.clone()), param(int_type.clone()), param(int_type.clone())],
-            return_type: DataType::simple(primitive_hashes::VOID),
+            return_type: DataType::simple(primitives::VOID),
             object_type: Some(type_id),
             traits: FunctionTraits {
                 is_constructor: true,
@@ -1996,7 +1996,7 @@ mod tests {
         registry.register_function(func_def);
 
         // Try to find constructor with different args (float, float, float)
-        let float_type = DataType::simple(primitive_hashes::FLOAT);
+        let float_type = DataType::simple(primitives::FLOAT);
         let found = registry.find_constructor(
             type_id,
             &[float_type.clone(), float_type.clone(), float_type.clone()],
@@ -2013,8 +2013,8 @@ mod tests {
         let registry = ScriptRegistry::new();
 
         // Try to find constructor for a type that was never registered
-        let nonexistent_type = crate::types::TypeHash::from_name("NonExistent");
-        let int_type = DataType::simple(primitive_hashes::INT32);
+        let nonexistent_type = angelscript_core::TypeHash::from_name("NonExistent");
+        let int_type = DataType::simple(primitives::INT32);
 
         let found = registry.find_constructor(nonexistent_type, &[int_type]);
 
@@ -2030,7 +2030,7 @@ mod tests {
         let typedef = TypeDef::Class {
             name: "Vector3".to_string(),
             qualified_name: "Vector3".to_string(),
-            type_hash: crate::types::TypeHash::from_name("Vector3"),
+            type_hash: angelscript_core::TypeHash::from_name("Vector3"),
             fields: Vec::new(),
             methods: Vec::new(),
             base_class: None,
@@ -2042,17 +2042,17 @@ mod tests {
             template_params: Vec::new(),
             template: None,
             type_args: Vec::new(),
-        type_kind: crate::types::TypeKind::reference(),
+        type_kind: angelscript_core::TypeKind::reference(),
             };
         let type_id = registry.register_type(typedef, Some("Vector3"));
 
         // Register explicit constructor: Vector3(int) explicit
-        let int_type = DataType::simple(primitive_hashes::INT32);
+        let int_type = DataType::simple(primitives::INT32);
         let func_def = FunctionDef {
             name: "Vector3".to_string(),
             namespace: Vec::new(),
             params: vec![param(int_type.clone())],
-            return_type: DataType::simple(primitive_hashes::VOID),
+            return_type: DataType::simple(primitives::VOID),
             object_type: Some(type_id),
             traits: FunctionTraits {
                 is_constructor: true,
@@ -2085,7 +2085,7 @@ mod tests {
         let typedef = TypeDef::Class {
             name: "Vector3".to_string(),
             qualified_name: "Vector3".to_string(),
-            type_hash: crate::types::TypeHash::from_name("Vector3"),
+            type_hash: angelscript_core::TypeHash::from_name("Vector3"),
             fields: Vec::new(),
             methods: Vec::new(),
             base_class: None,
@@ -2097,18 +2097,18 @@ mod tests {
             template_params: Vec::new(),
             template: None,
             type_args: Vec::new(),
-        type_kind: crate::types::TypeKind::reference(),
+        type_kind: angelscript_core::TypeKind::reference(),
             };
         let type_id = registry.register_type(typedef, Some("Vector3"));
 
-        let int_type = DataType::simple(primitive_hashes::INT32);
+        let int_type = DataType::simple(primitives::INT32);
 
         // Register default constructor
         let func_def1 = FunctionDef {
             name: "Vector3".to_string(),
             namespace: Vec::new(),
             params: Vec::new(),
-            return_type: DataType::simple(primitive_hashes::VOID),
+            return_type: DataType::simple(primitives::VOID),
             object_type: Some(type_id),
             traits: FunctionTraits {
                 is_constructor: true,
@@ -2132,7 +2132,7 @@ mod tests {
             name: "Vector3".to_string(),
             namespace: Vec::new(),
             params: vec![param(int_type.clone())],
-            return_type: DataType::simple(primitive_hashes::VOID),
+            return_type: DataType::simple(primitives::VOID),
             object_type: Some(type_id),
             traits: FunctionTraits {
                 is_constructor: true,
@@ -2178,7 +2178,7 @@ mod tests {
         let typedef = TypeDef::Class {
             name: "Player".to_string(),
             qualified_name: "Player".to_string(),
-            type_hash: crate::types::TypeHash::from_name("Player"),
+            type_hash: angelscript_core::TypeHash::from_name("Player"),
             base_class: None,
             interfaces: Vec::new(),
             fields: Vec::new(),
@@ -2190,7 +2190,7 @@ mod tests {
             template_params: Vec::new(),
             template: None,
             type_args: Vec::new(),
-        type_kind: crate::types::TypeKind::reference(),
+        type_kind: angelscript_core::TypeKind::reference(),
             };
         let type_id = registry.register_type(typedef, Some("Player"));
 
@@ -2200,7 +2200,7 @@ mod tests {
             name: "Player".to_string(),
             namespace: Vec::new(),
             params: vec![param(copy_ctor_param)],
-            return_type: DataType::simple(primitive_hashes::VOID),
+            return_type: DataType::simple(primitives::VOID),
             object_type: Some(type_id),
             traits: FunctionTraits {
                 is_constructor: true,
@@ -2240,7 +2240,7 @@ mod tests {
         let typedef = TypeDef::Class {
             name: "Player".to_string(),
             qualified_name: "Player".to_string(),
-            type_hash: crate::types::TypeHash::from_name("Player"),
+            type_hash: angelscript_core::TypeHash::from_name("Player"),
             base_class: None,
             interfaces: Vec::new(),
             fields: Vec::new(),
@@ -2252,7 +2252,7 @@ mod tests {
             template_params: Vec::new(),
             template: None,
             type_args: Vec::new(),
-        type_kind: crate::types::TypeKind::reference(),
+        type_kind: angelscript_core::TypeKind::reference(),
             };
         let type_id = registry.register_type(typedef, Some("Player"));
 
@@ -2262,7 +2262,7 @@ mod tests {
             name: "Player".to_string(),
             namespace: Vec::new(),
             params: vec![param(copy_ctor_param)],
-            return_type: DataType::simple(primitive_hashes::VOID),
+            return_type: DataType::simple(primitives::VOID),
             object_type: Some(type_id),
             traits: FunctionTraits {
                 is_constructor: true,
@@ -2302,7 +2302,7 @@ mod tests {
         let typedef = TypeDef::Class {
             name: "Player".to_string(),
             qualified_name: "Player".to_string(),
-            type_hash: crate::types::TypeHash::from_name("Player"),
+            type_hash: angelscript_core::TypeHash::from_name("Player"),
             base_class: None,
             interfaces: Vec::new(),
             fields: Vec::new(),
@@ -2314,18 +2314,18 @@ mod tests {
             template_params: Vec::new(),
             template: None,
             type_args: Vec::new(),
-        type_kind: crate::types::TypeKind::reference(),
+        type_kind: angelscript_core::TypeKind::reference(),
             };
         let type_id = registry.register_type(typedef, Some("Player"));
 
         // Create constructor with two parameters (not a copy constructor)
         let param1 = DataType::with_ref_in(type_id);
-        let param2 = DataType::simple(primitive_hashes::INT32);
+        let param2 = DataType::simple(primitives::INT32);
         let ctor = FunctionDef {
             name: "Player".to_string(),
             namespace: Vec::new(),
             params: vec![param(param1), param(param2)],
-            return_type: DataType::simple(primitive_hashes::VOID),
+            return_type: DataType::simple(primitives::VOID),
             object_type: Some(type_id),
             traits: FunctionTraits {
                 is_constructor: true,
@@ -2360,7 +2360,7 @@ mod tests {
         let typedef = TypeDef::Class {
             name: "Player".to_string(),
             qualified_name: "Player".to_string(),
-            type_hash: crate::types::TypeHash::from_name("Player"),
+            type_hash: angelscript_core::TypeHash::from_name("Player"),
             base_class: None,
             interfaces: Vec::new(),
             fields: Vec::new(),
@@ -2372,7 +2372,7 @@ mod tests {
             template_params: Vec::new(),
             template: None,
             type_args: Vec::new(),
-        type_kind: crate::types::TypeKind::reference(),
+        type_kind: angelscript_core::TypeKind::reference(),
             };
         let type_id = registry.register_type(typedef, Some("Player"));
 
@@ -2382,7 +2382,7 @@ mod tests {
             name: "Player".to_string(),
             namespace: Vec::new(),
             params: vec![param(param_type)],
-            return_type: DataType::simple(primitive_hashes::VOID),
+            return_type: DataType::simple(primitives::VOID),
             object_type: Some(type_id),
             traits: FunctionTraits {
                 is_constructor: true,
@@ -2417,7 +2417,7 @@ mod tests {
         let typedef = TypeDef::Class {
             name: "Player".to_string(),
             qualified_name: "Player".to_string(),
-            type_hash: crate::types::TypeHash::from_name("Player"),
+            type_hash: angelscript_core::TypeHash::from_name("Player"),
             base_class: None,
             interfaces: Vec::new(),
             fields: Vec::new(),
@@ -2429,17 +2429,17 @@ mod tests {
             template_params: Vec::new(),
             template: None,
             type_args: Vec::new(),
-        type_kind: crate::types::TypeKind::reference(),
+        type_kind: angelscript_core::TypeKind::reference(),
             };
         let type_id = registry.register_type(typedef, Some("Player"));
 
         // Create constructor with different type parameter (not same class)
-        let param_type = DataType::with_ref_in(primitive_hashes::INT32);
+        let param_type = DataType::with_ref_in(primitives::INT32);
         let ctor = FunctionDef {
             name: "Player".to_string(),
             namespace: Vec::new(),
             params: vec![param(param_type)],
-            return_type: DataType::simple(primitive_hashes::VOID),
+            return_type: DataType::simple(primitives::VOID),
             object_type: Some(type_id),
             traits: FunctionTraits {
                 is_constructor: true,
@@ -2474,7 +2474,7 @@ mod tests {
         let typedef = TypeDef::Class {
             name: "Player".to_string(),
             qualified_name: "Player".to_string(),
-            type_hash: crate::types::TypeHash::from_name("Player"),
+            type_hash: angelscript_core::TypeHash::from_name("Player"),
             base_class: None,
             interfaces: Vec::new(),
             fields: Vec::new(),
@@ -2486,7 +2486,7 @@ mod tests {
             template_params: Vec::new(),
             template: None,
             type_args: Vec::new(),
-        type_kind: crate::types::TypeKind::reference(),
+        type_kind: angelscript_core::TypeKind::reference(),
             };
         let type_id = registry.register_type(typedef, Some("Player"));
 
@@ -2503,7 +2503,7 @@ mod tests {
         let base_typedef = TypeDef::Class {
             name: "Base".to_string(),
             qualified_name: "Base".to_string(),
-            type_hash: crate::types::TypeHash::from_name("Base"),
+            type_hash: angelscript_core::TypeHash::from_name("Base"),
             base_class: None,
             interfaces: Vec::new(),
             fields: Vec::new(),
@@ -2515,7 +2515,7 @@ mod tests {
             template_params: Vec::new(),
             template: None,
             type_args: Vec::new(),
-        type_kind: crate::types::TypeKind::reference(),
+        type_kind: angelscript_core::TypeKind::reference(),
             };
         let base_id = registry.register_type(base_typedef, Some("Base"));
 
@@ -2523,7 +2523,7 @@ mod tests {
         let derived_typedef = TypeDef::Class {
             name: "Derived".to_string(),
             qualified_name: "Derived".to_string(),
-            type_hash: crate::types::TypeHash::from_name("Derived"),
+            type_hash: angelscript_core::TypeHash::from_name("Derived"),
             base_class: Some(base_id),
             interfaces: Vec::new(),
             fields: Vec::new(),
@@ -2535,7 +2535,7 @@ mod tests {
             template_params: Vec::new(),
             template: None,
             type_args: Vec::new(),
-        type_kind: crate::types::TypeKind::reference(),
+        type_kind: angelscript_core::TypeKind::reference(),
             };
         let derived_id = registry.register_type(derived_typedef, Some("Derived"));
 
@@ -2562,7 +2562,7 @@ mod tests {
         let base_typedef = TypeDef::Class {
             name: "Base".to_string(),
             qualified_name: "Base".to_string(),
-            type_hash: crate::types::TypeHash::from_name("Base"),
+            type_hash: angelscript_core::TypeHash::from_name("Base"),
             base_class: None,
             interfaces: Vec::new(),
             fields: Vec::new(),
@@ -2574,7 +2574,7 @@ mod tests {
             template_params: Vec::new(),
             template: None,
             type_args: Vec::new(),
-        type_kind: crate::types::TypeKind::reference(),
+        type_kind: angelscript_core::TypeKind::reference(),
             };
         let base_id = registry.register_type(base_typedef, Some("Base"));
 
@@ -2588,7 +2588,7 @@ mod tests {
         let derived_typedef = TypeDef::Class {
             name: "Derived".to_string(),
             qualified_name: "Derived".to_string(),
-            type_hash: crate::types::TypeHash::from_name("Derived"),
+            type_hash: angelscript_core::TypeHash::from_name("Derived"),
             base_class: Some(base_id),
             interfaces: Vec::new(),
             fields: Vec::new(),
@@ -2600,7 +2600,7 @@ mod tests {
             template_params: Vec::new(),
             template: None,
             type_args: Vec::new(),
-        type_kind: crate::types::TypeKind::reference(),
+        type_kind: angelscript_core::TypeKind::reference(),
             };
         let derived_id = registry.register_type(derived_typedef, Some("Derived"));
 
@@ -2622,7 +2622,7 @@ mod tests {
             name: "foo".to_string(),
             namespace: vec!["Base".to_string()],
             params: Vec::new(),
-            return_type: DataType::simple(primitive_hashes::VOID),
+            return_type: DataType::simple(primitives::VOID),
             object_type: None, // Set later
             traits: FunctionTraits::new(),
             is_native: false,
@@ -2637,7 +2637,7 @@ mod tests {
         let base_typedef = TypeDef::Class {
             name: "Base".to_string(),
             qualified_name: "Base".to_string(),
-            type_hash: crate::types::TypeHash::from_name("Base"),
+            type_hash: angelscript_core::TypeHash::from_name("Base"),
             base_class: None,
             interfaces: Vec::new(),
             fields: Vec::new(),
@@ -2649,7 +2649,7 @@ mod tests {
             template_params: Vec::new(),
             template: None,
             type_args: Vec::new(),
-        type_kind: crate::types::TypeKind::reference(),
+        type_kind: angelscript_core::TypeKind::reference(),
             };
         let base_id = registry.register_type(base_typedef, Some("Base"));
 
@@ -2657,7 +2657,7 @@ mod tests {
         let derived_typedef = TypeDef::Class {
             name: "Derived".to_string(),
             qualified_name: "Derived".to_string(),
-            type_hash: crate::types::TypeHash::from_name("Derived"),
+            type_hash: angelscript_core::TypeHash::from_name("Derived"),
             base_class: Some(base_id),
             interfaces: Vec::new(),
             fields: Vec::new(),
@@ -2669,7 +2669,7 @@ mod tests {
             template_params: Vec::new(),
             template: None,
             type_args: Vec::new(),
-        type_kind: crate::types::TypeKind::reference(),
+        type_kind: angelscript_core::TypeKind::reference(),
             };
         let derived_id = registry.register_type(derived_typedef, Some("Derived"));
 
@@ -2687,7 +2687,7 @@ mod tests {
             name: "foo".to_string(),
             namespace: vec!["Base".to_string()],
             params: Vec::new(),
-            return_type: DataType::simple(primitive_hashes::VOID),
+            return_type: DataType::simple(primitives::VOID),
             object_type: None,
             traits: FunctionTraits::new(),
             is_native: false,
@@ -2702,7 +2702,7 @@ mod tests {
         let base_typedef = TypeDef::Class {
             name: "Base".to_string(),
             qualified_name: "Base".to_string(),
-            type_hash: crate::types::TypeHash::from_name("Base"),
+            type_hash: angelscript_core::TypeHash::from_name("Base"),
             base_class: None,
             interfaces: Vec::new(),
             fields: Vec::new(),
@@ -2714,7 +2714,7 @@ mod tests {
             template_params: Vec::new(),
             template: None,
             type_args: Vec::new(),
-        type_kind: crate::types::TypeKind::reference(),
+        type_kind: angelscript_core::TypeKind::reference(),
             };
         let base_id = registry.register_type(base_typedef, Some("Base"));
 
@@ -2723,7 +2723,7 @@ mod tests {
             name: "foo".to_string(),
             namespace: vec!["Derived".to_string()],
             params: Vec::new(),
-            return_type: DataType::simple(primitive_hashes::VOID),
+            return_type: DataType::simple(primitives::VOID),
             object_type: None,
             traits: FunctionTraits::new(),
             is_native: false,
@@ -2738,7 +2738,7 @@ mod tests {
         let derived_typedef = TypeDef::Class {
             name: "Derived".to_string(),
             qualified_name: "Derived".to_string(),
-            type_hash: crate::types::TypeHash::from_name("Derived"),
+            type_hash: angelscript_core::TypeHash::from_name("Derived"),
             base_class: Some(base_id),
             interfaces: Vec::new(),
             fields: Vec::new(),
@@ -2750,7 +2750,7 @@ mod tests {
             template_params: Vec::new(),
             template: None,
             type_args: Vec::new(),
-        type_kind: crate::types::TypeKind::reference(),
+        type_kind: angelscript_core::TypeKind::reference(),
             };
         let derived_id = registry.register_type(derived_typedef, Some("Derived"));
 
@@ -2772,7 +2772,7 @@ mod tests {
             name: "foo".to_string(),
             namespace: vec!["Base".to_string()],
             params: Vec::new(),
-            return_type: DataType::simple(primitive_hashes::VOID),
+            return_type: DataType::simple(primitives::VOID),
             object_type: None,
             traits: FunctionTraits::new(),
             is_native: false,
@@ -2787,7 +2787,7 @@ mod tests {
         let base_typedef = TypeDef::Class {
             name: "Base".to_string(),
             qualified_name: "Base".to_string(),
-            type_hash: crate::types::TypeHash::from_name("Base"),
+            type_hash: angelscript_core::TypeHash::from_name("Base"),
             base_class: None,
             interfaces: Vec::new(),
             fields: Vec::new(),
@@ -2799,7 +2799,7 @@ mod tests {
             template_params: Vec::new(),
             template: None,
             type_args: Vec::new(),
-        type_kind: crate::types::TypeKind::reference(),
+        type_kind: angelscript_core::TypeKind::reference(),
             };
         let base_id = registry.register_type(base_typedef, Some("Base"));
 
@@ -2807,7 +2807,7 @@ mod tests {
         let middle_typedef = TypeDef::Class {
             name: "Middle".to_string(),
             qualified_name: "Middle".to_string(),
-            type_hash: crate::types::TypeHash::from_name("Middle"),
+            type_hash: angelscript_core::TypeHash::from_name("Middle"),
             base_class: Some(base_id),
             interfaces: Vec::new(),
             fields: Vec::new(),
@@ -2819,7 +2819,7 @@ mod tests {
             template_params: Vec::new(),
             template: None,
             type_args: Vec::new(),
-        type_kind: crate::types::TypeKind::reference(),
+        type_kind: angelscript_core::TypeKind::reference(),
             };
         let middle_id = registry.register_type(middle_typedef, Some("Middle"));
 
@@ -2827,7 +2827,7 @@ mod tests {
         let most_derived_typedef = TypeDef::Class {
             name: "MostDerived".to_string(),
             qualified_name: "MostDerived".to_string(),
-            type_hash: crate::types::TypeHash::from_name("MostDerived"),
+            type_hash: angelscript_core::TypeHash::from_name("MostDerived"),
             base_class: Some(middle_id),
             interfaces: Vec::new(),
             fields: Vec::new(),
@@ -2839,7 +2839,7 @@ mod tests {
             template_params: Vec::new(),
             template: None,
             type_args: Vec::new(),
-        type_kind: crate::types::TypeKind::reference(),
+        type_kind: angelscript_core::TypeKind::reference(),
             };
         let most_derived_id = registry.register_type(most_derived_typedef, Some("MostDerived"));
 
@@ -2855,7 +2855,7 @@ mod tests {
         let typedef = TypeDef::Class {
             name: "MyClass".to_string(),
             qualified_name: "MyClass".to_string(),
-            type_hash: crate::types::TypeHash::from_name("MyClass"),
+            type_hash: angelscript_core::TypeHash::from_name("MyClass"),
             base_class: None,
             interfaces: Vec::new(),
             fields: Vec::new(),
@@ -2867,7 +2867,7 @@ mod tests {
             template_params: Vec::new(),
             template: None,
             type_args: Vec::new(),
-        type_kind: crate::types::TypeKind::reference(),
+        type_kind: angelscript_core::TypeKind::reference(),
             };
         let type_id = registry.register_type(typedef, Some("MyClass"));
 
@@ -2890,7 +2890,7 @@ mod tests {
         let base_typedef = TypeDef::Class {
             name: "Base".to_string(),
             qualified_name: "Base".to_string(),
-            type_hash: crate::types::TypeHash::from_name("Base"),
+            type_hash: angelscript_core::TypeHash::from_name("Base"),
             base_class: None,
             interfaces: Vec::new(),
             fields: Vec::new(),
@@ -2902,7 +2902,7 @@ mod tests {
             template_params: Vec::new(),
             template: None,
             type_args: Vec::new(),
-        type_kind: crate::types::TypeKind::reference(),
+        type_kind: angelscript_core::TypeKind::reference(),
             };
         let base_id = registry.register_type(base_typedef, Some("Base"));
 
@@ -2910,7 +2910,7 @@ mod tests {
         let derived_typedef = TypeDef::Class {
             name: "Derived".to_string(),
             qualified_name: "Derived".to_string(),
-            type_hash: crate::types::TypeHash::from_name("Derived"),
+            type_hash: angelscript_core::TypeHash::from_name("Derived"),
             base_class: Some(base_id),
             interfaces: Vec::new(),
             fields: Vec::new(),
@@ -2922,7 +2922,7 @@ mod tests {
             template_params: Vec::new(),
             template: None,
             type_args: Vec::new(),
-        type_kind: crate::types::TypeKind::reference(),
+        type_kind: angelscript_core::TypeKind::reference(),
             };
         let derived_id = registry.register_type(derived_typedef, Some("Derived"));
 

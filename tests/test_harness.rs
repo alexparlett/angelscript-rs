@@ -5,6 +5,10 @@
 //! validating parse results, and checking error conditions.
 
 use angelscript::*;
+use angelscript_parser::ast::{
+    Block, ClassDecl, ClassMember, EnumDecl, Expr, ForInit, FunctionDecl,
+    GlobalVarDecl, InterfaceDecl, Item, Parser, ParseError, Script, Stmt,
+};
 use bumpalo::Bump;
 use std::fs;
 use std::path::PathBuf;

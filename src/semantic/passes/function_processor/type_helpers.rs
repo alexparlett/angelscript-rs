@@ -3,15 +3,15 @@
 //! This module contains helper methods for type resolution, type checking,
 //! visibility access, and name building.
 
-use crate::ast::{
+use angelscript_parser::ast::{
     expr::Expr,
     types::{TypeBase, TypeExpr, TypeSuffix},
 };
-use crate::lexer::Span;
+use angelscript_parser::lexer::Span;
 use crate::semantic::{
     DataType, DataTypeExt, FieldDef, SemanticErrorKind, TypeDef, Visibility,
 };
-use crate::types::{primitive_hashes, TypeHash};
+use angelscript_core::{primitives, TypeHash};
 
 use super::{FunctionCompiler, SwitchCategory};
 
@@ -21,7 +21,7 @@ impl<'ast> FunctionCompiler<'ast> {
     }
 
     /// Build a scoped name from a Scope (without intermediate Vec allocation)
-    pub(super) fn build_scope_name(scope: &crate::ast::Scope<'ast>) -> String {
+    pub(super) fn build_scope_name(scope: &angelscript_parser::ast::Scope<'ast>) -> String {
         if scope.segments.is_empty() {
             return String::new();
         }
@@ -179,10 +179,10 @@ impl<'ast> FunctionCompiler<'ast> {
     pub(super) fn resolve_base_type(
         &mut self,
         base: &TypeBase<'ast>,
-        scope: Option<&crate::ast::Scope<'ast>>,
+        scope: Option<&angelscript_parser::ast::Scope<'ast>>,
         span: Span,
     ) -> Option<TypeHash> {
-        use crate::ast::types::TypeBase;
+        use angelscript_parser::ast::types::TypeBase;
 
         match base {
             TypeBase::Primitive(prim) => Some(self.primitive_to_type_id(*prim)),
@@ -296,26 +296,26 @@ impl<'ast> FunctionCompiler<'ast> {
 
     /// Map a primitive type to its TypeHash
     #[inline]
-    pub(super) fn primitive_to_type_id(&self, prim: crate::ast::types::PrimitiveType) -> TypeHash {
-        use crate::ast::types::PrimitiveType;
+    pub(super) fn primitive_to_type_id(&self, prim: angelscript_parser::ast::types::PrimitiveType) -> TypeHash {
+        use angelscript_parser::ast::types::PrimitiveType;
         match prim {
-            PrimitiveType::Void => primitive_hashes::VOID,
-            PrimitiveType::Bool => primitive_hashes::BOOL,
-            PrimitiveType::Int => primitive_hashes::INT32,
-            PrimitiveType::Int8 => primitive_hashes::INT8,
-            PrimitiveType::Int16 => primitive_hashes::INT16,
-            PrimitiveType::Int64 => primitive_hashes::INT64,
-            PrimitiveType::UInt => primitive_hashes::UINT32,
-            PrimitiveType::UInt8 => primitive_hashes::UINT8,
-            PrimitiveType::UInt16 => primitive_hashes::UINT16,
-            PrimitiveType::UInt64 => primitive_hashes::UINT64,
-            PrimitiveType::Float => primitive_hashes::FLOAT,
-            PrimitiveType::Double => primitive_hashes::DOUBLE,
+            PrimitiveType::Void => primitives::VOID,
+            PrimitiveType::Bool => primitives::BOOL,
+            PrimitiveType::Int => primitives::INT32,
+            PrimitiveType::Int8 => primitives::INT8,
+            PrimitiveType::Int16 => primitives::INT16,
+            PrimitiveType::Int64 => primitives::INT64,
+            PrimitiveType::UInt => primitives::UINT32,
+            PrimitiveType::UInt8 => primitives::UINT8,
+            PrimitiveType::UInt16 => primitives::UINT16,
+            PrimitiveType::UInt64 => primitives::UINT64,
+            PrimitiveType::Float => primitives::FLOAT,
+            PrimitiveType::Double => primitives::DOUBLE,
         }
     }
 
     /// Build a scoped name from a Scope and a name (no intermediate Vec allocation)
-    pub(super) fn build_scoped_name(&self, scope: &crate::ast::Scope<'ast>, name: &str) -> String {
+    pub(super) fn build_scoped_name(&self, scope: &angelscript_parser::ast::Scope<'ast>, name: &str) -> String {
         let scope_name = Self::build_scope_name(scope);
         let mut result = String::with_capacity(scope_name.len() + 2 + name.len());
         result.push_str(&scope_name);
@@ -341,9 +341,9 @@ impl<'ast> FunctionCompiler<'ast> {
     pub(super) fn is_numeric(&self, ty: &DataType) -> bool {
         if matches!(
             ty.type_hash,
-            primitive_hashes::INT8 | primitive_hashes::INT16 | primitive_hashes::INT32 | primitive_hashes::INT64 |
-            primitive_hashes::UINT8 | primitive_hashes::UINT16 | primitive_hashes::UINT32 | primitive_hashes::UINT64 |
-            primitive_hashes::FLOAT | primitive_hashes::DOUBLE
+            primitives::INT8 | primitives::INT16 | primitives::INT32 | primitives::INT64 |
+            primitives::UINT8 | primitives::UINT16 | primitives::UINT32 | primitives::UINT64 |
+            primitives::FLOAT | primitives::DOUBLE
         ) {
             return true;
         }
@@ -355,8 +355,8 @@ impl<'ast> FunctionCompiler<'ast> {
     pub(super) fn is_integer(&self, ty: &DataType) -> bool {
         if matches!(
             ty.type_hash,
-            primitive_hashes::INT8 | primitive_hashes::INT16 | primitive_hashes::INT32 | primitive_hashes::INT64 |
-            primitive_hashes::UINT8 | primitive_hashes::UINT16 | primitive_hashes::UINT32 | primitive_hashes::UINT64
+            primitives::INT8 | primitives::INT16 | primitives::INT32 | primitives::INT64 |
+            primitives::UINT8 | primitives::UINT16 | primitives::UINT32 | primitives::UINT64
         ) {
             return true;
         }
@@ -367,7 +367,7 @@ impl<'ast> FunctionCompiler<'ast> {
     /// Checks if a type can be used in bitwise operations (integers and bool).
     /// Bool is implicitly converted to 0 or 1 for bitwise ops.
     pub(super) fn is_bitwise_compatible(&self, ty: &DataType) -> bool {
-        self.is_integer(ty) || ty.type_hash == primitive_hashes::BOOL
+        self.is_integer(ty) || ty.type_hash == primitives::BOOL
     }
 
     /// Checks if a type is compatible with switch statements (integer or enum).
@@ -390,12 +390,12 @@ impl<'ast> FunctionCompiler<'ast> {
         }
 
         // Boolean
-        if ty.type_hash == primitive_hashes::BOOL {
+        if ty.type_hash == primitives::BOOL {
             return Some(SwitchCategory::Bool);
         }
 
         // Float/Double
-        if ty.type_hash == primitive_hashes::FLOAT || ty.type_hash == primitive_hashes::DOUBLE {
+        if ty.type_hash == primitives::FLOAT || ty.type_hash == primitives::DOUBLE {
             return Some(SwitchCategory::Float);
         }
 
@@ -428,14 +428,14 @@ impl<'ast> FunctionCompiler<'ast> {
     /// Promotes two numeric types to their common type.
     pub(super) fn promote_numeric(&self, left: &DataType, right: &DataType) -> DataType {
         // Simplified promotion rules
-        if left.type_hash == primitive_hashes::DOUBLE || right.type_hash == primitive_hashes::DOUBLE {
-            DataType::simple(primitive_hashes::DOUBLE)
-        } else if left.type_hash == primitive_hashes::FLOAT || right.type_hash == primitive_hashes::FLOAT {
-            DataType::simple(primitive_hashes::FLOAT)
-        } else if left.type_hash == primitive_hashes::INT64 || right.type_hash == primitive_hashes::INT64 {
-            DataType::simple(primitive_hashes::INT64)
+        if left.type_hash == primitives::DOUBLE || right.type_hash == primitives::DOUBLE {
+            DataType::simple(primitives::DOUBLE)
+        } else if left.type_hash == primitives::FLOAT || right.type_hash == primitives::FLOAT {
+            DataType::simple(primitives::FLOAT)
+        } else if left.type_hash == primitives::INT64 || right.type_hash == primitives::INT64 {
+            DataType::simple(primitives::INT64)
         } else {
-            DataType::simple(primitive_hashes::INT32)
+            DataType::simple(primitives::INT32)
         }
     }
 

@@ -3,7 +3,7 @@
 //! This module contains all `visit_*` methods for compiling statements
 //! and emitting bytecode.
 
-use crate::ast::{
+use angelscript_parser::ast::{
     expr::{Expr, LiteralKind},
     stmt::{
         Block, BreakStmt, ContinueStmt, DoWhileStmt, ExprStmt, ForInit, ForStmt, ForeachStmt,
@@ -16,7 +16,7 @@ use crate::semantic::{
     ConstEvaluator, ConstValue, DataTypeExt, OperatorBehavior,
     SemanticErrorKind, TypeDef,
 };
-use crate::types::{primitive_hashes, TypeHash};
+use angelscript_core::{primitives, TypeHash};
 use rustc_hash::FxHashSet;
 
 use super::{FunctionCompiler, SwitchCategory, SwitchCaseKey};
@@ -72,7 +72,7 @@ impl<'ast> FunctionCompiler<'ast> {
             match self.resolve_type_expr(&var_decl.ty) {
                 Some(ty) => {
                     // Void type cannot be used for variables
-                    if ty.type_hash == primitive_hashes::VOID {
+                    if ty.type_hash == primitives::VOID {
                         self.error(
                             SemanticErrorKind::VoidExpression,
                             var_decl.ty.span,
@@ -109,7 +109,7 @@ impl<'ast> FunctionCompiler<'ast> {
                 };
 
                 // Cannot infer void type
-                if init_ctx.data_type.type_hash == primitive_hashes::VOID {
+                if init_ctx.data_type.type_hash == primitives::VOID {
                     self.error(
                         SemanticErrorKind::VoidExpression,
                         var.span,
@@ -259,7 +259,7 @@ impl<'ast> FunctionCompiler<'ast> {
             self.expected_funcdef_type = None;
 
             // Cannot return a void expression
-            if value_ctx.data_type.type_hash == primitive_hashes::VOID {
+            if value_ctx.data_type.type_hash == primitives::VOID {
                 self.error(
                     SemanticErrorKind::VoidExpression,
                     ret.span,
@@ -299,7 +299,7 @@ impl<'ast> FunctionCompiler<'ast> {
             self.bytecode.emit(Instruction::Return);
         } else {
             // Void return
-            if self.return_type.type_hash != primitive_hashes::VOID {
+            if self.return_type.type_hash != primitives::VOID {
                 self.error(
                     SemanticErrorKind::TypeMismatch,
                     ret.span,
@@ -340,7 +340,7 @@ impl<'ast> FunctionCompiler<'ast> {
     pub(super) fn visit_if(&mut self, if_stmt: &'ast IfStmt<'ast>) {
         // Check condition
         if let Some(cond_ctx) = self.check_expr(if_stmt.condition)
-            && cond_ctx.data_type.type_hash != primitive_hashes::BOOL {
+            && cond_ctx.data_type.type_hash != primitives::BOOL {
                 self.error(
                     SemanticErrorKind::TypeMismatch,
                     if_stmt.condition.span(),
@@ -385,7 +385,7 @@ impl<'ast> FunctionCompiler<'ast> {
 
         // Check condition
         if let Some(cond_ctx) = self.check_expr(while_stmt.condition)
-            && cond_ctx.data_type.type_hash != primitive_hashes::BOOL {
+            && cond_ctx.data_type.type_hash != primitives::BOOL {
                 self.error(
                     SemanticErrorKind::TypeMismatch,
                     while_stmt.condition.span(),
@@ -423,7 +423,7 @@ impl<'ast> FunctionCompiler<'ast> {
 
         // Check condition
         if let Some(cond_ctx) = self.check_expr(do_while.condition)
-            && cond_ctx.data_type.type_hash != primitive_hashes::BOOL {
+            && cond_ctx.data_type.type_hash != primitives::BOOL {
                 self.error(
                     SemanticErrorKind::TypeMismatch,
                     do_while.condition.span(),
@@ -465,7 +465,7 @@ impl<'ast> FunctionCompiler<'ast> {
         // Check condition
         let jump_to_end = if let Some(condition) = for_stmt.condition {
             if let Some(cond_ctx) = self.check_expr(condition)
-                && cond_ctx.data_type.type_hash != primitive_hashes::BOOL {
+                && cond_ctx.data_type.type_hash != primitives::BOOL {
                     self.error(
                         SemanticErrorKind::TypeMismatch,
                         condition.span(),
@@ -573,7 +573,7 @@ impl<'ast> FunctionCompiler<'ast> {
         }
 
         let end_func = self.context.get_function(end_func_id);
-        if end_func.param_count() != 1 || end_func.return_type().type_hash != primitive_hashes::BOOL {
+        if end_func.param_count() != 1 || end_func.return_type().type_hash != primitives::BOOL {
             self.error(
                 SemanticErrorKind::InvalidOperation,
                 foreach.expr.span(),
@@ -957,17 +957,17 @@ impl<'ast> FunctionCompiler<'ast> {
                                 value_ctx.data_type.type_hash == switch_ctx.data_type.type_hash
                                     || (self.is_integer(&value_ctx.data_type) && self.is_integer(&switch_ctx.data_type))
                             }
-                            SwitchCategory::Bool => value_ctx.data_type.type_hash == primitive_hashes::BOOL,
+                            SwitchCategory::Bool => value_ctx.data_type.type_hash == primitives::BOOL,
                             SwitchCategory::Float => {
-                                value_ctx.data_type.type_hash == primitive_hashes::FLOAT
-                                    || value_ctx.data_type.type_hash == primitive_hashes::DOUBLE
+                                value_ctx.data_type.type_hash == primitives::FLOAT
+                                    || value_ctx.data_type.type_hash == primitives::DOUBLE
                                     || self.is_integer(&value_ctx.data_type)
                             }
                             SwitchCategory::String => {
                                 self.context.lookup_type("string") == Some(value_ctx.data_type.type_hash)
                             }
                             SwitchCategory::Handle => {
-                                value_ctx.data_type.type_hash == primitive_hashes::NULL
+                                value_ctx.data_type.type_hash == primitives::NULL
                                     || (value_ctx.data_type.is_handle
                                         && value_ctx.data_type.type_hash == switch_ctx.data_type.type_hash)
                             }
