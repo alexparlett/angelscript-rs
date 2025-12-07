@@ -59,20 +59,22 @@ See `/claude/tasks/28_unified_error_types.md` for full details.
 | 1 | Move Span to core | Moved `Span` from parser to angelscript-core | ✅ Complete |
 | 2 | Create core error types | Defined `AngelScriptError` and phase-specific errors in core | ✅ Complete |
 | 3 | Migrate parser errors | Parser now uses `LexError`, `ParseError`, `ParseErrorKind`, `ParseErrors` from core | ✅ Complete |
+| 4 | Consolidate registration errors | Merged `FfiRegistryError` + `ModuleError` → `RegistrationError` | ✅ Complete |
 
-### Task 28.3 Summary (Just Completed)
+### Task 28.4 Summary (Just Completed)
 
-**Migrated parser errors to use unified types from core:**
-- Updated lexer to use `LexError` enum variants from core (replaced `LexerError` struct)
-- Deleted `crates/angelscript-parser/src/lexer/error.rs`
-- Deleted `crates/angelscript-parser/src/ast/error.rs`
-- Re-exported `LexError`, `ParseError`, `ParseErrorKind`, `ParseErrors` from core
-- Added `display_with_source()` method to core's `ParseError`
-- All 588 parser tests pass
+**Consolidated registration errors:**
+- Removed `FfiRegistryError` from angelscript-ffi (2 variants)
+- Removed `ModuleError` from angelscript-module (5 variants)
+- Both replaced by `RegistrationError` from angelscript-core
+- Updated all builders (ClassBuilder, EnumBuilder, InterfaceBuilder)
+- Updated Context, Unit, and default modules
+- Re-exported `RegistrationError` from main crate's public API
+- All tests passing
 
 ### Next Task
 
-**Task 28.4: Consolidate registration errors** - Merge `FfiRegistryError` + `ModuleError` → `RegistrationError`
+**Task 28.5: Migrate compiler errors** - Update compiler errors to use core types
 
 ### Deferred
 

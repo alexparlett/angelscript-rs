@@ -21,8 +21,8 @@
 use std::sync::Arc;
 use thiserror::Error;
 
-use angelscript_ffi::{FfiRegistry, FfiRegistryBuilder, FfiRegistryError};
-use angelscript_module::{ModuleError, Module};
+use angelscript_ffi::{FfiRegistry, FfiRegistryBuilder, RegistrationError};
+use angelscript_module::Module;
 use angelscript_modules::default_modules;
 use crate::unit::Unit;
 
@@ -232,7 +232,7 @@ pub enum ContextError {
 
     /// Failed to build a default module
     #[error("failed to build module: {0}")]
-    ModuleBuildFailed(#[from] ModuleError),
+    ModuleBuildFailed(#[from] RegistrationError),
 
     /// Context is already sealed - cannot install modules
     #[error("context is already sealed - cannot install modules after seal() or create_unit()")]
@@ -244,7 +244,7 @@ pub enum ContextError {
 
     /// Failed to build FFI registry
     #[error("failed to build FFI registry: {0:?}")]
-    RegistryBuildFailed(Vec<FfiRegistryError>),
+    RegistryBuildFailed(Vec<RegistrationError>),
 }
 
 #[cfg(test)]

@@ -55,7 +55,7 @@ use crate::{NativeFn, TemplateInstanceInfo, TemplateValidation};
 use angelscript_core::TypeBehaviors;
 use angelscript_core::{
     FunctionDef, MethodSignature, OperatorBehavior, Param, PropertyAccessors, TypeDef,
-    PrimitiveKind, FunctionTraits, Visibility,
+    PrimitiveKind, FunctionTraits, Visibility, RegistrationError,
 };
 use angelscript_core::primitives;
 use angelscript_core::DataType;
@@ -924,7 +924,7 @@ impl FfiRegistryBuilder {
     /// # Errors
     ///
     /// Returns a vector of resolution errors if any types cannot be resolved.
-    pub fn build(mut self) -> Result<FfiRegistry, Vec<FfiRegistryError>> {
+    pub fn build(mut self) -> Result<FfiRegistry, Vec<RegistrationError>> {
         let mut errors = Vec::new();
         let mut resolved_functions = FxHashMap::default();
         let mut function_names: FxHashMap<String, Vec<TypeHash>> = FxHashMap::default();
@@ -1045,7 +1045,7 @@ impl FfiRegistryBuilder {
         _type_names: &FxHashMap<String, TypeHash>,
         interface_def: &crate::types::FfiInterfaceDef,
         qualified_name: &str,
-    ) -> Result<TypeDef, FfiRegistryError> {
+    ) -> Result<TypeDef, RegistrationError> {
         let methods: Vec<MethodSignature> = interface_def
             .methods()
             .iter()
@@ -1074,7 +1074,7 @@ impl FfiRegistryBuilder {
         _type_names: &FxHashMap<String, TypeHash>,
         funcdef_def: &crate::types::FfiFuncdefDef,
         qualified_name: &str,
-    ) -> Result<TypeDef, FfiRegistryError> {
+    ) -> Result<TypeDef, RegistrationError> {
         Ok(TypeDef::Funcdef {
             name: funcdef_def.name.clone(),
             qualified_name: qualified_name.to_string(),
@@ -1083,22 +1083,6 @@ impl FfiRegistryBuilder {
             return_type: funcdef_def.return_type.clone(),
         })
     }
-}
-
-// ============================================================================
-// Errors
-// ============================================================================
-
-/// Errors that can occur when building an FfiRegistry.
-#[derive(Debug, Clone, PartialEq, thiserror::Error)]
-pub enum FfiRegistryError {
-    /// A referenced type was not found.
-    #[error("type not found: {0}")]
-    TypeNotFound(String),
-
-    /// Duplicate type registration.
-    #[error("duplicate type: {0}")]
-    DuplicateType(String),
 }
 
 #[cfg(test)]
@@ -1457,11 +1441,11 @@ mod tests {
 
     #[test]
     fn error_display() {
-        let err = FfiRegistryError::TypeNotFound("MyClass".to_string());
+        let err = RegistrationError::TypeNotFound("MyClass".to_string());
         assert!(err.to_string().contains("type not found"));
         assert!(err.to_string().contains("MyClass"));
 
-        let err = FfiRegistryError::DuplicateType("MyClass".to_string());
+        let err = RegistrationError::DuplicateType("MyClass".to_string());
         assert!(err.to_string().contains("duplicate type"));
     }
 }

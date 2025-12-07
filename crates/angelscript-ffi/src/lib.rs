@@ -47,7 +47,7 @@ pub use convert::{
 
 // FFI registry
 mod registry;
-pub use registry::{FfiRegistry, FfiRegistryBuilder, FfiRegistryError};
+pub use registry::{FfiRegistry, FfiRegistryBuilder, RegistrationError};
 
 // Re-export core types for convenience
 pub use angelscript_core::{DataType, RefModifier, TypeHash, TypeKind};

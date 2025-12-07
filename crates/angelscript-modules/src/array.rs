@@ -602,7 +602,7 @@ impl fmt::Debug for ScriptArray {
 // =========================================================================
 
 use angelscript_ffi::{CallContext, ListPattern, NativeError, NativeType, TemplateValidation};
-use angelscript_module::{ModuleError, Module};
+use angelscript_module::{RegistrationError, Module};
 
 impl NativeType for ScriptArray {
     const NAME: &'static str = "array";
@@ -628,7 +628,7 @@ impl NativeType for ScriptArray {
 /// let module = array_module().expect("failed to create array module");
 /// // Register with engine...
 /// ```
-pub fn array_module<'app>() -> Result<Module<'app>, ModuleError> {
+pub fn array_module<'app>() -> Result<Module<'app>, RegistrationError> {
     let mut module = Module::root();
 
     module

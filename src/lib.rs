@@ -72,8 +72,11 @@ mod unit;
 pub use unit::{Unit, BuildError, UnitError};
 
 // Re-export FFI module API directly from crates
-pub use angelscript_module::{Module, ModuleError};
+pub use angelscript_module::Module;
 pub use context::{Context, ContextError};
+
+// Re-export RegistrationError from core for convenience
+pub use angelscript_core::RegistrationError;
 
 // Re-export built-in module types directly from crate
 pub use angelscript_modules::{ScriptArray, ScriptDict, ScriptString};

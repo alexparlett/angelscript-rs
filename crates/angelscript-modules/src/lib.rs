@@ -34,7 +34,7 @@ mod math;
 mod std;
 mod string;
 
-use angelscript_module::{ModuleError, Module};
+use angelscript_module::{RegistrationError, Module};
 
 pub use array::{array_module, ScriptArray};
 pub use dict::{dictionary_module, ScriptDict};
@@ -60,7 +60,7 @@ pub use string::{string_module, ScriptString};
 /// // Register with engine...
 /// registry.import_modules(&modules)?;
 /// ```
-pub fn default_modules<'app>() -> Result<Vec<Module<'app>>, ModuleError> {
+pub fn default_modules<'app>() -> Result<Vec<Module<'app>>, RegistrationError> {
     Ok(vec![
         std_module()?,
         string_module()?,
