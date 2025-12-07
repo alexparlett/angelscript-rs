@@ -1,8 +1,28 @@
 //! AngelScript Registry crate.
 //!
-//! This crate will contain the TypeRegistry and Module types in Phase 2.
+//! This crate provides the unified type and function registry for AngelScript.
 //!
-//! Native function and runtime types have been moved to `angelscript-core`.
+//! # Overview
+//!
+//! The [`TypeRegistry`] provides central storage for all types and functions:
+//!
+//! - **Types**: All type entries stored by `TypeHash` for O(1) lookup
+//! - **Functions**: All functions (global, methods, operators, behaviors) in one map
+//! - **Template Callbacks**: Validation callbacks for template instantiation
+//!
+//! # Example
+//!
+//! ```
+//! use angelscript_registry::TypeRegistry;
+//! use angelscript_core::primitives;
+//!
+//! let registry = TypeRegistry::with_primitives();
+//! assert!(registry.get(primitives::INT32).is_some());
+//! ```
+
+mod registry;
+
+pub use registry::{TemplateCallback, TypeRegistry};
 
 // Re-export from core for backwards compatibility during transition
 pub use angelscript_core::{

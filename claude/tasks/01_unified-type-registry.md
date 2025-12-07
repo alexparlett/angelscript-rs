@@ -894,7 +894,7 @@ Apply design clarifications from template/storage review:
 - [x] Update `ClassEntry` to remove `fields`, keep only `properties: Vec<PropertyEntry>`
 
 ### Phase 3: Create angelscript-registry
-- [ ] `src/registry.rs` - TypeRegistry with unified `functions` map (methods + globals)
+- [x] `src/registry.rs` - TypeRegistry with unified `functions` map (methods + globals)
 - [ ] `src/module.rs` - Module builder with namespace support
 
 ### Phase 4: Create angelscript-macros

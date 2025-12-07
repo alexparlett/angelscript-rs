@@ -48,26 +48,37 @@ See `/claude/tasks/26_compiler_rewrite.md` for full details.
 
 ---
 
-## Task 1: Unified Type Registry - Phase 2 Complete
+## Task 1: Unified Type Registry - Phase 3 Task 1 Complete
 
 See `/claude/tasks/01_unified-type-registry.md` for full details.
 
-### Phase 2 Summary (Just Completed)
+### Phase 3 Task 1 Summary (Just Completed)
 
-**Design fixes applied to `crates/angelscript-core/src/`:**
+**Implemented `TypeRegistry` in `crates/angelscript-registry/src/registry.rs`:**
 
-- Updated `ClassEntry.methods` from `Vec<FunctionEntry>` to `Vec<TypeHash>` (single source of truth)
-- Updated `FunctionDef.template_params` from `Vec<String>` to `Vec<TypeHash>` (refs to TemplateParamEntry)
-- Removed `FieldEntry` struct and all exports (all property access via PropertyEntry with getter/setter)
-- Removed `ClassEntry.fields` field and related methods (`with_field`, `find_field`)
-- Added `has_method(TypeHash)` to ClassEntry for method lookup by hash
-- Verified `TemplateParamEntry.owner` and `TypeBehaviors` already use `TypeHash` correctly
+- Unified storage for all types (`FxHashMap<TypeHash, TypeEntry>`)
+- Single source of truth for ALL functions (global + methods + operators + behaviors)
+- Template callback storage (`FxHashMap<TypeHash, TemplateCallback>`) for validation callbacks
+- Added `operators` field to `TypeBehaviors` in `angelscript-core` (prerequisite)
 
-**Tests:** 309 unit tests passing in angelscript-core
+**Storage Model:**
+- Types: `TypeRegistry.types` - All TypeEntry variants
+- Functions: `TypeRegistry.functions` - Single source of truth
+- Template Callbacks: `TypeRegistry.template_callbacks` - Specific `Fn(&TemplateInstanceInfo) -> TemplateValidation` signature
+
+**API Methods:**
+- Basic lookup: `get()`, `get_by_name()`, `get_function()`, `get_function_overloads()`
+- Registration: `register_type()`, `register_function()`, `register_primitive()`, `register_template_callback()`
+- Iteration: `types()`, `classes()`, `enums()`, `interfaces()`, `funcdefs()`, `functions()`
+- Inheritance: `base_class_chain()`, `all_methods()`, `all_properties()`
+- Namespace: `types_in_namespace()`, `namespaces()`
+- Template: `validate_template_instance()`
+
+**Tests:** 326 unit tests passing (314 core + 12 registry)
 
 ### Next Phase
 
-**Phase 3: Create angelscript-registry** - TypeRegistry and Module builder
+**Phase 3 Task 2: Module builder with namespace support** - `src/module.rs`
 
 ---
 

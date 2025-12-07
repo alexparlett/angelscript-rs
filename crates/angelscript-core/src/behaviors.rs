@@ -1,10 +1,13 @@
 //! TypeBehaviors - lifecycle and initialization functions for types.
 //!
 //! This module defines `TypeBehaviors`, which stores function hashes for various
-//! lifecycle behaviors like construction, destruction, and initialization lists.
-//! Behaviors are stored centrally in the Registry, indexed by TypeHash.
+//! lifecycle behaviors like construction, destruction, initialization lists,
+//! and operator overloads. Behaviors are stored centrally in the Registry,
+//! indexed by TypeHash.
 
-use crate::TypeHash;
+use rustc_hash::FxHashMap;
+
+use crate::{OperatorBehavior, TypeHash};
 
 /// Lifecycle and initialization behaviors for a type.
 ///
@@ -77,6 +80,12 @@ pub struct TypeBehaviors {
     /// Template callback - validates template instantiation.
     /// Corresponds to asBEHAVE_TEMPLATE_CALLBACK
     pub template_callback: Option<TypeHash>,
+
+    // === Operators ===
+    /// Operator overloads for this type.
+    /// Maps operator behavior to function hashes (multiple overloads per operator).
+    /// The actual functions are stored in the registry's `functions` map.
+    pub operators: FxHashMap<OperatorBehavior, Vec<TypeHash>>,
 }
 
 impl TypeBehaviors {
@@ -96,6 +105,7 @@ impl TypeBehaviors {
             && self.list_factory.is_none()
             && self.get_weakref_flag.is_none()
             && self.template_callback.is_none()
+            && self.operators.is_empty()
     }
 
     /// Check if this type has any constructors.
@@ -188,6 +198,33 @@ impl TypeBehaviors {
     /// Set the list factory behavior for this type.
     pub fn set_list_factory(&mut self, func_hash: TypeHash) {
         self.list_factory = Some(func_hash);
+    }
+
+    // === Operator Methods ===
+
+    /// Check if this type has any operators defined.
+    pub fn has_operators(&self) -> bool {
+        !self.operators.is_empty()
+    }
+
+    /// Check if this type has a specific operator.
+    pub fn has_operator(&self, op: OperatorBehavior) -> bool {
+        self.operators.contains_key(&op)
+    }
+
+    /// Add an operator overload for this type.
+    pub fn add_operator(&mut self, op: OperatorBehavior, func_hash: TypeHash) {
+        self.operators.entry(op).or_default().push(func_hash);
+    }
+
+    /// Get all overloads for a specific operator.
+    pub fn get_operator(&self, op: OperatorBehavior) -> Option<&[TypeHash]> {
+        self.operators.get(&op).map(|v| v.as_slice())
+    }
+
+    /// Get all operators defined for this type.
+    pub fn operators(&self) -> impl Iterator<Item = (&OperatorBehavior, &Vec<TypeHash>)> {
+        self.operators.iter()
     }
 }
 
@@ -349,5 +386,61 @@ mod tests {
 
         let cloned = behaviors.clone();
         assert_eq!(behaviors, cloned);
+    }
+
+    #[test]
+    fn add_operators() {
+        let mut behaviors = TypeBehaviors::new();
+        let op_add = TypeHash::from_name("MyClass::opAdd");
+        let op_add_r = TypeHash::from_name("MyClass::opAdd_r");
+
+        behaviors.add_operator(OperatorBehavior::OpAdd, op_add);
+        behaviors.add_operator(OperatorBehavior::OpAddR, op_add_r);
+
+        assert!(!behaviors.is_empty());
+        assert!(behaviors.has_operators());
+        assert!(behaviors.has_operator(OperatorBehavior::OpAdd));
+        assert!(behaviors.has_operator(OperatorBehavior::OpAddR));
+        assert!(!behaviors.has_operator(OperatorBehavior::OpSub));
+    }
+
+    #[test]
+    fn operator_overloads() {
+        let mut behaviors = TypeBehaviors::new();
+        let op_add_int = TypeHash::from_name("MyClass::opAdd(int)");
+        let op_add_float = TypeHash::from_name("MyClass::opAdd(float)");
+
+        behaviors.add_operator(OperatorBehavior::OpAdd, op_add_int);
+        behaviors.add_operator(OperatorBehavior::OpAdd, op_add_float);
+
+        let overloads = behaviors.get_operator(OperatorBehavior::OpAdd).unwrap();
+        assert_eq!(overloads.len(), 2);
+        assert_eq!(overloads[0], op_add_int);
+        assert_eq!(overloads[1], op_add_float);
+    }
+
+    #[test]
+    fn get_nonexistent_operator() {
+        let behaviors = TypeBehaviors::new();
+        assert!(behaviors.get_operator(OperatorBehavior::OpAdd).is_none());
+    }
+
+    #[test]
+    fn operators_iterator() {
+        let mut behaviors = TypeBehaviors::new();
+        behaviors.add_operator(OperatorBehavior::OpAdd, TypeHash::from_name("add"));
+        behaviors.add_operator(OperatorBehavior::OpSub, TypeHash::from_name("sub"));
+
+        let ops: Vec<_> = behaviors.operators().collect();
+        assert_eq!(ops.len(), 2);
+    }
+
+    #[test]
+    fn operators_affects_is_empty() {
+        let mut behaviors = TypeBehaviors::new();
+        assert!(behaviors.is_empty());
+
+        behaviors.add_operator(OperatorBehavior::OpNeg, TypeHash::from_name("neg"));
+        assert!(!behaviors.is_empty());
     }
 }
