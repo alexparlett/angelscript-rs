@@ -117,7 +117,7 @@ impl TypeHash {
     /// # Examples
     ///
     /// ```
-    /// use angelscript_compiler::TypeHash;
+    /// use angelscript_core::TypeHash;
     ///
     /// let hash1 = TypeHash::from_name("int");
     /// let hash2 = TypeHash::from_name("int");
@@ -138,7 +138,7 @@ impl TypeHash {
     /// # Examples
     ///
     /// ```
-    /// use angelscript_compiler::TypeHash;
+    /// use angelscript_core::TypeHash;
     ///
     /// let int_hash = TypeHash::from_name("int");
     /// let float_hash = TypeHash::from_name("float");
@@ -229,7 +229,7 @@ impl TypeHash {
     /// # Examples
     ///
     /// ```
-    /// use angelscript_compiler::TypeHash;
+    /// use angelscript_core::TypeHash;
     ///
     /// let array_template = TypeHash::from_name("array");
     /// let int_hash = TypeHash::from_name("int");

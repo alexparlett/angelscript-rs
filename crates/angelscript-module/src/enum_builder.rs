@@ -22,7 +22,7 @@
 //!     .build()?;
 //! ```
 
-use crate::module::{FfiModuleError, Module};
+use crate::{ModuleError, Module};
 use angelscript_ffi::FfiEnumDef;
 
 /// Builder for registering native enum types.
@@ -78,10 +78,10 @@ impl<'m, 'app> EnumBuilder<'m, 'app> {
     ///     .value("All", 7)?
     ///     .build()?;
     /// ```
-    pub fn value(mut self, name: &str, value: i64) -> Result<Self, FfiModuleError> {
+    pub fn value(mut self, name: &str, value: i64) -> Result<Self, ModuleError> {
         // Check for duplicate value names
         if self.values.iter().any(|(n, _)| n == name) {
-            return Err(FfiModuleError::DuplicateEnumValue {
+            return Err(ModuleError::DuplicateEnumValue {
                 enum_name: self.name.clone(),
                 value_name: name.to_string(),
             });
@@ -112,10 +112,10 @@ impl<'m, 'app> EnumBuilder<'m, 'app> {
     ///     .auto_value("West")?
     ///     .build()?;
     /// ```
-    pub fn auto_value(mut self, name: &str) -> Result<Self, FfiModuleError> {
+    pub fn auto_value(mut self, name: &str) -> Result<Self, ModuleError> {
         // Check for duplicate value names
         if self.values.iter().any(|(n, _)| n == name) {
-            return Err(FfiModuleError::DuplicateEnumValue {
+            return Err(ModuleError::DuplicateEnumValue {
                 enum_name: self.name.clone(),
                 value_name: name.to_string(),
             });
@@ -133,9 +133,9 @@ impl<'m, 'app> EnumBuilder<'m, 'app> {
     /// # Errors
     ///
     /// Returns an error if the enum has no values.
-    pub fn build(self) -> Result<(), FfiModuleError> {
+    pub fn build(self) -> Result<(), ModuleError> {
         if self.values.is_empty() {
-            return Err(FfiModuleError::InvalidDeclaration(
+            return Err(ModuleError::InvalidDeclaration(
                 format!("enum '{}' has no values", self.name),
             ));
         }
@@ -261,7 +261,7 @@ mod tests {
 
         assert!(result.is_err());
         match result.unwrap_err() {
-            FfiModuleError::DuplicateEnumValue { enum_name, value_name } => {
+            ModuleError::DuplicateEnumValue { enum_name, value_name } => {
                 assert_eq!(enum_name, "Color");
                 assert_eq!(value_name, "Red");
             }
@@ -276,7 +276,7 @@ mod tests {
 
         assert!(result.is_err());
         match result.unwrap_err() {
-            FfiModuleError::InvalidDeclaration(msg) => {
+            ModuleError::InvalidDeclaration(msg) => {
                 assert!(msg.contains("Empty"));
                 assert!(msg.contains("no values"));
             }

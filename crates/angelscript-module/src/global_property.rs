@@ -19,7 +19,7 @@ use angelscript_parser::ast::{Ident, TypeExpr};
 ///
 /// - `'ast`: The arena lifetime for parsed AST nodes (Ident, TypeExpr)
 /// - `'app`: The application lifetime for the value reference
-pub struct GlobalPropertyDef<'ast, 'app> {
+pub struct GlobalPropertyBuilder<'ast, 'app> {
     /// Property name (parsed identifier)
     pub name: Ident<'ast>,
     /// Type expression (parsed from declaration)
@@ -28,7 +28,7 @@ pub struct GlobalPropertyDef<'ast, 'app> {
     pub value: &'app mut dyn Any,
 }
 
-impl<'ast, 'app> GlobalPropertyDef<'ast, 'app> {
+impl<'ast, 'app> GlobalPropertyBuilder<'ast, 'app> {
     /// Create a new global property definition.
     pub fn new<T: 'static>(
         name: Ident<'ast>,
@@ -64,7 +64,7 @@ impl<'ast, 'app> GlobalPropertyDef<'ast, 'app> {
 }
 
 // Manual Debug implementation since dyn Any doesn't implement Debug
-impl std::fmt::Debug for GlobalPropertyDef<'_, '_> {
+impl std::fmt::Debug for GlobalPropertyBuilder<'_, '_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("GlobalPropertyDef")
             .field("name", &self.name)
@@ -105,7 +105,7 @@ mod tests {
     #[test]
     fn global_property_def_new() {
         let mut value = 42i32;
-        let def = GlobalPropertyDef::new(make_ident("score"), make_int_type(), &mut value);
+        let def = GlobalPropertyBuilder::new(make_ident("score"), make_int_type(), &mut value);
 
         assert_eq!(def.name.name, "score");
         assert!(matches!(def.ty.base, TypeBase::Primitive(PrimitiveType::Int)));
@@ -115,7 +115,7 @@ mod tests {
     #[test]
     fn global_property_def_const() {
         let mut value = 3.14f64;
-        let def = GlobalPropertyDef::new(make_ident("PI"), make_const_double_type(), &mut value);
+        let def = GlobalPropertyBuilder::new(make_ident("PI"), make_const_double_type(), &mut value);
 
         assert_eq!(def.name.name, "PI");
         assert!(def.is_const());
@@ -124,7 +124,7 @@ mod tests {
     #[test]
     fn global_property_def_downcast_ref() {
         let mut value = 42i32;
-        let def = GlobalPropertyDef::new(make_ident("score"), make_int_type(), &mut value);
+        let def = GlobalPropertyBuilder::new(make_ident("score"), make_int_type(), &mut value);
 
         assert_eq!(def.downcast_ref::<i32>(), Some(&42));
         assert_eq!(def.downcast_ref::<i64>(), None);
@@ -133,7 +133,7 @@ mod tests {
     #[test]
     fn global_property_def_downcast_mut() {
         let mut value = 42i32;
-        let mut def = GlobalPropertyDef::new(make_ident("score"), make_int_type(), &mut value);
+        let mut def = GlobalPropertyBuilder::new(make_ident("score"), make_int_type(), &mut value);
 
         if let Some(v) = def.downcast_mut::<i32>() {
             *v = 100;
@@ -145,7 +145,7 @@ mod tests {
     #[test]
     fn global_property_def_type_id() {
         let mut value = 42i32;
-        let def = GlobalPropertyDef::new(make_ident("score"), make_int_type(), &mut value);
+        let def = GlobalPropertyBuilder::new(make_ident("score"), make_int_type(), &mut value);
 
         assert_eq!(def.type_id(), std::any::TypeId::of::<i32>());
     }
@@ -153,7 +153,7 @@ mod tests {
     #[test]
     fn global_property_def_debug() {
         let mut value = 42i32;
-        let def = GlobalPropertyDef::new(make_ident("score"), make_int_type(), &mut value);
+        let def = GlobalPropertyBuilder::new(make_ident("score"), make_int_type(), &mut value);
         let debug = format!("{:?}", def);
 
         assert!(debug.contains("GlobalPropertyDef"));
@@ -163,7 +163,7 @@ mod tests {
     #[test]
     fn global_property_def_string_type() {
         let mut value = String::from("hello");
-        let def = GlobalPropertyDef::new(make_ident("greeting"), make_named_type("string"), &mut value);
+        let def = GlobalPropertyBuilder::new(make_ident("greeting"), make_named_type("string"), &mut value);
 
         assert_eq!(def.downcast_ref::<String>(), Some(&String::from("hello")));
     }
@@ -175,7 +175,7 @@ mod tests {
         }
 
         let mut val = MyType { value: 42 };
-        let def = GlobalPropertyDef::new(make_ident("obj"), make_named_type("MyType"), &mut val);
+        let def = GlobalPropertyBuilder::new(make_ident("obj"), make_named_type("MyType"), &mut val);
 
         assert_eq!(def.type_id(), std::any::TypeId::of::<MyType>());
         assert!(def.downcast_ref::<MyType>().is_some());

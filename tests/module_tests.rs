@@ -18,13 +18,14 @@ fn load_script(filename: &str) -> String {
 
 /// Helper to build a module from a single test script.
 fn build_script(filename: &str) -> Unit<'static> {
-    let ctx = Arc::new(Context::with_default_modules().unwrap());
-    let mut module = ctx.create_unit().unwrap();
-    module
-        .add_source(filename, load_script(filename))
+    let mut ctx = Context::with_default_modules().unwrap();
+    ctx.seal().unwrap();
+    let ctx = Arc::new(ctx);
+    let mut unit = ctx.create_unit().unwrap();
+    unit.add_source(filename, load_script(filename))
         .expect("Failed to add source");
-    module.build().expect("Failed to build module");
-    module
+    unit.build().expect("Failed to build module");
+    unit
 }
 
 // =============================================================================

@@ -46,7 +46,7 @@ pub use convert::{
 };
 
 // FFI registry
-pub mod registry;
+mod registry;
 pub use registry::{FfiRegistry, FfiRegistryBuilder, FfiRegistryError};
 
 // Re-export core types for convenience

@@ -20,8 +20,9 @@
 //! ```
 
 use angelscript_parser::ast::Parser;
-use crate::module::{FfiModuleError, Module};
 use angelscript_ffi::{function_param_to_ffi, return_type_to_data_type, FfiInterfaceDef, FfiInterfaceMethod};
+
+use crate::{ModuleError, Module};
 
 /// Builder for registering native interface types.
 ///
@@ -85,12 +86,12 @@ impl<'m, 'app> InterfaceBuilder<'m, 'app> {
     ///     .method("void render() const")?
     ///     .build()?;
     /// ```
-    pub fn method(mut self, decl: &str) -> Result<Self, FfiModuleError> {
+    pub fn method(mut self, decl: &str) -> Result<Self, ModuleError> {
         let method = self.parse_method_decl(decl)?;
 
         // Check for duplicate method names
         if self.methods.iter().any(|m| m.name == method.name) {
-            return Err(FfiModuleError::DuplicateRegistration {
+            return Err(ModuleError::DuplicateRegistration {
                 name: method.name.clone(),
                 kind: "interface method".to_string(),
             });
@@ -107,9 +108,9 @@ impl<'m, 'app> InterfaceBuilder<'m, 'app> {
     /// # Errors
     ///
     /// Returns an error if the interface has no methods.
-    pub fn build(self) -> Result<(), FfiModuleError> {
+    pub fn build(self) -> Result<(), ModuleError> {
         if self.methods.is_empty() {
-            return Err(FfiModuleError::InvalidDeclaration(format!(
+            return Err(ModuleError::InvalidDeclaration(format!(
                 "interface '{}' has no methods",
                 self.name
             )));
@@ -130,17 +131,17 @@ impl<'m, 'app> InterfaceBuilder<'m, 'app> {
     // =========================================================================
 
     /// Parse a method declaration and convert to FfiInterfaceMethod.
-    fn parse_method_decl(&self, decl: &str) -> Result<FfiInterfaceMethod, FfiModuleError> {
+    fn parse_method_decl(&self, decl: &str) -> Result<FfiInterfaceMethod, ModuleError> {
         let decl = decl.trim();
         if decl.is_empty() {
-            return Err(FfiModuleError::InvalidDeclaration(
+            return Err(ModuleError::InvalidDeclaration(
                 "empty declaration".to_string(),
             ));
         }
 
         // Parse the declaration using the module's arena
         let sig = Parser::function_decl(decl, self.module.arena()).map_err(|errors| {
-            FfiModuleError::InvalidDeclaration(format!("parse error: {}", errors))
+            ModuleError::InvalidDeclaration(format!("parse error: {}", errors))
         })?;
 
         // Convert to owned FfiInterfaceMethod
@@ -230,7 +231,7 @@ mod tests {
 
         assert!(result.is_err());
         match result.unwrap_err() {
-            FfiModuleError::InvalidDeclaration(msg) => {
+            ModuleError::InvalidDeclaration(msg) => {
                 assert!(msg.contains("IEmpty"));
                 assert!(msg.contains("no methods"));
             }
@@ -267,7 +268,7 @@ mod tests {
 
         assert!(result.is_err());
         match result.unwrap_err() {
-            FfiModuleError::DuplicateRegistration { name, kind } => {
+            ModuleError::DuplicateRegistration { name, kind } => {
                 assert_eq!(name, "foo");
                 assert_eq!(kind, "interface method");
             }

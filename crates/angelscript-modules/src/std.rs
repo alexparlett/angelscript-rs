@@ -30,9 +30,8 @@
 
 use std::io::{self, Write};
 
-use crate::module::{CallContext, VmSlot};
-use crate::module::FfiModuleError;
-use crate::Module;
+use angelscript_ffi::{CallContext, VmSlot};
+use angelscript_module::{ModuleError, Module};
 
 /// Format a VmSlot value as a string.
 fn format_slot(slot: &VmSlot) -> String {
@@ -69,7 +68,7 @@ fn format_slot(slot: &VmSlot) -> String {
 /// let module = std_module().expect("failed to create std module");
 /// // Register with engine...
 /// ```
-pub fn std_module<'app>() -> Result<Module<'app>, FfiModuleError> {
+pub fn std_module<'app>() -> Result<Module<'app>, ModuleError> {
     let mut module = Module::root();
 
     // =========================================================================

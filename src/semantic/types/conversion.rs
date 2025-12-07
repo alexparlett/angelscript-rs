@@ -247,14 +247,12 @@ impl DataTypeExt for DataType {
 
         // Funcdef types are semantically always handles, so we should allow
         // conversions between handle and non-handle forms with the same type_id
-        if self.type_hash == target.type_hash {
-            if let Some(source_typedef) = ctx.try_get_type(self.type_hash) {
-                if matches!(source_typedef, TypeDef::Funcdef { .. }) {
+        if self.type_hash == target.type_hash
+            && let Some(source_typedef) = ctx.try_get_type(self.type_hash)
+                && matches!(source_typedef, TypeDef::Funcdef { .. }) {
                     // Same funcdef type with different handle flags - identity conversion
                     return Some(Conversion::identity());
                 }
-            }
-        }
 
         // Value type to handle of same type (e.g., Node -> Node@)
         // In AngelScript, when you have `Node@ n = Node(args)`, the value is implicitly
@@ -262,15 +260,14 @@ impl DataTypeExt for DataType {
         if !self.is_handle && target.is_handle && self.type_hash == target.type_hash {
             // Check if target is a class/object type (not primitive)
             // Note: Template instances are also Class types with template: Some(...)
-            if let Some(typedef) = ctx.try_get_type(self.type_hash) {
-                if matches!(typedef, TypeDef::Class { .. } | TypeDef::Interface { .. }) {
+            if let Some(typedef) = ctx.try_get_type(self.type_hash)
+                && matches!(typedef, TypeDef::Class { .. } | TypeDef::Interface { .. }) {
                     return Some(Conversion {
                         kind: ConversionKind::ValueToHandle,
                         cost: 1,
                         is_implicit: true,
                     });
                 }
-            }
         }
 
         // Try handle conversions
@@ -320,10 +317,7 @@ fn primitive_conversion(source: &DataType, target: &DataType) -> Option<Conversi
     }
 
     // Match on type pairs
-    use {
-        primitives::DOUBLE, primitives::FLOAT, primitives::INT8, primitives::INT16, primitives::INT32, primitives::INT64, primitives::UINT8,
-        primitives::UINT16, primitives::UINT32, primitives::UINT64,
-    };
+    
 
     match (source.type_hash, target.type_hash) {
         // Integer to Float conversions (implicit, cost 1)
@@ -651,7 +645,7 @@ fn constructor_conversion<'a>(source: &DataType, target: &DataType, ctx: &Compil
     }
 
     // Look for constructor with exactly one parameter matching our type
-    let constructor_id = ctx.find_constructor(target.type_hash, &[source.clone()])?;
+    let constructor_id = ctx.find_constructor(target.type_hash, &[*source])?;
 
     // Check if the constructor is marked explicit
     // Explicit constructors cannot be used for implicit conversions

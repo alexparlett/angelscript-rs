@@ -1,6 +1,6 @@
-//! Built-in modules for AngelScript.
+//! Built-in standard library modules for AngelScript.
 //!
-//! This module contains runtime types and FFI registration for built-in
+//! This crate provides runtime types and FFI registration for built-in
 //! AngelScript types like string, array, and dictionary.
 //!
 //! # Runtime Types
@@ -22,7 +22,7 @@
 //! Use [`default_modules`] to get all built-in modules at once:
 //!
 //! ```ignore
-//! use angelscript::modules::default_modules;
+//! use angelscript_modules::default_modules;
 //!
 //! let modules = default_modules().expect("failed to create modules");
 //! // modules is a Vec<Module> containing all built-in modules
@@ -34,8 +34,7 @@ mod math;
 mod std;
 mod string;
 
-use crate::module::FfiModuleError;
-use crate::Module;
+use angelscript_module::{ModuleError, Module};
 
 pub use array::{array_module, ScriptArray};
 pub use dict::{dictionary_module, ScriptDict};
@@ -55,13 +54,13 @@ pub use string::{string_module, ScriptString};
 /// # Example
 ///
 /// ```ignore
-/// use angelscript::modules::default_modules;
+/// use angelscript_modules::default_modules;
 ///
 /// let modules = default_modules().expect("failed to create modules");
 /// // Register with engine...
 /// registry.import_modules(&modules)?;
 /// ```
-pub fn default_modules<'app>() -> Result<Vec<Module<'app>>, FfiModuleError> {
+pub fn default_modules<'app>() -> Result<Vec<Module<'app>>, ModuleError> {
     Ok(vec![
         std_module()?,
         string_module()?,

@@ -37,7 +37,7 @@
 //! ```
 
 use crate::context::Context;
-use crate::module::FfiRegistryBuilder;
+use angelscript_ffi::FfiRegistryBuilder;
 use crate::semantic::{Compiler, CompiledModule, SemanticError};
 use angelscript_parser::ast::{Parser, ParseError};
 use bumpalo::Bump;
@@ -71,10 +71,6 @@ pub struct Unit<'app> {
 
     /// Compiled module (available after build)
     compiled: Option<CompiledModule>,
-
-    /// Type registry (available after build)
-    /// TODO: Cannot store CompilationContext with lifetimes here - need to redesign module API
-    // context: Option<CompilationContext>,
 
     /// Whether the module has been built
     is_built: bool,

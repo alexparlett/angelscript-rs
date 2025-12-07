@@ -25,7 +25,7 @@ impl<'ast> FunctionCompiler<'ast> {
         if let Some(func_id) = self.context.find_operator_method(left_type.type_hash, operator) {
             self.bytecode.emit(Instruction::Call(func_id.0));
             let func = self.context.get_function(func_id);
-            return Some(func.return_type().clone());
+            return Some(*func.return_type());
         }
 
         // Try right operand's reverse operator
@@ -36,7 +36,7 @@ impl<'ast> FunctionCompiler<'ast> {
             self.bytecode.emit(Instruction::Swap);
             self.bytecode.emit(Instruction::Call(func_id.0));
             let func = self.context.get_function(func_id);
-            return Some(func.return_type().clone());
+            return Some(*func.return_type());
         }
 
         None
@@ -55,7 +55,7 @@ impl<'ast> FunctionCompiler<'ast> {
         if let Some(func_id) = self.context.find_operator_method(operand_type.type_hash, operator) {
             self.bytecode.emit(Instruction::Call(func_id.0));
             let func = self.context.get_function(func_id);
-            return Some(func.return_type().clone());
+            return Some(*func.return_type());
         }
         None
     }

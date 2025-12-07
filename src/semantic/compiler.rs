@@ -40,7 +40,7 @@ use super::{
     TypeCompiler,
 };
 use angelscript_parser::ast::Script;
-use crate::module::{FfiRegistry, FfiRegistryBuilder};
+use angelscript_ffi::{FfiRegistry, FfiRegistryBuilder};
 use rustc_hash::FxHashMap;
 
 /// Result of compiling a complete script.

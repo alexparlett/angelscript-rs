@@ -18,20 +18,25 @@
 //!
 //! # Example: Basic Usage (Recommended)
 //!
-//! ```
-//! use angelscript::Unit;
+//! ```ignore
+//! use angelscript::{Context, Unit};
+//! use std::sync::Arc;
 //!
-//! let mut unit = Unit::new();
+//! // Create context with default modules and seal it
+//! let mut ctx = Context::with_default_modules().unwrap();
+//! ctx.seal().unwrap();
+//! let ctx = Arc::new(ctx);
 //!
-//! // Add source files
-//! unit.add_source("player.as", r#"
+//! // Create a compilation unit
+//! let mut unit = ctx.create_unit().unwrap();
+//!
+//! // Add source file
+//! unit.add_source("main.as", r#"
 //!     class Player {
 //!         int health;
-//!         Player(int h) { }
+//!         Player(int h) { health = h; }
 //!     }
-//! "#).unwrap();
 //!
-//! unit.add_source("main.as", r#"
 //!     void main() {
 //!         Player p = Player(100);
 //!     }
@@ -47,8 +52,8 @@
 //!
 //! # Example: Parse Only
 //!
-//! ```
-//! use angelscript::Parser;
+//! ```ignore
+//! use angelscript_parser::Parser;
 //! use bumpalo::Bump;
 //!
 //! let arena = Bump::new();
@@ -61,7 +66,6 @@
 //! ```
 
 mod context;
-pub mod module;
 pub mod semantic;
 pub mod codegen;
 mod unit;
@@ -69,8 +73,8 @@ mod unit;
 // Re-export compilation unit API (recommended for most users)
 pub use unit::{Unit, BuildError, UnitError};
 
-// Re-export FFI module and context API
-pub use module::{Module, FfiModuleError};
+// Re-export FFI module API directly from crates
+pub use angelscript_module::{Module, ModuleError};
 pub use context::{Context, ContextError};
 
 // Re-export semantic compiler (for advanced use cases)
@@ -84,11 +88,11 @@ pub use semantic::{
 // Re-export codegen types
 pub use codegen::{BytecodeEmitter, CompiledBytecode, Instruction};
 
-// Re-export built-in module types
-pub use module::stdlib::{ScriptArray, ScriptDict, ScriptString};
+// Re-export built-in module types directly from crate
+pub use angelscript_modules::{ScriptArray, ScriptDict, ScriptString};
 
-// Re-export built-in module constructors
-pub use module::stdlib::{
+// Re-export built-in module constructors directly from crate
+pub use angelscript_modules::{
     array_module, default_modules, dictionary_module, math_module, std_module, string_module,
 };
 

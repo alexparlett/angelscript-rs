@@ -21,9 +21,9 @@
 use std::sync::Arc;
 use thiserror::Error;
 
-use crate::module::{FfiRegistry, FfiRegistryBuilder, FfiRegistryError};
-use crate::module::{FfiModuleError, Module};
-use crate::module::stdlib::default_modules;
+use angelscript_ffi::{FfiRegistry, FfiRegistryBuilder, FfiRegistryError};
+use angelscript_module::{ModuleError, Module};
+use angelscript_modules::default_modules;
 use crate::unit::Unit;
 
 /// Execution context that owns installed modules.
@@ -66,18 +66,16 @@ impl<'app> Context<'app> {
     /// - `array` - Array template type (array<T>)
     /// - `dictionary` - Dictionary template type (dictionary)
     ///
-    /// The context is automatically sealed after installing default modules,
-    /// making it ready for `create_unit()` calls.
+    /// The context is NOT sealed - call `seal()` when done adding modules.
     ///
     /// # Errors
     ///
-    /// Returns an error if any default module fails to build or if sealing fails.
+    /// Returns an error if any default module fails to build.
     pub fn with_default_modules() -> Result<Self, ContextError> {
         let mut ctx = Self::new();
         for module in default_modules().map_err(ContextError::ModuleBuildFailed)? {
             ctx.install(module)?;
         }
-        ctx.seal()?;
         Ok(ctx)
     }
 
@@ -234,7 +232,7 @@ pub enum ContextError {
 
     /// Failed to build a default module
     #[error("failed to build module: {0}")]
-    ModuleBuildFailed(#[from] FfiModuleError),
+    ModuleBuildFailed(#[from] ModuleError),
 
     /// Context is already sealed - cannot install modules
     #[error("context is already sealed - cannot install modules after seal() or create_unit()")]
@@ -386,8 +384,16 @@ mod tests {
     }
 
     #[test]
-    fn context_with_default_modules_is_sealed() {
+    fn context_with_default_modules_not_sealed() {
         let ctx = Context::<'static>::with_default_modules().unwrap();
+        assert!(!ctx.is_sealed());
+        assert!(ctx.ffi_registry().is_none()); // Not sealed yet
+    }
+
+    #[test]
+    fn context_with_default_modules_can_seal() {
+        let mut ctx = Context::<'static>::with_default_modules().unwrap();
+        ctx.seal().unwrap();
         assert!(ctx.is_sealed());
         assert!(ctx.ffi_registry().is_some());
     }

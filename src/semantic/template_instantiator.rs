@@ -32,7 +32,7 @@
 
 use rustc_hash::FxHashMap;
 
-use crate::module::{FfiRegistry, TemplateInstanceInfo};
+use angelscript_ffi::{FfiRegistry, TemplateInstanceInfo};
 use angelscript_parser::lexer::Span;
 use crate::semantic::error::{SemanticError, SemanticErrorKind};
 use crate::semantic::types::registry::{FunctionDef, ScriptParam, ScriptRegistry};
@@ -97,7 +97,7 @@ impl TemplateInstantiator {
             && let TypeDef::TemplateParam { index, .. } = typedef {
                 // This is a template parameter - substitute it
                 if *index < args.len() {
-                    let mut substituted = args[*index].clone();
+                    let mut substituted = args[*index];
                     // Preserve modifiers from the original type
                     substituted.is_const = data_type.is_const;
                     substituted.ref_modifier = data_type.ref_modifier;
@@ -108,7 +108,7 @@ impl TemplateInstantiator {
         // Also check if the type_id is directly in template_params
         for (i, &param_id) in template_params.iter().enumerate() {
             if data_type.type_hash == param_id && i < args.len() {
-                let mut substituted = args[i].clone();
+                let mut substituted = args[i];
                 // Preserve modifiers from the original type
                 substituted.is_const = data_type.is_const;
                 substituted.ref_modifier = data_type.ref_modifier;
@@ -117,7 +117,7 @@ impl TemplateInstantiator {
         }
 
         // Not a template parameter - return as-is
-        data_type.clone()
+        *data_type
     }
 
     /// Instantiate a template type with the given type arguments.
@@ -430,7 +430,7 @@ impl TemplateInstantiator {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::module::FfiRegistryBuilder;
+    use angelscript_ffi::FfiRegistryBuilder;
     use crate::semantic::types::behaviors::TypeBehaviors;
     use angelscript_core::primitives;
     use angelscript_core::TypeKind;

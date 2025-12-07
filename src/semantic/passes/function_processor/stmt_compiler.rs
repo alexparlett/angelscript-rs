@@ -119,7 +119,7 @@ impl<'ast> FunctionCompiler<'ast> {
                 }
 
                 // Build the inferred type, applying modifiers from the auto declaration
-                let mut inferred_type = init_ctx.data_type.clone();
+                let mut inferred_type = init_ctx.data_type;
 
                 // Apply const from "const auto"
                 if var_decl.ty.is_const {
@@ -155,7 +155,7 @@ impl<'ast> FunctionCompiler<'ast> {
                 // Continue to next variable (we've already handled the initializer)
                 continue;
             } else {
-                base_var_type.clone().unwrap()
+                base_var_type.unwrap()
             };
 
             // Check if variable type is a funcdef (for function handle inference)
@@ -225,7 +225,7 @@ impl<'ast> FunctionCompiler<'ast> {
             // Declare the variable
             let offset = self.local_scope.declare_variable_auto(
                 var.name.name.to_string(),
-                var_type.clone(),
+                var_type,
                 true,
             );
 
@@ -657,7 +657,7 @@ impl<'ast> FunctionCompiler<'ast> {
                 continue;
             }
 
-            let element_type = value_func.return_type().clone();
+            let element_type = *value_func.return_type();
 
             // Resolve the variable's type
             if let Some(var_type) = self.resolve_type_expr(&var.ty) {
@@ -698,7 +698,7 @@ impl<'ast> FunctionCompiler<'ast> {
         // Store container in a temporary local variable to avoid re-evaluating
         let container_offset = self.local_scope.declare_variable_auto(
             format!("$container_{}_{}", foreach.span.line, foreach.span.col),
-            container_ctx.data_type.clone(),
+            container_ctx.data_type,
             false,
         );
         self.bytecode.emit(Instruction::StoreLocal(container_offset));
@@ -709,7 +709,7 @@ impl<'ast> FunctionCompiler<'ast> {
         self.bytecode.emit(Instruction::Call(begin_func_id.0));
 
         // Store iterator in a local variable
-        let iterator_type = begin_func.return_type().clone();
+        let iterator_type = *begin_func.return_type();
         let iterator_offset = self.local_scope.declare_variable_auto(
             format!("$it_{}_{}", foreach.span.line, foreach.span.col),
             iterator_type,
@@ -744,9 +744,9 @@ impl<'ast> FunctionCompiler<'ast> {
 
             // Apply conversion if needed
             if let Some(var_local) = self.local_scope.lookup(var.name.name) {
-                let element_type = value_func.return_type().clone();
+                let element_type = *value_func.return_type();
                 let var_offset = var_local.stack_offset; // Extract offset before mutable borrow
-                let var_type = var_local.data_type.clone();
+                let var_type = var_local.data_type;
 
                 if let Some(conversion) = element_type.can_convert_to(&var_type, self.context)
                     && conversion.is_implicit {
@@ -825,7 +825,7 @@ impl<'ast> FunctionCompiler<'ast> {
         // The expression value is already on the stack from check_expr
         let switch_offset = self.local_scope.declare_variable_auto(
             format!("$switch_{}_{}", switch.span.line, switch.span.col),
-            switch_ctx.data_type.clone(),
+            switch_ctx.data_type,
             false,
         );
         self.bytecode.emit(Instruction::StoreLocal(switch_offset));

@@ -138,7 +138,7 @@ impl<'ast> FunctionCompiler<'ast> {
                 let name_idx = self.bytecode.add_string_constant(global_var.qualified_name());
                 self.bytecode.emit(Instruction::LoadGlobal(name_idx));
                 let is_mutable = !global_var.data_type.is_const;
-                return Some(ExprContext::lvalue(global_var.data_type.clone(), is_mutable));
+                return Some(ExprContext::lvalue(global_var.data_type, is_mutable));
             }
 
             // Not found as enum or global variable
@@ -174,7 +174,7 @@ impl<'ast> FunctionCompiler<'ast> {
             let offset = local_var.stack_offset;
             self.bytecode.emit(Instruction::LoadLocal(offset));
             let is_mutable = !local_var.data_type.is_const;
-            return Some(ExprContext::lvalue(local_var.data_type.clone(), is_mutable));
+            return Some(ExprContext::lvalue(local_var.data_type, is_mutable));
         }
 
         // Check for implicit class member access (when inside a method)
@@ -190,7 +190,7 @@ impl<'ast> FunctionCompiler<'ast> {
             let name_idx = self.bytecode.add_string_constant(global_var.qualified_name());
             self.bytecode.emit(Instruction::LoadGlobal(name_idx));
             let is_mutable = !global_var.data_type.is_const;
-            return Some(ExprContext::lvalue(global_var.data_type.clone(), is_mutable));
+            return Some(ExprContext::lvalue(global_var.data_type, is_mutable));
         }
 
         // If we're inside a namespace, try looking up with the namespace-qualified name
@@ -201,7 +201,7 @@ impl<'ast> FunctionCompiler<'ast> {
                 let name_idx = self.bytecode.add_string_constant(global_var.qualified_name());
                 self.bytecode.emit(Instruction::LoadGlobal(name_idx));
                 let is_mutable = !global_var.data_type.is_const;
-                return Some(ExprContext::lvalue(global_var.data_type.clone(), is_mutable));
+                return Some(ExprContext::lvalue(global_var.data_type, is_mutable));
             }
         }
 
@@ -215,7 +215,7 @@ impl<'ast> FunctionCompiler<'ast> {
                 let name_idx = self.bytecode.add_string_constant(global_var.qualified_name());
                 self.bytecode.emit(Instruction::LoadGlobal(name_idx));
                 let is_mutable = !global_var.data_type.is_const;
-                return Some(ExprContext::lvalue(global_var.data_type.clone(), is_mutable));
+                return Some(ExprContext::lvalue(global_var.data_type, is_mutable));
             }
 
             // Check if this is an enum value by looking for it in all enum types in the namespace
@@ -262,7 +262,7 @@ impl<'ast> FunctionCompiler<'ast> {
                 if let Some(accessors) = properties.get(name)
                     && let Some(getter_id) = accessors.getter {
                         let getter = self.context.get_function(getter_id);
-                        let return_type = getter.return_type().clone();
+                        let return_type = *getter.return_type();
 
                         // Emit LoadThis followed by CallMethod for the getter
                         self.bytecode.emit(Instruction::LoadThis);
@@ -281,7 +281,7 @@ impl<'ast> FunctionCompiler<'ast> {
                         self.bytecode.emit(Instruction::LoadThis);
                         self.bytecode.emit(Instruction::LoadField(field_idx as u32));
                         let is_mutable = !field.data_type.is_const;
-                        return Some(ExprContext::lvalue(field.data_type.clone(), is_mutable));
+                        return Some(ExprContext::lvalue(field.data_type, is_mutable));
                     }
                 }
 
@@ -916,7 +916,7 @@ impl<'ast> FunctionCompiler<'ast> {
             UnaryOp::HandleOf => {
                 // @ operator - handle reference, produces rvalue
                 // This converts a value to a handle type
-                let mut handle_type = operand_ctx.data_type.clone();
+                let mut handle_type = operand_ctx.data_type;
                 handle_type.is_handle = true;
                 Some(ExprContext::rvalue(handle_type))
             }
@@ -1019,7 +1019,7 @@ impl<'ast> FunctionCompiler<'ast> {
                         // and the value - we just need to emit a store
                         self.bytecode.emit(Instruction::StoreHandle);
 
-                        return Some(ExprContext::rvalue(operand_ctx.data_type.clone()));
+                        return Some(ExprContext::rvalue(operand_ctx.data_type));
                     }
 
                 // Simple assignment: target = value
@@ -1076,7 +1076,7 @@ impl<'ast> FunctionCompiler<'ast> {
                     // Stack: [target, value] → target.opAssign(value)
                     self.bytecode.emit(Instruction::Call(func_id.0));
                     let func = self.context.get_function(func_id);
-                    return Some(ExprContext::rvalue(func.return_type().clone()));
+                    return Some(ExprContext::rvalue(*func.return_type()));
                 }
 
                 // Fall back to primitive assignment with type conversion
@@ -1173,7 +1173,7 @@ impl<'ast> FunctionCompiler<'ast> {
                     // Stack: [target, value] → target.opAddAssign(value)
                     self.bytecode.emit(Instruction::Call(func_id.0));
                     let func = self.context.get_function(func_id);
-                    return Some(ExprContext::rvalue(func.return_type().clone()));
+                    return Some(ExprContext::rvalue(*func.return_type()));
                 }
 
                 // Fall back to desugaring: x += y  =>  x = x + y
@@ -1370,7 +1370,7 @@ impl<'ast> FunctionCompiler<'ast> {
                     }
                     let mut arg_types = Vec::with_capacity(arg_contexts.len());
                     for ctx in &arg_contexts {
-                        arg_types.push(ctx.data_type.clone());
+                        arg_types.push(ctx.data_type);
                     }
 
                     // Find matching base constructor
@@ -1432,7 +1432,7 @@ impl<'ast> FunctionCompiler<'ast> {
                                     }
                                     let mut arg_types = Vec::with_capacity(arg_contexts.len());
                                     for ctx in &arg_contexts {
-                                        arg_types.push(ctx.data_type.clone());
+                                        arg_types.push(ctx.data_type);
                                     }
 
                                     // Find best matching overload
@@ -1455,7 +1455,7 @@ impl<'ast> FunctionCompiler<'ast> {
                                     // Emit call instruction
                                     self.bytecode.emit(Instruction::Call(method_id.0));
 
-                                    return Some(ExprContext::rvalue(func_ref.return_type().clone()));
+                                    return Some(ExprContext::rvalue(*func_ref.return_type()));
                                 }
                             }
                     }
@@ -1484,7 +1484,7 @@ impl<'ast> FunctionCompiler<'ast> {
 
                                 // Clone params and return_type to avoid borrow issues
                                 let params = params.clone();
-                                let return_type = return_type.clone();
+                                let return_type = *return_type;
 
                                 // Validate arguments
                                 if arg_contexts.len() != params.len() {
@@ -1578,7 +1578,7 @@ impl<'ast> FunctionCompiler<'ast> {
                             }
 
                             self.bytecode.emit(Instruction::Call(func_id.0));
-                            return Some(ExprContext::rvalue(func_ref.return_type().clone()));
+                            return Some(ExprContext::rvalue(*func_ref.return_type()));
                         }
                     }
                 }
@@ -1719,7 +1719,7 @@ impl<'ast> FunctionCompiler<'ast> {
                     for (i, arg) in call.args.iter().enumerate() {
                         if !lambda_positions.contains(&i) {
                             let arg_ctx = self.check_expr(arg.value)?;
-                            non_lambda_types[i] = Some(arg_ctx.data_type.clone());
+                            non_lambda_types[i] = Some(arg_ctx.data_type);
                             arg_contexts.push(arg_ctx);
                         }
                     }
@@ -1818,7 +1818,7 @@ impl<'ast> FunctionCompiler<'ast> {
                 // Extract types for overload resolution
                 let mut arg_types = Vec::with_capacity(arg_contexts.len());
                 for ctx in &arg_contexts {
-                    arg_types.push(ctx.data_type.clone());
+                    arg_types.push(ctx.data_type);
                 }
 
                 // Find best matching overload
@@ -1880,7 +1880,7 @@ impl<'ast> FunctionCompiler<'ast> {
                 self.bytecode.emit(Instruction::Call(matching_func.0));
 
                 // Function calls produce rvalues
-                Some(ExprContext::rvalue(func_ref.return_type().clone()))
+                Some(ExprContext::rvalue(*func_ref.return_type()))
             }
             _ => {
                 // Complex call expression (e.g., obj(args) with opCall, function pointer, lambda)
@@ -1944,7 +1944,7 @@ impl<'ast> FunctionCompiler<'ast> {
                     }
 
                     self.bytecode.emit(Instruction::Call(func_id.0));
-                    return Some(ExprContext::rvalue(func_ref.return_type().clone()));
+                    return Some(ExprContext::rvalue(*func_ref.return_type()));
                 }
 
                 // No opCall found - check if it's a funcdef/function pointer
@@ -1982,7 +1982,7 @@ impl<'ast> FunctionCompiler<'ast> {
                         self.bytecode.emit(Instruction::CallPtr);
 
                         // Return the funcdef's return type
-                        return Some(ExprContext::rvalue(return_type.clone()));
+                        return Some(ExprContext::rvalue(*return_type));
                     }
                 }
 
@@ -2011,7 +2011,7 @@ impl<'ast> FunctionCompiler<'ast> {
         // Extract types for overload resolution
         let mut arg_types = Vec::with_capacity(arg_contexts.len());
         for ctx in arg_contexts {
-            arg_types.push(ctx.data_type.clone());
+            arg_types.push(ctx.data_type);
         }
 
         let typedef = self.context.get_type(type_id);
@@ -2149,7 +2149,7 @@ impl<'ast> FunctionCompiler<'ast> {
 
             // opIndex returns a reference, so result is an lvalue
             let is_mutable = current_ctx.is_mutable && !func.return_type().is_const;
-            return Some(ExprContext::lvalue(func.return_type().clone(), is_mutable));
+            return Some(ExprContext::lvalue(*func.return_type(), is_mutable));
         }
 
         // Try get_opIndex accessor (priority 2)
@@ -2208,7 +2208,7 @@ impl<'ast> FunctionCompiler<'ast> {
             self.bytecode.emit(Instruction::Call(func_id.0));
 
             // get_opIndex returns a value (read-only), so result is an rvalue
-            return Some(ExprContext::rvalue(func.return_type().clone()));
+            return Some(ExprContext::rvalue(*func.return_type()));
         }
 
         // No opIndex or get_opIndex registered for this type
@@ -2287,7 +2287,7 @@ impl<'ast> FunctionCompiler<'ast> {
 
                     self.bytecode.emit(Instruction::Call(func_id.0));
                     let is_mutable = current_ctx.is_mutable && !func.return_type().is_const;
-                    current_ctx = ExprContext::lvalue(func.return_type().clone(), is_mutable);
+                    current_ctx = ExprContext::lvalue(*func.return_type(), is_mutable);
                 } else if let Some(func_id) = self.context.find_operator_method(current_ctx.data_type.type_hash, OperatorBehavior::OpIndexGet) {
                     let func = self.context.get_function(func_id);
 
@@ -2329,7 +2329,7 @@ impl<'ast> FunctionCompiler<'ast> {
                     }
 
                     self.bytecode.emit(Instruction::Call(func_id.0));
-                    current_ctx = ExprContext::rvalue(func.return_type().clone());
+                    current_ctx = ExprContext::rvalue(*func.return_type());
                 } else {
                     self.error(
                         SemanticErrorKind::InvalidOperation,
@@ -2384,7 +2384,7 @@ impl<'ast> FunctionCompiler<'ast> {
 
                     self.bytecode.emit(Instruction::Call(func_id.0));
                     let is_mutable = current_ctx.is_mutable && !func.return_type().is_const;
-                    current_ctx = ExprContext::lvalue(func.return_type().clone(), is_mutable);
+                    current_ctx = ExprContext::lvalue(*func.return_type(), is_mutable);
 
                     // Now handle assignment to the returned reference
                     // Check that it's a mutable lvalue
@@ -2699,7 +2699,7 @@ impl<'ast> FunctionCompiler<'ast> {
 
                                 // Property getter returns rvalue (can't assign to it directly)
                                 // This is a property accessor, not a reference
-                                return Some(ExprContext::rvalue(getter_func.return_type().clone()));
+                                return Some(ExprContext::rvalue(*getter_func.return_type()));
                             } else {
                                 // Property exists but is write-only (no getter)
                                 self.error(
@@ -2735,7 +2735,7 @@ impl<'ast> FunctionCompiler<'ast> {
                             self.bytecode.emit(Instruction::LoadField(field_index as u32));
 
                             // If the object is const, the field should also be const
-                            let mut field_type = field_def.data_type.clone();
+                            let mut field_type = field_def.data_type;
                             if object_ctx.data_type.is_const || object_ctx.data_type.is_handle_to_const {
                                 field_type.is_const = true;
                             }
@@ -2853,7 +2853,7 @@ impl<'ast> FunctionCompiler<'ast> {
                         // Extract types for overload resolution
                         let mut arg_types = Vec::with_capacity(arg_contexts.len());
                         for ctx in &arg_contexts {
-                            arg_types.push(ctx.data_type.clone());
+                            arg_types.push(ctx.data_type);
                         }
 
                         // Find best matching overload from const-filtered candidates
@@ -2888,7 +2888,7 @@ impl<'ast> FunctionCompiler<'ast> {
                         self.bytecode.emit(Instruction::CallMethod(matching_method.0));
 
                         // Method calls return rvalues
-                        Some(ExprContext::rvalue(func_ref.return_type().clone()))
+                        Some(ExprContext::rvalue(*func_ref.return_type()))
                     }
                     TypeDef::Interface { methods, .. } => {
                         // Type check arguments first
@@ -2901,7 +2901,7 @@ impl<'ast> FunctionCompiler<'ast> {
                         // Extract types for signature matching
                         let mut arg_types = Vec::with_capacity(arg_contexts.len());
                         for ctx in &arg_contexts {
-                            arg_types.push(ctx.data_type.clone());
+                            arg_types.push(ctx.data_type);
                         }
 
                         // Find the method signature on the interface
@@ -2979,7 +2979,7 @@ impl<'ast> FunctionCompiler<'ast> {
                         ));
 
                         // Interface method calls return rvalues
-                        Some(ExprContext::rvalue(sig.return_type.clone()))
+                        Some(ExprContext::rvalue(sig.return_type))
                     }
                     _ => {
                         self.error(
@@ -3258,16 +3258,16 @@ impl<'ast> FunctionCompiler<'ast> {
             let param_name = param.name
                 .map(|id| id.name.to_string())
                 .unwrap_or_else(|| format!("_param{}", i));
-            all_vars.push((param_name, expected_params[i].clone()));
+            all_vars.push((param_name, expected_params[i]));
         }
         for cap in &captured_vars {
-            all_vars.push((cap.name.clone(), cap.data_type.clone()));
+            all_vars.push((cap.name.clone(), cap.data_type));
         }
 
         // ✨ COMPILE LAMBDA IMMEDIATELY using compile_block
         let compiled = FunctionCompiler::compile_block(
             self.context,
-            expected_return.clone(),
+            *expected_return,
             &all_vars,
             lambda.body,
         );

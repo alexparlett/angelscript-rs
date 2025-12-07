@@ -625,17 +625,13 @@ mod tests {
 
         // Find the expression in the function body
         for item in script.items() {
-            if let Item::Function(func) = item {
-                if let Some(body) = &func.body {
-                    if let Some(stmt) = body.stmts.first() {
-                        if let Stmt::Expr(expr_stmt) = stmt {
-                            if let Some(expr) = expr_stmt.expr {
+            if let Item::Function(func) = item
+                && let Some(body) = &func.body
+                    && let Some(stmt) = body.stmts.first()
+                        && let Stmt::Expr(expr_stmt) = stmt
+                            && let Some(expr) = expr_stmt.expr {
                                 return evaluator.eval(expr);
                             }
-                        }
-                    }
-                }
-            }
         }
         None
     }
@@ -915,21 +911,16 @@ mod tests {
 
         // Find the expression
         for item in script.items() {
-            if let Item::Function(func) = item {
-                if func.name.name == "test" {
-                    if let Some(body) = &func.body {
-                        if let Some(stmt) = body.stmts.first() {
-                            if let Stmt::Expr(expr_stmt) = stmt {
-                                if let Some(expr) = expr_stmt.expr {
+            if let Item::Function(func) = item
+                && func.name.name == "test"
+                    && let Some(body) = &func.body
+                        && let Some(stmt) = body.stmts.first()
+                            && let Stmt::Expr(expr_stmt) = stmt
+                                && let Some(expr) = expr_stmt.expr {
                                     let result = evaluator.eval(expr);
                                     assert_eq!(result, Some(ConstValue::Int(1)));
                                     return;
                                 }
-                            }
-                        }
-                    }
-                }
-            }
         }
         panic!("Could not find test expression");
     }
@@ -948,21 +939,16 @@ mod tests {
         let evaluator = ConstEvaluator::new(&data.context);
 
         for item in script.items() {
-            if let Item::Function(func) = item {
-                if func.name.name == "test" {
-                    if let Some(body) = &func.body {
-                        if let Some(stmt) = body.stmts.first() {
-                            if let Stmt::Expr(expr_stmt) = stmt {
-                                if let Some(expr) = expr_stmt.expr {
+            if let Item::Function(func) = item
+                && func.name.name == "test"
+                    && let Some(body) = &func.body
+                        && let Some(stmt) = body.stmts.first()
+                            && let Stmt::Expr(expr_stmt) = stmt
+                                && let Some(expr) = expr_stmt.expr {
                                     let result = evaluator.eval_as_int(expr);
                                     assert_eq!(result, Some(6)); // 5 + 1
                                     return;
                                 }
-                            }
-                        }
-                    }
-                }
-            }
         }
         panic!("Could not find test expression");
     }
@@ -978,19 +964,15 @@ mod tests {
         let (script, _) = Parser::parse_lenient(source, &arena);
 
         for item in script.items() {
-            if let Item::Function(func) = item {
-                if let Some(body) = &func.body {
-                    if let Some(stmt) = body.stmts.first() {
-                        if let Stmt::Expr(expr_stmt) = stmt {
-                            if let Some(expr) = expr_stmt.expr {
+            if let Item::Function(func) = item
+                && let Some(body) = &func.body
+                    && let Some(stmt) = body.stmts.first()
+                        && let Stmt::Expr(expr_stmt) = stmt
+                            && let Some(expr) = expr_stmt.expr {
                                 let result = eval_const_int(expr);
                                 assert_eq!(result, Some(7));
                                 return;
                             }
-                        }
-                    }
-                }
-            }
         }
         panic!("Could not find test expression");
     }
@@ -1226,19 +1208,15 @@ mod tests {
         let (script, _) = Parser::parse_lenient(source, &arena);
 
         for item in script.items() {
-            if let Item::Function(func) = item {
-                if let Some(body) = &func.body {
-                    if let Some(stmt) = body.stmts.first() {
-                        if let Stmt::Expr(expr_stmt) = stmt {
-                            if let Some(expr) = expr_stmt.expr {
+            if let Item::Function(func) = item
+                && let Some(body) = &func.body
+                    && let Some(stmt) = body.stmts.first()
+                        && let Stmt::Expr(expr_stmt) = stmt
+                            && let Some(expr) = expr_stmt.expr {
                                 let result = eval_const_int(expr);
                                 assert_eq!(result, None);
                                 return;
                             }
-                        }
-                    }
-                }
-            }
         }
         panic!("Could not find test expression");
     }
@@ -1254,17 +1232,13 @@ mod tests {
         let (script, _) = Parser::parse_lenient(&full_source, &arena);
 
         for item in script.items() {
-            if let Item::Function(func) = item {
-                if let Some(body) = &func.body {
-                    if let Some(stmt) = body.stmts.first() {
-                        if let Stmt::Expr(expr_stmt) = stmt {
-                            if let Some(expr) = expr_stmt.expr {
+            if let Item::Function(func) = item
+                && let Some(body) = &func.body
+                    && let Some(stmt) = body.stmts.first()
+                        && let Stmt::Expr(expr_stmt) = stmt
+                            && let Some(expr) = expr_stmt.expr {
                                 return eval_const_int(expr);
                             }
-                        }
-                    }
-                }
-            }
         }
         None
     }
@@ -1476,17 +1450,13 @@ mod tests {
         let evaluator = ConstEvaluator::new(&data.context);
 
         for item in script.items() {
-            if let Item::Function(func) = item {
-                if let Some(body) = &func.body {
-                    if let Some(stmt) = body.stmts.first() {
-                        if let Stmt::Expr(expr_stmt) = stmt {
-                            if let Some(expr) = expr_stmt.expr {
+            if let Item::Function(func) = item
+                && let Some(body) = &func.body
+                    && let Some(stmt) = body.stmts.first()
+                        && let Stmt::Expr(expr_stmt) = stmt
+                            && let Some(expr) = expr_stmt.expr {
                                 return evaluator.eval_as_uint(expr);
                             }
-                        }
-                    }
-                }
-            }
         }
         None
     }
@@ -1518,19 +1488,17 @@ mod tests {
         let evaluator = ConstEvaluator::new(&data.context);
 
         for item in script.items() {
-            if let Item::Function(func) = item {
-                if let Some(body) = &func.body {
+            if let Item::Function(func) = item
+                && let Some(body) = &func.body {
                     for stmt in body.stmts {
-                        if let Stmt::Expr(expr_stmt) = stmt {
-                            if let Some(Expr::Assign(_)) = expr_stmt.expr {
+                        if let Stmt::Expr(expr_stmt) = stmt
+                            && let Some(Expr::Assign(_)) = expr_stmt.expr {
                                 let result = evaluator.eval(expr_stmt.expr.unwrap());
                                 assert!(result.is_none());
                                 return;
                             }
-                        }
                     }
                 }
-            }
         }
     }
 
@@ -1544,21 +1512,18 @@ mod tests {
         let evaluator = ConstEvaluator::new(&data.context);
 
         for item in script.items() {
-            if let Item::Function(func) = item {
-                if func.name.name == "test" {
-                    if let Some(body) = &func.body {
+            if let Item::Function(func) = item
+                && func.name.name == "test"
+                    && let Some(body) = &func.body {
                         for stmt in body.stmts {
-                            if let Stmt::Expr(expr_stmt) = stmt {
-                                if let Some(Expr::Call(_)) = expr_stmt.expr {
+                            if let Stmt::Expr(expr_stmt) = stmt
+                                && let Some(Expr::Call(_)) = expr_stmt.expr {
                                     let result = evaluator.eval(expr_stmt.expr.unwrap());
                                     assert!(result.is_none());
                                     return;
                                 }
-                            }
                         }
                     }
-                }
-            }
         }
     }
 
@@ -1572,19 +1537,17 @@ mod tests {
         let evaluator = ConstEvaluator::new(&data.context);
 
         for item in script.items() {
-            if let Item::Function(func) = item {
-                if let Some(body) = &func.body {
+            if let Item::Function(func) = item
+                && let Some(body) = &func.body {
                     for stmt in body.stmts {
-                        if let Stmt::Expr(expr_stmt) = stmt {
-                            if let Some(Expr::Postfix(_)) = expr_stmt.expr {
+                        if let Stmt::Expr(expr_stmt) = stmt
+                            && let Some(Expr::Postfix(_)) = expr_stmt.expr {
                                 let result = evaluator.eval(expr_stmt.expr.unwrap());
                                 assert!(result.is_none());
                                 return;
                             }
-                        }
                     }
                 }
-            }
         }
     }
 
@@ -1599,20 +1562,18 @@ mod tests {
         let evaluator = ConstEvaluator::new(&data.context);
 
         for item in script.items() {
-            if let Item::Function(func) = item {
-                if let Some(body) = &func.body {
+            if let Item::Function(func) = item
+                && let Some(body) = &func.body {
                     for stmt in body.stmts {
-                        if let Stmt::Expr(expr_stmt) = stmt {
-                            if let Some(Expr::Unary(_)) = expr_stmt.expr {
+                        if let Stmt::Expr(expr_stmt) = stmt
+                            && let Some(Expr::Unary(_)) = expr_stmt.expr {
                                 let result = evaluator.eval(expr_stmt.expr.unwrap());
                                 // Pre-increment can't be constant evaluated
                                 assert!(result.is_none());
                                 return;
                             }
-                        }
                     }
                 }
-            }
         }
     }
 
@@ -1630,23 +1591,19 @@ mod tests {
         let evaluator = ConstEvaluator::new(&data.context);
 
         for item in script.items() {
-            if let Item::Function(func) = item {
-                if func.name.name == "test" {
-                    if let Some(body) = &func.body {
+            if let Item::Function(func) = item
+                && func.name.name == "test"
+                    && let Some(body) = &func.body {
                         for stmt in body.stmts {
-                            if let Stmt::Expr(expr_stmt) = stmt {
-                                if let Some(Expr::Binary(bin)) = expr_stmt.expr {
-                                    if matches!(bin.op, angelscript_parser::ast::BinaryOp::Is | angelscript_parser::ast::BinaryOp::NotIs) {
+                            if let Stmt::Expr(expr_stmt) = stmt
+                                && let Some(Expr::Binary(bin)) = expr_stmt.expr
+                                    && matches!(bin.op, angelscript_parser::ast::BinaryOp::Is | angelscript_parser::ast::BinaryOp::NotIs) {
                                         let result = evaluator.eval(expr_stmt.expr.unwrap());
                                         assert!(result.is_none());
                                         return;
                                     }
-                                }
-                            }
                         }
                     }
-                }
-            }
         }
     }
 
@@ -1676,19 +1633,17 @@ mod tests {
         let evaluator = ConstEvaluator::new(&data.context);
 
         for item in script.items() {
-            if let Item::Function(func) = item {
-                if let Some(body) = &func.body {
+            if let Item::Function(func) = item
+                && let Some(body) = &func.body {
                     for stmt in body.stmts {
-                        if let Stmt::Expr(expr_stmt) = stmt {
-                            if let Some(Expr::Index(_)) = expr_stmt.expr {
+                        if let Stmt::Expr(expr_stmt) = stmt
+                            && let Some(Expr::Index(_)) = expr_stmt.expr {
                                 let result = evaluator.eval(expr_stmt.expr.unwrap());
                                 assert!(result.is_none());
                                 return;
                             }
-                        }
                     }
                 }
-            }
         }
     }
 
@@ -1706,21 +1661,18 @@ mod tests {
         let evaluator = ConstEvaluator::new(&data.context);
 
         for item in script.items() {
-            if let Item::Function(func) = item {
-                if func.name.name == "test" {
-                    if let Some(body) = &func.body {
+            if let Item::Function(func) = item
+                && func.name.name == "test"
+                    && let Some(body) = &func.body {
                         for stmt in body.stmts {
-                            if let Stmt::Expr(expr_stmt) = stmt {
-                                if let Some(Expr::Member(_)) = expr_stmt.expr {
+                            if let Stmt::Expr(expr_stmt) = stmt
+                                && let Some(Expr::Member(_)) = expr_stmt.expr {
                                     let result = evaluator.eval(expr_stmt.expr.unwrap());
                                     assert!(result.is_none());
                                     return;
                                 }
-                            }
                         }
                     }
-                }
-            }
         }
     }
 
@@ -1735,19 +1687,17 @@ mod tests {
         let evaluator = ConstEvaluator::new(&data.context);
 
         for item in script.items() {
-            if let Item::Function(func) = item {
-                if let Some(body) = &func.body {
+            if let Item::Function(func) = item
+                && let Some(body) = &func.body {
                     for stmt in body.stmts {
-                        if let Stmt::Expr(expr_stmt) = stmt {
-                            if let Some(Expr::Cast(_)) = expr_stmt.expr {
+                        if let Stmt::Expr(expr_stmt) = stmt
+                            && let Some(Expr::Cast(_)) = expr_stmt.expr {
                                 let result = evaluator.eval(expr_stmt.expr.unwrap());
                                 assert!(result.is_none());
                                 return;
                             }
-                        }
                     }
                 }
-            }
         }
     }
 
@@ -1762,21 +1712,18 @@ mod tests {
         let evaluator = ConstEvaluator::new(&data.context);
 
         for item in script.items() {
-            if let Item::Function(func) = item {
-                if let Some(body) = &func.body {
+            if let Item::Function(func) = item
+                && let Some(body) = &func.body {
                     for stmt in body.stmts {
-                        if let Stmt::Expr(expr_stmt) = stmt {
-                            if let Some(Expr::Unary(u)) = expr_stmt.expr {
-                                if matches!(u.op, UnaryOp::PreDec) {
+                        if let Stmt::Expr(expr_stmt) = stmt
+                            && let Some(Expr::Unary(u)) = expr_stmt.expr
+                                && matches!(u.op, UnaryOp::PreDec) {
                                     let result = evaluator.eval(expr_stmt.expr.unwrap());
                                     assert!(result.is_none());
                                     return;
                                 }
-                            }
-                        }
                     }
                 }
-            }
         }
     }
 
@@ -1794,23 +1741,19 @@ mod tests {
         let evaluator = ConstEvaluator::new(&data.context);
 
         for item in script.items() {
-            if let Item::Function(func) = item {
-                if func.name.name == "test" {
-                    if let Some(body) = &func.body {
+            if let Item::Function(func) = item
+                && func.name.name == "test"
+                    && let Some(body) = &func.body {
                         for stmt in body.stmts {
-                            if let Stmt::Expr(expr_stmt) = stmt {
-                                if let Some(Expr::Unary(u)) = expr_stmt.expr {
-                                    if matches!(u.op, UnaryOp::HandleOf) {
+                            if let Stmt::Expr(expr_stmt) = stmt
+                                && let Some(Expr::Unary(u)) = expr_stmt.expr
+                                    && matches!(u.op, UnaryOp::HandleOf) {
                                         let result = evaluator.eval(expr_stmt.expr.unwrap());
                                         assert!(result.is_none());
                                         return;
                                     }
-                                }
-                            }
                         }
                     }
-                }
-            }
         }
     }
 
@@ -2013,8 +1956,8 @@ mod tests {
     #[test]
     fn test_uint_uint_equality() {
         // UInt == UInt comparisons
-        assert_eq!(ConstValue::UInt(5) == ConstValue::UInt(5), true);
-        assert_eq!(ConstValue::UInt(5) == ConstValue::UInt(10), false);
+        assert!(ConstValue::UInt(5) == ConstValue::UInt(5));
+        assert!(!(ConstValue::UInt(5) == ConstValue::UInt(10)));
     }
 
     #[test]
@@ -2032,35 +1975,31 @@ mod tests {
         // Int == UInt with positive Int
         let pos_int = ConstValue::Int(5);
         let uint = ConstValue::UInt(5);
-        if let (ConstValue::Int(l), ConstValue::UInt(r)) = (&pos_int, &uint) {
-            if *l >= 0 {
+        if let (ConstValue::Int(l), ConstValue::UInt(r)) = (&pos_int, &uint)
+            && *l >= 0 {
                 assert_eq!(*l as u64, *r);
             }
-        }
 
         // Int == UInt with negative Int → always false
         let neg_int = ConstValue::Int(-5);
-        if let (ConstValue::Int(l), ConstValue::UInt(_)) = (&neg_int, &uint) {
-            if *l < 0 {
+        if let (ConstValue::Int(l), ConstValue::UInt(_)) = (&neg_int, &uint)
+            && *l < 0 {
                 // Can't be equal
                 assert!(true);
             }
-        }
 
         // UInt == Int with positive Int
-        if let (ConstValue::UInt(l), ConstValue::Int(r)) = (&uint, &pos_int) {
-            if *r >= 0 {
+        if let (ConstValue::UInt(l), ConstValue::Int(r)) = (&uint, &pos_int)
+            && *r >= 0 {
                 assert_eq!(*l, *r as u64);
             }
-        }
 
         // UInt == Int with negative Int → always false
-        if let (ConstValue::UInt(_), ConstValue::Int(r)) = (&uint, &neg_int) {
-            if *r < 0 {
+        if let (ConstValue::UInt(_), ConstValue::Int(r)) = (&uint, &neg_int)
+            && *r < 0 {
                 // Can't be equal
                 assert!(true);
             }
-        }
     }
 
     #[test]
@@ -2068,34 +2007,30 @@ mod tests {
         // Negative Int < any UInt → true
         let neg = ConstValue::Int(-5);
         let uint = ConstValue::UInt(0);
-        if let (ConstValue::Int(l), ConstValue::UInt(_)) = (&neg, &uint) {
-            if *l < 0 {
+        if let (ConstValue::Int(l), ConstValue::UInt(_)) = (&neg, &uint)
+            && *l < 0 {
                 assert!(true); // -5 < 0u is true
             }
-        }
 
         // Positive Int < UInt
         let pos = ConstValue::Int(5);
         let uint_big = ConstValue::UInt(10);
-        if let (ConstValue::Int(l), ConstValue::UInt(r)) = (&pos, &uint_big) {
-            if *l >= 0 {
+        if let (ConstValue::Int(l), ConstValue::UInt(r)) = (&pos, &uint_big)
+            && *l >= 0 {
                 assert!((*l as u64) < *r);
             }
-        }
 
         // UInt < negative Int → false
-        if let (ConstValue::UInt(_), ConstValue::Int(r)) = (&uint, &neg) {
-            if *r < 0 {
+        if let (ConstValue::UInt(_), ConstValue::Int(r)) = (&uint, &neg)
+            && *r < 0 {
                 assert!(true); // Any uint is NOT less than a negative int
             }
-        }
 
         // UInt < positive Int
-        if let (ConstValue::UInt(l), ConstValue::Int(r)) = (&uint, &pos) {
-            if *r >= 0 {
+        if let (ConstValue::UInt(l), ConstValue::Int(r)) = (&uint, &pos)
+            && *r >= 0 {
                 assert!(*l < (*r as u64));
             }
-        }
     }
 
     #[test]
@@ -2232,17 +2167,14 @@ mod tests {
         let (script, _) = Parser::parse_lenient(source, &arena);
 
         for item in script.items() {
-            if let Item::Function(func) = item {
-                if let Some(body) = &func.body {
-                    if let Some(Stmt::Expr(expr_stmt)) = body.stmts.first() {
-                        if let Some(expr) = expr_stmt.expr {
+            if let Item::Function(func) = item
+                && let Some(body) = &func.body
+                    && let Some(Stmt::Expr(expr_stmt)) = body.stmts.first()
+                        && let Some(expr) = expr_stmt.expr {
                             let result = super::eval_const_int(expr);
                             assert_eq!(result, Some(3));
                             return;
                         }
-                    }
-                }
-            }
         }
     }
 
@@ -2254,17 +2186,14 @@ mod tests {
         let (script, _) = Parser::parse_lenient(source, &arena);
 
         for item in script.items() {
-            if let Item::Function(func) = item {
-                if let Some(body) = &func.body {
-                    if let Some(Stmt::Expr(expr_stmt)) = body.stmts.first() {
-                        if let Some(expr) = expr_stmt.expr {
+            if let Item::Function(func) = item
+                && let Some(body) = &func.body
+                    && let Some(Stmt::Expr(expr_stmt)) = body.stmts.first()
+                        && let Some(expr) = expr_stmt.expr {
                             let result = eval_const_int_simple(expr);
                             assert_eq!(result, Some(1));
                             return;
                         }
-                    }
-                }
-            }
         }
     }
 
@@ -2311,16 +2240,13 @@ mod tests {
             let (script, _) = Parser::parse_lenient(&source, &arena);
 
             for item in script.items() {
-                if let Item::Function(func) = item {
-                    if let Some(body) = &func.body {
-                        if let Some(Stmt::Expr(expr_stmt)) = body.stmts.first() {
-                            if let Some(expr) = expr_stmt.expr {
+                if let Item::Function(func) = item
+                    && let Some(body) = &func.body
+                        && let Some(Stmt::Expr(expr_stmt)) = body.stmts.first()
+                            && let Some(expr) = expr_stmt.expr {
                                 let result = eval_const_int_simple(expr);
                                 assert_eq!(result, expected, "Failed for expression: {}", expr_str);
                             }
-                        }
-                    }
-                }
             }
         }
     }
@@ -2343,16 +2269,13 @@ mod tests {
             let (script, _) = Parser::parse_lenient(&source, &arena);
 
             for item in script.items() {
-                if let Item::Function(func) = item {
-                    if let Some(body) = &func.body {
-                        if let Some(Stmt::Expr(expr_stmt)) = body.stmts.first() {
-                            if let Some(expr) = expr_stmt.expr {
+                if let Item::Function(func) = item
+                    && let Some(body) = &func.body
+                        && let Some(Stmt::Expr(expr_stmt)) = body.stmts.first()
+                            && let Some(expr) = expr_stmt.expr {
                                 let result = eval_const_int_simple(expr);
                                 assert_eq!(result, expected, "Failed for expression: {}", expr_str);
                             }
-                        }
-                    }
-                }
             }
         }
     }
@@ -2365,17 +2288,14 @@ mod tests {
         let (script, _) = Parser::parse_lenient(source, &arena);
 
         for item in script.items() {
-            if let Item::Function(func) = item {
-                if let Some(body) = &func.body {
-                    if let Some(Stmt::Expr(expr_stmt)) = body.stmts.first() {
-                        if let Some(expr) = expr_stmt.expr {
+            if let Item::Function(func) = item
+                && let Some(body) = &func.body
+                    && let Some(Stmt::Expr(expr_stmt)) = body.stmts.first()
+                        && let Some(expr) = expr_stmt.expr {
                             let result = eval_const_int_simple(expr);
                             assert_eq!(result, None);
                             return;
                         }
-                    }
-                }
-            }
         }
     }
 
@@ -2387,17 +2307,14 @@ mod tests {
         let (script, _) = Parser::parse_lenient(source, &arena);
 
         for item in script.items() {
-            if let Item::Function(func) = item {
-                if let Some(body) = &func.body {
-                    if let Some(Stmt::Expr(expr_stmt)) = body.stmts.first() {
-                        if let Some(expr) = expr_stmt.expr {
+            if let Item::Function(func) = item
+                && let Some(body) = &func.body
+                    && let Some(Stmt::Expr(expr_stmt)) = body.stmts.first()
+                        && let Some(expr) = expr_stmt.expr {
                             let result = eval_const_int_simple(expr);
                             assert_eq!(result, None);
                             return;
                         }
-                    }
-                }
-            }
         }
     }
 
@@ -2409,17 +2326,14 @@ mod tests {
         let (script, _) = Parser::parse_lenient(source, &arena);
 
         for item in script.items() {
-            if let Item::Function(func) = item {
-                if let Some(body) = &func.body {
-                    if let Some(Stmt::Expr(expr_stmt)) = body.stmts.first() {
-                        if let Some(expr) = expr_stmt.expr {
+            if let Item::Function(func) = item
+                && let Some(body) = &func.body
+                    && let Some(Stmt::Expr(expr_stmt)) = body.stmts.first()
+                        && let Some(expr) = expr_stmt.expr {
                             let result = eval_const_int_simple(expr);
                             assert_eq!(result, None);
                             return;
                         }
-                    }
-                }
-            }
         }
     }
 
@@ -2431,17 +2345,14 @@ mod tests {
         let (script, _) = Parser::parse_lenient(source, &arena);
 
         for item in script.items() {
-            if let Item::Function(func) = item {
-                if let Some(body) = &func.body {
-                    if let Some(Stmt::Expr(expr_stmt)) = body.stmts.first() {
-                        if let Some(expr) = expr_stmt.expr {
+            if let Item::Function(func) = item
+                && let Some(body) = &func.body
+                    && let Some(Stmt::Expr(expr_stmt)) = body.stmts.first()
+                        && let Some(expr) = expr_stmt.expr {
                             let result = eval_const_int_simple(expr);
                             assert_eq!(result, Some(8));
                             return;
                         }
-                    }
-                }
-            }
         }
     }
 
@@ -2453,17 +2364,14 @@ mod tests {
         let (script, _) = Parser::parse_lenient(source, &arena);
 
         for item in script.items() {
-            if let Item::Function(func) = item {
-                if let Some(body) = &func.body {
-                    if let Some(Stmt::Expr(expr_stmt)) = body.stmts.first() {
-                        if let Some(expr) = expr_stmt.expr {
+            if let Item::Function(func) = item
+                && let Some(body) = &func.body
+                    && let Some(Stmt::Expr(expr_stmt)) = body.stmts.first()
+                        && let Some(expr) = expr_stmt.expr {
                             let result = eval_const_int_simple(expr);
                             assert_eq!(result, Some(5));
                             return;
                         }
-                    }
-                }
-            }
         }
     }
 
@@ -2475,17 +2383,14 @@ mod tests {
         let (script, _) = Parser::parse_lenient(source, &arena);
 
         for item in script.items() {
-            if let Item::Function(func) = item {
-                if let Some(body) = &func.body {
-                    if let Some(Stmt::Expr(expr_stmt)) = body.stmts.first() {
-                        if let Some(expr) = expr_stmt.expr {
+            if let Item::Function(func) = item
+                && let Some(body) = &func.body
+                    && let Some(Stmt::Expr(expr_stmt)) = body.stmts.first()
+                        && let Some(expr) = expr_stmt.expr {
                             let result = eval_const_int_simple(expr);
                             assert_eq!(result, Some(10));
                             return;
                         }
-                    }
-                }
-            }
         }
     }
 
@@ -2497,17 +2402,14 @@ mod tests {
         let (script, _) = Parser::parse_lenient(source, &arena);
 
         for item in script.items() {
-            if let Item::Function(func) = item {
-                if let Some(body) = &func.body {
-                    if let Some(Stmt::Expr(expr_stmt)) = body.stmts.first() {
-                        if let Some(expr) = expr_stmt.expr {
+            if let Item::Function(func) = item
+                && let Some(body) = &func.body
+                    && let Some(Stmt::Expr(expr_stmt)) = body.stmts.first()
+                        && let Some(expr) = expr_stmt.expr {
                             let result = eval_const_int_simple(expr);
                             assert_eq!(result, None);
                             return;
                         }
-                    }
-                }
-            }
         }
     }
 
@@ -2522,23 +2424,19 @@ mod tests {
         let (script, _) = Parser::parse_lenient(source, &arena);
 
         for item in script.items() {
-            if let Item::Function(func) = item {
-                if func.name.name == "test" {
-                    if let Some(body) = &func.body {
+            if let Item::Function(func) = item
+                && func.name.name == "test"
+                    && let Some(body) = &func.body {
                         for stmt in body.stmts {
-                            if let Stmt::Expr(expr_stmt) = stmt {
-                                if let Some(Expr::Binary(bin)) = expr_stmt.expr {
-                                    if matches!(bin.op, BinaryOp::Is | BinaryOp::NotIs) {
+                            if let Stmt::Expr(expr_stmt) = stmt
+                                && let Some(Expr::Binary(bin)) = expr_stmt.expr
+                                    && matches!(bin.op, BinaryOp::Is | BinaryOp::NotIs) {
                                         let result = eval_const_int_simple(expr_stmt.expr.unwrap());
                                         assert_eq!(result, None);
                                         return;
                                     }
-                                }
-                            }
                         }
                     }
-                }
-            }
         }
     }
 
@@ -2553,19 +2451,17 @@ mod tests {
         let evaluator = ConstEvaluator::new(&data.context);
 
         for item in script.items() {
-            if let Item::Function(func) = item {
-                if let Some(body) = &func.body {
+            if let Item::Function(func) = item
+                && let Some(body) = &func.body {
                     for stmt in body.stmts {
-                        if let Stmt::Expr(expr_stmt) = stmt {
-                            if let Some(Expr::Ident(_)) = expr_stmt.expr {
+                        if let Stmt::Expr(expr_stmt) = stmt
+                            && let Some(Expr::Ident(_)) = expr_stmt.expr {
                                 let result = evaluator.eval(expr_stmt.expr.unwrap());
                                 assert!(result.is_none());
                                 return;
                             }
-                        }
                     }
                 }
-            }
         }
     }
 
@@ -2580,19 +2476,17 @@ mod tests {
         let evaluator = ConstEvaluator::new(&data.context);
 
         for item in script.items() {
-            if let Item::Function(func) = item {
-                if let Some(body) = &func.body {
+            if let Item::Function(func) = item
+                && let Some(body) = &func.body {
                     for stmt in body.stmts {
-                        if let Stmt::Expr(expr_stmt) = stmt {
-                            if let Some(Expr::Ident(_)) = expr_stmt.expr {
+                        if let Stmt::Expr(expr_stmt) = stmt
+                            && let Some(Expr::Ident(_)) = expr_stmt.expr {
                                 let result = evaluator.eval(expr_stmt.expr.unwrap());
                                 assert!(result.is_none());
                                 return;
                             }
-                        }
                     }
                 }
-            }
         }
     }
 
@@ -2610,22 +2504,19 @@ mod tests {
         let evaluator = ConstEvaluator::new(&data.context);
 
         for item in script.items() {
-            if let Item::Function(func) = item {
-                if func.name.name == "test" {
-                    if let Some(body) = &func.body {
+            if let Item::Function(func) = item
+                && func.name.name == "test"
+                    && let Some(body) = &func.body {
                         for stmt in body.stmts {
-                            if let Stmt::Expr(expr_stmt) = stmt {
-                                if let Some(Expr::Ident(_)) = expr_stmt.expr {
+                            if let Stmt::Expr(expr_stmt) = stmt
+                                && let Some(Expr::Ident(_)) = expr_stmt.expr {
                                     let result = evaluator.eval(expr_stmt.expr.unwrap());
                                     // Should be None because Foo is a class, not an enum
                                     assert!(result.is_none());
                                     return;
                                 }
-                            }
                         }
                     }
-                }
-            }
         }
     }
 
@@ -2643,22 +2534,19 @@ mod tests {
         let evaluator = ConstEvaluator::new(&data.context);
 
         for item in script.items() {
-            if let Item::Function(func) = item {
-                if func.name.name == "test" {
-                    if let Some(body) = &func.body {
+            if let Item::Function(func) = item
+                && func.name.name == "test"
+                    && let Some(body) = &func.body {
                         for stmt in body.stmts {
-                            if let Stmt::Expr(expr_stmt) = stmt {
-                                if let Some(Expr::Ident(_)) = expr_stmt.expr {
+                            if let Stmt::Expr(expr_stmt) = stmt
+                                && let Some(Expr::Ident(_)) = expr_stmt.expr {
                                     let result = evaluator.eval(expr_stmt.expr.unwrap());
                                     // Should be None because Yellow doesn't exist in Color
                                     assert!(result.is_none());
                                     return;
                                 }
-                            }
                         }
                     }
-                }
-            }
         }
     }
 
@@ -2680,17 +2568,14 @@ mod tests {
         let evaluator = ConstEvaluator::new(&data.context);
 
         for item in script.items() {
-            if let Item::Function(func) = item {
-                if let Some(body) = &func.body {
-                    if let Some(Stmt::Expr(expr_stmt)) = body.stmts.first() {
-                        if let Some(expr) = expr_stmt.expr {
+            if let Item::Function(func) = item
+                && let Some(body) = &func.body
+                    && let Some(Stmt::Expr(expr_stmt)) = body.stmts.first()
+                        && let Some(expr) = expr_stmt.expr {
                             let result = evaluator.eval(expr);
                             assert!(matches!(result, Some(ConstValue::Float(_))));
                             return;
                         }
-                    }
-                }
-            }
         }
     }
 
