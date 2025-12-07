@@ -850,6 +850,7 @@ mod tests {
         let mut module = Module::root();
         module
             .register_type::<TestVec3>("TestVec3")
+            .unwrap()
             .value_type()
             .build()
             .unwrap();
@@ -864,6 +865,7 @@ mod tests {
         let mut module = Module::root();
         module
             .register_type::<TestVec3>("TestVec3")
+            .unwrap()
             .reference_type()
             .build()
             .unwrap();
@@ -877,6 +879,7 @@ mod tests {
         let mut module = Module::root();
         module
             .register_type::<TestVec3>("TestVec3")
+            .unwrap()
             .value_type()
             .constructor("void f()", || TestVec3::new(0.0, 0.0, 0.0))
             .unwrap()
@@ -893,6 +896,7 @@ mod tests {
         let mut module = Module::root();
         module
             .register_type::<TestVec3>("TestVec3")
+            .unwrap()
             .value_type()
             .method_raw("float length() const", |ctx: &mut CallContext| {
                 let this: &TestVec3 = ctx.this()?;
@@ -913,6 +917,7 @@ mod tests {
         let mut module = Module::root();
         module
             .register_type::<TestVec3>("TestVec3")
+            .unwrap()
             .value_type()
             .method("float length() const", |v: &TestVec3| v.length())
             .unwrap()
@@ -928,6 +933,7 @@ mod tests {
         let mut module = Module::root();
         module
             .register_type::<TestVec3>("TestVec3")
+            .unwrap()
             .value_type()
             .method_mut("void reset()", |v: &mut TestVec3| {
                 v.x = 0.0;
@@ -947,6 +953,7 @@ mod tests {
         let mut module = Module::root();
         module
             .register_type::<TestVec3>("TestVec3")
+            .unwrap()
             .value_type()
             .property("float x", |v: &TestVec3| v.x, |v: &mut TestVec3, x| v.x = x)
             .unwrap()
@@ -963,6 +970,7 @@ mod tests {
         let mut module = Module::root();
         module
             .register_type::<TestVec3>("TestVec3")
+            .unwrap()
             .value_type()
             .property_get("float lengthSq", |v: &TestVec3| {
                 v.x * v.x + v.y * v.y + v.z * v.z
@@ -980,6 +988,7 @@ mod tests {
         let mut module = Module::root();
         module
             .register_type::<TestVec3>("TestVec3")
+            .unwrap()
             .value_type()
             .method_raw("bool opEquals(const TestVec3 &in)", |ctx: &mut CallContext| {
                 let other_x: f32 = ctx.arg(0)?;
@@ -1002,6 +1011,7 @@ mod tests {
         let mut module = Module::root();
         let result = module
             .register_type::<TestVec3>("TestVec3")
+            .unwrap()
             .value_type()
             .method_raw("invalid declaration", |_ctx: &mut CallContext| Ok(()));
 
@@ -1013,6 +1023,7 @@ mod tests {
         let mut module = Module::root();
         let result = module
             .register_type::<TestVec3>("TestVec3")
+            .unwrap()
             .value_type()
             .method_raw("", |_ctx: &mut CallContext| Ok(()));
 
@@ -1024,6 +1035,7 @@ mod tests {
         let mut module = Module::root();
         module
             .register_type::<TestVec3>("TestVec3")
+            .unwrap()
             .value_type()
             .template_callback(|_| TemplateValidation::valid())
             .build()
@@ -1037,6 +1049,7 @@ mod tests {
         let mut module = Module::root();
         module
             .register_type::<TestVec3>("TestVec3")
+            .unwrap()
             .pod_type()
             .build()
             .unwrap();
@@ -1049,6 +1062,7 @@ mod tests {
         let mut module = Module::root();
         module
             .register_type::<TestVec3>("TestVec3")
+            .unwrap()
             .scoped_type()
             .build()
             .unwrap();
@@ -1065,6 +1079,7 @@ mod tests {
         let mut module = Module::root();
         module
             .register_type::<TestVec3>("TestVec3")
+            .unwrap()
             .single_ref_type()
             .build()
             .unwrap();
@@ -1081,6 +1096,7 @@ mod tests {
         let mut module = Module::root();
         module
             .register_type::<TestVec3>("TestVec3")
+            .unwrap()
             .reference_type()
             .factory("TestVec3@ f()", || TestVec3::new(0.0, 0.0, 0.0))
             .unwrap()
@@ -1100,6 +1116,7 @@ mod tests {
         let mut module = Module::root();
         module
             .register_type::<TestVec3>("TestVec3")
+            .unwrap()
             .reference_type()
             .addref(|_: &TestVec3| {
                 ADDREF_COUNT.fetch_add(1, Ordering::SeqCst);
@@ -1118,6 +1135,7 @@ mod tests {
         let mut module = Module::root();
         module
             .register_type::<TestVec3>("TestVec3")
+            .unwrap()
             .reference_type()
             .release(|_: &TestVec3| {
                 RELEASE_COUNT.fetch_add(1, Ordering::SeqCst);
@@ -1133,6 +1151,7 @@ mod tests {
         let mut module = Module::root();
         module
             .register_type::<TestVec3>("TestVec3")
+            .unwrap()
             .value_type()
             .destructor(|_: &mut TestVec3| {
                 // cleanup logic would go here
@@ -1148,6 +1167,7 @@ mod tests {
         let mut module = Module::root();
         module
             .register_type::<TestVec3>("TestVec3")
+            .unwrap()
             .value_type()
             .operator("bool opEquals(const TestVec3 &in)", |_a: &TestVec3, _b: f32| true)
             .unwrap()
@@ -1162,6 +1182,7 @@ mod tests {
         let mut module = Module::root();
         module
             .register_type::<TestVec3>("TestVec3")
+            .unwrap()
             .value_type()
             .method("float dot(float x, float y, float z) const", |v: &TestVec3, x: f32, y: f32, z: f32| {
                 v.x * x + v.y * y + v.z * z
@@ -1179,6 +1200,7 @@ mod tests {
         let mut module = Module::root();
         module
             .register_type::<TestVec3>("TestVec3")
+            .unwrap()
             .value_type()
             .method_mut("void set(float x, float y, float z)", |v: &mut TestVec3, x: f32, y: f32, z: f32| {
                 v.x = x;
@@ -1199,6 +1221,7 @@ mod tests {
         let mut module = Module::root();
         module
             .register_type::<TestVec3>("TestVec3")
+            .unwrap()
             .value_type()
             .method("float compute()", |v: &TestVec3| v.length())
             .unwrap()
@@ -1214,6 +1237,7 @@ mod tests {
         let mut module = Module::root();
         module
             .register_type::<TestVec3>("TestVec3")
+            .unwrap()
             .value_type()
             .property("float x", |v: &TestVec3| v.x, |v: &mut TestVec3, x| v.x = x)
             .unwrap()
@@ -1236,6 +1260,7 @@ mod tests {
         let mut module = Module::root();
         module
             .register_type::<TestVec3>("TestVec3")
+            .unwrap()
             .reference_type()
             .factory("TestVec3@ f()", || TestVec3::new(0.0, 0.0, 0.0))
             .unwrap()
@@ -1264,6 +1289,7 @@ mod tests {
         let mut module = Module::root();
         module
             .register_type::<TestVec3>("TestVec3")
+            .unwrap()
             .value_type()
             .constructor("void f()", || TestVec3::new(0.0, 0.0, 0.0))
             .unwrap()
@@ -1298,6 +1324,7 @@ mod tests {
         let mut module = Module::root();
         let result = module
             .register_type::<TestVec3>("TestVec3")
+            .unwrap()
             .value_type()
             .constructor("not valid", || TestVec3::new(0.0, 0.0, 0.0));
 
@@ -1309,6 +1336,7 @@ mod tests {
         let mut module = Module::root();
         let result = module
             .register_type::<TestVec3>("TestVec3")
+            .unwrap()
             .reference_type()
             .factory("invalid", || TestVec3::new(0.0, 0.0, 0.0));
 
@@ -1320,6 +1348,7 @@ mod tests {
         let mut module = Module::root();
         let result = module
             .register_type::<TestVec3>("TestVec3")
+            .unwrap()
             .value_type()
             .property("not a valid property", |v: &TestVec3| v.x, |v: &mut TestVec3, x| v.x = x);
 
@@ -1331,6 +1360,7 @@ mod tests {
         let mut module = Module::root();
         let result = module
             .register_type::<TestVec3>("TestVec3")
+            .unwrap()
             .value_type()
             .operator("invalid", |_a: &TestVec3, _b: f32| true);
 
@@ -1343,6 +1373,7 @@ mod tests {
         let mut module = Module::root();
         module
             .register_type::<TestVec3>("array<class T>")
+            .unwrap()
             .reference_type()
             .template_callback(|_| TemplateValidation::valid())
             .build()
@@ -1361,6 +1392,7 @@ mod tests {
         let mut module = Module::root();
         module
             .register_type::<TestVec3>("dictionary<class K, class V>")
+            .unwrap()
             .reference_type()
             .template_callback(|_| TemplateValidation::valid())
             .build()
@@ -1381,6 +1413,7 @@ mod tests {
         let mut module = Module::root();
         module
             .register_type::<TestVec3>("stringmap<string, class T>")
+            .unwrap()
             .reference_type()
             .template_callback(|_| TemplateValidation::valid())
             .build()
@@ -1399,6 +1432,7 @@ mod tests {
         let mut module = Module::root();
         let result = module
             .register_type::<TestVec3>("TestVec3")
+            .unwrap()
             .value_type()
             .property("", |v: &TestVec3| v.x, |v: &mut TestVec3, x| v.x = x);
 
@@ -1410,6 +1444,7 @@ mod tests {
         let mut module = Module::root();
         let result = module
             .register_type::<TestVec3>("TestVec3")
+            .unwrap()
             .value_type()
             .property_get("", |v: &TestVec3| v.x);
 
@@ -1421,6 +1456,7 @@ mod tests {
         let mut module = Module::root();
         let result = module
             .register_type::<TestVec3>("TestVec3")
+            .unwrap()
             .value_type()
             .property_get("not a valid property declaration", |v: &TestVec3| v.x);
 
@@ -1432,6 +1468,7 @@ mod tests {
         let mut module = Module::root();
         let result = module
             .register_type::<TestVec3>("TestVec3")
+            .unwrap()
             .value_type()
             .method("", |v: &TestVec3| v.length());
 
@@ -1443,6 +1480,7 @@ mod tests {
         let mut module = Module::root();
         let result = module
             .register_type::<TestVec3>("TestVec3")
+            .unwrap()
             .value_type()
             .method_mut("", |v: &mut TestVec3| {
                 v.x = 0.0;
@@ -1456,6 +1494,7 @@ mod tests {
         let mut module = Module::root();
         let result = module
             .register_type::<TestVec3>("TestVec3")
+            .unwrap()
             .value_type()
             .method("not valid syntax", |v: &TestVec3| v.length());
 
@@ -1467,6 +1506,7 @@ mod tests {
         let mut module = Module::root();
         let result = module
             .register_type::<TestVec3>("TestVec3")
+            .unwrap()
             .value_type()
             .method_mut("not valid syntax", |v: &mut TestVec3| {
                 v.x = 0.0;
@@ -1480,6 +1520,7 @@ mod tests {
         let mut module = Module::root();
         let result = module
             .register_type::<TestVec3>("TestVec3")
+            .unwrap()
             .value_type()
             .constructor("", || TestVec3::new(0.0, 0.0, 0.0));
 
@@ -1491,6 +1532,7 @@ mod tests {
         let mut module = Module::root();
         let result = module
             .register_type::<TestVec3>("TestVec3")
+            .unwrap()
             .reference_type()
             .factory("", || TestVec3::new(0.0, 0.0, 0.0));
 
@@ -1502,6 +1544,7 @@ mod tests {
         let mut module = Module::root();
         let result = module
             .register_type::<TestVec3>("TestVec3")
+            .unwrap()
             .value_type()
             .operator("", |_a: &TestVec3, _b: f32| true);
 
@@ -1513,6 +1556,7 @@ mod tests {
         let mut module = Module::root();
         let result = module
             .register_type::<TestVec3>("TestVec3")
+            .unwrap()
             .value_type()
             .method_raw("", |_ctx: &mut CallContext| Ok(()));
 
@@ -1526,6 +1570,7 @@ mod tests {
         let mut module = Module::root();
         module
             .register_type::<TestVec3>("TestVec3")
+            .unwrap()
             .value_type()
             .list_construct(
                 ListPattern::fixed(vec![primitive_hashes::FLOAT, primitive_hashes::FLOAT, primitive_hashes::FLOAT]),
@@ -1549,6 +1594,7 @@ mod tests {
         let mut module = Module::root();
         module
             .register_type::<TestVec3>("TestVec3")
+            .unwrap()
             .reference_type()
             .list_factory(
                 ListPattern::repeat(primitive_hashes::INT32),
@@ -1572,6 +1618,7 @@ mod tests {
         let mut module = Module::root();
         module
             .register_type::<TestVec3>("TestVec3")
+            .unwrap()
             .reference_type()
             .list_factory(
                 ListPattern::repeat_tuple(vec![primitive_hashes::STRING, primitive_hashes::INT32]),

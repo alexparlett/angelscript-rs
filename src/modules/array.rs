@@ -633,7 +633,7 @@ pub fn array_module<'app>() -> Result<Module<'app>, FfiModuleError> {
     let mut module = Module::root();
 
     module
-        .register_type::<ScriptArray>("array<class T>")
+        .register_type::<ScriptArray>("array<class T>")?
         .reference_type()
         // Template validation - arrays can contain any type
         .template_callback(|_info| TemplateValidation::valid())

@@ -108,7 +108,11 @@ impl<'app> Context<'app> {
         }
 
         // Install module into builder
-        let builder = self.builder.as_mut().expect("builder should exist before seal");
+        // Builder should always exist if not sealed, but handle gracefully
+        let builder = match self.builder.as_mut() {
+            Some(b) => b,
+            None => return Err(ContextError::AlreadySealed),
+        };
         module.install_into(builder)?;
 
         // Keep module for reference
@@ -177,10 +181,10 @@ impl<'app> Context<'app> {
     /// The unit will have access to all installed modules' functions,
     /// types, and global properties through the sealed FFI registry.
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if the context has not been sealed. Call `seal()` first,
-    /// or use `with_default_modules()` which auto-seals.
+    /// Returns `ContextError::NotSealed` if the context has not been sealed.
+    /// Call `seal()` first, or use `with_default_modules()` which auto-seals.
     ///
     /// # Example
     ///
@@ -188,14 +192,16 @@ impl<'app> Context<'app> {
     /// use std::sync::Arc;
     ///
     /// let ctx = Arc::new(Context::with_default_modules()?);
-    /// let mut unit = ctx.create_unit();
+    /// let mut unit = ctx.create_unit()?;
     ///
     /// unit.add_source("main.as", "void main() { }")?;
     /// unit.build()?;
     /// ```
-    pub fn create_unit(self: &Arc<Self>) -> Unit<'app> {
-        assert!(self.is_sealed(), "Context must be sealed before creating units. Call seal() first.");
-        Unit::with_context(Arc::clone(self))
+    pub fn create_unit(self: &Arc<Self>) -> Result<Unit<'app>, ContextError> {
+        if !self.is_sealed() {
+            return Err(ContextError::NotSealed);
+        }
+        Ok(Unit::with_context(Arc::clone(self)))
     }
 
     /// Get the total number of installed modules.
@@ -233,6 +239,10 @@ pub enum ContextError {
     /// Context is already sealed - cannot install modules
     #[error("context is already sealed - cannot install modules after seal() or create_unit()")]
     AlreadySealed,
+
+    /// Context is not sealed - must call seal() before creating units
+    #[error("context is not sealed - call seal() before create_unit()")]
+    NotSealed,
 
     /// Failed to build FFI registry
     #[error("failed to build FFI registry: {0:?}")]
@@ -336,16 +346,16 @@ mod tests {
         let mut ctx = Context::<'static>::new();
         ctx.seal().unwrap();
         let ctx = Arc::new(ctx);
-        let unit = ctx.create_unit();
+        let unit = ctx.create_unit().unwrap();
 
         assert!(!unit.is_built());
     }
 
     #[test]
-    #[should_panic(expected = "Context must be sealed")]
-    fn context_create_unit_unsealed_panics() {
+    fn context_create_unit_unsealed_returns_error() {
         let ctx = Arc::new(Context::<'static>::new());
-        let _unit = ctx.create_unit(); // Should panic
+        let result = ctx.create_unit();
+        assert!(matches!(result, Err(ContextError::NotSealed)));
     }
 
     #[test]
