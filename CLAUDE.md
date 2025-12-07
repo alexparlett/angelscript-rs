@@ -21,6 +21,13 @@ Design and implement a clean, idiomatic Rust scripting engine that runs AngelScr
 | `/clippy [fix]` | Run linter (with optional auto-fix) |
 | `/analyze-profile <path>` | Analyze samply profile JSON for hot spots |
 
+**Workflow Commands:**
+| Command | Description |
+|---------|-------------|
+| `/design <feature>` | Design a feature - analyze codebase and create task file |
+| `/implement <task>` | Implement from design doc (task number or file path) |
+| `/review [task]` | Review implementation against design, check quality |
+
 **Direct commands:**
 ```bash
 # Build
