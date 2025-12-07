@@ -462,11 +462,10 @@ pub struct ClassEntry {
     // Inheritance (use registry to resolve)
     pub base_class: Option<TypeHash>,
     pub interfaces: Vec<TypeHash>,
-    // Members (direct access, no lookup needed)
+    // Members
     pub behaviors: TypeBehaviors,
-    pub methods: Vec<FunctionEntry>,
-    pub properties: Vec<PropertyEntry>,
-    pub fields: Vec<FieldEntry>,
+    pub methods: Vec<TypeHash>,           // References to registry.functions
+    pub properties: Vec<PropertyEntry>,   // All property access via getter/setter methods
     // Template info
     pub template_params: Vec<TypeHash>,  // Non-empty = template definition
     pub template: Option<TypeHash>,       // Template this was instantiated from
@@ -556,19 +555,16 @@ pub enum TypeSource {
     Script { unit_id: UnitId, span: Span },
 }
 
+/// Property access - all properties use getter/setter methods
+/// - FFI: macro generates getter/setter methods from #[angelscript(get, set)]
+/// - Script: compiler generates accessor methods
+/// No direct field access with offsets - everything goes through methods
 pub struct PropertyEntry {
     pub name: String,
     pub data_type: DataType,
     pub visibility: Visibility,
-    pub getter: Option<TypeHash>,   // Virtual property getter
-    pub setter: Option<TypeHash>,   // Virtual property setter
-}
-
-pub struct FieldEntry {
-    pub name: String,
-    pub data_type: DataType,
-    pub visibility: Visibility,
-    pub offset: usize,
+    pub getter: Option<TypeHash>,   // Method that gets the value
+    pub setter: Option<TypeHash>,   // Method that sets the value
 }
 
 pub struct EnumValue {
@@ -591,8 +587,8 @@ pub struct TypeRegistry {
     // Single map for O(1) type lookup
     types: RwLock<FxHashMap<TypeHash, TypeEntry>>,
     type_by_name: RwLock<FxHashMap<String, TypeHash>>,
-    // Global functions (not methods - those live in ClassEntry)
-    global_functions: RwLock<FxHashMap<TypeHash, FunctionEntry>>,
+    // ALL functions (methods + globals) - single source of truth
+    functions: RwLock<FxHashMap<TypeHash, FunctionEntry>>,
     function_overloads: RwLock<FxHashMap<String, Vec<TypeHash>>>,
     // Namespaces
     namespaces: RwLock<FxHashSet<String>>,
@@ -610,7 +606,10 @@ impl TypeRegistry {
     pub fn classes(&self) -> impl Iterator<Item = &ClassEntry> { ... }
     pub fn enums(&self) -> impl Iterator<Item = &EnumEntry> { ... }
     pub fn interfaces(&self) -> impl Iterator<Item = &InterfaceEntry> { ... }
-    pub fn global_functions(&self) -> impl Iterator<Item = &FunctionEntry> { ... }
+    pub fn functions(&self) -> impl Iterator<Item = &FunctionEntry> { ... }
+
+    // === Function Lookup ===
+    pub fn get_function(&self, hash: TypeHash) -> Option<&FunctionEntry> { ... }
 
     // === Inheritance Helpers (resolve TypeHash chains) ===
     pub fn base_class_chain(&self, hash: TypeHash) -> impl Iterator<Item = &ClassEntry> { ... }
@@ -641,7 +640,7 @@ pub struct FunctionDef {
     pub object_type: Option<TypeHash>,  // None = global function
     pub traits: FunctionTraits,
     pub visibility: Visibility,
-    pub template_params: Vec<String>,   // ["T", "U"] for template functions
+    pub template_params: Vec<TypeHash>,  // Method's own template params (refs to TemplateParamEntry)
     pub is_variadic: bool,
 }
 
@@ -824,7 +823,7 @@ pub struct MyClass { ... }
 | `EnumDecl` | `TypeEntry::Enum` with values |
 | `FuncdefDecl` | `TypeEntry::Funcdef` |
 | `VirtualPropertyDecl` | `get_X`/`set_X` `FunctionEntry` pairs |
-| `FieldDecl` | `FieldEntry` in `ClassEntry` |
+| `FieldDecl` | `PropertyEntry` in `ClassEntry` (compiler generates accessors) |
 
 ### Example: Script Class to Registry
 
@@ -859,9 +858,7 @@ TypeEntry::Class(ClassEntry {
     properties: vec![
         PropertyEntry { name: "health".into(), getter: Some(get_health_hash), setter: None, .. },
     ],
-    fields: vec![
-        FieldEntry { name: "health".into(), visibility: Visibility::Private, offset: 0, .. },
-    ],
+    // Note: Script field "health" becomes a PropertyEntry with compiler-generated accessors
     ..Default::default()
 })
 ```
@@ -874,7 +871,7 @@ TypeEntry::Class(ClassEntry {
 - [x] `src/any.rs` - Any trait
 - [x] `src/entries/` module with:
   - `source.rs` - TypeSource, FunctionSource
-  - `common.rs` - PropertyEntry, FieldEntry, EnumValue
+  - `common.rs` - PropertyEntry, EnumValue
   - `primitive.rs` - PrimitiveEntry
   - `template_param.rs` - TemplateParamEntry
   - `enum_entry.rs` - EnumEntry
@@ -887,11 +884,20 @@ TypeEntry::Class(ClassEntry {
 - [x] Update `function_def.rs` - Add template_params, is_variadic
 - [x] Update `lib.rs` - Export all new types
 
-### Phase 2: Create angelscript-registry
-- [ ] `src/registry.rs` - TypeRegistry
+### Phase 2: Design Fixes (angelscript-core)
+Apply design clarifications from template/storage review:
+- [ ] Update `ClassEntry.methods` from `Vec<FunctionEntry>` to `Vec<TypeHash>`
+- [ ] Update `FunctionDef.template_params` from `Vec<String>` to `Vec<TypeHash>`
+- [ ] Ensure `TemplateParamEntry.owner` is `TypeHash` (metadata only, not lookup key)
+- [ ] Verify all method/behavior references use `TypeHash` (single source of truth in registry)
+- [ ] Remove `FieldEntry` - all property access via `PropertyEntry` with getter/setter methods
+- [ ] Update `ClassEntry` to remove `fields`, keep only `properties: Vec<PropertyEntry>`
+
+### Phase 3: Create angelscript-registry
+- [ ] `src/registry.rs` - TypeRegistry with unified `functions` map (methods + globals)
 - [ ] `src/module.rs` - Module builder with namespace support
 
-### Phase 3: Create angelscript-macros
+### Phase 4: Create angelscript-macros
 - [ ] `#[derive(Any)]`
 - [ ] `#[angelscript::function]`
 - [ ] `#[angelscript::param]` for generic calling convention
@@ -900,11 +906,11 @@ TypeEntry::Class(ClassEntry {
 - [ ] `#[angelscript::template_callback]`
 - [ ] `#[angelscript::list_pattern]` for list behaviors
 
-### Phase 4: Update Consumers
+### Phase 5: Update Consumers
 - [ ] Main crate: Use TypeRegistry
 - [ ] Compiler: Update to new registry
 
-### Phase 5: Migrate stdlib
+### Phase 6: Migrate stdlib
 - [ ] Update to macro-based registration
 
 ## Crates to Delete/Merge
