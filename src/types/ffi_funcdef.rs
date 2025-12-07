@@ -6,8 +6,7 @@
 //! A funcdef defines a function signature type that can be used for callbacks,
 //! delegates, or function pointers in scripts.
 
-use crate::semantic::types::type_def::TypeId;
-use crate::types::{FfiDataType, FfiParam};
+use crate::types::{FfiDataType, FfiParam, TypeHash};
 
 /// A funcdef (function pointer type) definition.
 ///
@@ -22,16 +21,16 @@ use crate::types::{FfiDataType, FfiParam};
 /// ```ignore
 /// // Define a callback type: void Callback(int value)
 /// let funcdef = FfiFuncdefDef::new(
-///     TypeId::next_ffi(),
+///     TypeHash::from_name("test_type"),
 ///     "Callback",
-///     vec![FfiParam::new("value", FfiDataType::resolved(DataType::simple(INT32_TYPE)), None)],
-///     FfiDataType::resolved(DataType::simple(VOID_TYPE)),
+///     vec![FfiParam::new("value", FfiDataType::resolved(DataType::simple(primitive_hashes::INT32)), None)],
+///     FfiDataType::resolved(DataType::simple(primitive_hashes::VOID)),
 /// );
 /// ```
 #[derive(Debug, Clone)]
 pub struct FfiFuncdefDef {
     /// Type ID assigned during build()
-    pub id: TypeId,
+    pub id: TypeHash,
 
     /// Funcdef name
     pub name: String,
@@ -46,7 +45,7 @@ pub struct FfiFuncdefDef {
 impl FfiFuncdefDef {
     /// Create a new funcdef definition.
     pub fn new(
-        id: TypeId,
+        id: TypeHash,
         name: impl Into<String>,
         params: Vec<FfiParam>,
         return_type: FfiDataType,
@@ -84,18 +83,18 @@ impl FfiFuncdefDef {
 mod tests {
     use super::*;
     use crate::semantic::types::DataType;
-    use crate::semantic::types::type_def::{INT32_TYPE, VOID_TYPE};
+    use crate::types::primitive_hashes;
 
     #[test]
     fn funcdef_creation() {
         let funcdef = FfiFuncdefDef::new(
-            TypeId::next_ffi(),
+            TypeHash::from_name("test_type"),
             "Callback",
             vec![FfiParam::new(
                 "value",
-                FfiDataType::resolved(DataType::simple(INT32_TYPE)),
+                FfiDataType::resolved(DataType::simple(primitive_hashes::INT32)),
             )],
-            FfiDataType::resolved(DataType::simple(VOID_TYPE)),
+            FfiDataType::resolved(DataType::simple(primitive_hashes::VOID)),
         );
 
         assert_eq!(funcdef.name(), "Callback");
@@ -106,10 +105,10 @@ mod tests {
     #[test]
     fn funcdef_no_params() {
         let funcdef = FfiFuncdefDef::new(
-            TypeId::next_ffi(),
+            TypeHash::from_name("test_type"),
             "NoArgCallback",
             vec![],
-            FfiDataType::resolved(DataType::simple(VOID_TYPE)),
+            FfiDataType::resolved(DataType::simple(primitive_hashes::VOID)),
         );
 
         assert_eq!(funcdef.name(), "NoArgCallback");
@@ -119,10 +118,10 @@ mod tests {
     #[test]
     fn debug_output() {
         let funcdef = FfiFuncdefDef::new(
-            TypeId::next_ffi(),
+            TypeHash::from_name("test_type"),
             "TestFunc",
             vec![],
-            FfiDataType::resolved(DataType::simple(VOID_TYPE)),
+            FfiDataType::resolved(DataType::simple(primitive_hashes::VOID)),
         );
         let debug = format!("{:?}", funcdef);
         assert!(debug.contains("FfiFuncdefDef"));
@@ -132,13 +131,13 @@ mod tests {
     #[test]
     fn clone() {
         let original = FfiFuncdefDef::new(
-            TypeId::next_ffi(),
+            TypeHash::from_name("test_type"),
             "Cloneable",
             vec![FfiParam::new(
                 "x",
-                FfiDataType::resolved(DataType::simple(INT32_TYPE)),
+                FfiDataType::resolved(DataType::simple(primitive_hashes::INT32)),
             )],
-            FfiDataType::resolved(DataType::simple(INT32_TYPE)),
+            FfiDataType::resolved(DataType::simple(primitive_hashes::INT32)),
         );
 
         let cloned = original.clone();

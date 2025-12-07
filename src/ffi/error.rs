@@ -3,6 +3,8 @@
 use std::any::TypeId;
 use thiserror::Error;
 
+use crate::types::TypeHash;
+
 /// Errors that can occur when converting between Rust and script values.
 #[derive(Debug, Error)]
 pub enum ConversionError {
@@ -54,7 +56,7 @@ pub enum NativeError {
 
     /// Type mismatch for `this` reference
     #[error("'this' type mismatch: expected {expected:?}, got {actual:?}")]
-    ThisTypeMismatch { expected: TypeId, actual: TypeId },
+    ThisTypeMismatch { expected: TypeHash, actual: TypeHash },
 
     /// Stale object handle (object was freed)
     #[error("stale object handle: object at index {index} has been freed")]
@@ -166,8 +168,8 @@ mod tests {
     #[test]
     fn native_error_this_type_mismatch() {
         let err = NativeError::ThisTypeMismatch {
-            expected: TypeId::of::<i32>(),
-            actual: TypeId::of::<String>(),
+            expected: TypeHash::of::<i32>(),
+            actual: TypeHash::of::<String>(),
         };
         assert!(err.to_string().contains("type mismatch"));
     }

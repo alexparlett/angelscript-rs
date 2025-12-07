@@ -4,8 +4,7 @@
 //! interface definitions that can be stored in `Arc<FfiRegistry>` without
 //! arena lifetimes.
 
-use crate::semantic::types::type_def::TypeId;
-use crate::types::{FfiDataType, FfiParam};
+use crate::types::{FfiDataType, FfiParam, TypeHash};
 
 /// An interface method signature.
 ///
@@ -51,7 +50,7 @@ impl FfiInterfaceMethod {
 #[derive(Debug, Clone)]
 pub struct FfiInterfaceDef {
     /// Type ID assigned during build()
-    pub id: TypeId,
+    pub id: TypeHash,
 
     /// Interface name
     pub name: String,
@@ -62,7 +61,7 @@ pub struct FfiInterfaceDef {
 
 impl FfiInterfaceDef {
     /// Create a new interface definition.
-    pub fn new(id: TypeId, name: impl Into<String>, methods: Vec<FfiInterfaceMethod>) -> Self {
+    pub fn new(id: TypeHash, name: impl Into<String>, methods: Vec<FfiInterfaceMethod>) -> Self {
         Self {
             id,
             name: name.into(),
@@ -85,14 +84,14 @@ impl FfiInterfaceDef {
 mod tests {
     use super::*;
     use crate::semantic::types::DataType;
-    use crate::semantic::types::type_def::VOID_TYPE;
+    use crate::types::primitive_hashes;
 
     #[test]
     fn interface_method_creation() {
         let method = FfiInterfaceMethod::new(
             "draw",
             vec![],
-            FfiDataType::resolved(DataType::simple(VOID_TYPE)),
+            FfiDataType::resolved(DataType::simple(primitive_hashes::VOID)),
             true,
         );
 
@@ -107,18 +106,18 @@ mod tests {
             FfiInterfaceMethod::new(
                 "draw",
                 vec![],
-                FfiDataType::resolved(DataType::simple(VOID_TYPE)),
+                FfiDataType::resolved(DataType::simple(primitive_hashes::VOID)),
                 true,
             ),
             FfiInterfaceMethod::new(
                 "update",
                 vec![],
-                FfiDataType::resolved(DataType::simple(VOID_TYPE)),
+                FfiDataType::resolved(DataType::simple(primitive_hashes::VOID)),
                 false,
             ),
         ];
 
-        let interface = FfiInterfaceDef::new(TypeId::next_ffi(), "IDrawable", methods);
+        let interface = FfiInterfaceDef::new(TypeHash::from_name("test_type"), "IDrawable", methods);
 
         assert_eq!(interface.name(), "IDrawable");
         assert_eq!(interface.methods().len(), 2);
@@ -128,7 +127,7 @@ mod tests {
 
     #[test]
     fn debug_output() {
-        let interface = FfiInterfaceDef::new(TypeId::next_ffi(), "ITest", vec![]);
+        let interface = FfiInterfaceDef::new(TypeHash::from_name("test_type"), "ITest", vec![]);
         let debug = format!("{:?}", interface);
         assert!(debug.contains("FfiInterfaceDef"));
         assert!(debug.contains("ITest"));

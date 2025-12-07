@@ -34,7 +34,8 @@
 //! )?;
 //! ```
 
-use crate::semantic::types::{DataType, RefModifier, TypeId, VOID_TYPE};
+use crate::semantic::types::{DataType, RefModifier};
+use crate::types::{primitive_hashes, TypeHash};
 
 /// The base type portion of a type reference (without modifiers).
 ///
@@ -69,7 +70,7 @@ pub enum UnresolvedBaseType {
 ///
 /// ```ignore
 /// // Primitive - resolved immediately
-/// let int_type = FfiDataType::Resolved(DataType::simple(INT32_TYPE));
+/// let int_type = FfiDataType::Resolved(DataType::simple(primitive_hashes::INT32));
 ///
 /// // User type - unresolved until install
 /// let my_class = FfiDataType::unresolved("MyClass", false, true, false, RefModifier::None);
@@ -111,7 +112,7 @@ impl FfiDataType {
     /// Create a void type.
     #[inline]
     pub fn void() -> Self {
-        FfiDataType::Resolved(DataType::simple(VOID_TYPE))
+        FfiDataType::Resolved(DataType::simple(primitive_hashes::VOID))
     }
 
     /// Create an unresolved simple type with all modifiers.
@@ -172,11 +173,19 @@ impl FfiDataType {
         Self::unresolved_template(name, args, false, false, false, RefModifier::None)
     }
 
+    /// Check if this type is const-qualified.
+    pub fn is_const(&self) -> bool {
+        match self {
+            FfiDataType::Resolved(dt) => dt.is_const,
+            FfiDataType::Unresolved { is_const, .. } => *is_const,
+        }
+    }
+
     /// Resolve this type to a concrete `DataType`.
     ///
     /// # Arguments
     ///
-    /// * `lookup` - Function to look up a type ID by name
+    /// * `lookup` - Function to look up a type hash by name
     /// * `instantiate` - Function to instantiate a template with type arguments
     ///
     /// # Returns
@@ -187,14 +196,14 @@ impl FfiDataType {
     ///
     /// ```ignore
     /// let resolved = ffi_type.resolve(
-    ///     |name| registry.get_type_id_by_name(name),
-    ///     |template_id, args| registry.instantiate_template(template_id, args),
+    ///     |name| registry.get_type_hash_by_name(name),
+    ///     |template_hash, args| registry.instantiate_template(template_hash, args),
     /// )?;
     /// ```
     pub fn resolve<L, I>(&self, lookup: &L, instantiate: &mut I) -> Result<DataType, String>
     where
-        L: Fn(&str) -> Option<TypeId>,
-        I: FnMut(TypeId, Vec<DataType>) -> Result<TypeId, String>,
+        L: Fn(&str) -> Option<TypeHash>,
+        I: FnMut(TypeHash, Vec<DataType>) -> Result<TypeHash, String>,
     {
         match self {
             FfiDataType::Resolved(dt) => Ok(dt.clone()),
@@ -206,13 +215,13 @@ impl FfiDataType {
                 is_handle_to_const,
                 ref_modifier,
             } => {
-                let type_id = match base {
+                let type_hash = match base {
                     UnresolvedBaseType::Simple(name) => lookup(name)
                         .ok_or_else(|| format!("Unknown type: {}", name))?,
 
                     UnresolvedBaseType::Template { name, args } => {
                         // Look up the template type
-                        let template_id = lookup(name)
+                        let template_hash = lookup(name)
                             .ok_or_else(|| format!("Unknown template type: {}", name))?;
 
                         // Recursively resolve all type arguments
@@ -222,12 +231,12 @@ impl FfiDataType {
                             .collect::<Result<_, _>>()?;
 
                         // Instantiate the template
-                        instantiate(template_id, resolved_args)?
+                        instantiate(template_hash, resolved_args)?
                     }
                 };
 
                 Ok(DataType {
-                    type_id,
+                    type_hash,
                     is_const: *is_const,
                     is_handle: *is_handle,
                     is_handle_to_const: *is_handle_to_const,
@@ -260,10 +269,30 @@ impl FfiDataType {
     /// Returns true if this is a resolved void type, false otherwise.
     pub fn is_void(&self) -> bool {
         match self {
-            FfiDataType::Resolved(dt) => dt.type_id == VOID_TYPE,
+            FfiDataType::Resolved(dt) => dt.type_hash == primitive_hashes::VOID,
             FfiDataType::Unresolved { base, .. } => match base {
                 UnresolvedBaseType::Simple(name) => name == "void",
                 UnresolvedBaseType::Template { .. } => false,
+            },
+        }
+    }
+
+    /// Get the TypeHash for this type without full resolution.
+    ///
+    /// This computes a TypeHash that can be used for function signature hashing
+    /// even before types are fully resolved. For unresolved types, this computes
+    /// the hash from the type name.
+    pub fn type_hash(&self) -> TypeHash {
+        match self {
+            FfiDataType::Resolved(dt) => dt.type_hash,
+            FfiDataType::Unresolved { base, .. } => match base {
+                UnresolvedBaseType::Simple(name) => TypeHash::from_name(name),
+                UnresolvedBaseType::Template { name, args } => {
+                    // For templates, compute hash from base template + arg hashes
+                    let template_hash = TypeHash::from_name(name);
+                    let arg_hashes: Vec<TypeHash> = args.iter().map(|a| a.type_hash()).collect();
+                    TypeHash::from_template_instance(template_hash, &arg_hashes)
+                }
             },
         }
     }
@@ -272,24 +301,23 @@ impl FfiDataType {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::semantic::types::type_def::INT32_TYPE;
 
-    // Use a fixed TypeId for string in tests since STRING_TYPE may not be available
-    const TEST_STRING_TYPE: TypeId = TypeId(50);
+    // Use a fixed TypeHash for string in tests since STRING_TYPE may not be available
+    const TEST_STRING_TYPE: TypeHash = TypeHash(50);
 
     /// Helper to create a simple type lookup
-    fn make_lookup<'a>(types: &'a [(&'a str, TypeId)]) -> impl Fn(&str) -> Option<TypeId> + 'a {
+    fn make_lookup<'a>(types: &'a [(&'a str, TypeHash)]) -> impl Fn(&str) -> Option<TypeHash> + 'a {
         move |name| types.iter().find(|(n, _)| *n == name).map(|(_, id)| *id)
     }
 
     /// Helper instantiate function that just returns an error (no templates)
-    fn no_templates(_: TypeId, _: Vec<DataType>) -> Result<TypeId, String> {
+    fn no_templates(_: TypeHash, _: Vec<DataType>) -> Result<TypeHash, String> {
         Err("Templates not supported in this test".to_string())
     }
 
     #[test]
     fn resolved_type_passes_through() {
-        let original = DataType::simple(INT32_TYPE);
+        let original = DataType::simple(primitive_hashes::INT32);
         let ffi = FfiDataType::resolved(original.clone());
 
         assert!(ffi.is_resolved());
@@ -309,12 +337,12 @@ mod tests {
         assert!(ffi.is_unresolved());
 
         // Create a mock type ID for MyClass
-        let my_class_id = TypeId(100);
+        let my_class_id = TypeHash(100);
         let types = [("MyClass", my_class_id)];
 
         let resolved = ffi.resolve(&make_lookup(&types), &mut no_templates).unwrap();
 
-        assert_eq!(resolved.type_id, my_class_id);
+        assert_eq!(resolved.type_hash, my_class_id);
         assert!(!resolved.is_const);
         assert!(!resolved.is_handle);
         assert!(!resolved.is_handle_to_const);
@@ -325,12 +353,12 @@ mod tests {
     fn unresolved_with_modifiers_preserves_modifiers() {
         let ffi = FfiDataType::unresolved("MyClass", true, true, true, RefModifier::In);
 
-        let my_class_id = TypeId(100);
+        let my_class_id = TypeHash(100);
         let types = [("MyClass", my_class_id)];
 
         let resolved = ffi.resolve(&make_lookup(&types), &mut no_templates).unwrap();
 
-        assert_eq!(resolved.type_id, my_class_id);
+        assert_eq!(resolved.type_hash, my_class_id);
         assert!(resolved.is_const);
         assert!(resolved.is_handle);
         assert!(resolved.is_handle_to_const);
@@ -341,12 +369,12 @@ mod tests {
     fn unresolved_handle_type() {
         let ffi = FfiDataType::unresolved_handle("MyClass", false);
 
-        let my_class_id = TypeId(100);
+        let my_class_id = TypeHash(100);
         let types = [("MyClass", my_class_id)];
 
         let resolved = ffi.resolve(&make_lookup(&types), &mut no_templates).unwrap();
 
-        assert_eq!(resolved.type_id, my_class_id);
+        assert_eq!(resolved.type_hash, my_class_id);
         assert!(!resolved.is_const);
         assert!(resolved.is_handle);
         assert!(!resolved.is_handle_to_const);
@@ -356,7 +384,7 @@ mod tests {
     fn unresolved_handle_to_const() {
         let ffi = FfiDataType::unresolved_handle("MyClass", true);
 
-        let my_class_id = TypeId(100);
+        let my_class_id = TypeHash(100);
         let types = [("MyClass", my_class_id)];
 
         let resolved = ffi.resolve(&make_lookup(&types), &mut no_templates).unwrap();
@@ -369,7 +397,7 @@ mod tests {
     fn unresolved_const_type() {
         let ffi = FfiDataType::unresolved_const("MyClass");
 
-        let my_class_id = TypeId(100);
+        let my_class_id = TypeHash(100);
         let types = [("MyClass", my_class_id)];
 
         let resolved = ffi.resolve(&make_lookup(&types), &mut no_templates).unwrap();
@@ -382,7 +410,7 @@ mod tests {
     fn unknown_type_returns_error() {
         let ffi = FfiDataType::unresolved_simple("UnknownType");
 
-        let types: [(& str, TypeId); 0] = [];
+        let types: [(& str, TypeHash); 0] = [];
         let result = ffi.resolve(&make_lookup(&types), &mut no_templates);
 
         assert!(result.is_err());
@@ -394,17 +422,17 @@ mod tests {
         // array<int> where int is already resolved in the arg
         let ffi = FfiDataType::unresolved_template_simple(
             "array",
-            vec![FfiDataType::resolved(DataType::simple(INT32_TYPE))],
+            vec![FfiDataType::resolved(DataType::simple(primitive_hashes::INT32))],
         );
 
-        let array_template_id = TypeId(200);
-        let array_int_instance_id = TypeId(201);
+        let array_template_id = TypeHash(200);
+        let array_int_instance_id = TypeHash(201);
 
         let types = [("array", array_template_id)];
 
         // Track instantiation calls
-        let mut instantiate_calls: Vec<(TypeId, Vec<DataType>)> = Vec::new();
-        let mut instantiate = |template_id: TypeId, args: Vec<DataType>| -> Result<TypeId, String> {
+        let mut instantiate_calls: Vec<(TypeHash, Vec<DataType>)> = Vec::new();
+        let mut instantiate = |template_id: TypeHash, args: Vec<DataType>| -> Result<TypeHash, String> {
             instantiate_calls.push((template_id, args.clone()));
             if template_id == array_template_id {
                 Ok(array_int_instance_id)
@@ -415,11 +443,11 @@ mod tests {
 
         let resolved = ffi.resolve(&make_lookup(&types), &mut instantiate).unwrap();
 
-        assert_eq!(resolved.type_id, array_int_instance_id);
+        assert_eq!(resolved.type_hash, array_int_instance_id);
         assert_eq!(instantiate_calls.len(), 1);
         assert_eq!(instantiate_calls[0].0, array_template_id);
         assert_eq!(instantiate_calls[0].1.len(), 1);
-        assert_eq!(instantiate_calls[0].1[0].type_id, INT32_TYPE);
+        assert_eq!(instantiate_calls[0].1[0].type_hash, primitive_hashes::INT32);
     }
 
     #[test]
@@ -430,14 +458,14 @@ mod tests {
             vec![FfiDataType::unresolved_simple("MyClass")],
         );
 
-        let array_template_id = TypeId(200);
-        let my_class_id = TypeId(100);
-        let array_myclass_instance_id = TypeId(202);
+        let array_template_id = TypeHash(200);
+        let my_class_id = TypeHash(100);
+        let array_myclass_instance_id = TypeHash(202);
 
         let types = [("array", array_template_id), ("MyClass", my_class_id)];
 
-        let mut instantiate = |template_id: TypeId, args: Vec<DataType>| -> Result<TypeId, String> {
-            if template_id == array_template_id && args.len() == 1 && args[0].type_id == my_class_id {
+        let mut instantiate = |template_id: TypeHash, args: Vec<DataType>| -> Result<TypeHash, String> {
+            if template_id == array_template_id && args.len() == 1 && args[0].type_hash == my_class_id {
                 Ok(array_myclass_instance_id)
             } else {
                 Err("Unexpected template instantiation".to_string())
@@ -446,7 +474,7 @@ mod tests {
 
         let resolved = ffi.resolve(&make_lookup(&types), &mut instantiate).unwrap();
 
-        assert_eq!(resolved.type_id, array_myclass_instance_id);
+        assert_eq!(resolved.type_hash, array_myclass_instance_id);
     }
 
     #[test]
@@ -456,21 +484,21 @@ mod tests {
             "array",
             vec![FfiDataType::unresolved_template_simple(
                 "array",
-                vec![FfiDataType::resolved(DataType::simple(INT32_TYPE))],
+                vec![FfiDataType::resolved(DataType::simple(primitive_hashes::INT32))],
             )],
         );
 
-        let array_template_id = TypeId(200);
-        let array_int_id = TypeId(201);
-        let array_array_int_id = TypeId(202);
+        let array_template_id = TypeHash(200);
+        let array_int_id = TypeHash(201);
+        let array_array_int_id = TypeHash(202);
 
         let types = [("array", array_template_id)];
 
-        let mut instantiate = |template_id: TypeId, args: Vec<DataType>| -> Result<TypeId, String> {
+        let mut instantiate = |template_id: TypeHash, args: Vec<DataType>| -> Result<TypeHash, String> {
             if template_id == array_template_id {
-                if args.len() == 1 && args[0].type_id == INT32_TYPE {
+                if args.len() == 1 && args[0].type_hash == primitive_hashes::INT32 {
                     Ok(array_int_id)
-                } else if args.len() == 1 && args[0].type_id == array_int_id {
+                } else if args.len() == 1 && args[0].type_hash == array_int_id {
                     Ok(array_array_int_id)
                 } else {
                     Err("Unexpected args".to_string())
@@ -482,7 +510,7 @@ mod tests {
 
         let resolved = ffi.resolve(&make_lookup(&types), &mut instantiate).unwrap();
 
-        assert_eq!(resolved.type_id, array_array_int_id);
+        assert_eq!(resolved.type_hash, array_array_int_id);
     }
 
     #[test]
@@ -496,17 +524,17 @@ mod tests {
             ],
         );
 
-        let dict_template_id = TypeId(300);
-        let my_class_id = TypeId(100);
-        let dict_instance_id = TypeId(301);
+        let dict_template_id = TypeHash(300);
+        let my_class_id = TypeHash(100);
+        let dict_instance_id = TypeHash(301);
 
         let types = [("dictionary", dict_template_id), ("MyClass", my_class_id)];
 
-        let mut instantiate = |template_id: TypeId, args: Vec<DataType>| -> Result<TypeId, String> {
+        let mut instantiate = |template_id: TypeHash, args: Vec<DataType>| -> Result<TypeHash, String> {
             if template_id == dict_template_id
                 && args.len() == 2
-                && args[0].type_id == TEST_STRING_TYPE
-                && args[1].type_id == my_class_id
+                && args[0].type_hash == TEST_STRING_TYPE
+                && args[1].type_hash == my_class_id
             {
                 Ok(dict_instance_id)
             } else {
@@ -516,17 +544,17 @@ mod tests {
 
         let resolved = ffi.resolve(&make_lookup(&types), &mut instantiate).unwrap();
 
-        assert_eq!(resolved.type_id, dict_instance_id);
+        assert_eq!(resolved.type_hash, dict_instance_id);
     }
 
     #[test]
     fn unknown_template_returns_error() {
         let ffi = FfiDataType::unresolved_template_simple(
             "UnknownTemplate",
-            vec![FfiDataType::resolved(DataType::simple(INT32_TYPE))],
+            vec![FfiDataType::resolved(DataType::simple(primitive_hashes::INT32))],
         );
 
-        let types: [(&str, TypeId); 0] = [];
+        let types: [(&str, TypeHash); 0] = [];
         let result = ffi.resolve(&make_lookup(&types), &mut no_templates);
 
         assert!(result.is_err());
@@ -541,11 +569,11 @@ mod tests {
             vec![FfiDataType::unresolved_simple("UnknownType")],
         );
 
-        let array_template_id = TypeId(200);
+        let array_template_id = TypeHash(200);
         let types = [("array", array_template_id)];
 
-        let mut instantiate = |_: TypeId, _: Vec<DataType>| -> Result<TypeId, String> {
-            Ok(TypeId(999)) // Should never be called
+        let mut instantiate = |_: TypeHash, _: Vec<DataType>| -> Result<TypeHash, String> {
+            Ok(TypeHash(999)) // Should never be called
         };
 
         let result = ffi.resolve(&make_lookup(&types), &mut instantiate);
@@ -558,13 +586,13 @@ mod tests {
     fn template_instantiation_error_propagates() {
         let ffi = FfiDataType::unresolved_template_simple(
             "array",
-            vec![FfiDataType::resolved(DataType::simple(INT32_TYPE))],
+            vec![FfiDataType::resolved(DataType::simple(primitive_hashes::INT32))],
         );
 
-        let array_template_id = TypeId(200);
+        let array_template_id = TypeHash(200);
         let types = [("array", array_template_id)];
 
-        let mut instantiate = |_: TypeId, _: Vec<DataType>| -> Result<TypeId, String> {
+        let mut instantiate = |_: TypeHash, _: Vec<DataType>| -> Result<TypeHash, String> {
             Err("Template instantiation failed: invalid type argument".to_string())
         };
 
@@ -586,19 +614,19 @@ mod tests {
             RefModifier::None,
         );
 
-        let array_template_id = TypeId(200);
-        let my_class_id = TypeId(100);
-        let array_instance_id = TypeId(201);
+        let array_template_id = TypeHash(200);
+        let my_class_id = TypeHash(100);
+        let array_instance_id = TypeHash(201);
 
         let types = [("array", array_template_id), ("MyClass", my_class_id)];
 
-        let mut instantiate = |_: TypeId, _: Vec<DataType>| -> Result<TypeId, String> {
+        let mut instantiate = |_: TypeHash, _: Vec<DataType>| -> Result<TypeHash, String> {
             Ok(array_instance_id)
         };
 
         let resolved = ffi.resolve(&make_lookup(&types), &mut instantiate).unwrap();
 
-        assert_eq!(resolved.type_id, array_instance_id);
+        assert_eq!(resolved.type_hash, array_instance_id);
         assert!(resolved.is_handle);
         assert!(!resolved.is_const);
     }
@@ -612,7 +640,7 @@ mod tests {
             (RefModifier::InOut, "InOut"),
         ];
 
-        let my_class_id = TypeId(100);
+        let my_class_id = TypeHash(100);
         let types = [("MyClass", my_class_id)];
 
         for (ref_mod, _name) in test_cases {
@@ -624,7 +652,7 @@ mod tests {
 
     #[test]
     fn equality_resolved() {
-        let dt = DataType::simple(INT32_TYPE);
+        let dt = DataType::simple(primitive_hashes::INT32);
         let ffi1 = FfiDataType::resolved(dt.clone());
         let ffi2 = FfiDataType::resolved(dt);
 
@@ -680,7 +708,7 @@ mod tests {
 
     #[test]
     fn clone_resolved() {
-        let ffi = FfiDataType::resolved(DataType::simple(INT32_TYPE));
+        let ffi = FfiDataType::resolved(DataType::simple(primitive_hashes::INT32));
         let cloned = ffi.clone();
         assert_eq!(ffi, cloned);
     }

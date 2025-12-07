@@ -3,7 +3,7 @@
 //! This module defines the instruction set for the AngelScript bytecode.
 //! The bytecode is a simple stack-based instruction set.
 
-use crate::semantic::TypeId;
+use crate::types::TypeHash;
 
 /// A bytecode instruction.
 ///
@@ -114,14 +114,14 @@ pub enum Instruction {
     // Function calls
     /// Call a function (pops args, pushes return value)
     /// The number of args is determined by looking up the function definition
-    Call(u32), // FunctionId
+    Call(u64), // TypeHash.0
 
     /// Call a method (pops object + args, pushes return value)
     /// The number of args is determined by looking up the method definition
-    CallMethod(u32), // FunctionId
+    CallMethod(u64), // TypeHash.0
     /// Call an interface method (pops object + args, pushes return value)
-    /// First u32 is the interface TypeId, second u32 is the method index in the interface
-    CallInterfaceMethod(u32, u32), // (InterfaceTypeId, MethodIndex)
+    /// First u64 is the interface TypeHash, second u32 is the method index in the interface
+    CallInterfaceMethod(u64, u32), // (InterfaceTypeId, MethodIndex)
     /// Return from function (pops return value if any)
     Return,
     /// Return void (no value)
@@ -144,10 +144,10 @@ pub enum Instruction {
 
     // Type operations
     /// Cast to a type (pops 1, pushes 1)
-    Cast(TypeId),
+    Cast(TypeHash),
     /// Check if handle on stack is instance of type (including subclasses/interfaces)
     /// Stack: [handle] → [bool]
-    IsInstanceOf(TypeId),
+    IsInstanceOf(TypeHash),
 
     // Type conversion operations - Primitive conversions
     // Integer to Float conversions
@@ -255,9 +255,9 @@ pub enum Instruction {
     /// 5. Push object handle onto stack
     ///
     /// Fields: (type_id, func_id)
-    /// - type_id: TypeId of the class being constructed
-    /// - func_id: FunctionId of the constructor to call
-    CallConstructor { type_id: u32, func_id: u32 },
+    /// - type_id: TypeHash of the class being constructed
+    /// - func_id: TypeHash of the constructor to call
+    CallConstructor { type_id: u64, func_id: u64 },
 
     /// Call a factory function for a reference type.
     /// Similar to CallConstructor but for reference types which use factory
@@ -270,9 +270,9 @@ pub enum Instruction {
     /// 4. Push object handle onto stack
     ///
     /// Fields: (type_id, func_id)
-    /// - type_id: TypeId of the class being created
-    /// - func_id: FunctionId of the factory to call
-    CallFactory { type_id: u32, func_id: u32 },
+    /// - type_id: TypeHash of the class being created
+    /// - func_id: TypeHash of the factory to call
+    CallFactory { type_id: u64, func_id: u64 },
 
     // Stack management
     /// Pop the top value from the stack
@@ -303,11 +303,11 @@ pub enum Instruction {
     /// Used for lambda expressions and function references
     /// The function pointer is a handle (reference-counted) to the function
     /// Stack: [...] → [... funcdef_handle]
-    FuncPtr(u32), // FunctionId - creates a handle to this function
+    FuncPtr(u64), // TypeHash.0 - creates a handle to this function
 
     /// Call through a function pointer (funcdef)
     /// The funcdef handle is already on the stack (loaded from a variable)
-    /// Pops: funcdef handle (extracts FunctionId from it), then N arguments
+    /// Pops: funcdef handle (extracts TypeHash from it), then N arguments
     /// Pushes: return value
     /// Stack: [funcdef_handle arg1 arg2 ...] → [return_value]
     CallPtr,
@@ -344,14 +344,14 @@ pub enum Instruction {
     /// Used for dictionary's `?` pattern (heterogeneous values)
     /// - buffer_var: Local variable containing buffer pointer
     /// - offset: Byte offset where type ID goes
-    /// - type_id: TypeId of the element
+    /// - type_id: TypeHash of the element
     /// Stack: [...] → [...]
-    SetListType { buffer_var: u32, offset: u32, type_id: u32 },
+    SetListType { buffer_var: u32, offset: u32, type_id: u64 },
 
     /// Free/release an initialization list buffer
     /// Called after the list constructor has consumed the buffer
     /// - buffer_var: Local variable containing buffer pointer
-    /// - pattern_type_id: TypeId of the list pattern type (for proper cleanup)
+    /// - pattern_type_id: TypeHash of the list pattern type (for proper cleanup)
     /// Stack: [...] → [...]
-    FreeListBuffer { buffer_var: u32, pattern_type_id: u32 },
+    FreeListBuffer { buffer_var: u32, pattern_type_id: u64 },
 }

@@ -9,12 +9,9 @@ use crate::ast::{
 };
 use crate::lexer::Span;
 use crate::semantic::{
-    DataType, FieldDef, SemanticErrorKind, TypeDef, TypeId, Visibility,
-    BOOL_TYPE, DOUBLE_TYPE, FLOAT_TYPE, VOID_TYPE,
-    INT8_TYPE, INT16_TYPE, INT32_TYPE, INT64_TYPE,
-    UINT8_TYPE, UINT16_TYPE, UINT32_TYPE, UINT64_TYPE,
+    DataType, FieldDef, SemanticErrorKind, TypeDef, Visibility,
 };
-use crate::semantic::types::type_def::FunctionId;
+use crate::types::{primitive_hashes, TypeHash};
 
 use super::{FunctionCompiler, SwitchCategory};
 
@@ -62,7 +59,7 @@ impl<'ast> FunctionCompiler<'ast> {
 
     /// Look up a function in imported namespaces.
     /// Returns all matching candidates from all imported namespaces (as owned Vec).
-    pub(super) fn lookup_function_in_imports(&self, name: &str) -> Vec<FunctionId> {
+    pub(super) fn lookup_function_in_imports(&self, name: &str) -> Vec<TypeHash> {
         for ns in &self.imported_namespaces {
             let qualified = format!("{}::{}", ns, name);
             let candidates = self.context.lookup_functions(&qualified);
@@ -93,7 +90,7 @@ impl<'ast> FunctionCompiler<'ast> {
             for arg in type_expr.template_args {
                 // Recursively resolve the template argument to get its canonical name
                 if let Some(resolved) = self.resolve_type_expr(arg) {
-                    let typedef = self.context.get_type(resolved.type_id);
+                    let typedef = self.context.get_type(resolved.type_hash);
                     arg_names.push(typedef.name());
                 } else {
                     return None; // Error already reported
@@ -178,13 +175,13 @@ impl<'ast> FunctionCompiler<'ast> {
         Some(data_type)
     }
 
-    /// Resolve a base type (primitive or named) to a TypeId, considering scope and namespaces.
+    /// Resolve a base type (primitive or named) to a TypeHash, considering scope and namespaces.
     pub(super) fn resolve_base_type(
         &mut self,
         base: &TypeBase<'ast>,
         scope: Option<&crate::ast::Scope<'ast>>,
         span: Span,
-    ) -> Option<TypeId> {
+    ) -> Option<TypeHash> {
         use crate::ast::types::TypeBase;
 
         match base {
@@ -237,7 +234,7 @@ impl<'ast> FunctionCompiler<'ast> {
                     }
 
                     // Try imported namespaces
-                    let mut found_in_import: Option<TypeId> = None;
+                    let mut found_in_import: Option<TypeHash> = None;
                     for ns in &self.imported_namespaces {
                         let imported_qualified = format!("{}::{}", ns, ident.name);
                         if let Some(type_id) = self.context.lookup_type(&imported_qualified) {
@@ -288,7 +285,7 @@ impl<'ast> FunctionCompiler<'ast> {
 
             TypeBase::TemplateParam(_) => {
                 // Template parameters (e.g., "class T" in "array<class T>") are placeholders
-                // used in FFI template type declarations. They are not resolved to a TypeId;
+                // used in FFI template type declarations. They are not resolved to a TypeHash;
                 // instead, they are captured separately as template parameter names.
                 // Returning None here allows concrete types in mixed declarations like
                 // "stringmap<string, class T>" to be resolved normally.
@@ -297,23 +294,23 @@ impl<'ast> FunctionCompiler<'ast> {
         }
     }
 
-    /// Map a primitive type to its TypeId
+    /// Map a primitive type to its TypeHash
     #[inline]
-    pub(super) fn primitive_to_type_id(&self, prim: crate::ast::types::PrimitiveType) -> TypeId {
+    pub(super) fn primitive_to_type_id(&self, prim: crate::ast::types::PrimitiveType) -> TypeHash {
         use crate::ast::types::PrimitiveType;
         match prim {
-            PrimitiveType::Void => VOID_TYPE,
-            PrimitiveType::Bool => BOOL_TYPE,
-            PrimitiveType::Int => INT32_TYPE,
-            PrimitiveType::Int8 => INT8_TYPE,
-            PrimitiveType::Int16 => INT16_TYPE,
-            PrimitiveType::Int64 => INT64_TYPE,
-            PrimitiveType::UInt => UINT32_TYPE,
-            PrimitiveType::UInt8 => UINT8_TYPE,
-            PrimitiveType::UInt16 => UINT16_TYPE,
-            PrimitiveType::UInt64 => UINT64_TYPE,
-            PrimitiveType::Float => FLOAT_TYPE,
-            PrimitiveType::Double => DOUBLE_TYPE,
+            PrimitiveType::Void => primitive_hashes::VOID,
+            PrimitiveType::Bool => primitive_hashes::BOOL,
+            PrimitiveType::Int => primitive_hashes::INT32,
+            PrimitiveType::Int8 => primitive_hashes::INT8,
+            PrimitiveType::Int16 => primitive_hashes::INT16,
+            PrimitiveType::Int64 => primitive_hashes::INT64,
+            PrimitiveType::UInt => primitive_hashes::UINT32,
+            PrimitiveType::UInt8 => primitive_hashes::UINT8,
+            PrimitiveType::UInt16 => primitive_hashes::UINT16,
+            PrimitiveType::UInt64 => primitive_hashes::UINT64,
+            PrimitiveType::Float => primitive_hashes::FLOAT,
+            PrimitiveType::Double => primitive_hashes::DOUBLE,
         }
     }
 
@@ -343,34 +340,34 @@ impl<'ast> FunctionCompiler<'ast> {
     /// Checks if a type is numeric (includes all integer types, floats, and enums).
     pub(super) fn is_numeric(&self, ty: &DataType) -> bool {
         if matches!(
-            ty.type_id,
-            INT8_TYPE | INT16_TYPE | INT32_TYPE | INT64_TYPE |
-            UINT8_TYPE | UINT16_TYPE | UINT32_TYPE | UINT64_TYPE |
-            FLOAT_TYPE | DOUBLE_TYPE
+            ty.type_hash,
+            primitive_hashes::INT8 | primitive_hashes::INT16 | primitive_hashes::INT32 | primitive_hashes::INT64 |
+            primitive_hashes::UINT8 | primitive_hashes::UINT16 | primitive_hashes::UINT32 | primitive_hashes::UINT64 |
+            primitive_hashes::FLOAT | primitive_hashes::DOUBLE
         ) {
             return true;
         }
         // Enum types are also numeric (int32 values)
-        self.context.get_type(ty.type_id).is_enum()
+        self.context.get_type(ty.type_hash).is_enum()
     }
 
     /// Checks if a type is an integer type (includes enums since they're int32 underneath).
     pub(super) fn is_integer(&self, ty: &DataType) -> bool {
         if matches!(
-            ty.type_id,
-            INT8_TYPE | INT16_TYPE | INT32_TYPE | INT64_TYPE |
-            UINT8_TYPE | UINT16_TYPE | UINT32_TYPE | UINT64_TYPE
+            ty.type_hash,
+            primitive_hashes::INT8 | primitive_hashes::INT16 | primitive_hashes::INT32 | primitive_hashes::INT64 |
+            primitive_hashes::UINT8 | primitive_hashes::UINT16 | primitive_hashes::UINT32 | primitive_hashes::UINT64
         ) {
             return true;
         }
         // Enum types are also integers (int32 values)
-        self.context.get_type(ty.type_id).is_enum()
+        self.context.get_type(ty.type_hash).is_enum()
     }
 
     /// Checks if a type can be used in bitwise operations (integers and bool).
     /// Bool is implicitly converted to 0 or 1 for bitwise ops.
     pub(super) fn is_bitwise_compatible(&self, ty: &DataType) -> bool {
-        self.is_integer(ty) || ty.type_id == BOOL_TYPE
+        self.is_integer(ty) || ty.type_hash == primitive_hashes::BOOL
     }
 
     /// Checks if a type is compatible with switch statements (integer or enum).
@@ -387,24 +384,24 @@ impl<'ast> FunctionCompiler<'ast> {
         }
 
         // Enum types (treated as integers)
-        let typedef = self.context.get_type(ty.type_id);
+        let typedef = self.context.get_type(ty.type_hash);
         if typedef.is_enum() {
             return Some(SwitchCategory::Integer);
         }
 
         // Boolean
-        if ty.type_id == BOOL_TYPE {
+        if ty.type_hash == primitive_hashes::BOOL {
             return Some(SwitchCategory::Bool);
         }
 
         // Float/Double
-        if ty.type_id == FLOAT_TYPE || ty.type_id == DOUBLE_TYPE {
+        if ty.type_hash == primitive_hashes::FLOAT || ty.type_hash == primitive_hashes::DOUBLE {
             return Some(SwitchCategory::Float);
         }
 
         // String
         if let Some(string_type) = self.context.lookup_type("string")
-            && ty.type_id == string_type {
+            && ty.type_hash == string_type {
                 return Some(SwitchCategory::String);
             }
 
@@ -412,8 +409,8 @@ impl<'ast> FunctionCompiler<'ast> {
     }
 
     /// Try to resolve a case expression as a type pattern (class/interface name).
-    /// Returns Some(TypeId) if the expression is an identifier that resolves to a class or interface.
-    pub(super) fn try_resolve_type_pattern(&self, expr: &Expr) -> Option<TypeId> {
+    /// Returns Some(TypeHash) if the expression is an identifier that resolves to a class or interface.
+    pub(super) fn try_resolve_type_pattern(&self, expr: &Expr) -> Option<TypeHash> {
         // Only identifiers can be type patterns
         if let Expr::Ident(ident) = expr {
             // Look up as type name, not variable
@@ -431,20 +428,20 @@ impl<'ast> FunctionCompiler<'ast> {
     /// Promotes two numeric types to their common type.
     pub(super) fn promote_numeric(&self, left: &DataType, right: &DataType) -> DataType {
         // Simplified promotion rules
-        if left.type_id == DOUBLE_TYPE || right.type_id == DOUBLE_TYPE {
-            DataType::simple(DOUBLE_TYPE)
-        } else if left.type_id == FLOAT_TYPE || right.type_id == FLOAT_TYPE {
-            DataType::simple(FLOAT_TYPE)
-        } else if left.type_id == INT64_TYPE || right.type_id == INT64_TYPE {
-            DataType::simple(INT64_TYPE)
+        if left.type_hash == primitive_hashes::DOUBLE || right.type_hash == primitive_hashes::DOUBLE {
+            DataType::simple(primitive_hashes::DOUBLE)
+        } else if left.type_hash == primitive_hashes::FLOAT || right.type_hash == primitive_hashes::FLOAT {
+            DataType::simple(primitive_hashes::FLOAT)
+        } else if left.type_hash == primitive_hashes::INT64 || right.type_hash == primitive_hashes::INT64 {
+            DataType::simple(primitive_hashes::INT64)
         } else {
-            DataType::simple(INT32_TYPE)
+            DataType::simple(primitive_hashes::INT32)
         }
     }
 
     /// Gets a human-readable name for a type.
     pub(super) fn type_name(&self, ty: &DataType) -> String {
-        let type_def = self.context.get_type(ty.type_id);
+        let type_def = self.context.get_type(ty.type_hash);
         type_def.name().to_string()
     }
 
@@ -456,7 +453,7 @@ impl<'ast> FunctionCompiler<'ast> {
     /// - `Public`: Always accessible
     /// - `Private`: Only accessible within the same class
     /// - `Protected`: Accessible within the same class or derived classes
-    pub(super) fn check_visibility_access(&self, visibility: Visibility, member_class: TypeId) -> bool {
+    pub(super) fn check_visibility_access(&self, visibility: Visibility, member_class: TypeHash) -> bool {
         match visibility {
             Visibility::Public => true,
             Visibility::Private => {
@@ -484,14 +481,14 @@ impl<'ast> FunctionCompiler<'ast> {
     ///
     /// Returns Some((field_index, field_def, defining_class_id)) if found,
     /// where field_index is the position within the defining class's fields,
-    /// and defining_class_id is the TypeId of the class that defines the field.
+    /// and defining_class_id is the TypeHash of the class that defines the field.
     ///
     /// Searches the immediate class first, then walks up the inheritance chain.
     pub(super) fn find_field_in_hierarchy(
         &self,
-        class_id: TypeId,
+        class_id: TypeHash,
         field_name: &str,
-    ) -> Option<(usize, FieldDef, TypeId)> {
+    ) -> Option<(usize, FieldDef, TypeHash)> {
         let mut current_class_id = Some(class_id);
 
         while let Some(cid) = current_class_id {
@@ -536,7 +533,7 @@ impl<'ast> FunctionCompiler<'ast> {
         );
     }
 
-    pub(super) fn get_base_class_by_name(&self, class_id: TypeId, name: &str) -> Option<TypeId> {
+    pub(super) fn get_base_class_by_name(&self, class_id: TypeHash, name: &str) -> Option<TypeHash> {
         let class_def = self.context.get_type(class_id);
         if let TypeDef::Class { base_class, .. } = class_def
             && let Some(base_id) = base_class {

@@ -21,7 +21,6 @@
 
 use crate::ast::Parser;
 use crate::module::{FfiModuleError, Module};
-use crate::semantic::types::type_def::TypeId;
 use crate::types::{function_param_to_ffi, return_type_to_ffi, FfiInterfaceDef, FfiInterfaceMethod};
 
 /// Builder for registering native interface types.
@@ -116,7 +115,11 @@ impl<'m, 'app> InterfaceBuilder<'m, 'app> {
             )));
         }
 
-        let interface_def = FfiInterfaceDef::new(TypeId::next_ffi(), self.name, self.methods);
+        // Compute the qualified name and type hash
+        let qualified_name = self.module.qualified_name(&self.name);
+        let type_hash = crate::types::TypeHash::from_name(&qualified_name);
+
+        let interface_def = FfiInterfaceDef::new(type_hash, self.name, self.methods);
 
         self.module.add_interface(interface_def);
         Ok(())

@@ -161,13 +161,16 @@ impl TypeHash {
         TypeHash(hash)
     }
 
-    /// Create a method hash from owner type, method name, and parameter type hashes.
+    /// Create a method hash from owner type, method name, parameter type hashes, and const qualifiers.
     ///
     /// Methods are distinguished from global functions by incorporating the owner type.
-    /// Parameter order matters.
+    /// Parameter order matters. The `is_const` flag indicates if this is a const method,
+    /// and `return_is_const` indicates if the return type is const-qualified.
     #[inline]
-    pub fn from_method(owner: TypeHash, name: &str, param_hashes: &[TypeHash]) -> Self {
-        let mut hash = hash_constants::METHOD ^ owner.0 ^ xxh64(name.as_bytes(), 0);
+    pub fn from_method(owner: TypeHash, name: &str, param_hashes: &[TypeHash], is_const: bool, return_is_const: bool) -> Self {
+        // Include const flags in initial hash computation
+        let const_modifier = if is_const { 0x1 } else { 0x0 } | if return_is_const { 0x2 } else { 0x0 };
+        let mut hash = hash_constants::METHOD ^ owner.0 ^ xxh64(name.as_bytes(), 0) ^ const_modifier;
         for (i, param) in param_hashes.iter().enumerate() {
             let marker = hash_constants::PARAM_MARKERS
                 .get(i)
@@ -192,6 +195,27 @@ impl TypeHash {
                 .copied()
                 .unwrap_or_else(|| hash_constants::PARAM_MARKERS[0].wrapping_add(i as u64));
             // Use wrapping_mul to make parameter order matter (not commutative like XOR)
+            hash = hash.wrapping_mul(hash_constants::SEP).wrapping_add(marker ^ param.0);
+        }
+        TypeHash(hash)
+    }
+
+    /// Create an operator method hash from owner type, operator name, parameter type hashes, and const qualifiers.
+    ///
+    /// Operators are like methods but use a different domain constant to distinguish
+    /// `opAdd` from a regular method named "opAdd". The `is_const` flag indicates if this
+    /// is a const method, and `return_is_const` indicates if the return type is const-qualified.
+    #[inline]
+    pub fn from_operator(owner: TypeHash, operator_name: &str, param_hashes: &[TypeHash], is_const: bool, return_is_const: bool) -> Self {
+        let name_hash = xxh64(operator_name.as_bytes(), 0);
+        // Include const flags in initial hash computation
+        let const_modifier = if is_const { 0x1 } else { 0x0 } | if return_is_const { 0x2 } else { 0x0 };
+        let mut hash = hash_constants::OPERATOR ^ owner.0 ^ name_hash ^ const_modifier;
+        for (i, param) in param_hashes.iter().enumerate() {
+            let marker = hash_constants::PARAM_MARKERS
+                .get(i)
+                .copied()
+                .unwrap_or_else(|| hash_constants::PARAM_MARKERS[0].wrapping_add(i as u64));
             hash = hash.wrapping_mul(hash_constants::SEP).wrapping_add(marker ^ param.0);
         }
         TypeHash(hash)
@@ -236,6 +260,35 @@ impl TypeHash {
     #[inline]
     pub const fn as_u64(self) -> u64 {
         self.0
+    }
+
+    /// Create a TypeHash from a Rust type's TypeId.
+    ///
+    /// This is used for runtime type verification in the FFI system.
+    /// Note: This produces a different hash than `from_name()` since it's
+    /// based on Rust's internal type representation, not the AngelScript name.
+    #[inline]
+    pub fn of<T: 'static>() -> Self {
+        use std::any::TypeId;
+        use std::hash::{Hash, Hasher};
+
+        // Hash the TypeId to get a u64
+        let type_id = TypeId::of::<T>();
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        type_id.hash(&mut hasher);
+        TypeHash(hasher.finish())
+    }
+
+    /// Create a TypeHash from an existing TypeId.
+    ///
+    /// Used when you have a TypeId value but need to convert it to TypeHash.
+    #[inline]
+    pub fn of_type_id(type_id: std::any::TypeId) -> Self {
+        use std::hash::{Hash, Hasher};
+
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        type_id.hash(&mut hasher);
+        TypeHash(hasher.finish())
     }
 }
 
@@ -293,6 +346,9 @@ pub mod primitives {
 
     /// Hash for `double` type
     pub const DOUBLE: TypeHash = TypeHash(0xeb125587f6c2a79b);
+
+    /// Hash for `string` type
+    pub const STRING: TypeHash = TypeHash(0x2fac10b5e60d02b2);
 
     /// Hash for null literal type (converts to any handle)
     pub const NULL: TypeHash = TypeHash(0x1165f1b6597b5a46);
@@ -379,8 +435,8 @@ mod tests {
         let enemy_hash = TypeHash::from_name("Enemy");
 
         // Same method name and params, different owners
-        let player_update = TypeHash::from_method(player_hash, "update", &[int_hash]);
-        let enemy_update = TypeHash::from_method(enemy_hash, "update", &[int_hash]);
+        let player_update = TypeHash::from_method(player_hash, "update", &[int_hash], false, false);
+        let enemy_update = TypeHash::from_method(enemy_hash, "update", &[int_hash], false, false);
         assert_ne!(player_update, enemy_update);
     }
 
@@ -391,7 +447,7 @@ mod tests {
 
         // Global function vs method with same name and params
         let global_func = TypeHash::from_function("update", &[int_hash]);
-        let method = TypeHash::from_method(player_hash, "update", &[int_hash]);
+        let method = TypeHash::from_method(player_hash, "update", &[int_hash], false, false);
         assert_ne!(global_func, method);
     }
 

@@ -23,7 +23,6 @@
 //! ```
 
 use crate::module::{FfiModuleError, Module};
-use crate::semantic::types::type_def::TypeId;
 use crate::types::FfiEnumDef;
 
 /// Builder for registering native enum types.
@@ -141,7 +140,11 @@ impl<'m, 'app> EnumBuilder<'m, 'app> {
             ));
         }
 
-        let enum_def = FfiEnumDef::new(TypeId::next_ffi(), self.name, self.values);
+        // Compute the qualified name and type hash
+        let qualified_name = self.module.qualified_name(&self.name);
+        let type_hash = crate::types::TypeHash::from_name(&qualified_name);
+
+        let enum_def = FfiEnumDef::new(type_hash, self.name, self.values);
 
         self.module.add_enum(enum_def);
         Ok(())

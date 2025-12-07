@@ -23,7 +23,7 @@
 //! // Instantiate array<int> from array<T>
 //! let array_int_id = instantiator.instantiate(
 //!     array_template_id,
-//!     vec![DataType::simple(INT32_TYPE)],
+//!     vec![DataType::simple(primitive_hashes::INT32)],
 //!     &ffi_registry,
 //!     &mut script_registry,
 //!     &mut type_by_name,
@@ -36,9 +36,9 @@ use crate::ffi::{FfiRegistry, TemplateInstanceInfo};
 use crate::lexer::Span;
 use crate::semantic::error::{SemanticError, SemanticErrorKind};
 use crate::semantic::types::registry::{FunctionDef, ScriptParam, ScriptRegistry};
-use crate::semantic::types::type_def::{FunctionId, OperatorBehavior, TypeDef, TypeId, Visibility, SELF_TYPE};
+use crate::semantic::types::type_def::{OperatorBehavior, TypeDef, Visibility};
 use crate::semantic::types::DataType;
-use crate::types::TypeHash;
+use crate::types::{primitive_hashes, TypeHash};
 
 /// Handles template instantiation with caching.
 ///
@@ -47,7 +47,7 @@ use crate::types::TypeHash;
 #[derive(Debug, Default)]
 pub struct TemplateInstantiator {
     /// Cache: (template_type_id, arg_type_ids) → instance_type_id
-    cache: FxHashMap<(TypeId, Vec<TypeId>), TypeId>,
+    cache: FxHashMap<(TypeHash, Vec<TypeHash>), TypeHash>,
 }
 
 impl TemplateInstantiator {
@@ -62,8 +62,8 @@ impl TemplateInstantiator {
     }
 
     /// Check if an instantiation is already cached.
-    pub fn get_cached(&self, template_id: TypeId, args: &[DataType]) -> Option<TypeId> {
-        let key = (template_id, args.iter().map(|a| a.type_id).collect());
+    pub fn get_cached(&self, template_id: TypeHash, args: &[DataType]) -> Option<TypeHash> {
+        let key = (template_id, args.iter().map(|a| a.type_hash).collect());
         self.cache.get(&key).copied()
     }
 
@@ -71,17 +71,17 @@ impl TemplateInstantiator {
     ///
     /// If the type is a template parameter (matching one in `template_params`),
     /// it will be replaced with the corresponding type from `args`.
-    /// If the type is SELF_TYPE and `instance_id` is provided, it will be replaced
+    /// If the type is primitive_hashes::SELF and `instance_id` is provided, it will be replaced
     /// with the instance type.
     fn substitute_type(
         data_type: &DataType,
-        template_params: &[TypeId],
+        template_params: &[TypeHash],
         args: &[DataType],
         ffi: &FfiRegistry,
-        instance_id: Option<TypeId>,
+        instance_id: Option<TypeHash>,
     ) -> DataType {
-        // Check for SELF_TYPE - substitute with the instance type
-        if data_type.type_id == SELF_TYPE
+        // Check for primitive_hashes::SELF - substitute with the instance type
+        if data_type.type_hash == primitive_hashes::SELF
             && let Some(inst_id) = instance_id {
                 let mut substituted = DataType::simple(inst_id);
                 // Preserve modifiers from the original type
@@ -93,7 +93,7 @@ impl TemplateInstantiator {
             }
 
         // Check if this type is a template parameter
-        if let Some(typedef) = ffi.get_type(data_type.type_id)
+        if let Some(typedef) = ffi.get_type(data_type.type_hash)
             && let TypeDef::TemplateParam { index, .. } = typedef {
                 // This is a template parameter - substitute it
                 if *index < args.len() {
@@ -107,7 +107,7 @@ impl TemplateInstantiator {
 
         // Also check if the type_id is directly in template_params
         for (i, &param_id) in template_params.iter().enumerate() {
-            if data_type.type_id == param_id && i < args.len() {
+            if data_type.type_hash == param_id && i < args.len() {
                 let mut substituted = args[i].clone();
                 // Preserve modifiers from the original type
                 substituted.is_const = data_type.is_const;
@@ -126,43 +126,41 @@ impl TemplateInstantiator {
     /// Template instances are cached to avoid duplicate instantiations.
     ///
     /// # Arguments
-    /// - `template_id`: The TypeId of the template type (must have template_params)
+    /// - `template_id`: The TypeHash of the template type (must have template_params)
     /// - `args`: The concrete type arguments to substitute for template parameters
     /// - `ffi`: The FFI registry (for looking up FFI templates)
     /// - `script`: The script registry (for registering instances and looking up script templates)
-    /// - `type_by_name`: The unified name→TypeId map (updated with instance name)
+    /// - `type_by_name`: The unified name→TypeHash map (updated with instance name)
     ///
     /// # Returns
-    /// - `Ok(TypeId)` - The TypeId of the instantiated type
+    /// - `Ok(TypeHash)` - The TypeHash of the instantiated type
     /// - `Err(SemanticError)` - If the template is invalid or validation fails
     pub fn instantiate(
         &mut self,
-        template_id: TypeId,
+        template_id: TypeHash,
         args: Vec<DataType>,
         ffi: &FfiRegistry,
         script: &mut ScriptRegistry<'_>,
-        type_by_name: &mut FxHashMap<String, TypeId>,
-    ) -> Result<TypeId, SemanticError> {
+        type_by_name: &mut FxHashMap<String, TypeHash>,
+    ) -> Result<TypeHash, SemanticError> {
         // Create cache key from type IDs
-        let cache_key = (template_id, args.iter().map(|a| a.type_id).collect::<Vec<_>>());
+        let cache_key = (template_id, args.iter().map(|a| a.type_hash).collect::<Vec<_>>());
 
         // Check cache first
         if let Some(&instance_id) = self.cache.get(&cache_key) {
             return Ok(instance_id);
         }
 
-        // Get the template definition
-        let template_def = if template_id.is_ffi() {
-            ffi.get_type(template_id).ok_or_else(|| {
+        // Get the template definition (try FFI first, then Script)
+        let template_def = ffi.get_type(template_id)
+            .or_else(|| script.get_type_by_hash(template_id))
+            .ok_or_else(|| {
                 SemanticError::new(
                     SemanticErrorKind::UndefinedType,
                     Span::default(),
                     format!("Template type {:?} not found", template_id),
                 )
-            })?
-        } else {
-            script.get_type(template_id)
-        };
+            })?;
 
         // Verify it's a template and extract info
         let (template_name, template_hash, template_params, template_kind, template_operator_methods, template_methods) =
@@ -216,56 +214,41 @@ impl TemplateInstantiator {
         }
 
         // Run validation callback if present (FFI templates only)
-        if template_id.is_ffi()
-            && let Some(callback) = ffi.get_template_callback(template_id) {
-                let info = TemplateInstanceInfo::new(template_name.clone(), args.clone());
-                let validation = callback(&info);
-                if !validation.is_valid {
-                    return Err(SemanticError::new(
-                        SemanticErrorKind::InvalidTemplateInstantiation,
-                        Span::default(),
-                        validation
-                            .error
-                            .unwrap_or_else(|| "Template validation failed".to_string()),
-                    ));
-                }
+        if let Some(callback) = ffi.get_template_callback(template_id) {
+            let info = TemplateInstanceInfo::new(template_name.clone(), args.clone());
+            let validation = callback(&info);
+            if !validation.is_valid {
+                return Err(SemanticError::new(
+                    SemanticErrorKind::InvalidTemplateInstantiation,
+                    Span::default(),
+                    validation
+                        .error
+                        .unwrap_or_else(|| "Template validation failed".to_string()),
+                ));
             }
+        }
 
         // Build the instance name (e.g., "array<int>")
         let type_arg_names: Vec<String> = args
             .iter()
             .map(|arg| {
-                if arg.type_id.is_ffi() {
-                    ffi.get_type(arg.type_id)
-                        .map(|t| t.name().to_string())
-                        .unwrap_or_else(|| format!("{:?}", arg.type_id))
-                } else {
-                    script.get_type(arg.type_id).name().to_string()
-                }
+                // Try FFI first, then Script
+                ffi.get_type(arg.type_hash)
+                    .or_else(|| script.get_type_by_hash(arg.type_hash))
+                    .map(|t| t.name().to_string())
+                    .unwrap_or_else(|| format!("{:?}", arg.type_hash))
             })
             .collect();
         let instance_name = format!("{}<{}>", template_name, type_arg_names.join(", "));
 
         // Compute instance hash from template hash + type argument hashes
         // This is done early so we can use it for method hash computation
-        let arg_hashes: Vec<TypeHash> = args.iter().map(|a| {
-            // Get the type's hash from its definition
-            // ffi.get_type returns Option, script.get_type panics if not found
-            // Type args are typically FFI primitives or already-registered types
-            if let Some(def) = ffi.get_type(a.type_id) {
-                def.type_hash()
-            } else if a.type_id.is_script() {
-                // Script types should be looked up in script registry
-                script.get_type(a.type_id).type_hash()
-            } else {
-                // Fallback: compute from name if we can't find the type
-                TypeHash::from_name(&format!("unknown_{}", a.type_id.as_u32()))
-            }
-        }).collect();
+        // Use the type_hash directly from args - they already have the correct hash
+        let arg_hashes: Vec<TypeHash> = args.iter().map(|a| a.type_hash).collect();
         let instance_hash = TypeHash::from_template_instance(template_hash, &arg_hashes);
 
         // Create specialized operator methods with substituted types
-        let mut specialized_operator_methods: FxHashMap<OperatorBehavior, Vec<FunctionId>> =
+        let mut specialized_operator_methods: FxHashMap<OperatorBehavior, Vec<TypeHash>> =
             FxHashMap::default();
 
         for (operator, func_ids) in &template_operator_methods {
@@ -301,26 +284,21 @@ impl TemplateInstantiator {
                     );
 
                     // Compute func_hash for the specialized method
+                    // Use the type_hash directly from the substituted params - they already have the correct hash
                     let param_hashes: Vec<TypeHash> = specialized_params.iter()
-                        .map(|p| {
-                            if let Some(def) = ffi.get_type(p.data_type.type_id) {
-                                def.type_hash()
-                            } else if p.data_type.type_id.is_script() {
-                                script.get_type(p.data_type.type_id).type_hash()
-                            } else {
-                                TypeHash::from_name(&format!("unknown_{}", p.data_type.type_id.as_u32()))
-                            }
-                        })
+                        .map(|p| p.data_type.type_hash)
                         .collect();
+                    let is_const = ffi_func.traits.is_const;
+                    let return_is_const = specialized_return_type.is_const;
                     let func_hash = if ffi_func.traits.is_constructor {
                         TypeHash::from_constructor(instance_hash, &param_hashes)
                     } else {
-                        TypeHash::from_method(instance_hash, &ffi_func.name, &param_hashes)
+                        TypeHash::from_method(instance_hash, &ffi_func.name, &param_hashes, is_const, return_is_const)
                     };
 
                     // Create a new script function with specialized types
                     let specialized_func = FunctionDef {
-                        id: FunctionId::next_script(),
+                        func_hash,
                         name: ffi_func.name.clone(),
                         namespace: Vec::new(),
                         params: specialized_params,
@@ -330,7 +308,6 @@ impl TemplateInstantiator {
                         is_native: true, // Still backed by native FFI function
                         visibility: Visibility::Public,
                         signature_filled: true,
-                        func_hash,
                     };
 
                     let specialized_id = script.register_function(specialized_func);
@@ -345,7 +322,7 @@ impl TemplateInstantiator {
         }
 
         // Create the instance TypeDef first (with empty methods)
-        // We need the instance_id before we can specialize methods that use SELF_TYPE
+        // We need the instance_id before we can specialize methods that use primitive_hashes::SELF
         // Template instances are always Script types (created per-compilation)
         let instance_def = TypeDef::Class {
             name: instance_name.clone(),
@@ -368,12 +345,12 @@ impl TemplateInstantiator {
         // Register the instance (always as a script type)
         let instance_id = script.register_type(instance_def, Some(&instance_name));
 
-        // Now specialize methods with substituted types (including SELF_TYPE substitution)
+        // Now specialize methods with substituted types (including primitive_hashes::SELF substitution)
         for &func_id in &template_methods {
             // Get the original FFI function
             if let Some(ffi_func) = ffi.get_function(func_id) {
                 // Create specialized parameters with substituted types
-                // Pass instance_id for SELF_TYPE substitution
+                // Pass instance_id for primitive_hashes::SELF substitution
                 let specialized_params: Vec<ScriptParam<'_>> = ffi_func
                     .params
                     .iter()
@@ -399,26 +376,21 @@ impl TemplateInstantiator {
                 );
 
                 // Compute func_hash for the specialized method
+                // Use the type_hash directly from the substituted params - they already have the correct hash
                 let param_hashes: Vec<TypeHash> = specialized_params.iter()
-                    .map(|p| {
-                        if let Some(def) = ffi.get_type(p.data_type.type_id) {
-                            def.type_hash()
-                        } else if p.data_type.type_id.is_script() {
-                            script.get_type(p.data_type.type_id).type_hash()
-                        } else {
-                            TypeHash::from_name(&format!("unknown_{}", p.data_type.type_id.as_u32()))
-                        }
-                    })
+                    .map(|p| p.data_type.type_hash)
                     .collect();
+                let is_const = ffi_func.traits.is_const;
+                let return_is_const = specialized_return_type.is_const;
                 let func_hash = if ffi_func.traits.is_constructor {
                     TypeHash::from_constructor(instance_hash, &param_hashes)
                 } else {
-                    TypeHash::from_method(instance_hash, &ffi_func.name, &param_hashes)
+                    TypeHash::from_method(instance_hash, &ffi_func.name, &param_hashes, is_const, return_is_const)
                 };
 
                 // Create a new script function with specialized types
                 let specialized_func = FunctionDef {
-                    id: FunctionId::next_script(),
+                    func_hash,
                     name: ffi_func.name.clone(),
                     namespace: Vec::new(),
                     params: specialized_params,
@@ -428,7 +400,6 @@ impl TemplateInstantiator {
                     is_native: true, // Still backed by native FFI function
                     visibility: Visibility::Public,
                     signature_filled: true,
-                    func_hash,
                 };
 
                 let specialized_id = script.register_function(specialized_func);
@@ -440,12 +411,10 @@ impl TemplateInstantiator {
         // Add to unified name map
         type_by_name.insert(instance_name, instance_id);
 
-        // Copy behaviors from template to instance
-        let template_behaviors = if template_id.is_ffi() {
-            ffi.get_behaviors(template_id).cloned()
-        } else {
-            script.get_behaviors(template_id).cloned()
-        };
+        // Copy behaviors from template to instance (try FFI first, then Script)
+        let template_behaviors = ffi.get_behaviors(template_id)
+            .or_else(|| script.get_behaviors(template_id))
+            .cloned();
 
         if let Some(behaviors) = template_behaviors {
             script.set_behaviors(instance_id, behaviors);
@@ -463,24 +432,25 @@ mod tests {
     use super::*;
     use crate::ffi::FfiRegistryBuilder;
     use crate::semantic::types::behaviors::TypeBehaviors;
-    use crate::semantic::types::type_def::INT32_TYPE;
+    use crate::types::primitive_hashes;
     use crate::types::TypeKind;
 
-    fn create_test_ffi_with_array() -> (FfiRegistry, TypeId) {
+    fn create_test_ffi_with_array() -> (FfiRegistry, TypeHash) {
         let mut builder = FfiRegistryBuilder::new();
 
-        // Register template param T first
-        let t_param = TypeId::next_ffi();
-        let template_id = TypeId::next_ffi();
+        // Template ID is based on the template name
+        let template_id = TypeHash::from_name("array");
 
-        let owner_hash = TypeHash::from_name("array");
+        // Template param hash is computed from template + param index
+        let t_param = TypeHash::from_template_instance(template_id, &[TypeHash(0)]);
+
         builder.register_type_with_id(
             t_param,
             TypeDef::TemplateParam {
                 name: "T".to_string(),
                 index: 0,
                 owner: template_id,
-                type_hash: TypeHash::from_template_instance(owner_hash, &[TypeHash(0)]),
+                type_hash: t_param,
             },
             None,
         );
@@ -489,7 +459,7 @@ mod tests {
         let array_typedef = TypeDef::Class {
             name: "array".to_string(),
             qualified_name: "array".to_string(),
-            type_hash: owner_hash,
+            type_hash: template_id,
             fields: Vec::new(),
             methods: Vec::new(),
             base_class: None,
@@ -508,7 +478,7 @@ mod tests {
 
         // Register list_factory behavior for array template
         let mut behaviors = TypeBehaviors::default();
-        behaviors.list_factory = Some(crate::semantic::FunctionId::new(9999));
+        behaviors.list_factory = Some(TypeHash(9999));
         builder.set_behaviors(template_id, behaviors);
 
         (builder.build().unwrap(), template_id)
@@ -524,15 +494,15 @@ mod tests {
         let instance_id = instantiator
             .instantiate(
                 array_template,
-                vec![DataType::simple(INT32_TYPE)],
+                vec![DataType::simple(primitive_hashes::INT32)],
                 &ffi,
                 &mut script,
                 &mut type_by_name,
             )
             .unwrap();
 
-        // Should be a script type
-        assert!(instance_id.is_script());
+        // Instance should be created successfully
+        assert!(!instance_id.is_empty());
 
         // Should be in name map
         assert_eq!(type_by_name.get("array<int>"), Some(&instance_id));
@@ -540,7 +510,7 @@ mod tests {
         // Should be cached
         assert_eq!(instantiator.cache_size(), 1);
         assert_eq!(
-            instantiator.get_cached(array_template, &[DataType::simple(INT32_TYPE)]),
+            instantiator.get_cached(array_template, &[DataType::simple(primitive_hashes::INT32)]),
             Some(instance_id)
         );
     }
@@ -555,7 +525,7 @@ mod tests {
         let instance_id1 = instantiator
             .instantiate(
                 array_template,
-                vec![DataType::simple(INT32_TYPE)],
+                vec![DataType::simple(primitive_hashes::INT32)],
                 &ffi,
                 &mut script,
                 &mut type_by_name,
@@ -565,7 +535,7 @@ mod tests {
         let instance_id2 = instantiator
             .instantiate(
                 array_template,
-                vec![DataType::simple(INT32_TYPE)],
+                vec![DataType::simple(primitive_hashes::INT32)],
                 &ffi,
                 &mut script,
                 &mut type_by_name,
@@ -608,9 +578,9 @@ mod tests {
         let mut type_by_name = ffi.type_by_name().clone();
         let mut instantiator = TemplateInstantiator::new();
 
-        // INT32_TYPE is a primitive, not a template
+        // primitive_hashes::INT32 is a primitive, not a template
         let result = instantiator.instantiate(
-            INT32_TYPE,
+            primitive_hashes::INT32,
             vec![],
             &ffi,
             &mut script,
@@ -630,7 +600,7 @@ mod tests {
         let instance_id = instantiator
             .instantiate(
                 array_template,
-                vec![DataType::simple(INT32_TYPE)],
+                vec![DataType::simple(primitive_hashes::INT32)],
                 &ffi,
                 &mut script,
                 &mut type_by_name,

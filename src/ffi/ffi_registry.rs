@@ -25,8 +25,8 @@
 //! │  │  ┌───────────────────────────────────────────────┐  │    │
 //! │  │  │            Registry<'ast>                      │  │    │
 //! │  │  │  - ffi: Arc<FfiRegistry>  (shared, immutable) │  │    │
-//! │  │  │  - script_types: HashMap<TypeId, TypeDef>     │  │    │
-//! │  │  │  - script_functions: HashMap<FunctionId, ...> │  │    │
+//! │  │  │  - script_types: HashMap<TypeHash, TypeDef>     │  │    │
+//! │  │  │  - script_functions: HashMap<TypeHash, ...> │  │    │
 //! │  │  │  - template_cache: HashMap<...>               │  │    │
 //! │  │  └───────────────────────────────────────────────┘  │    │
 //! │  └─────────────────────────────────────────────────────┘    │
@@ -54,11 +54,10 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use crate::ffi::{NativeFn, TemplateInstanceInfo, TemplateValidation};
 use crate::semantic::types::behaviors::TypeBehaviors;
 use crate::semantic::types::type_def::{
-    FunctionId, MethodSignature, OperatorBehavior, PropertyAccessors, TypeDef, TypeId,
-    BOOL_TYPE, DOUBLE_TYPE, FLOAT_TYPE, INT16_TYPE, INT32_TYPE, INT64_TYPE, INT8_TYPE,
-    PrimitiveType, UINT16_TYPE, UINT32_TYPE, UINT64_TYPE, UINT8_TYPE, VARIABLE_PARAM_TYPE, VOID_TYPE,
+    MethodSignature, OperatorBehavior, PropertyAccessors, TypeDef,
+    PrimitiveType,
 };
-use crate::semantic::types::SELF_TYPE;
+use crate::types::primitive_hashes;
 use crate::semantic::types::DataType;
 use crate::types::{FfiFunctionDef, FfiResolutionError, ResolvedFfiFunctionDef, TypeHash};
 
@@ -71,33 +70,25 @@ use crate::types::{FfiFunctionDef, FfiResolutionError, ResolvedFfiFunctionDef, T
 /// Template instances are NOT stored here - they are created per-Unit during
 /// compilation and cached in the per-Unit Registry.
 ///
-/// # Type Identity (Phase 3)
+/// # Type Identity
 ///
 /// Types and functions are identified by `TypeHash` - a deterministic 64-bit hash
 /// computed from the qualified name (for types) or name+signature (for functions).
 /// This enables forward references and eliminates registration order dependencies.
-///
-/// `TypeId` and `FunctionId` are still used within data structures (e.g., method lists,
-/// base class references) but lookups use `TypeHash` as the primary key.
 pub struct FfiRegistry {
     // === Type Storage (TypeHash primary key) ===
     /// All FFI types indexed by TypeHash
     types: FxHashMap<TypeHash, TypeDef>,
-    /// TypeHash to TypeId mapping (for compatibility during transition)
-    type_ids: FxHashMap<TypeHash, TypeId>,
 
     // === Function Storage (TypeHash primary key) ===
     /// All FFI functions indexed by TypeHash (resolved, non-template)
     functions: FxHashMap<TypeHash, ResolvedFfiFunctionDef>,
-    /// FunctionId to TypeHash reverse mapping (for compatibility during transition)
-    function_hashes: FxHashMap<FunctionId, TypeHash>,
     /// Function name to TypeHash mapping (supports overloads)
     function_overloads: FxHashMap<String, Vec<TypeHash>>,
     /// Native function implementations indexed by TypeHash
     native_fns: FxHashMap<TypeHash, NativeFn>,
-    /// Unresolved template functions indexed by FunctionId (resolved at instantiation time)
-    /// Note: These keep FunctionId as key since they're unresolved and don't have a func_hash yet
-    unresolved_functions: FxHashMap<FunctionId, FfiFunctionDef>,
+    /// Unresolved template functions indexed by TypeHash (resolved at instantiation time)
+    unresolved_functions: FxHashMap<TypeHash, FfiFunctionDef>,
 
     // === Behavior Storage ===
     /// Type behaviors (constructors, factories, etc.) indexed by TypeHash
@@ -117,9 +108,7 @@ impl std::fmt::Debug for FfiRegistry {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("FfiRegistry")
             .field("types", &format!("<{} types>", self.types.len()))
-            .field("type_ids", &format!("<{} entries>", self.type_ids.len()))
             .field("functions", &format!("<{} functions>", self.functions.len()))
-            .field("function_hashes", &format!("<{} entries>", self.function_hashes.len()))
             .field("function_overloads", &format!("<{} names>", self.function_overloads.len()))
             .field("native_fns", &format!("<{} native fns>", self.native_fns.len()))
             .field("unresolved_functions", &format!("<{} unresolved>", self.unresolved_functions.len()))
@@ -135,39 +124,32 @@ impl FfiRegistry {
     // Type Lookups
     // =========================================================================
 
-    /// Get a type definition by TypeId.
+    /// Get a type definition by TypeHash.
     ///
-    /// This method provides backward compatibility during the TypeHash migration.
-    /// It looks up the TypeHash from the type_ids map, then retrieves the TypeDef.
-    /// Prefer using `get_type_by_hash` for new code.
-    pub fn get_type(&self, id: TypeId) -> Option<&TypeDef> {
-        // Find the TypeHash for this TypeId by scanning type_ids
-        // This is O(n) but maintains compatibility - will be removed in Phase 5
-        self.type_ids
-            .iter()
-            .find(|&(_, tid)| *tid == id)
-            .and_then(|(hash, _)| self.types.get(hash))
+    /// TypeHash is now the primary key for all lookups.
+    pub fn get_type(&self, hash: TypeHash) -> Option<&TypeDef> {
+        self.types.get(&hash)
     }
 
-    /// Look up a TypeId by type name.
+    /// Look up a TypeHash by type name.
     ///
-    /// Computes the TypeHash from the name, then looks up the TypeId.
-    pub fn get_type_by_name(&self, name: &str) -> Option<TypeId> {
+    /// Computes the TypeHash from the name and returns it if the type exists.
+    pub fn get_type_by_name(&self, name: &str) -> Option<TypeHash> {
         let hash = TypeHash::from_name(name);
-        self.type_ids.get(&hash).copied()
+        if self.types.contains_key(&hash) {
+            Some(hash)
+        } else {
+            None
+        }
     }
 
-    /// Get access to the type name → TypeId map for iteration.
+    /// Get access to the type name → TypeHash map for iteration.
     ///
-    /// This reconstructs a name→TypeId map from the hash-based storage.
     /// Used by CompilationContext for initializing its unified name maps.
-    pub fn type_by_name(&self) -> FxHashMap<String, TypeId> {
+    pub fn type_by_name(&self) -> FxHashMap<String, TypeHash> {
         self.types
             .iter()
-            .filter_map(|(hash, def)| {
-                let type_id = self.type_ids.get(hash)?;
-                Some((def.qualified_name().to_string(), *type_id))
-            })
+            .map(|(hash, def)| (def.qualified_name().to_string(), *hash))
             .collect()
     }
 
@@ -183,11 +165,6 @@ impl FfiRegistry {
         self.types.get(&hash)
     }
 
-    /// Get the TypeId for a TypeHash.
-    pub fn get_type_id_by_hash(&self, hash: TypeHash) -> Option<TypeId> {
-        self.type_ids.get(&hash).copied()
-    }
-
     /// Check if a type exists by TypeHash.
     pub fn has_type(&self, hash: TypeHash) -> bool {
         self.types.contains_key(&hash)
@@ -197,15 +174,11 @@ impl FfiRegistry {
     // Function Lookups
     // =========================================================================
 
-    /// Get a function definition by FunctionId.
+    /// Get a function definition by TypeHash (func_hash).
     ///
-    /// This method provides backward compatibility during the TypeHash migration.
-    /// Uses a reverse lookup map for O(1) performance.
-    /// Prefer using `get_function_by_hash` for new code.
-    pub fn get_function(&self, id: FunctionId) -> Option<&ResolvedFfiFunctionDef> {
-        self.function_hashes
-            .get(&id)
-            .and_then(|hash| self.functions.get(hash))
+    /// TypeHash is now the primary key for function lookups.
+    pub fn get_function(&self, hash: TypeHash) -> Option<&ResolvedFfiFunctionDef> {
+        self.functions.get(&hash)
     }
 
     /// Look up all function hashes with the given name (for overload resolution).
@@ -220,27 +193,22 @@ impl FfiRegistry {
 
     /// Look up all functions with the given name (for overload resolution).
     ///
-    /// Returns FunctionIds for backward compatibility.
-    pub fn lookup_functions(&self, name: &str) -> Vec<FunctionId> {
+    /// Returns TypeHashes (func_hash) which are now the primary key.
+    pub fn lookup_functions(&self, name: &str) -> Vec<TypeHash> {
         self.function_overloads
             .get(name)
             .map(|hashes| {
                 hashes
                     .iter()
-                    .filter_map(|hash| self.functions.get(hash).map(|f| f.id))
+                    .filter_map(|hash| self.functions.get(hash).map(|f| f.func_hash))
                     .collect()
             })
             .unwrap_or_default()
     }
 
-    /// Get the native function implementation for a FunctionId.
-    ///
-    /// This method provides backward compatibility during the TypeHash migration.
-    /// Uses a reverse lookup map for O(1) performance.
-    pub fn get_native_fn(&self, id: FunctionId) -> Option<&NativeFn> {
-        self.function_hashes
-            .get(&id)
-            .and_then(|hash| self.native_fns.get(hash))
+    /// Get the native function implementation by TypeHash (func_hash).
+    pub fn get_native_fn(&self, hash: TypeHash) -> Option<&NativeFn> {
+        self.native_fns.get(&hash)
     }
 
     /// Get the native function implementation by TypeHash.
@@ -253,18 +221,15 @@ impl FfiRegistry {
         self.functions.len()
     }
 
-    /// Get access to the function name → FunctionIds map for iteration.
+    /// Get access to the function name → func_hashes map for iteration.
     ///
-    /// This reconstructs the map from hash-based storage for compatibility.
-    pub fn func_by_name(&self) -> FxHashMap<String, Vec<FunctionId>> {
+    /// Returns the TypeHash (func_hash) for each overload.
+    pub fn func_by_name(&self) -> FxHashMap<String, Vec<TypeHash>> {
         self.function_overloads
             .iter()
             .map(|(name, hashes)| {
-                let func_ids: Vec<FunctionId> = hashes
-                    .iter()
-                    .filter_map(|hash| self.functions.get(hash).map(|f| f.id))
-                    .collect();
-                (name.clone(), func_ids)
+                // func_hash IS the identity now, just return the hashes
+                (name.clone(), hashes.clone())
             })
             .collect()
     }
@@ -276,9 +241,9 @@ impl FfiRegistry {
         self.functions.get(&hash)
     }
 
-    /// Get the FunctionId for a TypeHash.
-    pub fn get_function_id_by_hash(&self, hash: TypeHash) -> Option<FunctionId> {
-        self.functions.get(&hash).map(|f| f.id)
+    /// Get the TypeHash for a TypeHash.
+    pub fn get_function_id_by_hash(&self, hash: TypeHash) -> Option<TypeHash> {
+        self.functions.get(&hash).map(|f| f.func_hash)
     }
 
     /// Check if a function exists by TypeHash.
@@ -290,14 +255,9 @@ impl FfiRegistry {
     // Behavior Lookups
     // =========================================================================
 
-    /// Get the behaviors for a type by TypeId.
-    ///
-    /// This method provides backward compatibility during the TypeHash migration.
-    pub fn get_behaviors(&self, type_id: TypeId) -> Option<&TypeBehaviors> {
-        // Get the TypeHash for this TypeId, then look up behaviors
-        self.get_type(type_id)
-            .map(|def| def.type_hash())
-            .and_then(|hash| self.behaviors.get(&hash))
+    /// Get the behaviors for a type by TypeHash.
+    pub fn get_behaviors(&self, hash: TypeHash) -> Option<&TypeBehaviors> {
+        self.behaviors.get(&hash)
     }
 
     /// Get the behaviors for a type by TypeHash.
@@ -306,25 +266,21 @@ impl FfiRegistry {
     }
 
     /// Find all constructors for a given type (value types).
-    pub fn find_constructors(&self, type_id: TypeId) -> Vec<FunctionId> {
-        self.get_type(type_id)
-            .map(|def| def.type_hash())
-            .and_then(|hash| self.behaviors.get(&hash))
+    pub fn find_constructors(&self, type_hash: TypeHash) -> Vec<TypeHash> {
+        self.behaviors.get(&type_hash)
             .map(|b| b.constructors.clone())
             .unwrap_or_default()
     }
 
     /// Find all factories for a given type (reference types).
-    pub fn find_factories(&self, type_id: TypeId) -> Vec<FunctionId> {
-        self.get_type(type_id)
-            .map(|def| def.type_hash())
-            .and_then(|hash| self.behaviors.get(&hash))
+    pub fn find_factories(&self, type_hash: TypeHash) -> Vec<TypeHash> {
+        self.behaviors.get(&type_hash)
             .map(|b| b.factories.clone())
             .unwrap_or_default()
     }
 
     /// Find a constructor for a type with specific argument types.
-    pub fn find_constructor(&self, type_id: TypeId, arg_types: &[DataType]) -> Option<FunctionId> {
+    pub fn find_constructor(&self, type_id: TypeHash, arg_types: &[DataType]) -> Option<TypeHash> {
         let constructors = self.find_constructors(type_id);
         for ctor_id in constructors {
             if let Some(func) = self.get_function(ctor_id)
@@ -344,7 +300,7 @@ impl FfiRegistry {
 
     /// Find the copy constructor for a type.
     /// Copy constructor has signature: ClassName(const ClassName&in) or ClassName(const ClassName&inout)
-    pub fn find_copy_constructor(&self, type_id: TypeId) -> Option<FunctionId> {
+    pub fn find_copy_constructor(&self, type_id: TypeHash) -> Option<TypeHash> {
         use crate::semantic::RefModifier;
 
         let constructors = self.find_constructors(type_id);
@@ -363,8 +319,11 @@ impl FfiRegistry {
                     continue;
                 }
                 // Parameter type must match the class type
-                if param.data_type.type_id == type_id {
-                    return Some(ctor_id);
+                // Get the expected type hash from the TypeDef
+                if let Some(type_def) = self.get_type(type_id) {
+                    if param.data_type.type_hash == type_def.type_hash() {
+                        return Some(ctor_id);
+                    }
                 }
             }
         }
@@ -372,7 +331,7 @@ impl FfiRegistry {
     }
 
     /// Check if a constructor is marked as explicit.
-    pub fn is_constructor_explicit(&self, func_id: FunctionId) -> bool {
+    pub fn is_constructor_explicit(&self, func_id: TypeHash) -> bool {
         self.get_function(func_id)
             .map(|f| f.traits.is_explicit)
             .unwrap_or(false)
@@ -383,7 +342,7 @@ impl FfiRegistry {
     // =========================================================================
 
     /// Get all method FunctionIds for a type.
-    pub fn get_methods(&self, type_id: TypeId) -> Vec<FunctionId> {
+    pub fn get_methods(&self, type_id: TypeHash) -> Vec<TypeHash> {
         match self.get_type(type_id) {
             Some(TypeDef::Class { methods, .. }) => methods.clone(),
             _ => Vec::new(),
@@ -391,12 +350,12 @@ impl FfiRegistry {
     }
 
     /// Find a method by name on a type (first match, no inheritance).
-    pub fn find_method(&self, type_id: TypeId, name: &str) -> Option<FunctionId> {
+    pub fn find_method(&self, type_id: TypeHash, name: &str) -> Option<TypeHash> {
         self.find_methods_by_name(type_id, name).first().copied()
     }
 
     /// Find all methods with the given name on a type.
-    pub fn find_methods_by_name(&self, type_id: TypeId, name: &str) -> Vec<FunctionId> {
+    pub fn find_methods_by_name(&self, type_id: TypeHash, name: &str) -> Vec<TypeHash> {
         match self.get_type(type_id) {
             Some(TypeDef::Class { methods, .. }) => methods
                 .iter()
@@ -418,18 +377,18 @@ impl FfiRegistry {
     /// Find an operator method on a type.
     pub fn find_operator_method(
         &self,
-        type_id: TypeId,
+        type_id: TypeHash,
         operator: OperatorBehavior,
-    ) -> Option<FunctionId> {
+    ) -> Option<TypeHash> {
         self.find_operator_methods(type_id, operator).first().copied()
     }
 
     /// Find all overloads of an operator method for a type.
     pub fn find_operator_methods(
         &self,
-        type_id: TypeId,
+        type_id: TypeHash,
         operator: OperatorBehavior,
-    ) -> &[FunctionId] {
+    ) -> &[TypeHash] {
         match self.get_type(type_id) {
             Some(TypeDef::Class { operator_methods, .. }) => {
                 operator_methods.get(&operator).map(|v| v.as_slice()).unwrap_or(&[])
@@ -443,7 +402,7 @@ impl FfiRegistry {
     // =========================================================================
 
     /// Find a property by name on a type.
-    pub fn find_property(&self, type_id: TypeId, name: &str) -> Option<PropertyAccessors> {
+    pub fn find_property(&self, type_id: TypeHash, name: &str) -> Option<PropertyAccessors> {
         match self.get_type(type_id) {
             Some(TypeDef::Class { properties, .. }) => properties.get(name).cloned(),
             _ => None,
@@ -451,7 +410,7 @@ impl FfiRegistry {
     }
 
     /// Get all properties for a type.
-    pub fn get_all_properties(&self, type_id: TypeId) -> FxHashMap<String, PropertyAccessors> {
+    pub fn get_all_properties(&self, type_id: TypeHash) -> FxHashMap<String, PropertyAccessors> {
         match self.get_type(type_id) {
             Some(TypeDef::Class { properties, .. }) => properties.clone(),
             _ => FxHashMap::default(),
@@ -463,7 +422,7 @@ impl FfiRegistry {
     // =========================================================================
 
     /// Get all method signatures for an interface type.
-    pub fn get_interface_methods(&self, type_id: TypeId) -> Option<&[MethodSignature]> {
+    pub fn get_interface_methods(&self, type_id: TypeHash) -> Option<&[MethodSignature]> {
         match self.get_type(type_id) {
             Some(TypeDef::Interface { methods, .. }) => Some(methods.as_slice()),
             _ => None,
@@ -471,7 +430,7 @@ impl FfiRegistry {
     }
 
     /// Get all interfaces implemented by a class.
-    pub fn get_all_interfaces(&self, type_id: TypeId) -> Vec<TypeId> {
+    pub fn get_all_interfaces(&self, type_id: TypeHash) -> Vec<TypeHash> {
         match self.get_type(type_id) {
             Some(TypeDef::Class { interfaces, .. }) => interfaces.clone(),
             _ => Vec::new(),
@@ -481,7 +440,7 @@ impl FfiRegistry {
     /// Check if a class has a method matching an interface method signature.
     pub fn has_method_matching_interface(
         &self,
-        class_type_id: TypeId,
+        class_type_id: TypeHash,
         interface_method: &MethodSignature,
     ) -> bool {
         // Get all methods with this name on the FFI class
@@ -489,7 +448,7 @@ impl FfiRegistry {
         for method_id in methods {
             if let Some(func) = self.get_function(method_id) {
                 // Check return type matches
-                if func.return_type.type_id != interface_method.return_type.type_id {
+                if func.return_type.type_hash != interface_method.return_type.type_hash {
                     continue;
                 }
                 // Check parameter count matches
@@ -499,7 +458,7 @@ impl FfiRegistry {
                 // Check parameter types match
                 let params_match = func.params.iter().zip(interface_method.params.iter()).all(
                     |(func_param, iface_param)| {
-                        func_param.data_type.type_id == iface_param.type_id
+                        func_param.data_type.type_hash == iface_param.type_hash
                             && func_param.data_type.ref_modifier == iface_param.ref_modifier
                             && func_param.data_type.is_handle == iface_param.is_handle
                     },
@@ -517,7 +476,7 @@ impl FfiRegistry {
     // =========================================================================
 
     /// Get the base class of a type (if any).
-    pub fn get_base_class(&self, type_id: TypeId) -> Option<TypeId> {
+    pub fn get_base_class(&self, type_id: TypeHash) -> Option<TypeHash> {
         match self.get_type(type_id) {
             Some(TypeDef::Class { base_class, .. }) => *base_class,
             _ => None,
@@ -525,7 +484,7 @@ impl FfiRegistry {
     }
 
     /// Check if `derived_class` is a subclass of `base_class`.
-    pub fn is_subclass_of(&self, derived_class: TypeId, base_class: TypeId) -> bool {
+    pub fn is_subclass_of(&self, derived_class: TypeHash, base_class: TypeHash) -> bool {
         if derived_class == base_class {
             return true;
         }
@@ -546,7 +505,7 @@ impl FfiRegistry {
     // =========================================================================
 
     /// Look up an enum value by enum type ID and value name.
-    pub fn lookup_enum_value(&self, type_id: TypeId, value_name: &str) -> Option<i64> {
+    pub fn lookup_enum_value(&self, type_id: TypeHash, value_name: &str) -> Option<i64> {
         match self.get_type(type_id) {
             Some(TypeDef::Enum { values, .. }) => values
                 .iter()
@@ -561,7 +520,7 @@ impl FfiRegistry {
     // =========================================================================
 
     /// Get the signature of a funcdef type.
-    pub fn get_funcdef_signature(&self, type_id: TypeId) -> Option<(&[DataType], &DataType)> {
+    pub fn get_funcdef_signature(&self, type_id: TypeHash) -> Option<(&[DataType], &DataType)> {
         match self.get_type(type_id) {
             Some(TypeDef::Funcdef {
                 params,
@@ -575,8 +534,8 @@ impl FfiRegistry {
     /// Check if a function is compatible with a funcdef type.
     pub fn is_function_compatible_with_funcdef(
         &self,
-        func_id: FunctionId,
-        funcdef_type_id: TypeId,
+        func_id: TypeHash,
+        funcdef_type_id: TypeHash,
     ) -> bool {
         let Some(func) = self.get_function(func_id) else {
             return false;
@@ -586,7 +545,7 @@ impl FfiRegistry {
         };
 
         // Check return type matches
-        if func.return_type.type_id != return_type.type_id {
+        if func.return_type.type_hash != return_type.type_hash {
             return false;
         }
 
@@ -597,7 +556,7 @@ impl FfiRegistry {
 
         // Check parameter types match
         func.params.iter().zip(params.iter()).all(|(func_param, funcdef_param)| {
-            func_param.data_type.type_id == funcdef_param.type_id
+            func_param.data_type.type_hash == funcdef_param.type_hash
                 && func_param.data_type.ref_modifier == funcdef_param.ref_modifier
         })
     }
@@ -606,12 +565,12 @@ impl FfiRegistry {
     pub fn find_compatible_function(
         &self,
         name: &str,
-        funcdef_type_id: TypeId,
-    ) -> Option<FunctionId> {
+        funcdef_type_id: TypeHash,
+    ) -> Option<TypeHash> {
         // Search through all FFI functions for a match
         for func in self.functions.values() {
-            if func.name == name && self.is_function_compatible_with_funcdef(func.id, funcdef_type_id) {
-                return Some(func.id);
+            if func.name == name && self.is_function_compatible_with_funcdef(func.func_hash, funcdef_type_id) {
+                return Some(func.func_hash);
             }
         }
         None
@@ -621,12 +580,12 @@ impl FfiRegistry {
     // Template Support
     // =========================================================================
 
-    /// Get the template callback for a template type by TypeId.
+    /// Get the template callback for a template type by TypeHash.
     ///
     /// This method provides backward compatibility during the TypeHash migration.
     pub fn get_template_callback(
         &self,
-        type_id: TypeId,
+        type_id: TypeHash,
     ) -> Option<&Arc<dyn Fn(&TemplateInstanceInfo) -> TemplateValidation + Send + Sync>> {
         self.get_type(type_id)
             .map(|def| def.type_hash())
@@ -642,7 +601,7 @@ impl FfiRegistry {
     }
 
     /// Check if a type is a template (has template parameters).
-    pub fn is_template(&self, type_id: TypeId) -> bool {
+    pub fn is_template(&self, type_id: TypeHash) -> bool {
         match self.get_type(type_id) {
             Some(TypeDef::Class { template_params, .. }) => !template_params.is_empty(),
             _ => false,
@@ -672,12 +631,12 @@ impl FfiRegistry {
     }
 
     /// Get an unresolved function by ID (for template instantiation).
-    pub fn get_unresolved_function(&self, id: FunctionId) -> Option<&FfiFunctionDef> {
+    pub fn get_unresolved_function(&self, id: TypeHash) -> Option<&FfiFunctionDef> {
         self.unresolved_functions.get(&id)
     }
 
     /// Get all unresolved functions.
-    pub fn unresolved_functions(&self) -> &FxHashMap<FunctionId, FfiFunctionDef> {
+    pub fn unresolved_functions(&self) -> &FxHashMap<TypeHash, FfiFunctionDef> {
         &self.unresolved_functions
     }
 }
@@ -708,8 +667,8 @@ impl FfiRegistry {
 /// ```
 pub struct FfiRegistryBuilder {
     // === Type Storage ===
-    types: FxHashMap<TypeId, TypeDef>,
-    type_names: FxHashMap<String, TypeId>,
+    types: FxHashMap<TypeHash, TypeDef>,
+    type_names: FxHashMap<String, TypeHash>,
 
     // === Function Storage ===
     /// Functions (resolved during build)
@@ -717,18 +676,18 @@ pub struct FfiRegistryBuilder {
 
     // === Interface Storage ===
     /// Interfaces (resolved during build)
-    interfaces: Vec<(TypeId, String, crate::types::FfiInterfaceDef)>,
+    interfaces: Vec<(TypeHash, String, crate::types::FfiInterfaceDef)>,
 
     // === Funcdef Storage ===
     /// Funcdefs (resolved during build)
-    funcdefs: Vec<(TypeId, String, crate::types::FfiFuncdefDef)>,
+    funcdefs: Vec<(TypeHash, String, crate::types::FfiFuncdefDef)>,
 
     // === Behavior Storage ===
-    behaviors: FxHashMap<TypeId, TypeBehaviors>,
+    behaviors: FxHashMap<TypeHash, TypeBehaviors>,
 
     // === Template Support ===
     template_callbacks:
-        FxHashMap<TypeId, Arc<dyn Fn(&TemplateInstanceInfo) -> TemplateValidation + Send + Sync>>,
+        FxHashMap<TypeHash, Arc<dyn Fn(&TemplateInstanceInfo) -> TemplateValidation + Send + Sync>>,
 
     // === Namespace Tracking ===
     namespaces: FxHashSet<String>,
@@ -770,33 +729,33 @@ impl FfiRegistryBuilder {
         };
 
         // Pre-register primitive types (both TypeDef and name lookup)
-        builder.register_primitive(PrimitiveType::Void, VOID_TYPE);
-        builder.register_primitive(PrimitiveType::Bool, BOOL_TYPE);
-        builder.register_primitive(PrimitiveType::Int8, INT8_TYPE);
-        builder.register_primitive(PrimitiveType::Int16, INT16_TYPE);
-        builder.register_primitive(PrimitiveType::Int32, INT32_TYPE);
-        builder.register_primitive(PrimitiveType::Int64, INT64_TYPE);
-        builder.register_primitive(PrimitiveType::Uint8, UINT8_TYPE);
-        builder.register_primitive(PrimitiveType::Uint16, UINT16_TYPE);
-        builder.register_primitive(PrimitiveType::Uint32, UINT32_TYPE);
-        builder.register_primitive(PrimitiveType::Uint64, UINT64_TYPE);
-        builder.register_primitive(PrimitiveType::Float, FLOAT_TYPE);
-        builder.register_primitive(PrimitiveType::Double, DOUBLE_TYPE);
+        builder.register_primitive(PrimitiveType::Void, primitive_hashes::VOID);
+        builder.register_primitive(PrimitiveType::Bool, primitive_hashes::BOOL);
+        builder.register_primitive(PrimitiveType::Int8, primitive_hashes::INT8);
+        builder.register_primitive(PrimitiveType::Int16, primitive_hashes::INT16);
+        builder.register_primitive(PrimitiveType::Int32, primitive_hashes::INT32);
+        builder.register_primitive(PrimitiveType::Int64, primitive_hashes::INT64);
+        builder.register_primitive(PrimitiveType::Uint8, primitive_hashes::UINT8);
+        builder.register_primitive(PrimitiveType::Uint16, primitive_hashes::UINT16);
+        builder.register_primitive(PrimitiveType::Uint32, primitive_hashes::UINT32);
+        builder.register_primitive(PrimitiveType::Uint64, primitive_hashes::UINT64);
+        builder.register_primitive(PrimitiveType::Float, primitive_hashes::FLOAT);
+        builder.register_primitive(PrimitiveType::Double, primitive_hashes::DOUBLE);
 
         // Register type aliases for primitives
-        builder.type_names.insert("int".to_string(), INT32_TYPE);
-        builder.type_names.insert("uint".to_string(), UINT32_TYPE);
+        builder.type_names.insert("int".to_string(), primitive_hashes::INT32);
+        builder.type_names.insert("uint".to_string(), primitive_hashes::UINT32);
 
         // Register special types
         // "auto" and "?" are used for variable parameter types in FFI
-        builder.type_names.insert("auto".to_string(), VARIABLE_PARAM_TYPE);
-        builder.type_names.insert("?".to_string(), VARIABLE_PARAM_TYPE);
+        builder.type_names.insert("auto".to_string(), primitive_hashes::VARIABLE_PARAM);
+        builder.type_names.insert("?".to_string(), primitive_hashes::VARIABLE_PARAM);
 
         builder
     }
 
     /// Register a primitive type with its TypeDef and name lookup.
-    fn register_primitive(&mut self, kind: PrimitiveType, type_id: TypeId) {
+    fn register_primitive(&mut self, kind: PrimitiveType, type_id: TypeHash) {
         let type_hash = crate::types::TypeHash::from_name(kind.name());
         self.types.insert(type_id, TypeDef::Primitive { kind, type_hash });
         self.type_names.insert(kind.name().to_string(), type_id);
@@ -806,27 +765,27 @@ impl FfiRegistryBuilder {
     // Type Registration
     // =========================================================================
 
-    /// Register a type and return its TypeId.
+    /// Register a type and return its TypeHash.
     ///
+    /// The TypeHash is extracted from the TypeDef's type_hash field.
     /// If `name` is provided, the type will be registered in the name lookup map.
-    /// Uses `TypeId::next_ffi()` to ensure the FFI bit is set.
-    pub fn register_type(&mut self, type_def: TypeDef, name: Option<&str>) -> TypeId {
-        let type_id = TypeId::next_ffi();
-        self.types.insert(type_id, type_def);
+    pub fn register_type(&mut self, type_def: TypeDef, name: Option<&str>) -> TypeHash {
+        let type_hash = type_def.type_hash();
+        self.types.insert(type_hash, type_def);
 
         if let Some(name) = name {
-            self.type_names.insert(name.to_string(), type_id);
+            self.type_names.insert(name.to_string(), type_hash);
         }
 
-        type_id
+        type_hash
     }
 
-    /// Register a type with a specific TypeId.
+    /// Register a type with a specific TypeHash.
     ///
-    /// This is used when the TypeId has already been assigned (e.g., during module import).
+    /// This is used when the TypeHash has already been assigned (e.g., during module import).
     pub fn register_type_with_id(
         &mut self,
-        type_id: TypeId,
+        type_id: TypeHash,
         type_def: TypeDef,
         name: Option<&str>,
     ) {
@@ -838,22 +797,22 @@ impl FfiRegistryBuilder {
     }
 
     /// Register a type alias (typedef).
-    pub fn register_type_alias(&mut self, alias_name: &str, target_type: TypeId) {
+    pub fn register_type_alias(&mut self, alias_name: &str, target_type: TypeHash) {
         self.type_names.insert(alias_name.to_string(), target_type);
     }
 
     /// Look up a type by name (useful during registration).
-    pub fn lookup_type(&self, name: &str) -> Option<TypeId> {
+    pub fn lookup_type(&self, name: &str) -> Option<TypeHash> {
         self.type_names.get(name).copied()
     }
 
-    /// Get a type definition by TypeId (useful during registration).
-    pub fn get_type(&self, type_id: TypeId) -> Option<&TypeDef> {
+    /// Get a type definition by TypeHash (useful during registration).
+    pub fn get_type(&self, type_id: TypeHash) -> Option<&TypeDef> {
         self.types.get(&type_id)
     }
 
-    /// Get a mutable type definition by TypeId.
-    pub fn get_type_mut(&mut self, type_id: TypeId) -> Option<&mut TypeDef> {
+    /// Get a mutable type definition by TypeHash.
+    pub fn get_type_mut(&mut self, type_id: TypeHash) -> Option<&mut TypeDef> {
         self.types.get_mut(&type_id)
     }
 
@@ -873,17 +832,17 @@ impl FfiRegistryBuilder {
     // =========================================================================
 
     /// Set behaviors for a type. Overwrites any existing behaviors.
-    pub fn set_behaviors(&mut self, type_id: TypeId, behaviors: TypeBehaviors) {
+    pub fn set_behaviors(&mut self, type_id: TypeHash, behaviors: TypeBehaviors) {
         self.behaviors.insert(type_id, behaviors);
     }
 
     /// Get or create behaviors for a type (for incremental registration).
-    pub fn behaviors_mut(&mut self, type_id: TypeId) -> &mut TypeBehaviors {
+    pub fn behaviors_mut(&mut self, type_id: TypeHash) -> &mut TypeBehaviors {
         self.behaviors.entry(type_id).or_default()
     }
 
     /// Get behaviors for a type.
-    pub fn get_behaviors(&self, type_id: TypeId) -> Option<&TypeBehaviors> {
+    pub fn get_behaviors(&self, type_id: TypeHash) -> Option<&TypeBehaviors> {
         self.behaviors.get(&type_id)
     }
 
@@ -892,7 +851,7 @@ impl FfiRegistryBuilder {
     // =========================================================================
 
     /// Register a template callback for a template type.
-    pub fn register_template_callback<F>(&mut self, type_id: TypeId, callback: F)
+    pub fn register_template_callback<F>(&mut self, type_id: TypeHash, callback: F)
     where
         F: Fn(&TemplateInstanceInfo) -> TemplateValidation + Send + Sync + 'static,
     {
@@ -902,7 +861,7 @@ impl FfiRegistryBuilder {
     /// Register a template callback using an Arc (for shared callbacks).
     pub fn register_template_callback_arc(
         &mut self,
-        type_id: TypeId,
+        type_id: TypeHash,
         callback: Arc<dyn Fn(&TemplateInstanceInfo) -> TemplateValidation + Send + Sync>,
     ) {
         self.template_callbacks.insert(type_id, callback);
@@ -980,7 +939,7 @@ impl FfiRegistryBuilder {
     pub fn build(mut self) -> Result<FfiRegistry, Vec<FfiRegistryError>> {
         let mut errors = Vec::new();
         let mut resolved_functions = FxHashMap::default();
-        let mut function_names: FxHashMap<String, Vec<FunctionId>> = FxHashMap::default();
+        let mut function_names: FxHashMap<String, Vec<TypeHash>> = FxHashMap::default();
         let mut native_fns = FxHashMap::default();
 
         // Extract items to avoid borrow conflicts
@@ -1014,22 +973,22 @@ impl FfiRegistryBuilder {
 
         // Resolve all functions
         let mut unresolved_functions = FxHashMap::default();
+        // Track unresolved functions with their native_fn for later
+        let mut unresolved_native_fns: Vec<(FfiFunctionDef, Option<NativeFn>)> = Vec::new();
 
         for (ffi_func, native_fn_opt) in functions {
-            let func_id = ffi_func.id;
-
             // Type lookup closure
-            let type_lookup = |name: &str| -> Option<TypeId> { self.type_names.get(name).copied() };
+            let type_lookup = |name: &str| -> Option<TypeHash> { self.type_names.get(name).copied() };
 
             // Type hash lookup closure
-            let type_hash_lookup = |type_id: TypeId| -> crate::types::TypeHash {
+            let type_hash_lookup = |type_id: TypeHash| -> crate::types::TypeHash {
                 self.types.get(&type_id)
                     .map(|td| td.type_hash())
-                    .unwrap_or_else(|| crate::types::TypeHash::from_name(&format!("unknown_{}", type_id.as_u32())))
+                    .unwrap_or_else(|| crate::types::TypeHash::from_name(&format!("unknown_{}", type_id.as_u64())))
             };
 
             // Get the owner type's template parameters (if this is a method on a template)
-            let owner_template_params: Option<Vec<TypeId>> = ffi_func.owner_type.and_then(|owner_id| {
+            let owner_template_params: Option<Vec<TypeHash>> = ffi_func.owner_type.and_then(|owner_id| {
                 self.types.get(&owner_id).and_then(|typedef| {
                     match typedef {
                         TypeDef::Class { template_params, .. } if !template_params.is_empty() => {
@@ -1042,16 +1001,20 @@ impl FfiRegistryBuilder {
             let owner_type_id = ffi_func.owner_type;
 
             // Create instantiate function that handles self-referential template types
-            let mut instantiate = |template_id: TypeId, args: Vec<DataType>| -> Result<TypeId, String> {
+            let mut instantiate = |template_id: TypeHash, args: Vec<DataType>| -> Result<TypeHash, String> {
                 // Check if this is a self-reference: instantiating owner type with its own template params
                 if let (Some(owner_id), Some(params)) = (owner_type_id, &owner_template_params)
                     && template_id == owner_id && args.len() == params.len() {
                         // Check if all args are the template params in order
+                        // Need to get type_hash for each param by looking up its TypeDef
                         let is_self_ref = args.iter().zip(params.iter()).all(|(arg, &param_id)| {
-                            arg.type_id == param_id && !arg.is_const && !arg.is_handle
+                            let param_hash = self.types.get(&param_id)
+                                .map(|td| td.type_hash())
+                                .unwrap_or(TypeHash::EMPTY);
+                            arg.type_hash == param_hash && !arg.is_const && !arg.is_handle
                         });
                         if is_self_ref {
-                            return Ok(SELF_TYPE);
+                            return Ok(primitive_hashes::SELF);
                         }
                     }
 
@@ -1062,10 +1025,13 @@ impl FfiRegistryBuilder {
                         && !template_params.is_empty() && template_params.len() == args.len() {
                             // Check if all args are the template's own params
                             let is_self_ref = args.iter().zip(template_params.iter()).all(|(arg, &param_id)| {
-                                arg.type_id == param_id && !arg.is_const && !arg.is_handle
+                                let param_hash = self.types.get(&param_id)
+                                    .map(|td| td.type_hash())
+                                    .unwrap_or(TypeHash::EMPTY);
+                                arg.type_hash == param_hash && !arg.is_const && !arg.is_handle
                             });
                             if is_self_ref {
-                                return Ok(SELF_TYPE);
+                                return Ok(primitive_hashes::SELF);
                             }
                         }
 
@@ -1075,30 +1041,42 @@ impl FfiRegistryBuilder {
 
             match ffi_func.resolve(&type_lookup, &mut instantiate, &type_hash_lookup) {
                 Ok(resolved) => {
+                    let func_hash = resolved.func_hash;
+
                     // Add to function name map
                     let qualified_name = resolved.qualified_name();
                     function_names
                         .entry(qualified_name)
                         .or_default()
-                        .push(func_id);
+                        .push(func_hash);
 
-                    resolved_functions.insert(func_id, resolved);
+                    resolved_functions.insert(func_hash, resolved);
 
                     // Store native function if provided
                     if let Some(native_fn) = native_fn_opt {
-                        native_fns.insert(func_id, native_fn);
+                        native_fns.insert(func_hash, native_fn);
                     }
                 }
                 Err(_e) => {
                     // Failed to resolve - likely a template method with unresolved type params
-                    // Store unresolved for later resolution at template instantiation time
-                    unresolved_functions.insert(func_id, ffi_func);
-
-                    // Store native function if provided
-                    if let Some(native_fn) = native_fn_opt {
-                        native_fns.insert(func_id, native_fn);
-                    }
+                    // Store for later processing
+                    unresolved_native_fns.push((ffi_func, native_fn_opt));
                 }
+            }
+        }
+
+        // Process unresolved functions - use their original func_hash
+        for (ffi_func, native_fn_opt) in unresolved_native_fns {
+            // For unresolved template methods, use their original func_hash which was
+            // computed in ClassBuilder::build() with the template param type hashes.
+            // This ensures the hash matches what's stored in TypeDef.methods.
+            let original_hash = ffi_func.func_hash;
+
+            unresolved_functions.insert(original_hash, ffi_func);
+
+            // Store native function if provided
+            if let Some(native_fn) = native_fn_opt {
+                native_fns.insert(original_hash, native_fn);
             }
         }
 
@@ -1106,34 +1084,22 @@ impl FfiRegistryBuilder {
             return Err(errors);
         }
 
-        // Convert TypeId-keyed types to TypeHash-keyed types
-        let types_by_hash: FxHashMap<TypeHash, TypeDef> = self.types
-            .iter()
-            .map(|(_, def)| (def.type_hash(), def.clone()))
+        // Types are already keyed by type_hash in self.types
+        let types: FxHashMap<TypeHash, TypeDef> = self.types
+            .into_iter()
+            .map(|(_, def)| (def.type_hash(), def))
             .collect();
 
-        // Build TypeHash → TypeId mapping for compatibility
-        let type_ids: FxHashMap<TypeHash, TypeId> = self.types
-            .iter()
-            .map(|(&id, def)| (def.type_hash(), id))
+        // Functions are keyed by func_hash
+        let functions: FxHashMap<TypeHash, ResolvedFfiFunctionDef> = resolved_functions
+            .into_iter()
+            .map(|(_, def)| (def.func_hash, def))
             .collect();
 
-        // Convert FunctionId-keyed functions to TypeHash-keyed functions
-        let functions_by_hash: FxHashMap<TypeHash, ResolvedFfiFunctionDef> = resolved_functions
-            .iter()
-            .map(|(_, def)| (def.func_hash, def.clone()))
-            .collect();
-
-        // Build FunctionId → TypeHash reverse lookup map
-        let function_hashes: FxHashMap<FunctionId, TypeHash> = resolved_functions
-            .iter()
-            .map(|(&func_id, def)| (func_id, def.func_hash))
-            .collect();
-
-        // Build function name → TypeHash mapping (for overload resolution)
+        // Build function name → func_hash mapping (for overload resolution)
         let function_overloads: FxHashMap<String, Vec<TypeHash>> = {
             let mut map: FxHashMap<String, Vec<TypeHash>> = FxHashMap::default();
-            for func in functions_by_hash.values() {
+            for func in functions.values() {
                 map.entry(func.qualified_name())
                     .or_default()
                     .push(func.func_hash);
@@ -1141,47 +1107,43 @@ impl FfiRegistryBuilder {
             map
         };
 
-        // Convert native_fns to TypeHash keys
-        let native_fns_by_hash: FxHashMap<TypeHash, NativeFn> = native_fns
-            .into_iter()
-            .filter_map(|(func_id, native_fn)| {
-                resolved_functions.get(&func_id).map(|f| (f.func_hash, native_fn))
-            })
-            .collect();
+        // Native functions are already keyed by func_hash from the resolution loop above
 
-        // Convert behaviors from TypeId keys to TypeHash keys
-        let behaviors_by_hash: FxHashMap<TypeHash, TypeBehaviors> = self.behaviors
+        // Behaviors are keyed by type_hash
+        let behaviors: FxHashMap<TypeHash, TypeBehaviors> = self.behaviors
             .into_iter()
             .filter_map(|(type_id, behaviors)| {
-                self.types.get(&type_id).map(|def| (def.type_hash(), behaviors))
+                types.values()
+                    .find(|def| def.type_hash() == type_id)
+                    .map(|def| (def.type_hash(), behaviors))
             })
             .collect();
 
-        // Convert template_callbacks from TypeId keys to TypeHash keys
-        let template_callbacks_by_hash: FxHashMap<TypeHash, Arc<dyn Fn(&TemplateInstanceInfo) -> TemplateValidation + Send + Sync>> = self.template_callbacks
+        // Template callbacks are keyed by type_hash
+        let template_callbacks: FxHashMap<TypeHash, Arc<dyn Fn(&TemplateInstanceInfo) -> TemplateValidation + Send + Sync>> = self.template_callbacks
             .into_iter()
             .filter_map(|(type_id, callback)| {
-                self.types.get(&type_id).map(|def| (def.type_hash(), callback))
+                types.values()
+                    .find(|def| def.type_hash() == type_id)
+                    .map(|def| (def.type_hash(), callback))
             })
             .collect();
 
         Ok(FfiRegistry {
-            types: types_by_hash,
-            type_ids,
-            functions: functions_by_hash,
-            function_hashes,
+            types,
+            functions,
             function_overloads,
-            native_fns: native_fns_by_hash,
+            native_fns,
             unresolved_functions,
-            behaviors: behaviors_by_hash,
-            template_callbacks: template_callbacks_by_hash,
+            behaviors,
+            template_callbacks,
             namespaces: self.namespaces,
         })
     }
 
     /// Resolve an interface definition's method types.
     fn resolve_interface(
-        type_names: &FxHashMap<String, TypeId>,
+        type_names: &FxHashMap<String, TypeHash>,
         interface_def: &crate::types::FfiInterfaceDef,
         qualified_name: &str,
     ) -> Result<TypeDef, FfiRegistryError> {
@@ -1218,7 +1180,7 @@ impl FfiRegistryBuilder {
 
     /// Resolve a funcdef definition's types.
     fn resolve_funcdef(
-        type_names: &FxHashMap<String, TypeId>,
+        type_names: &FxHashMap<String, TypeHash>,
         funcdef_def: &crate::types::FfiFuncdefDef,
         qualified_name: &str,
     ) -> Result<TypeDef, FfiRegistryError> {
@@ -1243,7 +1205,7 @@ impl FfiRegistryBuilder {
 
     /// Resolve an FfiDataType to a DataType.
     fn resolve_ffi_data_type(
-        type_names: &FxHashMap<String, TypeId>,
+        type_names: &FxHashMap<String, TypeHash>,
         ffi_type: &crate::types::FfiDataType,
     ) -> Result<DataType, FfiRegistryError> {
         use crate::types::{FfiDataType, UnresolvedBaseType};
@@ -1257,23 +1219,28 @@ impl FfiRegistryBuilder {
                 is_handle_to_const,
                 ref_modifier,
             } => {
-                let type_id = match base {
-                    UnresolvedBaseType::Simple(name) => type_names
-                        .get(name)
-                        .copied()
-                        .ok_or_else(|| FfiRegistryError::TypeNotFound(name.clone()))?,
+                let type_name = match base {
+                    UnresolvedBaseType::Simple(name) => {
+                        if !type_names.contains_key(name) {
+                            return Err(FfiRegistryError::TypeNotFound(name.clone()));
+                        }
+                        name.as_str()
+                    }
                     UnresolvedBaseType::Template { name, args: _ } => {
                         // For templates, just look up the base template type
                         // (full instantiation happens elsewhere)
-                        type_names
-                            .get(name)
-                            .copied()
-                            .ok_or_else(|| FfiRegistryError::TypeNotFound(name.clone()))?
+                        if !type_names.contains_key(name) {
+                            return Err(FfiRegistryError::TypeNotFound(name.clone()));
+                        }
+                        name.as_str()
                     }
                 };
 
+                // Compute type hash from name (same hash computation as TypeHash::from_name)
+                let type_hash = TypeHash::from_name(type_name);
+
                 Ok(DataType {
-                    type_id,
+                    type_hash,
                     is_const: *is_const,
                     is_handle: *is_handle,
                     is_handle_to_const: *is_handle_to_const,
@@ -1328,9 +1295,9 @@ mod tests {
         assert!(builder.lookup_type("double").is_some());
 
         // Check TypeIds match constants
-        assert_eq!(builder.lookup_type("void"), Some(VOID_TYPE));
-        assert_eq!(builder.lookup_type("int"), Some(INT32_TYPE));
-        assert_eq!(builder.lookup_type("float"), Some(FLOAT_TYPE));
+        assert_eq!(builder.lookup_type("void"), Some(primitive_hashes::VOID));
+        assert_eq!(builder.lookup_type("int"), Some(primitive_hashes::INT32));
+        assert_eq!(builder.lookup_type("float"), Some(primitive_hashes::FLOAT));
     }
 
     #[test]
@@ -1363,10 +1330,10 @@ mod tests {
     fn builder_register_type_alias() {
         let mut builder = FfiRegistryBuilder::new();
 
-        builder.register_type_alias("integer", INT32_TYPE);
+        builder.register_type_alias("integer", primitive_hashes::INT32);
 
-        assert_eq!(builder.lookup_type("integer"), Some(INT32_TYPE));
-        assert_eq!(builder.lookup_type("int"), Some(INT32_TYPE));
+        assert_eq!(builder.lookup_type("integer"), Some(primitive_hashes::INT32));
+        assert_eq!(builder.lookup_type("int"), Some(primitive_hashes::INT32));
     }
 
     #[test]
@@ -1378,20 +1345,21 @@ mod tests {
         // (TypeDef::Primitive is handled by Registry, not FfiRegistry)
         assert!(registry.get_type_by_name("void").is_some());
         assert!(registry.get_type_by_name("int").is_some());
-        assert_eq!(registry.get_type_by_name("void"), Some(VOID_TYPE));
-        assert_eq!(registry.get_type_by_name("int"), Some(INT32_TYPE));
+        assert_eq!(registry.get_type_by_name("void"), Some(primitive_hashes::VOID));
+        assert_eq!(registry.get_type_by_name("int"), Some(primitive_hashes::INT32));
     }
 
     #[test]
     fn builder_build_with_resolved_function() {
+        use crate::types::primitive_hashes;
         let mut builder = FfiRegistryBuilder::new();
 
-        let func = FfiFunctionDef::new(FunctionId::next_ffi(), "add")
+        let func = FfiFunctionDef::new("add")
             .with_params(vec![
-                FfiParam::new("a", FfiDataType::resolved(DataType::simple(INT32_TYPE))),
-                FfiParam::new("b", FfiDataType::resolved(DataType::simple(INT32_TYPE))),
+                FfiParam::new("a", FfiDataType::resolved(DataType::simple(primitive_hashes::INT32))),
+                FfiParam::new("b", FfiDataType::resolved(DataType::simple(primitive_hashes::INT32))),
             ])
-            .with_return_type(FfiDataType::resolved(DataType::simple(INT32_TYPE)));
+            .with_return_type(FfiDataType::resolved(DataType::simple(primitive_hashes::INT32)));
 
         builder.register_function(func, None);
 
@@ -1404,19 +1372,21 @@ mod tests {
         let resolved = registry.get_function(func_ids[0]).unwrap();
         assert_eq!(resolved.name, "add");
         assert_eq!(resolved.params.len(), 2);
-        assert_eq!(resolved.return_type.type_id, INT32_TYPE);
+        assert_eq!(resolved.return_type.type_hash, primitive_hashes::INT32);
     }
 
     #[test]
     fn builder_build_with_unresolved_function() {
+        use crate::types::primitive_hashes;
         let mut builder = FfiRegistryBuilder::new();
 
         // Register a custom type first
-        let my_class_id = builder.register_type(
+        let my_class_hash = TypeHash::from_name("MyClass");
+        let _my_class_id = builder.register_type(
             TypeDef::Class {
                 name: "MyClass".to_string(),
                 qualified_name: "MyClass".to_string(),
-                type_hash: crate::types::TypeHash::from_name("MyClass"),
+                type_hash: my_class_hash,
                 fields: Vec::new(),
                 methods: Vec::new(),
                 base_class: None,
@@ -1434,12 +1404,12 @@ mod tests {
         );
 
         // Register function with unresolved type
-        let func = FfiFunctionDef::new(FunctionId::next_ffi(), "process")
+        let func = FfiFunctionDef::new("process")
             .with_params(vec![FfiParam::new(
                 "obj",
                 FfiDataType::unresolved_handle("MyClass", false),
             )])
-            .with_return_type(FfiDataType::resolved(DataType::simple(VOID_TYPE)));
+            .with_return_type(FfiDataType::resolved(DataType::simple(primitive_hashes::VOID)));
 
         builder.register_function(func, None);
 
@@ -1449,7 +1419,7 @@ mod tests {
         assert_eq!(func_ids.len(), 1);
 
         let resolved = registry.get_function(func_ids[0]).unwrap();
-        assert_eq!(resolved.params[0].data_type.type_id, my_class_id);
+        assert_eq!(resolved.params[0].data_type.type_hash, my_class_hash);
         assert!(resolved.params[0].data_type.is_handle);
     }
 
@@ -1458,12 +1428,14 @@ mod tests {
         let mut builder = FfiRegistryBuilder::new();
 
         // Register function referencing unknown type
-        let func_id = FunctionId::next_ffi();
-        let func = FfiFunctionDef::new(func_id, "process")
+        let func = FfiFunctionDef::new("process")
             .with_params(vec![FfiParam::new(
                 "obj",
                 FfiDataType::unresolved_simple("UnknownType"),
             )]);
+
+        // Get the func_hash before registering (it was computed in with_params via recompute_hash)
+        let original_hash = func.func_hash;
 
         builder.register_function(func, None);
 
@@ -1473,8 +1445,9 @@ mod tests {
 
         let registry = result.unwrap();
         // Function should be in unresolved_functions, not functions
-        assert!(registry.get_function(func_id).is_none());
-        assert!(registry.get_unresolved_function(func_id).is_some());
+        // It's stored with its original func_hash (computed with unresolved type hashes)
+        assert!(registry.get_function(original_hash).is_none());
+        assert!(registry.get_unresolved_function(original_hash).is_some());
     }
 
     #[test]
@@ -1528,7 +1501,7 @@ mod tests {
             Some("MyClass"),
         );
 
-        let ctor_id = FunctionId::next_ffi();
+        let ctor_id = TypeHash::from_name("test_func");
         let mut behaviors = TypeBehaviors::default();
         behaviors.constructors.push(ctor_id);
         builder.set_behaviors(type_id, behaviors);
@@ -1629,7 +1602,7 @@ mod tests {
                 properties: FxHashMap::default(),
                 is_final: false,
                 is_abstract: false,
-                template_params: vec![TypeId::next_ffi()], // One template param
+                template_params: vec![TypeHash::from_name("test_type")], // One template param
                 template: None,
                 type_args: Vec::new(),
                 type_kind: crate::types::TypeKind::reference(),

@@ -8,32 +8,32 @@ use std::fmt;
 
 use super::error::NativeError;
 use super::traits::{FromScript, NativeType, ToScript};
-use crate::semantic::types::type_def::FunctionId;
+use crate::types::TypeHash;
 
 /// Type-erased native function.
 ///
 /// This wraps any callable that implements `NativeCallable`, allowing
 /// functions of different signatures to be stored uniformly.
 ///
-/// Each NativeFn has a unique FunctionId assigned at creation time,
+/// Each NativeFn has a unique TypeHash assigned at creation time,
 /// ensuring consistent IDs across all Units.
 ///
 /// The inner callable is wrapped in Arc to support cloning for FFI registration.
 pub struct NativeFn {
-    /// Unique FFI function ID (assigned at creation via FunctionId::next_ffi())
-    pub id: FunctionId,
+    /// Unique FFI function ID (assigned at creation via TypeHash::from_name("test_func"))
+    pub id: TypeHash,
     inner: std::sync::Arc<dyn NativeCallable + Send + Sync>,
 }
 
 impl NativeFn {
     /// Create a new NativeFn from a callable.
-    /// Automatically assigns a unique FFI FunctionId.
+    /// Automatically assigns a unique FFI TypeHash.
     pub fn new<F>(f: F) -> Self
     where
         F: NativeCallable + Send + Sync + 'static,
     {
         Self {
-            id: FunctionId::next_ffi(),
+            id: TypeHash::from_name("test_func"),
             inner: std::sync::Arc::new(f),
         }
     }
@@ -45,7 +45,7 @@ impl NativeFn {
 
     /// Clone this NativeFn, sharing the same underlying callable.
     ///
-    /// This creates a new NativeFn with the same FunctionId and callable,
+    /// This creates a new NativeFn with the same TypeHash and callable,
     /// using Arc to share the underlying implementation.
     pub fn clone_arc(&self) -> Self {
         Self {
@@ -175,7 +175,7 @@ pub struct ObjectHandle {
     pub index: u32,
     /// Generation for use-after-free detection
     pub generation: u32,
-    /// Type for runtime verification
+    /// Rust TypeId for runtime type verification and downcasting
     pub type_id: TypeId,
 }
 
@@ -408,8 +408,8 @@ impl<'vm> CallContext<'vm> {
             VmSlot::Object(handle) => {
                 if handle.type_id != TypeId::of::<T>() {
                     return Err(NativeError::ThisTypeMismatch {
-                        expected: TypeId::of::<T>(),
-                        actual: handle.type_id,
+                        expected: crate::types::TypeHash::of::<T>(),
+                        actual: crate::types::TypeHash::of_type_id(handle.type_id),
                     });
                 }
                 self.heap
@@ -433,8 +433,8 @@ impl<'vm> CallContext<'vm> {
             VmSlot::Object(handle) => {
                 if handle.type_id != TypeId::of::<T>() {
                     return Err(NativeError::ThisTypeMismatch {
-                        expected: TypeId::of::<T>(),
-                        actual: handle.type_id,
+                        expected: crate::types::TypeHash::of::<T>(),
+                        actual: crate::types::TypeHash::of_type_id(handle.type_id),
                     });
                 }
                 let handle_copy = *handle;

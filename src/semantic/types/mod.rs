@@ -9,6 +9,12 @@
 //!
 //! FFI types (including primitives) are stored in `FfiRegistry` and accessed
 //! via `CompilationContext` which provides a unified lookup interface.
+//!
+//! ## Type Identity
+//!
+//! Types are identified by `TypeHash` - a deterministic 64-bit hash computed
+//! from the type's qualified name. Primitive type hashes are available in
+//! `crate::types::primitive_hashes`.
 
 pub mod behaviors;
 pub mod conversion;
@@ -22,9 +28,6 @@ pub use conversion::{Conversion, ConversionKind};
 pub use data_type::{DataType, RefModifier};
 pub use registry::{FunctionDef, GlobalVarDef, ScriptParam, ScriptRegistry};
 pub use type_def::{
-    FieldDef, FunctionId, FunctionTraits, MethodSignature, OperatorBehavior, PrimitiveType,
-    PropertyAccessors, TypeDef, TypeId, Visibility, BOOL_TYPE,
-    DOUBLE_TYPE, FFI_BIT, FIRST_USER_TYPE_ID, FLOAT_TYPE, INT16_TYPE, INT32_TYPE, INT64_TYPE,
-    INT8_TYPE, NULL_TYPE, SELF_TYPE, UINT16_TYPE, UINT32_TYPE, UINT64_TYPE, UINT8_TYPE,
-    VARIABLE_PARAM_TYPE, VOID_TYPE,
+    FieldDef, FunctionTraits, MethodSignature, OperatorBehavior, PrimitiveType,
+    PropertyAccessors, TypeDef, Visibility,
 };

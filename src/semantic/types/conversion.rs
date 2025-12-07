@@ -9,13 +9,10 @@
 //! The code generator (FunctionCompiler) selects the specific bytecode instruction.
 
 use crate::semantic::CompilationContext;
+use crate::types::{primitive_hashes, TypeHash};
 use super::{
     data_type::DataType,
-    type_def::{
-        FunctionId, OperatorBehavior, TypeDef, TypeId, DOUBLE_TYPE, FLOAT_TYPE, INT16_TYPE,
-        INT32_TYPE, INT64_TYPE, INT8_TYPE, NULL_TYPE, UINT16_TYPE, UINT32_TYPE, UINT64_TYPE,
-        UINT8_TYPE, VARIABLE_PARAM_TYPE,
-    },
+    type_def::{OperatorBehavior, TypeDef},
 };
 
 /// The kind of type conversion.
@@ -32,8 +29,8 @@ pub enum ConversionKind {
     /// The code generator selects the specific instruction based on (from_type, to_type).
     /// Examples: int32→float32, uint64→double, float→int, etc.
     Primitive {
-        from_type: TypeId,
-        to_type: TypeId,
+        from_type: TypeHash,
+        to_type: TypeHash,
     },
 
     /// Null literal to handle conversion (null → T@)
@@ -50,22 +47,22 @@ pub enum ConversionKind {
 
     /// User-defined implicit conversion via constructor
     ConstructorConversion {
-        constructor_id: FunctionId,
+        constructor_id: TypeHash,
     },
 
     /// User-defined implicit conversion via opImplConv method
     ImplicitConversionMethod {
-        method_id: FunctionId,
+        method_id: TypeHash,
     },
 
     /// User-defined explicit conversion via opCast method
     ExplicitCastMethod {
-        method_id: FunctionId,
+        method_id: TypeHash,
     },
 
     /// User-defined explicit conversion via opImplCast method
     ImplicitCastMethod {
-        method_id: FunctionId,
+        method_id: TypeHash,
     },
 
     /// Value type to handle conversion (T → T@)
@@ -115,7 +112,7 @@ impl Conversion {
     }
 
     /// Create a primitive conversion
-    pub fn primitive(from_type: TypeId, to_type: TypeId, cost: u32, is_implicit: bool) -> Self {
+    pub fn primitive(from_type: TypeHash, to_type: TypeHash, cost: u32, is_implicit: bool) -> Self {
         Self {
             kind: ConversionKind::Primitive { from_type, to_type },
             cost,
@@ -160,7 +157,7 @@ impl Conversion {
     }
 
     /// Create a constructor conversion
-    pub fn constructor(constructor_id: FunctionId) -> Self {
+    pub fn constructor(constructor_id: TypeHash) -> Self {
         Self {
             kind: ConversionKind::ConstructorConversion { constructor_id },
             cost: 10,
@@ -169,7 +166,7 @@ impl Conversion {
     }
 
     /// Create an implicit conversion method
-    pub fn implicit_conv_method(method_id: FunctionId) -> Self {
+    pub fn implicit_conv_method(method_id: TypeHash) -> Self {
         Self {
             kind: ConversionKind::ImplicitConversionMethod { method_id },
             cost: 10,
@@ -178,7 +175,7 @@ impl Conversion {
     }
 
     /// Create an explicit cast method
-    pub fn explicit_cast_method(method_id: FunctionId) -> Self {
+    pub fn explicit_cast_method(method_id: TypeHash) -> Self {
         Self {
             kind: ConversionKind::ExplicitCastMethod { method_id },
             cost: 100,
@@ -187,7 +184,7 @@ impl Conversion {
     }
 
     /// Create an implicit cast method
-    pub fn implicit_cast_method(method_id: FunctionId) -> Self {
+    pub fn implicit_cast_method(method_id: TypeHash) -> Self {
         Self {
             kind: ConversionKind::ImplicitCastMethod { method_id },
             cost: 100,
@@ -207,11 +204,11 @@ impl DataType {
     /// # Example
     ///
     /// ```ignore
-    /// use angelscript::semantic::{DataType, INT32_TYPE, FLOAT_TYPE};
+    /// use angelscript::semantic::{DataType, primitive_hashes::INT32, primitive_hashes::FLOAT};
     /// # use angelscript::semantic::ScriptRegistry;
     ///
-    /// let int_type = DataType::simple(INT32_TYPE);
-    /// let float_type = DataType::simple(FLOAT_TYPE);
+    /// let int_type = DataType::simple(primitive_hashes::INT32);
+    /// let float_type = DataType::simple(primitive_hashes::FLOAT);
     /// let ctx = CompilationContext::default();
     ///
     /// // int can implicitly convert to float
@@ -232,24 +229,24 @@ impl DataType {
 
         // Same base type with different const qualifiers (for non-handles)
         // e.g., const int -> int is allowed (reading a const value into a non-const variable)
-        if !self.is_handle && !target.is_handle && self.type_id == target.type_id {
+        if !self.is_handle && !target.is_handle && self.type_hash == target.type_hash {
             // Same type_id means identity conversion, const doesn't matter for value types
             return Some(Conversion::identity());
         }
 
-        // Null literal (NULL_TYPE) converts to any handle type
-        if self.type_id == NULL_TYPE && target.is_handle {
+        // Null literal (primitive_hashes::NULL) converts to any handle type
+        if self.type_hash == primitive_hashes::NULL && target.is_handle {
             return Some(Conversion::null_to_handle());
         }
 
         // Null literal cannot convert to non-handle types - return early to avoid
-        // looking up NULL_TYPE in registry (it's a special sentinel, not a real type)
-        if self.type_id == NULL_TYPE {
+        // looking up primitive_hashes::NULL in registry (it's a special sentinel, not a real type)
+        if self.type_hash == primitive_hashes::NULL {
             return None;
         }
 
-        // VARIABLE_PARAM_TYPE (?&in) accepts any type - used for generic FFI functions
-        if target.type_id == VARIABLE_PARAM_TYPE {
+        // primitive_hashes::VARIABLE_PARAM (?&in) accepts any type - used for generic FFI functions
+        if target.type_hash == primitive_hashes::VARIABLE_PARAM {
             return Some(Conversion::identity());
         }
 
@@ -265,8 +262,8 @@ impl DataType {
 
         // Funcdef types are semantically always handles, so we should allow
         // conversions between handle and non-handle forms with the same type_id
-        if self.type_id == target.type_id {
-            let source_typedef = ctx.get_type(self.type_id);
+        if self.type_hash == target.type_hash {
+            let source_typedef = ctx.get_type(self.type_hash);
             if matches!(source_typedef, TypeDef::Funcdef { .. }) {
                 // Same funcdef type with different handle flags - identity conversion
                 return Some(Conversion::identity());
@@ -276,10 +273,10 @@ impl DataType {
         // Value type to handle of same type (e.g., Node -> Node@)
         // In AngelScript, when you have `Node@ n = Node(args)`, the value is implicitly
         // converted to a handle reference. This is a common pattern for handle initialization.
-        if !self.is_handle && target.is_handle && self.type_id == target.type_id {
+        if !self.is_handle && target.is_handle && self.type_hash == target.type_hash {
             // Check if target is a class/object type (not primitive)
             // Note: Template instances are also Class types with template: Some(...)
-            let typedef = ctx.get_type(self.type_id);
+            let typedef = ctx.get_type(self.type_hash);
             if matches!(typedef, TypeDef::Class { .. } | TypeDef::Interface { .. }) {
                 return Some(Conversion {
                     kind: ConversionKind::ValueToHandle,
@@ -310,16 +307,16 @@ impl DataType {
             return None;
         }
 
-        let source_typedef = ctx.get_type(self.type_id);
-        let target_typedef = ctx.get_type(target.type_id);
+        let source_typedef = ctx.get_type(self.type_hash);
+        let target_typedef = ctx.get_type(target.type_hash);
 
         // Enum -> int (implicit) - enums are int32 internally, no conversion needed
-        if source_typedef.is_enum() && target.type_id == INT32_TYPE {
+        if source_typedef.is_enum() && target.type_hash == primitive_hashes::INT32 {
             return Some(Conversion::identity());
         }
 
         // Int -> enum (implicit) - enums are int32 internally, no conversion needed
-        if self.type_id == INT32_TYPE && target_typedef.is_enum() {
+        if self.type_hash == primitive_hashes::INT32 && target_typedef.is_enum() {
             return Some(Conversion::identity());
         }
 
@@ -336,136 +333,136 @@ impl DataType {
 
         // Match on type pairs
         use {
-            DOUBLE_TYPE, FLOAT_TYPE, INT8_TYPE, INT16_TYPE, INT32_TYPE, INT64_TYPE, UINT8_TYPE,
-            UINT16_TYPE, UINT32_TYPE, UINT64_TYPE,
+            primitive_hashes::DOUBLE, primitive_hashes::FLOAT, primitive_hashes::INT8, primitive_hashes::INT16, primitive_hashes::INT32, primitive_hashes::INT64, primitive_hashes::UINT8,
+            primitive_hashes::UINT16, primitive_hashes::UINT32, primitive_hashes::UINT64,
         };
 
-        match (self.type_id, target.type_id) {
+        match (self.type_hash, target.type_hash) {
             // Integer to Float conversions (implicit, cost 1)
-            (INT8_TYPE, FLOAT_TYPE) => Some(Conversion::primitive(self.type_id, target.type_id, 1, true)),
-            (INT16_TYPE, FLOAT_TYPE) => Some(Conversion::primitive(self.type_id, target.type_id, 1, true)),
-            (INT32_TYPE, FLOAT_TYPE) => Some(Conversion::primitive(self.type_id, target.type_id, 1, true)),
-            (INT8_TYPE, DOUBLE_TYPE) => Some(Conversion::primitive(self.type_id, target.type_id, 1, true)),
-            (INT16_TYPE, DOUBLE_TYPE) => Some(Conversion::primitive(self.type_id, target.type_id, 1, true)),
-            (INT32_TYPE, DOUBLE_TYPE) => Some(Conversion::primitive(self.type_id, target.type_id, 1, true)),
+            (primitive_hashes::INT8, primitive_hashes::FLOAT) => Some(Conversion::primitive(self.type_hash, target.type_hash, 1, true)),
+            (primitive_hashes::INT16, primitive_hashes::FLOAT) => Some(Conversion::primitive(self.type_hash, target.type_hash, 1, true)),
+            (primitive_hashes::INT32, primitive_hashes::FLOAT) => Some(Conversion::primitive(self.type_hash, target.type_hash, 1, true)),
+            (primitive_hashes::INT8, primitive_hashes::DOUBLE) => Some(Conversion::primitive(self.type_hash, target.type_hash, 1, true)),
+            (primitive_hashes::INT16, primitive_hashes::DOUBLE) => Some(Conversion::primitive(self.type_hash, target.type_hash, 1, true)),
+            (primitive_hashes::INT32, primitive_hashes::DOUBLE) => Some(Conversion::primitive(self.type_hash, target.type_hash, 1, true)),
 
             // int64 to float (implicit but higher cost - may lose precision)
-            (INT64_TYPE, FLOAT_TYPE) => Some(Conversion::primitive(self.type_id, target.type_id, 2, true)),
-            (INT64_TYPE, DOUBLE_TYPE) => Some(Conversion::primitive(self.type_id, target.type_id, 1, true)),
+            (primitive_hashes::INT64, primitive_hashes::FLOAT) => Some(Conversion::primitive(self.type_hash, target.type_hash, 2, true)),
+            (primitive_hashes::INT64, primitive_hashes::DOUBLE) => Some(Conversion::primitive(self.type_hash, target.type_hash, 1, true)),
 
             // Unsigned to Float conversions (implicit, cost 1)
-            (UINT8_TYPE, FLOAT_TYPE) => Some(Conversion::primitive(self.type_id, target.type_id, 1, true)),
-            (UINT16_TYPE, FLOAT_TYPE) => Some(Conversion::primitive(self.type_id, target.type_id, 1, true)),
-            (UINT32_TYPE, FLOAT_TYPE) => Some(Conversion::primitive(self.type_id, target.type_id, 1, true)),
-            (UINT8_TYPE, DOUBLE_TYPE) => Some(Conversion::primitive(self.type_id, target.type_id, 1, true)),
-            (UINT16_TYPE, DOUBLE_TYPE) => Some(Conversion::primitive(self.type_id, target.type_id, 1, true)),
-            (UINT32_TYPE, DOUBLE_TYPE) => Some(Conversion::primitive(self.type_id, target.type_id, 1, true)),
+            (primitive_hashes::UINT8, primitive_hashes::FLOAT) => Some(Conversion::primitive(self.type_hash, target.type_hash, 1, true)),
+            (primitive_hashes::UINT16, primitive_hashes::FLOAT) => Some(Conversion::primitive(self.type_hash, target.type_hash, 1, true)),
+            (primitive_hashes::UINT32, primitive_hashes::FLOAT) => Some(Conversion::primitive(self.type_hash, target.type_hash, 1, true)),
+            (primitive_hashes::UINT8, primitive_hashes::DOUBLE) => Some(Conversion::primitive(self.type_hash, target.type_hash, 1, true)),
+            (primitive_hashes::UINT16, primitive_hashes::DOUBLE) => Some(Conversion::primitive(self.type_hash, target.type_hash, 1, true)),
+            (primitive_hashes::UINT32, primitive_hashes::DOUBLE) => Some(Conversion::primitive(self.type_hash, target.type_hash, 1, true)),
 
             // uint64 to float (implicit but higher cost - may lose precision)
-            (UINT64_TYPE, FLOAT_TYPE) => Some(Conversion::primitive(self.type_id, target.type_id, 2, true)),
-            (UINT64_TYPE, DOUBLE_TYPE) => Some(Conversion::primitive(self.type_id, target.type_id, 1, true)),
+            (primitive_hashes::UINT64, primitive_hashes::FLOAT) => Some(Conversion::primitive(self.type_hash, target.type_hash, 2, true)),
+            (primitive_hashes::UINT64, primitive_hashes::DOUBLE) => Some(Conversion::primitive(self.type_hash, target.type_hash, 1, true)),
 
             // Float to Integer conversions (implicit with higher cost - truncation)
-            (FLOAT_TYPE, INT8_TYPE) => Some(Conversion::primitive(self.type_id, target.type_id, 3, true)),
-            (FLOAT_TYPE, INT16_TYPE) => Some(Conversion::primitive(self.type_id, target.type_id, 3, true)),
-            (FLOAT_TYPE, INT32_TYPE) => Some(Conversion::primitive(self.type_id, target.type_id, 3, true)),
-            (FLOAT_TYPE, INT64_TYPE) => Some(Conversion::primitive(self.type_id, target.type_id, 3, true)),
-            (DOUBLE_TYPE, INT8_TYPE) => Some(Conversion::primitive(self.type_id, target.type_id, 3, true)),
-            (DOUBLE_TYPE, INT16_TYPE) => Some(Conversion::primitive(self.type_id, target.type_id, 3, true)),
-            (DOUBLE_TYPE, INT32_TYPE) => Some(Conversion::primitive(self.type_id, target.type_id, 3, true)),
-            (DOUBLE_TYPE, INT64_TYPE) => Some(Conversion::primitive(self.type_id, target.type_id, 3, true)),
+            (primitive_hashes::FLOAT, primitive_hashes::INT8) => Some(Conversion::primitive(self.type_hash, target.type_hash, 3, true)),
+            (primitive_hashes::FLOAT, primitive_hashes::INT16) => Some(Conversion::primitive(self.type_hash, target.type_hash, 3, true)),
+            (primitive_hashes::FLOAT, primitive_hashes::INT32) => Some(Conversion::primitive(self.type_hash, target.type_hash, 3, true)),
+            (primitive_hashes::FLOAT, primitive_hashes::INT64) => Some(Conversion::primitive(self.type_hash, target.type_hash, 3, true)),
+            (primitive_hashes::DOUBLE, primitive_hashes::INT8) => Some(Conversion::primitive(self.type_hash, target.type_hash, 3, true)),
+            (primitive_hashes::DOUBLE, primitive_hashes::INT16) => Some(Conversion::primitive(self.type_hash, target.type_hash, 3, true)),
+            (primitive_hashes::DOUBLE, primitive_hashes::INT32) => Some(Conversion::primitive(self.type_hash, target.type_hash, 3, true)),
+            (primitive_hashes::DOUBLE, primitive_hashes::INT64) => Some(Conversion::primitive(self.type_hash, target.type_hash, 3, true)),
 
             // Float to Unsigned conversions (implicit with higher cost)
-            (FLOAT_TYPE, UINT8_TYPE) => Some(Conversion::primitive(self.type_id, target.type_id, 3, true)),
-            (FLOAT_TYPE, UINT16_TYPE) => Some(Conversion::primitive(self.type_id, target.type_id, 3, true)),
-            (FLOAT_TYPE, UINT32_TYPE) => Some(Conversion::primitive(self.type_id, target.type_id, 3, true)),
-            (FLOAT_TYPE, UINT64_TYPE) => Some(Conversion::primitive(self.type_id, target.type_id, 3, true)),
-            (DOUBLE_TYPE, UINT8_TYPE) => Some(Conversion::primitive(self.type_id, target.type_id, 3, true)),
-            (DOUBLE_TYPE, UINT16_TYPE) => Some(Conversion::primitive(self.type_id, target.type_id, 3, true)),
-            (DOUBLE_TYPE, UINT32_TYPE) => Some(Conversion::primitive(self.type_id, target.type_id, 3, true)),
-            (DOUBLE_TYPE, UINT64_TYPE) => Some(Conversion::primitive(self.type_id, target.type_id, 3, true)),
+            (primitive_hashes::FLOAT, primitive_hashes::UINT8) => Some(Conversion::primitive(self.type_hash, target.type_hash, 3, true)),
+            (primitive_hashes::FLOAT, primitive_hashes::UINT16) => Some(Conversion::primitive(self.type_hash, target.type_hash, 3, true)),
+            (primitive_hashes::FLOAT, primitive_hashes::UINT32) => Some(Conversion::primitive(self.type_hash, target.type_hash, 3, true)),
+            (primitive_hashes::FLOAT, primitive_hashes::UINT64) => Some(Conversion::primitive(self.type_hash, target.type_hash, 3, true)),
+            (primitive_hashes::DOUBLE, primitive_hashes::UINT8) => Some(Conversion::primitive(self.type_hash, target.type_hash, 3, true)),
+            (primitive_hashes::DOUBLE, primitive_hashes::UINT16) => Some(Conversion::primitive(self.type_hash, target.type_hash, 3, true)),
+            (primitive_hashes::DOUBLE, primitive_hashes::UINT32) => Some(Conversion::primitive(self.type_hash, target.type_hash, 3, true)),
+            (primitive_hashes::DOUBLE, primitive_hashes::UINT64) => Some(Conversion::primitive(self.type_hash, target.type_hash, 3, true)),
 
             // Float ↔ Double conversions
-            (FLOAT_TYPE, DOUBLE_TYPE) => Some(Conversion::primitive(self.type_id, target.type_id, 1, true)),
-            (DOUBLE_TYPE, FLOAT_TYPE) => Some(Conversion::primitive(self.type_id, target.type_id, 2, true)), // Implicit but may lose precision
+            (primitive_hashes::FLOAT, primitive_hashes::DOUBLE) => Some(Conversion::primitive(self.type_hash, target.type_hash, 1, true)),
+            (primitive_hashes::DOUBLE, primitive_hashes::FLOAT) => Some(Conversion::primitive(self.type_hash, target.type_hash, 2, true)), // Implicit but may lose precision
 
             // Integer widening (signed) - implicit
-            (INT8_TYPE, INT16_TYPE) => Some(Conversion::primitive(self.type_id, target.type_id, 1, true)),
-            (INT8_TYPE, INT32_TYPE) => Some(Conversion::primitive(self.type_id, target.type_id, 1, true)),
-            (INT8_TYPE, INT64_TYPE) => Some(Conversion::primitive(self.type_id, target.type_id, 1, true)),
-            (INT16_TYPE, INT32_TYPE) => Some(Conversion::primitive(self.type_id, target.type_id, 1, true)),
-            (INT16_TYPE, INT64_TYPE) => Some(Conversion::primitive(self.type_id, target.type_id, 1, true)),
-            (INT32_TYPE, INT64_TYPE) => Some(Conversion::primitive(self.type_id, target.type_id, 1, true)),
+            (primitive_hashes::INT8, primitive_hashes::INT16) => Some(Conversion::primitive(self.type_hash, target.type_hash, 1, true)),
+            (primitive_hashes::INT8, primitive_hashes::INT32) => Some(Conversion::primitive(self.type_hash, target.type_hash, 1, true)),
+            (primitive_hashes::INT8, primitive_hashes::INT64) => Some(Conversion::primitive(self.type_hash, target.type_hash, 1, true)),
+            (primitive_hashes::INT16, primitive_hashes::INT32) => Some(Conversion::primitive(self.type_hash, target.type_hash, 1, true)),
+            (primitive_hashes::INT16, primitive_hashes::INT64) => Some(Conversion::primitive(self.type_hash, target.type_hash, 1, true)),
+            (primitive_hashes::INT32, primitive_hashes::INT64) => Some(Conversion::primitive(self.type_hash, target.type_hash, 1, true)),
 
             // Integer narrowing (signed) - implicit with higher cost (data loss possible)
-            (INT64_TYPE, INT32_TYPE) => Some(Conversion::primitive(self.type_id, target.type_id, 2, true)),
-            (INT64_TYPE, INT16_TYPE) => Some(Conversion::primitive(self.type_id, target.type_id, 2, true)),
-            (INT64_TYPE, INT8_TYPE) => Some(Conversion::primitive(self.type_id, target.type_id, 2, true)),
-            (INT32_TYPE, INT16_TYPE) => Some(Conversion::primitive(self.type_id, target.type_id, 2, true)),
-            (INT32_TYPE, INT8_TYPE) => Some(Conversion::primitive(self.type_id, target.type_id, 2, true)),
-            (INT16_TYPE, INT8_TYPE) => Some(Conversion::primitive(self.type_id, target.type_id, 2, true)),
+            (primitive_hashes::INT64, primitive_hashes::INT32) => Some(Conversion::primitive(self.type_hash, target.type_hash, 2, true)),
+            (primitive_hashes::INT64, primitive_hashes::INT16) => Some(Conversion::primitive(self.type_hash, target.type_hash, 2, true)),
+            (primitive_hashes::INT64, primitive_hashes::INT8) => Some(Conversion::primitive(self.type_hash, target.type_hash, 2, true)),
+            (primitive_hashes::INT32, primitive_hashes::INT16) => Some(Conversion::primitive(self.type_hash, target.type_hash, 2, true)),
+            (primitive_hashes::INT32, primitive_hashes::INT8) => Some(Conversion::primitive(self.type_hash, target.type_hash, 2, true)),
+            (primitive_hashes::INT16, primitive_hashes::INT8) => Some(Conversion::primitive(self.type_hash, target.type_hash, 2, true)),
 
             // Unsigned widening - implicit
-            (UINT8_TYPE, UINT16_TYPE) => Some(Conversion::primitive(self.type_id, target.type_id, 1, true)),
-            (UINT8_TYPE, UINT32_TYPE) => Some(Conversion::primitive(self.type_id, target.type_id, 1, true)),
-            (UINT8_TYPE, UINT64_TYPE) => Some(Conversion::primitive(self.type_id, target.type_id, 1, true)),
-            (UINT16_TYPE, UINT32_TYPE) => Some(Conversion::primitive(self.type_id, target.type_id, 1, true)),
-            (UINT16_TYPE, UINT64_TYPE) => Some(Conversion::primitive(self.type_id, target.type_id, 1, true)),
-            (UINT32_TYPE, UINT64_TYPE) => Some(Conversion::primitive(self.type_id, target.type_id, 1, true)),
+            (primitive_hashes::UINT8, primitive_hashes::UINT16) => Some(Conversion::primitive(self.type_hash, target.type_hash, 1, true)),
+            (primitive_hashes::UINT8, primitive_hashes::UINT32) => Some(Conversion::primitive(self.type_hash, target.type_hash, 1, true)),
+            (primitive_hashes::UINT8, primitive_hashes::UINT64) => Some(Conversion::primitive(self.type_hash, target.type_hash, 1, true)),
+            (primitive_hashes::UINT16, primitive_hashes::UINT32) => Some(Conversion::primitive(self.type_hash, target.type_hash, 1, true)),
+            (primitive_hashes::UINT16, primitive_hashes::UINT64) => Some(Conversion::primitive(self.type_hash, target.type_hash, 1, true)),
+            (primitive_hashes::UINT32, primitive_hashes::UINT64) => Some(Conversion::primitive(self.type_hash, target.type_hash, 1, true)),
 
             // Unsigned narrowing - implicit with higher cost (data loss possible)
-            (UINT64_TYPE, UINT32_TYPE) => Some(Conversion::primitive(self.type_id, target.type_id, 2, true)),
-            (UINT64_TYPE, UINT16_TYPE) => Some(Conversion::primitive(self.type_id, target.type_id, 2, true)),
-            (UINT64_TYPE, UINT8_TYPE) => Some(Conversion::primitive(self.type_id, target.type_id, 2, true)),
-            (UINT32_TYPE, UINT16_TYPE) => Some(Conversion::primitive(self.type_id, target.type_id, 2, true)),
-            (UINT32_TYPE, UINT8_TYPE) => Some(Conversion::primitive(self.type_id, target.type_id, 2, true)),
-            (UINT16_TYPE, UINT8_TYPE) => Some(Conversion::primitive(self.type_id, target.type_id, 2, true)),
+            (primitive_hashes::UINT64, primitive_hashes::UINT32) => Some(Conversion::primitive(self.type_hash, target.type_hash, 2, true)),
+            (primitive_hashes::UINT64, primitive_hashes::UINT16) => Some(Conversion::primitive(self.type_hash, target.type_hash, 2, true)),
+            (primitive_hashes::UINT64, primitive_hashes::UINT8) => Some(Conversion::primitive(self.type_hash, target.type_hash, 2, true)),
+            (primitive_hashes::UINT32, primitive_hashes::UINT16) => Some(Conversion::primitive(self.type_hash, target.type_hash, 2, true)),
+            (primitive_hashes::UINT32, primitive_hashes::UINT8) => Some(Conversion::primitive(self.type_hash, target.type_hash, 2, true)),
+            (primitive_hashes::UINT16, primitive_hashes::UINT8) => Some(Conversion::primitive(self.type_hash, target.type_hash, 2, true)),
 
             // Signed/Unsigned reinterpret (same size) - implicit with higher cost
-            (INT8_TYPE, UINT8_TYPE) => Some(Conversion::primitive(self.type_id, target.type_id, 2, true)),
-            (INT16_TYPE, UINT16_TYPE) => Some(Conversion::primitive(self.type_id, target.type_id, 2, true)),
-            (INT32_TYPE, UINT32_TYPE) => Some(Conversion::primitive(self.type_id, target.type_id, 2, true)),
-            (INT64_TYPE, UINT64_TYPE) => Some(Conversion::primitive(self.type_id, target.type_id, 2, true)),
-            (UINT8_TYPE, INT8_TYPE) => Some(Conversion::primitive(self.type_id, target.type_id, 2, true)),
-            (UINT16_TYPE, INT16_TYPE) => Some(Conversion::primitive(self.type_id, target.type_id, 2, true)),
-            (UINT32_TYPE, INT32_TYPE) => Some(Conversion::primitive(self.type_id, target.type_id, 2, true)),
-            (UINT64_TYPE, INT64_TYPE) => Some(Conversion::primitive(self.type_id, target.type_id, 2, true)),
+            (primitive_hashes::INT8, primitive_hashes::UINT8) => Some(Conversion::primitive(self.type_hash, target.type_hash, 2, true)),
+            (primitive_hashes::INT16, primitive_hashes::UINT16) => Some(Conversion::primitive(self.type_hash, target.type_hash, 2, true)),
+            (primitive_hashes::INT32, primitive_hashes::UINT32) => Some(Conversion::primitive(self.type_hash, target.type_hash, 2, true)),
+            (primitive_hashes::INT64, primitive_hashes::UINT64) => Some(Conversion::primitive(self.type_hash, target.type_hash, 2, true)),
+            (primitive_hashes::UINT8, primitive_hashes::INT8) => Some(Conversion::primitive(self.type_hash, target.type_hash, 2, true)),
+            (primitive_hashes::UINT16, primitive_hashes::INT16) => Some(Conversion::primitive(self.type_hash, target.type_hash, 2, true)),
+            (primitive_hashes::UINT32, primitive_hashes::INT32) => Some(Conversion::primitive(self.type_hash, target.type_hash, 2, true)),
+            (primitive_hashes::UINT64, primitive_hashes::INT64) => Some(Conversion::primitive(self.type_hash, target.type_hash, 2, true)),
 
             // Signed to Unsigned (different sizes) - implicit with higher cost
             // int8 -> uint16, uint32, uint64
-            (INT8_TYPE, UINT16_TYPE) => Some(Conversion::primitive(self.type_id, target.type_id, 2, true)),
-            (INT8_TYPE, UINT32_TYPE) => Some(Conversion::primitive(self.type_id, target.type_id, 2, true)),
-            (INT8_TYPE, UINT64_TYPE) => Some(Conversion::primitive(self.type_id, target.type_id, 2, true)),
+            (primitive_hashes::INT8, primitive_hashes::UINT16) => Some(Conversion::primitive(self.type_hash, target.type_hash, 2, true)),
+            (primitive_hashes::INT8, primitive_hashes::UINT32) => Some(Conversion::primitive(self.type_hash, target.type_hash, 2, true)),
+            (primitive_hashes::INT8, primitive_hashes::UINT64) => Some(Conversion::primitive(self.type_hash, target.type_hash, 2, true)),
             // int16 -> uint8, uint32, uint64
-            (INT16_TYPE, UINT8_TYPE) => Some(Conversion::primitive(self.type_id, target.type_id, 2, true)),
-            (INT16_TYPE, UINT32_TYPE) => Some(Conversion::primitive(self.type_id, target.type_id, 2, true)),
-            (INT16_TYPE, UINT64_TYPE) => Some(Conversion::primitive(self.type_id, target.type_id, 2, true)),
+            (primitive_hashes::INT16, primitive_hashes::UINT8) => Some(Conversion::primitive(self.type_hash, target.type_hash, 2, true)),
+            (primitive_hashes::INT16, primitive_hashes::UINT32) => Some(Conversion::primitive(self.type_hash, target.type_hash, 2, true)),
+            (primitive_hashes::INT16, primitive_hashes::UINT64) => Some(Conversion::primitive(self.type_hash, target.type_hash, 2, true)),
             // int32 -> uint8, uint16, uint64
-            (INT32_TYPE, UINT8_TYPE) => Some(Conversion::primitive(self.type_id, target.type_id, 2, true)),
-            (INT32_TYPE, UINT16_TYPE) => Some(Conversion::primitive(self.type_id, target.type_id, 2, true)),
-            (INT32_TYPE, UINT64_TYPE) => Some(Conversion::primitive(self.type_id, target.type_id, 2, true)),
+            (primitive_hashes::INT32, primitive_hashes::UINT8) => Some(Conversion::primitive(self.type_hash, target.type_hash, 2, true)),
+            (primitive_hashes::INT32, primitive_hashes::UINT16) => Some(Conversion::primitive(self.type_hash, target.type_hash, 2, true)),
+            (primitive_hashes::INT32, primitive_hashes::UINT64) => Some(Conversion::primitive(self.type_hash, target.type_hash, 2, true)),
             // int64 -> uint8, uint16, uint32
-            (INT64_TYPE, UINT8_TYPE) => Some(Conversion::primitive(self.type_id, target.type_id, 2, true)),
-            (INT64_TYPE, UINT16_TYPE) => Some(Conversion::primitive(self.type_id, target.type_id, 2, true)),
-            (INT64_TYPE, UINT32_TYPE) => Some(Conversion::primitive(self.type_id, target.type_id, 2, true)),
+            (primitive_hashes::INT64, primitive_hashes::UINT8) => Some(Conversion::primitive(self.type_hash, target.type_hash, 2, true)),
+            (primitive_hashes::INT64, primitive_hashes::UINT16) => Some(Conversion::primitive(self.type_hash, target.type_hash, 2, true)),
+            (primitive_hashes::INT64, primitive_hashes::UINT32) => Some(Conversion::primitive(self.type_hash, target.type_hash, 2, true)),
 
             // Unsigned to Signed (different sizes) - implicit with higher cost
             // uint8 -> int16, int32, int64
-            (UINT8_TYPE, INT16_TYPE) => Some(Conversion::primitive(self.type_id, target.type_id, 2, true)),
-            (UINT8_TYPE, INT32_TYPE) => Some(Conversion::primitive(self.type_id, target.type_id, 2, true)),
-            (UINT8_TYPE, INT64_TYPE) => Some(Conversion::primitive(self.type_id, target.type_id, 2, true)),
+            (primitive_hashes::UINT8, primitive_hashes::INT16) => Some(Conversion::primitive(self.type_hash, target.type_hash, 2, true)),
+            (primitive_hashes::UINT8, primitive_hashes::INT32) => Some(Conversion::primitive(self.type_hash, target.type_hash, 2, true)),
+            (primitive_hashes::UINT8, primitive_hashes::INT64) => Some(Conversion::primitive(self.type_hash, target.type_hash, 2, true)),
             // uint16 -> int8, int32, int64
-            (UINT16_TYPE, INT8_TYPE) => Some(Conversion::primitive(self.type_id, target.type_id, 2, true)),
-            (UINT16_TYPE, INT32_TYPE) => Some(Conversion::primitive(self.type_id, target.type_id, 2, true)),
-            (UINT16_TYPE, INT64_TYPE) => Some(Conversion::primitive(self.type_id, target.type_id, 2, true)),
+            (primitive_hashes::UINT16, primitive_hashes::INT8) => Some(Conversion::primitive(self.type_hash, target.type_hash, 2, true)),
+            (primitive_hashes::UINT16, primitive_hashes::INT32) => Some(Conversion::primitive(self.type_hash, target.type_hash, 2, true)),
+            (primitive_hashes::UINT16, primitive_hashes::INT64) => Some(Conversion::primitive(self.type_hash, target.type_hash, 2, true)),
             // uint32 -> int8, int16, int64
-            (UINT32_TYPE, INT8_TYPE) => Some(Conversion::primitive(self.type_id, target.type_id, 2, true)),
-            (UINT32_TYPE, INT16_TYPE) => Some(Conversion::primitive(self.type_id, target.type_id, 2, true)),
-            (UINT32_TYPE, INT64_TYPE) => Some(Conversion::primitive(self.type_id, target.type_id, 2, true)),
+            (primitive_hashes::UINT32, primitive_hashes::INT8) => Some(Conversion::primitive(self.type_hash, target.type_hash, 2, true)),
+            (primitive_hashes::UINT32, primitive_hashes::INT16) => Some(Conversion::primitive(self.type_hash, target.type_hash, 2, true)),
+            (primitive_hashes::UINT32, primitive_hashes::INT64) => Some(Conversion::primitive(self.type_hash, target.type_hash, 2, true)),
             // uint64 -> int8, int16, int32
-            (UINT64_TYPE, INT8_TYPE) => Some(Conversion::primitive(self.type_id, target.type_id, 2, true)),
-            (UINT64_TYPE, INT16_TYPE) => Some(Conversion::primitive(self.type_id, target.type_id, 2, true)),
-            (UINT64_TYPE, INT32_TYPE) => Some(Conversion::primitive(self.type_id, target.type_id, 2, true)),
+            (primitive_hashes::UINT64, primitive_hashes::INT8) => Some(Conversion::primitive(self.type_hash, target.type_hash, 2, true)),
+            (primitive_hashes::UINT64, primitive_hashes::INT16) => Some(Conversion::primitive(self.type_hash, target.type_hash, 2, true)),
+            (primitive_hashes::UINT64, primitive_hashes::INT32) => Some(Conversion::primitive(self.type_hash, target.type_hash, 2, true)),
 
             // No conversion
             _ => None,
@@ -490,7 +487,7 @@ impl DataType {
 
         // Rule 1: Adding const qualifiers (T@ → const T@, T@ → T@ const, etc.)
         // This is safe for same-type conversions
-        if self.type_id == target.type_id {
+        if self.type_hash == target.type_hash {
             // Check if we're only adding const (never removing)
             let adding_handle_const = !self.is_const && target.is_const;
             let adding_object_const = !self.is_handle_to_const && target.is_handle_to_const;
@@ -531,11 +528,11 @@ impl DataType {
 
     fn derived_to_base_conversion<'a>(&self, target: &DataType, ctx: &CompilationContext<'a>) -> Option<Conversion> {
         // Walk up the inheritance chain to find base class
-        let mut current_type = self.type_id;
+        let mut current_type = self.type_hash;
 
         loop {
             // Check if current_type is the target
-            if current_type == target.type_id {
+            if current_type == target.type_hash {
                 // Found it! Now check const compatibility for BOTH const flags
                 let adding_handle_const = !self.is_const && target.is_const;
                 let adding_object_const = !self.is_handle_to_const && target.is_handle_to_const;
@@ -573,13 +570,13 @@ impl DataType {
 
     fn class_to_interface_conversion<'a>(&self, target: &DataType, ctx: &CompilationContext<'a>) -> Option<Conversion> {
         // Target must be an interface
-        let target_typedef = ctx.get_type(target.type_id);
+        let target_typedef = ctx.get_type(target.type_hash);
         if !target_typedef.is_interface() {
             return None;
         }
 
         // Check if this class (or any base class) implements the target interface
-        let mut current_type = self.type_id;
+        let mut current_type = self.type_hash;
 
         loop {
             let typedef = ctx.get_type(current_type);
@@ -591,7 +588,7 @@ impl DataType {
             };
 
             // Check if target interface is in the list
-            if interfaces.contains(&target.type_id) {
+            if interfaces.contains(&target.type_hash) {
                 // Found it! Check const compatibility for BOTH const flags
                 let adding_handle_const = !self.is_const && target.is_const;
                 let adding_object_const = !self.is_handle_to_const && target.is_handle_to_const;
@@ -662,7 +659,7 @@ impl DataType {
 
     fn constructor_conversion<'a>(&self, target: &DataType, ctx: &CompilationContext<'a>) -> Option<Conversion> {
         // Get the target type definition
-        let target_typedef = ctx.get_type(target.type_id);
+        let target_typedef = ctx.get_type(target.type_hash);
 
         // Only classes can have constructors
         if !target_typedef.is_class() {
@@ -670,7 +667,7 @@ impl DataType {
         }
 
         // Look for constructor with exactly one parameter matching our type
-        let constructor_id = ctx.find_constructor(target.type_id, &[self.clone()])?;
+        let constructor_id = ctx.find_constructor(target.type_hash, &[self.clone()])?;
 
         // Check if the constructor is marked explicit
         // Explicit constructors cannot be used for implicit conversions
@@ -688,7 +685,7 @@ impl DataType {
 
     fn value_operator_conversion<'a>(&self, target: &DataType, ctx: &CompilationContext<'a>) -> Option<Conversion> {
         // Get the source type definition
-        let source_typedef = ctx.get_type(self.type_id);
+        let source_typedef = ctx.get_type(self.type_hash);
 
         // Only classes can have operator methods
         let operator_methods = match source_typedef {
@@ -697,14 +694,14 @@ impl DataType {
         };
 
         // Try opImplConv first (implicit conversion, cost 10)
-        let implicit_behavior = OperatorBehavior::OpImplConv(target.type_id);
+        let implicit_behavior = OperatorBehavior::OpImplConv(target.type_hash);
         if let Some(function_id) = operator_methods.get(&implicit_behavior).and_then(|v| v.first().copied()) {
             // Found implicit conversion operator
             return Some(Conversion::implicit_conv_method(function_id));
         }
 
         // Try opConv (explicit conversion, cost 100)
-        let explicit_behavior = OperatorBehavior::OpConv(target.type_id);
+        let explicit_behavior = OperatorBehavior::OpConv(target.type_hash);
         if let Some(function_id) = operator_methods.get(&explicit_behavior).and_then(|v| v.first().copied()) {
             return Some(Conversion::explicit_cast_method(function_id));
         }
@@ -715,7 +712,7 @@ impl DataType {
 
     fn handle_operator_conversion<'a>(&self, target: &DataType, ctx: &CompilationContext<'a>) -> Option<Conversion> {
         // Get the source type definition
-        let source_typedef = ctx.get_type(self.type_id);
+        let source_typedef = ctx.get_type(self.type_hash);
 
         // Only classes can have operator methods
         let operator_methods = match source_typedef {
@@ -724,13 +721,13 @@ impl DataType {
         };
 
         // Try opImplCast first (implicit cast, cost 10)
-        let implicit_behavior = OperatorBehavior::OpImplCast(target.type_id);
+        let implicit_behavior = OperatorBehavior::OpImplCast(target.type_hash);
         if let Some(function_id) = operator_methods.get(&implicit_behavior).and_then(|v| v.first().copied()) {
             return Some(Conversion::implicit_conv_method(function_id));
         }
 
         // Try opCast (explicit cast, cost 100)
-        let explicit_behavior = OperatorBehavior::OpCast(target.type_id);
+        let explicit_behavior = OperatorBehavior::OpCast(target.type_hash);
         if let Some(function_id) = operator_methods.get(&explicit_behavior).and_then(|v| v.first().copied()) {
             return Some(Conversion::explicit_cast_method(function_id));
         }
@@ -743,19 +740,19 @@ impl DataType {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::semantic::types::type_def::{INT32_TYPE, VOID_TYPE, TypeId};
+    use crate::types::{primitive_hashes, TypeHash};
 
     // Test-local type ID to simulate a user type (like string)
     // This must be within the primitive type range for ScriptRegistry::get_type to work without panicking
-    // Since we're just testing conversion logic, we can use any valid TypeId
-    const TEST_USER_TYPE: TypeId = TypeId(100);
+    // Since we're just testing conversion logic, we can use any valid TypeHash
+    const TEST_USER_TYPE: TypeHash = TypeHash(100);
 
     // ==================== Null Conversion Tests ====================
 
     #[test]
     fn null_literal_creation() {
         let null = DataType::null_literal();
-        assert_eq!(null.type_id, NULL_TYPE);
+        assert_eq!(null.type_hash, primitive_hashes::NULL);
         assert!(!null.is_handle);
         assert!(!null.is_const);
     }
@@ -766,7 +763,7 @@ mod tests {
         let null = DataType::null_literal();
 
         // null -> int@ (handle to primitive)
-        let int_handle = DataType::with_handle(INT32_TYPE, false);
+        let int_handle = DataType::with_handle(primitive_hashes::INT32, false);
         let conv = null.can_convert_to(&int_handle, &ctx);
         assert!(conv.is_some());
         let conv = conv.unwrap();
@@ -775,7 +772,7 @@ mod tests {
         assert!(conv.is_implicit);
 
         // null -> const int@ (handle to const primitive)
-        let const_int_handle = DataType::const_handle(INT32_TYPE, false);
+        let const_int_handle = DataType::const_handle(primitive_hashes::INT32, false);
         let conv = null.can_convert_to(&const_int_handle, &ctx);
         assert!(conv.is_some());
         assert_eq!(conv.unwrap().kind, ConversionKind::NullToHandle);
@@ -795,7 +792,7 @@ mod tests {
         let null = DataType::null_literal();
 
         // null cannot convert to value types
-        let int_type = DataType::simple(INT32_TYPE);
+        let int_type = DataType::simple(primitive_hashes::INT32);
         assert!(null.can_convert_to(&int_type, &ctx).is_none());
 
         // Register a custom class to test
@@ -835,7 +832,7 @@ mod tests {
     #[test]
     fn identity_conversion_same_type() {
         let ctx = CompilationContext::default();
-        let int_type = DataType::simple(INT32_TYPE);
+        let int_type = DataType::simple(primitive_hashes::INT32);
 
         let conv = int_type.can_convert_to(&int_type, &ctx);
         assert!(conv.is_some());
@@ -860,8 +857,8 @@ mod tests {
         let ctx = CompilationContext::default();
 
         // int8 -> float
-        let int8 = DataType::simple(INT8_TYPE);
-        let float = DataType::simple(FLOAT_TYPE);
+        let int8 = DataType::simple(primitive_hashes::INT8);
+        let float = DataType::simple(primitive_hashes::FLOAT);
         let conv = int8.can_convert_to(&float, &ctx);
         assert!(conv.is_some());
         let conv = conv.unwrap();
@@ -870,19 +867,19 @@ mod tests {
         assert!(conv.is_implicit);
 
         // int16 -> float
-        let int16 = DataType::simple(INT16_TYPE);
+        let int16 = DataType::simple(primitive_hashes::INT16);
         let conv = int16.can_convert_to(&float, &ctx);
         assert!(conv.is_some());
         assert!(conv.unwrap().is_implicit);
 
         // int32 -> float
-        let int32 = DataType::simple(INT32_TYPE);
+        let int32 = DataType::simple(primitive_hashes::INT32);
         let conv = int32.can_convert_to(&float, &ctx);
         assert!(conv.is_some());
         assert!(conv.unwrap().is_implicit);
 
         // int64 -> float (higher cost due to precision loss)
-        let int64 = DataType::simple(INT64_TYPE);
+        let int64 = DataType::simple(primitive_hashes::INT64);
         let conv = int64.can_convert_to(&float, &ctx);
         assert!(conv.is_some());
         let conv = conv.unwrap();
@@ -893,28 +890,28 @@ mod tests {
     #[test]
     fn primitive_int_to_double_implicit() {
         let ctx = CompilationContext::default();
-        let double = DataType::simple(DOUBLE_TYPE);
+        let double = DataType::simple(primitive_hashes::DOUBLE);
 
         // int8 -> double
-        let int8 = DataType::simple(INT8_TYPE);
+        let int8 = DataType::simple(primitive_hashes::INT8);
         let conv = int8.can_convert_to(&double, &ctx);
         assert!(conv.is_some());
         assert_eq!(conv.unwrap().cost, 1);
 
         // int16 -> double
-        let int16 = DataType::simple(INT16_TYPE);
+        let int16 = DataType::simple(primitive_hashes::INT16);
         let conv = int16.can_convert_to(&double, &ctx);
         assert!(conv.is_some());
         assert_eq!(conv.unwrap().cost, 1);
 
         // int32 -> double
-        let int32 = DataType::simple(INT32_TYPE);
+        let int32 = DataType::simple(primitive_hashes::INT32);
         let conv = int32.can_convert_to(&double, &ctx);
         assert!(conv.is_some());
         assert_eq!(conv.unwrap().cost, 1);
 
         // int64 -> double
-        let int64 = DataType::simple(INT64_TYPE);
+        let int64 = DataType::simple(primitive_hashes::INT64);
         let conv = int64.can_convert_to(&double, &ctx);
         assert!(conv.is_some());
         assert_eq!(conv.unwrap().cost, 1);
@@ -923,28 +920,28 @@ mod tests {
     #[test]
     fn primitive_uint_to_float_implicit() {
         let ctx = CompilationContext::default();
-        let float = DataType::simple(FLOAT_TYPE);
+        let float = DataType::simple(primitive_hashes::FLOAT);
 
         // uint8 -> float
-        let uint8 = DataType::simple(UINT8_TYPE);
+        let uint8 = DataType::simple(primitive_hashes::UINT8);
         let conv = uint8.can_convert_to(&float, &ctx);
         assert!(conv.is_some());
         assert_eq!(conv.unwrap().cost, 1);
 
         // uint16 -> float
-        let uint16 = DataType::simple(UINT16_TYPE);
+        let uint16 = DataType::simple(primitive_hashes::UINT16);
         let conv = uint16.can_convert_to(&float, &ctx);
         assert!(conv.is_some());
         assert_eq!(conv.unwrap().cost, 1);
 
         // uint32 -> float
-        let uint32 = DataType::simple(UINT32_TYPE);
+        let uint32 = DataType::simple(primitive_hashes::UINT32);
         let conv = uint32.can_convert_to(&float, &ctx);
         assert!(conv.is_some());
         assert_eq!(conv.unwrap().cost, 1);
 
         // uint64 -> float (higher cost)
-        let uint64 = DataType::simple(UINT64_TYPE);
+        let uint64 = DataType::simple(primitive_hashes::UINT64);
         let conv = uint64.can_convert_to(&float, &ctx);
         assert!(conv.is_some());
         assert_eq!(conv.unwrap().cost, 2);
@@ -953,16 +950,16 @@ mod tests {
     #[test]
     fn primitive_uint_to_double_implicit() {
         let ctx = CompilationContext::default();
-        let double = DataType::simple(DOUBLE_TYPE);
+        let double = DataType::simple(primitive_hashes::DOUBLE);
 
         // uint8 -> double
-        let uint8 = DataType::simple(UINT8_TYPE);
+        let uint8 = DataType::simple(primitive_hashes::UINT8);
         let conv = uint8.can_convert_to(&double, &ctx);
         assert!(conv.is_some());
         assert_eq!(conv.unwrap().cost, 1);
 
         // uint64 -> double
-        let uint64 = DataType::simple(UINT64_TYPE);
+        let uint64 = DataType::simple(primitive_hashes::UINT64);
         let conv = uint64.can_convert_to(&double, &ctx);
         assert!(conv.is_some());
         assert_eq!(conv.unwrap().cost, 1);
@@ -971,10 +968,10 @@ mod tests {
     #[test]
     fn primitive_float_to_int_implicit_truncation() {
         let ctx = CompilationContext::default();
-        let float = DataType::simple(FLOAT_TYPE);
+        let float = DataType::simple(primitive_hashes::FLOAT);
 
         // float -> int8
-        let int8 = DataType::simple(INT8_TYPE);
+        let int8 = DataType::simple(primitive_hashes::INT8);
         let conv = float.can_convert_to(&int8, &ctx);
         assert!(conv.is_some());
         let conv = conv.unwrap();
@@ -982,13 +979,13 @@ mod tests {
         assert!(conv.is_implicit);
 
         // float -> int32
-        let int32 = DataType::simple(INT32_TYPE);
+        let int32 = DataType::simple(primitive_hashes::INT32);
         let conv = float.can_convert_to(&int32, &ctx);
         assert!(conv.is_some());
         assert_eq!(conv.unwrap().cost, 3);
 
         // float -> int64
-        let int64 = DataType::simple(INT64_TYPE);
+        let int64 = DataType::simple(primitive_hashes::INT64);
         let conv = float.can_convert_to(&int64, &ctx);
         assert!(conv.is_some());
         assert_eq!(conv.unwrap().cost, 3);
@@ -997,16 +994,16 @@ mod tests {
     #[test]
     fn primitive_double_to_int_implicit_truncation() {
         let ctx = CompilationContext::default();
-        let double = DataType::simple(DOUBLE_TYPE);
+        let double = DataType::simple(primitive_hashes::DOUBLE);
 
         // double -> int32
-        let int32 = DataType::simple(INT32_TYPE);
+        let int32 = DataType::simple(primitive_hashes::INT32);
         let conv = double.can_convert_to(&int32, &ctx);
         assert!(conv.is_some());
         assert_eq!(conv.unwrap().cost, 3);
 
         // double -> uint64
-        let uint64 = DataType::simple(UINT64_TYPE);
+        let uint64 = DataType::simple(primitive_hashes::UINT64);
         let conv = double.can_convert_to(&uint64, &ctx);
         assert!(conv.is_some());
         assert_eq!(conv.unwrap().cost, 3);
@@ -1015,8 +1012,8 @@ mod tests {
     #[test]
     fn primitive_float_double_conversion() {
         let ctx = CompilationContext::default();
-        let float = DataType::simple(FLOAT_TYPE);
-        let double = DataType::simple(DOUBLE_TYPE);
+        let float = DataType::simple(primitive_hashes::FLOAT);
+        let double = DataType::simple(primitive_hashes::DOUBLE);
 
         // float -> double (widening, cost 1)
         let conv = float.can_convert_to(&double, &ctx);
@@ -1038,10 +1035,10 @@ mod tests {
         let ctx = CompilationContext::default();
 
         // int8 -> int16 -> int32 -> int64
-        let int8 = DataType::simple(INT8_TYPE);
-        let int16 = DataType::simple(INT16_TYPE);
-        let int32 = DataType::simple(INT32_TYPE);
-        let int64 = DataType::simple(INT64_TYPE);
+        let int8 = DataType::simple(primitive_hashes::INT8);
+        let int16 = DataType::simple(primitive_hashes::INT16);
+        let int32 = DataType::simple(primitive_hashes::INT32);
+        let int64 = DataType::simple(primitive_hashes::INT64);
 
         let conv = int8.can_convert_to(&int16, &ctx);
         assert!(conv.is_some());
@@ -1069,10 +1066,10 @@ mod tests {
         let ctx = CompilationContext::default();
 
         // int64 -> int32 -> int16 -> int8
-        let int8 = DataType::simple(INT8_TYPE);
-        let int16 = DataType::simple(INT16_TYPE);
-        let int32 = DataType::simple(INT32_TYPE);
-        let int64 = DataType::simple(INT64_TYPE);
+        let int8 = DataType::simple(primitive_hashes::INT8);
+        let int16 = DataType::simple(primitive_hashes::INT16);
+        let int32 = DataType::simple(primitive_hashes::INT32);
+        let int64 = DataType::simple(primitive_hashes::INT64);
 
         let conv = int64.can_convert_to(&int32, &ctx);
         assert!(conv.is_some());
@@ -1099,10 +1096,10 @@ mod tests {
     fn primitive_unsigned_widening() {
         let ctx = CompilationContext::default();
 
-        let uint8 = DataType::simple(UINT8_TYPE);
-        let uint16 = DataType::simple(UINT16_TYPE);
-        let uint32 = DataType::simple(UINT32_TYPE);
-        let uint64 = DataType::simple(UINT64_TYPE);
+        let uint8 = DataType::simple(primitive_hashes::UINT8);
+        let uint16 = DataType::simple(primitive_hashes::UINT16);
+        let uint32 = DataType::simple(primitive_hashes::UINT32);
+        let uint64 = DataType::simple(primitive_hashes::UINT64);
 
         let conv = uint8.can_convert_to(&uint16, &ctx);
         assert!(conv.is_some());
@@ -1121,10 +1118,10 @@ mod tests {
     fn primitive_unsigned_narrowing() {
         let ctx = CompilationContext::default();
 
-        let uint8 = DataType::simple(UINT8_TYPE);
-        let uint16 = DataType::simple(UINT16_TYPE);
-        let uint32 = DataType::simple(UINT32_TYPE);
-        let uint64 = DataType::simple(UINT64_TYPE);
+        let uint8 = DataType::simple(primitive_hashes::UINT8);
+        let uint16 = DataType::simple(primitive_hashes::UINT16);
+        let uint32 = DataType::simple(primitive_hashes::UINT32);
+        let uint64 = DataType::simple(primitive_hashes::UINT64);
 
         let conv = uint64.can_convert_to(&uint32, &ctx);
         assert!(conv.is_some());
@@ -1144,8 +1141,8 @@ mod tests {
         let ctx = CompilationContext::default();
 
         // Same size reinterpret
-        let int8 = DataType::simple(INT8_TYPE);
-        let uint8 = DataType::simple(UINT8_TYPE);
+        let int8 = DataType::simple(primitive_hashes::INT8);
+        let uint8 = DataType::simple(primitive_hashes::UINT8);
         let conv = int8.can_convert_to(&uint8, &ctx);
         assert!(conv.is_some());
         assert_eq!(conv.unwrap().cost, 2);
@@ -1154,14 +1151,14 @@ mod tests {
         assert!(conv.is_some());
         assert_eq!(conv.unwrap().cost, 2);
 
-        let int32 = DataType::simple(INT32_TYPE);
-        let uint32 = DataType::simple(UINT32_TYPE);
+        let int32 = DataType::simple(primitive_hashes::INT32);
+        let uint32 = DataType::simple(primitive_hashes::UINT32);
         let conv = int32.can_convert_to(&uint32, &ctx);
         assert!(conv.is_some());
         assert_eq!(conv.unwrap().cost, 2);
 
-        let int64 = DataType::simple(INT64_TYPE);
-        let uint64 = DataType::simple(UINT64_TYPE);
+        let int64 = DataType::simple(primitive_hashes::INT64);
+        let uint64 = DataType::simple(primitive_hashes::UINT64);
         let conv = int64.can_convert_to(&uint64, &ctx);
         assert!(conv.is_some());
         assert_eq!(conv.unwrap().cost, 2);
@@ -1171,14 +1168,14 @@ mod tests {
     fn primitive_signed_to_unsigned_different_sizes() {
         let ctx = CompilationContext::default();
 
-        let int8 = DataType::simple(INT8_TYPE);
-        let int16 = DataType::simple(INT16_TYPE);
-        let int32 = DataType::simple(INT32_TYPE);
-        let int64 = DataType::simple(INT64_TYPE);
-        let uint8 = DataType::simple(UINT8_TYPE);
-        let uint16 = DataType::simple(UINT16_TYPE);
-        let uint32 = DataType::simple(UINT32_TYPE);
-        let uint64 = DataType::simple(UINT64_TYPE);
+        let int8 = DataType::simple(primitive_hashes::INT8);
+        let int16 = DataType::simple(primitive_hashes::INT16);
+        let int32 = DataType::simple(primitive_hashes::INT32);
+        let int64 = DataType::simple(primitive_hashes::INT64);
+        let uint8 = DataType::simple(primitive_hashes::UINT8);
+        let uint16 = DataType::simple(primitive_hashes::UINT16);
+        let uint32 = DataType::simple(primitive_hashes::UINT32);
+        let uint64 = DataType::simple(primitive_hashes::UINT64);
 
         // int8 -> uint16, uint32, uint64
         let conv = int8.can_convert_to(&uint16, &ctx);
@@ -1237,14 +1234,14 @@ mod tests {
     fn primitive_unsigned_to_signed_different_sizes() {
         let ctx = CompilationContext::default();
 
-        let int8 = DataType::simple(INT8_TYPE);
-        let int16 = DataType::simple(INT16_TYPE);
-        let int32 = DataType::simple(INT32_TYPE);
-        let int64 = DataType::simple(INT64_TYPE);
-        let uint8 = DataType::simple(UINT8_TYPE);
-        let uint16 = DataType::simple(UINT16_TYPE);
-        let uint32 = DataType::simple(UINT32_TYPE);
-        let uint64 = DataType::simple(UINT64_TYPE);
+        let int8 = DataType::simple(primitive_hashes::INT8);
+        let int16 = DataType::simple(primitive_hashes::INT16);
+        let int32 = DataType::simple(primitive_hashes::INT32);
+        let int64 = DataType::simple(primitive_hashes::INT64);
+        let uint8 = DataType::simple(primitive_hashes::UINT8);
+        let uint16 = DataType::simple(primitive_hashes::UINT16);
+        let uint32 = DataType::simple(primitive_hashes::UINT32);
+        let uint64 = DataType::simple(primitive_hashes::UINT64);
 
         // uint8 -> int16, int32, int64
         let conv = uint8.can_convert_to(&int16, &ctx);
@@ -1302,8 +1299,8 @@ mod tests {
     #[test]
     fn primitive_no_conversion_void() {
         let ctx = CompilationContext::default();
-        let int32 = DataType::simple(INT32_TYPE);
-        let void_type = DataType::simple(VOID_TYPE);
+        let int32 = DataType::simple(primitive_hashes::INT32);
+        let void_type = DataType::simple(primitive_hashes::VOID);
 
         // Can't convert to/from void
         assert!(int32.can_convert_to(&void_type, &ctx).is_none());
@@ -1312,9 +1309,9 @@ mod tests {
 
     #[test]
     fn primitive_conversion_helper() {
-        let conv = Conversion::primitive(INT32_TYPE, FLOAT_TYPE, 1, true);
+        let conv = Conversion::primitive(primitive_hashes::INT32, primitive_hashes::FLOAT, 1, true);
         assert!(matches!(conv.kind, ConversionKind::Primitive { from_type, to_type }
-            if from_type == INT32_TYPE && to_type == FLOAT_TYPE));
+            if from_type == primitive_hashes::INT32 && to_type == primitive_hashes::FLOAT));
         assert_eq!(conv.cost, 1);
         assert!(conv.is_implicit);
     }
@@ -1326,8 +1323,8 @@ mod tests {
         let ctx = CompilationContext::default();
 
         // T@ -> const T@ (adding const is implicit)
-        let handle = DataType::with_handle(INT32_TYPE, false);
-        let const_handle = DataType::const_handle(INT32_TYPE, false);
+        let handle = DataType::with_handle(primitive_hashes::INT32, false);
+        let const_handle = DataType::const_handle(primitive_hashes::INT32, false);
 
         let conv = handle.can_convert_to(&const_handle, &ctx);
         assert!(conv.is_some());
@@ -1342,8 +1339,8 @@ mod tests {
         let ctx = CompilationContext::default();
 
         // const T@ -> T@ (removing const requires explicit cast)
-        let const_handle = DataType::const_handle(INT32_TYPE, false);
-        let handle = DataType::with_handle(INT32_TYPE, false);
+        let const_handle = DataType::const_handle(primitive_hashes::INT32, false);
+        let handle = DataType::with_handle(primitive_hashes::INT32, false);
 
         let conv = const_handle.can_convert_to(&handle, &ctx);
         assert!(conv.is_some());
@@ -1500,8 +1497,8 @@ mod tests {
 
     #[test]
     fn constructor_conversion_helper() {
-        use crate::semantic::FunctionId;
-        let func_id = FunctionId(42);
+        use crate::types::TypeHash;
+        let func_id = TypeHash(42);
         let conv = Conversion::constructor(func_id);
         assert!(matches!(conv.kind, ConversionKind::ConstructorConversion { constructor_id }
             if constructor_id == func_id));
@@ -1511,8 +1508,8 @@ mod tests {
 
     #[test]
     fn implicit_conv_method_helper() {
-        use crate::semantic::FunctionId;
-        let func_id = FunctionId(99);
+        use crate::types::TypeHash;
+        let func_id = TypeHash(99);
         let conv = Conversion::implicit_conv_method(func_id);
         assert!(matches!(conv.kind, ConversionKind::ImplicitConversionMethod { method_id }
             if method_id == func_id));
@@ -1522,8 +1519,8 @@ mod tests {
 
     #[test]
     fn explicit_cast_method_helper() {
-        use crate::semantic::FunctionId;
-        let func_id = FunctionId(100);
+        use crate::types::TypeHash;
+        let func_id = TypeHash(100);
         let conv = Conversion::explicit_cast_method(func_id);
         assert!(matches!(conv.kind, ConversionKind::ExplicitCastMethod { method_id }
             if method_id == func_id));
@@ -1533,8 +1530,8 @@ mod tests {
 
     #[test]
     fn implicit_cast_method_helper() {
-        use crate::semantic::FunctionId;
-        let func_id = FunctionId(101);
+        use crate::types::TypeHash;
+        let func_id = TypeHash(101);
         let conv = Conversion::implicit_cast_method(func_id);
         assert!(matches!(conv.kind, ConversionKind::ImplicitCastMethod { method_id }
             if method_id == func_id));
@@ -1572,7 +1569,7 @@ mod tests {
 
         // user_type -> int (no conversion)
         let user_type = DataType::simple(user_type_id);
-        let int_type = DataType::simple(INT32_TYPE);
+        let int_type = DataType::simple(primitive_hashes::INT32);
 
         assert!(user_type.can_convert_to(&int_type, &ctx).is_none());
         assert!(int_type.can_convert_to(&user_type, &ctx).is_none());
@@ -1583,8 +1580,8 @@ mod tests {
         let ctx = CompilationContext::default();
 
         // int@ cannot use primitive conversion rules
-        let int_handle = DataType::with_handle(INT32_TYPE, false);
-        let float_handle = DataType::with_handle(FLOAT_TYPE, false);
+        let int_handle = DataType::with_handle(primitive_hashes::INT32, false);
+        let float_handle = DataType::with_handle(primitive_hashes::FLOAT, false);
 
         // These are different handle types - no primitive conversion
         let conv = int_handle.can_convert_to(&float_handle, &ctx);
@@ -1598,13 +1595,13 @@ mod tests {
 
         // const int -> float SHOULD work - const only affects mutability, not conversions
         let const_int = DataType {
-            type_id: INT32_TYPE,
+            type_hash: primitive_hashes::INT32,
             is_handle: false,
             is_const: true,
             is_handle_to_const: false,
             ref_modifier: RefModifier::None,
         };
-        let float = DataType::simple(FLOAT_TYPE);
+        let float = DataType::simple(primitive_hashes::FLOAT);
 
         // Const values CAN participate in primitive conversion
         let conv = const_int.can_convert_to(&float, &ctx);
@@ -1621,13 +1618,13 @@ mod tests {
 
         // const int -> int should work (same base type, const doesn't matter for reading)
         let const_int = DataType {
-            type_id: INT32_TYPE,
+            type_hash: primitive_hashes::INT32,
             is_handle: false,
             is_const: true,
             is_handle_to_const: false,
             ref_modifier: RefModifier::None,
         };
-        let int = DataType::simple(INT32_TYPE);
+        let int = DataType::simple(primitive_hashes::INT32);
 
         // This should work - same base type, const is ignored for value conversions
         let conv = const_int.can_convert_to(&int, &ctx);
@@ -1645,8 +1642,8 @@ mod tests {
         assert!(debug_str.contains("Identity"));
 
         let kind = ConversionKind::Primitive {
-            from_type: INT32_TYPE,
-            to_type: FLOAT_TYPE,
+            from_type: primitive_hashes::INT32,
+            to_type: primitive_hashes::FLOAT,
         };
         let debug_str = format!("{:?}", kind);
         assert!(debug_str.contains("Primitive"));

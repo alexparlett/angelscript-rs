@@ -6,9 +6,9 @@
 use crate::codegen::Instruction;
 use crate::lexer::Span;
 use crate::semantic::{
-    DataType, OperatorBehavior, SemanticErrorKind, VOID_TYPE,
+    DataType, OperatorBehavior, SemanticErrorKind,
 };
-use crate::semantic::types::type_def::FunctionId;
+use crate::types::{primitive_hashes, TypeHash};
 
 use super::{ExprContext, FunctionCompiler};
 
@@ -22,19 +22,19 @@ impl<'ast> FunctionCompiler<'ast> {
         _span: Span,
     ) -> Option<DataType> {
         // Try left operand's operator first
-        if let Some(func_id) = self.context.find_operator_method(left_type.type_id, operator) {
-            self.bytecode.emit(Instruction::Call(func_id.as_u32()));
+        if let Some(func_id) = self.context.find_operator_method(left_type.type_hash, operator) {
+            self.bytecode.emit(Instruction::Call(func_id.0));
             let func = self.context.get_function(func_id);
             return Some(func.return_type().clone());
         }
 
         // Try right operand's reverse operator
-        if let Some(func_id) = self.context.find_operator_method(right_type.type_id, reverse_operator) {
+        if let Some(func_id) = self.context.find_operator_method(right_type.type_hash, reverse_operator) {
             // For reverse operators, arguments are swapped: right.opAdd_r(left)
             // Stack already has: [left, right]
             // We need: [right, left]
             self.bytecode.emit(Instruction::Swap);
-            self.bytecode.emit(Instruction::Call(func_id.as_u32()));
+            self.bytecode.emit(Instruction::Call(func_id.0));
             let func = self.context.get_function(func_id);
             return Some(func.return_type().clone());
         }
@@ -52,8 +52,8 @@ impl<'ast> FunctionCompiler<'ast> {
         operand_type: &DataType,
         _span: Span,
     ) -> Option<DataType> {
-        if let Some(func_id) = self.context.find_operator_method(operand_type.type_id, operator) {
-            self.bytecode.emit(Instruction::Call(func_id.as_u32()));
+        if let Some(func_id) = self.context.find_operator_method(operand_type.type_hash, operator) {
+            self.bytecode.emit(Instruction::Call(func_id.0));
             let func = self.context.get_function(func_id);
             return Some(func.return_type().clone());
         }
@@ -83,7 +83,7 @@ impl<'ast> FunctionCompiler<'ast> {
             let arg_ctx = &arg_contexts[i];
 
             // Void expressions cannot be passed as arguments
-            if arg_ctx.data_type.type_id == VOID_TYPE {
+            if arg_ctx.data_type.type_hash == primitive_hashes::VOID {
                 self.error(
                     SemanticErrorKind::VoidExpression,
                     call_args[i].span,
@@ -158,7 +158,7 @@ impl<'ast> FunctionCompiler<'ast> {
             let param_type = func_ref.param_type(i);
 
             // Void expressions cannot be passed as arguments
-            if arg_ctx.data_type.type_id == VOID_TYPE {
+            if arg_ctx.data_type.type_hash == primitive_hashes::VOID {
                 self.error(
                     SemanticErrorKind::VoidExpression,
                     call_args[i].span,
@@ -210,13 +210,13 @@ impl<'ast> FunctionCompiler<'ast> {
 
     /// Finds the best matching function overload for the given arguments.
     ///
-    /// Returns the FunctionId of the best match, or None if no match found.
+    /// Returns the TypeHash of the best match, or None if no match found.
     pub fn find_best_function_overload(
         &mut self,
-        candidates: &[FunctionId],
+        candidates: &[TypeHash],
         arg_types: &[DataType],
         span: Span,
-    ) -> Option<(FunctionId, Vec<Option<crate::semantic::Conversion>>)> {
+    ) -> Option<(TypeHash, Vec<Option<crate::semantic::Conversion>>)> {
         // Filter candidates by argument count first (considering default parameters)
         let count_matched: Vec<_> = candidates.iter().copied()
             .filter(|&func_id| {
@@ -278,7 +278,7 @@ impl<'ast> FunctionCompiler<'ast> {
 
         // If no exact match, find best match with implicit conversions
         // Rank by total conversion cost
-        let mut best_match: Option<(FunctionId, Vec<Option<crate::semantic::Conversion>>, u32)> = None;
+        let mut best_match: Option<(TypeHash, Vec<Option<crate::semantic::Conversion>>, u32)> = None;
 
         for &func_id in &count_matched {
             let func_ref = self.context.get_function(func_id);
@@ -288,7 +288,7 @@ impl<'ast> FunctionCompiler<'ast> {
             let mut all_convertible = true;
 
             for (param_type, arg_type) in param_types.iter().zip(arg_types.iter()) {
-                if param_type.type_id == arg_type.type_id {
+                if param_type.type_hash == arg_type.type_hash {
                     // Exact match - no conversion needed
                     conversions.push(None);
                 } else if let Some(conversion) = arg_type.can_convert_to(param_type, self.context) {

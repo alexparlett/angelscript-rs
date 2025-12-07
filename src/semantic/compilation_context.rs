@@ -2,7 +2,7 @@
 //!
 //! `CompilationContext` is the unified facade for type/function lookups during compilation.
 //! It holds an immutable `Arc<FfiRegistry>` (shared across all Units) and a mutable
-//! `ScriptRegistry` (per-compilation), routing lookups based on the FFI_BIT in TypeId/FunctionId.
+//! `ScriptRegistry` (per-compilation), routing lookups based on the FFI_BIT in TypeHash/TypeHash.
 //!
 //! # Architecture
 //!
@@ -10,8 +10,8 @@
 //! ┌─────────────────────────────────────────────────────────────┐
 //! │                   CompilationContext                         │
 //! │  ┌─────────────────────────────────────────────────────┐   │
-//! │  │  type_by_name: HashMap<String, TypeId>              │   │
-//! │  │  func_by_name: HashMap<String, Vec<FunctionId>>     │   │
+//! │  │  type_by_name: HashMap<String, TypeHash>              │   │
+//! │  │  func_by_name: HashMap<String, Vec<TypeHash>>     │   │
 //! │  │  (unified name lookup - FFI + Script)               │   │
 //! │  └─────────────────────────────────────────────────────┘   │
 //! │                                                              │
@@ -26,7 +26,7 @@
 //! │  └─────────────────────────────────────────────────────┘   │
 //! │                                                              │
 //! │  ┌─────────────────────────────────────────────────────┐   │
-//! │  │  template_cache: HashMap<(TypeId, Vec<TypeId>), TypeId>│ │
+//! │  │  template_cache: HashMap<(TypeHash, Vec<TypeHash>), TypeHash>│ │
 //! │  │  (template instantiation cache)                      │   │
 //! │  └─────────────────────────────────────────────────────┘   │
 //! └─────────────────────────────────────────────────────────────┘
@@ -69,8 +69,8 @@ use crate::semantic::template_instantiator::TemplateInstantiator;
 use crate::semantic::types::behaviors::TypeBehaviors;
 use crate::semantic::types::registry::{FunctionDef, GlobalVarDef, MixinDef, ScriptParam, ScriptRegistry};
 use crate::semantic::types::type_def::{
-    FieldDef, FunctionId, FunctionTraits, MethodSignature, OperatorBehavior, PropertyAccessors,
-    TypeDef, TypeId, Visibility,
+    FieldDef, FunctionTraits, MethodSignature, OperatorBehavior, PropertyAccessors,
+    TypeDef, Visibility,
 };
 use crate::semantic::types::DataType;
 use crate::types::{ResolvedFfiFunctionDef, TypeHash};
@@ -88,12 +88,20 @@ pub enum FunctionRef<'a, 'ast> {
 }
 
 impl<'a, 'ast> FunctionRef<'a, 'ast> {
-    /// Get the function's unique identifier.
-    pub fn id(&self) -> FunctionId {
+    /// Get the function's unique identifier (func_hash).
+    ///
+    /// This is the deterministic hash computed from the qualified name and parameter types.
+    pub fn func_hash(&self) -> TypeHash {
         match self {
-            FunctionRef::Script(f) => f.id,
-            FunctionRef::Ffi(f) => f.id,
+            FunctionRef::Script(f) => f.func_hash,
+            FunctionRef::Ffi(f) => f.func_hash,
         }
+    }
+
+    /// Alias for func_hash() for backwards compatibility.
+    #[deprecated(note = "Use func_hash() instead")]
+    pub fn id(&self) -> TypeHash {
+        self.func_hash()
     }
 
     /// Get the function name.
@@ -147,7 +155,7 @@ impl<'a, 'ast> FunctionRef<'a, 'ast> {
     }
 
     /// Get the owning type if this is a method.
-    pub fn owner_type(&self) -> Option<TypeId> {
+    pub fn owner_type(&self) -> Option<TypeHash> {
         match self {
             FunctionRef::Script(f) => f.object_type,
             FunctionRef::Ffi(f) => f.owner_type,
@@ -207,20 +215,6 @@ impl<'a, 'ast> FunctionRef<'a, 'ast> {
     }
 }
 
-/// Routes a lookup by TypeId to the appropriate registry (FFI or Script).
-///
-/// This macro reduces boilerplate for methods that have the same signature on both registries.
-/// It routes based on `type_id.is_ffi()`.
-macro_rules! route_type_lookup {
-    ($self:expr, $type_id:expr, $method:ident $(, $args:expr)*) => {
-        if $type_id.is_ffi() {
-            $self.ffi.$method($type_id $(, $args)*)
-        } else {
-            $self.script.$method($type_id $(, $args)*)
-        }
-    };
-}
-
 /// Unified compilation context providing access to both FFI and Script registries.
 ///
 /// This is the primary interface for type and function lookups during compilation.
@@ -233,11 +227,11 @@ pub struct CompilationContext<'ast> {
     /// Mutable script registry (per-compilation)
     script: ScriptRegistry<'ast>,
 
-    /// Unified type name → TypeId map (FFI + Script)
-    type_by_name: FxHashMap<String, TypeId>,
+    /// Unified type name → TypeHash map (FFI + Script)
+    type_by_name: FxHashMap<String, TypeHash>,
 
     /// Unified function name → FunctionIds map (FFI + Script)
-    func_by_name: FxHashMap<String, Vec<FunctionId>>,
+    func_by_name: FxHashMap<String, Vec<TypeHash>>,
 
     /// Template instantiator with cache
     template_instantiator: TemplateInstantiator,
@@ -291,44 +285,33 @@ impl<'ast> CompilationContext<'ast> {
     /// Look up a type by name.
     ///
     /// This uses the unified name map which includes both FFI and script types.
-    pub fn lookup_type(&self, name: &str) -> Option<TypeId> {
+    pub fn lookup_type(&self, name: &str) -> Option<TypeHash> {
         self.type_by_name.get(name).copied()
     }
 
-    /// Get a type definition by TypeId.
+    /// Get a type definition by TypeHash.
     ///
-    /// Routes to FFI or Script registry based on the FFI_BIT.
-    /// Panics if the TypeId is not found.
-    pub fn get_type(&self, type_id: TypeId) -> &TypeDef {
-        if type_id.is_ffi() {
-            self.ffi
-                .get_type(type_id)
-                .expect("FFI TypeId not found in FfiRegistry")
-        } else {
-            self.script.get_type(type_id)
-        }
+    /// Uses try-both dispatch: FFI first, then Script.
+    /// Panics if the TypeHash is not found in either registry.
+    pub fn get_type(&self, type_id: TypeHash) -> &TypeDef {
+        self.ffi
+            .get_type(type_id)
+            .or_else(|| self.script.get_type_by_hash(type_id))
+            .expect("TypeHash not found in FfiRegistry or ScriptRegistry")
     }
 
-    /// Try to get a type definition by TypeId.
+    /// Try to get a type definition by TypeHash.
     ///
-    /// Returns None if the TypeId is not found.
-    pub fn try_get_type(&self, type_id: TypeId) -> Option<&TypeDef> {
-        if type_id.is_ffi() {
-            self.ffi.get_type(type_id)
-        } else {
-            // ScriptRegistry::get_type panics, so we need to check first
-            if self.script.type_by_name().values().any(|&id| id == type_id) {
-                Some(self.script.get_type(type_id))
-            } else {
-                // Check if it's in the types map directly
-                // This is a workaround since ScriptRegistry doesn't have try_get_type
-                None
-            }
-        }
+    /// Uses try-both dispatch: FFI first, then Script.
+    /// Returns None if the TypeHash is not found in either registry.
+    pub fn try_get_type(&self, type_id: TypeHash) -> Option<&TypeDef> {
+        self.ffi
+            .get_type(type_id)
+            .or_else(|| self.script.get_type_by_hash(type_id))
     }
 
     /// Get access to the unified type name map.
-    pub fn type_by_name(&self) -> &FxHashMap<String, TypeId> {
+    pub fn type_by_name(&self) -> &FxHashMap<String, TypeHash> {
         &self.type_by_name
     }
 
@@ -347,23 +330,14 @@ impl<'ast> CompilationContext<'ast> {
             .or_else(|| self.script.get_type_by_hash(hash))
     }
 
-    /// Get the TypeId for a TypeHash.
-    ///
-    /// Tries FFI registry first, then Script registry.
-    pub fn get_type_id_by_hash(&self, hash: TypeHash) -> Option<TypeId> {
-        self.ffi
-            .get_type_id_by_hash(hash)
-            .or_else(|| self.script.get_type_id_by_hash(hash))
-    }
-
     // =========================================================================
     // Type Registration (delegates to ScriptRegistry)
     // =========================================================================
 
-    /// Register a new script type and return its TypeId.
+    /// Register a new script type and return its TypeHash.
     ///
     /// The type is added to both the ScriptRegistry and the unified name map.
-    pub fn register_type(&mut self, typedef: TypeDef, name: Option<&str>) -> TypeId {
+    pub fn register_type(&mut self, typedef: TypeDef, name: Option<&str>) -> TypeHash {
         let type_id = self.script.register_type(typedef, name);
 
         if let Some(name) = name {
@@ -376,7 +350,7 @@ impl<'ast> CompilationContext<'ast> {
     /// Register a type alias.
     ///
     /// Creates an alias name that points to an existing type.
-    pub fn register_type_alias(&mut self, alias_name: &str, target_type: TypeId) {
+    pub fn register_type_alias(&mut self, alias_name: &str, target_type: TypeHash) {
         self.script.register_type_alias(alias_name, target_type);
         self.type_by_name.insert(alias_name.to_string(), target_type);
     }
@@ -388,28 +362,26 @@ impl<'ast> CompilationContext<'ast> {
     /// Look up all functions with the given name (for overload resolution).
     ///
     /// Uses the unified name map.
-    pub fn lookup_functions(&self, name: &str) -> &[FunctionId] {
+    pub fn lookup_functions(&self, name: &str) -> &[TypeHash] {
         self.func_by_name
             .get(name)
             .map(|v| v.as_slice())
             .unwrap_or(&[])
     }
 
-    /// Get a function definition by FunctionId (unified interface).
+    /// Get a function definition by TypeHash (unified interface).
     ///
     /// Returns a `FunctionRef` that provides unified access to function metadata
     /// for both FFI and script functions.
-    /// Panics if the function is not found.
-    pub fn get_function(&self, func_id: FunctionId) -> FunctionRef<'_, 'ast> {
-        if func_id.is_ffi() {
-            FunctionRef::Ffi(
-                self.ffi
-                    .get_function(func_id)
-                    .expect("FFI function not found"),
-            )
-        } else {
-            FunctionRef::Script(self.script.get_function(func_id))
+    /// Uses try-both dispatch: FFI first, then Script.
+    /// Panics if the function is not found in either registry.
+    pub fn get_function(&self, func_id: TypeHash) -> FunctionRef<'_, 'ast> {
+        // Try FFI first
+        if let Some(ffi_func) = self.ffi.get_function(func_id) {
+            return FunctionRef::Ffi(ffi_func);
         }
+        // Then Script (panics if not found)
+        FunctionRef::Script(self.script.get_function(func_id))
     }
 
     /// Get the total count of registered functions (FFI + Script).
@@ -432,32 +404,24 @@ impl<'ast> CompilationContext<'ast> {
             .map(FunctionRef::Script)
     }
 
-    /// Get the FunctionId for a TypeHash.
+    /// Check if a function exists by its hash.
     ///
+    /// Returns the hash back if found (hash IS the identity now).
     /// Tries FFI registry first, then Script registry.
-    pub fn get_function_id_by_hash(&self, hash: TypeHash) -> Option<FunctionId> {
-        self.ffi
-            .get_function_id_by_hash(hash)
-            .or_else(|| self.script.get_function_id_by_hash(hash))
-    }
-
-    /// Generate the next script FunctionId.
-    ///
-    /// This allocates a new FunctionId for a script-defined function.
-    /// FFI functions get their IDs from FfiRegistry.
-    pub fn next_function_id(&self) -> FunctionId {
-        FunctionId::next()
+    pub fn function_exists(&self, hash: TypeHash) -> bool {
+        self.ffi.get_function_by_hash(hash).is_some()
+            || self.script.get_function_by_hash(hash).is_some()
     }
 
     // =========================================================================
     // Function Registration (delegates to ScriptRegistry)
     // =========================================================================
 
-    /// Register a script function and return its FunctionId.
+    /// Register a script function and return its TypeHash (func_hash).
     ///
     /// The function is added to both the ScriptRegistry and the unified name map.
-    pub fn register_function(&mut self, def: FunctionDef<'ast>) -> FunctionId {
-        let func_id = def.id;
+    pub fn register_function(&mut self, def: FunctionDef<'ast>) -> TypeHash {
+        let func_hash = def.func_hash;
         let qualified_name = def.qualified_name();
 
         self.script.register_function(def);
@@ -466,9 +430,9 @@ impl<'ast> CompilationContext<'ast> {
         self.func_by_name
             .entry(qualified_name)
             .or_default()
-            .push(func_id);
+            .push(func_hash);
 
-        func_id
+        func_hash
     }
 
     /// Update a function's signature.
@@ -477,7 +441,7 @@ impl<'ast> CompilationContext<'ast> {
         qualified_name: &str,
         params: Vec<ScriptParam<'ast>>,
         return_type: DataType,
-        object_type: Option<TypeId>,
+        object_type: Option<TypeHash>,
         traits: FunctionTraits,
     ) {
         self.script.update_function_signature(
@@ -489,13 +453,13 @@ impl<'ast> CompilationContext<'ast> {
         );
     }
 
-    /// Update a function's parameters directly by FunctionId.
-    pub fn update_function_params(&mut self, func_id: FunctionId, params: Vec<ScriptParam<'ast>>) {
+    /// Update a function's parameters directly by TypeHash.
+    pub fn update_function_params(&mut self, func_id: TypeHash, params: Vec<ScriptParam<'ast>>) {
         self.script.update_function_params(func_id, params);
     }
 
-    /// Update a function's return type directly by FunctionId.
-    pub fn update_function_return_type(&mut self, func_id: FunctionId, return_type: DataType) {
+    /// Update a function's return type directly by TypeHash.
+    pub fn update_function_return_type(&mut self, func_id: TypeHash, return_type: DataType) {
         self.script.update_function_return_type(func_id, return_type);
     }
 
@@ -505,35 +469,55 @@ impl<'ast> CompilationContext<'ast> {
 
     /// Get the behaviors for a type, if any are registered.
     ///
-    /// Routes to FFI or Script registry based on the FFI_BIT.
-    pub fn get_behaviors(&self, type_id: TypeId) -> Option<&TypeBehaviors> {
-        route_type_lookup!(self, type_id, get_behaviors)
+    /// Uses try-both dispatch: FFI first, then Script.
+    pub fn get_behaviors(&self, type_id: TypeHash) -> Option<&TypeBehaviors> {
+        self.ffi.get_behaviors(type_id)
+            .or_else(|| self.script.get_behaviors(type_id))
     }
 
     /// Find all constructors for a given type (value types).
-    pub fn find_constructors(&self, type_id: TypeId) -> Vec<FunctionId> {
-        route_type_lookup!(self, type_id, find_constructors)
+    pub fn find_constructors(&self, type_id: TypeHash) -> Vec<TypeHash> {
+        // Try FFI first, if empty try Script
+        let ffi_result = self.ffi.find_constructors(type_id);
+        if !ffi_result.is_empty() {
+            ffi_result
+        } else {
+            self.script.find_constructors(type_id)
+        }
     }
 
     /// Find all factories for a given type (reference types).
-    pub fn find_factories(&self, type_id: TypeId) -> Vec<FunctionId> {
-        route_type_lookup!(self, type_id, find_factories)
+    pub fn find_factories(&self, type_id: TypeHash) -> Vec<TypeHash> {
+        // Try FFI first, if empty try Script
+        let ffi_result = self.ffi.find_factories(type_id);
+        if !ffi_result.is_empty() {
+            ffi_result
+        } else {
+            self.script.find_factories(type_id)
+        }
     }
 
     /// Find a constructor for a type with specific argument types.
-    pub fn find_constructor(&self, type_id: TypeId, arg_types: &[DataType]) -> Option<FunctionId> {
-        route_type_lookup!(self, type_id, find_constructor, arg_types)
+    pub fn find_constructor(&self, type_id: TypeHash, arg_types: &[DataType]) -> Option<TypeHash> {
+        self.ffi.find_constructor(type_id, arg_types)
+            .or_else(|| self.script.find_constructor(type_id, arg_types))
     }
 
     /// Find the copy constructor for a type.
     /// Copy constructor has signature: ClassName(const ClassName&in) or ClassName(const ClassName&inout)
-    pub fn find_copy_constructor(&self, type_id: TypeId) -> Option<FunctionId> {
-        route_type_lookup!(self, type_id, find_copy_constructor)
+    pub fn find_copy_constructor(&self, type_id: TypeHash) -> Option<TypeHash> {
+        self.ffi.find_copy_constructor(type_id)
+            .or_else(|| self.script.find_copy_constructor(type_id))
     }
 
     /// Check if a constructor is marked as explicit.
-    pub fn is_constructor_explicit(&self, func_id: FunctionId) -> bool {
-        route_type_lookup!(self, func_id, is_constructor_explicit)
+    pub fn is_constructor_explicit(&self, func_id: TypeHash) -> bool {
+        // Try FFI first, then Script
+        if self.ffi.get_function(func_id).is_some() {
+            self.ffi.is_constructor_explicit(func_id)
+        } else {
+            self.script.is_constructor_explicit(func_id)
+        }
     }
 
     // =========================================================================
@@ -541,25 +525,39 @@ impl<'ast> CompilationContext<'ast> {
     // =========================================================================
 
     /// Get all methods for a given type.
-    pub fn get_methods(&self, type_id: TypeId) -> Vec<FunctionId> {
-        route_type_lookup!(self, type_id, get_methods)
+    pub fn get_methods(&self, type_id: TypeHash) -> Vec<TypeHash> {
+        // Try FFI first, if empty try Script
+        let ffi_result = self.ffi.get_methods(type_id);
+        if !ffi_result.is_empty() {
+            ffi_result
+        } else {
+            self.script.get_methods(type_id)
+        }
     }
 
     /// Find a method by name on a type (first match, with inheritance).
-    pub fn find_method(&self, type_id: TypeId, name: &str) -> Option<FunctionId> {
-        route_type_lookup!(self, type_id, find_method, name)
+    pub fn find_method(&self, type_id: TypeHash, name: &str) -> Option<TypeHash> {
+        self.ffi.find_method(type_id, name)
+            .or_else(|| self.script.find_method(type_id, name))
     }
 
     /// Find all methods with the given name on a type (for overload resolution).
-    pub fn find_methods_by_name(&self, type_id: TypeId, name: &str) -> Vec<FunctionId> {
-        route_type_lookup!(self, type_id, find_methods_by_name, name)
+    pub fn find_methods_by_name(&self, type_id: TypeHash, name: &str) -> Vec<TypeHash> {
+        // Try FFI first, if empty try Script
+        let ffi_result = self.ffi.find_methods_by_name(type_id, name);
+        if !ffi_result.is_empty() {
+            ffi_result
+        } else {
+            self.script.find_methods_by_name(type_id, name)
+        }
     }
 
     /// Get all methods for a class, including inherited methods.
-    pub fn get_all_methods(&self, type_id: TypeId) -> Vec<FunctionId> {
-        if type_id.is_ffi() {
-            // FfiRegistry doesn't have get_all_methods, use get_methods
-            self.ffi.get_methods(type_id)
+    pub fn get_all_methods(&self, type_id: TypeHash) -> Vec<TypeHash> {
+        // Try FFI first, if empty try Script
+        let ffi_result = self.ffi.get_methods(type_id);
+        if !ffi_result.is_empty() {
+            ffi_result
         } else {
             self.script.get_all_methods(type_id)
         }
@@ -572,19 +570,26 @@ impl<'ast> CompilationContext<'ast> {
     /// Find an operator method on a type.
     pub fn find_operator_method(
         &self,
-        type_id: TypeId,
+        type_id: TypeHash,
         operator: OperatorBehavior,
-    ) -> Option<FunctionId> {
-        route_type_lookup!(self, type_id, find_operator_method, operator)
+    ) -> Option<TypeHash> {
+        self.ffi.find_operator_method(type_id, operator)
+            .or_else(|| self.script.find_operator_method(type_id, operator))
     }
 
     /// Find all overloads of an operator method for a type.
     pub fn find_operator_methods(
         &self,
-        type_id: TypeId,
+        type_id: TypeHash,
         operator: OperatorBehavior,
-    ) -> &[FunctionId] {
-        route_type_lookup!(self, type_id, find_operator_methods, operator)
+    ) -> Vec<TypeHash> {
+        // Try FFI first, if empty try Script
+        let ffi_result = self.ffi.find_operator_methods(type_id, operator);
+        if !ffi_result.is_empty() {
+            ffi_result.to_vec()
+        } else {
+            self.script.find_operator_methods(type_id, operator).to_vec()
+        }
     }
 
     /// Find the best operator method based on desired mutability.
@@ -593,10 +598,10 @@ impl<'ast> CompilationContext<'ast> {
     /// on script types (like template instances) may be FFI functions.
     pub fn find_operator_method_with_mutability(
         &self,
-        type_id: TypeId,
+        type_id: TypeHash,
         operator: OperatorBehavior,
         prefer_mutable: bool,
-    ) -> Option<FunctionId> {
+    ) -> Option<TypeHash> {
         let overloads = self.find_operator_methods(type_id, operator);
         if overloads.is_empty() {
             return None;
@@ -613,7 +618,7 @@ impl<'ast> CompilationContext<'ast> {
         let mut mutable_method = None;
         let mut const_method = None;
 
-        for &func_id in overloads {
+        for func_id in overloads {
             // Use unified lookup since operator methods could be FFI or Script
             let func = self.get_function(func_id);
             if func.return_type().is_const {
@@ -635,13 +640,20 @@ impl<'ast> CompilationContext<'ast> {
     // =========================================================================
 
     /// Find a property by name on a type.
-    pub fn find_property(&self, type_id: TypeId, property_name: &str) -> Option<PropertyAccessors> {
-        route_type_lookup!(self, type_id, find_property, property_name)
+    pub fn find_property(&self, type_id: TypeHash, property_name: &str) -> Option<PropertyAccessors> {
+        self.ffi.find_property(type_id, property_name)
+            .or_else(|| self.script.find_property(type_id, property_name))
     }
 
     /// Get all properties for a type (including inherited).
-    pub fn get_all_properties(&self, type_id: TypeId) -> FxHashMap<String, PropertyAccessors> {
-        route_type_lookup!(self, type_id, get_all_properties)
+    pub fn get_all_properties(&self, type_id: TypeHash) -> FxHashMap<String, PropertyAccessors> {
+        // Try FFI first
+        let ffi_result = self.ffi.get_all_properties(type_id);
+        if !ffi_result.is_empty() {
+            ffi_result
+        } else {
+            self.script.get_all_properties(type_id)
+        }
     }
 
     // =========================================================================
@@ -649,12 +661,13 @@ impl<'ast> CompilationContext<'ast> {
     // =========================================================================
 
     /// Get the base class of a type (if any).
-    pub fn get_base_class(&self, type_id: TypeId) -> Option<TypeId> {
-        route_type_lookup!(self, type_id, get_base_class)
+    pub fn get_base_class(&self, type_id: TypeHash) -> Option<TypeHash> {
+        self.ffi.get_base_class(type_id)
+            .or_else(|| self.script.get_base_class(type_id))
     }
 
     /// Check if `derived_class` is a subclass of `base_class`.
-    pub fn is_subclass_of(&self, derived_class: TypeId, base_class: TypeId) -> bool {
+    pub fn is_subclass_of(&self, derived_class: TypeHash, base_class: TypeHash) -> bool {
         if derived_class == base_class {
             return true;
         }
@@ -672,15 +685,13 @@ impl<'ast> CompilationContext<'ast> {
     }
 
     /// Check if a class is marked as 'final'.
-    pub fn is_class_final(&self, type_id: TypeId) -> bool {
-        if type_id.is_ffi() {
-            match self.ffi.get_type(type_id) {
-                Some(TypeDef::Class { is_final, .. }) => *is_final,
-                _ => false,
-            }
-        } else {
-            self.script.is_class_final(type_id)
+    pub fn is_class_final(&self, type_id: TypeHash) -> bool {
+        // Try FFI first
+        if let Some(TypeDef::Class { is_final, .. }) = self.ffi.get_type(type_id) {
+            return *is_final;
         }
+        // Then Script
+        self.script.is_class_final(type_id)
     }
 
     // =========================================================================
@@ -688,26 +699,33 @@ impl<'ast> CompilationContext<'ast> {
     // =========================================================================
 
     /// Get all method signatures for an interface type.
-    pub fn get_interface_methods(&self, type_id: TypeId) -> Option<&[MethodSignature]> {
-        route_type_lookup!(self, type_id, get_interface_methods)
+    pub fn get_interface_methods(&self, type_id: TypeHash) -> Option<&[MethodSignature]> {
+        self.ffi.get_interface_methods(type_id)
+            .or_else(|| self.script.get_interface_methods(type_id))
     }
 
     /// Get all interfaces implemented by a class.
-    pub fn get_all_interfaces(&self, type_id: TypeId) -> Vec<TypeId> {
-        route_type_lookup!(self, type_id, get_all_interfaces)
+    pub fn get_all_interfaces(&self, type_id: TypeHash) -> Vec<TypeHash> {
+        // Try FFI first
+        let ffi_result = self.ffi.get_all_interfaces(type_id);
+        if !ffi_result.is_empty() {
+            ffi_result
+        } else {
+            self.script.get_all_interfaces(type_id)
+        }
     }
 
     /// Check if a class has a method matching an interface method signature.
     pub fn has_method_matching_interface(
         &self,
-        class_type_id: TypeId,
+        class_type_id: TypeHash,
         interface_method: &MethodSignature,
     ) -> bool {
-        if class_type_id.is_ffi() {
+        // Try FFI first, then Script
+        if self.ffi.get_type(class_type_id).is_some() {
             self.ffi.has_method_matching_interface(class_type_id, interface_method)
         } else {
-            self.script
-                .has_method_matching_interface(class_type_id, interface_method)
+            self.script.has_method_matching_interface(class_type_id, interface_method)
         }
     }
 
@@ -716,8 +734,9 @@ impl<'ast> CompilationContext<'ast> {
     // =========================================================================
 
     /// Look up an enum value by enum type ID and value name.
-    pub fn lookup_enum_value(&self, type_id: TypeId, value_name: &str) -> Option<i64> {
-        route_type_lookup!(self, type_id, lookup_enum_value, value_name)
+    pub fn lookup_enum_value(&self, type_id: TypeHash, value_name: &str) -> Option<i64> {
+        self.ffi.lookup_enum_value(type_id, value_name)
+            .or_else(|| self.script.lookup_enum_value(type_id, value_name))
     }
 
     // =========================================================================
@@ -725,17 +744,19 @@ impl<'ast> CompilationContext<'ast> {
     // =========================================================================
 
     /// Get the signature of a funcdef type.
-    pub fn get_funcdef_signature(&self, type_id: TypeId) -> Option<(&[DataType], &DataType)> {
-        route_type_lookup!(self, type_id, get_funcdef_signature)
+    pub fn get_funcdef_signature(&self, type_id: TypeHash) -> Option<(&[DataType], &DataType)> {
+        self.ffi.get_funcdef_signature(type_id)
+            .or_else(|| self.script.get_funcdef_signature(type_id))
     }
 
     /// Check if a function is compatible with a funcdef type.
     pub fn is_function_compatible_with_funcdef(
         &self,
-        func_id: FunctionId,
-        funcdef_type_id: TypeId,
+        func_id: TypeHash,
+        funcdef_type_id: TypeHash,
     ) -> bool {
-        if func_id.is_ffi() {
+        // Try FFI first, then Script
+        if self.ffi.get_function(func_id).is_some() {
             self.ffi.is_function_compatible_with_funcdef(func_id, funcdef_type_id)
         } else {
             self.script
@@ -747,8 +768,8 @@ impl<'ast> CompilationContext<'ast> {
     pub fn find_compatible_function(
         &self,
         name: &str,
-        funcdef_type_id: TypeId,
-    ) -> Option<FunctionId> {
+        funcdef_type_id: TypeHash,
+    ) -> Option<TypeHash> {
         // Try script functions first
         if let Some(func_id) = self.script.find_compatible_function(name, funcdef_type_id) {
             return Some(func_id);
@@ -762,15 +783,13 @@ impl<'ast> CompilationContext<'ast> {
     // =========================================================================
 
     /// Get the fields of a class (does not include inherited fields).
-    pub fn get_class_fields(&self, type_id: TypeId) -> &[FieldDef] {
-        if type_id.is_ffi() {
-            match self.ffi.get_type(type_id) {
-                Some(TypeDef::Class { fields, .. }) => fields,
-                _ => &[],
-            }
-        } else {
-            self.script.get_class_fields(type_id)
+    pub fn get_class_fields(&self, type_id: TypeHash) -> &[FieldDef] {
+        // Try FFI first
+        if let Some(TypeDef::Class { fields, .. }) = self.ffi.get_type(type_id) {
+            return fields;
         }
+        // Then Script
+        self.script.get_class_fields(type_id)
     }
 
     // =========================================================================
@@ -821,17 +840,17 @@ impl<'ast> CompilationContext<'ast> {
     /// Template instances are cached to avoid duplicate instantiations.
     ///
     /// # Arguments
-    /// - `template_id`: The TypeId of the template type (must have template_params)
+    /// - `template_id`: The TypeHash of the template type (must have template_params)
     /// - `args`: The concrete type arguments to substitute for template parameters
     ///
     /// # Returns
-    /// - `Ok(TypeId)` - The TypeId of the instantiated type
+    /// - `Ok(TypeHash)` - The TypeHash of the instantiated type
     /// - `Err(SemanticError)` - If the template is invalid or validation fails
     pub fn instantiate_template(
         &mut self,
-        template_id: TypeId,
+        template_id: TypeHash,
         args: Vec<DataType>,
-    ) -> Result<TypeId, SemanticError> {
+    ) -> Result<TypeHash, SemanticError> {
         self.template_instantiator.instantiate(
             template_id,
             args,
@@ -844,8 +863,9 @@ impl<'ast> CompilationContext<'ast> {
     /// Check if a type is a template (has template parameters).
     ///
     /// Templates are always FFI types - script types can only be template *instances*.
-    pub fn is_template(&self, type_id: TypeId) -> bool {
-        type_id.is_ffi() && self.ffi.is_template(type_id)
+    pub fn is_template(&self, type_id: TypeHash) -> bool {
+        // Only FFI types can be templates
+        self.ffi.is_template(type_id)
     }
 }
 
@@ -861,7 +881,7 @@ impl<'ast> Default for CompilationContext<'ast> {
 mod tests {
     use super::*;
     use crate::ffi::FfiRegistryBuilder;
-    use crate::semantic::types::type_def::{BOOL_TYPE, INT32_TYPE, VOID_TYPE};
+    use crate::types::primitive_hashes;
     use crate::types::TypeKind;
 
     fn create_test_context() -> CompilationContext<'static> {
@@ -885,9 +905,9 @@ mod tests {
         assert!(ctx.lookup_type("double").is_some());
 
         // Check TypeIds match constants
-        assert_eq!(ctx.lookup_type("void"), Some(VOID_TYPE));
-        assert_eq!(ctx.lookup_type("int"), Some(INT32_TYPE));
-        assert_eq!(ctx.lookup_type("bool"), Some(BOOL_TYPE));
+        assert_eq!(ctx.lookup_type("void"), Some(primitive_hashes::VOID));
+        assert_eq!(ctx.lookup_type("int"), Some(primitive_hashes::INT32));
+        assert_eq!(ctx.lookup_type("bool"), Some(primitive_hashes::BOOL));
     }
 
     #[test]
@@ -917,9 +937,6 @@ mod tests {
         // Should be findable via unified lookup
         assert_eq!(ctx.lookup_type("Player"), Some(type_id));
 
-        // Should be a script type (no FFI bit)
-        assert!(type_id.is_script());
-
         // Should be retrievable
         assert!(ctx.get_type(type_id).is_class());
     }
@@ -929,21 +946,18 @@ mod tests {
         let ctx = create_test_context();
 
         // FFI type (primitive)
-        let void_type = ctx.get_type(VOID_TYPE);
+        let void_type = ctx.get_type(primitive_hashes::VOID);
         assert!(void_type.is_primitive());
-
-        // Verify routing works for FFI types
-        assert!(VOID_TYPE.is_ffi());
     }
 
     #[test]
     fn type_alias_works() {
         let mut ctx = create_test_context();
 
-        ctx.register_type_alias("integer", INT32_TYPE);
+        ctx.register_type_alias("integer", primitive_hashes::INT32);
 
-        assert_eq!(ctx.lookup_type("integer"), Some(INT32_TYPE));
-        assert_eq!(ctx.lookup_type("int"), Some(INT32_TYPE));
+        assert_eq!(ctx.lookup_type("integer"), Some(primitive_hashes::INT32));
+        assert_eq!(ctx.lookup_type("int"), Some(primitive_hashes::INT32));
     }
 
     #[test]
@@ -951,14 +965,14 @@ mod tests {
         let mut builder = FfiRegistryBuilder::new();
 
         // Register a template type
-        let t_param = TypeId::next_ffi();
+        let t_param = TypeHash::from_name("test_type");
         let owner_hash = crate::types::TypeHash::from_name("array");
         builder.register_type_with_id(
             t_param,
             TypeDef::TemplateParam {
                 name: "T".to_string(),
                 index: 0,
-                owner: TypeId::next_ffi(), // Will be updated
+                owner: TypeHash::from_name("test_type"), // Will be updated
                 type_hash: crate::types::TypeHash::from_template_instance(owner_hash, &[crate::types::TypeHash(0)]),
             },
             None,
@@ -989,15 +1003,15 @@ mod tests {
 
         // Instantiate array<int>
         let instance_id = ctx
-            .instantiate_template(template_id, vec![DataType::simple(INT32_TYPE)])
+            .instantiate_template(template_id, vec![DataType::simple(primitive_hashes::INT32)])
             .unwrap();
 
-        // Should be a script type
-        assert!(instance_id.is_script());
+        // Instance should be created successfully
+        assert!(!instance_id.is_empty());
 
         // Should be cached
         let instance_id2 = ctx
-            .instantiate_template(template_id, vec![DataType::simple(INT32_TYPE)])
+            .instantiate_template(template_id, vec![DataType::simple(primitive_hashes::INT32)])
             .unwrap();
         assert_eq!(instance_id, instance_id2);
 
@@ -1009,14 +1023,14 @@ mod tests {
     fn instantiate_template_wrong_arg_count() {
         let mut builder = FfiRegistryBuilder::new();
 
-        let t_param = TypeId::next_ffi();
+        let t_param = TypeHash::from_name("test_type");
         let owner_hash = crate::types::TypeHash::from_name("array");
         builder.register_type_with_id(
             t_param,
             TypeDef::TemplateParam {
                 name: "T".to_string(),
                 index: 0,
-                owner: TypeId::next_ffi(),
+                owner: TypeHash::from_name("test_type"),
                 type_hash: crate::types::TypeHash::from_template_instance(owner_hash, &[crate::types::TypeHash(0)]),
             },
             None,
@@ -1058,8 +1072,8 @@ mod tests {
     fn instantiate_non_template_fails() {
         let mut ctx = create_test_context();
 
-        // INT32_TYPE is a primitive, not a template
-        let result = ctx.instantiate_template(INT32_TYPE, vec![]);
+        // primitive_hashes::INT32 is a primitive, not a template
+        let result = ctx.instantiate_template(primitive_hashes::INT32, vec![]);
         assert!(result.is_err());
     }
 

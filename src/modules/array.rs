@@ -8,7 +8,7 @@ use std::fmt;
 use std::sync::atomic::{AtomicU32, Ordering as AtomicOrdering};
 
 use crate::ffi::VmSlot;
-use crate::semantic::TypeId;
+use crate::types::TypeHash;
 
 /// Type-erased array for AngelScript `array<T>` template.
 ///
@@ -18,7 +18,7 @@ pub struct ScriptArray {
     /// Type-erased element storage
     elements: Vec<VmSlot>,
     /// Element type for runtime checking
-    element_type_id: TypeId,
+    element_type_id: TypeHash,
     /// Reference count (starts at 1)
     ref_count: AtomicU32,
 }
@@ -29,7 +29,7 @@ impl ScriptArray {
     // =========================================================================
 
     /// Create an empty array for given element type.
-    pub fn new(element_type_id: TypeId) -> Self {
+    pub fn new(element_type_id: TypeHash) -> Self {
         Self {
             elements: Vec::new(),
             element_type_id,
@@ -38,7 +38,7 @@ impl ScriptArray {
     }
 
     /// Create array with initial capacity.
-    pub fn with_capacity(element_type_id: TypeId, capacity: usize) -> Self {
+    pub fn with_capacity(element_type_id: TypeHash, capacity: usize) -> Self {
         Self {
             elements: Vec::with_capacity(capacity),
             element_type_id,
@@ -47,7 +47,7 @@ impl ScriptArray {
     }
 
     /// Create array with given length, filled with default values.
-    pub fn with_length(element_type_id: TypeId, length: usize) -> Self {
+    pub fn with_length(element_type_id: TypeHash, length: usize) -> Self {
         let mut elements = Vec::with_capacity(length);
         for _ in 0..length {
             elements.push(Self::default_for_type(element_type_id));
@@ -61,7 +61,7 @@ impl ScriptArray {
 
     /// Create array filled with a specific value.
     /// Note: The value must be cloneable (not Native variant).
-    pub fn filled(element_type_id: TypeId, length: usize, value: VmSlot) -> Self {
+    pub fn filled(element_type_id: TypeHash, length: usize, value: VmSlot) -> Self {
         let mut elements = Vec::with_capacity(length);
         for _ in 0..length {
             if let Some(cloned) = value.clone_if_possible() {
@@ -76,7 +76,7 @@ impl ScriptArray {
     }
 
     /// Create array from a vector of slots.
-    pub fn from_vec(element_type_id: TypeId, elements: Vec<VmSlot>) -> Self {
+    pub fn from_vec(element_type_id: TypeHash, elements: Vec<VmSlot>) -> Self {
         Self {
             elements,
             element_type_id,
@@ -86,7 +86,7 @@ impl ScriptArray {
 
     /// Get the element type ID.
     #[inline]
-    pub fn element_type_id(&self) -> TypeId {
+    pub fn element_type_id(&self) -> TypeHash {
         self.element_type_id
     }
 
@@ -541,14 +541,29 @@ impl ScriptArray {
     }
 
     /// Get default value for a type.
-    pub fn default_for_type(type_id: TypeId) -> VmSlot {
-        match type_id.0 {
-            0 => VmSlot::Void,                    // void
-            1 => VmSlot::Bool(false),             // bool
-            2..=9 => VmSlot::Int(0),              // int types
-            10..=11 => VmSlot::Float(0.0),        // float/double
-            16 => VmSlot::String(String::new()),  // string
-            _ => VmSlot::NullHandle,              // reference types default to null
+    pub fn default_for_type(type_id: TypeHash) -> VmSlot {
+        use crate::types::primitive_hashes;
+
+        if type_id == primitive_hashes::VOID {
+            VmSlot::Void
+        } else if type_id == primitive_hashes::BOOL {
+            VmSlot::Bool(false)
+        } else if type_id == primitive_hashes::INT8
+            || type_id == primitive_hashes::INT16
+            || type_id == primitive_hashes::INT32
+            || type_id == primitive_hashes::INT64
+            || type_id == primitive_hashes::UINT8
+            || type_id == primitive_hashes::UINT16
+            || type_id == primitive_hashes::UINT32
+            || type_id == primitive_hashes::UINT64
+        {
+            VmSlot::Int(0)
+        } else if type_id == primitive_hashes::FLOAT || type_id == primitive_hashes::DOUBLE {
+            VmSlot::Float(0.0)
+        } else if type_id == primitive_hashes::STRING {
+            VmSlot::String(String::new())
+        } else {
+            VmSlot::NullHandle // reference types default to null
         }
     }
 
@@ -634,9 +649,9 @@ pub fn array_module<'app>() -> Result<Module<'app>, FfiModuleError> {
             Ok(())
         })?
         // List factory for initialization lists: array<int> a = {1, 2, 3}
-        // The pattern uses a placeholder TypeId(0) since the actual element type
+        // The pattern uses a placeholder TypeHash(0) since the actual element type
         // comes from template instantiation
-        .list_factory(ListPattern::repeat(TypeId(0)), |ctx: &mut CallContext| {
+        .list_factory(ListPattern::repeat(TypeHash(0)), |ctx: &mut CallContext| {
             // This is a placeholder implementation
             // The VM will need to provide list buffer access
             let _ = ctx;
@@ -838,12 +853,7 @@ pub fn array_module<'app>() -> Result<Module<'app>, FfiModuleError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    // Helper to create test TypeId constants
-    const INT_TYPE: TypeId = TypeId(4);  // int32
-    const STRING_TYPE: TypeId = TypeId(16);
-    const FLOAT_TYPE: TypeId = TypeId(10);
-    const BOOL_TYPE: TypeId = TypeId(1);
+    use crate::types::primitive_hashes;
 
     // =========================================================================
     // CONSTRUCTOR TESTS
@@ -851,23 +861,23 @@ mod tests {
 
     #[test]
     fn test_new_creates_empty_array() {
-        let arr = ScriptArray::new(INT_TYPE);
+        let arr = ScriptArray::new(primitive_hashes::INT32);
         assert!(arr.is_empty());
         assert_eq!(arr.len(), 0);
-        assert_eq!(arr.element_type_id(), INT_TYPE);
+        assert_eq!(arr.element_type_id(), primitive_hashes::INT32);
         assert_eq!(arr.ref_count(), 1);
     }
 
     #[test]
     fn test_with_capacity() {
-        let arr = ScriptArray::with_capacity(INT_TYPE, 100);
+        let arr = ScriptArray::with_capacity(primitive_hashes::INT32, 100);
         assert!(arr.is_empty());
         assert!(arr.capacity() >= 100);
     }
 
     #[test]
     fn test_with_length() {
-        let arr = ScriptArray::with_length(INT_TYPE, 5);
+        let arr = ScriptArray::with_length(primitive_hashes::INT32, 5);
         assert_eq!(arr.len(), 5);
         // All elements should be default (0 for int)
         for i in 0..5 {
@@ -877,7 +887,7 @@ mod tests {
 
     #[test]
     fn test_filled() {
-        let arr = ScriptArray::filled(INT_TYPE, 3, VmSlot::Int(42));
+        let arr = ScriptArray::filled(primitive_hashes::INT32, 3, VmSlot::Int(42));
         assert_eq!(arr.len(), 3);
         for i in 0..3 {
             assert!(matches!(arr.get(i), Some(VmSlot::Int(42))));
@@ -887,7 +897,7 @@ mod tests {
     #[test]
     fn test_from_vec() {
         let vec = vec![VmSlot::Int(1), VmSlot::Int(2), VmSlot::Int(3)];
-        let arr = ScriptArray::from_vec(INT_TYPE, vec);
+        let arr = ScriptArray::from_vec(primitive_hashes::INT32, vec);
         assert_eq!(arr.len(), 3);
         assert!(matches!(arr.get(0), Some(VmSlot::Int(1))));
         assert!(matches!(arr.get(2), Some(VmSlot::Int(3))));
@@ -899,13 +909,13 @@ mod tests {
 
     #[test]
     fn test_ref_count_initial() {
-        let arr = ScriptArray::new(INT_TYPE);
+        let arr = ScriptArray::new(primitive_hashes::INT32);
         assert_eq!(arr.ref_count(), 1);
     }
 
     #[test]
     fn test_add_ref() {
-        let arr = ScriptArray::new(INT_TYPE);
+        let arr = ScriptArray::new(primitive_hashes::INT32);
         arr.add_ref();
         assert_eq!(arr.ref_count(), 2);
         arr.add_ref();
@@ -914,7 +924,7 @@ mod tests {
 
     #[test]
     fn test_release() {
-        let arr = ScriptArray::new(INT_TYPE);
+        let arr = ScriptArray::new(primitive_hashes::INT32);
         arr.add_ref(); // ref_count = 2
         assert!(!arr.release()); // ref_count = 1, not zero
         assert_eq!(arr.ref_count(), 1);
@@ -927,7 +937,7 @@ mod tests {
         use std::thread;
 
         // Wrap in Arc for sharing across threads
-        let arr = Arc::new(ScriptArray::new(INT_TYPE));
+        let arr = Arc::new(ScriptArray::new(primitive_hashes::INT32));
         let mut handles = vec![];
 
         // Spawn threads that add refs
@@ -954,7 +964,7 @@ mod tests {
 
     #[test]
     fn test_len_and_is_empty() {
-        let mut arr = ScriptArray::new(INT_TYPE);
+        let mut arr = ScriptArray::new(primitive_hashes::INT32);
         assert!(arr.is_empty());
         assert_eq!(arr.len(), 0);
 
@@ -965,14 +975,14 @@ mod tests {
 
     #[test]
     fn test_reserve() {
-        let mut arr = ScriptArray::new(INT_TYPE);
+        let mut arr = ScriptArray::new(primitive_hashes::INT32);
         arr.reserve(100);
         assert!(arr.capacity() >= 100);
     }
 
     #[test]
     fn test_shrink_to_fit() {
-        let mut arr = ScriptArray::new(INT_TYPE);
+        let mut arr = ScriptArray::new(primitive_hashes::INT32);
         arr.reserve(1000);
         arr.push(VmSlot::Int(1));
         arr.shrink_to_fit();
@@ -982,7 +992,7 @@ mod tests {
 
     #[test]
     fn test_clear() {
-        let mut arr = ScriptArray::new(INT_TYPE);
+        let mut arr = ScriptArray::new(primitive_hashes::INT32);
         arr.push(VmSlot::Int(1));
         arr.push(VmSlot::Int(2));
         arr.clear();
@@ -991,7 +1001,7 @@ mod tests {
 
     #[test]
     fn test_resize_grow() {
-        let mut arr = ScriptArray::new(INT_TYPE);
+        let mut arr = ScriptArray::new(primitive_hashes::INT32);
         arr.push(VmSlot::Int(1));
         arr.resize(5);
         assert_eq!(arr.len(), 5);
@@ -1001,7 +1011,7 @@ mod tests {
 
     #[test]
     fn test_resize_shrink() {
-        let mut arr = ScriptArray::from_vec(INT_TYPE, vec![
+        let mut arr = ScriptArray::from_vec(primitive_hashes::INT32, vec![
             VmSlot::Int(1), VmSlot::Int(2), VmSlot::Int(3), VmSlot::Int(4), VmSlot::Int(5)
         ]);
         arr.resize(2);
@@ -1012,7 +1022,7 @@ mod tests {
 
     #[test]
     fn test_resize_with() {
-        let mut arr = ScriptArray::new(INT_TYPE);
+        let mut arr = ScriptArray::new(primitive_hashes::INT32);
         arr.resize_with(3, VmSlot::Int(99));
         assert_eq!(arr.len(), 3);
         for i in 0..3 {
@@ -1026,7 +1036,7 @@ mod tests {
 
     #[test]
     fn test_get_and_get_mut() {
-        let mut arr = ScriptArray::from_vec(INT_TYPE, vec![VmSlot::Int(10), VmSlot::Int(20)]);
+        let mut arr = ScriptArray::from_vec(primitive_hashes::INT32, vec![VmSlot::Int(10), VmSlot::Int(20)]);
 
         assert!(matches!(arr.get(0), Some(VmSlot::Int(10))));
         assert!(matches!(arr.get(1), Some(VmSlot::Int(20))));
@@ -1040,7 +1050,7 @@ mod tests {
 
     #[test]
     fn test_first_and_last() {
-        let mut arr = ScriptArray::from_vec(INT_TYPE, vec![
+        let mut arr = ScriptArray::from_vec(primitive_hashes::INT32, vec![
             VmSlot::Int(1), VmSlot::Int(2), VmSlot::Int(3)
         ]);
 
@@ -1059,14 +1069,14 @@ mod tests {
 
     #[test]
     fn test_first_last_empty() {
-        let arr = ScriptArray::new(INT_TYPE);
+        let arr = ScriptArray::new(primitive_hashes::INT32);
         assert!(arr.first().is_none());
         assert!(arr.last().is_none());
     }
 
     #[test]
     fn test_as_slice() {
-        let arr = ScriptArray::from_vec(INT_TYPE, vec![VmSlot::Int(1), VmSlot::Int(2)]);
+        let arr = ScriptArray::from_vec(primitive_hashes::INT32, vec![VmSlot::Int(1), VmSlot::Int(2)]);
         let slice = arr.as_slice();
         assert_eq!(slice.len(), 2);
     }
@@ -1077,7 +1087,7 @@ mod tests {
 
     #[test]
     fn test_push() {
-        let mut arr = ScriptArray::new(INT_TYPE);
+        let mut arr = ScriptArray::new(primitive_hashes::INT32);
         arr.push(VmSlot::Int(1));
         arr.push(VmSlot::Int(2));
         arr.push(VmSlot::Int(3));
@@ -1087,7 +1097,7 @@ mod tests {
 
     #[test]
     fn test_insert_middle() {
-        let mut arr = ScriptArray::from_vec(INT_TYPE, vec![VmSlot::Int(1), VmSlot::Int(3)]);
+        let mut arr = ScriptArray::from_vec(primitive_hashes::INT32, vec![VmSlot::Int(1), VmSlot::Int(3)]);
         arr.insert(1, VmSlot::Int(2));
         assert_eq!(arr.len(), 3);
         assert!(matches!(arr.get(0), Some(VmSlot::Int(1))));
@@ -1097,14 +1107,14 @@ mod tests {
 
     #[test]
     fn test_insert_start() {
-        let mut arr = ScriptArray::from_vec(INT_TYPE, vec![VmSlot::Int(2)]);
+        let mut arr = ScriptArray::from_vec(primitive_hashes::INT32, vec![VmSlot::Int(2)]);
         arr.insert(0, VmSlot::Int(1));
         assert!(matches!(arr.get(0), Some(VmSlot::Int(1))));
     }
 
     #[test]
     fn test_insert_end() {
-        let mut arr = ScriptArray::from_vec(INT_TYPE, vec![VmSlot::Int(1)]);
+        let mut arr = ScriptArray::from_vec(primitive_hashes::INT32, vec![VmSlot::Int(1)]);
         arr.insert(1, VmSlot::Int(2));
         arr.insert(100, VmSlot::Int(3)); // clamped to end
         assert!(matches!(arr.get(2), Some(VmSlot::Int(3))));
@@ -1112,8 +1122,8 @@ mod tests {
 
     #[test]
     fn test_extend() {
-        let mut arr1 = ScriptArray::from_vec(INT_TYPE, vec![VmSlot::Int(1), VmSlot::Int(2)]);
-        let arr2 = ScriptArray::from_vec(INT_TYPE, vec![VmSlot::Int(3), VmSlot::Int(4)]);
+        let mut arr1 = ScriptArray::from_vec(primitive_hashes::INT32, vec![VmSlot::Int(1), VmSlot::Int(2)]);
+        let arr2 = ScriptArray::from_vec(primitive_hashes::INT32, vec![VmSlot::Int(3), VmSlot::Int(4)]);
         arr1.extend(&arr2);
         assert_eq!(arr1.len(), 4);
         assert!(matches!(arr1.get(3), Some(VmSlot::Int(4))));
@@ -1125,7 +1135,7 @@ mod tests {
 
     #[test]
     fn test_pop() {
-        let mut arr = ScriptArray::from_vec(INT_TYPE, vec![VmSlot::Int(1), VmSlot::Int(2)]);
+        let mut arr = ScriptArray::from_vec(primitive_hashes::INT32, vec![VmSlot::Int(1), VmSlot::Int(2)]);
         let popped = arr.pop();
         assert!(matches!(popped, Some(VmSlot::Int(2))));
         assert_eq!(arr.len(), 1);
@@ -1133,13 +1143,13 @@ mod tests {
 
     #[test]
     fn test_pop_empty() {
-        let mut arr = ScriptArray::new(INT_TYPE);
+        let mut arr = ScriptArray::new(primitive_hashes::INT32);
         assert!(arr.pop().is_none());
     }
 
     #[test]
     fn test_remove_at() {
-        let mut arr = ScriptArray::from_vec(INT_TYPE, vec![
+        let mut arr = ScriptArray::from_vec(primitive_hashes::INT32, vec![
             VmSlot::Int(1), VmSlot::Int(2), VmSlot::Int(3)
         ]);
         let removed = arr.remove_at(1);
@@ -1150,14 +1160,14 @@ mod tests {
 
     #[test]
     fn test_remove_at_out_of_bounds() {
-        let mut arr = ScriptArray::from_vec(INT_TYPE, vec![VmSlot::Int(1)]);
+        let mut arr = ScriptArray::from_vec(primitive_hashes::INT32, vec![VmSlot::Int(1)]);
         assert!(arr.remove_at(100).is_none());
         assert_eq!(arr.len(), 1);
     }
 
     #[test]
     fn test_remove_range() {
-        let mut arr = ScriptArray::from_vec(INT_TYPE, vec![
+        let mut arr = ScriptArray::from_vec(primitive_hashes::INT32, vec![
             VmSlot::Int(1), VmSlot::Int(2), VmSlot::Int(3), VmSlot::Int(4), VmSlot::Int(5)
         ]);
         arr.remove_range(1, 2);
@@ -1168,7 +1178,7 @@ mod tests {
 
     #[test]
     fn test_retain() {
-        let mut arr = ScriptArray::from_vec(INT_TYPE, vec![
+        let mut arr = ScriptArray::from_vec(primitive_hashes::INT32, vec![
             VmSlot::Int(1), VmSlot::Int(2), VmSlot::Int(3), VmSlot::Int(4)
         ]);
         arr.retain(|slot| {
@@ -1185,7 +1195,7 @@ mod tests {
 
     #[test]
     fn test_dedup() {
-        let mut arr = ScriptArray::from_vec(INT_TYPE, vec![
+        let mut arr = ScriptArray::from_vec(primitive_hashes::INT32, vec![
             VmSlot::Int(1), VmSlot::Int(1), VmSlot::Int(2), VmSlot::Int(2), VmSlot::Int(3)
         ]);
         arr.dedup();
@@ -1201,7 +1211,7 @@ mod tests {
 
     #[test]
     fn test_find() {
-        let arr = ScriptArray::from_vec(INT_TYPE, vec![
+        let arr = ScriptArray::from_vec(primitive_hashes::INT32, vec![
             VmSlot::Int(10), VmSlot::Int(20), VmSlot::Int(30)
         ]);
         assert_eq!(arr.find(&VmSlot::Int(20)), Some(1));
@@ -1210,7 +1220,7 @@ mod tests {
 
     #[test]
     fn test_find_from() {
-        let arr = ScriptArray::from_vec(INT_TYPE, vec![
+        let arr = ScriptArray::from_vec(primitive_hashes::INT32, vec![
             VmSlot::Int(1), VmSlot::Int(2), VmSlot::Int(1), VmSlot::Int(2)
         ]);
         assert_eq!(arr.find_from(0, &VmSlot::Int(2)), Some(1));
@@ -1220,7 +1230,7 @@ mod tests {
 
     #[test]
     fn test_rfind() {
-        let arr = ScriptArray::from_vec(INT_TYPE, vec![
+        let arr = ScriptArray::from_vec(primitive_hashes::INT32, vec![
             VmSlot::Int(1), VmSlot::Int(2), VmSlot::Int(1), VmSlot::Int(2)
         ]);
         assert_eq!(arr.rfind(&VmSlot::Int(1)), Some(2));
@@ -1229,14 +1239,14 @@ mod tests {
 
     #[test]
     fn test_contains() {
-        let arr = ScriptArray::from_vec(INT_TYPE, vec![VmSlot::Int(1), VmSlot::Int(2)]);
+        let arr = ScriptArray::from_vec(primitive_hashes::INT32, vec![VmSlot::Int(1), VmSlot::Int(2)]);
         assert!(arr.contains(&VmSlot::Int(1)));
         assert!(!arr.contains(&VmSlot::Int(99)));
     }
 
     #[test]
     fn test_count() {
-        let arr = ScriptArray::from_vec(INT_TYPE, vec![
+        let arr = ScriptArray::from_vec(primitive_hashes::INT32, vec![
             VmSlot::Int(1), VmSlot::Int(2), VmSlot::Int(1), VmSlot::Int(1)
         ]);
         assert_eq!(arr.count(&VmSlot::Int(1)), 3);
@@ -1250,7 +1260,7 @@ mod tests {
 
     #[test]
     fn test_reverse() {
-        let mut arr = ScriptArray::from_vec(INT_TYPE, vec![
+        let mut arr = ScriptArray::from_vec(primitive_hashes::INT32, vec![
             VmSlot::Int(1), VmSlot::Int(2), VmSlot::Int(3)
         ]);
         arr.reverse();
@@ -1261,7 +1271,7 @@ mod tests {
 
     #[test]
     fn test_sort_asc() {
-        let mut arr = ScriptArray::from_vec(INT_TYPE, vec![
+        let mut arr = ScriptArray::from_vec(primitive_hashes::INT32, vec![
             VmSlot::Int(3), VmSlot::Int(1), VmSlot::Int(2)
         ]);
         arr.sort_asc();
@@ -1272,7 +1282,7 @@ mod tests {
 
     #[test]
     fn test_sort_desc() {
-        let mut arr = ScriptArray::from_vec(INT_TYPE, vec![
+        let mut arr = ScriptArray::from_vec(primitive_hashes::INT32, vec![
             VmSlot::Int(1), VmSlot::Int(3), VmSlot::Int(2)
         ]);
         arr.sort_desc();
@@ -1283,7 +1293,7 @@ mod tests {
 
     #[test]
     fn test_sort_strings() {
-        let mut arr = ScriptArray::from_vec(STRING_TYPE, vec![
+        let mut arr = ScriptArray::from_vec(primitive_hashes::STRING, vec![
             VmSlot::String("banana".into()),
             VmSlot::String("apple".into()),
             VmSlot::String("cherry".into()),
@@ -1296,12 +1306,12 @@ mod tests {
 
     #[test]
     fn test_is_sorted() {
-        let sorted = ScriptArray::from_vec(INT_TYPE, vec![
+        let sorted = ScriptArray::from_vec(primitive_hashes::INT32, vec![
             VmSlot::Int(1), VmSlot::Int(2), VmSlot::Int(3)
         ]);
         assert!(sorted.is_sorted());
 
-        let unsorted = ScriptArray::from_vec(INT_TYPE, vec![
+        let unsorted = ScriptArray::from_vec(primitive_hashes::INT32, vec![
             VmSlot::Int(3), VmSlot::Int(1), VmSlot::Int(2)
         ]);
         assert!(!unsorted.is_sorted());
@@ -1309,12 +1319,12 @@ mod tests {
 
     #[test]
     fn test_is_sorted_desc() {
-        let sorted = ScriptArray::from_vec(INT_TYPE, vec![
+        let sorted = ScriptArray::from_vec(primitive_hashes::INT32, vec![
             VmSlot::Int(3), VmSlot::Int(2), VmSlot::Int(1)
         ]);
         assert!(sorted.is_sorted_desc());
 
-        let unsorted = ScriptArray::from_vec(INT_TYPE, vec![
+        let unsorted = ScriptArray::from_vec(primitive_hashes::INT32, vec![
             VmSlot::Int(1), VmSlot::Int(3), VmSlot::Int(2)
         ]);
         assert!(!unsorted.is_sorted_desc());
@@ -1322,11 +1332,11 @@ mod tests {
 
     #[test]
     fn test_is_sorted_empty_and_single() {
-        let empty = ScriptArray::new(INT_TYPE);
+        let empty = ScriptArray::new(primitive_hashes::INT32);
         assert!(empty.is_sorted());
         assert!(empty.is_sorted_desc());
 
-        let single = ScriptArray::from_vec(INT_TYPE, vec![VmSlot::Int(1)]);
+        let single = ScriptArray::from_vec(primitive_hashes::INT32, vec![VmSlot::Int(1)]);
         assert!(single.is_sorted());
         assert!(single.is_sorted_desc());
     }
@@ -1337,7 +1347,7 @@ mod tests {
 
     #[test]
     fn test_fill() {
-        let mut arr = ScriptArray::from_vec(INT_TYPE, vec![
+        let mut arr = ScriptArray::from_vec(primitive_hashes::INT32, vec![
             VmSlot::Int(1), VmSlot::Int(2), VmSlot::Int(3)
         ]);
         arr.fill(VmSlot::Int(99));
@@ -1348,7 +1358,7 @@ mod tests {
 
     #[test]
     fn test_swap() {
-        let mut arr = ScriptArray::from_vec(INT_TYPE, vec![
+        let mut arr = ScriptArray::from_vec(primitive_hashes::INT32, vec![
             VmSlot::Int(1), VmSlot::Int(2), VmSlot::Int(3)
         ]);
         arr.swap(0, 2);
@@ -1358,14 +1368,14 @@ mod tests {
 
     #[test]
     fn test_swap_out_of_bounds() {
-        let mut arr = ScriptArray::from_vec(INT_TYPE, vec![VmSlot::Int(1), VmSlot::Int(2)]);
+        let mut arr = ScriptArray::from_vec(primitive_hashes::INT32, vec![VmSlot::Int(1), VmSlot::Int(2)]);
         arr.swap(0, 100); // Should do nothing
         assert!(matches!(arr.get(0), Some(VmSlot::Int(1))));
     }
 
     #[test]
     fn test_rotate_right() {
-        let mut arr = ScriptArray::from_vec(INT_TYPE, vec![
+        let mut arr = ScriptArray::from_vec(primitive_hashes::INT32, vec![
             VmSlot::Int(1), VmSlot::Int(2), VmSlot::Int(3), VmSlot::Int(4)
         ]);
         arr.rotate(1); // Rotate right by 1
@@ -1375,7 +1385,7 @@ mod tests {
 
     #[test]
     fn test_rotate_left() {
-        let mut arr = ScriptArray::from_vec(INT_TYPE, vec![
+        let mut arr = ScriptArray::from_vec(primitive_hashes::INT32, vec![
             VmSlot::Int(1), VmSlot::Int(2), VmSlot::Int(3), VmSlot::Int(4)
         ]);
         arr.rotate(-1); // Rotate left by 1
@@ -1385,7 +1395,7 @@ mod tests {
 
     #[test]
     fn test_rotate_empty() {
-        let mut arr = ScriptArray::new(INT_TYPE);
+        let mut arr = ScriptArray::new(primitive_hashes::INT32);
         arr.rotate(5); // Should do nothing
         assert!(arr.is_empty());
     }
@@ -1396,7 +1406,7 @@ mod tests {
 
     #[test]
     fn test_slice() {
-        let arr = ScriptArray::from_vec(INT_TYPE, vec![
+        let arr = ScriptArray::from_vec(primitive_hashes::INT32, vec![
             VmSlot::Int(1), VmSlot::Int(2), VmSlot::Int(3), VmSlot::Int(4), VmSlot::Int(5)
         ]);
         let sliced = arr.slice(1, 4);
@@ -1408,21 +1418,21 @@ mod tests {
 
     #[test]
     fn test_slice_clamped() {
-        let arr = ScriptArray::from_vec(INT_TYPE, vec![VmSlot::Int(1), VmSlot::Int(2)]);
+        let arr = ScriptArray::from_vec(primitive_hashes::INT32, vec![VmSlot::Int(1), VmSlot::Int(2)]);
         let sliced = arr.slice(0, 100);
         assert_eq!(sliced.len(), 2);
     }
 
     #[test]
     fn test_slice_empty() {
-        let arr = ScriptArray::from_vec(INT_TYPE, vec![VmSlot::Int(1)]);
+        let arr = ScriptArray::from_vec(primitive_hashes::INT32, vec![VmSlot::Int(1)]);
         let sliced = arr.slice(5, 10); // Out of bounds
         assert!(sliced.is_empty());
     }
 
     #[test]
     fn test_slice_from() {
-        let arr = ScriptArray::from_vec(INT_TYPE, vec![
+        let arr = ScriptArray::from_vec(primitive_hashes::INT32, vec![
             VmSlot::Int(1), VmSlot::Int(2), VmSlot::Int(3)
         ]);
         let sliced = arr.slice_from(1);
@@ -1432,7 +1442,7 @@ mod tests {
 
     #[test]
     fn test_slice_to() {
-        let arr = ScriptArray::from_vec(INT_TYPE, vec![
+        let arr = ScriptArray::from_vec(primitive_hashes::INT32, vec![
             VmSlot::Int(1), VmSlot::Int(2), VmSlot::Int(3)
         ]);
         let sliced = arr.slice_to(2);
@@ -1442,7 +1452,7 @@ mod tests {
 
     #[test]
     fn test_clone_array() {
-        let arr = ScriptArray::from_vec(INT_TYPE, vec![
+        let arr = ScriptArray::from_vec(primitive_hashes::INT32, vec![
             VmSlot::Int(1), VmSlot::Int(2), VmSlot::Int(3)
         ]);
         let cloned = arr.clone_array();
@@ -1466,7 +1476,7 @@ mod tests {
 
     #[test]
     fn test_binary_search_found() {
-        let arr = ScriptArray::from_vec(INT_TYPE, vec![
+        let arr = ScriptArray::from_vec(primitive_hashes::INT32, vec![
             VmSlot::Int(1), VmSlot::Int(2), VmSlot::Int(3), VmSlot::Int(4), VmSlot::Int(5)
         ]);
         assert_eq!(arr.binary_search(&VmSlot::Int(3)), Ok(2));
@@ -1476,7 +1486,7 @@ mod tests {
 
     #[test]
     fn test_binary_search_not_found() {
-        let arr = ScriptArray::from_vec(INT_TYPE, vec![
+        let arr = ScriptArray::from_vec(primitive_hashes::INT32, vec![
             VmSlot::Int(1), VmSlot::Int(3), VmSlot::Int(5)
         ]);
         assert_eq!(arr.binary_search(&VmSlot::Int(2)), Err(1)); // Insert at index 1
@@ -1528,12 +1538,12 @@ mod tests {
 
     #[test]
     fn test_default_for_type() {
-        assert!(matches!(ScriptArray::default_for_type(TypeId(0)), VmSlot::Void));
-        assert!(matches!(ScriptArray::default_for_type(TypeId(1)), VmSlot::Bool(false)));
-        assert!(matches!(ScriptArray::default_for_type(TypeId(4)), VmSlot::Int(0)));
-        assert!(matches!(ScriptArray::default_for_type(TypeId(10)), VmSlot::Float(f) if f == 0.0));
-        assert!(matches!(ScriptArray::default_for_type(TypeId(16)), VmSlot::String(ref s) if s.is_empty()));
-        assert!(matches!(ScriptArray::default_for_type(TypeId(100)), VmSlot::NullHandle));
+        assert!(matches!(ScriptArray::default_for_type(primitive_hashes::VOID), VmSlot::Void));
+        assert!(matches!(ScriptArray::default_for_type(primitive_hashes::BOOL), VmSlot::Bool(false)));
+        assert!(matches!(ScriptArray::default_for_type(primitive_hashes::INT32), VmSlot::Int(0)));
+        assert!(matches!(ScriptArray::default_for_type(primitive_hashes::FLOAT), VmSlot::Float(f) if f == 0.0));
+        assert!(matches!(ScriptArray::default_for_type(primitive_hashes::STRING), VmSlot::String(ref s) if s.is_empty()));
+        assert!(matches!(ScriptArray::default_for_type(TypeHash(100)), VmSlot::NullHandle)); // Unknown type
     }
 
     // =========================================================================
@@ -1542,7 +1552,7 @@ mod tests {
 
     #[test]
     fn test_iter() {
-        let arr = ScriptArray::from_vec(INT_TYPE, vec![
+        let arr = ScriptArray::from_vec(primitive_hashes::INT32, vec![
             VmSlot::Int(1), VmSlot::Int(2), VmSlot::Int(3)
         ]);
         let sum: i64 = arr.iter().filter_map(|slot| {
@@ -1553,7 +1563,7 @@ mod tests {
 
     #[test]
     fn test_iter_mut() {
-        let mut arr = ScriptArray::from_vec(INT_TYPE, vec![
+        let mut arr = ScriptArray::from_vec(primitive_hashes::INT32, vec![
             VmSlot::Int(1), VmSlot::Int(2), VmSlot::Int(3)
         ]);
         for slot in arr.iter_mut() {
@@ -1572,7 +1582,7 @@ mod tests {
 
     #[test]
     fn test_debug() {
-        let arr = ScriptArray::from_vec(INT_TYPE, vec![VmSlot::Int(1), VmSlot::Int(2)]);
+        let arr = ScriptArray::from_vec(primitive_hashes::INT32, vec![VmSlot::Int(1), VmSlot::Int(2)]);
         let debug = format!("{:?}", arr);
         assert!(debug.contains("ScriptArray"));
         assert!(debug.contains("len: 2"));
@@ -1584,7 +1594,7 @@ mod tests {
 
     #[test]
     fn test_operations_on_empty_array() {
-        let mut arr = ScriptArray::new(INT_TYPE);
+        let mut arr = ScriptArray::new(primitive_hashes::INT32);
 
         assert!(arr.pop().is_none());
         assert!(arr.first().is_none());
@@ -1597,7 +1607,7 @@ mod tests {
 
     #[test]
     fn test_single_element_array() {
-        let mut arr = ScriptArray::from_vec(INT_TYPE, vec![VmSlot::Int(42)]);
+        let mut arr = ScriptArray::from_vec(primitive_hashes::INT32, vec![VmSlot::Int(42)]);
 
         // First and last should both be 42
         assert!(matches!(arr.first(), Some(VmSlot::Int(42))));
@@ -1611,7 +1621,7 @@ mod tests {
 
     #[test]
     fn test_float_array_with_nan() {
-        let mut arr = ScriptArray::from_vec(FLOAT_TYPE, vec![
+        let mut arr = ScriptArray::from_vec(primitive_hashes::FLOAT, vec![
             VmSlot::Float(1.0),
             VmSlot::Float(f64::NAN),
             VmSlot::Float(2.0),
