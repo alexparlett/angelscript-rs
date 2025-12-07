@@ -148,7 +148,7 @@ pub use entries::{
     // Source tracking
     TypeSource, FunctionSource,
     // Common types
-    PropertyEntry, FieldEntry, EnumValue,
+    PropertyEntry, EnumValue,
     // Type entries
     PrimitiveEntry, TemplateParamEntry, EnumEntry, InterfaceEntry,
     FuncdefEntry, ClassEntry,

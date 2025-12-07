@@ -218,8 +218,8 @@ pub struct FunctionDef {
     pub is_native: bool,
     /// Visibility (public, private, protected) - only meaningful for methods.
     pub visibility: Visibility,
-    /// Template type parameter names (e.g., `["T", "U"]` for template functions).
-    pub template_params: Vec<String>,
+    /// Template type parameter hashes (refs to TemplateParamEntry in registry).
+    pub template_params: Vec<TypeHash>,
     /// True if this function accepts variadic arguments.
     pub is_variadic: bool,
     /// Cached qualified name (computed on first access).
@@ -285,7 +285,7 @@ impl FunctionDef {
         traits: FunctionTraits,
         is_native: bool,
         visibility: Visibility,
-        template_params: Vec<String>,
+        template_params: Vec<TypeHash>,
     ) -> Self {
         Self {
             func_hash,

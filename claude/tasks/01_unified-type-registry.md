@@ -884,14 +884,14 @@ TypeEntry::Class(ClassEntry {
 - [x] Update `function_def.rs` - Add template_params, is_variadic
 - [x] Update `lib.rs` - Export all new types
 
-### Phase 2: Design Fixes (angelscript-core)
+### Phase 2: Design Fixes (angelscript-core) ✅ COMPLETE
 Apply design clarifications from template/storage review:
-- [ ] Update `ClassEntry.methods` from `Vec<FunctionEntry>` to `Vec<TypeHash>`
-- [ ] Update `FunctionDef.template_params` from `Vec<String>` to `Vec<TypeHash>`
-- [ ] Ensure `TemplateParamEntry.owner` is `TypeHash` (metadata only, not lookup key)
-- [ ] Verify all method/behavior references use `TypeHash` (single source of truth in registry)
-- [ ] Remove `FieldEntry` - all property access via `PropertyEntry` with getter/setter methods
-- [ ] Update `ClassEntry` to remove `fields`, keep only `properties: Vec<PropertyEntry>`
+- [x] Update `ClassEntry.methods` from `Vec<FunctionEntry>` to `Vec<TypeHash>`
+- [x] Update `FunctionDef.template_params` from `Vec<String>` to `Vec<TypeHash>`
+- [x] Ensure `TemplateParamEntry.owner` is `TypeHash` (already correct)
+- [x] Verify all method/behavior references use `TypeHash` (TypeBehaviors already correct)
+- [x] Remove `FieldEntry` - all property access via `PropertyEntry` with getter/setter methods
+- [x] Update `ClassEntry` to remove `fields`, keep only `properties: Vec<PropertyEntry>`
 
 ### Phase 3: Create angelscript-registry
 - [ ] `src/registry.rs` - TypeRegistry with unified `functions` map (methods + globals)

@@ -13,7 +13,7 @@
 //!
 //! Supporting types:
 //! - [`TypeSource`], [`FunctionSource`] - Origin tracking (FFI vs script)
-//! - [`PropertyEntry`], [`FieldEntry`], [`EnumValue`] - Member types
+//! - [`PropertyEntry`], [`EnumValue`] - Member types
 
 mod source;
 mod common;
@@ -30,7 +30,7 @@ mod type_entry;
 pub use source::{FunctionSource, TypeSource};
 
 // Common member types
-pub use common::{EnumValue, FieldEntry, PropertyEntry};
+pub use common::{EnumValue, PropertyEntry};
 
 // Individual entry types
 pub use primitive::PrimitiveEntry;

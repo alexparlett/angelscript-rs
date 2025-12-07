@@ -88,59 +88,6 @@ impl PropertyEntry {
     }
 }
 
-/// A field entry for class member variables.
-///
-/// Fields are direct data members in a class, unlike properties which
-/// are backed by accessor methods.
-#[derive(Debug, Clone, PartialEq)]
-pub struct FieldEntry {
-    /// Field name.
-    pub name: String,
-    /// Field type.
-    pub data_type: DataType,
-    /// Field visibility.
-    pub visibility: Visibility,
-    /// Byte offset within the object (for native types).
-    pub offset: usize,
-}
-
-impl FieldEntry {
-    /// Create a new field entry.
-    pub fn new(
-        name: impl Into<String>,
-        data_type: DataType,
-        visibility: Visibility,
-        offset: usize,
-    ) -> Self {
-        Self {
-            name: name.into(),
-            data_type,
-            visibility,
-            offset,
-        }
-    }
-
-    /// Create a public field at offset 0.
-    pub fn public(name: impl Into<String>, data_type: DataType) -> Self {
-        Self {
-            name: name.into(),
-            data_type,
-            visibility: Visibility::Public,
-            offset: 0,
-        }
-    }
-
-    /// Create a private field at offset 0.
-    pub fn private(name: impl Into<String>, data_type: DataType) -> Self {
-        Self {
-            name: name.into(),
-            data_type,
-            visibility: Visibility::Private,
-            offset: 0,
-        }
-    }
-}
-
 /// An enum value entry.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EnumValue {
@@ -189,31 +136,6 @@ mod tests {
         assert!(prop.is_read_write());
         assert!(!prop.is_read_only());
         assert!(!prop.is_write_only());
-    }
-
-    #[test]
-    fn field_entry_public() {
-        let field = FieldEntry::public("health", DataType::simple(primitives::INT32));
-        assert_eq!(field.name, "health");
-        assert_eq!(field.visibility, Visibility::Public);
-        assert_eq!(field.offset, 0);
-    }
-
-    #[test]
-    fn field_entry_private() {
-        let field = FieldEntry::private("secret", DataType::simple(primitives::INT32));
-        assert_eq!(field.visibility, Visibility::Private);
-    }
-
-    #[test]
-    fn field_entry_with_offset() {
-        let field = FieldEntry::new(
-            "value",
-            DataType::simple(primitives::FLOAT),
-            Visibility::Public,
-            8,
-        );
-        assert_eq!(field.offset, 8);
     }
 
     #[test]

@@ -5,7 +5,7 @@
 
 use crate::{DataType, TypeBehaviors, TypeHash, TypeKind};
 
-use super::{FieldEntry, FunctionEntry, PropertyEntry, TypeSource};
+use super::{PropertyEntry, TypeSource};
 
 /// Registry entry for a class type.
 ///
@@ -33,12 +33,10 @@ pub struct ClassEntry {
     // === Members ===
     /// Lifecycle behaviors (constructors, factories, destructor, etc.).
     pub behaviors: TypeBehaviors,
-    /// Methods (function entries, not just hashes).
-    pub methods: Vec<FunctionEntry>,
-    /// Virtual properties.
+    /// Method function hashes (actual FunctionEntry stored in registry).
+    pub methods: Vec<TypeHash>,
+    /// Virtual properties (backed by getter/setter methods).
     pub properties: Vec<PropertyEntry>,
-    /// Direct field members.
-    pub fields: Vec<FieldEntry>,
 
     // === Template Info ===
     /// Template parameter type hashes (non-empty = template definition).
@@ -76,7 +74,6 @@ impl ClassEntry {
             behaviors: TypeBehaviors::default(),
             methods: Vec::new(),
             properties: Vec::new(),
-            fields: Vec::new(),
             template_params: Vec::new(),
             template: None,
             type_args: Vec::new(),
@@ -118,21 +115,15 @@ impl ClassEntry {
         self
     }
 
-    /// Add a method.
-    pub fn with_method(mut self, method: FunctionEntry) -> Self {
-        self.methods.push(method);
+    /// Add a method by its function hash.
+    pub fn with_method(mut self, method_hash: TypeHash) -> Self {
+        self.methods.push(method_hash);
         self
     }
 
     /// Add a property.
     pub fn with_property(mut self, property: PropertyEntry) -> Self {
         self.properties.push(property);
-        self
-    }
-
-    /// Add a field.
-    pub fn with_field(mut self, field: FieldEntry) -> Self {
-        self.fields.push(field);
         self
     }
 
@@ -188,19 +179,14 @@ impl ClassEntry {
         self.type_kind.is_script_object()
     }
 
-    /// Find a method by name.
-    pub fn find_method(&self, name: &str) -> Option<&FunctionEntry> {
-        self.methods.iter().find(|m| m.def.name == name)
+    /// Check if this class has a method with the given hash.
+    pub fn has_method(&self, method_hash: TypeHash) -> bool {
+        self.methods.contains(&method_hash)
     }
 
     /// Find a property by name.
     pub fn find_property(&self, name: &str) -> Option<&PropertyEntry> {
         self.properties.iter().find(|p| p.name == name)
-    }
-
-    /// Find a field by name.
-    pub fn find_field(&self, name: &str) -> Option<&FieldEntry> {
-        self.fields.iter().find(|f| f.name == name)
     }
 
     /// Check if this class implements a specific interface.
@@ -212,22 +198,7 @@ impl ClassEntry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{primitives, FunctionDef, FunctionTraits, Visibility};
-
-    fn make_test_method(name: &str) -> FunctionEntry {
-        let func_hash = TypeHash::from_name(name);
-        FunctionEntry::ffi(FunctionDef::new(
-            func_hash,
-            name.to_string(),
-            vec![],
-            vec![],
-            DataType::void(),
-            None,
-            FunctionTraits::default(),
-            true,
-            Visibility::Public,
-        ))
-    }
+    use crate::primitives;
 
     #[test]
     fn class_entry_ffi() {
@@ -275,12 +246,12 @@ mod tests {
 
     #[test]
     fn class_entry_with_method() {
-        let method = make_test_method("update");
-        let entry = ClassEntry::ffi("Entity", TypeKind::reference()).with_method(method);
+        let method_hash = TypeHash::from_name("Entity::update");
+        let entry = ClassEntry::ffi("Entity", TypeKind::reference()).with_method(method_hash);
 
         assert_eq!(entry.methods.len(), 1);
-        assert!(entry.find_method("update").is_some());
-        assert!(entry.find_method("nonexistent").is_none());
+        assert!(entry.has_method(method_hash));
+        assert!(!entry.has_method(TypeHash::from_name("nonexistent")));
     }
 
     #[test]
@@ -290,14 +261,6 @@ mod tests {
         let entry = ClassEntry::ffi("Player", TypeKind::reference()).with_property(prop);
 
         assert!(entry.find_property("health").is_some());
-    }
-
-    #[test]
-    fn class_entry_with_field() {
-        let field = FieldEntry::public("x", DataType::simple(primitives::FLOAT));
-        let entry = ClassEntry::ffi("Vector2", TypeKind::value::<[f32; 2]>()).with_field(field);
-
-        assert!(entry.find_field("x").is_some());
     }
 
     #[test]
