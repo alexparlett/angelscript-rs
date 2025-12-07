@@ -12,7 +12,7 @@ use bumpalo::Bump;
 
 use super::cursor::{is_ident_continue, is_ident_start, Cursor};
 use super::error::LexerError;
-use super::span::Span;
+use angelscript_core::Span;
 use super::token::{lookup_keyword, Token, TokenKind};
 
 /// Lexer for AngelScript source code.

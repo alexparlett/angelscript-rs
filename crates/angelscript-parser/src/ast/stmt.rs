@@ -12,7 +12,7 @@
 use crate::ast::Ident;
 use crate::ast::expr::Expr;
 use crate::ast::types::TypeExpr;
-use crate::lexer::Span;
+use angelscript_core::Span;
 
 /// A statement.
 #[derive(Debug, Clone, Copy, PartialEq)]

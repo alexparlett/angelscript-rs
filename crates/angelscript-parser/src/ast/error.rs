@@ -3,7 +3,7 @@
 //! Provides comprehensive error reporting with source location tracking
 //! and helpful error messages.
 
-use crate::lexer::Span;
+use angelscript_core::Span;
 use std::fmt;
 
 /// A parse error with location and diagnostic information.

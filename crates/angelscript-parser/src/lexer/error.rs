@@ -3,7 +3,7 @@
 //! Provides Rust-style error messages with source context, similar to
 //! `rustc` error output.
 
-use super::span::Span;
+use angelscript_core::Span;
 use std::fmt;
 
 /// An error encountered during lexical analysis.

@@ -181,7 +181,7 @@ mod tests {
     #[test]
     fn from_ast_literals() {
         use angelscript_parser::ast::{Expr, LiteralExpr, LiteralKind};
-        use angelscript_parser::lexer::Span;
+        use angelscript_core::Span;
 
         let span = Span::new(1, 1, 1);
 
@@ -210,7 +210,7 @@ mod tests {
     #[test]
     fn from_ast_identifier() {
         use angelscript_parser::ast::{Expr, Ident, IdentExpr};
-        use angelscript_parser::lexer::Span;
+        use angelscript_core::Span;
 
         let span = Span::new(1, 1, 1);
 
@@ -231,7 +231,7 @@ mod tests {
     fn from_ast_scoped_identifier() {
         use bumpalo::Bump;
         use angelscript_parser::ast::{Expr, Ident, IdentExpr, Scope};
-        use angelscript_parser::lexer::Span;
+        use angelscript_core::Span;
 
         let arena = Bump::new();
         let span = Span::new(1, 1, 1);
@@ -262,7 +262,7 @@ mod tests {
     fn from_ast_unary() {
         use bumpalo::Bump;
         use angelscript_parser::ast::{Expr, LiteralExpr, LiteralKind, UnaryExpr, UnaryOp};
-        use angelscript_parser::lexer::Span;
+        use angelscript_core::Span;
 
         let arena = Bump::new();
         let span = Span::new(1, 1, 1);
@@ -289,7 +289,7 @@ mod tests {
     fn from_ast_binary() {
         use bumpalo::Bump;
         use angelscript_parser::ast::{BinaryExpr, BinaryOp, Expr, LiteralExpr, LiteralKind};
-        use angelscript_parser::lexer::Span;
+        use angelscript_core::Span;
 
         let arena = Bump::new();
         let span = Span::new(1, 1, 1);
@@ -321,7 +321,7 @@ mod tests {
     fn from_ast_paren() {
         use bumpalo::Bump;
         use angelscript_parser::ast::{Expr, LiteralExpr, LiteralKind, ParenExpr};
-        use angelscript_parser::lexer::Span;
+        use angelscript_core::Span;
 
         let arena = Bump::new();
         let span = Span::new(1, 1, 1);
@@ -341,7 +341,7 @@ mod tests {
     fn from_ast_unsupported() {
         use bumpalo::Bump;
         use angelscript_parser::ast::{AssignExpr, AssignOp, Expr, Ident, IdentExpr};
-        use angelscript_parser::lexer::Span;
+        use angelscript_core::Span;
 
         let arena = Bump::new();
         let span = Span::new(1, 1, 1);

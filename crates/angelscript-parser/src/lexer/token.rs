@@ -3,7 +3,7 @@
 //! Based on token definitions from the C++ AngelScript implementation
 //! (`as_tokendef.h`).
 
-use super::span::Span;
+use angelscript_core::Span;
 use std::fmt;
 
 /// A token from the source code.

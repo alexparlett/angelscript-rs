@@ -12,6 +12,7 @@
 //! - [`ExprInfo`]: Expression type checking results
 //! - [`TypeBehaviors`]: Lifecycle behaviors for types
 //! - [`FfiExpr`]: Owned expressions for FFI default arguments
+//! - [`Span`]: Source location tracking for error reporting
 //!
 //! ## Operators
 //!
@@ -26,6 +27,7 @@ mod function_def;
 mod expr_info;
 mod behaviors;
 mod ffi_expr;
+mod span;
 
 // TypeHash and related
 pub use type_hash::{hash_constants, primitives, TypeHash};
@@ -65,3 +67,6 @@ pub use behaviors::TypeBehaviors;
 
 // FFI expressions
 pub use ffi_expr::FfiExpr;
+
+// Source location tracking
+pub use span::Span;

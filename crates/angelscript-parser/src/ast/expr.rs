@@ -28,7 +28,7 @@
 
 use crate::ast::{AssignOp, BinaryOp, Ident, PostfixOp, Scope, UnaryOp};
 use crate::ast::types::{ParamType, ReturnType, TypeExpr};
-use crate::lexer::Span;
+use angelscript_core::Span;
 
 /// An expression.
 #[derive(Debug, Clone, PartialEq)]

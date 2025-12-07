@@ -764,7 +764,7 @@ pub fn walk_return_type<'src, 'ast, V: Visitor<'ast>>(visitor: &mut V, ty: &Retu
 mod tests {
     use super::*;
     use crate::ast::Ident;
-    use crate::lexer::Span;
+    use angelscript_core::Span;
 
     /// Example visitor that counts function declarations.
     struct FunctionCounter {

@@ -1,7 +1,6 @@
-//! Source location tracking for the lexer.
+//! Source location tracking for error reporting.
 //!
-//! Provides [`Span`] and [`Position`] types to track where tokens
-//! and errors occur in source code.
+//! Provides [`Span`] to track where tokens and errors occur in source code.
 
 use std::fmt;
 
