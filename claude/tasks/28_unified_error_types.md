@@ -104,8 +104,8 @@ This replaces both:
 | 3 | Migrate parser errors | Update parser to use Span and errors from core | 2 | ✅ Complete |
 | 4 | Consolidate registration errors | Merge `FfiRegistryError` + `ModuleError` → `RegistrationError` | 2 | ✅ Complete |
 | 5 | Migrate compiler errors | Update compiler errors to use core types | 2 | ✅ Complete |
-| 6 | Migrate main crate errors | Update `ContextError`, `UnitError`, `BuildError` | 2-5 | Pending |
-| 7 | Update public API | Expose `AngelScriptError` in public API | 6 | Pending |
+| 6 | Migrate main crate errors | Update `ContextError`, `UnitError`, `BuildError` | 2-5 | ✅ Complete |
+| 7 | Update public API | Expose `AngelScriptError` in public API | 6 | ✅ Complete |
 
 ## Task Details
 

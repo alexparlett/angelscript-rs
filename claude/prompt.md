@@ -48,7 +48,7 @@ See `/claude/tasks/26_compiler_rewrite.md` for full details.
 
 ---
 
-## Task 28: Unified Error Types
+## Task 28: Unified Error Types - COMPLETE
 
 See `/claude/tasks/28_unified_error_types.md` for full details.
 
@@ -61,20 +61,28 @@ See `/claude/tasks/28_unified_error_types.md` for full details.
 | 3 | Migrate parser errors | Parser now uses `LexError`, `ParseError`, `ParseErrorKind`, `ParseErrors` from core | ✅ Complete |
 | 4 | Consolidate registration errors | Merged `FfiRegistryError` + `ModuleError` → `RegistrationError` | ✅ Complete |
 | 5 | Migrate compiler errors | Compiler now uses `CompilationError` from core | ✅ Complete |
+| 6 | Migrate main crate errors | Updated `ContextError`, `BuildError` with helper methods | ✅ Complete |
+| 7 | Update public API | Exposed all error types in public API | ✅ Complete |
 
-### Task 28.5 Summary (Just Completed)
+### Task 28.6 & 28.7 Summary (Just Completed)
 
-**Migrated compiler errors:**
-- Removed `SemanticError` from angelscript-compiler crate
-- Compiler now uses `CompilationError` from angelscript-core
-- Updated `CompilationResult.errors` to use `Vec<CompilationError>`
-- Updated `src/unit.rs` to import `CompilationError` from core instead of `SemanticError`
-- Updated `BuildError::CompilationErrors` variant to use `Vec<CompilationError>`
-- All 39 unit tests passing
+**Updated public API exports in `src/lib.rs`:**
+- Exported `AngelScriptError`, `LexError`, `ParseError`, `ParseErrorKind`, `ParseErrors`
+- Exported `RegistrationError`, `CompilationError`, `RuntimeError`, `Span`
+
+**Added helper methods to `BuildError`:**
+- `into_errors()` - Converts to `Vec<AngelScriptError>` for unified handling
+- `first_error()` - Gets first error as `AngelScriptError`
+
+**Added helper methods to `ContextError`:**
+- `into_errors()` - Converts to `Vec<AngelScriptError>` for unified handling
+- `first_error()` - Gets first error as `AngelScriptError`
+
+**Tests:** 47 library tests passing
 
 ### Next Task
 
-**Task 28.6: Migrate main crate errors** - Update `ContextError`, `UnitError`, `BuildError`
+**Task 26.8: Pass 1: RegistrationPass** - Type + function registration with complete signatures
 
 ### Deferred
 
