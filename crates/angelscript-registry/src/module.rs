@@ -1,7 +1,7 @@
 //! Module - a container for pending type and function registrations.
 //!
 //! Modules collect metadata from macro-generated code and pass it to Context
-//! for installation into the TypeRegistry.
+//! for installation into the SymbolRegistry.
 //!
 //! # Example
 //!

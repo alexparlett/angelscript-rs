@@ -1,6 +1,6 @@
-//! TypeRegistry - unified type and function registry.
+//! SymbolRegistry - unified type and function registry.
 //!
-//! This module provides [`TypeRegistry`], the central storage for all types and
+//! This module provides [`SymbolRegistry`], the central storage for all types and
 //! functions in the AngelScript runtime. It provides O(1) lookup by hash and
 //! supports FFI, shared script, and local script entities.
 //!
@@ -16,10 +16,10 @@
 //! # Example
 //!
 //! ```
-//! use angelscript_registry::TypeRegistry;
+//! use angelscript_registry::SymbolRegistry;
 //! use angelscript_core::{TypeEntry, PrimitiveEntry, PrimitiveKind, primitives};
 //!
-//! let mut registry = TypeRegistry::new();
+//! let mut registry = SymbolRegistry::new();
 //!
 //! // Register primitives
 //! registry.register_all_primitives();
@@ -49,7 +49,7 @@ pub type TemplateCallback =
 /// Provides central storage for all types and functions in the AngelScript runtime.
 /// All lookups are O(1) by `TypeHash`.
 #[derive(Default)]
-pub struct TypeRegistry {
+pub struct SymbolRegistry {
     /// All types by hash (O(1) lookup).
     types: FxHashMap<TypeHash, TypeEntry>,
 
@@ -71,7 +71,7 @@ pub struct TypeRegistry {
     template_callbacks: FxHashMap<TypeHash, TemplateCallback>,
 }
 
-impl TypeRegistry {
+impl SymbolRegistry {
     /// Create a new empty registry.
     pub fn new() -> Self {
         Self::default()
@@ -395,9 +395,9 @@ impl TypeRegistry {
     }
 }
 
-impl std::fmt::Debug for TypeRegistry {
+impl std::fmt::Debug for SymbolRegistry {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("TypeRegistry")
+        f.debug_struct("SymbolRegistry")
             .field("types", &self.types.len())
             .field("functions", &self.functions.len())
             .field("namespaces", &self.namespaces.len())
@@ -415,14 +415,14 @@ mod tests {
 
     #[test]
     fn new_registry_is_empty() {
-        let registry = TypeRegistry::new();
+        let registry = SymbolRegistry::new();
         assert_eq!(registry.type_count(), 0);
         assert_eq!(registry.function_count(), 0);
     }
 
     #[test]
     fn register_all_primitives() {
-        let registry = TypeRegistry::with_primitives();
+        let registry = SymbolRegistry::with_primitives();
         assert_eq!(registry.type_count(), 12); // void, bool, int8..int64, uint8..uint64, float, double
 
         assert!(registry.get(primitives::INT32).is_some());
@@ -432,7 +432,7 @@ mod tests {
 
     #[test]
     fn lookup_by_name() {
-        let registry = TypeRegistry::with_primitives();
+        let registry = SymbolRegistry::with_primitives();
 
         let int_type = registry.get_by_name("int");
         assert!(int_type.is_some());
@@ -441,7 +441,7 @@ mod tests {
 
     #[test]
     fn register_class() {
-        let mut registry = TypeRegistry::new();
+        let mut registry = SymbolRegistry::new();
 
         let class = ClassEntry::ffi("Player", TypeKind::reference());
         registry.register_type(class.into()).unwrap();
@@ -452,7 +452,7 @@ mod tests {
 
     #[test]
     fn duplicate_type_error() {
-        let mut registry = TypeRegistry::new();
+        let mut registry = SymbolRegistry::new();
 
         let class1 = ClassEntry::ffi("Player", TypeKind::reference());
         let class2 = ClassEntry::ffi("Player", TypeKind::reference());
@@ -465,7 +465,7 @@ mod tests {
 
     #[test]
     fn register_function() {
-        let mut registry = TypeRegistry::new();
+        let mut registry = SymbolRegistry::new();
 
         let def = FunctionDef::new(
             TypeHash::from_function("print", &[primitives::INT32]),
@@ -486,7 +486,7 @@ mod tests {
 
     #[test]
     fn function_overloads() {
-        let mut registry = TypeRegistry::new();
+        let mut registry = SymbolRegistry::new();
 
         let def1 = FunctionDef::new(
             TypeHash::from_function("print", &[primitives::INT32]),
@@ -520,7 +520,7 @@ mod tests {
 
     #[test]
     fn iterate_classes() {
-        let mut registry = TypeRegistry::with_primitives();
+        let mut registry = SymbolRegistry::with_primitives();
 
         registry
             .register_type(ClassEntry::ffi("Player", TypeKind::reference()).into())
@@ -546,7 +546,7 @@ mod tests {
 
     #[test]
     fn inheritance_chain() {
-        let mut registry = TypeRegistry::new();
+        let mut registry = SymbolRegistry::new();
 
         let entity = ClassEntry::ffi("Entity", TypeKind::reference());
         let entity_hash = entity.type_hash;
@@ -569,7 +569,7 @@ mod tests {
 
     #[test]
     fn namespace_registration() {
-        let mut registry = TypeRegistry::new();
+        let mut registry = SymbolRegistry::new();
 
         registry.register_namespace("Game");
         registry.register_namespace("Game::Entities");
@@ -581,7 +581,7 @@ mod tests {
 
     #[test]
     fn template_callback() {
-        let mut registry = TypeRegistry::new();
+        let mut registry = SymbolRegistry::new();
 
         let array_hash = TypeHash::from_name("array");
         registry.register_template_callback(
@@ -617,9 +617,9 @@ mod tests {
 
     #[test]
     fn debug_impl() {
-        let registry = TypeRegistry::with_primitives();
+        let registry = SymbolRegistry::with_primitives();
         let debug_str = format!("{:?}", registry);
-        assert!(debug_str.contains("TypeRegistry"));
+        assert!(debug_str.contains("SymbolRegistry"));
         assert!(debug_str.contains("types"));
     }
 }

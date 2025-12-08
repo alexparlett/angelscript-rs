@@ -1,6 +1,6 @@
 //! Execution context for the scripting engine.
 //!
-//! The Context owns a [`TypeRegistry`] that stores all registered types and functions.
+//! The Context owns a [`SymbolRegistry`] that stores all registered types and functions.
 //! Users install modules into the context, then create compilation units from it.
 
 use std::sync::Arc;
@@ -11,7 +11,7 @@ use angelscript_core::{
     FunctionMeta, FunctionTraits, InterfaceEntry, InterfaceMeta, MethodSignature, Param,
     PropertyEntry, TemplateParamEntry, TypeHash, TypeSource, Visibility,
 };
-use angelscript_registry::{Module, TypeRegistry};
+use angelscript_registry::{Module, SymbolRegistry};
 
 use crate::unit::Unit;
 
@@ -34,14 +34,14 @@ use crate::unit::Unit;
 /// let unit = ctx.create_unit()?;
 /// ```
 pub struct Context {
-    registry: TypeRegistry,
+    registry: SymbolRegistry,
 }
 
 impl Context {
     /// Create a new context with primitives pre-registered.
     pub fn new() -> Self {
         Self {
-            registry: TypeRegistry::with_primitives(),
+            registry: SymbolRegistry::with_primitives(),
         }
     }
 
@@ -107,7 +107,7 @@ impl Context {
     }
 
     /// Get a reference to the type registry.
-    pub fn registry(&self) -> &TypeRegistry {
+    pub fn registry(&self) -> &SymbolRegistry {
         &self.registry
     }
 

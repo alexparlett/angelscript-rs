@@ -284,7 +284,7 @@ impl Unit {
         }
 
         // Compile the script(s)
-        // TODO: Pass TypeRegistry when Phase 2 is complete
+        // TODO: Pass SymbolRegistry when Phase 2 is complete
         let compilation_result = {
             if scripts.len() == 1 {
                 Compiler::compile(&scripts[0].1)

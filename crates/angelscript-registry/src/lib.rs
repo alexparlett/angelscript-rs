@@ -4,7 +4,7 @@
 //!
 //! # Overview
 //!
-//! The [`TypeRegistry`] provides central storage for all types and functions:
+//! The [`SymbolRegistry`] provides central storage for all types and functions:
 //!
 //! - **Types**: All type entries stored by `TypeHash` for O(1) lookup
 //! - **Functions**: All functions (global, methods, operators, behaviors) in one map
@@ -16,10 +16,10 @@
 //! # Example
 //!
 //! ```
-//! use angelscript_registry::TypeRegistry;
+//! use angelscript_registry::SymbolRegistry;
 //! use angelscript_core::primitives;
 //!
-//! let registry = TypeRegistry::with_primitives();
+//! let registry = SymbolRegistry::with_primitives();
 //! assert!(registry.get(primitives::INT32).is_some());
 //! ```
 //!
@@ -44,7 +44,7 @@ mod module;
 mod registry;
 
 pub use module::{HasClassMeta, HasFunctionMeta, IntoFunctionMeta, Module};
-pub use registry::{TemplateCallback, TypeRegistry};
+pub use registry::{TemplateCallback, SymbolRegistry};
 
 // Re-export from core for backwards compatibility during transition
 pub use angelscript_core::{

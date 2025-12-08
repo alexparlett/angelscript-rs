@@ -2,7 +2,7 @@
 
 ## Overview
 
-Replace the current split architecture (`FfiRegistry` + planned `ScriptRegistry`) with a single unified `TypeRegistry` that handles FFI, shared script, and local script entities.
+Replace the current split architecture (`FfiRegistry` + planned `ScriptRegistry`) with a single unified `SymbolRegistry` that handles FFI, shared script, and local script entities.
 
 **Key decisions:**
 - Rename `angelscript-ffi` → `angelscript-registry`
@@ -35,7 +35,7 @@ Replace the current split architecture (`FfiRegistry` + planned `ScriptRegistry`
 │angelscript-     │  │angelscript-     │
 │registry         │  │parser           │
 │                 │  │                 │
-│TypeRegistry,    │  │Lexer, AST       │
+│SymbolRegistry,    │  │Lexer, AST       │
 │Module           │  │                 │
 └────────┬────────┘  └────────┬────────┘
          │                    │
@@ -457,7 +457,7 @@ pub fn process(#[angelscript(default = null)] obj: Option<Handle<Obj>>) { ... }
 
 Storage in registry:
 ```rust
-pub struct TypeRegistry {
+pub struct SymbolRegistry {
     // ... existing ...
     /// FFI default argument values: (func_hash, param_idx) → FfiExpr
     ffi_defaults: RwLock<FxHashMap<(TypeHash, usize), FfiExpr>>,
@@ -690,10 +690,10 @@ pub struct MethodSignature {
 }
 ```
 
-### TypeRegistry
+### SymbolRegistry
 
 ```rust
-pub struct TypeRegistry {
+pub struct SymbolRegistry {
     // Single map for O(1) type lookup
     types: RwLock<FxHashMap<TypeHash, TypeEntry>>,
     type_by_name: RwLock<FxHashMap<String, TypeHash>>,
@@ -706,7 +706,7 @@ pub struct TypeRegistry {
     template_callbacks: RwLock<FxHashMap<TypeHash, TemplateCallback>>,
 }
 
-impl TypeRegistry {
+impl SymbolRegistry {
     // === Basic Lookup ===
     pub fn get(&self, hash: TypeHash) -> Option<&TypeEntry> { ... }
     pub fn get_by_name(&self, name: &str) -> Option<&TypeEntry> { ... }
@@ -859,7 +859,7 @@ impl Module {
         self.pending_functions.push(f());
     }
 
-    pub fn install(self, registry: &TypeRegistry) -> Result<(), Error> {
+    pub fn install(self, registry: &SymbolRegistry) -> Result<(), Error> {
         // Build ClassEntry from ClassMeta + associated FunctionMetas
         // Register into registry
     }
@@ -1090,7 +1090,7 @@ The caller doesn't need to know if it's FFI or script - the unified registry abs
 - Update `function_def.rs` - Add template_params, is_variadic
 
 ### Phase 2: Create angelscript-registry
-- `src/registry.rs` - TypeRegistry
+- `src/registry.rs` - SymbolRegistry
 - `src/module.rs` - Module builder with namespace support
 
 ### Phase 3: Create angelscript-macros
@@ -1103,7 +1103,7 @@ The caller doesn't need to know if it's FFI or script - the unified registry abs
 - `#[angelscript::list_pattern]` for list behaviors
 
 ### Phase 4: Update Consumers
-- Main crate: Use TypeRegistry
+- Main crate: Use SymbolRegistry
 - Compiler: Update to new registry
 
 ### Phase 5: Migrate stdlib
@@ -1119,7 +1119,7 @@ The caller doesn't need to know if it's FFI or script - the unified registry abs
 - `crates/angelscript-modules/` - Update to macros
 - `crates/angelscript-core/` - Add new types
 - `crates/angelscript-parser/` - No changes
-- `crates/angelscript-compiler/` - Update to TypeRegistry
+- `crates/angelscript-compiler/` - Update to SymbolRegistry
 
 ## VM Integration (TBD)
 
