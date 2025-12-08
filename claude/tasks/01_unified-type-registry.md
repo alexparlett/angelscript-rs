@@ -908,8 +908,14 @@ Note: Macros must be implemented before Module builder because `Module.ty::<T>()
 - [x] `#[list_pattern(...)]` - List initialization patterns (repeat, fixed, repeat_tuple)
 - [x] `template_callback` function kind - Macro generates `Behavior::TemplateCallback` (runtime callback invocation deferred)
 
-### Phase 5: Module Builder (angelscript-registry)
-- [ ] `src/module.rs` - Module builder with namespace support (consumes macro-generated metadata)
+### Phase 5: Module Builder (angelscript-registry) ✅ COMPLETE
+- [x] `src/module.rs` - Module struct with namespace support
+  - Module as data container (Vec-based storage for now)
+  - Builder methods: `class<T>()`, `class_meta()`, `function()`, `interface()`, `funcdef()`
+  - Accessor methods for Context: `classes()`, `functions()`, `interfaces()`, `funcdefs()`, `into_parts()`
+  - `HasClassMeta` trait for types with macro-generated ClassMeta
+  - Meta types updated to use `TypeHash` instead of `TypeId` (requires `Any` trait)
+  - Note: Context::install() not yet implemented (Phase 6)
 
 ### Phase 6: Update Consumers
 - [ ] Main crate: Use TypeRegistry

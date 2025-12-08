@@ -66,7 +66,7 @@ fn function_inner(attrs: &FunctionAttrs, input: &ItemFn) -> syn::Result<TokenStr
         quote! {
             ::angelscript_core::ParamMeta {
                 name: #name,
-                rust_type: ::std::any::TypeId::of::<#ty>(),
+                type_hash: <#ty as ::angelscript_core::Any>::type_hash(),
                 default_value: #default_value,
             }
         }
@@ -78,12 +78,6 @@ fn function_inner(attrs: &FunctionAttrs, input: &ItemFn) -> syn::Result<TokenStr
 
     // Parse #[returns(...)] attribute for return metadata
     let return_attrs = ReturnAttrs::from_attrs(fn_attrs)?;
-
-    // Determine return type
-    let return_type_token = match fn_output {
-        ReturnType::Default => quote! { ::std::any::TypeId::of::<()>() },
-        ReturnType::Type(_, ty) => quote! { ::std::any::TypeId::of::<#ty>() },
-    };
 
     // Generate return meta from #[returns] attribute or defaults
     let return_meta_token = generate_return_meta(fn_output, &return_attrs);
@@ -141,7 +135,6 @@ fn function_inner(attrs: &FunctionAttrs, input: &ItemFn) -> syn::Result<TokenStr
                 as_name: #as_name_token,
                 params: vec![#(#param_tokens),*],
                 generic_params: vec![#(#generic_param_tokens),*],
-                return_type: #return_type_token,
                 return_meta: #return_meta_token,
                 is_method: #is_method,
                 behavior: #behavior,
@@ -258,10 +251,10 @@ fn generate_generic_params(param_attrs: &[ParamAttrs]) -> Vec<TokenStream2> {
     param_attrs
         .iter()
         .map(|p| {
-            let param_type = if p.is_variable {
+            let type_hash = if p.is_variable {
                 quote! { None }
             } else if let Some(ty) = &p.param_type {
-                quote! { Some(::std::any::TypeId::of::<#ty>()) }
+                quote! { Some(<#ty as ::angelscript_core::Any>::type_hash()) }
             } else {
                 quote! { None }
             };
@@ -282,7 +275,7 @@ fn generate_generic_params(param_attrs: &[ParamAttrs]) -> Vec<TokenStream2> {
 
             quote! {
                 ::angelscript_core::GenericParamMeta {
-                    param_type: #param_type,
+                    type_hash: #type_hash,
                     ref_mode: #ref_mode,
                     is_variadic: #is_variadic,
                     default_value: #default_value,
@@ -297,12 +290,12 @@ fn generate_return_meta(fn_output: &ReturnType, return_attrs: &Option<ReturnAttr
     match return_attrs {
         Some(attrs) => {
             // Get return type - explicit from attribute or from function signature
-            let return_type = if let Some(ty) = &attrs.return_type {
-                quote! { Some(::std::any::TypeId::of::<#ty>()) }
+            let type_hash = if let Some(ty) = &attrs.return_type {
+                quote! { Some(<#ty as ::angelscript_core::Any>::type_hash()) }
             } else {
                 match fn_output {
                     ReturnType::Default => quote! { None },
-                    ReturnType::Type(_, ty) => quote! { Some(::std::any::TypeId::of::<#ty>()) },
+                    ReturnType::Type(_, ty) => quote! { Some(<#ty as ::angelscript_core::Any>::type_hash()) },
                 }
             };
 
@@ -317,7 +310,7 @@ fn generate_return_meta(fn_output: &ReturnType, return_attrs: &Option<ReturnAttr
 
             quote! {
                 ::angelscript_core::ReturnMeta {
-                    return_type: #return_type,
+                    type_hash: #type_hash,
                     mode: #mode,
                     is_const: #is_const,
                     is_variable: #is_variable,
@@ -329,7 +322,7 @@ fn generate_return_meta(fn_output: &ReturnType, return_attrs: &Option<ReturnAttr
             match fn_output {
                 ReturnType::Default => quote! {
                     ::angelscript_core::ReturnMeta {
-                        return_type: None,
+                        type_hash: None,
                         mode: ::angelscript_core::ReturnMode::Value,
                         is_const: false,
                         is_variable: false,
@@ -337,7 +330,7 @@ fn generate_return_meta(fn_output: &ReturnType, return_attrs: &Option<ReturnAttr
                 },
                 ReturnType::Type(_, ty) => quote! {
                     ::angelscript_core::ReturnMeta {
-                        return_type: Some(::std::any::TypeId::of::<#ty>()),
+                        type_hash: Some(<#ty as ::angelscript_core::Any>::type_hash()),
                         mode: ::angelscript_core::ReturnMode::Value,
                         is_const: false,
                         is_variable: false,
@@ -355,14 +348,14 @@ fn generate_list_pattern(list_pattern_attrs: &Option<ListPatternAttrs>) -> Token
             ListPatternKind::Repeat(ty) => {
                 quote! {
                     Some(::angelscript_core::ListPatternMeta::Repeat(
-                        ::std::any::TypeId::of::<#ty>()
+                        <#ty as ::angelscript_core::Any>::type_hash()
                     ))
                 }
             }
             ListPatternKind::Fixed(types) => {
                 let type_tokens: Vec<_> = types
                     .iter()
-                    .map(|ty| quote! { ::std::any::TypeId::of::<#ty>() })
+                    .map(|ty| quote! { <#ty as ::angelscript_core::Any>::type_hash() })
                     .collect();
                 quote! {
                     Some(::angelscript_core::ListPatternMeta::Fixed(
@@ -373,7 +366,7 @@ fn generate_list_pattern(list_pattern_attrs: &Option<ListPatternAttrs>) -> Token
             ListPatternKind::RepeatTuple(types) => {
                 let type_tokens: Vec<_> = types
                     .iter()
-                    .map(|ty| quote! { ::std::any::TypeId::of::<#ty>() })
+                    .map(|ty| quote! { <#ty as ::angelscript_core::Any>::type_hash() })
                     .collect();
                 quote! {
                     Some(::angelscript_core::ListPatternMeta::RepeatTuple(

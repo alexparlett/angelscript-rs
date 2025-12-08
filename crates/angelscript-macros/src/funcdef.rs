@@ -80,7 +80,7 @@ fn funcdef_inner(attrs: &FuncdefAttrs, input: &ItemType) -> syn::Result<TokenStr
     };
 
     let param_type_tokens: Vec<_> = param_types.iter().map(|ty| {
-        quote! { ::std::any::TypeId::of::<#ty>() }
+        quote! { <#ty as ::angelscript_core::Any>::type_hash() }
     }).collect();
 
     // Generate the metadata function
@@ -98,7 +98,7 @@ fn funcdef_inner(attrs: &FuncdefAttrs, input: &ItemType) -> syn::Result<TokenStr
                 name: #as_name,
                 type_hash: ::angelscript_core::TypeHash::from_name(#as_name),
                 param_types: vec![#(#param_type_tokens),*],
-                return_type: ::std::any::TypeId::of::<#return_type>(),
+                return_type: <#return_type as ::angelscript_core::Any>::type_hash(),
             }
         }
     })

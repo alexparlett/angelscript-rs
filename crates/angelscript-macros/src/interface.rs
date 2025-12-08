@@ -86,8 +86,8 @@ fn interface_inner(attrs: &InterfaceAttrs, input: &ItemTrait) -> syn::Result<Tok
             ::angelscript_core::InterfaceMethodMeta {
                 name: #as_name,
                 is_const: #is_const,
-                param_types: vec![#(::std::any::TypeId::of::<#param_types>()),*],
-                return_type: ::std::any::TypeId::of::<#return_type>(),
+                param_types: vec![#(<#param_types as ::angelscript_core::Any>::type_hash()),*],
+                return_type: <#return_type as ::angelscript_core::Any>::type_hash(),
             }
         }
     }).collect();

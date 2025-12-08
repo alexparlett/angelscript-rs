@@ -142,7 +142,7 @@ fn collect_properties(input: &DeriveInput) -> syn::Result<Vec<TokenStream2>> {
                         name: #prop_name,
                         get: #get,
                         set: #set,
-                        rust_type: ::std::any::TypeId::of::<#field_ty>(),
+                        type_hash: <#field_ty as ::angelscript_core::Any>::type_hash(),
                     }
                 });
             }

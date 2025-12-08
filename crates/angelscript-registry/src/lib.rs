@@ -10,6 +10,9 @@
 //! - **Functions**: All functions (global, methods, operators, behaviors) in one map
 //! - **Template Callbacks**: Validation callbacks for template instantiation
 //!
+//! The [`Module`] type is a container for pending registrations that can be
+//! passed to Context for installation.
+//!
 //! # Example
 //!
 //! ```
@@ -20,8 +23,10 @@
 //! assert!(registry.get(primitives::INT32).is_some());
 //! ```
 
+mod module;
 mod registry;
 
+pub use module::{HasClassMeta, Module};
 pub use registry::{TemplateCallback, TypeRegistry};
 
 // Re-export from core for backwards compatibility during transition
