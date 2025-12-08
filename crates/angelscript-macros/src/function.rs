@@ -2,7 +2,7 @@
 
 use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
-use quote::quote;
+use quote::{quote, format_ident};
 use syn::{parse_macro_input, ItemFn, FnArg, ReturnType, Pat, Type, Attribute};
 
 use crate::attrs::{
@@ -42,35 +42,48 @@ fn function_inner(attrs: &FunctionAttrs, input: &ItemFn) -> syn::Result<TokenStr
     let fn_output = &input.sig.output;
     let fn_attrs = &input.attrs;
 
-    // Generate the metadata function name (Rune convention: method__meta)
-    let meta_fn_name = syn::Ident::new(
-        &format!("{}__meta", fn_name),
-        fn_name.span(),
-    );
-
     // Determine if this is a method (has self parameter)
     let is_method = fn_inputs.iter().any(|arg| matches!(arg, FnArg::Receiver(_)));
 
+    // Naming strategy:
+    // - Methods always keep original name (can't replace with struct in impl block)
+    // - Free functions with `keep`: keep original name, use __meta suffix
+    // - Free functions without `keep` (default): unit struct gets original name, impl is mangled
+    let use_unit_struct = !is_method && !attrs.keep;
+
     // Extract parameter info for metadata (non-generic calling convention)
-    let params = extract_params(fn_inputs)?;
+    // For generic functions, params come from #[param] attributes, not function signature
+    let param_tokens: Vec<_> = if attrs.is_generic {
+        // Generic calling convention: use empty params, metadata comes from #[param] attributes
+        Vec::new()
+    } else {
+        let params = extract_params(fn_inputs)?;
 
-    // Generate param tokens with defaults from #[default(...)] on each param
-    let param_tokens: Vec<_> = params.iter().map(|p| {
-        let name = &p.name;
-        let ty = strip_reference(&p.ty);
-        let default_value = match &p.default {
-            Some(val) => quote! { Some(#val) },
-            None => quote! { None },
-        };
+        // Generate param tokens with defaults from #[default(...)] and template from #[template(...)] on each param
+        params.iter().map(|p| {
+            let name = &p.name;
+            let ty = strip_reference(&p.ty);
+            let default_value = match &p.default {
+                Some(val) => quote! { Some(#val) },
+                None => quote! { None },
+            };
+            let template_param = match &p.template_param {
+                Some(param_name) => quote! { Some(#param_name) },
+                None => quote! { None },
+            };
+            let if_handle_then_const = p.if_handle_then_const;
 
-        quote! {
-            ::angelscript_core::ParamMeta {
-                name: #name,
-                type_hash: <#ty as ::angelscript_core::Any>::type_hash(),
-                default_value: #default_value,
+            quote! {
+                ::angelscript_core::ParamMeta {
+                    name: #name,
+                    type_hash: <#ty as ::angelscript_core::Any>::type_hash(),
+                    default_value: #default_value,
+                    template_param: #template_param,
+                    if_handle_then_const: #if_handle_then_const,
+                }
             }
-        }
-    }).collect();
+        }).collect()
+    };
 
     // Parse #[param(...)] attributes for generic calling convention
     let param_attrs = ParamAttrs::from_attrs(fn_attrs)?;
@@ -129,31 +142,73 @@ fn function_inner(attrs: &FunctionAttrs, input: &ItemFn) -> syn::Result<TokenStr
         quote! { None }
     };
 
-    // Output the original function plus the metadata generator
-    Ok(quote! {
-        #(#filtered_attrs)*
-        #fn_vis fn #fn_name #fn_generics(#filtered_inputs) #fn_output
-        #fn_block
-
-        #[doc(hidden)]
-        #fn_vis fn #meta_fn_name() -> ::angelscript_core::FunctionMeta {
-            ::angelscript_core::FunctionMeta {
-                name: stringify!(#fn_name),
-                as_name: #as_name_token,
-                params: vec![#(#param_tokens),*],
-                generic_params: vec![#(#generic_param_tokens),*],
-                return_meta: #return_meta_token,
-                is_method: #is_method,
-                associated_type: #associated_type_token,
-                behavior: #behavior,
-                is_const: #is_const,
-                is_property: #is_property,
-                property_name: #property_name_token,
-                is_generic: #is_generic,
-                list_pattern: #list_pattern_token,
-            }
+    // Common metadata body
+    let meta_body = quote! {
+        ::angelscript_core::FunctionMeta {
+            name: stringify!(#fn_name),
+            as_name: #as_name_token,
+            params: vec![#(#param_tokens),*],
+            generic_params: vec![#(#generic_param_tokens),*],
+            return_meta: #return_meta_token,
+            is_method: #is_method,
+            associated_type: #associated_type_token,
+            behavior: #behavior,
+            is_const: #is_const,
+            is_property: #is_property,
+            property_name: #property_name_token,
+            is_generic: #is_generic,
+            list_pattern: #list_pattern_token,
         }
-    })
+    };
+
+    if use_unit_struct {
+        // Rune pattern: unit struct gets original name, impl is mangled
+        // Users can write: module.function(print)
+        let mangled_fn_name = format_ident!("__as_fn__{}", fn_name);
+
+        Ok(quote! {
+            /// Unit struct for function metadata. Pass this to `Module::function()`.
+            #[allow(non_camel_case_types)]
+            #fn_vis struct #fn_name;
+
+            impl ::angelscript_registry::HasFunctionMeta for #fn_name {
+                fn __as_fn_meta() -> ::angelscript_core::FunctionMeta {
+                    #meta_body
+                }
+            }
+
+            #[doc(hidden)]
+            #[allow(non_snake_case)]
+            #(#filtered_attrs)*
+            fn #mangled_fn_name #fn_generics(#filtered_inputs) #fn_output
+            #fn_block
+        })
+    } else {
+        // Keep pattern: original function stays callable, use __meta suffix
+        // For methods (inside impl blocks), we generate a const fn pointer.
+        // Function items coerce to fn pointers in const context, so:
+        //   const len__meta: fn() -> FunctionMeta = Self::__len_meta_fn;
+        // This gives us a true fn pointer that IntoFunctionMeta can accept.
+        let meta_fn_name = format_ident!("__{}_meta_fn", fn_name);
+        let meta_const_name = format_ident!("{}__meta", fn_name);
+
+        Ok(quote! {
+            #(#filtered_attrs)*
+            #fn_vis fn #fn_name #fn_generics(#filtered_inputs) #fn_output
+            #fn_block
+
+            #[doc(hidden)]
+            #[allow(non_snake_case)]
+            fn #meta_fn_name() -> ::angelscript_core::FunctionMeta {
+                #meta_body
+            }
+
+            /// Metadata constant. Pass to `Module::function()`.
+            #[doc(hidden)]
+            #[allow(non_upper_case_globals, non_snake_case)]
+            #fn_vis const #meta_const_name: fn() -> ::angelscript_core::FunctionMeta = Self::#meta_fn_name;
+        })
+    }
 }
 
 /// Parameter info extracted from function inputs.
@@ -161,6 +216,8 @@ struct ParamInfo {
     name: String,
     ty: Box<Type>,
     default: Option<String>,
+    template_param: Option<String>,
+    if_handle_then_const: bool,
 }
 
 /// Extract parameter names, types, and defaults from function inputs.
@@ -181,10 +238,15 @@ fn extract_params(inputs: &syn::punctuated::Punctuated<FnArg, syn::token::Comma>
                 // Look for #[default(...)] attribute on this parameter
                 let default = extract_param_default(&pat_type.attrs)?;
 
+                // Look for #[template("T")] or #[template("T", if_handle_then_const)] attribute
+                let (template_param, if_handle_then_const) = extract_param_template(&pat_type.attrs)?;
+
                 params.push(ParamInfo {
                     name,
                     ty: pat_type.ty.clone(),
                     default,
+                    template_param,
+                    if_handle_then_const,
                 });
             }
         }
@@ -203,6 +265,51 @@ fn extract_param_default(attrs: &[Attribute]) -> syn::Result<Option<String>> {
         }
     }
     Ok(None)
+}
+
+/// Extract template parameter name and if_handle_then_const from #[template("T")] or
+/// #[template("T", if_handle_then_const)] attribute on a parameter.
+fn extract_param_template(attrs: &[Attribute]) -> syn::Result<(Option<String>, bool)> {
+    for attr in attrs {
+        if attr.path().is_ident("template") {
+            // Parse the template param - can be just a string or string with if_handle_then_const
+            let mut template_name = None;
+            let mut if_handle_then_const = false;
+
+            attr.parse_nested_meta(|meta| {
+                if template_name.is_none() {
+                    // First item should be a string literal for the template param name
+                    // But parse_nested_meta expects ident = value format, so we need different parsing
+                    return Err(meta.error("use #[template(\"T\")] format"));
+                }
+                if meta.path.is_ident("if_handle_then_const") {
+                    if_handle_then_const = true;
+                }
+                Ok(())
+            }).or_else(|_| {
+                // Fallback to simple parsing for #[template("T")] or #[template("T", if_handle_then_const)]
+                attr.parse_args_with(|input: syn::parse::ParseStream| {
+                    let lit: syn::LitStr = input.parse()?;
+                    template_name = Some(lit.value());
+
+                    // Check for optional if_handle_then_const
+                    if input.peek(syn::Token![,]) {
+                        let _: syn::Token![,] = input.parse()?;
+                        let ident: syn::Ident = input.parse()?;
+                        if ident == "if_handle_then_const" {
+                            if_handle_then_const = true;
+                        } else {
+                            return Err(syn::Error::new(ident.span(), "expected `if_handle_then_const`"));
+                        }
+                    }
+                    Ok(())
+                })
+            })?;
+
+            return Ok((template_name, if_handle_then_const));
+        }
+    }
+    Ok((None, false))
 }
 
 /// Generate the behavior kind token.
@@ -260,11 +367,12 @@ fn generate_generic_params(param_attrs: &[ParamAttrs]) -> Vec<TokenStream2> {
         .iter()
         .map(|p| {
             let type_hash = if p.is_variable {
-                quote! { None }
+                quote! { ::angelscript_core::primitives::VARIABLE_PARAM }
             } else if let Some(ty) = &p.param_type {
-                quote! { Some(<#ty as ::angelscript_core::Any>::type_hash()) }
+                quote! { <#ty as ::angelscript_core::Any>::type_hash() }
             } else {
-                quote! { None }
+                // No type specified and not variable - default to VARIABLE_PARAM
+                quote! { ::angelscript_core::primitives::VARIABLE_PARAM }
             };
 
             let ref_mode = match p.ref_mode {
@@ -281,12 +389,15 @@ fn generate_generic_params(param_attrs: &[ParamAttrs]) -> Vec<TokenStream2> {
                 None => quote! { None },
             };
 
+            let if_handle_then_const = p.if_handle_then_const;
+
             quote! {
                 ::angelscript_core::GenericParamMeta {
                     type_hash: #type_hash,
                     ref_mode: #ref_mode,
                     is_variadic: #is_variadic,
                     default_value: #default_value,
+                    if_handle_then_const: #if_handle_then_const,
                 }
             }
         })
@@ -401,15 +512,17 @@ fn filter_helper_attrs(attrs: &[Attribute]) -> Vec<&Attribute> {
         .collect()
 }
 
-/// Filter #[default] attributes from function parameters.
+/// Filter #[default] and #[template] attributes from function parameters.
 fn filter_param_attrs(inputs: &syn::punctuated::Punctuated<FnArg, syn::token::Comma>) -> TokenStream2 {
     let filtered: Vec<_> = inputs.iter().map(|arg| {
         match arg {
             FnArg::Receiver(recv) => quote! { #recv },
             FnArg::Typed(pat_type) => {
-                // Filter out #[default] attribute
+                // Filter out #[default] and #[template] attributes
                 let filtered_attrs: Vec<_> = pat_type.attrs.iter()
-                    .filter(|attr| !attr.path().is_ident("default"))
+                    .filter(|attr| {
+                        !attr.path().is_ident("default") && !attr.path().is_ident("template")
+                    })
                     .collect();
                 let pat = &pat_type.pat;
                 let ty = &pat_type.ty;

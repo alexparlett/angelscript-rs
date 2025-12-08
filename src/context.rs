@@ -130,7 +130,9 @@ impl Context {
 
         // Add template parameters
         if !meta.template_params.is_empty() {
-            class_entry = class_entry.with_template_params(meta.template_params);
+            class_entry = class_entry.with_template_params(
+                meta.template_params.iter().map(|s| s.to_string()).collect()
+            );
         }
 
         // Convert properties
@@ -373,6 +375,8 @@ mod tests {
             type_kind: TypeKind::reference(),
             properties: vec![],
             template_params: vec![],
+            specialization_of: None,
+            specialization_args: vec![],
         });
         ctx.install(module).unwrap();
 
@@ -390,6 +394,8 @@ mod tests {
             type_kind: TypeKind::reference(),
             properties: vec![],
             template_params: vec![],
+            specialization_of: None,
+            specialization_args: vec![],
         });
         ctx.install(module).unwrap();
 
@@ -410,6 +416,8 @@ mod tests {
             type_kind: TypeKind::reference(),
             properties: vec![],
             template_params: vec![],
+            specialization_of: None,
+            specialization_args: vec![],
         };
 
         let mut module1 = Module::new();

@@ -12,11 +12,13 @@ use syn::{parse_macro_input, ItemType, Type, TypeBareFn, ReturnType};
 pub struct FuncdefAttrs {
     /// Override the AngelScript funcdef name.
     pub name: Option<String>,
+    /// Parent type for child funcdefs (e.g., `parent = ScriptArray`).
+    pub parent: Option<syn::Type>,
 }
 
 impl FuncdefAttrs {
     pub fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
-        use syn::{Token, LitStr};
+        use syn::{Token, punctuated::Punctuated};
 
         let mut result = Self::default();
 
@@ -24,17 +26,42 @@ impl FuncdefAttrs {
             return Ok(result);
         }
 
-        // Parse name = "..."
-        if input.peek(syn::Ident) {
-            let ident: syn::Ident = input.parse()?;
-            if ident == "name" {
-                let _: Token![=] = input.parse()?;
-                let value: LitStr = input.parse()?;
-                result.name = Some(value.value());
+        // Parse comma-separated attributes: name = "...", parent = Type
+        let items = Punctuated::<FuncdefAttrItem, Token![,]>::parse_terminated(input)?;
+
+        for item in items {
+            match item {
+                FuncdefAttrItem::Name(name) => result.name = Some(name),
+                FuncdefAttrItem::Parent(ty) => result.parent = Some(ty),
             }
         }
 
         Ok(result)
+    }
+}
+
+/// Individual funcdef attribute item.
+enum FuncdefAttrItem {
+    Name(String),
+    Parent(syn::Type),
+}
+
+impl syn::parse::Parse for FuncdefAttrItem {
+    fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
+        use syn::{Token, LitStr};
+
+        let ident: syn::Ident = input.parse()?;
+        let _: Token![=] = input.parse()?;
+
+        if ident == "name" {
+            let value: LitStr = input.parse()?;
+            Ok(FuncdefAttrItem::Name(value.value()))
+        } else if ident == "parent" {
+            let ty: syn::Type = input.parse()?;
+            Ok(FuncdefAttrItem::Parent(ty))
+        } else {
+            Err(syn::Error::new(ident.span(), format!("unknown funcdef attribute: {}", ident)))
+        }
     }
 }
 
@@ -83,6 +110,12 @@ fn funcdef_inner(attrs: &FuncdefAttrs, input: &ItemType) -> syn::Result<TokenStr
         quote! { <#ty as ::angelscript_core::Any>::type_hash() }
     }).collect();
 
+    // Generate parent_type token
+    let parent_type_token = match &attrs.parent {
+        Some(ty) => quote! { Some(<#ty as ::angelscript_core::Any>::type_hash()) },
+        None => quote! { None },
+    };
+
     // Generate the metadata function
     let meta_fn_name = syn::Ident::new(
         &format!("__as_{}_funcdef_meta", type_name),
@@ -99,6 +132,7 @@ fn funcdef_inner(attrs: &FuncdefAttrs, input: &ItemType) -> syn::Result<TokenStr
                 type_hash: ::angelscript_core::TypeHash::from_name(#as_name),
                 param_types: vec![#(#param_type_tokens),*],
                 return_type: <#return_type as ::angelscript_core::Any>::type_hash(),
+                parent_type: #parent_type_token,
             }
         }
     })

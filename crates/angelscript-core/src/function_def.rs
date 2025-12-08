@@ -48,6 +48,12 @@ pub struct Param {
     /// Whether this parameter has a default value.
     /// The actual default expression is evaluated during compilation.
     pub has_default: bool,
+    /// If true and this is a template param instantiated with a handle type,
+    /// the pointed-to object is also const (not just the handle).
+    ///
+    /// Example: `const T&in` with T=`Obj@` becomes `const Obj@ const &in`
+    /// instead of `Obj@ const &in`.
+    pub if_handle_then_const: bool,
 }
 
 impl Param {
@@ -57,6 +63,7 @@ impl Param {
             name: name.into(),
             data_type,
             has_default: false,
+            if_handle_then_const: false,
         }
     }
 
@@ -66,7 +73,14 @@ impl Param {
             name: name.into(),
             data_type,
             has_default: true,
+            if_handle_then_const: false,
         }
+    }
+
+    /// Set the if_handle_then_const flag.
+    pub fn with_if_handle_then_const(mut self, value: bool) -> Self {
+        self.if_handle_then_const = value;
+        self
     }
 }
 

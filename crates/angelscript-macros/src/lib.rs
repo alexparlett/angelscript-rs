@@ -185,3 +185,14 @@ pub fn interface(attr: TokenStream, item: TokenStream) -> TokenStream {
 pub fn funcdef(attr: TokenStream, item: TokenStream) -> TokenStream {
     funcdef::funcdef_impl(attr, item)
 }
+
+// Note: #[template("T")] is a helper attribute for function parameters that marks
+// a parameter as representing a template type parameter. It's parsed by the
+// #[function] macro and doesn't need its own proc-macro - it's just an inert
+// attribute like #[default("...")] for parameter defaults.
+//
+// Usage:
+//   #[angelscript_macros::function(instance)]
+//   pub fn insert(&mut self, #[template("T")] value: DynValue) { ... }
+//
+// The template param name is stored in ParamMeta::template_param.

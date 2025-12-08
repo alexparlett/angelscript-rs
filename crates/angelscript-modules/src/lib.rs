@@ -36,4 +36,4 @@ pub mod std;
 // Re-export the types for convenience
 pub use string::ScriptString;
 pub use array::ScriptArray;
-pub use dictionary::{ScriptDict, ScriptKey};
+pub use dictionary::ScriptDict;

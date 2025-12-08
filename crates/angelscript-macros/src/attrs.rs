@@ -15,6 +15,12 @@ pub struct TypeAttrs {
     pub type_kind: Option<TypeKindAttr>,
     /// Template parameter string (e.g., "<T>" or "<K, V>")
     pub template: Option<String>,
+    /// Template specialization: base template name.
+    /// Example: `specialization_of = "myTemplate"`
+    pub specialization_of: Option<String>,
+    /// Template specialization arguments as types.
+    /// Example: `specialization_args(f32, i32)`
+    pub specialization_args: Vec<syn::Type>,
 }
 
 /// Type kind attribute values.
@@ -62,6 +68,8 @@ pub struct FunctionAttrs {
     pub returns: Option<String>,
     /// Copy constructor
     pub is_copy: bool,
+    /// Keep original function name callable (use __meta suffix for metadata)
+    pub keep: bool,
 }
 
 /// Function kind.
@@ -116,6 +124,16 @@ impl TypeAttrs {
                 } else if meta.path.is_ident("template") {
                     let value: LitStr = meta.value()?.parse()?;
                     result.template = Some(value.value());
+                } else if meta.path.is_ident("specialization_of") {
+                    let value: LitStr = meta.value()?.parse()?;
+                    result.specialization_of = Some(value.value());
+                } else if meta.path.is_ident("specialization_args") {
+                    // Parse parenthesized list of types: specialization_args(f32, i32)
+                    let content;
+                    syn::parenthesized!(content in meta.input);
+                    let types: Punctuated<syn::Type, Token![,]> =
+                        content.parse_terminated(syn::Type::parse, Token![,])?;
+                    result.specialization_args = types.into_iter().collect();
                 } else {
                     return Err(meta.error(format!(
                         "unknown angelscript attribute: {}",
@@ -201,6 +219,7 @@ impl FunctionAttrs {
                         "generic" => result.is_generic = true,
                         "template" => result.is_template = true,
                         "copy" => result.is_copy = true,
+                        "keep" => result.keep = true,
                         _ => {
                             return Err(syn::Error::new(
                                 ident.span(),
@@ -317,6 +336,7 @@ pub enum RefModeAttr {
 /// - `type = T` - Specific type
 /// - `in` / `out` / `inout` - Reference mode
 /// - `default = "expr"` - Default value expression
+/// - `if_handle_then_const` - When T is handle type, pointed-to object is also const
 #[derive(Debug, Default)]
 pub struct ParamAttrs {
     /// Is this a variable type (`?`)?
@@ -329,6 +349,9 @@ pub struct ParamAttrs {
     pub ref_mode: RefModeAttr,
     /// Default value expression (e.g., "-1", "\"\"")
     pub default: Option<String>,
+    /// If true and this is a template param instantiated with a handle type,
+    /// the pointed-to object is also const.
+    pub if_handle_then_const: bool,
 }
 
 impl ParamAttrs {
@@ -355,6 +378,8 @@ impl ParamAttrs {
                 let value = meta.value()?;
                 let lit: LitStr = value.parse()?;
                 result.default = Some(lit.value());
+            } else if meta.path.is_ident("if_handle_then_const") {
+                result.if_handle_then_const = true;
             } else {
                 return Err(meta.error(format!(
                     "unknown param attribute: {}",

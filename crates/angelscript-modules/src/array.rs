@@ -1,73 +1,21 @@
-//! ScriptArray - Type-erased, reference-counted array for AngelScript.
+//! ScriptArray - FFI registration for AngelScript array<T> template.
 //!
-//! This is a REFERENCE type - passed by handle with manual reference counting.
-//! Elements are stored type-erased as raw bytes.
+//! This is a placeholder implementation for FFI registration.
+//! The actual storage and runtime implementation will be handled by the VM.
 
-use std::fmt;
-use std::sync::atomic::{AtomicU32, Ordering as AtomicOrdering};
-
-use angelscript_core::TypeHash;
+use angelscript_core::AnyRef;
 use angelscript_macros::Any;
 use angelscript_registry::Module;
 
-/// Type-erased array for AngelScript `array<T>` template.
+/// Placeholder for AngelScript `array<T>` template.
 ///
-/// This is a REFERENCE type with manual reference counting.
-/// Elements are stored as raw bytes for type-erased storage.
+/// This is an empty struct used purely for FFI registration.
+/// The actual implementation will be provided by the VM.
 #[derive(Any)]
 #[angelscript(name = "array", reference, template = "<T>")]
-pub struct ScriptArray {
-    /// Type-erased element storage (raw bytes)
-    elements: Vec<u8>,
-    /// Size of each element in bytes
-    element_size: usize,
-    /// Number of elements
-    len: u32,
-    /// Element type for runtime checking
-    element_type_id: TypeHash,
-    /// Reference count (starts at 1)
-    ref_count: AtomicU32,
-}
+pub struct ScriptArray;
 
 impl ScriptArray {
-    // =========================================================================
-    // CONSTRUCTORS
-    // =========================================================================
-
-    /// Create an empty array for given element type and size.
-    pub fn new(element_type_id: TypeHash, element_size: usize) -> Self {
-        Self {
-            elements: Vec::new(),
-            element_size,
-            len: 0,
-            element_type_id,
-            ref_count: AtomicU32::new(1),
-        }
-    }
-
-    /// Create array with initial capacity.
-    pub fn with_capacity(element_type_id: TypeHash, element_size: usize, capacity: usize) -> Self {
-        Self {
-            elements: Vec::with_capacity(capacity * element_size),
-            element_size,
-            len: 0,
-            element_type_id,
-            ref_count: AtomicU32::new(1),
-        }
-    }
-
-    /// Get the element type ID.
-    #[inline]
-    pub fn element_type_id(&self) -> TypeHash {
-        self.element_type_id
-    }
-
-    /// Get the element size in bytes.
-    #[inline]
-    pub fn element_size(&self) -> usize {
-        self.element_size
-    }
-
     // =========================================================================
     // REFERENCE COUNTING
     // =========================================================================
@@ -75,19 +23,13 @@ impl ScriptArray {
     /// Increment reference count.
     #[angelscript_macros::function(addref)]
     pub fn add_ref(&self) {
-        self.ref_count.fetch_add(1, AtomicOrdering::Relaxed);
+        todo!()
     }
 
-    /// Decrement reference count. Returns true if count reached zero.
+    /// Decrement reference count.
     #[angelscript_macros::function(release)]
     pub fn release(&self) -> bool {
-        self.ref_count.fetch_sub(1, AtomicOrdering::Release) == 1
-    }
-
-    /// Get current reference count.
-    #[inline]
-    pub fn ref_count(&self) -> u32 {
-        self.ref_count.load(AtomicOrdering::Relaxed)
+        todo!()
     }
 
     // =========================================================================
@@ -97,135 +39,45 @@ impl ScriptArray {
     /// Returns the number of elements.
     #[angelscript_macros::function(instance, const, name = "length")]
     pub fn len(&self) -> u32 {
-        self.len
+        todo!()
     }
 
     /// Returns true if the array is empty.
     #[angelscript_macros::function(instance, const, name = "isEmpty")]
     pub fn is_empty(&self) -> bool {
-        self.len == 0
+        todo!()
     }
 
     /// Returns the allocated capacity.
     #[angelscript_macros::function(instance, const)]
     pub fn capacity(&self) -> u32 {
-        if self.element_size == 0 {
-            u32::MAX
-        } else {
-            (self.elements.capacity() / self.element_size) as u32
-        }
+        todo!()
     }
 
-    /// Reserve capacity for at least `additional` more elements.
+    /// Reserve capacity for at least `count` elements.
     #[angelscript_macros::function(instance)]
-    pub fn reserve(&mut self, additional: u32) {
-        self.elements.reserve(additional as usize * self.element_size);
+    pub fn reserve(&mut self, count: u32) {
+        let _ = count;
+        todo!()
+    }
+
+    /// Resize array to `count` elements.
+    #[angelscript_macros::function(instance)]
+    pub fn resize(&mut self, count: u32) {
+        let _ = count;
+        todo!()
     }
 
     /// Shrink capacity to fit current length.
     #[angelscript_macros::function(instance, name = "shrinkToFit")]
     pub fn shrink_to_fit(&mut self) {
-        self.elements.shrink_to_fit();
+        todo!()
     }
 
     /// Remove all elements.
     #[angelscript_macros::function(instance)]
     pub fn clear(&mut self) {
-        self.elements.clear();
-        self.len = 0;
-    }
-
-    /// Resize array to `new_len` elements.
-    /// New elements are zero-initialized.
-    #[angelscript_macros::function(instance)]
-    pub fn resize(&mut self, new_len: u32) {
-        let new_byte_len = new_len as usize * self.element_size;
-        self.elements.resize(new_byte_len, 0);
-        self.len = new_len;
-    }
-
-    // =========================================================================
-    // RAW ELEMENT ACCESS (for VM use)
-    // =========================================================================
-
-    /// Get raw pointer to element at index.
-    ///
-    /// # Safety
-    /// Index must be within bounds.
-    #[inline]
-    pub unsafe fn get_raw(&self, index: u32) -> *const u8 {
-        unsafe {
-            self.elements
-                .as_ptr()
-                .add(index as usize * self.element_size)
-        }
-    }
-
-    /// Get mutable raw pointer to element at index.
-    ///
-    /// # Safety
-    /// Index must be within bounds.
-    #[inline]
-    pub unsafe fn get_raw_mut(&mut self, index: u32) -> *mut u8 {
-        unsafe {
-            self.elements
-                .as_mut_ptr()
-                .add(index as usize * self.element_size)
-        }
-    }
-
-    /// Push raw bytes as a new element.
-    ///
-    /// # Safety
-    /// The bytes must represent a valid value of the element type.
-    pub unsafe fn push_raw(&mut self, bytes: &[u8]) {
-        debug_assert_eq!(bytes.len(), self.element_size);
-        self.elements.extend_from_slice(bytes);
-        self.len += 1;
-    }
-
-    /// Pop the last element, returning its raw bytes.
-    pub fn pop_raw(&mut self) -> Option<Vec<u8>> {
-        if self.len == 0 {
-            return None;
-        }
-        let start = (self.len as usize - 1) * self.element_size;
-        let bytes = self.elements[start..].to_vec();
-        self.elements.truncate(start);
-        self.len -= 1;
-        Some(bytes)
-    }
-
-    // =========================================================================
-    // ORDERING
-    // =========================================================================
-
-    /// Reverse elements in place.
-    #[angelscript_macros::function(instance)]
-    pub fn reverse(&mut self) {
-        if self.element_size == 0 || self.len <= 1 {
-            return;
-        }
-        // Reverse by swapping elements
-        let mut i = 0;
-        let mut j = self.len - 1;
-        while i < j {
-            self.swap_raw(i, j);
-            i += 1;
-            j -= 1;
-        }
-    }
-
-    /// Swap two elements by index.
-    fn swap_raw(&mut self, i: u32, j: u32) {
-        if i == j || i >= self.len || j >= self.len {
-            return;
-        }
-        let i_start = i as usize * self.element_size;
-        let j_start = j as usize * self.element_size;
-        for k in 0..self.element_size {
-            self.elements.swap(i_start + k, j_start + k);
-        }
+        todo!()
     }
 
     // =========================================================================
@@ -235,62 +87,114 @@ impl ScriptArray {
     /// Remove element at position.
     #[angelscript_macros::function(instance, name = "removeAt")]
     pub fn remove_at(&mut self, index: u32) {
-        if index >= self.len {
-            return;
-        }
-        let start = index as usize * self.element_size;
-        let end = start + self.element_size;
-        self.elements.drain(start..end);
-        self.len -= 1;
+        let _ = index;
+        todo!()
     }
 
     /// Remove the last element.
     #[angelscript_macros::function(instance, name = "removeLast")]
     pub fn remove_last(&mut self) {
-        if self.len > 0 {
-            let new_byte_len = (self.len as usize - 1) * self.element_size;
-            self.elements.truncate(new_byte_len);
-            self.len -= 1;
-        }
+        todo!()
     }
 
     /// Remove range of elements [start..start+count].
     #[angelscript_macros::function(instance, name = "removeRange")]
     pub fn remove_range(&mut self, start: u32, count: u32) {
-        let start_idx = start.min(self.len) as usize;
-        let end_idx = (start + count).min(self.len) as usize;
-        if start_idx < end_idx {
-            let byte_start = start_idx * self.element_size;
-            let byte_end = end_idx * self.element_size;
-            self.elements.drain(byte_start..byte_end);
-            self.len -= (end_idx - start_idx) as u32;
-        }
+        let _ = (start, count);
+        todo!()
     }
 
     // =========================================================================
-    // ITERATOR ACCESS
+    // ORDERING
     // =========================================================================
 
-    /// Iterate over element byte slices.
-    pub fn iter_raw(&self) -> impl Iterator<Item = &[u8]> {
-        self.elements.chunks(self.element_size).take(self.len as usize)
+    /// Reverse elements in place.
+    #[angelscript_macros::function(instance)]
+    pub fn reverse(&mut self) {
+        todo!()
     }
 
-    /// Iterate over mutable element byte slices.
-    pub fn iter_raw_mut(&mut self) -> impl Iterator<Item = &mut [u8]> {
-        let len = self.len as usize;
-        self.elements.chunks_mut(self.element_size).take(len)
+    /// Sort elements in ascending order.
+    #[angelscript_macros::function(instance, name = "sortAsc")]
+    pub fn sort_asc(&mut self) {
+        todo!()
     }
-}
 
-impl fmt::Debug for ScriptArray {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("ScriptArray")
-            .field("element_type_id", &self.element_type_id)
-            .field("element_size", &self.element_size)
-            .field("len", &self.len)
-            .field("ref_count", &self.ref_count.load(AtomicOrdering::Relaxed))
-            .finish()
+    /// Sort elements in descending order.
+    #[angelscript_macros::function(instance, name = "sortDesc")]
+    pub fn sort_desc(&mut self) {
+        todo!()
+    }
+
+    // =========================================================================
+    // TEMPLATE PARAMETER METHODS
+    // =========================================================================
+
+    /// Insert element at position.
+    #[angelscript_macros::function(instance, name = "insertAt")]
+    pub fn insert_at(&mut self, index: u32, #[template("T")] value: AnyRef<'static>) {
+        let _ = (index, value);
+        todo!()
+    }
+
+    /// Insert element at the end.
+    #[angelscript_macros::function(instance, name = "insertLast")]
+    pub fn insert_last(&mut self, #[template("T")] value: AnyRef<'static>) {
+        let _ = value;
+        todo!()
+    }
+
+    /// Find first occurrence of value.
+    #[angelscript_macros::function(instance, const)]
+    pub fn find(&self, #[template("T")] value: AnyRef<'static>) -> i32 {
+        let _ = value;
+        todo!()
+    }
+
+    /// Find first occurrence of value starting from `start`.
+    #[angelscript_macros::function(instance, const, name = "findFrom")]
+    pub fn find_from(&self, start: u32, #[template("T")] value: AnyRef<'static>) -> i32 {
+        let _ = (start, value);
+        todo!()
+    }
+
+    /// Check if array contains value.
+    #[angelscript_macros::function(instance, const)]
+    pub fn contains(&self, #[template("T")] value: AnyRef<'static>) -> bool {
+        let _ = value;
+        todo!()
+    }
+
+    // =========================================================================
+    // OPERATORS
+    // =========================================================================
+
+    /// Index operator (mutable).
+    #[angelscript_macros::function(instance, operator = Operator::Index)]
+    pub fn op_index(&mut self, index: u32) -> AnyRef<'static> {
+        let _ = index;
+        todo!()
+    }
+
+    /// Index operator (const).
+    #[angelscript_macros::function(instance, const, operator = Operator::Index)]
+    pub fn op_index_const(&self, index: u32) -> AnyRef<'static> {
+        let _ = index;
+        todo!()
+    }
+
+    /// Equality comparison.
+    #[angelscript_macros::function(instance, const, operator = Operator::Equals)]
+    pub fn op_equals(&self, other: &Self) -> bool {
+        let _ = other;
+        todo!()
+    }
+
+    /// Assignment operator.
+    #[angelscript_macros::function(instance, operator = Operator::Assign)]
+    pub fn op_assign(&mut self, other: &Self) {
+        let _ = other;
+        todo!()
     }
 }
 
@@ -299,153 +203,49 @@ impl fmt::Debug for ScriptArray {
 // =========================================================================
 
 /// Creates the array module with the `array<T>` template type.
-///
-/// Registers the built-in array template with:
-/// - Reference counting behaviors (addref/release)
-/// - Basic size/capacity methods
-///
-/// # Example
-///
-/// ```ignore
-/// use angelscript_modules::array;
-///
-/// let module = array::module();
-/// // Install with context...
-/// ```
 pub fn module() -> Module {
     Module::new()
         .ty::<ScriptArray>()
+        // Reference counting
+        .function(ScriptArray::add_ref__meta)
+        .function(ScriptArray::release__meta)
+        // Size/capacity operations
+        .function(ScriptArray::len__meta)
+        .function(ScriptArray::is_empty__meta)
+        .function(ScriptArray::capacity__meta)
+        .function(ScriptArray::reserve__meta)
+        .function(ScriptArray::resize__meta)
+        .function(ScriptArray::shrink_to_fit__meta)
+        .function(ScriptArray::clear__meta)
+        // Removal
+        .function(ScriptArray::remove_at__meta)
+        .function(ScriptArray::remove_last__meta)
+        .function(ScriptArray::remove_range__meta)
+        // Ordering
+        .function(ScriptArray::reverse__meta)
+        .function(ScriptArray::sort_asc__meta)
+        .function(ScriptArray::sort_desc__meta)
+        // Template parameter methods
+        .function(ScriptArray::insert_at__meta)
+        .function(ScriptArray::insert_last__meta)
+        .function(ScriptArray::find__meta)
+        .function(ScriptArray::find_from__meta)
+        .function(ScriptArray::contains__meta)
+        // Operators
+        .function(ScriptArray::op_index__meta)
+        .function(ScriptArray::op_index_const__meta)
+        .function(ScriptArray::op_equals__meta)
+        .function(ScriptArray::op_assign__meta)
 }
-
-// =========================================================================
-// TESTS
-// =========================================================================
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use angelscript_core::primitives;
-
-    #[test]
-    fn test_new_creates_empty_array() {
-        let arr = ScriptArray::new(primitives::INT32, 4);
-        assert!(arr.is_empty());
-        assert_eq!(arr.len(), 0);
-        assert_eq!(arr.element_type_id(), primitives::INT32);
-        assert_eq!(arr.element_size(), 4);
-        assert_eq!(arr.ref_count(), 1);
-    }
-
-    #[test]
-    fn test_with_capacity() {
-        let arr = ScriptArray::with_capacity(primitives::INT32, 4, 100);
-        assert!(arr.is_empty());
-        assert!(arr.capacity() >= 100);
-    }
-
-    #[test]
-    fn test_ref_count_initial() {
-        let arr = ScriptArray::new(primitives::INT32, 4);
-        assert_eq!(arr.ref_count(), 1);
-    }
-
-    #[test]
-    fn test_add_ref() {
-        let arr = ScriptArray::new(primitives::INT32, 4);
-        arr.add_ref();
-        assert_eq!(arr.ref_count(), 2);
-        arr.add_ref();
-        assert_eq!(arr.ref_count(), 3);
-    }
-
-    #[test]
-    fn test_release() {
-        let arr = ScriptArray::new(primitives::INT32, 4);
-        arr.add_ref(); // ref_count = 2
-        assert!(!arr.release()); // ref_count = 1, not zero
-        assert_eq!(arr.ref_count(), 1);
-        assert!(arr.release()); // ref_count = 0, returns true
-    }
-
-    #[test]
-    fn test_push_and_len() {
-        let mut arr = ScriptArray::new(primitives::INT32, 4);
-        unsafe {
-            arr.push_raw(&42i32.to_ne_bytes());
-            arr.push_raw(&100i32.to_ne_bytes());
-        }
-        assert_eq!(arr.len(), 2);
-        assert!(!arr.is_empty());
-    }
-
-    #[test]
-    fn test_resize() {
-        let mut arr = ScriptArray::new(primitives::INT32, 4);
-        arr.resize(5);
-        assert_eq!(arr.len(), 5);
-    }
-
-    #[test]
-    fn test_clear() {
-        let mut arr = ScriptArray::new(primitives::INT32, 4);
-        arr.resize(5);
-        arr.clear();
-        assert!(arr.is_empty());
-        assert_eq!(arr.len(), 0);
-    }
-
-    #[test]
-    fn test_remove_at() {
-        let mut arr = ScriptArray::new(primitives::INT32, 4);
-        unsafe {
-            arr.push_raw(&1i32.to_ne_bytes());
-            arr.push_raw(&2i32.to_ne_bytes());
-            arr.push_raw(&3i32.to_ne_bytes());
-        }
-        arr.remove_at(1);
-        assert_eq!(arr.len(), 2);
-    }
-
-    #[test]
-    fn test_remove_last() {
-        let mut arr = ScriptArray::new(primitives::INT32, 4);
-        unsafe {
-            arr.push_raw(&1i32.to_ne_bytes());
-            arr.push_raw(&2i32.to_ne_bytes());
-        }
-        arr.remove_last();
-        assert_eq!(arr.len(), 1);
-    }
-
-    #[test]
-    fn test_reverse() {
-        let mut arr = ScriptArray::new(primitives::INT32, 4);
-        unsafe {
-            arr.push_raw(&1i32.to_ne_bytes());
-            arr.push_raw(&2i32.to_ne_bytes());
-            arr.push_raw(&3i32.to_ne_bytes());
-        }
-        arr.reverse();
-        // First element should now be 3
-        unsafe {
-            let ptr = arr.get_raw(0);
-            let value = i32::from_ne_bytes(std::slice::from_raw_parts(ptr, 4).try_into().unwrap());
-            assert_eq!(value, 3);
-        }
-    }
+    use angelscript_registry::HasClassMeta;
 
     #[test]
     fn test_module_creates() {
-        use angelscript_registry::HasClassMeta;
         let meta = ScriptArray::__as_type_meta();
         assert_eq!(meta.name, "array");
-    }
-
-    #[test]
-    fn test_debug() {
-        let arr = ScriptArray::new(primitives::INT32, 4);
-        let debug = format!("{:?}", arr);
-        assert!(debug.contains("ScriptArray"));
-        assert!(debug.contains("len: 0"));
     }
 }

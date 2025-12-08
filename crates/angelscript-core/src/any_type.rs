@@ -809,3 +809,17 @@ mod tests {
 
     use super::super::native_fn::ObjectHeap;
 }
+
+// === Any trait implementation for AnyRef<'static> ===
+
+use crate::{Any as AsTrait, primitives, TypeHash};
+
+impl AsTrait for AnyRef<'static> {
+    fn type_hash() -> TypeHash {
+        primitives::SELF
+    }
+
+    fn type_name() -> &'static str {
+        "?"
+    }
+}

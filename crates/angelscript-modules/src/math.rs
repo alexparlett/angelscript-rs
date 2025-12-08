@@ -446,79 +446,79 @@ pub fn ieee_remainder(x: f64, y: f64) -> f64 {
 /// Everything is in the `math` namespace, accessible as `math::sin(x)`, `math::PI`, etc.
 pub fn module() -> Module {
     Module::in_namespace(&["math"])
-        .function_meta(pi__meta)
-        .function_meta(e__meta)
-        .function_meta(tau__meta)
-        .function_meta(sqrt2__meta)
-        .function_meta(ln2__meta)
-        .function_meta(ln10__meta)
-        .function_meta(infinity__meta)
-        .function_meta(neg_infinity__meta)
+        .function(pi)
+        .function(e)
+        .function(tau)
+        .function(sqrt2)
+        .function(ln2)
+        .function(ln10)
+        .function(infinity)
+        .function(neg_infinity)
         // Trigonometric
-        .function_meta(sin__meta)
-        .function_meta(cos__meta)
-        .function_meta(tan__meta)
-        .function_meta(asin__meta)
-        .function_meta(acos__meta)
-        .function_meta(atan__meta)
-        .function_meta(atan2__meta)
+        .function(sin)
+        .function(cos)
+        .function(tan)
+        .function(asin)
+        .function(acos)
+        .function(atan)
+        .function(atan2)
         // Hyperbolic
-        .function_meta(sinh__meta)
-        .function_meta(cosh__meta)
-        .function_meta(tanh__meta)
-        .function_meta(asinh__meta)
-        .function_meta(acosh__meta)
-        .function_meta(atanh__meta)
+        .function(sinh)
+        .function(cosh)
+        .function(tanh)
+        .function(asinh)
+        .function(acosh)
+        .function(atanh)
         // Exponential and logarithmic
-        .function_meta(exp__meta)
-        .function_meta(exp2__meta)
-        .function_meta(exp_m1__meta)
-        .function_meta(ln__meta)
-        .function_meta(log2__meta)
-        .function_meta(log10__meta)
-        .function_meta(log__meta)
-        .function_meta(ln_1p__meta)
+        .function(exp)
+        .function(exp2)
+        .function(exp_m1)
+        .function(ln)
+        .function(log2)
+        .function(log10)
+        .function(log)
+        .function(ln_1p)
         // Power and root
-        .function_meta(pow__meta)
-        .function_meta(powi__meta)
-        .function_meta(sqrt__meta)
-        .function_meta(cbrt__meta)
-        .function_meta(hypot__meta)
+        .function(pow)
+        .function(powi)
+        .function(sqrt)
+        .function(cbrt)
+        .function(hypot)
         // Rounding
-        .function_meta(floor__meta)
-        .function_meta(ceil__meta)
-        .function_meta(round__meta)
-        .function_meta(trunc__meta)
-        .function_meta(fract__meta)
+        .function(floor)
+        .function(ceil)
+        .function(round)
+        .function(trunc)
+        .function(fract)
         // Absolute value and sign
-        .function_meta(abs_f64__meta)
-        .function_meta(abs_i32__meta)
-        .function_meta(abs_i64__meta)
-        .function_meta(sign__meta)
-        .function_meta(sign_i32__meta)
-        .function_meta(copy_sign__meta)
+        .function(abs_f64)
+        .function(abs_i32)
+        .function(abs_i64)
+        .function(sign)
+        .function(sign_i32)
+        .function(copy_sign)
         // Min/max/clamp
-        .function_meta(min_f64__meta)
-        .function_meta(min_i32__meta)
-        .function_meta(max_f64__meta)
-        .function_meta(max_i32__meta)
-        .function_meta(clamp__meta)
-        .function_meta(clamp_i32__meta)
+        .function(min_f64)
+        .function(min_i32)
+        .function(max_f64)
+        .function(max_i32)
+        .function(clamp)
+        .function(clamp_i32)
         // Interpolation
-        .function_meta(lerp__meta)
-        .function_meta(inv_lerp__meta)
-        .function_meta(smooth_step__meta)
+        .function(lerp)
+        .function(inv_lerp)
+        .function(smooth_step)
         // Special values
-        .function_meta(is_nan__meta)
-        .function_meta(is_infinite__meta)
-        .function_meta(is_finite__meta)
-        .function_meta(is_normal__meta)
+        .function(is_nan)
+        .function(is_infinite)
+        .function(is_finite)
+        .function(is_normal)
         // Angle conversion
-        .function_meta(to_radians__meta)
-        .function_meta(to_degrees__meta)
+        .function(to_radians)
+        .function(to_degrees)
         // Modulo and remainder
-        .function_meta(fmod__meta)
-        .function_meta(ieee_remainder__meta)
+        .function(fmod)
+        .function(ieee_remainder)
 }
 
 // =============================================================================
@@ -531,81 +531,81 @@ mod tests {
 
     #[test]
     fn test_constants() {
-        assert!((pi() - std::f64::consts::PI).abs() < f64::EPSILON);
-        assert!((e() - std::f64::consts::E).abs() < f64::EPSILON);
-        assert!((tau() - std::f64::consts::TAU).abs() < f64::EPSILON);
+        assert!((__as_fn__pi() - std::f64::consts::PI).abs() < f64::EPSILON);
+        assert!((__as_fn__e() - std::f64::consts::E).abs() < f64::EPSILON);
+        assert!((__as_fn__tau() - std::f64::consts::TAU).abs() < f64::EPSILON);
     }
 
     #[test]
     fn test_trig() {
-        assert!((sin(0.0)).abs() < f64::EPSILON);
-        assert!((cos(0.0) - 1.0).abs() < f64::EPSILON);
-        assert!((tan(0.0)).abs() < f64::EPSILON);
-        assert!((sin(std::f64::consts::PI / 2.0) - 1.0).abs() < f64::EPSILON);
+        assert!((__as_fn__sin(0.0)).abs() < f64::EPSILON);
+        assert!((__as_fn__cos(0.0) - 1.0).abs() < f64::EPSILON);
+        assert!((__as_fn__tan(0.0)).abs() < f64::EPSILON);
+        assert!((__as_fn__sin(std::f64::consts::PI / 2.0) - 1.0).abs() < f64::EPSILON);
     }
 
     #[test]
     fn test_exp_log() {
-        assert!((exp(0.0) - 1.0).abs() < f64::EPSILON);
-        assert!((ln(1.0)).abs() < f64::EPSILON);
-        assert!((ln(std::f64::consts::E) - 1.0).abs() < f64::EPSILON);
-        assert!((log2(8.0) - 3.0).abs() < f64::EPSILON);
-        assert!((log10(100.0) - 2.0).abs() < f64::EPSILON);
+        assert!((__as_fn__exp(0.0) - 1.0).abs() < f64::EPSILON);
+        assert!((__as_fn__ln(1.0)).abs() < f64::EPSILON);
+        assert!((__as_fn__ln(std::f64::consts::E) - 1.0).abs() < f64::EPSILON);
+        assert!((__as_fn__log2(8.0) - 3.0).abs() < f64::EPSILON);
+        assert!((__as_fn__log10(100.0) - 2.0).abs() < f64::EPSILON);
     }
 
     #[test]
     fn test_pow_sqrt() {
-        assert!((pow(2.0, 3.0) - 8.0).abs() < f64::EPSILON);
-        assert!((sqrt(4.0) - 2.0).abs() < f64::EPSILON);
-        assert!((cbrt(8.0) - 2.0).abs() < f64::EPSILON);
-        assert!((hypot(3.0, 4.0) - 5.0).abs() < f64::EPSILON);
+        assert!((__as_fn__pow(2.0, 3.0) - 8.0).abs() < f64::EPSILON);
+        assert!((__as_fn__sqrt(4.0) - 2.0).abs() < f64::EPSILON);
+        assert!((__as_fn__cbrt(8.0) - 2.0).abs() < f64::EPSILON);
+        assert!((__as_fn__hypot(3.0, 4.0) - 5.0).abs() < f64::EPSILON);
     }
 
     #[test]
     fn test_rounding() {
-        assert!((floor(3.7) - 3.0).abs() < f64::EPSILON);
-        assert!((ceil(3.2) - 4.0).abs() < f64::EPSILON);
-        assert!((round(3.5) - 4.0).abs() < f64::EPSILON);
-        assert!((trunc(-3.7) + 3.0).abs() < f64::EPSILON);
+        assert!((__as_fn__floor(3.7) - 3.0).abs() < f64::EPSILON);
+        assert!((__as_fn__ceil(3.2) - 4.0).abs() < f64::EPSILON);
+        assert!((__as_fn__round(3.5) - 4.0).abs() < f64::EPSILON);
+        assert!((__as_fn__trunc(-3.7) + 3.0).abs() < f64::EPSILON);
     }
 
     #[test]
     fn test_abs_sign() {
-        assert!((abs_f64(-5.0) - 5.0).abs() < f64::EPSILON);
-        assert_eq!(abs_i32(-5), 5);
-        assert!((sign(-5.0) + 1.0).abs() < f64::EPSILON);
-        assert!((sign(5.0) - 1.0).abs() < f64::EPSILON);
-        assert!(sign(0.0).abs() < f64::EPSILON);
+        assert!((__as_fn__abs_f64(-5.0) - 5.0).abs() < f64::EPSILON);
+        assert_eq!(__as_fn__abs_i32(-5), 5);
+        assert!((__as_fn__sign(-5.0) + 1.0).abs() < f64::EPSILON);
+        assert!((__as_fn__sign(5.0) - 1.0).abs() < f64::EPSILON);
+        assert!(__as_fn__sign(0.0).abs() < f64::EPSILON);
     }
 
     #[test]
     fn test_min_max_clamp() {
-        assert!((min_f64(3.0, 5.0) - 3.0).abs() < f64::EPSILON);
-        assert!((max_f64(3.0, 5.0) - 5.0).abs() < f64::EPSILON);
-        assert!((clamp(10.0, 0.0, 5.0) - 5.0).abs() < f64::EPSILON);
-        assert!((clamp(-10.0, 0.0, 5.0)).abs() < f64::EPSILON);
+        assert!((__as_fn__min_f64(3.0, 5.0) - 3.0).abs() < f64::EPSILON);
+        assert!((__as_fn__max_f64(3.0, 5.0) - 5.0).abs() < f64::EPSILON);
+        assert!((__as_fn__clamp(10.0, 0.0, 5.0) - 5.0).abs() < f64::EPSILON);
+        assert!((__as_fn__clamp(-10.0, 0.0, 5.0)).abs() < f64::EPSILON);
     }
 
     #[test]
     fn test_lerp() {
-        assert!((lerp(0.0, 10.0, 0.5) - 5.0).abs() < f64::EPSILON);
-        assert!((lerp(0.0, 10.0, 0.0)).abs() < f64::EPSILON);
-        assert!((lerp(0.0, 10.0, 1.0) - 10.0).abs() < f64::EPSILON);
+        assert!((__as_fn__lerp(0.0, 10.0, 0.5) - 5.0).abs() < f64::EPSILON);
+        assert!((__as_fn__lerp(0.0, 10.0, 0.0)).abs() < f64::EPSILON);
+        assert!((__as_fn__lerp(0.0, 10.0, 1.0) - 10.0).abs() < f64::EPSILON);
     }
 
     #[test]
     fn test_special_values() {
-        assert!(is_nan(f64::NAN));
-        assert!(is_infinite(f64::INFINITY));
-        assert!(is_infinite(f64::NEG_INFINITY));
-        assert!(is_finite(1.0));
-        assert!(!is_finite(f64::INFINITY));
+        assert!(__as_fn__is_nan(f64::NAN));
+        assert!(__as_fn__is_infinite(f64::INFINITY));
+        assert!(__as_fn__is_infinite(f64::NEG_INFINITY));
+        assert!(__as_fn__is_finite(1.0));
+        assert!(!__as_fn__is_finite(f64::INFINITY));
     }
 
     #[test]
     fn test_angle_conversion() {
-        assert!((to_radians(180.0) - std::f64::consts::PI).abs() < f64::EPSILON);
-        assert!((to_degrees(std::f64::consts::PI) - 180.0).abs() < f64::EPSILON);
+        assert!((__as_fn__to_radians(180.0) - std::f64::consts::PI).abs() < f64::EPSILON);
+        assert!((__as_fn__to_degrees(std::f64::consts::PI) - 180.0).abs() < f64::EPSILON);
     }
 
     #[test]

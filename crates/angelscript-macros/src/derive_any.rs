@@ -80,19 +80,24 @@ fn generate_type_meta(
             .filter(|s| !s.is_empty())
             .collect();
 
-        let param_names: Vec<_> = params.iter().map(|p| {
-            let full_name = format!("{}::{}", as_name, p);
-            quote! { #full_name }
-        }).collect();
+        let param_names: Vec<&str> = params.clone();
 
         quote! {
-            template_params: vec![
-                #(::angelscript_core::TypeHash::from_name(#param_names)),*
-            ],
+            template_params: vec![#(#param_names),*],
         }
     } else {
         quote! { template_params: vec![], }
     };
+
+    // Generate specialization fields
+    let specialization_of_token = match &attrs.specialization_of {
+        Some(base_name) => quote! { Some(#base_name) },
+        None => quote! { None },
+    };
+
+    let specialization_args_tokens: Vec<_> = attrs.specialization_args.iter().map(|ty| {
+        quote! { <#ty as ::angelscript_core::Any>::type_hash() }
+    }).collect();
 
     // Collect property metadata from fields
     let properties = collect_properties(input)?;
@@ -106,6 +111,8 @@ fn generate_type_meta(
                     type_kind: #type_kind_tokens,
                     properties: vec![#(#properties),*],
                     #template_tokens
+                    specialization_of: #specialization_of_token,
+                    specialization_args: vec![#(#specialization_args_tokens),*],
                 }
             }
         }

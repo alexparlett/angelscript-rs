@@ -594,7 +594,67 @@ impl AsRef<[u8]> for ScriptString {
 /// // Install with context...
 /// ```
 pub fn module() -> Module {
-    Module::new().ty::<ScriptString>()
+    Module::new()
+        .ty::<ScriptString>()
+        // Basic operations
+        .function(ScriptString::len__meta)
+        .function(ScriptString::is_empty__meta)
+        .function(ScriptString::capacity__meta)
+        .function(ScriptString::reserve__meta)
+        .function(ScriptString::shrink_to_fit__meta)
+        .function(ScriptString::clear__meta)
+        .function(ScriptString::resize__meta)
+        // Substrings
+        .function(ScriptString::substr__meta)
+        .function(ScriptString::slice__meta)
+        .function(ScriptString::slice_from__meta)
+        .function(ScriptString::slice_to__meta)
+        // Search
+        .function(ScriptString::find_first__meta)
+        .function(ScriptString::find_last__meta)
+        .function(ScriptString::find_first_of__meta)
+        .function(ScriptString::find_first_not_of__meta)
+        .function(ScriptString::find_last_of__meta)
+        .function(ScriptString::find_last_not_of__meta)
+        // Modification
+        .function(ScriptString::insert__meta)
+        .function(ScriptString::erase__meta)
+        .function(ScriptString::push__meta)
+        .function(ScriptString::pop__meta)
+        .function(ScriptString::truncate__meta)
+        .function(ScriptString::replace_range__meta)
+        // Case conversion
+        .function(ScriptString::to_lowercase__meta)
+        .function(ScriptString::to_uppercase__meta)
+        .function(ScriptString::to_ascii_lowercase__meta)
+        .function(ScriptString::to_ascii_uppercase__meta)
+        // Trimming
+        .function(ScriptString::trim__meta)
+        .function(ScriptString::trim_start__meta)
+        .function(ScriptString::trim_end__meta)
+        .function(ScriptString::trim_matches__meta)
+        // Predicates
+        .function(ScriptString::starts_with__meta)
+        .function(ScriptString::ends_with__meta)
+        .function(ScriptString::contains__meta)
+        .function(ScriptString::is_ascii__meta)
+        .function(ScriptString::is_ascii_alphabetic__meta)
+        .function(ScriptString::is_ascii_alphanumeric__meta)
+        .function(ScriptString::is_ascii_digit__meta)
+        .function(ScriptString::is_ascii_hexdigit__meta)
+        .function(ScriptString::is_ascii_whitespace__meta)
+        // Transformations
+        .function(ScriptString::repeat_n__meta)
+        .function(ScriptString::replace_all__meta)
+        .function(ScriptString::replace_first__meta)
+        .function(ScriptString::reversed__meta)
+        .function(ScriptString::count_occurrences__meta)
+        // Operators
+        .function(ScriptString::concat__meta)
+        .function(ScriptString::append__meta)
+        .function(ScriptString::eq_op__meta)
+        .function(ScriptString::cmp_op__meta)
+        .function(ScriptString::byte_at__meta)
 }
 
 // =========================================================================
