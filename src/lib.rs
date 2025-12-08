@@ -16,12 +16,12 @@
 //! # Example: Basic Usage (Recommended)
 //!
 //! ```ignore
-//! use angelscript::{Context, Unit};
+//! use angelscript::{Context, Module, Unit};
 //! use std::sync::Arc;
 //!
-//! // Create context with default modules and seal it
-//! let mut ctx = Context::with_default_modules().unwrap();
-//! ctx.seal().unwrap();
+//! // Create context and install modules
+//! let mut ctx = Context::new();
+//! ctx.install(Module::new().class::<MyClass>())?;
 //! let ctx = Arc::new(ctx);
 //!
 //! // Create a compilation unit
@@ -101,6 +101,5 @@ pub use angelscript_core::{
 // Re-export proc macros
 pub use angelscript_macros::{Any, function, interface, funcdef};
 
-// TODO: Re-export Module and stdlib types when Phase 2 is complete
-// pub use angelscript_registry::Module;
-// pub use angelscript_registry::{ScriptArray, ScriptDict, ScriptString};
+// Re-export Module and registry types
+pub use angelscript_registry::{Module, HasClassMeta, TypeRegistry};

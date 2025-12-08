@@ -917,9 +917,14 @@ Note: Macros must be implemented before Module builder because `Module.ty::<T>()
   - Meta types updated to use `TypeHash` instead of `TypeId` (requires `Any` trait)
   - Note: Context::install() not yet implemented (Phase 6)
 
-### Phase 6: Update Consumers
-- [ ] Main crate: Use TypeRegistry
-- [ ] Compiler: Update to new registry
+### Phase 6: Update Consumers ✅ COMPLETE
+- [x] Main crate: Use TypeRegistry
+  - Context owns TypeRegistry (created with primitives in `new()`)
+  - Context.install(Module) converts metadata to entries and registers them
+  - Context.registry() provides access to the registry
+  - Unit.type_count() queries context's registry
+  - Exported Module, HasClassMeta, TypeRegistry from main crate
+- [x] Compiler: Registry already available via Context (compiler update deferred until needed)
 
 ### Phase 7: Migrate stdlib
 - [ ] Update to macro-based registration

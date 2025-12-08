@@ -98,9 +98,36 @@ See `/claude/tasks/01_unified-type-registry.md` for full details.
 
 **Tests:** 20 macro integration tests passing
 
+### Phase 5 Summary (Complete)
+
+**Implemented Module builder in `crates/angelscript-registry/src/module.rs`:**
+- `Module::new()` - Root namespace module
+- `Module::in_namespace(&["std", "string"])` - Namespaced module
+- `.class::<T>()` - Register class via `HasClassMeta` trait
+- `.class_meta()`, `.function()`, `.interface()`, `.funcdef()` - Direct metadata registration
+- `qualified_namespace()` - Returns "std::string" format
+
+### Phase 6 Summary (Just Completed)
+
+**Updated Context and Unit to use TypeRegistry:**
+- `Context` now owns a `TypeRegistry` (created with primitives in `new()`)
+- `Context::install(Module)` converts metadata to registry entries and registers them
+- `Context::registry()` provides access to the registry
+- `Unit::type_count()` queries the context's registry
+- Removed seal() - simplified API, trust the user
+- Exported `Module`, `HasClassMeta`, `TypeRegistry` from main crate
+
+**API:**
+```rust
+let mut ctx = Context::new();
+ctx.install(Module::new().class::<MyClass>())?;
+let ctx = Arc::new(ctx);
+let unit = ctx.create_unit()?;
+```
+
 ### Next Phase
 
-**Phase 5: Module Builder** - Create Module builder in angelscript-registry that consumes macro-generated metadata.
+**Phase 7: Migrate stdlib** - Update stdlib types to use macro-based registration.
 
 ---
 

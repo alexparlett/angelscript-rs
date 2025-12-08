@@ -344,10 +344,15 @@ impl Unit {
         self.compiled.as_ref().map_or(0, |c| c.functions.len())
     }
 
-    /// Get the number of registered types (available after build).
+    /// Get the number of registered types.
+    ///
+    /// Returns the count of types in the context's registry if a context exists,
+    /// otherwise returns 0.
     pub fn type_count(&self) -> usize {
-        // TODO: Return actual type count when TypeRegistry is implemented
-        0
+        self.context
+            .as_ref()
+            .map(|ctx| ctx.registry().type_count())
+            .unwrap_or(0)
     }
 }
 
@@ -580,13 +585,22 @@ mod tests {
     }
 
     #[test]
-    fn type_count_returns_zero() {
+    fn type_count_without_context() {
         let mut unit = Unit::new();
         unit.add_source("test.as", "void main() { }").unwrap();
         unit.build().unwrap();
 
-        // Currently always returns 0 since registry is not stored
+        // Without context, returns 0
         assert_eq!(unit.type_count(), 0);
+    }
+
+    #[test]
+    fn type_count_with_context() {
+        let ctx = Arc::new(Context::new());
+        let unit = ctx.create_unit().unwrap();
+
+        // With context, returns primitive count (12 primitives)
+        assert_eq!(unit.type_count(), 12);
     }
 
     #[test]
