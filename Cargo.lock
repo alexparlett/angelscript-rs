@@ -24,6 +24,7 @@ dependencies = [
  "angelscript-compiler",
  "angelscript-core",
  "angelscript-macros",
+ "angelscript-modules",
  "angelscript-parser",
  "angelscript-registry",
  "bitflags",

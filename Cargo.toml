@@ -34,6 +34,7 @@ angelscript-compiler = { path = "crates/angelscript-compiler" }
 angelscript-parser = { path = "crates/angelscript-parser" }
 angelscript-registry = { path = "crates/angelscript-registry" }
 angelscript-macros = { path = "crates/angelscript-macros" }
+angelscript-modules = { path = "crates/angelscript-modules" }
 thiserror.workspace = true
 bitflags.workspace = true
 num_enum.workspace = true

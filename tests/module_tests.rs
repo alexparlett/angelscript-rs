@@ -18,8 +18,7 @@ fn load_script(filename: &str) -> String {
 
 /// Helper to build a module from a single test script.
 fn build_script(filename: &str) -> Unit {
-    let mut ctx = Context::with_default_modules().unwrap();
-    ctx.seal().unwrap();
+    let ctx = Context::with_default_modules().unwrap();
     let ctx = Arc::new(ctx);
     let mut unit = ctx.create_unit().unwrap();
     unit.add_source(filename, load_script(filename))

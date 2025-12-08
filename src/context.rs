@@ -50,8 +50,16 @@ impl Context {
     /// This registers the standard library types (string, array, dictionary, etc.)
     /// in addition to primitives.
     pub fn with_default_modules() -> Result<Self, ContextError> {
-        // TODO: Install stdlib modules when they're implemented
-        Ok(Self::new())
+        let mut ctx = Self::new();
+
+        // Install stdlib modules
+        ctx.install(angelscript_modules::string::module())?;
+        ctx.install(angelscript_modules::array::module())?;
+        ctx.install(angelscript_modules::dictionary::module())?;
+        ctx.install(angelscript_modules::math::module())?;
+        ctx.install(angelscript_modules::std::module())?;
+
+        Ok(ctx)
     }
 
     /// Install a module into the context.
@@ -80,9 +88,9 @@ impl Context {
             self.install_class(&qualified_ns, class_meta)?;
         }
 
-        // Install global functions - pass namespace Vec directly
+        // Install functions - pass associated_type for methods, None for globals
         for func_meta in module.functions {
-            self.install_function(&module.namespace, None, func_meta)?;
+            self.install_function(&module.namespace, func_meta.associated_type, func_meta)?;
         }
 
         // Install interfaces
@@ -206,9 +214,13 @@ impl Context {
     ) -> Result<(), ContextError> {
         let name = meta.as_name.unwrap_or(meta.name);
 
-        // Compute function hash directly from iterator (no Vec allocation)
-        let func_hash =
-            TypeHash::from_function_iter(name, meta.params.iter().map(|p| p.type_hash));
+        // Compute function hash - use from_method for methods, from_function for globals
+        let param_hashes: Vec<TypeHash> = meta.params.iter().map(|p| p.type_hash).collect();
+        let func_hash = if let Some(owner) = object_type {
+            TypeHash::from_method(owner, name, &param_hashes, meta.is_const, meta.return_meta.is_const)
+        } else {
+            TypeHash::from_function(name, &param_hashes)
+        };
 
         // Convert parameters
         let params: Vec<Param> = meta
