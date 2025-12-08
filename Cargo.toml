@@ -5,6 +5,7 @@ members = [
     "crates/angelscript-registry",
     "crates/angelscript-compiler",
     "crates/angelscript-macros",
+    "crates/angelscript-modules",
     ".",
 ]
 resolver = "3"

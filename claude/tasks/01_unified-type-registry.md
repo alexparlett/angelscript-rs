@@ -926,8 +926,13 @@ Note: Macros must be implemented before Module builder because `Module.ty::<T>()
   - Exported Module, HasClassMeta, TypeRegistry from main crate
 - [x] Compiler: Registry already available via Context (compiler update deferred until needed)
 
-### Phase 7: Migrate stdlib
-- [ ] Update to macro-based registration
+### Phase 7: Migrate stdlib ✅ COMPLETE
+- [x] Created `crates/angelscript-modules` crate
+- [x] Fixed `#[derive(Any)]` macro to generate `impl HasClassMeta`
+- [x] Migrated `ScriptArray` with `#[derive(Any)]` and `#[angelscript(reference, template = "<T>")]`
+- [x] Migrated `ScriptDict` with `#[derive(Any)]` and `#[angelscript(reference, template = "<K, V>")]`
+- [x] Created placeholder modules for `math` and `std` (global function registration deferred)
+- Note: Global functions (math, std) deferred - needs simpler registration API than per-function wrapper macros
 
 ## Crates to Delete/Merge
 

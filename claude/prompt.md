@@ -125,9 +125,26 @@ let ctx = Arc::new(ctx);
 let unit = ctx.create_unit()?;
 ```
 
-### Next Phase
+### Phase 7 Summary (Just Completed)
 
-**Phase 7: Migrate stdlib** - Update stdlib types to use macro-based registration.
+**Created `crates/angelscript-modules` for stdlib types:**
+- `ScriptArray` - Type-erased `array<T>` template with ref counting
+- `ScriptDict` - Type-erased `dictionary<K,V>` template with ref counting
+- Placeholder `math` and `std` modules (global functions deferred)
+
+**Fixed `#[derive(Any)]` macro:**
+- Now generates `impl HasClassMeta` trait (was only generating `__as_type_meta()` method)
+- Enables `Module::class::<T>()` syntax
+
+**Tests:** 22 angelscript-modules tests + 33 main crate tests passing
+
+### Task 1: Unified Type Registry - COMPLETE
+
+All 7 phases complete. See `/claude/tasks/01_unified-type-registry.md`.
+
+### Next Task
+
+**Task 26.8: Pass 1: RegistrationPass** - Type + function registration with complete signatures
 
 ---
 
@@ -186,7 +203,9 @@ See `/claude/tasks/19_ffi_default_args.md` for details.
 ### Crates (in `crates/`):
 ```
 angelscript-core/       →  Shared types (TypeHash, DataType, TypeDef, FunctionDef, etc.)
-angelscript-ffi/        →  FFI registry and type registration
+angelscript-registry/   →  TypeRegistry, Module builder
+angelscript-macros/     →  Proc macros (#[derive(Any)], #[angelscript::function], etc.)
+angelscript-modules/    →  Stdlib types (array, dictionary)
 angelscript-parser/     →  Lexer + AST + Parser
 angelscript-compiler/   →  2-pass compiler (registration + compilation)
 ```
@@ -196,8 +215,12 @@ angelscript-compiler/   →  2-pass compiler (registration + compilation)
 angelscript-core  ←─────────────────────────────┐
        ↑                                        │
        │                                        │
-angelscript-parser    angelscript-ffi ──────────┤
+angelscript-parser    angelscript-registry ─────┤
        ↑                     ↑                  │
+       │                     │                  │
+       │             angelscript-macros         │
+       │                     │                  │
+       │             angelscript-modules ───────┤
        │                     │                  │
        └─────── angelscript-compiler ───────────┘
                       ↑

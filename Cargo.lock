@@ -70,6 +70,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "angelscript-modules"
+version = "0.1.0"
+dependencies = [
+ "angelscript-core",
+ "angelscript-macros",
+ "angelscript-registry",
+ "ordered-float",
+]
+
+[[package]]
 name = "angelscript-parser"
 version = "0.1.0"
 dependencies = [
