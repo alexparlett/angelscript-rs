@@ -94,6 +94,32 @@ pub fn derive_any(input: TokenStream) -> TokenStream {
 /// - `operator = Operator::Add` - Operator overload
 /// - `generic` - Uses generic calling convention
 ///
+/// ## Parameter Defaults
+///
+/// Use `#[default("value")]` on parameters to specify default values:
+///
+/// ```ignore
+/// #[angelscript::function(instance)]
+/// fn take_damage(&mut self, #[default("5")] amount: i32) { ... }
+///
+/// // For string defaults, escape the quotes:
+/// #[angelscript::function(instance)]
+/// fn set_name(&mut self, #[default("\"\"")] name: String) { ... }
+/// ```
+///
+/// ## Generic Calling Convention
+///
+/// For functions using generic calling convention, use `#[param(...)]` and
+/// `#[returns(...)]` attributes:
+///
+/// ```ignore
+/// #[angelscript::function(instance, generic)]
+/// #[param(variable, ref_mode = "in")]
+/// #[param(type = i32, default = "-1")]
+/// #[returns(variable)]
+/// fn insert(&mut self, value: *mut (), index: i32) { ... }
+/// ```
+///
 /// # Example
 ///
 /// ```ignore
@@ -106,6 +132,10 @@ pub fn derive_any(input: TokenStream) -> TokenStream {
 ///
 ///     #[angelscript::function(instance, operator = Operator::Add)]
 ///     pub fn add(&self, other: &MyClass) -> MyClass { ... }
+///
+///     // With default parameter
+///     #[angelscript::function(instance)]
+///     fn resize(&mut self, #[default("0")] new_size: i32) { ... }
 /// }
 /// ```
 #[proc_macro_attribute]

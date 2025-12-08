@@ -2,6 +2,8 @@
 
 use angelscript::{Any, TypeHash, TypeKind, ClassMeta, Behavior, FunctionMeta, Operator, InterfaceMeta, FuncdefMeta};
 use angelscript::{function, interface, funcdef};
+use angelscript::{RefModifier, ReturnMode, ListPatternMeta};
+use angelscript::CallContext;  // For generic calling convention examples
 
 /// Test basic `#[derive(Any)]` usage.
 #[derive(Any)]
@@ -342,4 +344,408 @@ fn test_funcdef_void() {
     let meta = __as_VoidCallback_funcdef_meta();
     assert_eq!(meta.name, "VoidCallback");
     assert_eq!(meta.param_types.len(), 0);
+}
+
+// ============================================================================
+// New Functionality Tests (Phase 4)
+// ============================================================================
+
+// --- Function Name Override Tests ---
+
+/// Test function with explicit name override.
+#[function(name = "AddIntegers")]
+fn add_ints(a: i32, b: i32) -> i32 {
+    a + b
+}
+
+#[test]
+fn test_function_name_override() {
+    let meta = __as_add_ints_meta();
+    assert_eq!(meta.name, "add_ints");  // Rust name
+    assert_eq!(meta.as_name, Some("AddIntegers"));  // AngelScript name
+}
+
+// --- Property Name Tests ---
+
+/// Test type for property tests.
+#[derive(Any)]
+#[angelscript(name = "PropertyTest", value)]
+struct PropertyTest {
+    data: i32,
+}
+
+impl PropertyTest {
+    /// Property with inferred name from get_ prefix.
+    #[function(instance, property, const)]
+    fn get_data(&self) -> i32 {
+        self.data
+    }
+
+    /// Property with inferred name from set_ prefix.
+    #[function(instance, property)]
+    fn set_data(&mut self, value: i32) {
+        self.data = value;
+    }
+
+    /// Property with explicit name override.
+    #[function(instance, property, const, property_name = "computed")]
+    fn get_computed_value(&self) -> i32 {
+        self.data * 2
+    }
+}
+
+#[test]
+fn test_property_name_inference() {
+    let meta = PropertyTest::__as_get_data_meta();
+    assert!(meta.is_property);
+    assert_eq!(meta.property_name, Some("data"));  // Inferred from get_data
+}
+
+#[test]
+fn test_property_name_inference_setter() {
+    let meta = PropertyTest::__as_set_data_meta();
+    assert!(meta.is_property);
+    assert_eq!(meta.property_name, Some("data"));  // Inferred from set_data
+}
+
+#[test]
+fn test_property_name_explicit() {
+    let meta = PropertyTest::__as_get_computed_value_meta();
+    assert!(meta.is_property);
+    assert_eq!(meta.property_name, Some("computed"));  // Explicit override
+}
+
+// --- Generic Calling Convention Tests ---
+
+/// Array-like type for generic calling convention examples.
+#[derive(Any)]
+#[angelscript(name = "DynamicArray", reference)]
+struct DynamicArray {
+    items: Vec<i32>,
+}
+
+impl DynamicArray {
+    /// Generic calling convention with typed parameter.
+    #[function(instance, generic)]
+    #[param(type = i32)]
+    fn push_int(&mut self, _ctx: &mut CallContext) {
+        // In real implementation, would extract value from ctx
+    }
+
+    /// Generic calling convention with variable type parameter.
+    #[function(instance, generic)]
+    #[param(variable, in)]
+    fn push_any(&mut self, _ctx: &mut CallContext) {
+        // Variable type parameter
+    }
+
+    /// Generic calling convention with variadic parameter.
+    #[function(instance, generic)]
+    #[param(type = i32, variadic)]
+    fn push_all(&mut self, _ctx: &mut CallContext) {
+        // Variadic parameter
+    }
+
+    /// Multiple params with different modes.
+    #[function(instance, generic)]
+    #[param(type = i32, in)]
+    #[param(type = i32, out)]
+    fn swap(&mut self, _ctx: &mut CallContext) {
+        // in and out params
+    }
+}
+
+#[test]
+fn test_generic_param_typed() {
+    let meta = DynamicArray::__as_push_int_meta();
+    assert!(meta.is_generic);
+    assert_eq!(meta.generic_params.len(), 1);
+    assert!(meta.generic_params[0].param_type.is_some());  // Has explicit type
+    assert!(!meta.generic_params[0].is_variadic);
+}
+
+#[test]
+fn test_generic_param_variable() {
+    let meta = DynamicArray::__as_push_any_meta();
+    assert!(meta.is_generic);
+    assert_eq!(meta.generic_params.len(), 1);
+    assert!(meta.generic_params[0].param_type.is_none());  // Variable type
+    assert_eq!(meta.generic_params[0].ref_mode, RefModifier::In);
+}
+
+#[test]
+fn test_generic_param_variadic() {
+    let meta = DynamicArray::__as_push_all_meta();
+    assert!(meta.is_generic);
+    assert_eq!(meta.generic_params.len(), 1);
+    assert!(meta.generic_params[0].is_variadic);
+}
+
+#[test]
+fn test_generic_multiple_params() {
+    let meta = DynamicArray::__as_swap_meta();
+    assert!(meta.is_generic);
+    assert_eq!(meta.generic_params.len(), 2);
+    assert_eq!(meta.generic_params[0].ref_mode, RefModifier::In);
+    assert_eq!(meta.generic_params[1].ref_mode, RefModifier::Out);
+}
+
+// --- Default Parameter Value Tests ---
+
+/// Type for default parameter tests.
+#[derive(Any)]
+#[angelscript(name = "SearchTest", reference)]
+struct SearchTest {
+    items: Vec<i32>,
+}
+
+impl SearchTest {
+    /// Function with default parameter value (count = -1 means all).
+    #[function(instance, generic)]
+    #[param(type = i32)]
+    #[param(type = i32, default = "-1")]
+    fn find_with_count(&self, _ctx: &mut CallContext) -> i32 {
+        0
+    }
+
+    /// Function with default string parameter.
+    #[function(instance, generic)]
+    #[param(type = String, default = "\"\"")]
+    fn search_with_pattern(&self, _ctx: &mut CallContext) {
+        // Empty string default
+    }
+
+    /// Multiple parameters with defaults.
+    #[function(instance, generic)]
+    #[param(type = i32)]
+    #[param(type = i32, default = "0")]
+    #[param(type = i32, default = "-1")]
+    fn slice(&self, _ctx: &mut CallContext) {
+        // start, offset=0, count=-1
+    }
+}
+
+#[test]
+fn test_default_param_integer() {
+    let meta = SearchTest::__as_find_with_count_meta();
+    assert!(meta.is_generic);
+    assert_eq!(meta.generic_params.len(), 2);
+    assert!(meta.generic_params[0].default_value.is_none());  // No default
+    assert_eq!(meta.generic_params[1].default_value, Some("-1"));  // Has default
+}
+
+#[test]
+fn test_default_param_string() {
+    let meta = SearchTest::__as_search_with_pattern_meta();
+    assert!(meta.is_generic);
+    assert_eq!(meta.generic_params.len(), 1);
+    assert_eq!(meta.generic_params[0].default_value, Some("\"\""));
+}
+
+#[test]
+fn test_multiple_defaults() {
+    let meta = SearchTest::__as_slice_meta();
+    assert!(meta.is_generic);
+    assert_eq!(meta.generic_params.len(), 3);
+    assert!(meta.generic_params[0].default_value.is_none());  // Required
+    assert_eq!(meta.generic_params[1].default_value, Some("0"));  // Optional
+    assert_eq!(meta.generic_params[2].default_value, Some("-1"));  // Optional
+}
+
+// --- Regular Parameter Defaults (non-generic calling convention) ---
+
+/// Type for regular param default tests.
+#[derive(Any)]
+#[angelscript(name = "DamageTest", value)]
+struct DamageTest {
+    health: i32,
+}
+
+impl DamageTest {
+    /// Function with default on regular parameter.
+    #[function(instance)]
+    fn take_damage(&mut self, #[default("5")] amount: i32) {
+        self.health -= amount;
+    }
+
+    /// Multiple params with some defaults.
+    #[function(instance)]
+    fn take_damage_with_type(
+        &mut self,
+        #[default("10")] amount: i32,
+        #[default("0")] damage_type: i32,
+    ) {
+        self.health -= amount + damage_type;
+    }
+
+    /// Mixed required and optional params.
+    #[function(instance)]
+    fn complex_damage(
+        &mut self,
+        source_id: i32,
+        #[default("1")] amount: i32,
+        #[default("false")] is_critical: bool,
+    ) {
+        let _ = (source_id, amount, is_critical);
+    }
+}
+
+#[test]
+fn test_regular_param_default() {
+    let meta = DamageTest::__as_take_damage_meta();
+    assert!(!meta.is_generic);
+    assert_eq!(meta.params.len(), 1);
+    assert_eq!(meta.params[0].name, "amount");
+    assert_eq!(meta.params[0].default_value, Some("5"));
+}
+
+#[test]
+fn test_regular_param_multiple_defaults() {
+    let meta = DamageTest::__as_take_damage_with_type_meta();
+    assert!(!meta.is_generic);
+    assert_eq!(meta.params.len(), 2);
+    assert_eq!(meta.params[0].default_value, Some("10"));
+    assert_eq!(meta.params[1].default_value, Some("0"));
+}
+
+#[test]
+fn test_regular_param_mixed_required_optional() {
+    let meta = DamageTest::__as_complex_damage_meta();
+    assert!(!meta.is_generic);
+    assert_eq!(meta.params.len(), 3);
+    assert!(meta.params[0].default_value.is_none());  // source_id - required
+    assert_eq!(meta.params[1].default_value, Some("1"));  // amount - optional
+    assert_eq!(meta.params[2].default_value, Some("false"));  // is_critical - optional
+}
+
+// --- Return Metadata Tests ---
+
+impl DynamicArray {
+    /// Return by reference.
+    #[function(instance, const)]
+    #[returns(ref)]
+    fn get_first_ref(&self) -> &i32 {
+        &self.items[0]
+    }
+
+    /// Return const reference.
+    #[function(instance, const)]
+    #[returns(ref, const)]
+    fn get_first_const(&self) -> &i32 {
+        &self.items[0]
+    }
+
+    /// Return as handle.
+    #[function(instance, const)]
+    #[returns(handle)]
+    fn get_handle(&self) -> i32 {
+        0  // Simplified
+    }
+
+    /// Variable type return (for generic calling conv).
+    #[function(instance, generic)]
+    #[returns(variable)]
+    fn get_any(&self, _ctx: &mut CallContext) {
+        // Variable return type
+    }
+}
+
+#[test]
+fn test_return_by_reference() {
+    let meta = DynamicArray::__as_get_first_ref_meta();
+    assert_eq!(meta.return_meta.mode, ReturnMode::Reference);
+    assert!(!meta.return_meta.is_const);
+}
+
+#[test]
+fn test_return_const_reference() {
+    let meta = DynamicArray::__as_get_first_const_meta();
+    assert_eq!(meta.return_meta.mode, ReturnMode::Reference);
+    assert!(meta.return_meta.is_const);
+}
+
+#[test]
+fn test_return_handle() {
+    let meta = DynamicArray::__as_get_handle_meta();
+    assert_eq!(meta.return_meta.mode, ReturnMode::Handle);
+}
+
+#[test]
+fn test_return_variable() {
+    let meta = DynamicArray::__as_get_any_meta();
+    assert!(meta.return_meta.is_variable);
+}
+
+// --- List Pattern Tests ---
+
+/// Dictionary type for list pattern example.
+#[derive(Any)]
+#[angelscript(name = "Dictionary", reference)]
+struct Dictionary {
+    // ...
+}
+
+impl Dictionary {
+    /// List constructor with repeat pattern.
+    #[function(list_construct, generic)]
+    #[list_pattern(repeat = i32)]
+    fn from_list_repeat(_ctx: &mut CallContext) -> Self {
+        Dictionary {}
+    }
+
+    /// List constructor with repeat tuple pattern (key-value).
+    #[function(list_construct, generic)]
+    #[list_pattern(repeat_tuple(String, i32))]
+    fn from_list_kv(_ctx: &mut CallContext) -> Self {
+        Dictionary {}
+    }
+}
+
+#[test]
+fn test_list_pattern_repeat() {
+    let meta = Dictionary::__as_from_list_repeat_meta();
+    assert_eq!(meta.behavior, Some(Behavior::ListConstruct));
+    assert!(meta.list_pattern.is_some());
+    match &meta.list_pattern {
+        Some(ListPatternMeta::Repeat(_)) => {}  // Correct
+        _ => panic!("Expected Repeat pattern"),
+    }
+}
+
+#[test]
+fn test_list_pattern_repeat_tuple() {
+    let meta = Dictionary::__as_from_list_kv_meta();
+    assert!(meta.list_pattern.is_some());
+    match &meta.list_pattern {
+        Some(ListPatternMeta::RepeatTuple(types)) => {
+            assert_eq!(types.len(), 2);
+        }
+        _ => panic!("Expected RepeatTuple pattern"),
+    }
+}
+
+// --- Interface with Function Attributes ---
+
+/// Interface with method name overrides.
+#[interface(name = "IRenderer")]
+pub trait Renderer {
+    #[function(name = "Render")]
+    fn render(&self);
+
+    #[function(name = "SetViewport")]
+    fn set_viewport(&mut self, x: i32, y: i32, w: i32, h: i32);
+}
+
+#[test]
+fn test_interface_method_name_override() {
+    let meta = __as_Renderer_interface_meta();
+    assert_eq!(meta.name, "IRenderer");
+
+    // Check method names were overridden
+    let render = meta.methods.iter().find(|m| m.name == "Render").unwrap();
+    assert!(render.is_const);
+
+    let set_viewport = meta.methods.iter().find(|m| m.name == "SetViewport").unwrap();
+    assert!(!set_viewport.is_const);
+    assert_eq!(set_viewport.param_types.len(), 4);
 }

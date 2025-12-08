@@ -42,12 +42,16 @@ pub struct FieldAttrs {
 /// Parsed `#[angelscript::function(...)]` attributes.
 #[derive(Debug, Default)]
 pub struct FunctionAttrs {
+    /// Override name for AngelScript
+    pub name: Option<String>,
     /// Function kind
     pub kind: FunctionKind,
     /// Is const method
     pub is_const: bool,
     /// Is property accessor
     pub is_property: bool,
+    /// Property name override (overrides inference from get_/set_ prefix)
+    pub property_name: Option<String>,
     /// Is generic calling convention
     pub is_generic: bool,
     /// Is template function
@@ -208,6 +212,26 @@ impl FunctionAttrs {
                 FunctionAttrItem::NameValue { name, value } => {
                     let name_str = name.to_string();
                     match name_str.as_str() {
+                        "name" => {
+                            if let Expr::Lit(syn::ExprLit { lit: syn::Lit::Str(s), .. }) = value {
+                                result.name = Some(s.value());
+                            } else {
+                                return Err(syn::Error::new(
+                                    name.span(),
+                                    "name value must be a string literal",
+                                ));
+                            }
+                        }
+                        "property_name" => {
+                            if let Expr::Lit(syn::ExprLit { lit: syn::Lit::Str(s), .. }) = value {
+                                result.property_name = Some(s.value());
+                            } else {
+                                return Err(syn::Error::new(
+                                    name.span(),
+                                    "property_name value must be a string literal",
+                                ));
+                            }
+                        }
                         "operator" => {
                             if let Expr::Path(path) = value {
                                 result.operator = Some(
@@ -267,6 +291,254 @@ enum FunctionAttrItem {
     NameValue { name: Ident, value: Expr },
 }
 
+// =============================================================================
+// Param Attribute
+// =============================================================================
+
+/// Reference mode for parameters.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum RefModeAttr {
+    /// No reference modifier (by value).
+    #[default]
+    None,
+    /// Input reference (`in`).
+    In,
+    /// Output reference (`out`).
+    Out,
+    /// Input/output reference (`inout`).
+    InOut,
+}
+
+/// Parsed `#[param(...)]` attribute for generic calling convention parameters.
+///
+/// Supports:
+/// - `variable` - Any type parameter (`?`)
+/// - `variadic` - Multiple parameters of same type (`...`)
+/// - `type = T` - Specific type
+/// - `in` / `out` / `inout` - Reference mode
+/// - `default = "expr"` - Default value expression
+#[derive(Debug, Default)]
+pub struct ParamAttrs {
+    /// Is this a variable type (`?`)?
+    pub is_variable: bool,
+    /// Is this variadic (`...`)?
+    pub is_variadic: bool,
+    /// Explicit type (None means infer or variable)
+    pub param_type: Option<syn::Type>,
+    /// Reference mode
+    pub ref_mode: RefModeAttr,
+    /// Default value expression (e.g., "-1", "\"\"")
+    pub default: Option<String>,
+}
+
+impl ParamAttrs {
+    /// Parse a single `#[param(...)]` attribute.
+    pub fn from_attr(attr: &Attribute) -> syn::Result<Self> {
+        let mut result = Self::default();
+
+        attr.parse_nested_meta(|meta| {
+            if meta.path.is_ident("variable") {
+                result.is_variable = true;
+            } else if meta.path.is_ident("variadic") {
+                result.is_variadic = true;
+            } else if meta.path.is_ident("in") {
+                result.ref_mode = RefModeAttr::In;
+            } else if meta.path.is_ident("out") {
+                result.ref_mode = RefModeAttr::Out;
+            } else if meta.path.is_ident("inout") {
+                result.ref_mode = RefModeAttr::InOut;
+            } else if meta.path.is_ident("type") {
+                let value = meta.value()?;
+                let ty: syn::Type = value.parse()?;
+                result.param_type = Some(ty);
+            } else if meta.path.is_ident("default") {
+                let value = meta.value()?;
+                let lit: LitStr = value.parse()?;
+                result.default = Some(lit.value());
+            } else {
+                return Err(meta.error(format!(
+                    "unknown param attribute: {}",
+                    meta.path.get_ident().map(|i| i.to_string()).unwrap_or_default()
+                )));
+            }
+            Ok(())
+        })?;
+
+        Ok(result)
+    }
+
+    /// Parse all `#[param(...)]` attributes from a list.
+    pub fn from_attrs(attrs: &[Attribute]) -> syn::Result<Vec<Self>> {
+        let mut params = Vec::new();
+
+        for attr in attrs {
+            if attr.path().is_ident("param") {
+                params.push(Self::from_attr(attr)?);
+            }
+        }
+
+        Ok(params)
+    }
+}
+
+// =============================================================================
+// Return Attribute
+// =============================================================================
+
+/// Return mode for functions.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ReturnModeAttr {
+    /// Return by value (default).
+    #[default]
+    Value,
+    /// Return by reference.
+    Reference,
+    /// Return as handle.
+    Handle,
+}
+
+/// Parsed `#[return(...)]` attribute for return type metadata.
+///
+/// Supports:
+/// - `const` - Const reference/handle return
+/// - `ref` - Return by reference
+/// - `handle` - Return as handle
+/// - `variable` - Variable type return (`?`)
+/// - `type = T` - Explicit return type (for generic calling conv)
+#[derive(Debug, Default)]
+pub struct ReturnAttrs {
+    /// Return mode (value, reference, handle)
+    pub mode: ReturnModeAttr,
+    /// Is the return const?
+    pub is_const: bool,
+    /// Is this a variable type return?
+    pub is_variable: bool,
+    /// Explicit return type (for generic calling convention)
+    pub return_type: Option<syn::Type>,
+}
+
+impl ReturnAttrs {
+    /// Parse a `#[return(...)]` attribute.
+    pub fn from_attr(attr: &Attribute) -> syn::Result<Self> {
+        let mut result = Self::default();
+
+        attr.parse_nested_meta(|meta| {
+            if meta.path.is_ident("const") {
+                result.is_const = true;
+            } else if meta.path.is_ident("ref") {
+                result.mode = ReturnModeAttr::Reference;
+            } else if meta.path.is_ident("handle") {
+                result.mode = ReturnModeAttr::Handle;
+            } else if meta.path.is_ident("variable") {
+                result.is_variable = true;
+            } else if meta.path.is_ident("type") {
+                let value = meta.value()?;
+                let ty: syn::Type = value.parse()?;
+                result.return_type = Some(ty);
+            } else {
+                return Err(meta.error(format!(
+                    "unknown return attribute: {}",
+                    meta.path.get_ident().map(|i| i.to_string()).unwrap_or_default()
+                )));
+            }
+            Ok(())
+        })?;
+
+        Ok(result)
+    }
+
+    /// Find and parse the first `#[return(...)]` attribute from a list.
+    pub fn from_attrs(attrs: &[Attribute]) -> syn::Result<Option<Self>> {
+        for attr in attrs {
+            if attr.path().is_ident("return") {
+                // Note: `return` is a keyword, so we need special handling
+                // Actually, let's use `returns` to avoid keyword conflict
+                return Ok(Some(Self::from_attr(attr)?));
+            }
+            if attr.path().is_ident("returns") {
+                return Ok(Some(Self::from_attr(attr)?));
+            }
+        }
+        Ok(None)
+    }
+}
+
+// =============================================================================
+// List Pattern Attribute
+// =============================================================================
+
+/// List pattern kind for initialization lists.
+#[derive(Debug, Clone)]
+pub enum ListPatternKind {
+    /// Repeat a single type: `{T, T, T, ...}`
+    Repeat(syn::Type),
+    /// Fixed sequence of types: `{A, B, C}`
+    Fixed(Vec<syn::Type>),
+    /// Repeat a tuple of types: `{(K, V), (K, V), ...}`
+    RepeatTuple(Vec<syn::Type>),
+}
+
+/// Parsed `#[list_pattern(...)]` attribute for list constructors/factories.
+///
+/// Supports:
+/// - `repeat = T` - Repeating single type
+/// - `fixed(T1, T2, T3)` - Fixed sequence
+/// - `repeat_tuple(K, V)` - Repeating tuple pattern
+#[derive(Debug)]
+pub struct ListPatternAttrs {
+    /// The list pattern kind
+    pub pattern: ListPatternKind,
+}
+
+impl ListPatternAttrs {
+    /// Parse a `#[list_pattern(...)]` attribute.
+    pub fn from_attr(attr: &Attribute) -> syn::Result<Self> {
+        let mut pattern: Option<ListPatternKind> = None;
+
+        attr.parse_nested_meta(|meta| {
+            if meta.path.is_ident("repeat") {
+                let value = meta.value()?;
+                let ty: syn::Type = value.parse()?;
+                pattern = Some(ListPatternKind::Repeat(ty));
+            } else if meta.path.is_ident("fixed") {
+                // Parse parenthesized list of types
+                let content;
+                syn::parenthesized!(content in meta.input);
+                let types: Punctuated<syn::Type, Token![,]> =
+                    content.parse_terminated(syn::Type::parse, Token![,])?;
+                pattern = Some(ListPatternKind::Fixed(types.into_iter().collect()));
+            } else if meta.path.is_ident("repeat_tuple") {
+                // Parse parenthesized list of types for tuple
+                let content;
+                syn::parenthesized!(content in meta.input);
+                let types: Punctuated<syn::Type, Token![,]> =
+                    content.parse_terminated(syn::Type::parse, Token![,])?;
+                pattern = Some(ListPatternKind::RepeatTuple(types.into_iter().collect()));
+            } else {
+                return Err(meta.error(format!(
+                    "unknown list_pattern attribute: {}",
+                    meta.path.get_ident().map(|i| i.to_string()).unwrap_or_default()
+                )));
+            }
+            Ok(())
+        })?;
+
+        pattern
+            .map(|p| ListPatternAttrs { pattern: p })
+            .ok_or_else(|| syn::Error::new_spanned(attr, "list_pattern requires a pattern specification"))
+    }
+
+    /// Find and parse the first `#[list_pattern(...)]` attribute from a list.
+    pub fn from_attrs(attrs: &[Attribute]) -> syn::Result<Option<Self>> {
+        for attr in attrs {
+            if attr.path().is_ident("list_pattern") {
+                return Ok(Some(Self::from_attr(attr)?));
+            }
+        }
+        Ok(None)
+    }
+}
+
 impl Parse for FunctionAttrItem {
     fn parse(input: ParseStream) -> syn::Result<Self> {
         // Handle `const` keyword specially
@@ -286,3 +558,4 @@ impl Parse for FunctionAttrItem {
         }
     }
 }
+

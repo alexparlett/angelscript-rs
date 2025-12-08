@@ -89,9 +89,13 @@ pub use angelscript_core::{ReferenceKind, TypeKind};
 
 // Re-export types needed for proc macros
 pub use angelscript_core::{
-    Any, TypeHash, Operator,
+    Any, TypeHash, Operator, RefModifier,
     ClassMeta, FunctionMeta, PropertyMeta, ParamMeta, Behavior,
     InterfaceMeta, InterfaceMethodMeta, FuncdefMeta,
+    // Enhanced function metadata types
+    ReturnMode, ReturnMeta, GenericParamMeta, ListPatternMeta,
+    // Native function types for generic calling convention
+    CallContext,
 };
 
 // Re-export proc macros

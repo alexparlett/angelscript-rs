@@ -171,4 +171,9 @@ pub use meta::{
     InterfaceMeta,
     InterfaceMethodMeta,
     FuncdefMeta,
+    // New types for enhanced function metadata
+    ReturnMode,
+    ReturnMeta,
+    GenericParamMeta,
+    ListPatternMeta,
 };
