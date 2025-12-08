@@ -245,14 +245,15 @@ impl<T> ScriptArray<T> {
 
     #[angelscript::function(instance)]
     pub fn length(&self) -> u64 { self.inner.len() as u64 }
-}
 
-#[angelscript::template_callback(for = "array")]
-pub fn array_callback(info: &TemplateInstanceInfo) -> TemplateValidation {
-    if info.type_arg(0).is_void() {
-        return TemplateValidation::Reject("array cannot hold void");
+    // Template callback - registered as behavior like others
+    #[angelscript::function(template_callback)]
+    pub fn validate(info: &TemplateInstanceInfo) -> TemplateValidation {
+        if info.type_arg(0).is_void() {
+            return TemplateValidation::Reject("array cannot hold void");
+        }
+        TemplateValidation::Accept
     }
-    TemplateValidation::Accept
 }
 ```
 
@@ -461,11 +462,10 @@ pub struct ClassEntry {
     // Inheritance (use registry to resolve)
     pub base_class: Option<TypeHash>,
     pub interfaces: Vec<TypeHash>,
-    // Members (direct access, no lookup needed)
+    // Members
     pub behaviors: TypeBehaviors,
-    pub methods: Vec<FunctionEntry>,
-    pub properties: Vec<PropertyEntry>,
-    pub fields: Vec<FieldEntry>,
+    pub methods: Vec<TypeHash>,           // References to registry.functions
+    pub properties: Vec<PropertyEntry>,   // All property access via getter/setter methods
     // Template info
     pub template_params: Vec<TypeHash>,  // Non-empty = template definition
     pub template: Option<TypeHash>,       // Template this was instantiated from
@@ -555,19 +555,16 @@ pub enum TypeSource {
     Script { unit_id: UnitId, span: Span },
 }
 
+/// Property access - all properties use getter/setter methods
+/// - FFI: macro generates getter/setter methods from #[angelscript(get, set)]
+/// - Script: compiler generates accessor methods
+/// No direct field access with offsets - everything goes through methods
 pub struct PropertyEntry {
     pub name: String,
     pub data_type: DataType,
     pub visibility: Visibility,
-    pub getter: Option<TypeHash>,   // Virtual property getter
-    pub setter: Option<TypeHash>,   // Virtual property setter
-}
-
-pub struct FieldEntry {
-    pub name: String,
-    pub data_type: DataType,
-    pub visibility: Visibility,
-    pub offset: usize,
+    pub getter: Option<TypeHash>,   // Method that gets the value
+    pub setter: Option<TypeHash>,   // Method that sets the value
 }
 
 pub struct EnumValue {
@@ -590,8 +587,8 @@ pub struct TypeRegistry {
     // Single map for O(1) type lookup
     types: RwLock<FxHashMap<TypeHash, TypeEntry>>,
     type_by_name: RwLock<FxHashMap<String, TypeHash>>,
-    // Global functions (not methods - those live in ClassEntry)
-    global_functions: RwLock<FxHashMap<TypeHash, FunctionEntry>>,
+    // ALL functions (methods + globals) - single source of truth
+    functions: RwLock<FxHashMap<TypeHash, FunctionEntry>>,
     function_overloads: RwLock<FxHashMap<String, Vec<TypeHash>>>,
     // Namespaces
     namespaces: RwLock<FxHashSet<String>>,
@@ -609,7 +606,10 @@ impl TypeRegistry {
     pub fn classes(&self) -> impl Iterator<Item = &ClassEntry> { ... }
     pub fn enums(&self) -> impl Iterator<Item = &EnumEntry> { ... }
     pub fn interfaces(&self) -> impl Iterator<Item = &InterfaceEntry> { ... }
-    pub fn global_functions(&self) -> impl Iterator<Item = &FunctionEntry> { ... }
+    pub fn functions(&self) -> impl Iterator<Item = &FunctionEntry> { ... }
+
+    // === Function Lookup ===
+    pub fn get_function(&self, hash: TypeHash) -> Option<&FunctionEntry> { ... }
 
     // === Inheritance Helpers (resolve TypeHash chains) ===
     pub fn base_class_chain(&self, hash: TypeHash) -> impl Iterator<Item = &ClassEntry> { ... }
@@ -640,7 +640,7 @@ pub struct FunctionDef {
     pub object_type: Option<TypeHash>,  // None = global function
     pub traits: FunctionTraits,
     pub visibility: Visibility,
-    pub template_params: Vec<String>,   // ["T", "U"] for template functions
+    pub template_params: Vec<TypeHash>,  // Method's own template params (refs to TemplateParamEntry)
     pub is_variadic: bool,
 }
 
@@ -823,7 +823,7 @@ pub struct MyClass { ... }
 | `EnumDecl` | `TypeEntry::Enum` with values |
 | `FuncdefDecl` | `TypeEntry::Funcdef` |
 | `VirtualPropertyDecl` | `get_X`/`set_X` `FunctionEntry` pairs |
-| `FieldDecl` | `FieldEntry` in `ClassEntry` |
+| `FieldDecl` | `PropertyEntry` in `ClassEntry` (compiler generates accessors) |
 
 ### Example: Script Class to Registry
 
@@ -858,43 +858,81 @@ TypeEntry::Class(ClassEntry {
     properties: vec![
         PropertyEntry { name: "health".into(), getter: Some(get_health_hash), setter: None, .. },
     ],
-    fields: vec![
-        FieldEntry { name: "health".into(), visibility: Visibility::Private, offset: 0, .. },
-    ],
+    // Note: Script field "health" becomes a PropertyEntry with compiler-generated accessors
     ..Default::default()
 })
 ```
 
 ## Implementation Phases
 
-### Phase 1: Core Types (angelscript-core)
-- [ ] `src/entries.rs` - ClassEntry, EnumEntry, InterfaceEntry, FuncdefEntry, etc.
-- [ ] `src/type_entry.rs` - TypeEntry enum wrapping all entry types
-- [ ] `src/function_entry.rs` - FunctionEntry, FunctionImpl, FunctionSource
-- [ ] `src/ids.rs` - UnitId
-- [ ] `src/op.rs` - Op enum (for macro attribute)
-- [ ] `src/any.rs` - Any trait
-- [ ] Update `function_def.rs` - Add template_params, is_variadic
+### Phase 1: Core Types (angelscript-core) ✅ COMPLETE
+- [x] `src/ids.rs` - UnitId
+- [x] `src/operator.rs` - Operator enum (for macro attribute)
+- [x] `src/any.rs` - Any trait
+- [x] `src/entries/` module with:
+  - `source.rs` - TypeSource, FunctionSource
+  - `common.rs` - PropertyEntry, EnumValue
+  - `primitive.rs` - PrimitiveEntry
+  - `template_param.rs` - TemplateParamEntry
+  - `enum_entry.rs` - EnumEntry
+  - `interface.rs` - InterfaceEntry
+  - `funcdef.rs` - FuncdefEntry
+  - `class.rs` - ClassEntry
+  - `function.rs` - FunctionEntry, FunctionImpl
+  - `type_entry.rs` - TypeEntry enum
+  - `mod.rs` - re-exports
+- [x] Update `function_def.rs` - Add template_params, is_variadic
+- [x] Update `lib.rs` - Export all new types
 
-### Phase 2: Create angelscript-registry
-- [ ] `src/registry.rs` - TypeRegistry
-- [ ] `src/module.rs` - Module builder with namespace support
+### Phase 2: Design Fixes (angelscript-core) ✅ COMPLETE
+Apply design clarifications from template/storage review:
+- [x] Update `ClassEntry.methods` from `Vec<FunctionEntry>` to `Vec<TypeHash>`
+- [x] Update `FunctionDef.template_params` from `Vec<String>` to `Vec<TypeHash>`
+- [x] Ensure `TemplateParamEntry.owner` is `TypeHash` (already correct)
+- [x] Verify all method/behavior references use `TypeHash` (TypeBehaviors already correct)
+- [x] Remove `FieldEntry` - all property access via `PropertyEntry` with getter/setter methods
+- [x] Update `ClassEntry` to remove `fields`, keep only `properties: Vec<PropertyEntry>`
 
-### Phase 3: Create angelscript-macros
-- [ ] `#[derive(Any)]`
-- [ ] `#[angelscript::function]`
-- [ ] `#[angelscript::param]` for generic calling convention
-- [ ] `#[angelscript::interface]`
-- [ ] `#[angelscript::funcdef]`
-- [ ] `#[angelscript::template_callback]`
-- [ ] `#[angelscript::list_pattern]` for list behaviors
+### Phase 3: Create angelscript-registry
+- [x] `src/registry.rs` - TypeRegistry with unified `functions` map (methods + globals)
 
-### Phase 4: Update Consumers
-- [ ] Main crate: Use TypeRegistry
-- [ ] Compiler: Update to new registry
+### Phase 4: Create angelscript-macros ✅ COMPLETE
+Note: Macros must be implemented before Module builder because `Module.ty::<T>()` depends on macro-generated metadata.
+- [x] `#[derive(Any)]` - Generates Any trait + ClassMeta
+- [x] `#[angelscript::function]` - Generates FunctionMeta with behaviors
+- [x] `#[angelscript::interface]` - Generates InterfaceMeta
+- [x] `#[angelscript::funcdef]` - Generates FuncdefMeta
+- [x] `#[param(...)]` - Generic calling convention parameters (type, ref_mode, default, variable, variadic)
+- [x] `#[returns(...)]` - Return metadata (ref, handle, const, variable)
+- [x] `#[default("value")]` - Default parameter values on regular params
+- [x] `#[list_pattern(...)]` - List initialization patterns (repeat, fixed, repeat_tuple)
+- [x] `template_callback` function kind - Macro generates `Behavior::TemplateCallback` (runtime callback invocation deferred)
 
-### Phase 5: Migrate stdlib
-- [ ] Update to macro-based registration
+### Phase 5: Module Builder (angelscript-registry) ✅ COMPLETE
+- [x] `src/module.rs` - Module struct with namespace support
+  - Module as data container (Vec-based storage for now)
+  - Builder methods: `class<T>()`, `class_meta()`, `function()`, `interface()`, `funcdef()`
+  - Accessor methods for Context: `classes()`, `functions()`, `interfaces()`, `funcdefs()`, `into_parts()`
+  - `HasClassMeta` trait for types with macro-generated ClassMeta
+  - Meta types updated to use `TypeHash` instead of `TypeId` (requires `Any` trait)
+  - Note: Context::install() not yet implemented (Phase 6)
+
+### Phase 6: Update Consumers ✅ COMPLETE
+- [x] Main crate: Use TypeRegistry
+  - Context owns TypeRegistry (created with primitives in `new()`)
+  - Context.install(Module) converts metadata to entries and registers them
+  - Context.registry() provides access to the registry
+  - Unit.type_count() queries context's registry
+  - Exported Module, HasClassMeta, TypeRegistry from main crate
+- [x] Compiler: Registry already available via Context (compiler update deferred until needed)
+
+### Phase 7: Migrate stdlib ✅ COMPLETE
+- [x] Created `crates/angelscript-modules` crate
+- [x] Fixed `#[derive(Any)]` macro to generate `impl HasClassMeta`
+- [x] Migrated `ScriptArray` with `#[derive(Any)]` and `#[angelscript(reference, template = "<T>")]`
+- [x] Migrated `ScriptDict` with `#[derive(Any)]` and `#[angelscript(reference, template = "<K, V>")]`
+- [x] Created placeholder modules for `math` and `std` (global function registration deferred)
+- Note: Global functions (math, std) deferred - needs simpler registration API than per-function wrapper macros
 
 ## Crates to Delete/Merge
 

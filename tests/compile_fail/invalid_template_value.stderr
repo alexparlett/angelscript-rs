@@ -1,0 +1,5 @@
+error: template value must be a string literal like "<T, U>"
+ --> tests/compile_fail/invalid_template_value.rs:5:12
+  |
+5 | #[function(template = 123)]
+  |            ^^^^^^^^

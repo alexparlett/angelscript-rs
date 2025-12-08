@@ -157,8 +157,7 @@ fn size_based_benchmarks(c: &mut Criterion) {
     setup_profiler();
 
     // Create context once for all benchmarks in this group
-    let mut ctx = Context::with_default_modules().unwrap();
-    ctx.seal().unwrap();
+    let ctx = Context::with_default_modules().unwrap();
     let ctx = Arc::new(ctx);
 
     let mut group = c.benchmark_group("unit/file_sizes");
@@ -260,8 +259,7 @@ fn size_based_benchmarks(c: &mut Criterion) {
 /// Benchmark build performance for specific language features.
 fn feature_specific_benchmarks(c: &mut Criterion) {
     // Create context once for all benchmarks in this group
-    let mut ctx = Context::with_default_modules().unwrap();
-    ctx.seal().unwrap();
+    let ctx = Context::with_default_modules().unwrap();
     let ctx = Arc::new(ctx);
 
     let mut group = c.benchmark_group("unit/features");
@@ -399,8 +397,7 @@ fn feature_specific_benchmarks(c: &mut Criterion) {
 /// Benchmark real-world use cases.
 fn real_world_benchmarks(c: &mut Criterion) {
     // Create context once for all benchmarks in this group
-    let mut ctx = Context::with_default_modules().unwrap();
-    ctx.seal().unwrap();
+    let ctx = Context::with_default_modules().unwrap();
     let ctx = Arc::new(ctx);
 
     let mut group = c.benchmark_group("unit/real_world");
@@ -448,8 +445,7 @@ fn real_world_benchmarks(c: &mut Criterion) {
 /// Benchmark build with different complexity characteristics.
 fn complexity_benchmarks(c: &mut Criterion) {
     // Create context once for all benchmarks in this group
-    let mut ctx = Context::with_default_modules().unwrap();
-    ctx.seal().unwrap();
+    let ctx = Context::with_default_modules().unwrap();
     let ctx = Arc::new(ctx);
 
     let mut group = c.benchmark_group("unit/complexity");

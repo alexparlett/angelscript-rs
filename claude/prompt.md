@@ -48,6 +48,106 @@ See `/claude/tasks/26_compiler_rewrite.md` for full details.
 
 ---
 
+## Task 1: Unified Type Registry - Phase 3 Task 1 Complete
+
+See `/claude/tasks/01_unified-type-registry.md` for full details.
+
+### Phase 3 Task 1 Summary (Just Completed)
+
+**Implemented `TypeRegistry` in `crates/angelscript-registry/src/registry.rs`:**
+
+- Unified storage for all types (`FxHashMap<TypeHash, TypeEntry>`)
+- Single source of truth for ALL functions (global + methods + operators + behaviors)
+- Template callback storage (`FxHashMap<TypeHash, TemplateCallback>`) for validation callbacks
+- Added `operators` field to `TypeBehaviors` in `angelscript-core` (prerequisite)
+
+**Storage Model:**
+- Types: `TypeRegistry.types` - All TypeEntry variants
+- Functions: `TypeRegistry.functions` - Single source of truth
+- Template Callbacks: `TypeRegistry.template_callbacks` - Specific `Fn(&TemplateInstanceInfo) -> TemplateValidation` signature
+
+**API Methods:**
+- Basic lookup: `get()`, `get_by_name()`, `get_function()`, `get_function_overloads()`
+- Registration: `register_type()`, `register_function()`, `register_primitive()`, `register_template_callback()`
+- Iteration: `types()`, `classes()`, `enums()`, `interfaces()`, `funcdefs()`, `functions()`
+- Inheritance: `base_class_chain()`, `all_methods()`, `all_properties()`
+- Namespace: `types_in_namespace()`, `namespaces()`
+- Template: `validate_template_instance()`
+
+**Tests:** 326 unit tests passing (314 core + 12 registry)
+
+### Phase 4 Summary (Just Completed)
+
+**Implemented `angelscript-macros` crate with proc macros:**
+
+- `#[derive(Any)]` - Generates `Any` trait + `ClassMeta` with properties
+- `#[angelscript::function]` - Generates `FunctionMeta` with behaviors/operators
+- `#[angelscript::interface]` - Generates `InterfaceMeta` from traits
+- `#[angelscript::funcdef]` - Generates `FuncdefMeta` from type aliases
+
+**Added meta types to `angelscript-core`:**
+- `ClassMeta`, `PropertyMeta` - For class registration
+- `FunctionMeta`, `ParamMeta`, `Behavior` - For function registration
+- `InterfaceMeta`, `InterfaceMethodMeta` - For interface definitions
+- `FuncdefMeta` - For function pointer types
+
+**Deferred (need VM/runtime):**
+- `#[angelscript::param]` - Generic calling convention
+- `#[angelscript::template_callback]` - Template validation
+- `#[angelscript::list_pattern]` - List initialization
+
+**Tests:** 20 macro integration tests passing
+
+### Phase 5 Summary (Complete)
+
+**Implemented Module builder in `crates/angelscript-registry/src/module.rs`:**
+- `Module::new()` - Root namespace module
+- `Module::in_namespace(&["std", "string"])` - Namespaced module
+- `.class::<T>()` - Register class via `HasClassMeta` trait
+- `.class_meta()`, `.function()`, `.interface()`, `.funcdef()` - Direct metadata registration
+- `qualified_namespace()` - Returns "std::string" format
+
+### Phase 6 Summary (Just Completed)
+
+**Updated Context and Unit to use TypeRegistry:**
+- `Context` now owns a `TypeRegistry` (created with primitives in `new()`)
+- `Context::install(Module)` converts metadata to registry entries and registers them
+- `Context::registry()` provides access to the registry
+- `Unit::type_count()` queries the context's registry
+- Removed seal() - simplified API, trust the user
+- Exported `Module`, `HasClassMeta`, `TypeRegistry` from main crate
+
+**API:**
+```rust
+let mut ctx = Context::new();
+ctx.install(Module::new().class::<MyClass>())?;
+let ctx = Arc::new(ctx);
+let unit = ctx.create_unit()?;
+```
+
+### Phase 7 Summary (Just Completed)
+
+**Created `crates/angelscript-modules` for stdlib types:**
+- `ScriptArray` - Type-erased `array<T>` template with ref counting
+- `ScriptDict` - Type-erased `dictionary<K,V>` template with ref counting
+- Placeholder `math` and `std` modules (global functions deferred)
+
+**Fixed `#[derive(Any)]` macro:**
+- Now generates `impl HasClassMeta` trait (was only generating `__as_type_meta()` method)
+- Enables `Module::class::<T>()` syntax
+
+**Tests:** 22 angelscript-modules tests + 33 main crate tests passing
+
+### Task 1: Unified Type Registry - COMPLETE
+
+All 7 phases complete. See `/claude/tasks/01_unified-type-registry.md`.
+
+### Next Task
+
+**Task 26.8: Pass 1: RegistrationPass** - Type + function registration with complete signatures
+
+---
+
 ## Task 28: Unified Error Types - COMPLETE
 
 See `/claude/tasks/28_unified_error_types.md` for full details.
@@ -103,7 +203,9 @@ See `/claude/tasks/19_ffi_default_args.md` for details.
 ### Crates (in `crates/`):
 ```
 angelscript-core/       →  Shared types (TypeHash, DataType, TypeDef, FunctionDef, etc.)
-angelscript-ffi/        →  FFI registry and type registration
+angelscript-registry/   →  TypeRegistry, Module builder
+angelscript-macros/     →  Proc macros (#[derive(Any)], #[angelscript::function], etc.)
+angelscript-modules/    →  Stdlib types (array, dictionary)
 angelscript-parser/     →  Lexer + AST + Parser
 angelscript-compiler/   →  2-pass compiler (registration + compilation)
 ```
@@ -113,8 +215,12 @@ angelscript-compiler/   →  2-pass compiler (registration + compilation)
 angelscript-core  ←─────────────────────────────┐
        ↑                                        │
        │                                        │
-angelscript-parser    angelscript-ffi ──────────┤
+angelscript-parser    angelscript-registry ─────┤
        ↑                     ↑                  │
+       │                     │                  │
+       │             angelscript-macros         │
+       │                     │                  │
+       │             angelscript-modules ───────┤
        │                     │                  │
        └─────── angelscript-compiler ───────────┘
                       ↑

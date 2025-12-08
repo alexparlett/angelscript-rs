@@ -14,10 +14,22 @@
 //! - [`FfiExpr`]: Owned expressions for FFI default arguments
 //! - [`Span`]: Source location tracking for error reporting
 //!
+//! ## Registry Entry Types
+//!
+//! - [`TypeEntry`]: Unified enum for type storage in registry
+//! - [`ClassEntry`], [`EnumEntry`], [`InterfaceEntry`], [`FuncdefEntry`]: Type entries
+//! - [`FunctionEntry`]: Function storage with implementation
+//! - [`TypeSource`], [`FunctionSource`]: Origin tracking (FFI vs script)
+//!
 //! ## Operators
 //!
 //! - [`BinaryOp`]: Binary operators (arithmetic, logical, comparison)
 //! - [`UnaryOp`]: Unary operators (negation, not, increment)
+//! - [`Operator`]: Operator enum for proc-macro attributes
+//!
+//! ## Traits
+//!
+//! - [`Any`]: Trait for types registrable with AngelScript
 //!
 //! ## Error Types
 //!
@@ -39,6 +51,22 @@ mod behaviors;
 mod ffi_expr;
 mod span;
 mod error;
+
+// New types for unified type registry
+mod ids;
+mod operator;
+mod any;
+pub mod entries;
+
+// Native function / VM runtime types (moved from angelscript-registry)
+pub mod native_fn;
+pub mod native_error;
+pub mod list_buffer;
+pub mod template;
+pub mod any_type;
+
+// Metadata types for proc-macros
+pub mod meta;
 
 // TypeHash and related
 pub use type_hash::{hash_constants, primitives, TypeHash};
@@ -92,4 +120,60 @@ pub use error::{
     RegistrationError,
     CompilationError,
     RuntimeError,
+};
+
+// Native function types
+pub use native_fn::{NativeFn, NativeCallable, VmSlot, ObjectHandle, ObjectHeap, CallContext};
+
+// Native error types
+pub use native_error::{ConversionError, NativeError};
+
+// List buffer types
+pub use list_buffer::{ListBuffer, TupleListBuffer, ListPattern};
+
+// Template types
+pub use template::{TemplateInstanceInfo, TemplateValidation};
+
+// Any type support
+pub use any_type::{AnyRef, AnyRefMut};
+
+// Unit ID for script compilation units
+pub use ids::UnitId;
+
+// Operator enum for proc-macro attributes
+pub use operator::Operator;
+
+// Any trait for registrable types
+pub use any::Any;
+
+// Registry entry types
+pub use entries::{
+    // Source tracking
+    TypeSource, FunctionSource,
+    // Common types
+    PropertyEntry, EnumValue,
+    // Type entries
+    PrimitiveEntry, TemplateParamEntry, EnumEntry, InterfaceEntry,
+    FuncdefEntry, ClassEntry,
+    // Function entry
+    FunctionEntry, FunctionImpl,
+    // Unified type entry
+    TypeEntry,
+};
+
+// Proc-macro metadata types
+pub use meta::{
+    ClassMeta,
+    FunctionMeta,
+    PropertyMeta,
+    ParamMeta,
+    Behavior,
+    InterfaceMeta,
+    InterfaceMethodMeta,
+    FuncdefMeta,
+    // New types for enhanced function metadata
+    ReturnMode,
+    ReturnMeta,
+    GenericParamMeta,
+    ListPatternMeta,
 };

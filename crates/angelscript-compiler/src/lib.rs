@@ -14,9 +14,7 @@
 //! - [`context`]: Compilation context with name resolution
 //! - [`passes`]: Compiler passes (registration and compilation)
 
-use std::sync::Arc;
 use angelscript_core::CompilationError;
-use angelscript_ffi::FfiRegistry;
 use angelscript_parser::ast::Script;
 
 /// A compiled module containing bytecode and metadata.
@@ -48,11 +46,15 @@ impl CompilationResult {
 }
 
 /// The main compiler entry point.
+///
+/// TODO: This will take a TypeRegistry once Phase 2 is complete.
 pub struct Compiler;
 
 impl Compiler {
-    /// Compile a script with the given FFI registry.
-    pub fn compile(script: &Script<'_>, _ffi: Arc<FfiRegistry>) -> CompilationResult {
+    /// Compile a script.
+    ///
+    /// TODO: Will take `&TypeRegistry` parameter once Phase 2 is complete.
+    pub fn compile(script: &Script<'_>) -> CompilationResult {
         use angelscript_parser::ast::Item;
 
         // TODO: Implement actual compilation

@@ -48,6 +48,12 @@ pub struct Param {
     /// Whether this parameter has a default value.
     /// The actual default expression is evaluated during compilation.
     pub has_default: bool,
+    /// If true and this is a template param instantiated with a handle type,
+    /// the pointed-to object is also const (not just the handle).
+    ///
+    /// Example: `const T&in` with T=`Obj@` becomes `const Obj@ const &in`
+    /// instead of `Obj@ const &in`.
+    pub if_handle_then_const: bool,
 }
 
 impl Param {
@@ -57,6 +63,7 @@ impl Param {
             name: name.into(),
             data_type,
             has_default: false,
+            if_handle_then_const: false,
         }
     }
 
@@ -66,7 +73,14 @@ impl Param {
             name: name.into(),
             data_type,
             has_default: true,
+            if_handle_then_const: false,
         }
+    }
+
+    /// Set the if_handle_then_const flag.
+    pub fn with_if_handle_then_const(mut self, value: bool) -> Self {
+        self.if_handle_then_const = value;
+        self
     }
 }
 
@@ -218,6 +232,10 @@ pub struct FunctionDef {
     pub is_native: bool,
     /// Visibility (public, private, protected) - only meaningful for methods.
     pub visibility: Visibility,
+    /// Template type parameter hashes (refs to TemplateParamEntry in registry).
+    pub template_params: Vec<TypeHash>,
+    /// True if this function accepts variadic arguments.
+    pub is_variadic: bool,
     /// Cached qualified name (computed on first access).
     cached_qualified_name: OnceCell<String>,
 }
@@ -234,6 +252,8 @@ impl PartialEq for FunctionDef {
             && self.traits == other.traits
             && self.is_native == other.is_native
             && self.visibility == other.visibility
+            && self.template_params == other.template_params
+            && self.is_variadic == other.is_variadic
     }
 }
 
@@ -261,6 +281,38 @@ impl FunctionDef {
             traits,
             is_native,
             visibility,
+            template_params: Vec::new(),
+            is_variadic: false,
+            cached_qualified_name: OnceCell::new(),
+        }
+    }
+
+    /// Create a new template function definition.
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_template(
+        func_hash: TypeHash,
+        name: String,
+        namespace: Vec<String>,
+        params: Vec<Param>,
+        return_type: DataType,
+        object_type: Option<TypeHash>,
+        traits: FunctionTraits,
+        is_native: bool,
+        visibility: Visibility,
+        template_params: Vec<TypeHash>,
+    ) -> Self {
+        Self {
+            func_hash,
+            name,
+            namespace,
+            params,
+            return_type,
+            object_type,
+            traits,
+            is_native,
+            visibility,
+            template_params,
+            is_variadic: false,
             cached_qualified_name: OnceCell::new(),
         }
     }
@@ -335,6 +387,16 @@ impl FunctionDef {
     /// Get the number of required parameters (those without defaults).
     pub fn required_param_count(&self) -> usize {
         self.params.iter().filter(|p| !p.has_default).count()
+    }
+
+    /// Check if this is a template function.
+    pub fn is_template(&self) -> bool {
+        !self.template_params.is_empty()
+    }
+
+    /// Check if this function accepts variadic arguments.
+    pub fn is_variadic_fn(&self) -> bool {
+        self.is_variadic
     }
 }
 

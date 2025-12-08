@@ -1,0 +1,5 @@
+error: list_pattern requires a pattern specification
+  --> tests/compile_fail/missing_list_pattern_spec.rs:10:5
+   |
+10 |     #[list_pattern()]
+   |     ^^^^^^^^^^^^^^^^^

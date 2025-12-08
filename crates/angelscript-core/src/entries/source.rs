@@ -1,0 +1,162 @@
+//! Source tracking for registry entries.
+//!
+//! This module provides types for tracking where types and functions
+//! originate from - either FFI (Rust native) or script sources.
+
+use std::any::TypeId;
+
+use crate::{Span, UnitId};
+
+/// Tracks the origin of a type in the registry.
+///
+/// Types can come from FFI registration (Rust native types) or from
+/// script compilation. This information is useful for error reporting
+/// and determining available behaviors.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TypeSource {
+    /// Type registered via FFI from Rust.
+    Ffi {
+        /// The Rust `TypeId` if available (for runtime type checking).
+        rust_type_id: Option<TypeId>,
+    },
+
+    /// Type defined in a script.
+    Script {
+        /// The compilation unit this type was defined in.
+        unit_id: UnitId,
+        /// Source location of the type declaration.
+        span: Span,
+    },
+}
+
+impl TypeSource {
+    /// Create an FFI source with a Rust type ID.
+    pub fn ffi<T: 'static>() -> Self {
+        TypeSource::Ffi {
+            rust_type_id: Some(TypeId::of::<T>()),
+        }
+    }
+
+    /// Create an FFI source without a Rust type ID.
+    pub fn ffi_untyped() -> Self {
+        TypeSource::Ffi { rust_type_id: None }
+    }
+
+    /// Create a script source.
+    pub fn script(unit_id: UnitId, span: Span) -> Self {
+        TypeSource::Script { unit_id, span }
+    }
+
+    /// Check if this is an FFI source.
+    pub fn is_ffi(&self) -> bool {
+        matches!(self, TypeSource::Ffi { .. })
+    }
+
+    /// Check if this is a script source.
+    pub fn is_script(&self) -> bool {
+        matches!(self, TypeSource::Script { .. })
+    }
+
+    /// Get the Rust type ID if this is an FFI source.
+    pub fn rust_type_id(&self) -> Option<TypeId> {
+        match self {
+            TypeSource::Ffi { rust_type_id } => *rust_type_id,
+            TypeSource::Script { .. } => None,
+        }
+    }
+
+    /// Get the span if this is a script source.
+    pub fn span(&self) -> Option<Span> {
+        match self {
+            TypeSource::Ffi { .. } => None,
+            TypeSource::Script { span, .. } => Some(*span),
+        }
+    }
+}
+
+/// Tracks the origin of a function in the registry.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FunctionSource {
+    /// Function registered via FFI from Rust.
+    Ffi,
+
+    /// Function defined in a script.
+    Script {
+        /// Source location of the function declaration.
+        span: Span,
+    },
+}
+
+impl FunctionSource {
+    /// Create a script function source.
+    pub fn script(span: Span) -> Self {
+        FunctionSource::Script { span }
+    }
+
+    /// Check if this is an FFI source.
+    pub fn is_ffi(&self) -> bool {
+        matches!(self, FunctionSource::Ffi)
+    }
+
+    /// Check if this is a script source.
+    pub fn is_script(&self) -> bool {
+        matches!(self, FunctionSource::Script { .. })
+    }
+
+    /// Get the span if this is a script source.
+    pub fn span(&self) -> Option<Span> {
+        match self {
+            FunctionSource::Ffi => None,
+            FunctionSource::Script { span } => Some(*span),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn type_source_ffi() {
+        let source = TypeSource::ffi::<i32>();
+        assert!(source.is_ffi());
+        assert!(!source.is_script());
+        assert!(source.rust_type_id().is_some());
+        assert!(source.span().is_none());
+    }
+
+    #[test]
+    fn type_source_ffi_untyped() {
+        let source = TypeSource::ffi_untyped();
+        assert!(source.is_ffi());
+        assert!(source.rust_type_id().is_none());
+    }
+
+    #[test]
+    fn type_source_script() {
+        let unit_id = UnitId::new(1);
+        let span = Span::new(1, 10, 10);
+        let source = TypeSource::script(unit_id, span);
+        assert!(source.is_script());
+        assert!(!source.is_ffi());
+        assert!(source.rust_type_id().is_none());
+        assert_eq!(source.span(), Some(span));
+    }
+
+    #[test]
+    fn function_source_ffi() {
+        let source = FunctionSource::Ffi;
+        assert!(source.is_ffi());
+        assert!(!source.is_script());
+        assert!(source.span().is_none());
+    }
+
+    #[test]
+    fn function_source_script() {
+        let span = Span::new(1, 5, 10);
+        let source = FunctionSource::script(span);
+        assert!(source.is_script());
+        assert!(!source.is_ffi());
+        assert_eq!(source.span(), Some(span));
+    }
+}

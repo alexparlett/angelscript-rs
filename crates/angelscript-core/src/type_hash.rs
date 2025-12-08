@@ -149,8 +149,16 @@ impl TypeHash {
     /// ```
     #[inline]
     pub fn from_function(name: &str, param_hashes: &[TypeHash]) -> Self {
+        Self::from_function_iter(name, param_hashes.iter().copied())
+    }
+
+    /// Create a function hash from name and parameter type hash iterator.
+    ///
+    /// This is the iterator-based version that avoids intermediate Vec allocation.
+    #[inline]
+    pub fn from_function_iter(name: &str, param_hashes: impl Iterator<Item = TypeHash>) -> Self {
         let mut hash = hash_constants::FUNCTION ^ xxh64(name.as_bytes(), 0);
-        for (i, param) in param_hashes.iter().enumerate() {
+        for (i, param) in param_hashes.enumerate() {
             let marker = hash_constants::PARAM_MARKERS
                 .get(i)
                 .copied()

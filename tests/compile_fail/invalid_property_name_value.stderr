@@ -1,0 +1,5 @@
+error: property_name value must be a string literal
+ --> tests/compile_fail/invalid_property_name_value.rs:9:26
+  |
+9 |     #[function(property, property_name = 123)]
+  |                          ^^^^^^^^^^^^^

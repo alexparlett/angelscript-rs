@@ -1,220 +1,414 @@
 //! Execution context for the scripting engine.
 //!
-//! A `Context` owns installed modules and provides the execution environment
-//! for scripts.
-//!
-//! # Example
-//!
-//! ```ignore
-//! use angelscript::{Context, Module};
-//! use std::sync::Arc;
-//!
-//! // Create a context with default modules (string, array, dict, math, std)
-//! let ctx = Arc::new(Context::with_default_modules().unwrap());
-//!
-//! // Create a compilation unit from the context
-//! let mut unit = ctx.create_unit();
-//! unit.add_source("main.as", "void main() { print(\"hello\"); }").unwrap();
-//! unit.build().unwrap();
-//! ```
+//! The Context owns a [`TypeRegistry`] that stores all registered types and functions.
+//! Users install modules into the context, then create compilation units from it.
 
 use std::sync::Arc;
 use thiserror::Error;
 
-use angelscript_core::AngelScriptError;
-use angelscript_ffi::{FfiRegistry, FfiRegistryBuilder, RegistrationError};
-use angelscript_module::Module;
-use angelscript_modules::default_modules;
+use angelscript_core::{
+    ClassEntry, ClassMeta, DataType, FuncdefEntry, FuncdefMeta, FunctionDef, FunctionEntry,
+    FunctionMeta, FunctionTraits, InterfaceEntry, InterfaceMeta, MethodSignature, Param,
+    PropertyEntry, TemplateParamEntry, TypeHash, TypeSource, Visibility,
+};
+use angelscript_registry::{Module, TypeRegistry};
+
 use crate::unit::Unit;
 
-/// Execution context that owns installed modules.
+/// Execution context that owns the type registry.
 ///
-/// The Context is the top-level container that:
-/// - Owns all installed `Module`s (native registrations)
-/// - Provides factory method for creating `Unit`s (compilation units)
-/// - Will eventually own the VM and manage execution
+/// The context is the central owner of all type and function registrations.
+/// Install modules to register FFI types, then create compilation units to
+/// compile and run scripts.
 ///
-/// # Lifetime
+/// # Example
 ///
-/// The `'app` lifetime parameter ensures that global property references
-/// in installed modules remain valid for the lifetime of the Context.
-/// Context is not Debug because FfiRegistryBuilder contains function pointers
-pub struct Context<'app> {
-    /// Installed native modules
-    modules: Vec<Module<'app>>,
-    /// Builder for FFI registry (consumed on seal)
-    builder: Option<FfiRegistryBuilder>,
-    /// Sealed FFI registry (available after seal)
-    ffi_registry: Option<Arc<FfiRegistry>>,
+/// ```ignore
+/// use angelscript::{Context, Module};
+/// use std::sync::Arc;
+///
+/// let mut ctx = Context::new();
+/// ctx.install(Module::new().class::<MyClass>())?;
+///
+/// let ctx = Arc::new(ctx);
+/// let unit = ctx.create_unit()?;
+/// ```
+pub struct Context {
+    registry: TypeRegistry,
 }
 
-impl<'app> Context<'app> {
-    /// Create a new empty context.
+impl Context {
+    /// Create a new context with primitives pre-registered.
     pub fn new() -> Self {
         Self {
-            modules: Vec::new(),
-            builder: Some(FfiRegistryBuilder::new()),
-            ffi_registry: None,
+            registry: TypeRegistry::with_primitives(),
         }
     }
 
-    /// Create a context with default modules pre-installed and sealed.
+    /// Create a context with default modules pre-installed.
     ///
-    /// Default modules include:
-    /// - `std` - I/O functions (print, println, eprint, eprintln)
-    /// - `string` - String type and parsing/formatting functions
-    /// - `math` - Math constants and functions (sin, cos, sqrt, PI, etc.)
-    /// - `array` - Array template type (array<T>)
-    /// - `dictionary` - Dictionary template type (dictionary)
-    ///
-    /// The context is NOT sealed - call `seal()` when done adding modules.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if any default module fails to build.
+    /// This registers the standard library types (string, array, dictionary, etc.)
+    /// in addition to primitives.
     pub fn with_default_modules() -> Result<Self, ContextError> {
         let mut ctx = Self::new();
-        for module in default_modules().map_err(ContextError::ModuleBuildFailed)? {
-            ctx.install(module)?;
-        }
+
+        // Install stdlib modules
+        ctx.install(angelscript_modules::string::module())?;
+        ctx.install(angelscript_modules::array::module())?;
+        ctx.install(angelscript_modules::dictionary::module())?;
+        ctx.install(angelscript_modules::math::module())?;
+        ctx.install(angelscript_modules::std::module())?;
+
         Ok(ctx)
     }
 
     /// Install a module into the context.
     ///
-    /// The module's functions, types, and global properties become available
-    /// to scripts compiled against this context.
+    /// This registers all types and functions from the module into the
+    /// context's type registry.
     ///
     /// # Errors
     ///
-    /// Returns `ContextError::AlreadySealed` if the context has already been sealed.
-    ///
-    /// # Example
-    ///
-    /// ```ignore
-    /// let mut ctx = Context::new();
-    ///
-    /// let mut math = Module::new(&["math"]);
-    /// // ... register math functions ...
-    ///
-    /// ctx.install(math)?;
-    /// ctx.seal()?;
-    /// ```
-    pub fn install(&mut self, module: Module<'app>) -> Result<(), ContextError> {
-        // Check if already sealed
-        if self.ffi_registry.is_some() {
-            return Err(ContextError::AlreadySealed);
-        }
-
-        // Install module into builder
-        // Builder should always exist if not sealed, but handle gracefully
-        let builder = match self.builder.as_mut() {
-            Some(b) => b,
-            None => return Err(ContextError::AlreadySealed),
+    /// Returns an error if registration fails (e.g., duplicate type names).
+    pub fn install(&mut self, module: Module) -> Result<(), ContextError> {
+        // Compute qualified namespace string once (only for registry operations that need it)
+        let qualified_ns = if module.namespace.is_empty() {
+            String::new()
+        } else {
+            module.namespace.join("::")
         };
-        module.install_into(builder)?;
 
-        // Keep module for reference
-        self.modules.push(module);
-        Ok(())
-    }
-
-    /// Seal the context, building the immutable FFI registry.
-    ///
-    /// After sealing, no more modules can be installed, but `create_unit()` can be called.
-    /// This resolves all type references and builds the shared FFI registry.
-    ///
-    /// Calling `seal()` multiple times is safe - subsequent calls are no-ops.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the FFI registry fails to build (e.g., unresolved types).
-    ///
-    /// # Example
-    ///
-    /// ```ignore
-    /// let mut ctx = Context::new();
-    /// ctx.install(my_module)?;
-    /// ctx.seal()?;
-    ///
-    /// let ctx = Arc::new(ctx);
-    /// let unit = ctx.create_unit();
-    /// ```
-    pub fn seal(&mut self) -> Result<(), ContextError> {
-        // Already sealed - no-op
-        if self.ffi_registry.is_some() {
-            return Ok(());
+        // Register namespace if non-empty
+        if !qualified_ns.is_empty() {
+            self.registry.register_namespace(&qualified_ns);
         }
 
-        // Take builder and build the registry
-        let builder = self.builder.take().unwrap_or_default();
-        let registry = builder.build().map_err(ContextError::RegistryBuildFailed)?;
-        self.ffi_registry = Some(Arc::new(registry));
+        // Install classes
+        for class_meta in module.classes {
+            self.install_class(&qualified_ns, class_meta)?;
+        }
+
+        // Install functions - pass associated_type for methods, None for globals
+        for func_meta in module.functions {
+            self.install_function(&module.namespace, func_meta.associated_type, func_meta)?;
+        }
+
+        // Install interfaces
+        for interface_meta in module.interfaces {
+            self.install_interface(&qualified_ns, interface_meta)?;
+        }
+
+        // Install funcdefs
+        for funcdef_meta in module.funcdefs {
+            self.install_funcdef(&qualified_ns, funcdef_meta)?;
+        }
 
         Ok(())
     }
 
-    /// Check if the context has been sealed.
-    pub fn is_sealed(&self) -> bool {
-        self.ffi_registry.is_some()
-    }
-
-    /// Get the FFI registry (available after sealing).
-    pub fn ffi_registry(&self) -> Option<&Arc<FfiRegistry>> {
-        self.ffi_registry.as_ref()
-    }
-
-    /// Get the installed modules.
-    pub fn modules(&self) -> &[Module<'app>] {
-        &self.modules
-    }
-
-    /// Get a module by namespace.
-    pub fn get_module(&self, namespace: &[&str]) -> Option<&Module<'app>> {
-        let namespace: Vec<String> = namespace.iter().map(|s| (*s).to_string()).collect();
-        self.modules.iter().find(|m| m.namespace() == namespace.as_slice())
+    /// Get a reference to the type registry.
+    pub fn registry(&self) -> &TypeRegistry {
+        &self.registry
     }
 
     /// Create a new compilation unit from this context.
-    ///
-    /// The unit will have access to all installed modules' functions,
-    /// types, and global properties through the sealed FFI registry.
-    ///
-    /// # Errors
-    ///
-    /// Returns `ContextError::NotSealed` if the context has not been sealed.
-    /// Call `seal()` first, or use `with_default_modules()` which auto-seals.
-    ///
-    /// # Example
-    ///
-    /// ```ignore
-    /// use std::sync::Arc;
-    ///
-    /// let ctx = Arc::new(Context::with_default_modules()?);
-    /// let mut unit = ctx.create_unit()?;
-    ///
-    /// unit.add_source("main.as", "void main() { }")?;
-    /// unit.build()?;
-    /// ```
-    pub fn create_unit(self: &Arc<Self>) -> Result<Unit<'app>, ContextError> {
-        if !self.is_sealed() {
-            return Err(ContextError::NotSealed);
-        }
+    pub fn create_unit(self: &Arc<Self>) -> Result<Unit, ContextError> {
         Ok(Unit::with_context(Arc::clone(self)))
     }
 
-    /// Get the total number of installed modules.
-    pub fn module_count(&self) -> usize {
-        self.modules.len()
+    // =========================================================================
+    // Private installation helpers
+    // =========================================================================
+
+    fn install_class(&mut self, namespace: &str, meta: ClassMeta) -> Result<(), ContextError> {
+        let qualified_name = if namespace.is_empty() {
+            meta.name.to_string()
+        } else {
+            format!("{}::{}", namespace, meta.name)
+        };
+
+        // Create the class entry
+        let mut class_entry = ClassEntry::new(
+            meta.name,
+            &qualified_name,
+            meta.type_hash,
+            meta.type_kind,
+            TypeSource::ffi_untyped(),
+        );
+
+        // Register template parameters as TemplateParamEntry and collect their hashes
+        if !meta.template_params.is_empty() {
+            let mut template_param_hashes = Vec::with_capacity(meta.template_params.len());
+            for (index, param_name) in meta.template_params.iter().enumerate() {
+                let param_entry = TemplateParamEntry::for_template(
+                    *param_name,
+                    index,
+                    meta.type_hash,
+                    &qualified_name,
+                );
+                let param_hash = param_entry.type_hash;
+                template_param_hashes.push(param_hash);
+
+                // Register the TemplateParamEntry in the registry
+                self.registry
+                    .register_type(param_entry.into())
+                    .map_err(|e| ContextError::RegistrationFailed(e.to_string()))?;
+            }
+            class_entry = class_entry.with_template_params(template_param_hashes);
+        }
+
+        // Add template specialization info
+        if let Some(base_name) = meta.specialization_of {
+            let template_hash = TypeHash::from_name(base_name);
+            let type_args: Vec<DataType> = meta
+                .specialization_args
+                .iter()
+                .map(|&h| DataType::simple(h))
+                .collect();
+            class_entry = class_entry.with_template_instance(template_hash, type_args);
+        }
+
+        // Convert properties
+        for prop in meta.properties {
+            let data_type = DataType::simple(prop.type_hash);
+            // Generate getter/setter function hashes based on property name
+            let getter_hash = if prop.get {
+                Some(TypeHash::from_name(&format!(
+                    "{}::get_{}",
+                    meta.name, prop.name
+                )))
+            } else {
+                None
+            };
+            let setter_hash = if prop.set {
+                Some(TypeHash::from_name(&format!(
+                    "{}::set_{}",
+                    meta.name, prop.name
+                )))
+            } else {
+                None
+            };
+            let prop_entry = PropertyEntry::new(
+                prop.name,
+                data_type,
+                Visibility::Public,
+                getter_hash,
+                setter_hash,
+            );
+            class_entry = class_entry.with_property(prop_entry);
+        }
+
+        // Register the class
+        self.registry
+            .register_type(class_entry.into())
+            .map_err(|e| ContextError::RegistrationFailed(e.to_string()))?;
+
+        Ok(())
     }
 
-    /// Get the total number of registered items across all modules.
-    pub fn total_item_count(&self) -> usize {
-        self.modules.iter().map(|m| m.item_count()).sum()
+    fn install_function(
+        &mut self,
+        namespace: &[String],
+        object_type: Option<TypeHash>,
+        meta: FunctionMeta,
+    ) -> Result<(), ContextError> {
+        let name = meta.as_name.unwrap_or(meta.name);
+
+        // Compute function hash - use from_method for methods, from_function for globals
+        let param_hashes: Vec<TypeHash> = meta.params.iter().map(|p| p.type_hash).collect();
+        let func_hash = if let Some(owner) = object_type {
+            TypeHash::from_method(owner, name, &param_hashes, meta.is_const, meta.return_meta.is_const)
+        } else {
+            TypeHash::from_function(name, &param_hashes)
+        };
+
+        // Convert parameters
+        let params: Vec<Param> = meta
+            .params
+            .iter()
+            .map(|p| {
+                let param = if p.default_value.is_some() {
+                    Param::with_default(p.name, DataType::simple(p.type_hash))
+                } else {
+                    Param::new(p.name, DataType::simple(p.type_hash))
+                };
+                // Set if_handle_then_const for template parameters
+                if p.if_handle_then_const {
+                    param.with_if_handle_then_const(true)
+                } else {
+                    param
+                }
+            })
+            .collect();
+
+        // Determine return type
+        let return_type = meta
+            .return_meta
+            .type_hash
+            .map(DataType::simple)
+            .unwrap_or_else(DataType::void);
+
+        // Build function traits
+        let (is_constructor, is_destructor) = match &meta.behavior {
+            Some(angelscript_core::Behavior::Constructor) => (true, false),
+            Some(angelscript_core::Behavior::Destructor) => (false, true),
+            _ => (false, false),
+        };
+        let traits = FunctionTraits {
+            is_const: meta.is_const,
+            is_constructor,
+            is_destructor,
+            ..Default::default()
+        };
+
+        let def = if meta.template_params.is_empty() {
+            FunctionDef::new(
+                func_hash,
+                name.to_string(),
+                namespace.to_vec(),
+                params,
+                return_type,
+                object_type,
+                traits,
+                true, // is_native
+                Visibility::Public,
+            )
+        } else {
+            // Compute qualified function name for template param naming
+            let qualified_func_name = if namespace.is_empty() {
+                name.to_string()
+            } else {
+                format!("{}::{}", namespace.join("::"), name)
+            };
+
+            // Register template parameters as TemplateParamEntry and collect their hashes
+            let mut template_param_hashes = Vec::with_capacity(meta.template_params.len());
+            for (index, param_name) in meta.template_params.iter().enumerate() {
+                let param_entry = TemplateParamEntry::for_template(
+                    *param_name,
+                    index,
+                    func_hash,
+                    &qualified_func_name,
+                );
+                let param_hash = param_entry.type_hash;
+                template_param_hashes.push(param_hash);
+
+                // Register the TemplateParamEntry in the registry
+                self.registry
+                    .register_type(param_entry.into())
+                    .map_err(|e| ContextError::RegistrationFailed(e.to_string()))?;
+            }
+
+            FunctionDef::new_template(
+                func_hash,
+                name.to_string(),
+                namespace.to_vec(),
+                params,
+                return_type,
+                object_type,
+                traits,
+                true, // is_native
+                Visibility::Public,
+                template_param_hashes,
+            )
+        };
+
+        let entry = FunctionEntry::ffi(def);
+
+        self.registry
+            .register_function(entry)
+            .map_err(|e| ContextError::RegistrationFailed(e.to_string()))?;
+
+        Ok(())
+    }
+
+    fn install_interface(
+        &mut self,
+        namespace: &str,
+        meta: InterfaceMeta,
+    ) -> Result<(), ContextError> {
+        let qualified_name = if namespace.is_empty() {
+            meta.name.to_string()
+        } else {
+            format!("{}::{}", namespace, meta.name)
+        };
+
+        let mut entry = InterfaceEntry::new(
+            meta.name,
+            &qualified_name,
+            meta.type_hash,
+            TypeSource::ffi_untyped(),
+        );
+
+        // Convert methods
+        for method in meta.methods {
+            let params: Vec<DataType> = method
+                .param_types
+                .iter()
+                .map(|&h| DataType::simple(h))
+                .collect();
+            let return_type = DataType::simple(method.return_type);
+
+            let sig = if method.is_const {
+                MethodSignature::new_const(method.name, params, return_type)
+            } else {
+                MethodSignature::new(method.name, params, return_type)
+            };
+
+            entry = entry.with_method(sig);
+        }
+
+        self.registry
+            .register_type(entry.into())
+            .map_err(|e| ContextError::RegistrationFailed(e.to_string()))?;
+
+        Ok(())
+    }
+
+    fn install_funcdef(&mut self, namespace: &str, meta: FuncdefMeta) -> Result<(), ContextError> {
+        let qualified_name = if namespace.is_empty() {
+            meta.name.to_string()
+        } else {
+            format!("{}::{}", namespace, meta.name)
+        };
+
+        let params: Vec<DataType> = meta
+            .param_types
+            .iter()
+            .map(|&h| DataType::simple(h))
+            .collect();
+        let return_type = DataType::simple(meta.return_type);
+
+        let entry = if let Some(parent_hash) = meta.parent_type {
+            FuncdefEntry::new_child(
+                meta.name,
+                &qualified_name,
+                meta.type_hash,
+                TypeSource::ffi_untyped(),
+                params,
+                return_type,
+                parent_hash,
+            )
+        } else {
+            FuncdefEntry::new(
+                meta.name,
+                &qualified_name,
+                meta.type_hash,
+                TypeSource::ffi_untyped(),
+                params,
+                return_type,
+            )
+        };
+
+        self.registry
+            .register_type(entry.into())
+            .map_err(|e| ContextError::RegistrationFailed(e.to_string()))?;
+
+        Ok(())
     }
 }
 
-impl Default for Context<'_> {
+impl Default for Context {
     fn default() -> Self {
         Self::new()
     }
@@ -223,297 +417,219 @@ impl Default for Context<'_> {
 /// Errors that can occur during context operations.
 #[derive(Debug, Error)]
 pub enum ContextError {
-    /// Module not found
-    #[error("module not found: '{0}'")]
-    ModuleNotFound(String),
-
-    /// Failed to apply module to registry
-    #[error("failed to apply module: {0}")]
-    ApplyFailed(String),
-
-    /// Failed to build a default module
-    #[error("failed to build module: {0}")]
-    ModuleBuildFailed(#[from] RegistrationError),
-
-    /// Context is already sealed - cannot install modules
-    #[error("context is already sealed - cannot install modules after seal() or create_unit()")]
-    AlreadySealed,
-
-    /// Context is not sealed - must call seal() before creating units
-    #[error("context is not sealed - call seal() before create_unit()")]
-    NotSealed,
-
-    /// Failed to build FFI registry
-    #[error("failed to build FFI registry: {0:?}")]
-    RegistryBuildFailed(Vec<RegistrationError>),
-}
-
-impl ContextError {
-    /// Convert to a vector of `AngelScriptError`.
-    ///
-    /// This extracts the underlying registration errors, enabling unified
-    /// error handling with the top-level `AngelScriptError` type.
-    ///
-    /// For variants that don't contain underlying errors (ModuleNotFound,
-    /// ApplyFailed, AlreadySealed, NotSealed), this returns an empty vector.
-    pub fn into_errors(self) -> Vec<AngelScriptError> {
-        match self {
-            ContextError::ModuleBuildFailed(err) => vec![AngelScriptError::from(err)],
-            ContextError::RegistryBuildFailed(errors) => {
-                errors.into_iter().map(AngelScriptError::from).collect()
-            }
-            _ => Vec::new(),
-        }
-    }
-
-    /// Get the first error as an `AngelScriptError`, if any.
-    ///
-    /// This is useful when you only need to report a single error.
-    pub fn first_error(&self) -> Option<AngelScriptError> {
-        match self {
-            ContextError::ModuleBuildFailed(err) => Some(AngelScriptError::from(err.clone())),
-            ContextError::RegistryBuildFailed(errors) => {
-                errors.first().cloned().map(AngelScriptError::from)
-            }
-            _ => None,
-        }
-    }
+    /// Registration failed
+    #[error("registration failed: {0}")]
+    RegistrationFailed(String),
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use angelscript_core::{primitives, TypeKind};
 
     #[test]
     fn context_new() {
-        let ctx = Context::<'static>::new();
-        assert_eq!(ctx.module_count(), 0);
+        let ctx = Context::new();
+        // Should have primitives registered
+        assert!(ctx.registry().get(primitives::INT32).is_some());
     }
 
     #[test]
     fn context_default() {
-        let ctx = Context::<'static>::default();
-        assert_eq!(ctx.module_count(), 0);
+        let ctx = Context::default();
+        assert!(ctx.registry().get(primitives::FLOAT).is_some());
     }
 
     #[test]
     fn context_with_default_modules() {
-        let ctx = Context::<'static>::with_default_modules().unwrap();
-        // Should have 5 default modules: std, string, math, array, dictionary
-        assert_eq!(ctx.module_count(), 5);
-    }
-
-    #[test]
-    fn context_install_module() {
-        let mut ctx = Context::new();
-        let module = Module::new(&["math"]);
-
-        ctx.install(module).unwrap();
-
-        assert_eq!(ctx.module_count(), 1);
-    }
-
-    #[test]
-    fn context_install_multiple_modules() {
-        let mut ctx = Context::new();
-
-        ctx.install(Module::new(&["math"])).unwrap();
-        ctx.install(Module::new(&["io"])).unwrap();
-        ctx.install(Module::root()).unwrap();
-
-        assert_eq!(ctx.module_count(), 3);
-    }
-
-    #[test]
-    fn context_install_same_namespace_allowed() {
-        // Multiple modules can contribute to the same namespace
-        let mut ctx = Context::new();
-
-        ctx.install(Module::new(&["math"])).unwrap();
-        ctx.install(Module::new(&["math"])).unwrap();
-
-        assert_eq!(ctx.module_count(), 2);
-    }
-
-    #[test]
-    fn context_get_module() {
-        let mut ctx = Context::new();
-        ctx.install(Module::new(&["math"])).unwrap();
-        ctx.install(Module::new(&["io"])).unwrap();
-
-        let math = ctx.get_module(&["math"]);
-        assert!(math.is_some());
-        assert_eq!(math.unwrap().namespace(), &["math"]);
-
-        let io = ctx.get_module(&["io"]);
-        assert!(io.is_some());
-
-        let nonexistent = ctx.get_module(&["nonexistent"]);
-        assert!(nonexistent.is_none());
-    }
-
-    #[test]
-    fn context_get_root_module() {
-        let mut ctx = Context::new();
-        ctx.install(Module::root()).unwrap();
-
-        let root = ctx.get_module(&[]);
-        assert!(root.is_some());
-        assert!(root.unwrap().is_root());
-    }
-
-    #[test]
-    fn context_modules() {
-        let mut ctx = Context::new();
-        ctx.install(Module::new(&["math"])).unwrap();
-        ctx.install(Module::new(&["io"])).unwrap();
-
-        let modules = ctx.modules();
-        assert_eq!(modules.len(), 2);
+        let ctx = Context::with_default_modules().unwrap();
+        assert!(ctx.registry().get(primitives::BOOL).is_some());
     }
 
     #[test]
     fn context_create_unit() {
-        let mut ctx = Context::<'static>::new();
-        ctx.seal().unwrap();
-        let ctx = Arc::new(ctx);
-        let unit = ctx.create_unit().unwrap();
-
-        assert!(!unit.is_built());
+        let ctx = Arc::new(Context::new());
+        let _unit = ctx.create_unit().unwrap();
     }
 
     #[test]
-    fn context_create_unit_unsealed_returns_error() {
-        let ctx = Arc::new(Context::<'static>::new());
-        let result = ctx.create_unit();
-        assert!(matches!(result, Err(ContextError::NotSealed)));
+    fn context_install_empty_module() {
+        let mut ctx = Context::new();
+        let module = Module::new();
+        ctx.install(module).unwrap();
     }
 
     #[test]
-    fn context_seal() {
-        let mut ctx = Context::<'static>::new();
-        assert!(!ctx.is_sealed());
+    fn context_install_module_with_class() {
+        let mut ctx = Context::new();
 
-        ctx.seal().unwrap();
-        assert!(ctx.is_sealed());
-        assert!(ctx.ffi_registry().is_some());
+        let mut module = Module::new();
+        module.classes.push(ClassMeta {
+            name: "Player",
+            type_hash: TypeHash::from_name("Player"),
+            type_kind: TypeKind::reference(),
+            properties: vec![],
+            template_params: vec![],
+            specialization_of: None,
+            specialization_args: vec![],
+        });
+        ctx.install(module).unwrap();
+
+        assert!(ctx.registry().get(TypeHash::from_name("Player")).is_some());
     }
 
     #[test]
-    fn context_seal_idempotent() {
-        let mut ctx = Context::<'static>::new();
-        ctx.seal().unwrap();
-        ctx.seal().unwrap(); // Should be no-op
-        assert!(ctx.is_sealed());
+    fn context_install_module_with_namespace() {
+        let mut ctx = Context::new();
+
+        let mut module = Module::in_namespace(&["Game"]);
+        module.classes.push(ClassMeta {
+            name: "Entity",
+            type_hash: TypeHash::from_name("Game::Entity"),
+            type_kind: TypeKind::reference(),
+            properties: vec![],
+            template_params: vec![],
+            specialization_of: None,
+            specialization_args: vec![],
+        });
+        ctx.install(module).unwrap();
+
+        assert!(ctx.registry().has_namespace("Game"));
+        assert!(ctx
+            .registry()
+            .get(TypeHash::from_name("Game::Entity"))
+            .is_some());
     }
 
     #[test]
-    fn context_install_after_seal_fails() {
-        let mut ctx = Context::<'static>::new();
-        ctx.seal().unwrap();
+    fn context_install_duplicate_type_fails() {
+        let mut ctx = Context::new();
 
-        let result = ctx.install(Module::new(&["test"]));
-        assert!(matches!(result, Err(ContextError::AlreadySealed)));
+        let class_meta = ClassMeta {
+            name: "Player",
+            type_hash: TypeHash::from_name("Player"),
+            type_kind: TypeKind::reference(),
+            properties: vec![],
+            template_params: vec![],
+            specialization_of: None,
+            specialization_args: vec![],
+        };
+
+        let mut module1 = Module::new();
+        module1.classes.push(class_meta.clone());
+        let mut module2 = Module::new();
+        module2.classes.push(class_meta);
+
+        ctx.install(module1).unwrap();
+        let result = ctx.install(module2);
+        assert!(result.is_err());
     }
 
     #[test]
-    fn context_with_default_modules_not_sealed() {
-        let ctx = Context::<'static>::with_default_modules().unwrap();
-        assert!(!ctx.is_sealed());
-        assert!(ctx.ffi_registry().is_none()); // Not sealed yet
+    fn context_install_template_class_registers_params() {
+        let mut ctx = Context::new();
+
+        let mut module = Module::new();
+        module.classes.push(ClassMeta {
+            name: "array",
+            type_hash: TypeHash::from_name("array"),
+            type_kind: TypeKind::reference(),
+            properties: vec![],
+            template_params: vec!["T"],
+            specialization_of: None,
+            specialization_args: vec![],
+        });
+        ctx.install(module).unwrap();
+
+        // Verify the class was registered
+        let class_entry = ctx.registry().get(TypeHash::from_name("array"));
+        assert!(class_entry.is_some());
+
+        // Verify the template param entry was registered
+        let t_param = ctx.registry().get(TypeHash::from_name("array::T"));
+        assert!(t_param.is_some(), "TemplateParamEntry for 'T' should be registered");
+        assert!(t_param.unwrap().as_template_param().is_some());
     }
 
     #[test]
-    fn context_with_default_modules_can_seal() {
-        let mut ctx = Context::<'static>::with_default_modules().unwrap();
-        ctx.seal().unwrap();
-        assert!(ctx.is_sealed());
-        assert!(ctx.ffi_registry().is_some());
+    fn context_install_template_class_multi_params() {
+        let mut ctx = Context::new();
+
+        let mut module = Module::new();
+        module.classes.push(ClassMeta {
+            name: "dict",
+            type_hash: TypeHash::from_name("dict"),
+            type_kind: TypeKind::reference(),
+            properties: vec![],
+            template_params: vec!["K", "V"],
+            specialization_of: None,
+            specialization_args: vec![],
+        });
+        ctx.install(module).unwrap();
+
+        // Verify both template params were registered
+        let k_param = ctx.registry().get(TypeHash::from_name("dict::K"));
+        let v_param = ctx.registry().get(TypeHash::from_name("dict::V"));
+        assert!(k_param.is_some(), "TemplateParamEntry for 'K' should be registered");
+        assert!(v_param.is_some(), "TemplateParamEntry for 'V' should be registered");
+
+        // Verify the class entry has the correct template_params hashes
+        let class_entry = ctx.registry().get(TypeHash::from_name("dict")).unwrap();
+        let class = class_entry.as_class().unwrap();
+        assert_eq!(class.template_params.len(), 2);
+        assert_eq!(class.template_params[0], TypeHash::from_name("dict::K"));
+        assert_eq!(class.template_params[1], TypeHash::from_name("dict::V"));
     }
 
     #[test]
-    fn context_total_item_count() {
-        let mut value1: i32 = 0;
-        let mut value2: i32 = 0;
+    fn context_install_template_function_registers_params() {
+        use angelscript_core::ReturnMeta;
 
         let mut ctx = Context::new();
 
-        let mut math = Module::new(&["math"]);
-        math.register_global_property("int x", &mut value1).unwrap();
+        let mut module = Module::new();
+        module.functions.push(FunctionMeta {
+            name: "identity",
+            as_name: None,
+            params: vec![],
+            generic_params: vec![],
+            return_meta: ReturnMeta::default(),
+            is_method: false,
+            associated_type: None,
+            behavior: None,
+            is_const: false,
+            is_property: false,
+            property_name: None,
+            is_generic: true,
+            list_pattern: None,
+            template_params: vec!["T"],
+        });
+        ctx.install(module).unwrap();
 
-        let mut io = Module::new(&["io"]);
-        io.register_global_property("int y", &mut value2).unwrap();
-
-        ctx.install(math).unwrap();
-        ctx.install(io).unwrap();
-
-        assert_eq!(ctx.total_item_count(), 2);
+        // Verify the template param entry was registered
+        let t_param = ctx.registry().get(TypeHash::from_name("identity::T"));
+        assert!(t_param.is_some(), "TemplateParamEntry for function 'T' should be registered");
+        assert!(t_param.unwrap().as_template_param().is_some());
     }
 
     #[test]
-    fn context_error_display() {
-        let err = ContextError::ModuleNotFound("foo".to_string());
-        assert!(err.to_string().contains("module not found"));
+    fn context_install_namespaced_template_class() {
+        let mut ctx = Context::new();
 
-        let err = ContextError::ApplyFailed("some error".to_string());
-        assert!(err.to_string().contains("failed to apply"));
+        let mut module = Module::in_namespace(&["std"]);
+        module.classes.push(ClassMeta {
+            name: "vector",
+            type_hash: TypeHash::from_name("std::vector"),
+            type_kind: TypeKind::reference(),
+            properties: vec![],
+            template_params: vec!["T"],
+            specialization_of: None,
+            specialization_args: vec![],
+        });
+        ctx.install(module).unwrap();
 
-        let err = ContextError::AlreadySealed;
-        assert!(err.to_string().contains("already sealed"));
-    }
-
-    #[test]
-    fn context_error_into_errors_module_build() {
-        let err = ContextError::ModuleBuildFailed(
-            RegistrationError::TypeNotFound("Foo".to_string())
-        );
-
-        let errors = err.into_errors();
-        assert_eq!(errors.len(), 1);
-        assert!(errors[0].is_registration());
-    }
-
-    #[test]
-    fn context_error_into_errors_registry_build() {
-        let err = ContextError::RegistryBuildFailed(vec![
-            RegistrationError::TypeNotFound("Foo".to_string()),
-            RegistrationError::DuplicateType("Bar".to_string()),
-        ]);
-
-        let errors = err.into_errors();
-        assert_eq!(errors.len(), 2);
-        assert!(errors[0].is_registration());
-        assert!(errors[1].is_registration());
-    }
-
-    #[test]
-    fn context_error_into_errors_empty() {
-        let err = ContextError::ModuleNotFound("foo".to_string());
-        let errors = err.into_errors();
-        assert!(errors.is_empty());
-
-        let err = ContextError::AlreadySealed;
-        let errors = err.into_errors();
-        assert!(errors.is_empty());
-
-        let err = ContextError::NotSealed;
-        let errors = err.into_errors();
-        assert!(errors.is_empty());
-    }
-
-    #[test]
-    fn context_error_first_error() {
-        let err = ContextError::RegistryBuildFailed(vec![
-            RegistrationError::TypeNotFound("First".to_string()),
-            RegistrationError::DuplicateType("Second".to_string()),
-        ]);
-
-        let first = err.first_error();
-        assert!(first.is_some());
-        assert!(first.unwrap().is_registration());
-
-        // Empty errors return None
-        let err = ContextError::AlreadySealed;
-        assert!(err.first_error().is_none());
+        // Verify the template param uses the qualified name
+        let t_param = ctx.registry().get(TypeHash::from_name("std::vector::T"));
+        assert!(t_param.is_some(), "TemplateParamEntry should use qualified name 'std::vector::T'");
     }
 }

@@ -2,10 +2,10 @@
 members = [
     "crates/angelscript-core",
     "crates/angelscript-parser",
-    "crates/angelscript-ffi",
-    "crates/angelscript-module",
-    "crates/angelscript-modules",
+    "crates/angelscript-registry",
     "crates/angelscript-compiler",
+    "crates/angelscript-macros",
+    "crates/angelscript-modules",
     ".",
 ]
 resolver = "3"
@@ -32,8 +32,8 @@ edition = "2024"
 angelscript-core.workspace = true
 angelscript-compiler = { path = "crates/angelscript-compiler" }
 angelscript-parser = { path = "crates/angelscript-parser" }
-angelscript-ffi = { path = "crates/angelscript-ffi" }
-angelscript-module = { path = "crates/angelscript-module" }
+angelscript-registry = { path = "crates/angelscript-registry" }
+angelscript-macros = { path = "crates/angelscript-macros" }
 angelscript-modules = { path = "crates/angelscript-modules" }
 thiserror.workspace = true
 bitflags.workspace = true
@@ -47,6 +47,7 @@ xxhash-rust.workspace = true
 [dev-dependencies]
 criterion.workspace = true
 puffin.workspace = true
+trybuild = "1.0"
 
 [features]
 default = []

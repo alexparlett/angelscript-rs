@@ -1,0 +1,5 @@
+error: unknown function attribute: unknown_function_attr
+ --> tests/compile_fail/unknown_function_attr.rs:5:12
+  |
+5 | #[function(unknown_function_attr)]
+  |            ^^^^^^^^^^^^^^^^^^^^^

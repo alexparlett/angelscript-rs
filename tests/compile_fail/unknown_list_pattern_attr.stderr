@@ -1,0 +1,5 @@
+error: unknown list_pattern attribute: unknown_pattern
+  --> tests/compile_fail/unknown_list_pattern_attr.rs:10:20
+   |
+10 |     #[list_pattern(unknown_pattern)]
+   |                    ^^^^^^^^^^^^^^^
