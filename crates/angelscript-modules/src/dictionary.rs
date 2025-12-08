@@ -277,7 +277,7 @@ impl fmt::Debug for ScriptDict {
 /// // Install with context...
 /// ```
 pub fn module() -> Module {
-    Module::new().class::<ScriptDict>()
+    Module::new().ty::<ScriptDict>()
 }
 
 // =========================================================================
@@ -349,9 +349,9 @@ mod tests {
 
     #[test]
     fn test_module_creates() {
-        use angelscript_registry::HasClassMeta;
-        let meta = ScriptDict::__as_type_meta();
-        assert_eq!(meta.name, "dictionary");
+        let m = module();
+        assert_eq!(m.classes.len(), 1);
+        assert_eq!(m.classes[0].name, "dictionary");
     }
 
     #[test]

@@ -42,9 +42,9 @@ fn function_inner(attrs: &FunctionAttrs, input: &ItemFn) -> syn::Result<TokenStr
     let fn_output = &input.sig.output;
     let fn_attrs = &input.attrs;
 
-    // Generate the metadata function name
+    // Generate the metadata function name (Rune convention: method__meta)
     let meta_fn_name = syn::Ident::new(
-        &format!("__as_{}_meta", fn_name),
+        &format!("{}__meta", fn_name),
         fn_name.span(),
     );
 
@@ -57,7 +57,7 @@ fn function_inner(attrs: &FunctionAttrs, input: &ItemFn) -> syn::Result<TokenStr
     // Generate param tokens with defaults from #[default(...)] on each param
     let param_tokens: Vec<_> = params.iter().map(|p| {
         let name = &p.name;
-        let ty = &p.ty;
+        let ty = strip_reference(&p.ty);
         let default_value = match &p.default {
             Some(val) => quote! { Some(#val) },
             None => quote! { None },
@@ -122,6 +122,13 @@ fn function_inner(attrs: &FunctionAttrs, input: &ItemFn) -> syn::Result<TokenStr
     // Filter #[default] from parameter attributes in output
     let filtered_inputs = filter_param_attrs(fn_inputs);
 
+    // Generate associated_type - for methods with self, use Self::type_hash()
+    let associated_type_token = if is_method {
+        quote! { Some(<Self as ::angelscript_core::Any>::type_hash()) }
+    } else {
+        quote! { None }
+    };
+
     // Output the original function plus the metadata generator
     Ok(quote! {
         #(#filtered_attrs)*
@@ -137,6 +144,7 @@ fn function_inner(attrs: &FunctionAttrs, input: &ItemFn) -> syn::Result<TokenStr
                 generic_params: vec![#(#generic_param_tokens),*],
                 return_meta: #return_meta_token,
                 is_method: #is_method,
+                associated_type: #associated_type_token,
                 behavior: #behavior,
                 is_const: #is_const,
                 is_property: #is_property,
@@ -415,4 +423,16 @@ fn filter_param_attrs(inputs: &syn::punctuated::Punctuated<FnArg, syn::token::Co
     }).collect();
 
     quote! { #(#filtered),* }
+}
+
+/// Strip reference from a type to get the underlying type.
+/// `&T` -> `T`, `&mut T` -> `T`, `T` -> `T`
+fn strip_reference(ty: &Type) -> TokenStream2 {
+    match ty {
+        Type::Reference(type_ref) => {
+            let elem = &type_ref.elem;
+            quote! { #elem }
+        }
+        _ => quote! { #ty },
+    }
 }

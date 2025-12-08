@@ -155,6 +155,9 @@ pub struct FunctionMeta {
     pub return_meta: ReturnMeta,
     /// True if this is an instance method (has self parameter).
     pub is_method: bool,
+    /// The type this function is associated with (for methods).
+    /// None for global functions.
+    pub associated_type: Option<TypeHash>,
     /// Behavior kind (constructor, factory, operator, etc.).
     pub behavior: Option<Behavior>,
     /// True if method is const.
@@ -390,6 +393,7 @@ mod tests {
             generic_params: vec![],
             return_meta: ReturnMeta::default(),
             is_method: true,
+            associated_type: None,
             behavior: None,
             is_const: false,
             is_property: false,
@@ -413,6 +417,7 @@ mod tests {
             generic_params: vec![],
             return_meta: ReturnMeta::default(),
             is_method: true,
+            associated_type: None,
             behavior: Some(Behavior::Constructor),
             is_const: false,
             is_property: false,
@@ -433,6 +438,7 @@ mod tests {
             generic_params: vec![],
             return_meta: ReturnMeta::default(),
             is_method: true,
+            associated_type: None,
             behavior: Some(Behavior::Operator(Operator::Add)),
             is_const: true,
             is_property: false,
@@ -461,6 +467,7 @@ mod tests {
             ],
             return_meta: ReturnMeta::default(),
             is_method: true,
+            associated_type: None,
             behavior: None,
             is_const: false,
             is_property: false,

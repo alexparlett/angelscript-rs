@@ -314,7 +314,7 @@ impl fmt::Debug for ScriptArray {
 /// ```
 pub fn module() -> Module {
     Module::new()
-        .class::<ScriptArray>()
+        .ty::<ScriptArray>()
 }
 
 // =========================================================================

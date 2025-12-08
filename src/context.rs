@@ -366,15 +366,14 @@ mod tests {
     fn context_install_module_with_class() {
         let mut ctx = Context::new();
 
-        let class_meta = ClassMeta {
+        let mut module = Module::new();
+        module.classes.push(ClassMeta {
             name: "Player",
             type_hash: TypeHash::from_name("Player"),
             type_kind: TypeKind::reference(),
             properties: vec![],
             template_params: vec![],
-        };
-
-        let module = Module::new().class_meta(class_meta);
+        });
         ctx.install(module).unwrap();
 
         assert!(ctx.registry().get(TypeHash::from_name("Player")).is_some());
@@ -384,15 +383,14 @@ mod tests {
     fn context_install_module_with_namespace() {
         let mut ctx = Context::new();
 
-        let class_meta = ClassMeta {
+        let mut module = Module::in_namespace(&["Game"]);
+        module.classes.push(ClassMeta {
             name: "Entity",
             type_hash: TypeHash::from_name("Game::Entity"),
             type_kind: TypeKind::reference(),
             properties: vec![],
             template_params: vec![],
-        };
-
-        let module = Module::in_namespace(&["Game"]).class_meta(class_meta);
+        });
         ctx.install(module).unwrap();
 
         assert!(ctx.registry().has_namespace("Game"));
@@ -414,8 +412,10 @@ mod tests {
             template_params: vec![],
         };
 
-        let module1 = Module::new().class_meta(class_meta.clone());
-        let module2 = Module::new().class_meta(class_meta);
+        let mut module1 = Module::new();
+        module1.classes.push(class_meta.clone());
+        let mut module2 = Module::new();
+        module2.classes.push(class_meta);
 
         ctx.install(module1).unwrap();
         let result = ctx.install(module2);
