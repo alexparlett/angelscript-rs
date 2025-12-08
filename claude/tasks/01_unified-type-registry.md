@@ -896,15 +896,17 @@ Apply design clarifications from template/storage review:
 ### Phase 3: Create angelscript-registry
 - [x] `src/registry.rs` - TypeRegistry with unified `functions` map (methods + globals)
 
-### Phase 4: Create angelscript-macros
+### Phase 4: Create angelscript-macros ✅ COMPLETE
 Note: Macros must be implemented before Module builder because `Module.ty::<T>()` depends on macro-generated metadata.
 - [x] `#[derive(Any)]` - Generates Any trait + ClassMeta
 - [x] `#[angelscript::function]` - Generates FunctionMeta with behaviors
 - [x] `#[angelscript::interface]` - Generates InterfaceMeta
 - [x] `#[angelscript::funcdef]` - Generates FuncdefMeta
-- [ ] `#[angelscript::param]` for generic calling convention (deferred - needs VM)
-- [ ] `#[angelscript::template_callback]` (deferred - needs runtime)
-- [ ] `#[angelscript::list_pattern]` for list behaviors (deferred - needs runtime)
+- [x] `#[param(...)]` - Generic calling convention parameters (type, ref_mode, default, variable, variadic)
+- [x] `#[returns(...)]` - Return metadata (ref, handle, const, variable)
+- [x] `#[default("value")]` - Default parameter values on regular params
+- [x] `#[list_pattern(...)]` - List initialization patterns (repeat, fixed, repeat_tuple)
+- [x] `template_callback` function kind - Macro generates `Behavior::TemplateCallback` (runtime callback invocation deferred)
 
 ### Phase 5: Module Builder (angelscript-registry)
 - [ ] `src/module.rs` - Module builder with namespace support (consumes macro-generated metadata)
