@@ -179,6 +179,10 @@ pub struct FunctionMeta {
     pub is_generic: bool,
     /// List initialization pattern (for list constructors/factories).
     pub list_pattern: Option<ListPatternMeta>,
+    /// Template parameter names for template functions (e.g., `["T", "U"]`).
+    /// Empty if not a template function.
+    /// Example: For `T Test<T, U>(T t, U u)`, this would be `["T", "U"]`.
+    pub template_params: Vec<&'static str>,
 }
 
 /// Metadata for a function parameter.
@@ -446,6 +450,7 @@ mod tests {
             property_name: None,
             is_generic: false,
             list_pattern: None,
+            template_params: vec![],
         };
 
         assert_eq!(meta.name, "update");
@@ -470,6 +475,7 @@ mod tests {
             property_name: None,
             is_generic: false,
             list_pattern: None,
+            template_params: vec![],
         };
 
         assert!(meta.behavior.as_ref().unwrap().is_lifecycle());
@@ -491,6 +497,7 @@ mod tests {
             property_name: None,
             is_generic: false,
             list_pattern: None,
+            template_params: vec![],
         };
 
         assert!(meta.behavior.as_ref().unwrap().is_operator());
@@ -521,6 +528,7 @@ mod tests {
             property_name: None,
             is_generic: true,
             list_pattern: None,
+            template_params: vec![],
         };
 
         assert!(meta.is_generic);
@@ -606,5 +614,130 @@ mod tests {
         assert!(Behavior::GcEnumRefs.is_gc());
         assert!(Behavior::GcReleaseRefs.is_gc());
         assert!(!Behavior::Constructor.is_gc());
+    }
+
+    #[test]
+    fn function_meta_template_function() {
+        // Template function: T Test<T, U>(T t, U u)
+        let meta = FunctionMeta {
+            name: "test",
+            as_name: None,
+            params: vec![],
+            generic_params: vec![
+                GenericParamMeta {
+                    type_hash: primitives::VARIABLE_PARAM,
+                    ref_mode: RefModifier::In,
+                    is_variadic: false,
+                    default_value: None,
+                    if_handle_then_const: false,
+                },
+                GenericParamMeta {
+                    type_hash: primitives::VARIABLE_PARAM,
+                    ref_mode: RefModifier::In,
+                    is_variadic: false,
+                    default_value: None,
+                    if_handle_then_const: false,
+                },
+            ],
+            return_meta: ReturnMeta {
+                type_hash: None,
+                mode: ReturnMode::Value,
+                is_const: false,
+                is_variable: true,
+            },
+            is_method: false,
+            associated_type: None,
+            behavior: None,
+            is_const: false,
+            is_property: false,
+            property_name: None,
+            is_generic: true,
+            list_pattern: None,
+            template_params: vec!["T", "U"],
+        };
+
+        assert_eq!(meta.template_params.len(), 2);
+        assert_eq!(meta.template_params[0], "T");
+        assert_eq!(meta.template_params[1], "U");
+        assert!(meta.is_generic);
+        assert_eq!(meta.generic_params.len(), 2);
+    }
+
+    #[test]
+    fn funcdef_meta_child_funcdef() {
+        // Child funcdef: bool myTemplate<T>::callback(const T &in)
+        let meta = FuncdefMeta {
+            name: "callback",
+            type_hash: TypeHash::from_name("callback"),
+            param_types: vec![primitives::VARIABLE_PARAM],
+            return_type: primitives::BOOL,
+            parent_type: Some(TypeHash::from_name("myTemplate")),
+        };
+
+        assert_eq!(meta.name, "callback");
+        assert!(meta.parent_type.is_some());
+        assert_eq!(meta.parent_type.unwrap(), TypeHash::from_name("myTemplate"));
+        assert_eq!(meta.param_types.len(), 1);
+    }
+
+    #[test]
+    fn funcdef_meta_global_funcdef() {
+        // Global funcdef: bool Callback(int)
+        let meta = FuncdefMeta {
+            name: "Callback",
+            type_hash: TypeHash::from_name("Callback"),
+            param_types: vec![primitives::INT32],
+            return_type: primitives::BOOL,
+            parent_type: None,
+        };
+
+        assert_eq!(meta.name, "Callback");
+        assert!(meta.parent_type.is_none());
+    }
+
+    #[test]
+    fn generic_param_meta_if_handle_then_const() {
+        // Generic param with if_handle_then_const
+        let param = GenericParamMeta {
+            type_hash: primitives::VARIABLE_PARAM,
+            ref_mode: RefModifier::In,
+            is_variadic: false,
+            default_value: None,
+            if_handle_then_const: true,
+        };
+
+        assert!(param.if_handle_then_const);
+        assert_eq!(param.type_hash, primitives::VARIABLE_PARAM);
+        assert_eq!(param.ref_mode, RefModifier::In);
+    }
+
+    #[test]
+    fn generic_param_meta_with_default() {
+        // Generic param with default value
+        let param = GenericParamMeta {
+            type_hash: primitives::INT32,
+            ref_mode: RefModifier::In,
+            is_variadic: false,
+            default_value: Some("0"),
+            if_handle_then_const: false,
+        };
+
+        assert_eq!(param.default_value, Some("0"));
+        assert_eq!(param.type_hash, primitives::INT32);
+    }
+
+    #[test]
+    fn param_meta_with_template_param() {
+        // Non-generic param with template parameter placeholder
+        let param = ParamMeta {
+            name: "value",
+            type_hash: primitives::VARIABLE_PARAM,
+            default_value: None,
+            template_param: Some("T"),
+            if_handle_then_const: false,
+        };
+
+        assert_eq!(param.template_param, Some("T"));
+        assert_eq!(param.name, "value");
     }
 }

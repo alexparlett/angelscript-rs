@@ -1,0 +1,5 @@
+error: unknown funcdef attribute: unknown_attr
+ --> tests/compile_fail/unknown_funcdef_attr.rs:5:11
+  |
+5 | #[funcdef(unknown_attr = "value")]
+  |           ^^^^^^^^^^^^

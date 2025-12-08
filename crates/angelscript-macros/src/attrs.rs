@@ -60,8 +60,11 @@ pub struct FunctionAttrs {
     pub property_name: Option<String>,
     /// Is generic calling convention
     pub is_generic: bool,
-    /// Is template function
+    /// Is template function (deprecated, use template = "...")
     pub is_template: bool,
+    /// Template parameter string for template functions (e.g., "<T, U>").
+    /// Example: `template = "<T, U>"` for `T Test<T, U>(T t, U u)`
+    pub template: Option<String>,
     /// Operator type
     pub operator: Option<String>,
     /// Explicit return type for generic functions
@@ -282,6 +285,16 @@ impl FunctionAttrs {
                                 return Err(syn::Error::new(
                                     name.span(),
                                     "returns value must be a type path",
+                                ));
+                            }
+                        }
+                        "template" => {
+                            if let Expr::Lit(syn::ExprLit { lit: syn::Lit::Str(s), .. }) = value {
+                                result.template = Some(s.value());
+                            } else {
+                                return Err(syn::Error::new(
+                                    name.span(),
+                                    "template value must be a string literal like \"<T, U>\"",
                                 ));
                             }
                         }

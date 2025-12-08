@@ -319,8 +319,9 @@ mod tests {
 
     #[test]
     fn type_entry_template() {
+        let t_hash = TypeHash::from_name("array::T");
         let class = ClassEntry::ffi("array", TypeKind::reference())
-            .with_template_params(vec!["T".to_string()]);
+            .with_template_params(vec![t_hash]);
         let entry: TypeEntry = class.into();
 
         assert!(entry.is_template());

@@ -28,6 +28,8 @@ Apply these to the struct/enum with `#[angelscript(...)]`:
 | `scoped` | Scoped reference - automatically released at scope exit |
 | `nocount` | Single-ref type - no reference counting |
 | `template = "<T>"` | Template type with type parameters |
+| `specialization_of = "name"` | Base template name for template specialization |
+| `specialization_args(T1, T2)` | Type arguments for template specialization |
 
 ### Field Attributes
 
@@ -112,7 +114,8 @@ Marks a function or method for registration with AngelScript. Generates metadata
 | `const` | Method doesn't modify object state |
 | `property` | Virtual property accessor |
 | `generic` | Uses generic calling convention (see below) |
-| `template` | Template function |
+| `template` | Template function (deprecated, use `template = "..."`) |
+| `template = "<T, U>"` | Template function with named type parameters |
 | `copy` | Copy constructor (use with `constructor`) |
 | `keep` | Keep original function name callable, use `__meta` suffix |
 | `name = "name"` | Override AngelScript function name |
@@ -373,6 +376,7 @@ For functions that need to accept any type or have variadic arguments, use the `
 | `out` | Output reference mode |
 | `inout` | Input/output reference mode |
 | `default = "expr"` | Default value expression |
+| `if_handle_then_const` | When T is handle type, pointed-to object is also const |
 
 ### #[returns(...)] Attributes
 
@@ -511,6 +515,7 @@ Creates an AngelScript function pointer type (funcdef) from a Rust type alias.
 | Attribute | Description |
 |-----------|-------------|
 | `name = "Name"` | Override the AngelScript funcdef name |
+| `parent = Type` | Parent type for child funcdefs (see Advanced Template Features) |
 
 ### Examples
 
@@ -562,36 +567,104 @@ pub fn array_module() -> Module {
 
 ---
 
-## Not Yet Implemented
-
-The following attributes are parsed but not yet fully implemented:
+## Advanced Template Features
 
 ### Template Functions
 
-The `template` attribute is parsed but not currently used:
+Template functions are functions that are themselves generic (not just methods on template types). Use `template = "<T>"` or `template = "<T, U>"` to define template parameters:
 
 ```rust
-// PARSED BUT NOT FUNCTIONAL
-#[angelscript_macros::function(template)]
-pub fn create<T>() -> T { ... }
-```
+/// T Test<T, U>(T t, U u) - A template function with two type parameters
+#[angelscript_macros::function(generic, template = "<T, U>")]
+#[param(variable, in)]  // T t - first param uses first template type
+#[param(variable, in)]  // U u - second param uses second template type
+#[returns(variable)]    // returns T
+pub fn template_test(_ctx: &CallContext) {
+    // Implementation accesses args via ctx.get_arg(index)
+    todo!()
+}
 
-Template functions (functions that are themselves generic, not just methods on template types) will require additional work in the registry and compiler to support template instantiation.
+/// Single template parameter
+#[angelscript_macros::function(generic, template = "<T>")]
+#[param(variable, in)]
+#[returns(variable)]
+pub fn identity<T>(_ctx: &CallContext) {
+    todo!()
+}
+```
 
 ### Child Funcdefs
 
-Funcdefs nested inside a class (child funcdefs) are not yet supported. Currently all funcdefs are global:
+Funcdefs can belong to template types (child funcdefs). Use `parent = Type` to associate a funcdef with its parent type:
 
 ```rust
-// SUPPORTED: Global funcdef
+/// Global funcdef
 #[angelscript_macros::funcdef(name = "Callback")]
 pub type Callback = fn(i32) -> bool;
 
-// NOT SUPPORTED: Child funcdef (belongs to a class)
-// In AngelScript: class Foo { funcdef void MyCallback(); }
+/// Child funcdef of myTemplate<T>
+/// In AngelScript: "bool myTemplate<T>::callback(const T &in)"
+#[angelscript_macros::funcdef(
+    name = "callback",
+    parent = ScriptArray  // parent template type
+)]
+pub type ArrayCallback = fn(&i32) -> bool;
 ```
 
-To support child funcdefs, `FuncdefMeta` would need a `parent_type: Option<TypeHash>` field and the macro would need syntax to specify the parent class.
+### Template Specializations
+
+When you need specialized implementations for specific template instantiations:
+
+```rust
+/// Generic template type
+#[derive(Any)]
+#[angelscript(name = "myTemplate", reference, template = "<T>")]
+pub struct MyTemplate<T> {
+    _phantom: std::marker::PhantomData<T>,
+}
+
+/// Specialization for float: myTemplate<float>
+#[derive(Any)]
+#[angelscript(
+    name = "myTemplate<float>",
+    reference,
+    specialization_of = "myTemplate",
+    specialization_args(f32)
+)]
+pub struct MyTemplateFloat {
+    // Specialized implementation for float
+}
+
+/// Multiple type argument specialization: dictionary<string, int>
+#[derive(Any)]
+#[angelscript(
+    name = "dictionary<string, int>",
+    reference,
+    specialization_of = "dictionary",
+    specialization_args(String, i32)
+)]
+pub struct DictStringInt {
+    // Specialized implementation
+}
+```
+
+### if_handle_then_const
+
+For generic calling convention parameters that should apply `const` transitively when instantiated with a handle type. This attribute is **only available on `#[param(...)]` attributes** for generic functions.
+
+When `if_handle_then_const` is set and the parameter is instantiated with a handle type (e.g., `Obj@`), the pointed-to object is also const:
+- `const T&in` with T=`Obj@` becomes `const Obj@ const &in` instead of `Obj@ const &in`
+
+```rust
+/// Generic calling convention with if_handle_then_const
+#[angelscript_macros::function(generic, instance, const)]
+#[param(variable, in, if_handle_then_const)]  // when T is a handle, pointed-to object is const
+#[param(type = u32, in, default = "0")]
+#[returns(type = i32)]
+pub fn find(_ctx: &CallContext) {
+    todo!()
+}
+```
 
 ---
 

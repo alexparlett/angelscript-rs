@@ -1,0 +1,5 @@
+error: operator value must be a path like Operator::Add
+ --> tests/compile_fail/invalid_operator_value.rs:9:16
+  |
+9 |     #[function(operator = "Add")]
+  |                ^^^^^^^^

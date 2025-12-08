@@ -238,6 +238,8 @@ mod tests {
             type_kind: TypeKind::reference(),
             properties: vec![],
             template_params: vec![],
+            specialization_of: None,
+            specialization_args: vec![],
         });
 
         assert_eq!(module.len(), 1);
@@ -262,6 +264,7 @@ mod tests {
             property_name: None,
             is_generic: false,
             list_pattern: None,
+            template_params: vec![],
         };
 
         let mut module = Module::new();
@@ -292,6 +295,7 @@ mod tests {
             type_hash: TypeHash::from_name("Callback"),
             param_types: vec![],
             return_type: TypeHash::from_name("void"),
+            parent_type: None,
         };
 
         let module = Module::new().funcdef(meta);
@@ -310,6 +314,8 @@ mod tests {
             type_kind: TypeKind::reference(),
             properties: vec![],
             template_params: vec![],
+            specialization_of: None,
+            specialization_args: vec![],
         });
 
         module.classes.push(ClassMeta {
@@ -318,6 +324,8 @@ mod tests {
             type_kind: TypeKind::reference(),
             properties: vec![],
             template_params: vec![],
+            specialization_of: None,
+            specialization_args: vec![],
         });
 
         module.functions.push(FunctionMeta {
@@ -334,6 +342,7 @@ mod tests {
             property_name: None,
             is_generic: false,
             list_pattern: None,
+            template_params: vec![],
         });
 
         assert_eq!(module.qualified_namespace(), "game");
@@ -352,6 +361,8 @@ mod tests {
             type_kind: TypeKind::reference(),
             properties: vec![],
             template_params: vec![],
+            specialization_of: None,
+            specialization_args: vec![],
         });
 
         module.functions.push(FunctionMeta {
@@ -368,6 +379,7 @@ mod tests {
             property_name: None,
             is_generic: false,
             list_pattern: None,
+            template_params: vec![],
         });
 
         // Direct field access - zero allocation consumption

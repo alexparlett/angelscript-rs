@@ -102,4 +102,4 @@ pub use angelscript_core::{
 pub use angelscript_macros::{Any, function, interface, funcdef};
 
 // Re-export Module and registry types
-pub use angelscript_registry::{Module, HasClassMeta, TypeRegistry};
+pub use angelscript_registry::{Module, HasClassMeta, HasFunctionMeta, TypeRegistry};

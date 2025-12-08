@@ -1,0 +1,5 @@
+error: unknown angelscript attribute: unknown_attr
+ --> tests/compile_fail/unknown_type_attr.rs:6:15
+  |
+6 | #[angelscript(unknown_attr)]
+  |               ^^^^^^^^^^^^

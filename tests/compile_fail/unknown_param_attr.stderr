@@ -1,0 +1,5 @@
+error: unknown param attribute: unknown_param_attr
+ --> tests/compile_fail/unknown_param_attr.rs:6:9
+  |
+6 | #[param(unknown_param_attr)]
+  |         ^^^^^^^^^^^^^^^^^^

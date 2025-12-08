@@ -24,6 +24,9 @@ pub struct FuncdefEntry {
     pub params: Vec<DataType>,
     /// Return type.
     pub return_type: DataType,
+    /// Parent type for child funcdefs (e.g., `myTemplate<T>::callback`).
+    /// None for global funcdefs.
+    pub parent_type: Option<TypeHash>,
 }
 
 impl FuncdefEntry {
@@ -43,6 +46,28 @@ impl FuncdefEntry {
             source,
             params,
             return_type,
+            parent_type: None,
+        }
+    }
+
+    /// Create a new funcdef entry with a parent type (child funcdef).
+    pub fn new_child(
+        name: impl Into<String>,
+        qualified_name: impl Into<String>,
+        type_hash: TypeHash,
+        source: TypeSource,
+        params: Vec<DataType>,
+        return_type: DataType,
+        parent_type: TypeHash,
+    ) -> Self {
+        Self {
+            name: name.into(),
+            qualified_name: qualified_name.into(),
+            type_hash,
+            source,
+            params,
+            return_type,
+            parent_type: Some(parent_type),
         }
     }
 
@@ -61,7 +86,13 @@ impl FuncdefEntry {
             source: TypeSource::ffi_untyped(),
             params,
             return_type,
+            parent_type: None,
         }
+    }
+
+    /// Check if this is a child funcdef (belongs to a parent type).
+    pub fn is_child(&self) -> bool {
+        self.parent_type.is_some()
     }
 
     /// Get the number of parameters.

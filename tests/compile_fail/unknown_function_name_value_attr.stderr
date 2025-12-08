@@ -1,0 +1,5 @@
+error: unknown function attribute: unknown_key
+ --> tests/compile_fail/unknown_function_name_value_attr.rs:5:12
+  |
+5 | #[function(unknown_key = "value")]
+  |            ^^^^^^^^^^^

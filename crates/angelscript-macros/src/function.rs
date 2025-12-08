@@ -71,7 +71,8 @@ fn function_inner(attrs: &FunctionAttrs, input: &ItemFn) -> syn::Result<TokenStr
                 Some(param_name) => quote! { Some(#param_name) },
                 None => quote! { None },
             };
-            let if_handle_then_const = p.if_handle_then_const;
+            // if_handle_then_const only applies to generic calling convention
+            // For non-generic params, it's always false
 
             quote! {
                 ::angelscript_core::ParamMeta {
@@ -79,7 +80,7 @@ fn function_inner(attrs: &FunctionAttrs, input: &ItemFn) -> syn::Result<TokenStr
                     type_hash: <#ty as ::angelscript_core::Any>::type_hash(),
                     default_value: #default_value,
                     template_param: #template_param,
-                    if_handle_then_const: #if_handle_then_const,
+                    if_handle_then_const: false,
                 }
             }
         }).collect()
@@ -142,6 +143,21 @@ fn function_inner(attrs: &FunctionAttrs, input: &ItemFn) -> syn::Result<TokenStr
         quote! { None }
     };
 
+    // Parse template params for template functions
+    let template_params_tokens = if let Some(ref template_str) = attrs.template {
+        // Parse template params like "<T>" or "<T, U>"
+        let params: Vec<&str> = template_str
+            .trim_start_matches('<')
+            .trim_end_matches('>')
+            .split(',')
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+            .collect();
+        quote! { vec![#(#params),*] }
+    } else {
+        quote! { vec![] }
+    };
+
     // Common metadata body
     let meta_body = quote! {
         ::angelscript_core::FunctionMeta {
@@ -158,6 +174,7 @@ fn function_inner(attrs: &FunctionAttrs, input: &ItemFn) -> syn::Result<TokenStr
             property_name: #property_name_token,
             is_generic: #is_generic,
             list_pattern: #list_pattern_token,
+            template_params: #template_params_tokens,
         }
     };
 
@@ -217,7 +234,6 @@ struct ParamInfo {
     ty: Box<Type>,
     default: Option<String>,
     template_param: Option<String>,
-    if_handle_then_const: bool,
 }
 
 /// Extract parameter names, types, and defaults from function inputs.
@@ -238,15 +254,14 @@ fn extract_params(inputs: &syn::punctuated::Punctuated<FnArg, syn::token::Comma>
                 // Look for #[default(...)] attribute on this parameter
                 let default = extract_param_default(&pat_type.attrs)?;
 
-                // Look for #[template("T")] or #[template("T", if_handle_then_const)] attribute
-                let (template_param, if_handle_then_const) = extract_param_template(&pat_type.attrs)?;
+                // Look for #[template("T")] attribute
+                let template_param = extract_param_template(&pat_type.attrs)?;
 
                 params.push(ParamInfo {
                     name,
                     ty: pat_type.ty.clone(),
                     default,
                     template_param,
-                    if_handle_then_const,
                 });
             }
         }
@@ -267,49 +282,16 @@ fn extract_param_default(attrs: &[Attribute]) -> syn::Result<Option<String>> {
     Ok(None)
 }
 
-/// Extract template parameter name and if_handle_then_const from #[template("T")] or
-/// #[template("T", if_handle_then_const)] attribute on a parameter.
-fn extract_param_template(attrs: &[Attribute]) -> syn::Result<(Option<String>, bool)> {
+/// Extract template parameter name from #[template("T")] attribute on a parameter.
+fn extract_param_template(attrs: &[Attribute]) -> syn::Result<Option<String>> {
     for attr in attrs {
         if attr.path().is_ident("template") {
-            // Parse the template param - can be just a string or string with if_handle_then_const
-            let mut template_name = None;
-            let mut if_handle_then_const = false;
-
-            attr.parse_nested_meta(|meta| {
-                if template_name.is_none() {
-                    // First item should be a string literal for the template param name
-                    // But parse_nested_meta expects ident = value format, so we need different parsing
-                    return Err(meta.error("use #[template(\"T\")] format"));
-                }
-                if meta.path.is_ident("if_handle_then_const") {
-                    if_handle_then_const = true;
-                }
-                Ok(())
-            }).or_else(|_| {
-                // Fallback to simple parsing for #[template("T")] or #[template("T", if_handle_then_const)]
-                attr.parse_args_with(|input: syn::parse::ParseStream| {
-                    let lit: syn::LitStr = input.parse()?;
-                    template_name = Some(lit.value());
-
-                    // Check for optional if_handle_then_const
-                    if input.peek(syn::Token![,]) {
-                        let _: syn::Token![,] = input.parse()?;
-                        let ident: syn::Ident = input.parse()?;
-                        if ident == "if_handle_then_const" {
-                            if_handle_then_const = true;
-                        } else {
-                            return Err(syn::Error::new(ident.span(), "expected `if_handle_then_const`"));
-                        }
-                    }
-                    Ok(())
-                })
-            })?;
-
-            return Ok((template_name, if_handle_then_const));
+            // Parse the template param - just a string literal
+            let lit: syn::LitStr = attr.parse_args()?;
+            return Ok(Some(lit.value()));
         }
     }
-    Ok((None, false))
+    Ok(None)
 }
 
 /// Generate the behavior kind token.

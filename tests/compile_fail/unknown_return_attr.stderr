@@ -1,0 +1,5 @@
+error: unknown return attribute: unknown_return_attr
+  --> tests/compile_fail/unknown_return_attr.rs:10:15
+   |
+10 |     #[returns(unknown_return_attr)]
+   |               ^^^^^^^^^^^^^^^^^^^

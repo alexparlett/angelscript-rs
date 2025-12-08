@@ -1,0 +1,5 @@
+error: returns value must be a type path
+ --> tests/compile_fail/invalid_returns_value.rs:5:21
+  |
+5 | #[function(generic, returns = "i32")]
+  |                     ^^^^^^^

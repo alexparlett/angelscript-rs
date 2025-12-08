@@ -9,7 +9,7 @@ use thiserror::Error;
 use angelscript_core::{
     ClassEntry, ClassMeta, DataType, FuncdefEntry, FuncdefMeta, FunctionDef, FunctionEntry,
     FunctionMeta, FunctionTraits, InterfaceEntry, InterfaceMeta, MethodSignature, Param,
-    PropertyEntry, TypeHash, TypeSource, Visibility,
+    PropertyEntry, TemplateParamEntry, TypeHash, TypeSource, Visibility,
 };
 use angelscript_registry::{Module, TypeRegistry};
 
@@ -128,11 +128,36 @@ impl Context {
             TypeSource::ffi_untyped(),
         );
 
-        // Add template parameters
+        // Register template parameters as TemplateParamEntry and collect their hashes
         if !meta.template_params.is_empty() {
-            class_entry = class_entry.with_template_params(
-                meta.template_params.iter().map(|s| s.to_string()).collect()
-            );
+            let mut template_param_hashes = Vec::with_capacity(meta.template_params.len());
+            for (index, param_name) in meta.template_params.iter().enumerate() {
+                let param_entry = TemplateParamEntry::for_template(
+                    *param_name,
+                    index,
+                    meta.type_hash,
+                    &qualified_name,
+                );
+                let param_hash = param_entry.type_hash;
+                template_param_hashes.push(param_hash);
+
+                // Register the TemplateParamEntry in the registry
+                self.registry
+                    .register_type(param_entry.into())
+                    .map_err(|e| ContextError::RegistrationFailed(e.to_string()))?;
+            }
+            class_entry = class_entry.with_template_params(template_param_hashes);
+        }
+
+        // Add template specialization info
+        if let Some(base_name) = meta.specialization_of {
+            let template_hash = TypeHash::from_name(base_name);
+            let type_args: Vec<DataType> = meta
+                .specialization_args
+                .iter()
+                .map(|&h| DataType::simple(h))
+                .collect();
+            class_entry = class_entry.with_template_instance(template_hash, type_args);
         }
 
         // Convert properties
@@ -190,10 +215,16 @@ impl Context {
             .params
             .iter()
             .map(|p| {
-                if p.default_value.is_some() {
+                let param = if p.default_value.is_some() {
                     Param::with_default(p.name, DataType::simple(p.type_hash))
                 } else {
                     Param::new(p.name, DataType::simple(p.type_hash))
+                };
+                // Set if_handle_then_const for template parameters
+                if p.if_handle_then_const {
+                    param.with_if_handle_then_const(true)
+                } else {
+                    param
                 }
             })
             .collect();
@@ -218,17 +249,57 @@ impl Context {
             ..Default::default()
         };
 
-        let def = FunctionDef::new(
-            func_hash,
-            name.to_string(),
-            namespace.to_vec(),
-            params,
-            return_type,
-            object_type,
-            traits,
-            true, // is_native
-            Visibility::Public,
-        );
+        let def = if meta.template_params.is_empty() {
+            FunctionDef::new(
+                func_hash,
+                name.to_string(),
+                namespace.to_vec(),
+                params,
+                return_type,
+                object_type,
+                traits,
+                true, // is_native
+                Visibility::Public,
+            )
+        } else {
+            // Compute qualified function name for template param naming
+            let qualified_func_name = if namespace.is_empty() {
+                name.to_string()
+            } else {
+                format!("{}::{}", namespace.join("::"), name)
+            };
+
+            // Register template parameters as TemplateParamEntry and collect their hashes
+            let mut template_param_hashes = Vec::with_capacity(meta.template_params.len());
+            for (index, param_name) in meta.template_params.iter().enumerate() {
+                let param_entry = TemplateParamEntry::for_template(
+                    *param_name,
+                    index,
+                    func_hash,
+                    &qualified_func_name,
+                );
+                let param_hash = param_entry.type_hash;
+                template_param_hashes.push(param_hash);
+
+                // Register the TemplateParamEntry in the registry
+                self.registry
+                    .register_type(param_entry.into())
+                    .map_err(|e| ContextError::RegistrationFailed(e.to_string()))?;
+            }
+
+            FunctionDef::new_template(
+                func_hash,
+                name.to_string(),
+                namespace.to_vec(),
+                params,
+                return_type,
+                object_type,
+                traits,
+                true, // is_native
+                Visibility::Public,
+                template_param_hashes,
+            )
+        };
 
         let entry = FunctionEntry::ffi(def);
 
@@ -296,14 +367,26 @@ impl Context {
             .collect();
         let return_type = DataType::simple(meta.return_type);
 
-        let entry = FuncdefEntry::new(
-            meta.name,
-            &qualified_name,
-            meta.type_hash,
-            TypeSource::ffi_untyped(),
-            params,
-            return_type,
-        );
+        let entry = if let Some(parent_hash) = meta.parent_type {
+            FuncdefEntry::new_child(
+                meta.name,
+                &qualified_name,
+                meta.type_hash,
+                TypeSource::ffi_untyped(),
+                params,
+                return_type,
+                parent_hash,
+            )
+        } else {
+            FuncdefEntry::new(
+                meta.name,
+                &qualified_name,
+                meta.type_hash,
+                TypeSource::ffi_untyped(),
+                params,
+                return_type,
+            )
+        };
 
         self.registry
             .register_type(entry.into())
@@ -428,5 +511,113 @@ mod tests {
         ctx.install(module1).unwrap();
         let result = ctx.install(module2);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn context_install_template_class_registers_params() {
+        let mut ctx = Context::new();
+
+        let mut module = Module::new();
+        module.classes.push(ClassMeta {
+            name: "array",
+            type_hash: TypeHash::from_name("array"),
+            type_kind: TypeKind::reference(),
+            properties: vec![],
+            template_params: vec!["T"],
+            specialization_of: None,
+            specialization_args: vec![],
+        });
+        ctx.install(module).unwrap();
+
+        // Verify the class was registered
+        let class_entry = ctx.registry().get(TypeHash::from_name("array"));
+        assert!(class_entry.is_some());
+
+        // Verify the template param entry was registered
+        let t_param = ctx.registry().get(TypeHash::from_name("array::T"));
+        assert!(t_param.is_some(), "TemplateParamEntry for 'T' should be registered");
+        assert!(t_param.unwrap().as_template_param().is_some());
+    }
+
+    #[test]
+    fn context_install_template_class_multi_params() {
+        let mut ctx = Context::new();
+
+        let mut module = Module::new();
+        module.classes.push(ClassMeta {
+            name: "dict",
+            type_hash: TypeHash::from_name("dict"),
+            type_kind: TypeKind::reference(),
+            properties: vec![],
+            template_params: vec!["K", "V"],
+            specialization_of: None,
+            specialization_args: vec![],
+        });
+        ctx.install(module).unwrap();
+
+        // Verify both template params were registered
+        let k_param = ctx.registry().get(TypeHash::from_name("dict::K"));
+        let v_param = ctx.registry().get(TypeHash::from_name("dict::V"));
+        assert!(k_param.is_some(), "TemplateParamEntry for 'K' should be registered");
+        assert!(v_param.is_some(), "TemplateParamEntry for 'V' should be registered");
+
+        // Verify the class entry has the correct template_params hashes
+        let class_entry = ctx.registry().get(TypeHash::from_name("dict")).unwrap();
+        let class = class_entry.as_class().unwrap();
+        assert_eq!(class.template_params.len(), 2);
+        assert_eq!(class.template_params[0], TypeHash::from_name("dict::K"));
+        assert_eq!(class.template_params[1], TypeHash::from_name("dict::V"));
+    }
+
+    #[test]
+    fn context_install_template_function_registers_params() {
+        use angelscript_core::ReturnMeta;
+
+        let mut ctx = Context::new();
+
+        let mut module = Module::new();
+        module.functions.push(FunctionMeta {
+            name: "identity",
+            as_name: None,
+            params: vec![],
+            generic_params: vec![],
+            return_meta: ReturnMeta::default(),
+            is_method: false,
+            associated_type: None,
+            behavior: None,
+            is_const: false,
+            is_property: false,
+            property_name: None,
+            is_generic: true,
+            list_pattern: None,
+            template_params: vec!["T"],
+        });
+        ctx.install(module).unwrap();
+
+        // Verify the template param entry was registered
+        let t_param = ctx.registry().get(TypeHash::from_name("identity::T"));
+        assert!(t_param.is_some(), "TemplateParamEntry for function 'T' should be registered");
+        assert!(t_param.unwrap().as_template_param().is_some());
+    }
+
+    #[test]
+    fn context_install_namespaced_template_class() {
+        let mut ctx = Context::new();
+
+        let mut module = Module::in_namespace(&["std"]);
+        module.classes.push(ClassMeta {
+            name: "vector",
+            type_hash: TypeHash::from_name("std::vector"),
+            type_kind: TypeKind::reference(),
+            properties: vec![],
+            template_params: vec!["T"],
+            specialization_of: None,
+            specialization_args: vec![],
+        });
+        ctx.install(module).unwrap();
+
+        // Verify the template param uses the qualified name
+        let t_param = ctx.registry().get(TypeHash::from_name("std::vector::T"));
+        assert!(t_param.is_some(), "TemplateParamEntry should use qualified name 'std::vector::T'");
     }
 }

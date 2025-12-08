@@ -39,8 +39,9 @@ pub struct ClassEntry {
     pub properties: Vec<PropertyEntry>,
 
     // === Template Info ===
-    /// Template parameter names (non-empty = template definition).
-    pub template_params: Vec<String>,
+    /// Template parameter type hashes (refs to TemplateParamEntry in registry).
+    /// Non-empty = template definition.
+    pub template_params: Vec<TypeHash>,
     /// Template this was instantiated from (for template instances).
     pub template: Option<TypeHash>,
     /// Type arguments for template instances.
@@ -128,7 +129,7 @@ impl ClassEntry {
     }
 
     /// Set template parameters (makes this a template definition).
-    pub fn with_template_params(mut self, params: Vec<String>) -> Self {
+    pub fn with_template_params(mut self, params: Vec<TypeHash>) -> Self {
         self.template_params = params;
         self
     }
@@ -265,11 +266,13 @@ mod tests {
 
     #[test]
     fn class_entry_template() {
+        let t_hash = TypeHash::from_name("array::T");
         let entry = ClassEntry::ffi("array", TypeKind::reference())
-            .with_template_params(vec!["T".to_string()]);
+            .with_template_params(vec![t_hash]);
 
         assert!(entry.is_template());
         assert!(!entry.is_template_instance());
+        assert_eq!(entry.template_params[0], t_hash);
     }
 
     #[test]
