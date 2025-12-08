@@ -2,7 +2,7 @@
 
 ## Overview
 
-Replace the current split architecture (`FfiRegistry` + planned `ScriptRegistry`) with a single unified `TypeRegistry` that handles FFI, shared script, and local script entities.
+Replace the current split architecture (`FfiRegistry` + planned `ScriptRegistry`) with a single unified `SymbolRegistry` that handles FFI, shared script, and local script entities.
 
 **Key decisions:**
 - Rename `angelscript-ffi` → `angelscript-registry`
@@ -36,7 +36,7 @@ Replace the current split architecture (`FfiRegistry` + planned `ScriptRegistry`
 │angelscript-     │  │angelscript-     │
 │registry         │  │parser           │
 │                 │  │                 │
-│TypeRegistry,    │  │Lexer, AST       │
+│SymbolRegistry,    │  │Lexer, AST       │
 │Module           │  │                 │
 └────────┬────────┘  └────────┬────────┘
          │                    │
@@ -580,10 +580,10 @@ pub struct MethodSignature {
 }
 ```
 
-### TypeRegistry
+### SymbolRegistry
 
 ```rust
-pub struct TypeRegistry {
+pub struct SymbolRegistry {
     // Single map for O(1) type lookup
     types: RwLock<FxHashMap<TypeHash, TypeEntry>>,
     type_by_name: RwLock<FxHashMap<String, TypeHash>>,
@@ -596,7 +596,7 @@ pub struct TypeRegistry {
     template_callbacks: RwLock<FxHashMap<TypeHash, TemplateCallback>>,
 }
 
-impl TypeRegistry {
+impl SymbolRegistry {
     // === Basic Lookup ===
     pub fn get(&self, hash: TypeHash) -> Option<&TypeEntry> { ... }
     pub fn get_by_name(&self, name: &str) -> Option<&TypeEntry> { ... }
@@ -752,7 +752,7 @@ impl Module {
         self.pending_functions.push(f());
     }
 
-    pub fn install(self, registry: &TypeRegistry) -> Result<(), Error> {
+    pub fn install(self, registry: &SymbolRegistry) -> Result<(), Error> {
         // Build ClassEntry from ClassMeta + associated FunctionMetas
         // Register into registry
     }
@@ -894,7 +894,7 @@ Apply design clarifications from template/storage review:
 - [x] Update `ClassEntry` to remove `fields`, keep only `properties: Vec<PropertyEntry>`
 
 ### Phase 3: Create angelscript-registry
-- [x] `src/registry.rs` - TypeRegistry with unified `functions` map (methods + globals)
+- [x] `src/registry.rs` - SymbolRegistry with unified `functions` map (methods + globals)
 
 ### Phase 4: Create angelscript-macros ✅ COMPLETE
 Note: Macros must be implemented before Module builder because `Module.ty::<T>()` depends on macro-generated metadata.
@@ -918,12 +918,12 @@ Note: Macros must be implemented before Module builder because `Module.ty::<T>()
   - Note: Context::install() not yet implemented (Phase 6)
 
 ### Phase 6: Update Consumers ✅ COMPLETE
-- [x] Main crate: Use TypeRegistry
-  - Context owns TypeRegistry (created with primitives in `new()`)
+- [x] Main crate: Use SymbolRegistry
+  - Context owns SymbolRegistry (created with primitives in `new()`)
   - Context.install(Module) converts metadata to entries and registers them
   - Context.registry() provides access to the registry
   - Unit.type_count() queries context's registry
-  - Exported Module, HasClassMeta, TypeRegistry from main crate
+  - Exported Module, HasClassMeta, SymbolRegistry from main crate
 - [x] Compiler: Registry already available via Context (compiler update deferred until needed)
 
 ### Phase 7: Migrate stdlib ✅ COMPLETE
@@ -944,7 +944,7 @@ Note: Macros must be implemented before Module builder because `Module.ty::<T>()
 - `crates/angelscript-module/` - Update to macros
 - `crates/angelscript-core/` - Add new types
 - `crates/angelscript-parser/` - No changes
-- `crates/angelscript-compiler/` - Update to TypeRegistry
+- `crates/angelscript-compiler/` - Update to SymbolRegistry
 
 ## VM Integration (Deferred)
 

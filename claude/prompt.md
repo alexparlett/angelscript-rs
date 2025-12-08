@@ -54,7 +54,7 @@ See `/claude/tasks/01_unified-type-registry.md` for full details.
 
 ### Phase 3 Task 1 Summary (Just Completed)
 
-**Implemented `TypeRegistry` in `crates/angelscript-registry/src/registry.rs`:**
+**Implemented `SymbolRegistry` in `crates/angelscript-registry/src/registry.rs`:**
 
 - Unified storage for all types (`FxHashMap<TypeHash, TypeEntry>`)
 - Single source of truth for ALL functions (global + methods + operators + behaviors)
@@ -62,9 +62,9 @@ See `/claude/tasks/01_unified-type-registry.md` for full details.
 - Added `operators` field to `TypeBehaviors` in `angelscript-core` (prerequisite)
 
 **Storage Model:**
-- Types: `TypeRegistry.types` - All TypeEntry variants
-- Functions: `TypeRegistry.functions` - Single source of truth
-- Template Callbacks: `TypeRegistry.template_callbacks` - Specific `Fn(&TemplateInstanceInfo) -> TemplateValidation` signature
+- Types: `SymbolRegistry.types` - All TypeEntry variants
+- Functions: `SymbolRegistry.functions` - Single source of truth
+- Template Callbacks: `SymbolRegistry.template_callbacks` - Specific `Fn(&TemplateInstanceInfo) -> TemplateValidation` signature
 
 **API Methods:**
 - Basic lookup: `get()`, `get_by_name()`, `get_function()`, `get_function_overloads()`
@@ -109,13 +109,13 @@ See `/claude/tasks/01_unified-type-registry.md` for full details.
 
 ### Phase 6 Summary (Just Completed)
 
-**Updated Context and Unit to use TypeRegistry:**
-- `Context` now owns a `TypeRegistry` (created with primitives in `new()`)
+**Updated Context and Unit to use SymbolRegistry:**
+- `Context` now owns a `SymbolRegistry` (created with primitives in `new()`)
 - `Context::install(Module)` converts metadata to registry entries and registers them
 - `Context::registry()` provides access to the registry
 - `Unit::type_count()` queries the context's registry
 - Removed seal() - simplified API, trust the user
-- Exported `Module`, `HasClassMeta`, `TypeRegistry` from main crate
+- Exported `Module`, `HasClassMeta`, `SymbolRegistry` from main crate
 
 **API:**
 ```rust
@@ -203,7 +203,7 @@ See `/claude/tasks/19_ffi_default_args.md` for details.
 ### Crates (in `crates/`):
 ```
 angelscript-core/       →  Shared types (TypeHash, DataType, TypeDef, FunctionDef, etc.)
-angelscript-registry/   →  TypeRegistry, Module builder
+angelscript-registry/   →  SymbolRegistry, Module builder
 angelscript-macros/     →  Proc macros (#[derive(Any)], #[angelscript::function], etc.)
 angelscript-modules/    →  Stdlib types (array, dictionary)
 angelscript-parser/     →  Lexer + AST + Parser

@@ -77,7 +77,7 @@ pub fn derive_any(input: TokenStream) -> TokenStream {
 /// Mark a function for registration with AngelScript.
 ///
 /// This attribute generates function metadata that can be collected by `Module`
-/// for registration with the `TypeRegistry`.
+/// for registration with the `SymbolRegistry`.
 ///
 /// # Attributes
 ///

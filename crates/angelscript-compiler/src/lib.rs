@@ -47,13 +47,13 @@ impl CompilationResult {
 
 /// The main compiler entry point.
 ///
-/// TODO: This will take a TypeRegistry once Phase 2 is complete.
+/// TODO: This will take a SymbolRegistry once Phase 2 is complete.
 pub struct Compiler;
 
 impl Compiler {
     /// Compile a script.
     ///
-    /// TODO: Will take `&TypeRegistry` parameter once Phase 2 is complete.
+    /// TODO: Will take `&SymbolRegistry` parameter once Phase 2 is complete.
     pub fn compile(script: &Script<'_>) -> CompilationResult {
         use angelscript_parser::ast::Item;
 
