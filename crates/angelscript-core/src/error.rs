@@ -560,6 +560,13 @@ pub enum CompilationError {
         /// Where the error occurred.
         span: Span,
     },
+
+    /// No string factory configured for string literals.
+    #[error("at {span}: no string factory configured - call Context::set_string_factory() or use with_default_modules()")]
+    NoStringFactory {
+        /// Where the string literal occurred.
+        span: Span,
+    },
 }
 
 impl CompilationError {
@@ -575,6 +582,7 @@ impl CompilationError {
             CompilationError::CircularInheritance { span, .. } => *span,
             CompilationError::DuplicateDefinition { span, .. } => *span,
             CompilationError::Other { span, .. } => *span,
+            CompilationError::NoStringFactory { span } => *span,
         }
     }
 }
