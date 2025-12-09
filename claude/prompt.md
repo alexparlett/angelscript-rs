@@ -1,6 +1,6 @@
 # Current Task: Global Properties (Task 25)
 
-**Status:** Phase 2 Complete
+**Status:** Complete
 **Date:** 2025-12-09
 **Branch:** 025-adding-global-properties
 
@@ -37,10 +37,9 @@ Enables FFI registration of global properties accessible from scripts.
 
 **Key fix:** Changed `GlobalPropertyImpl::data_type()` to return `DataType` directly instead of `Option<DataType>` since all variants always have a data type.
 
-### Phase 3: Macro (Pending)
+### Phase 3: Macro ✗ (Not Needed)
 
-- [ ] **Step 9:** Add `#[angelscript::global]` attribute macro
-- [ ] **Step 10:** Comprehensive tests
+The `#[angelscript::global]` macro was determined to be unnecessary since `Module::global()` already handles primitives directly via the `IntoGlobalProperty` trait.
 
 ---
 
@@ -79,8 +78,8 @@ Module::in_namespace(&["math"])
 
 ---
 
-## Next Step
+## Complete
 
-Phase 3: Add `#[angelscript::global]` attribute macro
-- Located in `crates/angelscript-macros/`
-- Generate `GlobalMeta` from static declarations
+Task 25 is complete. Global properties can be registered via:
+- `Module::global("name", value)` for primitives and `Arc<RwLock<T>>`
+- `SymbolRegistry::register_global(entry)` for direct registration
