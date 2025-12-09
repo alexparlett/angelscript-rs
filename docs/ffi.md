@@ -127,14 +127,19 @@ Marks a function or method for registration with AngelScript. Generates metadata
 
 Use with `operator = Operator::X`:
 
-- Arithmetic: `Add`, `Sub`, `Mul`, `Div`, `Mod`, `Pow`
-- Unary: `Neg`, `PreInc`, `PreDec`, `PostInc`, `PostDec`
-- Comparison: `Equals`, `Cmp`
-- Bitwise: `BitAnd`, `BitOr`, `BitXor`, `BitNot`, `ShiftLeft`, `ShiftRight`
-- Compound: `AddAssign`, `SubAssign`, `MulAssign`, `DivAssign`, `ModAssign`, etc.
-- Access: `Index`
-- Conversion: `Conv`, `ImplConv`
-- Other: `Assign`, `Call`, `Cast`
+- **Arithmetic**: `Add`, `Sub`, `Mul`, `Div`, `Mod`, `Pow`
+- **Arithmetic (reverse)**: `AddR`, `SubR`, `MulR`, `DivR`, `ModR`, `PowR`
+- **Unary**: `Neg`, `Com`, `PreInc`, `PreDec`, `PostInc`, `PostDec`
+- **Comparison**: `Equals`, `Cmp`
+- **Bitwise**: `And`, `Or`, `Xor`, `Shl`, `Shr`, `Ushr`
+- **Bitwise (reverse)**: `AndR`, `OrR`, `XorR`, `ShlR`, `ShrR`, `UshrR`
+- **Assignment**: `Assign`, `AddAssign`, `SubAssign`, `MulAssign`, `DivAssign`, `ModAssign`, `PowAssign`, `AndAssign`, `OrAssign`, `XorAssign`, `ShlAssign`, `ShrAssign`, `UshrAssign`, `HndlAssign`
+- **Index Access**: `Index` (returns reference), `IndexGet` (returns value), `IndexSet` (sets value)
+- **Function Call**: `Call`
+- **Conversion**: `Conv`, `ImplConv`, `Cast`, `ImplCast`
+- **Foreach**: `ForBegin`, `ForEnd`, `ForNext`, `ForValue`, `ForValue0`, `ForValue1`, `ForValue2`, `ForValue3`
+
+**Reverse operators** are called on the right operand when the left operand doesn't support the operation. For example, if `a + b` is evaluated but `a` doesn't have `opAdd`, the engine tries `b.opAdd_r(a)` instead.
 
 ### Parameter Attributes (Non-Generic)
 
@@ -213,12 +218,33 @@ impl Vector2 {
         self.y += other.y;
     }
 
-    #[angelscript_macros::function(instance, const, operator = Operator::Index)]
-    pub fn op_index(&self, index: u32) -> f32 {
+    // Reference-returning index (can be used for both read and write)
+    #[angelscript_macros::function(instance, operator = Operator::Index)]
+    pub fn op_index(&mut self, index: u32) -> &mut f32 {
+        match index {
+            0 => &mut self.x,
+            1 => &mut self.y,
+            _ => panic!("Index out of bounds"),
+        }
+    }
+
+    // Value-returning index getter (read-only, for when you can't return a reference)
+    #[angelscript_macros::function(instance, const, operator = Operator::IndexGet)]
+    pub fn get_index(&self, index: u32) -> f32 {
         match index {
             0 => self.x,
             1 => self.y,
             _ => 0.0,
+        }
+    }
+
+    // Index setter (write-only, for custom set logic)
+    #[angelscript_macros::function(instance, operator = Operator::IndexSet)]
+    pub fn set_index(&mut self, index: u32, value: f32) {
+        match index {
+            0 => self.x = value,
+            1 => self.y = value,
+            _ => {},
         }
     }
 
