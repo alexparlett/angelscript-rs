@@ -1,6 +1,6 @@
-# AngelScript Macros Usage Guide
+# FFI Guide
 
-This document provides comprehensive documentation for all procedural macros in `angelscript-macros`.
+This document covers the Foreign Function Interface (FFI) system for registering Rust types and functions with AngelScript. It provides comprehensive documentation for all procedural macros in `angelscript-macros`.
 
 ## Table of Contents
 
