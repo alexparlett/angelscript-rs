@@ -1,4 +1,4 @@
-# Task 44: Statement Compilation - Loops
+# Task 45: Statement Compilation - Loops
 
 ## Overview
 
@@ -13,9 +13,9 @@ Implement advanced loop statements: for loops, foreach loops, switch/case statem
 
 ## Dependencies
 
-- Task 42: Statement Basics (while loop foundation)
-- Task 38: Bytecode Emitter (jump management)
-- Task 40: Expression Calls (iterator method calls)
+- Task 43: Statement Basics (while loop foundation)
+- Task 39: Bytecode Emitter (jump management)
+- Task 41: Expression Calls (iterator method calls)
 
 ## Files to Create/Modify
 
@@ -618,4 +618,4 @@ mod tests {
 
 ## Next Phase
 
-Task 45: Function Compilation Pass (orchestrating full function compilation)
+Task 46: Function Compilation Pass (orchestrating full function compilation)

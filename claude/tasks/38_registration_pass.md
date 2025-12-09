@@ -1,21 +1,39 @@
-# Task 37: Registration Pass (Pass 1)
+# Task 38: Registration Pass (Pass 1)
 
 ## Overview
 
-Implement Pass 1 of the two-pass compiler: walk the AST and register all type and function declarations. This pass collects signatures without compiling function bodies.
+Implement Pass 1 of the two-pass compiler: walk the AST and register all type and function declarations into the **per-unit registry**. Shared types go into the global registry. This pass collects signatures without compiling function bodies.
 
 ## Goals
 
-1. Register all class/interface/enum declarations
-2. Register all function signatures (global and methods)
-3. Handle namespace declarations
-4. Resolve base classes and interfaces
-5. Auto-generate default constructors/destructors where needed
+1. Register non-shared class/interface/enum into `ctx.unit_registry` via `ctx.register_script_type()`
+2. Register shared types into global registry via `ctx.register_shared_type()`
+3. Register function signatures (global and methods)
+4. Handle namespace declarations
+5. Resolve base classes using `ctx.get_type()` (layered lookup)
+6. Auto-generate default constructors/destructors where needed
+
+## Architecture
+
+```
+┌────────────────────────────────────┐
+│ Global TypeRegistry                │  ← Shared types, FFI types
+│ ctx.register_shared_type()         │
+└────────────────────────────────────┘
+             ▲
+             │ (layered lookup via ctx.get_type())
+             │
+┌────────────────────────────────────┐
+│ Per-Unit TypeRegistry              │  ← Non-shared script types
+│ ctx.register_script_type()         │
+│ ctx.register_script_function()     │
+└────────────────────────────────────┘
+```
 
 ## Dependencies
 
-- Task 32: Compilation Context
-- Task 33: Type Resolution
+- Task 33: Compilation Context (layered registry)
+- Task 34: Type Resolution
 
 ## Files to Create
 
@@ -32,7 +50,10 @@ crates/angelscript-compiler/src/
 ### 1. Registration Pass (passes/registration.rs)
 
 ```rust
-use angelscript_core::{DataType, Span, TypeHash, UnitId, Visibility};
+use angelscript_core::{
+    DataType, Span, TypeHash, UnitId, Visibility, TypeSource,
+    GlobalPropertyEntry, GlobalPropertyImpl,
+};
 use angelscript_parser::ast::{
     ClassDecl, EnumDecl, FunctionDecl, InterfaceDecl, NamespaceDecl,
     Script, TypeExpr, VarDecl,
@@ -49,6 +70,8 @@ pub struct RegistrationOutput {
     pub types_registered: usize,
     /// Number of functions registered
     pub functions_registered: usize,
+    /// Number of global variables registered
+    pub globals_registered: usize,
     /// Collected errors (compilation can continue with some errors)
     pub errors: Vec<CompileError>,
 }
@@ -60,6 +83,9 @@ pub struct RegistrationPass<'a, 'reg, 'ast> {
     resolver: TypeResolver<'a, 'reg>,
     types_registered: usize,
     functions_registered: usize,
+    globals_registered: usize,
+    /// Next slot index for script global variables
+    next_global_slot: u32,
 }
 
 impl<'a, 'reg, 'ast> RegistrationPass<'a, 'reg, 'ast> {
@@ -71,6 +97,8 @@ impl<'a, 'reg, 'ast> RegistrationPass<'a, 'reg, 'ast> {
             resolver,
             types_registered: 0,
             functions_registered: 0,
+            globals_registered: 0,
+            next_global_slot: 0,
         }
     }
 
@@ -87,6 +115,7 @@ impl<'a, 'reg, 'ast> RegistrationPass<'a, 'reg, 'ast> {
         RegistrationOutput {
             types_registered: self.types_registered,
             functions_registered: self.functions_registered,
+            globals_registered: self.globals_registered,
             errors: self.ctx.take_errors(),
         }
     }
@@ -173,7 +202,12 @@ impl<'a, 'reg, 'ast> RegistrationPass<'a, 'reg, 'ast> {
             span: class.span,
         };
 
-        self.ctx.register_script_type(def);
+        // Register in unit registry (or global if shared)
+        if class.is_shared {
+            self.ctx.register_shared_type(def.into()).ok();
+        } else {
+            self.ctx.register_script_type(def.into()).ok();
+        }
         self.types_registered += 1;
 
         // Register class members
@@ -387,8 +421,42 @@ impl<'a, 'reg, 'ast> RegistrationPass<'a, 'reg, 'ast> {
     // ==========================================================================
 
     fn visit_global_var(&mut self, var: &'ast VarDecl<'ast>) {
-        // Global variables are registered but not compiled yet
-        // Will be handled in Pass 2
+        let name = var.name.to_string();
+        let qualified_name = self.qualified_name(&name);
+
+        // Compute hash using IDENT domain for globals
+        let type_hash = TypeHash::from_ident(&qualified_name);
+
+        // Resolve the variable's type
+        let data_type = match self.resolver.resolve(&var.type_expr, var.span) {
+            Ok(dt) => dt,
+            Err(e) => {
+                self.ctx.error(e);
+                return;
+            }
+        };
+
+        // Allocate slot in unit's global variable table
+        let slot = self.next_global_slot;
+        self.next_global_slot += 1;
+
+        let entry = GlobalPropertyEntry {
+            name,
+            qualified_name,
+            type_hash,
+            data_type,
+            is_const: var.is_const,
+            source: TypeSource::script(self.ctx.unit_id(), var.span),
+            implementation: GlobalPropertyImpl::Script { slot },
+        };
+
+        if let Err(e) = self.ctx.register_script_global(entry) {
+            self.ctx.error(e.into());
+        }
+        self.globals_registered += 1;
+
+        // Note: Initializer expressions are compiled in Pass 2
+        // The AST index for the initializer is stored for later compilation
     }
 
     fn visit_property(&mut self, prop: &'ast PropertyDecl<'ast>, class_hash: TypeHash) {
@@ -517,6 +585,57 @@ mod tests {
         "#;
         // Player should have base_class = Entity hash
     }
+
+    #[test]
+    fn register_global_variable() {
+        let source = "int g_score = 0;";
+        let ast = parse(source);
+        let mut registry = TypeRegistry::new();
+        let mut ctx = CompilationContext::new(&mut registry, UnitId::new(0));
+
+        let pass = RegistrationPass::new(&mut ctx, &ast);
+        let output = pass.run();
+
+        assert_eq!(output.globals_registered, 1);
+        assert!(ctx.resolve_global("g_score").is_some());
+
+        let global = ctx.resolve_global("g_score").unwrap();
+        assert!(!global.is_const);
+        assert!(matches!(global.implementation, GlobalPropertyImpl::Script { slot: 0 }));
+    }
+
+    #[test]
+    fn register_const_global() {
+        let source = "const int MAX_PLAYERS = 8;";
+        let ast = parse(source);
+        let mut registry = TypeRegistry::new();
+        let mut ctx = CompilationContext::new(&mut registry, UnitId::new(0));
+
+        let pass = RegistrationPass::new(&mut ctx, &ast);
+        let output = pass.run();
+
+        let global = ctx.resolve_global("MAX_PLAYERS").unwrap();
+        assert!(global.is_const);
+    }
+
+    #[test]
+    fn register_namespaced_global() {
+        let source = r#"
+            namespace game {
+                int g_level = 1;
+            }
+        "#;
+        let ast = parse(source);
+        let mut registry = TypeRegistry::new();
+        let mut ctx = CompilationContext::new(&mut registry, UnitId::new(0));
+
+        let pass = RegistrationPass::new(&mut ctx, &ast);
+        pass.run();
+
+        // Should be resolvable by qualified name
+        let hash = TypeHash::from_ident("game::g_level");
+        assert!(ctx.get_global(hash).is_some());
+    }
 }
 ```
 
@@ -531,8 +650,12 @@ mod tests {
 - [ ] Interface implementation recorded
 - [ ] Constructors/destructors registered
 - [ ] Funcdefs registered
+- [ ] **Script global variables registered with GlobalPropertyImpl::Script { slot }**
+- [ ] **Const globals have is_const = true**
+- [ ] **Global slot allocation is sequential (0, 1, 2, ...)**
+- [ ] **Namespaced globals use qualified name for hash**
 - [ ] All tests pass
 
 ## Next Phase
 
-Task 38: Local Scope - variable tracking and scope management
+Task 39: Local Scope - variable tracking and scope management

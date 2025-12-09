@@ -1,4 +1,4 @@
-# Task 39: Bytecode Emitter
+# Task 40: Bytecode Emitter
 
 ## Overview
 
@@ -33,15 +33,19 @@ crates/angelscript-compiler/src/
 ```rust
 use angelscript_core::TypeHash;
 
-use crate::bytecode::{BytecodeChunk, Constant, OpCode};
+use crate::bytecode::{BytecodeChunk, Constant, ConstantPool, OpCode};
 
 mod jumps;
 use jumps::JumpManager;
 
 /// Emits bytecode instructions.
-pub struct BytecodeEmitter {
-    /// The bytecode chunk being built
+/// Uses a shared module-level constant pool for deduplication.
+pub struct BytecodeEmitter<'pool> {
+    /// The bytecode chunk being built (per-function)
     chunk: BytecodeChunk,
+
+    /// Shared module-level constant pool (deduplicated)
+    constants: &'pool mut ConstantPool,
 
     /// Jump management for control flow
     jumps: JumpManager,
@@ -50,10 +54,11 @@ pub struct BytecodeEmitter {
     current_line: u32,
 }
 
-impl BytecodeEmitter {
-    pub fn new() -> Self {
+impl<'pool> BytecodeEmitter<'pool> {
+    pub fn new(constants: &'pool mut ConstantPool) -> Self {
         Self {
             chunk: BytecodeChunk::new(),
+            constants,
             jumps: JumpManager::new(),
             current_line: 1,
         }
@@ -86,8 +91,9 @@ impl BytecodeEmitter {
     }
 
     /// Emit a constant load instruction.
+    /// Constants are added to the shared module pool (deduplicated).
     pub fn emit_constant(&mut self, constant: Constant) {
-        let index = self.chunk.add_constant(constant);
+        let index = self.constants.add(constant);
         if index < 256 {
             self.emit_byte(OpCode::Constant, index as u8);
         } else {
@@ -114,6 +120,9 @@ impl BytecodeEmitter {
     }
 
     /// Emit a string constant.
+    /// NOTE: Stores RAW string data in the constant pool. The actual string type
+    /// is determined by Context::default_string_factory and the factory function
+    /// is called by the compiler to produce the final string value.
     pub fn emit_string(&mut self, value: String) {
         self.emit_constant(Constant::String(value));
     }
@@ -156,21 +165,21 @@ impl BytecodeEmitter {
 
     /// Emit function call.
     pub fn emit_call(&mut self, func_hash: TypeHash, arg_count: u8) {
-        let index = self.chunk.add_constant(Constant::TypeHash(func_hash));
+        let index = self.constants.add(Constant::TypeHash(func_hash));
         self.emit_u16(OpCode::Call, index as u16);
         self.chunk.write_byte(arg_count, self.current_line);
     }
 
     /// Emit method call.
     pub fn emit_call_method(&mut self, method_hash: TypeHash, arg_count: u8) {
-        let index = self.chunk.add_constant(Constant::TypeHash(method_hash));
+        let index = self.constants.add(Constant::TypeHash(method_hash));
         self.emit_u16(OpCode::CallMethod, index as u16);
         self.chunk.write_byte(arg_count, self.current_line);
     }
 
     /// Emit virtual method call (interface dispatch).
     pub fn emit_call_virtual(&mut self, method_hash: TypeHash, arg_count: u8) {
-        let index = self.chunk.add_constant(Constant::TypeHash(method_hash));
+        let index = self.constants.add(Constant::TypeHash(method_hash));
         self.emit_u16(OpCode::CallVirtual, index as u16);
         self.chunk.write_byte(arg_count, self.current_line);
     }
@@ -245,8 +254,8 @@ impl BytecodeEmitter {
 
     /// Emit object creation.
     pub fn emit_new(&mut self, type_hash: TypeHash, ctor_hash: TypeHash, arg_count: u8) {
-        let type_index = self.chunk.add_constant(Constant::TypeHash(type_hash));
-        let ctor_index = self.chunk.add_constant(Constant::TypeHash(ctor_hash));
+        let type_index = self.constants.add(Constant::TypeHash(type_hash));
+        let ctor_index = self.constants.add(Constant::TypeHash(ctor_hash));
         self.emit_u16(OpCode::New, type_index as u16);
         self.chunk.write_u16(ctor_index as u16, self.current_line);
         self.chunk.write_byte(arg_count, self.current_line);
@@ -273,13 +282,13 @@ impl BytecodeEmitter {
 
     /// Emit type cast.
     pub fn emit_cast(&mut self, target_type: TypeHash) {
-        let index = self.chunk.add_constant(Constant::TypeHash(target_type));
+        let index = self.constants.add(Constant::TypeHash(target_type));
         self.emit_u16(OpCode::Cast, index as u16);
     }
 
     /// Emit instanceof check.
     pub fn emit_instanceof(&mut self, type_hash: TypeHash) {
-        let index = self.chunk.add_constant(Constant::TypeHash(type_hash));
+        let index = self.constants.add(Constant::TypeHash(type_hash));
         self.emit_u16(OpCode::InstanceOf, index as u16);
     }
 
@@ -308,11 +317,8 @@ pub enum BreakError {
     NotInLoop,
 }
 
-impl Default for BytecodeEmitter {
-    fn default() -> Self {
-        Self::new()
-    }
-}
+// Note: BytecodeEmitter cannot implement Default because it requires
+// a &mut ConstantPool reference. Create with BytecodeEmitter::new(constants).
 ```
 
 ### Jump Management (emit/jumps.rs)
@@ -384,17 +390,19 @@ mod tests {
 
     #[test]
     fn emit_constant() {
-        let mut emitter = BytecodeEmitter::new();
+        let mut constants = ConstantPool::new();
+        let mut emitter = BytecodeEmitter::new(&mut constants);
         emitter.emit_int(42);
         let chunk = emitter.finish();
 
         assert_eq!(chunk.code[0], OpCode::Constant as u8);
-        assert_eq!(chunk.constants[0], Constant::Int(42));
+        assert_eq!(constants.get(0), Some(&Constant::Int(42)));
     }
 
     #[test]
     fn emit_special_ints() {
-        let mut emitter = BytecodeEmitter::new();
+        let mut constants = ConstantPool::new();
+        let mut emitter = BytecodeEmitter::new(&mut constants);
         emitter.emit_int(0);
         emitter.emit_int(1);
         let chunk = emitter.finish();
@@ -404,8 +412,21 @@ mod tests {
     }
 
     #[test]
+    fn constant_deduplication() {
+        let mut constants = ConstantPool::new();
+        let mut emitter = BytecodeEmitter::new(&mut constants);
+        emitter.emit_string("hello".to_string());
+        emitter.emit_string("hello".to_string());  // Same string
+        let _chunk = emitter.finish();
+
+        // Only one constant stored due to deduplication
+        assert_eq!(constants.len(), 1);
+    }
+
+    #[test]
     fn jump_and_patch() {
-        let mut emitter = BytecodeEmitter::new();
+        let mut constants = ConstantPool::new();
+        let mut emitter = BytecodeEmitter::new(&mut constants);
         let label = emitter.emit_jump(OpCode::JumpIfFalse);
         emitter.emit(OpCode::PushTrue);
         emitter.patch_jump(label);
@@ -417,7 +438,8 @@ mod tests {
 
     #[test]
     fn loop_break_continue() {
-        let mut emitter = BytecodeEmitter::new();
+        let mut constants = ConstantPool::new();
+        let mut emitter = BytecodeEmitter::new(&mut constants);
         let loop_start = emitter.current_offset();
         emitter.enter_loop(loop_start);
 
@@ -435,7 +457,8 @@ mod tests {
 
     #[test]
     fn break_outside_loop() {
-        let mut emitter = BytecodeEmitter::new();
+        let mut constants = ConstantPool::new();
+        let mut emitter = BytecodeEmitter::new(&mut constants);
         let result = emitter.emit_break();
         assert!(matches!(result, Err(BreakError::NotInLoop)));
     }
@@ -456,4 +479,4 @@ mod tests {
 
 ## Next Phase
 
-Task 39: Expression Compilation - Basics (literals, identifiers, binary ops)
+Task 40: Expression Compilation - Basics (literals, identifiers, binary ops)

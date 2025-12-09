@@ -1,4 +1,4 @@
-# Task 33: Type Resolution
+# Task 34: Type Resolution
 
 ## Overview
 
@@ -6,16 +6,16 @@ Implement the `TypeResolver` that converts AST `TypeExpr` nodes into semantic `D
 
 ## Goals
 
-1. Resolve simple type names to TypeHash
+1. Resolve simple type names to TypeHash using `ctx.get_type()` (layered lookup)
 2. Handle type modifiers (const, handle @, reference &)
-3. Instantiate templates with type arguments
+3. Instantiate templates via `TemplateInstantiator` (Task 35)
 4. Support array types
-5. Integrate with template instance cache
+5. Use CompilationContext's layered lookup (unit registry → global registry)
 
 ## Dependencies
 
 - Task 31: Compiler Foundation
-- Task 32: Compilation Context
+- Task 33: Compilation Context (layered registry)
 
 ## Files to Create/Modify
 
@@ -209,32 +209,16 @@ impl<'a, 'reg> TypeResolver<'a, 'reg> {
         Ok(DataType::simple(instance_hash))
     }
 
-    /// Find or create a template instance.
+    /// Find or create a template instance using TemplateInstantiator.
     fn find_or_instantiate_template(
         &mut self,
         template_hash: TypeHash,
         type_args: Vec<DataType>,
         span: Span,
     ) -> Result<TypeHash> {
-        let arg_hashes: Vec<TypeHash> = type_args.iter().map(|a| a.type_hash).collect();
-
-        // Check cache first
-        if let Some(instance) = self.ctx.get_cached_template(template_hash, &arg_hashes) {
-            return Ok(instance);
-        }
-
-        // Cache miss - need to instantiate
-        let instance_hash = crate::template::instantiate_template_type(
-            template_hash,
-            type_args,
-            self.ctx,
-            span,
-        )?;
-
-        // Cache the result
-        self.ctx.cache_template(template_hash, arg_hashes, instance_hash);
-
-        Ok(instance_hash)
+        // Delegate to CompilationContext which uses TemplateInstantiator
+        // Template instances go into global registry
+        self.ctx.instantiate_template(template_hash, &type_args.iter().map(|a| a.type_hash).collect::<Vec<_>>())
     }
 }
 ```
@@ -523,4 +507,4 @@ mod tests {
 
 ## Next Phase
 
-Task 35: Conversion System - type conversion rules and costs
+Task 36: Conversion System - type conversion rules and costs

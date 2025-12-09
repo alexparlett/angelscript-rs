@@ -1,21 +1,43 @@
-# Task 34: Template Instantiation
+# Task 35: Template Instantiation
 
 ## Overview
 
-Implement template instantiation for types, functions, and child funcdefs. This includes the template instance cache, type substitution, and FFI specialization lookup.
+Implement the `TemplateInstantiator` struct that handles template instantiation for types, functions, and child funcdefs. This is a separate struct for isolation and testability. All template instances go into the **global registry**.
 
 ## Goals
 
-1. Instantiate template types (e.g., `array<int>` from `array<T>`)
-2. Instantiate template functions (e.g., `identity<int>` from `identity<T>`)
-3. Instantiate child funcdefs (e.g., `array<int>::Callback`)
-4. Implement template instance cache with FFI specialization priority
-5. Handle nested template instantiation
+1. Create `TemplateInstantiator` struct for isolated, testable instantiation logic
+2. Instantiate template types (e.g., `array<int>` from `array<T>`)
+3. Instantiate template functions (e.g., `identity<int>` from `identity<T>`)
+4. Instantiate child funcdefs (e.g., `array<int>::Callback`)
+5. Template instance cache with FFI specialization priority
+6. Nested template instantiation
+
+## Architecture
+
+Template instances are **shared across all units** and go into the global registry:
+
+```
+┌────────────────────────────────────┐
+│ Global TypeRegistry                │  ← Template instances stored here
+│ - FFI types                        │
+│ - FFI specializations (pre-cached) │
+│ - Script template instances        │
+└────────────────────────────────────┘
+             ↑
+             │
+    TemplateInstantiator
+             │
+             ▼
+┌────────────────────────────────────┐
+│ Per-Unit TypeRegistry              │  ← Non-shared script types
+└────────────────────────────────────┘
+```
 
 ## Dependencies
 
-- Task 32: Compilation Context (registry access)
-- Task 33: Type Resolution (resolving type arguments)
+- Task 33: Compilation Context (layered registry)
+- Task 34: Type Resolution (resolving type arguments)
 
 ## Files to Create/Modify
 
@@ -37,18 +59,129 @@ crates/angelscript-compiler/src/
 ```rust
 //! Template instantiation system.
 //!
-//! Handles instantiation of template types, functions, and child funcdefs.
+//! Provides the `TemplateInstantiator` struct for isolated, testable template instantiation.
+//! All template instances go into the global registry.
 //! Integrates with FFI specializations via the template instance cache.
 
-mod instantiation;
+mod instantiator;
 mod substitution;
 mod cache;
 mod validation;
 
-pub use instantiation::*;
+pub use instantiator::TemplateInstantiator;
 pub use substitution::*;
 pub use cache::*;
 pub use validation::*;
+```
+
+### TemplateInstantiator (template/instantiator.rs)
+
+```rust
+use angelscript_core::{DataType, TypeHash, TypeEntry};
+use angelscript_registry::TypeRegistry;
+
+use crate::error::{CompileError, Result};
+use super::substitution::{build_substitution_map, substitute_type};
+use super::cache::TemplateInstanceCache;
+
+/// Handles template instantiation logic - isolated for testability.
+/// All template instances go into the global registry.
+pub struct TemplateInstantiator<'a> {
+    /// Global registry where instances are stored
+    global_registry: &'a TypeRegistry,
+    /// Cache for template instances (includes FFI specializations)
+    cache: &'a TemplateInstanceCache,
+}
+
+impl<'a> TemplateInstantiator<'a> {
+    pub fn new(global_registry: &'a TypeRegistry, cache: &'a TemplateInstanceCache) -> Self {
+        Self { global_registry, cache }
+    }
+
+    /// Instantiate a template type with the given type arguments.
+    /// Returns the instance hash (cached if already instantiated).
+    pub fn instantiate_type(
+        &self,
+        template_hash: TypeHash,
+        type_args: &[TypeHash],
+    ) -> Result<TypeHash> {
+        let instance_hash = TypeHash::from_template_instance(template_hash, type_args);
+
+        // 1. Check cache - includes FFI specializations
+        if let Some(cached) = self.cache.get_type_instance(template_hash, type_args) {
+            return Ok(cached);
+        }
+
+        // 2. Check if already in registry (e.g., FFI specialization not in cache)
+        if self.global_registry.contains_type(instance_hash) {
+            return Ok(instance_hash);
+        }
+
+        // 3. Create and register instance
+        let instance = self.create_type_instance(template_hash, type_args)?;
+        self.global_registry.register_type(instance)?;
+
+        Ok(instance_hash)
+    }
+
+    /// Instantiate a template function with the given type arguments.
+    pub fn instantiate_function(
+        &self,
+        func_hash: TypeHash,
+        type_args: &[TypeHash],
+    ) -> Result<TypeHash> {
+        let instance_hash = TypeHash::from_function_instance(func_hash, type_args);
+
+        // Check cache
+        if let Some(cached) = self.cache.get_function_instance(func_hash, type_args) {
+            return Ok(cached);
+        }
+
+        // Check if already exists
+        if self.global_registry.contains_function(instance_hash) {
+            return Ok(instance_hash);
+        }
+
+        // Create and register
+        let instance = self.create_function_instance(func_hash, type_args)?;
+        self.global_registry.register_function(instance)?;
+
+        Ok(instance_hash)
+    }
+
+    fn create_type_instance(
+        &self,
+        template_hash: TypeHash,
+        type_args: &[TypeHash],
+    ) -> Result<TypeEntry> {
+        // Get template definition
+        let template = self.global_registry.get(template_hash)
+            .and_then(|t| t.as_class())
+            .ok_or_else(|| CompileError::TypeNotFound {
+                name: format!("{:?}", template_hash),
+                span: Default::default(),
+            })?;
+
+        if !template.is_template() {
+            return Err(CompileError::NotATemplate {
+                name: template.name.clone(),
+                span: Default::default(),
+            });
+        }
+
+        // Build substitution map and create instance
+        // ... (See detailed algorithm in original implementation)
+        todo!("Create template instance entry")
+    }
+
+    fn create_function_instance(
+        &self,
+        func_hash: TypeHash,
+        type_args: &[TypeHash],
+    ) -> Result<FunctionEntry> {
+        todo!("Create function instance entry")
+    }
+}
 ```
 
 ### Template Instance Cache (template/cache.rs)
@@ -907,4 +1040,4 @@ mod tests {
 
 ## Next Phase
 
-Task 35: Conversion System (type conversions with costs)
+Task 36: Conversion System (type conversions with costs)

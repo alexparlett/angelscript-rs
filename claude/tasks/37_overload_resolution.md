@@ -1,4 +1,4 @@
-# Task 36: Overload Resolution
+# Task 37: Overload Resolution
 
 ## Overview
 
@@ -6,15 +6,17 @@ Implement the overload resolution algorithm that selects the best matching funct
 
 ## Goals
 
-1. Filter candidates by argument count (considering defaults)
-2. Check argument type compatibility
-3. Rank candidates by total conversion cost
-4. Detect and report ambiguous overloads
-5. Handle operator overload resolution
+1. Use `ctx.get_function_overloads(name)` to get candidates from both registries
+2. Filter candidates by argument count (considering defaults)
+3. Check argument type compatibility
+4. Rank candidates by total conversion cost
+5. Detect and report ambiguous overloads
+6. Handle operator overload resolution
 
 ## Dependencies
 
-- Task 34: Conversion System
+- Task 33: Compilation Context (provides `get_function_overloads()`)
+- Task 36: Conversion System
 
 ## Files to Create
 
@@ -55,6 +57,7 @@ pub struct OverloadMatch {
 }
 
 /// Resolve overloaded function call.
+/// Uses ctx.get_function_overloads() which searches both unit and global registries.
 pub fn resolve_overload(
     candidates: &[TypeHash],
     arg_types: &[DataType],
@@ -479,4 +482,4 @@ mod tests {
 
 ## Next Phase
 
-Task 37: Registration Pass - AST walker to register types and functions
+Task 38: Registration Pass - AST walker to register types and functions

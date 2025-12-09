@@ -513,15 +513,14 @@ pub enum OpCode {
 ### 6. BytecodeChunk (bytecode/chunk.rs)
 
 ```rust
-use super::{Constant, OpCode};
+use super::OpCode;
 
-/// A chunk of compiled bytecode with associated data.
+/// A chunk of compiled bytecode for a single function.
+/// Constants are stored at module level, not per-function.
 #[derive(Debug, Clone, Default)]
 pub struct BytecodeChunk {
     /// The bytecode instructions
     pub code: Vec<u8>,
-    /// Constant pool
-    pub constants: Vec<Constant>,
     /// Line numbers for debugging (parallel to code)
     pub lines: Vec<u32>,
 }
@@ -551,12 +550,6 @@ impl BytecodeChunk {
         self.lines.push(line);
     }
 
-    /// Add a constant and return its index
-    pub fn add_constant(&mut self, constant: Constant) -> usize {
-        self.constants.push(constant);
-        self.constants.len() - 1
-    }
-
     /// Get current code offset (for jump patching)
     pub fn current_offset(&self) -> usize {
         self.code.len()
@@ -575,6 +568,7 @@ impl BytecodeChunk {
 
 ```rust
 use angelscript_core::TypeHash;
+use rustc_hash::FxHashMap;
 
 /// Values stored in the constant pool.
 #[derive(Debug, Clone, PartialEq)]
@@ -587,10 +581,85 @@ pub enum Constant {
     Float32(f32),
     /// 64-bit float
     Float64(f64),
-    /// String literal
-    String(String),
+    /// Raw string literal bytes. NOT a script string type.
+    /// The VM passes this to Context::string_factory().create() to produce
+    /// the actual string value (e.g., ScriptString).
+    /// See Task 32 for StringFactory trait details.
+    StringData(Vec<u8>),
     /// Type hash (for function calls, type checks, etc.)
     TypeHash(TypeHash),
+}
+
+/// Module-level constant pool with deduplication.
+/// Shared across all functions in a module to avoid duplicate strings/values.
+#[derive(Debug, Clone, Default)]
+pub struct ConstantPool {
+    /// The actual constants
+    constants: Vec<Constant>,
+    /// Deduplication index: maps constant to its index
+    index: FxHashMap<ConstantKey, u32>,
+}
+
+/// Key for constant deduplication (hashable version of Constant).
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+enum ConstantKey {
+    Int(i64),
+    Uint(u64),
+    Float32(u32),  // Bit pattern for hashing
+    Float64(u64),  // Bit pattern for hashing
+    StringData(Vec<u8>),
+    TypeHash(TypeHash),
+}
+
+impl ConstantPool {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Add or get existing constant, returns index.
+    /// Deduplicates identical constants.
+    pub fn add(&mut self, constant: Constant) -> u32 {
+        let key = Self::to_key(&constant);
+
+        if let Some(&idx) = self.index.get(&key) {
+            return idx;
+        }
+
+        let idx = self.constants.len() as u32;
+        self.constants.push(constant);
+        self.index.insert(key, idx);
+        idx
+    }
+
+    /// Get constant by index.
+    pub fn get(&self, index: u32) -> Option<&Constant> {
+        self.constants.get(index as usize)
+    }
+
+    /// Get all constants (for serialization).
+    pub fn constants(&self) -> &[Constant] {
+        &self.constants
+    }
+
+    /// Number of constants.
+    pub fn len(&self) -> usize {
+        self.constants.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.constants.is_empty()
+    }
+
+    fn to_key(constant: &Constant) -> ConstantKey {
+        match constant {
+            Constant::Int(v) => ConstantKey::Int(*v),
+            Constant::Uint(v) => ConstantKey::Uint(*v),
+            Constant::Float32(v) => ConstantKey::Float32(v.to_bits()),
+            Constant::Float64(v) => ConstantKey::Float64(v.to_bits()),
+            Constant::StringData(b) => ConstantKey::StringData(b.clone()),
+            Constant::TypeHash(h) => ConstantKey::TypeHash(*h),
+        }
+    }
 }
 ```
 
@@ -653,4 +722,4 @@ mod tests {
 
 ## Next Phase
 
-Task 32: Compilation Context - wraps TypeRegistry with compilation state
+Task 33: Compilation Context - wraps TypeRegistry with compilation state

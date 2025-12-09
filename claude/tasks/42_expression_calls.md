@@ -1,4 +1,4 @@
-# Task 41: Expression Compilation - Calls
+# Task 42: Expression Compilation - Calls
 
 ## Overview
 
@@ -14,8 +14,8 @@ Implement function calls, method calls, and constructor calls with overload reso
 
 ## Dependencies
 
-- Task 35: Overload Resolution
-- Task 39: Expression Basics
+- Task 36: Overload Resolution
+- Task 40: Expression Basics
 
 ## Files to Create/Modify
 
@@ -489,4 +489,4 @@ mod tests {
 
 ## Next Phase
 
-Task 41: Expression Compilation - Advanced (cast, lambda, init list, ternary)
+Task 42: Expression Compilation - Advanced (cast, lambda, init list, ternary)

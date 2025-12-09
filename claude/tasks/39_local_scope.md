@@ -1,4 +1,4 @@
-# Task 38: Local Scope & Variables
+# Task 39: Local Scope & Variables
 
 ## Overview
 
@@ -455,4 +455,4 @@ mod tests {
 
 ## Next Phase
 
-Task 39: Bytecode Emitter - instruction emission and jump management
+Task 40: Bytecode Emitter - instruction emission and jump management

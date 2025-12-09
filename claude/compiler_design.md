@@ -917,28 +917,64 @@ FUNCTION check_lambda(lambda: LambdaExpr, expected: DataType) -> Result<ExprInfo
 
 ## 8. Bytecode Design
 
-### 8.1 Chunk Structure (from Crafting Interpreters)
+### 8.1 Storage Architecture
+
+**Bytecode** is stored in the registry (`FunctionImpl::Script.bytecode`).
+**Constants** are stored at module level (`CompiledModule.constants`) to avoid duplication.
 
 ```rust
+/// Per-function bytecode (stored in FunctionImpl::Script)
 pub struct BytecodeChunk {
-    /// Raw bytecode bytes
+    /// Raw bytecode bytes (references constants by index)
     pub code: Vec<u8>,
-
-    /// Constant pool (values referenced by index)
-    pub constants: Vec<Constant>,
-
     /// Line numbers (parallel to code, for error reporting)
     pub lines: Vec<u32>,
 }
 
+/// Bytecode stored in registry function entries
+pub enum FunctionImpl {
+    Native(Option<NativeFn>),
+    Script {
+        unit_id: UnitId,
+        bytecode: Option<BytecodeChunk>,  // Set after compilation
+    },
+    Abstract,
+    External { module: String },
+}
+
+/// Module-level constant pool with deduplication
+pub struct ConstantPool {
+    constants: Vec<Constant>,
+    index: FxHashMap<ConstantKey, u32>,  // For deduplication
+}
+
 pub enum Constant {
     Int(i64),
-    Float(f64),
+    Uint(u64),
+    Float32(f32),
+    Float64(f64),
     String(String),
-    FuncHash(TypeHash),
     TypeHash(TypeHash),
 }
+
+/// Compilation result (constants + tracking)
+pub struct CompiledModule {
+    pub constants: ConstantPool,    // Shared, needed at runtime
+    pub functions: Vec<TypeHash>,   // What was compiled (bytecode in registry)
+    pub global_inits: Vec<TypeHash>,
+}
 ```
+
+**Data flow:**
+1. Compiler emits bytecode referencing constants by index
+2. Bytecode stored in `registry.get_function_mut(hash).implementation.set_bytecode(chunk)`
+3. Constants stored in `CompiledModule.constants`
+4. VM lookup: `registry.get_function(hash).implementation.bytecode()` + `module.constants()`
+
+**Benefits:**
+- Strings appearing in multiple functions are stored once
+- Single registry lookup for function + bytecode
+- Type hashes deduplicated automatically
 
 ### 8.2 Instruction Format
 
@@ -1070,8 +1106,11 @@ pub enum OpCode {
 ### 8.4 BytecodeEmitter
 
 ```rust
-pub struct BytecodeEmitter {
+/// Emits bytecode for a single function.
+/// Uses a shared module-level constant pool (passed by reference).
+pub struct BytecodeEmitter<'pool> {
     chunk: BytecodeChunk,
+    constants: &'pool mut ConstantPool,  // Shared module-level pool
     current_line: u32,
 
     /// Stack of loop/switch contexts for break/continue
@@ -1084,12 +1123,14 @@ struct BreakableContext {
     break_patches: Vec<usize>,
 }
 
-impl BytecodeEmitter {
+impl<'pool> BytecodeEmitter<'pool> {
+    pub fn new(constants: &'pool mut ConstantPool) -> Self;
+
     // Emit instructions
     pub fn emit(&mut self, op: OpCode);
     pub fn emit_byte(&mut self, byte: u8);
     pub fn emit_u16(&mut self, value: u16);
-    pub fn emit_constant(&mut self, constant: Constant) -> u8;
+    pub fn emit_constant(&mut self, constant: Constant) -> u32;  // Index into shared pool
 
     // Jumps
     pub fn emit_jump(&mut self, op: OpCode) -> usize;  // Returns patch location

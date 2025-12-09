@@ -59,6 +59,7 @@ New types to add:
 - `Op` - Operator enum for macros
 - `Any` - Trait for registrable types
 - `NativeFn` - Type-erased native function storage (`Box<dyn Any + Send + Sync>`)
+- `GlobalPropertyEntry`, `ConstantValue` - Global property storage
 
 ## Module API (Namespace-based)
 
@@ -1077,6 +1078,287 @@ TypeEntry::Class(ClassEntry {
 ```
 
 The caller doesn't need to know if it's FFI or script - the unified registry abstracts this.
+
+## Unit Isolation and Type Scoping
+
+### The Problem
+
+With a single unified registry, if two compilation units both define a type with the same name but different definitions, they would produce the same `TypeHash` and clash:
+
+```angelscript
+// Unit A: game_logic.as
+class MyClass {
+    int x;
+    void update() { }
+}
+
+// Unit B: network.as
+class MyClass {
+    string name;
+    float timeout;
+}
+```
+
+Both would compute `TypeHash::from_name("MyClass")` → **collision in registry**.
+
+### Solution: Layered Registry Architecture
+
+Instead of unit-scoped hashes, we use a **layered registry** with the same `TypeRegistry` struct at each layer:
+
+```
+┌────────────────────────────────────┐
+│ TypeRegistry (Global)              │
+│ - FFI types/functions              │
+│ - Template instances (mutex-guard) │
+│ - Shared script types              │
+└──────────────────┬─────────────────┘
+                   │
+          ┌────────┴────────┐
+          ▼                 ▼
+   ┌─────────────┐   ┌─────────────┐
+   │ TypeRegistry│   │ TypeRegistry│
+   │ (Unit A)    │   │ (Unit B)    │
+   └─────────────┘   └─────────────┘
+```
+
+**Key insight**: We reuse the existing `TypeRegistry` struct for both layers:
+- **1 global TypeRegistry**: FFI types, template instances, shared script types
+- **N per-unit TypeRegistry instances**: Non-shared script types for each compilation unit
+
+### What This Approach Provides
+
+| Concern | Solution |
+|---------|----------|
+| **Type collision** | Same name in Unit A and B = separate entries in separate registries |
+| **Memory cleanup** | Drop per-unit `TypeRegistry` = release all unit memory |
+| **Hash simplicity** | Same `TypeHash::from_name()` everywhere |
+| **Template sharing** | All template instances go in global registry |
+| **FFI types** | Always in global registry, visible to all units |
+
+### CompilationContext with Layered Lookup
+
+The `CompilationContext` holds both registries and provides layered lookup:
+
+```rust
+pub struct CompilationContext<'a> {
+    /// Global registry (FFI + templates + shared)
+    pub global_registry: &'a TypeRegistry,
+    /// Per-unit registry (non-shared script types)
+    pub unit_registry: TypeRegistry,
+    /// Current unit ID
+    pub unit_id: UnitId,
+}
+
+impl<'a> CompilationContext<'a> {
+    pub fn new(global: &'a TypeRegistry, unit_id: UnitId) -> Self {
+        Self {
+            global_registry: global,
+            unit_registry: TypeRegistry::new(),
+            unit_id,
+        }
+    }
+
+    // === Layered Lookup (unit first, then global) ===
+
+    /// Look up type: unit first, then global
+    pub fn get_type(&self, hash: TypeHash) -> Option<&TypeEntry> {
+        self.unit_registry.get(hash)
+            .or_else(|| self.global_registry.get(hash))
+    }
+
+    /// Look up function: unit first, then global
+    pub fn get_function(&self, hash: TypeHash) -> Option<&FunctionEntry> {
+        self.unit_registry.get_function(hash)
+            .or_else(|| self.global_registry.get_function(hash))
+    }
+
+    /// Get function overloads from both registries
+    pub fn get_function_overloads(&self, name: &str) -> Vec<&FunctionEntry> {
+        let mut overloads: Vec<_> = self.unit_registry.get_function_overloads(name).collect();
+        overloads.extend(self.global_registry.get_function_overloads(name));
+        overloads
+    }
+
+    // === Registration ===
+
+    /// Register a script type (goes into unit registry)
+    pub fn register_script_type(&mut self, entry: TypeEntry) -> Result<(), Error> {
+        self.unit_registry.register_type(entry)
+    }
+
+    /// Register a shared type (goes into global registry)
+    pub fn register_shared_type(&self, entry: TypeEntry) -> Result<(), Error> {
+        self.global_registry.register_shared_type(entry)
+    }
+}
+```
+
+### Template Instantiation
+
+Template instances are shared across all units and go into the global registry. A separate `TemplateInstantiator` struct handles the complex instantiation logic:
+
+```rust
+/// Handles template instantiation logic - isolated for testability.
+pub struct TemplateInstantiator<'a> {
+    global_registry: &'a TypeRegistry,
+}
+
+impl<'a> TemplateInstantiator<'a> {
+    pub fn new(global_registry: &'a TypeRegistry) -> Self {
+        Self { global_registry }
+    }
+
+    /// Instantiate a template type with the given type arguments.
+    pub fn instantiate_type(
+        &self,
+        template_hash: TypeHash,
+        type_args: &[TypeHash],
+    ) -> Result<TypeHash, Error> {
+        let instance_hash = TypeHash::from_template_instance(template_hash, type_args);
+
+        // Check if already exists (includes FFI specializations)
+        if self.global_registry.contains_type(instance_hash) {
+            return Ok(instance_hash);
+        }
+
+        // Create and register (mutex-guarded for thread safety)
+        let instance = self.create_type_instance(template_hash, type_args)?;
+        self.global_registry.register_type(instance)?;
+
+        Ok(instance_hash)
+    }
+}
+```
+
+### Shared Types
+
+AngelScript's `shared` keyword opts types into global scope:
+
+```angelscript
+// Unit A
+shared class SharedData {
+    int value;
+    void process() { }
+}
+
+// Unit B - uses the same type
+external shared class SharedData;  // References Unit A's definition
+```
+
+**Rules for shared types:**
+1. Registered in global registry (not unit registry)
+2. Must have identical definitions in all units that declare it
+3. Can only reference other shared types or FFI types
+4. Validated at link time
+
+### Memory Management
+
+Dropping a unit is simple:
+```rust
+// When done with a compilation unit:
+drop(compilation_context.unit_registry);  // Releases all unit memory
+// Global registry stays alive
+```
+
+### Summary
+
+| Scenario | Registry | Hash Function |
+|----------|----------|---------------|
+| FFI type `Player` | Global | `from_name("Player")` |
+| Unit A: `class Foo` | Unit A | `from_name("Foo")` |
+| Unit B: `class Foo` | Unit B | `from_name("Foo")` (different registry!) |
+| `shared class Bar` | Global | `from_name("Bar")` |
+| `array<int>` instance | Global | `from_template_instance(...)` |
+
+This design maintains clean separation between units while sharing FFI types and template instances globally.
+
+## Global Properties
+
+Global properties enable scripts to access application-owned values. Two categories:
+
+### Constants (Primitive Values)
+
+Raw primitive values are stored as immutable constants:
+
+```rust
+Module::in_namespace(&["math"])
+    .global("PI", std::f64::consts::PI)    // const double math::PI
+    .global("E", std::f64::consts::E);     // const double math::E
+```
+
+### Mutable Globals (Arc<RwLock<T>>)
+
+For shared mutable state, use `Arc<RwLock<T>>`:
+
+```rust
+let score = Arc::new(RwLock::new(0i32));
+Module::new()
+    .global("g_score", score.clone());  // int g_score (mutable)
+```
+
+The application keeps a clone of the Arc to read/write the value.
+
+### Handle Semantics
+
+All FFI global properties with reference types are implicitly `@ const` (handle cannot be reassigned). The pointed-to object can be mutable unless `.const_()` is called:
+
+```rust
+let player = Arc::new(RwLock::new(Player::new()));
+Module::new()
+    .global("g_player", player.clone())      // Player@ const g_player
+    .const_();                                // const Player@ const g_player
+```
+
+### Storage
+
+Global properties are stored in `TypeRegistry` alongside types and functions:
+
+```rust
+pub struct TypeRegistry {
+    types: FxHashMap<TypeHash, TypeEntry>,
+    functions: FxHashMap<TypeHash, FunctionEntry>,
+    globals: FxHashMap<TypeHash, GlobalPropertyEntry>,  // NEW
+}
+```
+
+**Note**: No separate name lookup map needed - globals use `TypeHash::from_ident(name)` for lookup.
+
+### GlobalPropertyEntry
+
+```rust
+pub struct GlobalPropertyEntry {
+    pub name: String,
+    pub qualified_name: String,
+    pub type_hash: TypeHash,
+    pub data_type: DataType,
+    pub is_const: bool,
+    pub source: TypeSource,
+    pub implementation: GlobalPropertyImpl,
+}
+
+pub enum GlobalPropertyImpl {
+    Constant(ConstantValue),                    // Owned primitive
+    Mutable(Box<dyn GlobalPropertyAccessor>),   // Arc<RwLock<T>>
+    Script { slot: u32 },                       // Script-declared
+}
+```
+
+### Macro Support (Primitive Constants Only)
+
+```rust
+#[angelscript::global(namespace = "math")]
+pub const PI: f64 = 3.14159265358979;
+
+// Generates: fn PI__global_meta() -> GlobalMeta
+```
+
+Module registration:
+```rust
+Module::in_namespace(&["math"])
+    .global_meta(PI__global_meta)
+```
+
+See [Task 25](tasks/25_global_properties.md) for full implementation details.
 
 ## Implementation Phases
 

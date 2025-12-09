@@ -1,4 +1,4 @@
-# Task 40: Expression Compilation - Basics
+# Task 41: Expression Compilation - Basics
 
 ## Overview
 
@@ -14,11 +14,22 @@ Implement basic expression compilation: literals, identifiers, unary operators, 
 
 ## Dependencies
 
-- Task 32: Compilation Context
-- Task 34: Conversion System
-- Task 35: Overload Resolution (for operators)
-- Task 37: Local Scope
-- Task 38: Bytecode Emitter
+- Task 32: String Factory Configuration (for string literals)
+- Task 33: Compilation Context
+- Task 35: Conversion System
+- Task 36: Overload Resolution (for operators)
+- Task 38: Local Scope
+- Task 39: Bytecode Emitter
+
+## Important Notes
+
+### String Literals
+
+String literals do NOT use a hardcoded primitive type. Instead, they use `Context::string_factory()` to determine:
+1. What type the literal produces (e.g., `string`)
+2. What factory function to call with the raw string data
+
+This allows users to configure custom string types or omit the stdlib string module entirely. See Task 32 for details.
 
 ## Files to Create
 
@@ -106,14 +117,14 @@ impl<'a, 'reg> ExprCompiler<'a, 'reg> {
             Expr::Paren(inner) => self.infer(inner, span),
 
             // Others handled in later tasks
-            Expr::Call { .. } => todo!("Task 40"),
-            Expr::MethodCall { .. } => todo!("Task 40"),
-            Expr::FieldAccess { .. } => todo!("Task 40"),
-            Expr::Index { .. } => todo!("Task 40"),
-            Expr::Cast { .. } => todo!("Task 41"),
-            Expr::Lambda { .. } => todo!("Task 41"),
-            Expr::InitList { .. } => todo!("Task 41"),
-            Expr::Ternary { .. } => todo!("Task 41"),
+            Expr::Call { .. } => todo!("Task 41"),
+            Expr::MethodCall { .. } => todo!("Task 41"),
+            Expr::FieldAccess { .. } => todo!("Task 41"),
+            Expr::Index { .. } => todo!("Task 41"),
+            Expr::Cast { .. } => todo!("Task 42"),
+            Expr::Lambda { .. } => todo!("Task 42"),
+            Expr::InitList { .. } => todo!("Task 42"),
+            Expr::Ternary { .. } => todo!("Task 42"),
             Expr::Assignment { .. } => self.compile_assignment(expr, span),
         }
     }
@@ -259,9 +270,20 @@ pub fn compile_float(compiler: &mut ExprCompiler, value: f64, _span: Span) -> Re
     Ok(ExprInfo::rvalue(DataType::simple(primitives::DOUBLE)))
 }
 
-pub fn compile_string(compiler: &mut ExprCompiler, value: &str, _span: Span) -> Result<ExprInfo> {
+pub fn compile_string(compiler: &mut ExprCompiler, value: &str, span: Span) -> Result<ExprInfo> {
+    // Get string factory configuration from Context
+    // String literals use the configured factory, not a hardcoded primitive type
+    let factory_info = compiler.ctx().string_factory()
+        .ok_or(CompileError::NoStringFactory { span })?;
+
+    // Store raw string data in constant pool
     compiler.emitter().emit_string(value.to_string());
-    Ok(ExprInfo::rvalue(DataType::simple(primitives::STRING)))
+
+    // Call the factory function to create the string type
+    compiler.emitter().emit_call(factory_info.factory, 1);
+
+    // Result type is whatever the factory produces (e.g., "string")
+    Ok(ExprInfo::rvalue(DataType::simple(factory_info.type_hash)))
 }
 
 pub fn compile_bool(compiler: &mut ExprCompiler, value: bool, _span: Span) -> Result<ExprInfo> {
@@ -673,4 +695,4 @@ mod tests {
 
 ## Next Phase
 
-Task 40: Expression Compilation - Calls (function calls, method calls, constructors)
+Task 41: Expression Compilation - Calls (function calls, method calls, constructors)

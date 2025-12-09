@@ -1,4 +1,4 @@
-# Task 45: Function Compilation Pass
+# Task 46: Function Compilation Pass
 
 ## Overview
 
@@ -13,10 +13,10 @@ Implement the second pass of the compiler that generates bytecode for function b
 
 ## Dependencies
 
-- Task 36: Registration Pass (provides function signatures)
-- Task 42-43: Statement Compilation
-- Task 39-41: Expression Compilation
-- Task 38: Bytecode Emitter
+- Task 37: Registration Pass (provides function signatures)
+- Task 43-43: Statement Compilation
+- Task 40-41: Expression Compilation
+- Task 39: Bytecode Emitter
 
 ## Files to Create/Modify
 
@@ -24,7 +24,7 @@ Implement the second pass of the compiler that generates bytecode for function b
 crates/angelscript-compiler/src/
 ├── pass/
 │   ├── mod.rs                    # Pass modules
-│   ├── registration.rs           # Pass 1 (from Task 36)
+│   ├── registration.rs           # Pass 1 (from Task 37)
 │   └── compilation.rs            # Pass 2 - function compilation
 ├── function_compiler.rs          # Single function compilation
 └── return_checker.rs             # Return path verification
@@ -270,7 +270,7 @@ impl<'ctx> CompilationPass<'ctx> {
     ) -> Result<()> {
         if let Some(init) = &var.initializer {
             // Create init function for this global
-            let init_hash = TypeHash::from_global_init(&var.name);
+            let init_hash = TypeHash::from_ident(&var.name);
 
             let mut compiler = FunctionCompiler::new_for_global_init(
                 self.ctx,
@@ -290,10 +290,14 @@ impl<'ctx> CompilationPass<'ctx> {
 }
 
 /// Output from compilation pass.
+/// Note: Bytecode is stored in the registry (FunctionImpl::Script.bytecode),
+/// not in this struct. This tracks what was compiled.
 pub struct CompilationOutput {
     pub unit_id: UnitId,
-    /// Function hash -> bytecode
-    pub bytecode: FxHashMap<TypeHash, BytecodeChunk>,
+    /// Shared constant pool for all functions
+    pub constants: ConstantPool,
+    /// Functions that were compiled (bytecode stored in registry)
+    pub compiled_functions: Vec<TypeHash>,
     /// Global initializers in order
     pub global_inits: Vec<TypeHash>,
 }
@@ -302,17 +306,32 @@ impl CompilationOutput {
     pub fn new(unit_id: UnitId) -> Self {
         Self {
             unit_id,
-            bytecode: FxHashMap::default(),
+            constants: ConstantPool::new(),
+            compiled_functions: Vec::new(),
             global_inits: Vec::new(),
         }
     }
 
-    pub fn add_bytecode(&mut self, hash: TypeHash, bytecode: BytecodeChunk) {
-        self.bytecode.insert(hash, bytecode);
+    /// Store bytecode in registry and track what was compiled.
+    pub fn store_bytecode(
+        &mut self,
+        ctx: &mut CompilationContext,
+        hash: TypeHash,
+        bytecode: BytecodeChunk,
+    ) {
+        // Store in registry
+        ctx.set_function_bytecode(hash, bytecode);
+        // Track what was compiled
+        self.compiled_functions.push(hash);
     }
 
     pub fn add_global_init(&mut self, hash: TypeHash) {
         self.global_inits.push(hash);
+    }
+
+    /// Get mutable constant pool for emitter.
+    pub fn constants_mut(&mut self) -> &mut ConstantPool {
+        &mut self.constants
     }
 }
 ```
@@ -739,4 +758,4 @@ mod tests {
 
 ## Next Phase
 
-Task 46: Integration & Testing (end-to-end compilation tests)
+Task 47: Integration & Testing (end-to-end compilation tests)

@@ -1,4 +1,4 @@
-# Task 42: Expression Compilation - Advanced
+# Task 43: Expression Compilation - Advanced
 
 ## Overview
 
@@ -13,9 +13,9 @@ Implement advanced expression compilation: cast expressions, lambda expressions,
 
 ## Dependencies
 
-- Task 37: Local Scope (for lambda captures)
-- Task 39: Expression Basics
-- Task 40: Expression Calls
+- Task 38: Local Scope (for lambda captures)
+- Task 40: Expression Basics
+- Task 41: Expression Calls
 
 ## Files to Create/Modify
 
@@ -521,4 +521,4 @@ mod tests {
 
 ## Next Phase
 
-Task 43: Statement Compilation - Basics (blocks, variables, control flow)
+Task 44: Statement Compilation - Basics (blocks, variables, control flow)

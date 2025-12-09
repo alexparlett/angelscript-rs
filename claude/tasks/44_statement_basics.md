@@ -1,4 +1,4 @@
-# Task 43: Statement Compilation - Basics
+# Task 44: Statement Compilation - Basics
 
 ## Overview
 
@@ -14,9 +14,9 @@ Implement basic statement compilation: blocks, variable declarations, return sta
 
 ## Dependencies
 
-- Task 37: Local Scope
-- Task 38: Bytecode Emitter
-- Task 39-41: Expression Compilation
+- Task 38: Local Scope
+- Task 39: Bytecode Emitter
+- Task 40-41: Expression Compilation
 
 ## Files to Create/Modify
 
@@ -606,4 +606,4 @@ mod tests {
 
 ## Next Phase
 
-Task 44: Statement Compilation - Loops (for, foreach, switch, break/continue)
+Task 45: Statement Compilation - Loops (for, foreach, switch, break/continue)

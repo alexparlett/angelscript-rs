@@ -1,4 +1,4 @@
-# Task 35: Conversion System
+# Task 36: Conversion System
 
 ## Overview
 
@@ -14,7 +14,7 @@ Implement the type conversion checking system that determines if one type can be
 ## Dependencies
 
 - Task 31: Compiler Foundation (Conversion types)
-- Task 32: Compilation Context
+- Task 33: Compilation Context
 
 ## Files to Create/Modify
 
@@ -521,4 +521,4 @@ mod tests {
 
 ## Next Phase
 
-Task 36: Overload Resolution - select best function from candidates
+Task 37: Overload Resolution - select best function from candidates

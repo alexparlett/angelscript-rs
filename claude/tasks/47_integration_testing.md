@@ -1,4 +1,4 @@
-# Task 46: Compiler API & Validation
+# Task 47: Compiler API & Validation
 
 ## Overview
 
@@ -159,36 +159,47 @@ impl<'ctx> Compiler<'ctx> {
 
 ```rust
 use angelscript_core::{TypeHash, UnitId};
-use rustc_hash::FxHashMap;
 
-use crate::bytecode::BytecodeChunk;
+use crate::bytecode::ConstantPool;
 
-/// A compiled module containing bytecode for all functions.
+/// Result of compiling a module.
+///
+/// Bytecode is stored in the registry (FunctionImpl::Script.bytecode),
+/// but constants are module-level and stored here.
 #[derive(Debug)]
 pub struct CompiledModule {
     pub name: String,
     pub unit_id: UnitId,
-    pub bytecode: FxHashMap<TypeHash, BytecodeChunk>,
+    /// Shared constant pool for all functions (deduplicated).
+    /// Bytecode references constants by index into this pool.
+    pub constants: ConstantPool,
+    /// Functions that were compiled (bytecode is in registry).
+    pub functions: Vec<TypeHash>,
+    /// Global initializers in execution order.
     pub global_inits: Vec<TypeHash>,
 }
 
 impl CompiledModule {
-    /// Get bytecode for a specific function.
-    pub fn get_function(&self, hash: TypeHash) -> Option<&BytecodeChunk> {
-        self.bytecode.get(&hash)
+    /// Get the shared constant pool.
+    pub fn constants(&self) -> &ConstantPool {
+        &self.constants
     }
 
-    /// Get all function hashes in this module.
-    pub fn functions(&self) -> impl Iterator<Item = TypeHash> + '_ {
-        self.bytecode.keys().copied()
+    /// Get function hashes that were compiled.
+    pub fn functions(&self) -> &[TypeHash] {
+        &self.functions
     }
 
-    /// Total bytecode size.
-    pub fn bytecode_size(&self) -> usize {
-        self.bytecode.values().map(|c| c.code.len()).sum()
+    /// Number of functions compiled.
+    pub fn function_count(&self) -> usize {
+        self.functions.len()
     }
 }
 ```
+
+Note: Bytecode is stored in `FunctionImpl::Script { bytecode }` in the registry, not in CompiledModule. The VM looks up functions by hash and gets bytecode from there. CompiledModule holds:
+- Constants (shared, needed at runtime)
+- List of what was compiled (for tracking/unloading)
 
 ## Validation
 

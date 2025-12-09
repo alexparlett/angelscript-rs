@@ -1,198 +1,344 @@
-# Task 25: Global Properties
+# Task 25: Global Properties (Revised)
 
 ## Overview
 
-Global properties in AngelScript need runtime mutability - values can be added and updated during the program lifecycle. Unlike types and functions which are sealed at compile time, global properties are stored on the `Context` equivalent, not in `FfiRegistry`.
+Enable FFI registration of global properties that scripts can access. Two categories:
+1. **Constants** - Immutable values like `math::PI`
+2. **Mutable globals** - Shared state between application and script via `Arc<RwLock<T>>`
 
-**Prerequisites:** Task 22 (TypeHash Identity System)
+**Prerequisites:** Task 01 (Unified Type Registry)
 
 ---
 
-## Design
+## Design Decisions
 
-### Why Context, Not FfiRegistry?
+1. **Constants**: Owned by registry, always immutable
+2. **Mutable globals**: Application owns `Arc<RwLock<T>>`, shares clone with engine
+3. **Handle semantics**: All FFI global properties are implicitly `@ const` (no handle reassignment)
+4. **Object constness**: `.const_()` modifier makes object read-only from script
+5. **Type inference**: `DataType` derived from `T::data_type()` on `Any` trait (includes `is_handle` flag)
+6. **Namespace**: Inherited from `Module`
+7. **Unified API**: Single `global()` method with trait-based dispatch
 
-1. **Runtime mutability**: Global property values can be modified during execution
-2. **Dynamic registration**: Properties can be added after initial compilation
-3. **Lifetime requirements**: `'app` lifetime for value references requires per-context storage
-4. **AngelScript C++ pattern**: Original implementation stores globals on context equivalent
+---
 
-### Registration API (Builder Pattern)
+## API Design
+
+### Explicit Registration (Module Builder)
 
 ```rust
-context.global_property("g_score")
-    .data_type("int")        // Type name, resolved via TypeHash
-    .value(&mut score)       // Reference to host value
-    .namespace("Game")       // Optional namespace
-    .const_()                // Optional: mark read-only
-    .register()?;
+// Constants - raw primitives are always const
+Module::in_namespace(&["math"])
+    .global("PI", std::f64::consts::PI)    // const double math::PI
+    .global("E", std::f64::consts::E);     // const double math::E
 
-// Shorthand for simple cases
-context.global_property("g_count")
-    .data_type("int")
-    .value(&mut count)
-    .register()?;
+// Mutable global property - use Arc<RwLock<T>>
+let score = Arc::new(RwLock::new(0i32));
+Module::new()
+    .global("g_score", score.clone());  // int g_score (mutable)
+
+// Const object (read-only from script)
+let player = Arc::new(RwLock::new(Player::new()));
+Module::new()
+    .global("g_player", player.clone())
+    .const_();  // const Player@ const g_player
 ```
 
-### Storage Structure
+### Macro Registration (Primitive Constants)
+
+For primitive constants, macros provide a convenient alternative:
 
 ```rust
-/// A global property exposed to scripts.
-pub struct GlobalProperty<'app> {
-    /// Property name (without namespace)
+// Basic constant
+#[angelscript::global]
+pub const PI: f64 = 3.14159265358979;
+
+// With namespace
+#[angelscript::global(namespace = "math")]
+pub const E: f64 = 2.71828182845905;
+
+// With name override
+#[angelscript::global(name = "MAX_INT", namespace = "limits")]
+pub const I32_MAX: i32 = i32::MAX;
+```
+
+Generates metadata function:
+```rust
+pub fn PI__global_meta() -> GlobalMeta {
+    GlobalMeta {
+        name: "PI",
+        namespace: None,
+        value: ConstantValue::Double(3.14159265358979),
+    }
+}
+```
+
+Module registration:
+```rust
+Module::in_namespace(&["math"])
+    .global_meta(PI__global_meta)
+    .global_meta(E__global_meta)
+```
+
+**Note**: Macro registration only supports primitive constants. Mutable globals (`Arc<RwLock<T>>`) must use explicit registration because the application needs to hold a reference to interact with the value.
+
+---
+
+## Type Mapping
+
+| Rust `T` in `Arc<RwLock<T>>` | T's TypeKind | AngelScript Declaration |
+|------------------------------|--------------|------------------------|
+| `i32` | Primitive | `int g_score` |
+| `f64` | Primitive | `double g_value` |
+| `Vector2` (pod) | Value | `Vector2 g_pos` |
+| `Player` (reference) | Reference | `Player@ const g_player` |
+
+With `.const_()`:
+- Primitives/Values: `const int g_score`
+- Reference types: `const Player@ const g_player`
+
+---
+
+## Core Types
+
+### GlobalPropertyEntry
+
+```rust
+/// A global property registered with the engine
+pub struct GlobalPropertyEntry {
     pub name: String,
-
-    /// Fully qualified name (e.g., "Game::g_score")
     pub qualified_name: String,
-
-    /// Resolved type (via TypeHash lookup)
+    pub type_hash: TypeHash,
     pub data_type: DataType,
+    pub is_const: bool,  // Object constness (const Player@ const)
+    pub source: TypeSource,
+    pub implementation: GlobalPropertyImpl,
+}
 
-    /// Whether this property is read-only
-    pub is_const: bool,
-
-    /// Reference to host application value
-    pub value: &'app mut dyn Any,
+/// How the global property value is stored/accessed
+pub enum GlobalPropertyImpl {
+    /// Constant value (primitives only for now)
+    Constant(ConstantValue),
+    /// Mutable FFI property via Arc<RwLock<T>>
+    Mutable(Box<dyn GlobalPropertyAccessor>),
+    /// Script-declared global (slot in unit's global table)
+    Script { slot: u32 },
 }
 ```
 
-### Builder
+### ConstantValue
 
 ```rust
-pub struct GlobalPropertyBuilder<'ctx, 'app> {
-    context: &'ctx mut Context<'app>,
-    name: String,
-    namespace: Option<String>,
-    data_type: Option<String>,  // Type name, resolved on register()
-    is_const: bool,
-    value: Option<&'app mut dyn Any>,
-}
-
-impl<'ctx, 'app> GlobalPropertyBuilder<'ctx, 'app> {
-    pub fn data_type(mut self, type_name: &str) -> Self {
-        self.data_type = Some(type_name.to_string());
-        self
-    }
-
-    pub fn value<T: Any>(mut self, val: &'app mut T) -> Self {
-        self.value = Some(val);
-        self
-    }
-
-    pub fn namespace(mut self, ns: &str) -> Self {
-        self.namespace = Some(ns.to_string());
-        self
-    }
-
-    pub fn const_(mut self) -> Self {
-        self.is_const = true;
-        self
-    }
-
-    pub fn register(self) -> Result<(), GlobalPropertyError> {
-        // Resolve type via TypeHash
-        let type_hash = TypeHash::of(self.data_type.as_ref().unwrap());
-        let data_type = self.context.resolve_type(type_hash)?;
-
-        // Build qualified name
-        let qualified_name = match &self.namespace {
-            Some(ns) => format!("{}::{}", ns, self.name),
-            None => self.name.clone(),
-        };
-
-        // Create and store property
-        let prop = GlobalProperty {
-            name: self.name,
-            qualified_name,
-            data_type,
-            is_const: self.is_const,
-            value: self.value.unwrap(),
-        };
-
-        self.context.add_global_property(prop)
-    }
+/// Primitive constant values
+#[derive(Debug, Clone, Copy)]
+pub enum ConstantValue {
+    Bool(bool),
+    Int8(i8), Int16(i16), Int32(i32), Int64(i64),
+    Uint8(u8), Uint16(u16), Uint32(u32), Uint64(u64),
+    Float(f32), Double(f64),
 }
 ```
 
----
-
-## Lookup Integration
-
-### CompilationContext Changes
-
-`CompilationContext::lookup_global_var` needs to check both FFI and script globals:
+### GlobalPropertyAccessor Trait
 
 ```rust
-impl<'ast, 'app> CompilationContext<'ast, 'app> {
-    pub fn lookup_global_var(&self, name: &str) -> Option<GlobalVarInfo> {
-        // 1. Check FFI global properties (from Context)
-        if let Some(prop) = self.ffi_globals.get(name) {
-            return Some(GlobalVarInfo {
-                data_type: prop.data_type.clone(),
-                is_const: prop.is_const,
-                source: GlobalVarSource::Ffi,
-            });
-        }
+/// Type-erased accessor for mutable global properties
+pub trait GlobalPropertyAccessor: Send + Sync {
+    /// Get the data type of this property
+    fn data_type(&self) -> DataType;
 
-        // 2. Check script global variables (from ScriptRegistry)
-        if let Some(var) = self.script_registry.get_global_var(name) {
-            return Some(GlobalVarInfo {
-                data_type: var.data_type.clone(),
-                is_const: var.is_const,
-                source: GlobalVarSource::Script,
-            });
-        }
+    /// Read the current value (type-erased)
+    fn read(&self) -> Box<dyn std::any::Any>;
 
-        None
+    /// Write a new value (type-erased)
+    fn write(&self, value: Box<dyn std::any::Any>) -> Result<(), PropertyError>;
+}
+
+impl<T: Any + Clone + Send + Sync + 'static> GlobalPropertyAccessor for Arc<RwLock<T>> {
+    fn data_type(&self) -> DataType {
+        T::data_type()  // Uses our Any trait
     }
+
+    fn read(&self) -> Box<dyn std::any::Any> {
+        Box::new(self.read().unwrap().clone())
+    }
+
+    fn write(&self, value: Box<dyn std::any::Any>) -> Result<(), PropertyError> {
+        let typed = value.downcast::<T>()
+            .map_err(|_| PropertyError::TypeMismatch)?;
+        *self.write().unwrap() = *typed;
+        Ok(())
+    }
+}
+```
+
+### IntoGlobalProperty Trait
+
+```rust
+/// Trait for types that can be registered as global properties
+pub trait IntoGlobalProperty {
+    fn into_global_impl(self) -> GlobalPropertyImpl;
+    fn data_type() -> DataType;
+    fn is_inherently_const() -> bool;
+}
+
+// Raw primitives -> Constant (always const)
+impl IntoGlobalProperty for i32 {
+    fn into_global_impl(self) -> GlobalPropertyImpl {
+        GlobalPropertyImpl::Constant(ConstantValue::Int32(self))
+    }
+    fn data_type() -> DataType { DataType::simple(primitives::INT32) }
+    fn is_inherently_const() -> bool { true }
+}
+
+// Arc<RwLock<T>> -> Mutable, uses T::data_type() directly
+// The #[derive(Any)] macro generates data_type() with is_handle=true for reference types
+impl<T: Any + Clone + Send + Sync + 'static> IntoGlobalProperty for Arc<RwLock<T>> {
+    fn into_global_impl(self) -> GlobalPropertyImpl {
+        GlobalPropertyImpl::Mutable(Box::new(self))
+    }
+    fn data_type() -> DataType { T::data_type() }
+    fn is_inherently_const() -> bool { false }
+}
+```
+
+### GlobalMeta (for macros)
+
+```rust
+/// Metadata returned by #[angelscript::global] macro
+pub struct GlobalMeta {
+    pub name: &'static str,
+    pub namespace: Option<&'static [&'static str]>,
+    pub value: ConstantValue,
 }
 ```
 
 ---
 
-## Implementation Phases
+## Files to Modify/Create
 
-### Phase 1: Storage Infrastructure
-- [ ] Add `GlobalProperty<'app>` struct to `src/ffi/global_property.rs`
-- [ ] Add global properties storage to Context
-- [ ] Add `GlobalPropertyError` error type
+### Phase 1: Core Types (angelscript-core)
 
-### Phase 2: Builder API
-- [ ] Create `GlobalPropertyBuilder` with fluent methods
-- [ ] Add `context.global_property(name)` entry point
-- [ ] Implement type resolution via TypeHash
+**`crates/angelscript-core/src/entries/global_property.rs`** (new)
+- `GlobalPropertyEntry`
+- `GlobalPropertyImpl`
+- `ConstantValue`
 
-### Phase 3: Lookup Integration
-- [ ] Update `CompilationContext::lookup_global_var`
-- [ ] Add `GlobalVarSource` enum to distinguish FFI vs script globals
-- [ ] Wire up to semantic analysis
+**`crates/angelscript-core/src/global_property_accessor.rs`** (new)
+- `GlobalPropertyAccessor` trait
+- `PropertyError` enum
+- `impl GlobalPropertyAccessor for Arc<RwLock<T>>`
 
-### Phase 4: Testing
-- [ ] Unit tests for builder API
-- [ ] Integration tests for FFI global access from scripts
-- [ ] Tests for namespace support
+**`crates/angelscript-core/src/into_global_property.rs`** (new)
+- `IntoGlobalProperty` trait
+- Implementations for all primitive types
+- Implementation for `Arc<RwLock<T>>`
+
+**`crates/angelscript-core/src/global_meta.rs`** (new)
+- `GlobalMeta` struct (for macro output)
+
+**`crates/angelscript-core/src/entries/mod.rs`**
+- Export `GlobalPropertyEntry`, `GlobalPropertyImpl`, `ConstantValue`
+
+**`crates/angelscript-core/src/lib.rs`**
+- Export new modules
+
+### Phase 2: Registry Storage (angelscript-registry)
+
+**`crates/angelscript-registry/src/registry.rs`**
+- Add `globals: FxHashMap<TypeHash, GlobalPropertyEntry>`
+- Add `register_global()` method
+- Add `get_global(hash: TypeHash)` method
+
+**Note**: No separate name lookup map needed - globals use `TypeHash::from_ident(name)` for lookup, following the same pattern as other IDENT-based lookups.
+
+### Phase 3: Module API (angelscript-registry)
+
+**`crates/angelscript-registry/src/module.rs`**
+```rust
+impl Module {
+    /// Register a global property (constant or mutable)
+    pub fn global<T: IntoGlobalProperty>(
+        self,
+        name: &str,
+        value: T
+    ) -> GlobalPropertyBuilder;
+
+    /// Register from macro-generated metadata
+    pub fn global_meta(self, meta: fn() -> GlobalMeta) -> Self;
+}
+
+pub struct GlobalPropertyBuilder {
+    module: Module,
+    entry: GlobalPropertyEntry,
+}
+
+impl GlobalPropertyBuilder {
+    /// Mark as const (object constness for reference types)
+    pub fn const_(mut self) -> Module {
+        self.entry.is_const = true;
+        self.module.pending_globals.push(self.entry);
+        self.module
+    }
+
+    /// Finish building (for mutable properties)
+    pub fn build(self) -> Module {
+        self.module.pending_globals.push(self.entry);
+        self.module
+    }
+}
+```
+
+### Phase 4: Macro Support (angelscript-macros)
+
+**`crates/angelscript-macros/src/global.rs`** (new)
+- `#[angelscript::global]` attribute macro
+- Parses: `name`, `namespace` attributes
+- Generates `fn NAME__global_meta() -> GlobalMeta`
+
+**`crates/angelscript-macros/src/lib.rs`**
+- Export `global` attribute macro
+
+### Phase 5: Tests
+
+**`crates/angelscript-registry/src/tests/global_tests.rs`** (new)
+- Primitive constant registration
+- Arc<RwLock<T>> mutable registration
+- Const vs mutable access semantics
+- Namespace qualification
+- Name lookup
+
+**`crates/angelscript-macros/tests/global_macro.rs`** (new)
+- Macro-based constant registration
+- Namespace and name attributes
 
 ---
 
-## Dependencies
+## Implementation Order
 
-- **Task 22 (TypeHash)**: Required for type resolution from string names
-  - `TypeHash::of("int")` computes hash from type name
-  - Lookup in unified type map without sealed registry requirement
+1. Add `ConstantValue` enum to core
+2. Add `GlobalPropertyEntry` and `GlobalPropertyImpl` to core
+3. Add `GlobalPropertyAccessor` trait and impl for `Arc<RwLock<T>>`
+4. Add `IntoGlobalProperty` trait and impls
+5. Add `GlobalMeta` struct
+6. Add storage to `TypeRegistry` (globals field + lookup methods)
+7. Add `global()` and `GlobalPropertyBuilder` to `Module`
+8. Add `global_meta()` to `Module`
+9. Add `#[angelscript::global]` macro
+10. Add tests
 
 ---
 
-## Critical Files
+## Future Work (VM/Heap phase)
 
-| File | Purpose |
-|------|---------|
-| `src/ffi/global_property.rs` | GlobalProperty struct and builder |
-| `src/ffi/context.rs` | Global property storage |
-| `src/semantic/compilation_context.rs` | Lookup integration |
+- Unsafe memory swapping for handle reassignment
+- Script-created objects in global properties
+- Remove `@ const` restriction when object heap exists
+- Non-primitive constants (strings, value types)
 
 ---
 
 ## Related Tasks
 
-- **Task 22**: TypeHash Identity System - enables type resolution from names
+- **Task 01**: Unified Type Registry - globals stored in TypeRegistry
 - **Task 23**: Ergonomic Module API - similar builder patterns
