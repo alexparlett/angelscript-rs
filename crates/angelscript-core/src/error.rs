@@ -643,6 +643,10 @@ pub enum RuntimeError {
         /// The error message.
         message: String,
     },
+
+    /// A global property access error.
+    #[error("property error: {0}")]
+    Property(#[from] crate::PropertyError),
 }
 
 // ============================================================================

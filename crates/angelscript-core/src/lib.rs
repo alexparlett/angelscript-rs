@@ -159,6 +159,9 @@ pub use entries::{
     FunctionEntry, FunctionImpl,
     // Unified type entry
     TypeEntry,
+    // Global property types
+    ConstantValue, GlobalPropertyAccessor, GlobalPropertyEntry, GlobalPropertyImpl,
+    IntoGlobalProperty, PropertyError,
 };
 
 // Proc-macro metadata types
@@ -171,6 +174,7 @@ pub use meta::{
     InterfaceMeta,
     InterfaceMethodMeta,
     FuncdefMeta,
+    GlobalMeta,
     // New types for enhanced function metadata
     ReturnMode,
     ReturnMeta,

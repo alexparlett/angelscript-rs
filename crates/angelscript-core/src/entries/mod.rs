@@ -25,6 +25,7 @@ mod funcdef;
 mod class;
 mod function;
 mod type_entry;
+mod global_property;
 
 // Source tracking
 pub use source::{FunctionSource, TypeSource};
@@ -43,3 +44,9 @@ pub use function::{FunctionEntry, FunctionImpl};
 
 // Unified type entry
 pub use type_entry::TypeEntry;
+
+// Global property types
+pub use global_property::{
+    ConstantValue, GlobalPropertyAccessor, GlobalPropertyEntry, GlobalPropertyImpl,
+    IntoGlobalProperty, PropertyError,
+};
