@@ -6,7 +6,7 @@ Implement the `TypeResolver` that converts AST `TypeExpr` nodes into semantic `D
 
 ## Goals
 
-1. Resolve simple type names to TypeHash using `ctx.get_type()` (layered lookup)
+1. Resolve simple type names to TypeHash using `ctx.resolve_type()` (O(1) via materialized scope)
 2. Handle type modifiers (const, handle @, reference &)
 3. Instantiate templates via `TemplateInstantiator` (Task 35)
 4. Support array types
@@ -15,7 +15,15 @@ Implement the `TypeResolver` that converts AST `TypeExpr` nodes into semantic `D
 ## Dependencies
 
 - Task 31: Compiler Foundation
-- Task 33: Compilation Context (layered registry)
+- Task 33: Compilation Context (provides O(1) `resolve_type()` via Materialized Scope)
+
+## Key Integration with Task 33
+
+Task 33 provides:
+- `ctx.resolve_type(name)` - O(1) lookup for unqualified names via materialized Scope
+- `ctx.resolve_type("ns::Type")` - O(1) lookup for qualified names via direct registry
+- Automatic namespace resolution (current namespace → imports → global)
+- Ambiguity detection during scope building (not per-lookup)
 
 ## Files to Create/Modify
 

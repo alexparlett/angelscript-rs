@@ -32,8 +32,20 @@ Implement Pass 1 of the two-pass compiler: walk the AST and register all type an
 
 ## Dependencies
 
-- Task 33: Compilation Context (layered registry)
+- Task 33: Compilation Context (provides namespace management and O(1) resolution)
 - Task 34: Type Resolution
+
+## Key Integration with Task 33
+
+Task 33's CompilationContext provides namespace management:
+- `ctx.enter_namespace(ns)` - Enter a namespace block, rebuilds Scope
+- `ctx.exit_namespace()` - Exit current namespace, rebuilds Scope
+- `ctx.add_import(ns)` - Process `using namespace`, rebuilds Scope
+- `ctx.current_namespace()` - Get current qualified namespace string
+- `ctx.register_type()` / `ctx.register_function()` / `ctx.register_global()` - Register in unit registry
+
+The Scope is automatically rebuilt when namespace changes, so registered types
+become immediately resolvable via `ctx.resolve_type()` (O(1)).
 
 ## Files to Create
 
@@ -150,8 +162,9 @@ impl<'a, 'reg, 'ast> RegistrationPass<'a, 'reg, 'ast> {
     }
 
     fn visit_using(&mut self, u: &'ast UsingDecl) {
-        let ns: Vec<String> = u.path.iter().map(|s| s.to_string()).collect();
-        self.ctx.add_import(ns);
+        // Join path parts into qualified namespace string
+        let ns = u.path.join("::");
+        self.ctx.add_import(&ns);
     }
 
     // ==========================================================================
