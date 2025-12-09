@@ -162,12 +162,12 @@ fn parse_heredoc_bytes() {
 
 ## Acceptance Criteria
 
-- [ ] `LiteralKind::String` stores `Vec<u8>`
-- [ ] Lexer produces raw bytes with escape processing
-- [ ] `\xNN` escape sequences work correctly
-- [ ] Heredoc strings preserve raw bytes
-- [ ] All existing tests pass (updated for new type)
-- [ ] New tests for byte escape sequences
+- [x] `LiteralKind::String` stores `Vec<u8>`
+- [x] Parser produces raw bytes with escape processing
+- [x] `\xNN` escape sequences work correctly
+- [x] Heredoc strings preserve raw bytes
+- [x] All existing tests pass (updated for new type)
+- [x] New tests for byte escape sequences
 
 ## Notes
 

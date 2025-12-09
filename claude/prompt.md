@@ -1,63 +1,54 @@
-# Current Task: String Factory Configuration (Task 32)
+# Current Task: AST String Literal Byte Storage (Task 32b)
 
 **Status:** Complete
 **Date:** 2025-12-09
-**Branch:** 032-string-factory
+**Branch:** 032b-ast-string-bytes
 
 ---
 
-## Task 32: String Factory Configuration
+## Task 32b: AST String Literal Byte Storage
 
-Added `StringFactory` trait and configuration to `Context` for custom string
-literal handling. This allows users to configure custom string implementations
-(interned strings, OsString, ASCII-optimized, etc.).
+Changed `LiteralKind::String` from `String` to `Vec<u8>` to support non-UTF8
+escape sequences and proper StringFactory integration.
 
 ### Implementation Summary
 
 | Component | Location | Purpose |
 |-----------|----------|---------|
-| `StringFactory` trait | angelscript-core/src/string_factory.rs | Trait for creating string values from raw bytes |
-| `ScriptStringFactory` | angelscript-modules/src/string.rs | Default factory using ScriptString |
-| `Context::set_string_factory()` | src/context.rs | Set custom string factory |
-| `Context::string_factory()` | src/context.rs | Get current string factory |
-| `NoStringFactory` error | angelscript-core/src/error.rs | Compile error when no factory configured |
+| `LiteralKind::String(Vec<u8>)` | angelscript-parser/src/ast/expr.rs | Store raw bytes instead of String |
+| `process_string_bytes()` | angelscript-parser/src/ast/expr_parser.rs | Parse escape sequences into bytes |
+| `InvalidEscapeSequence` | angelscript-core/src/error.rs | New error variant for bad escapes |
 
-### API Usage
+### Escape Sequences Supported
 
-```rust
-// Using default modules (sets ScriptStringFactory automatically)
-let ctx = Context::with_default_modules()?;
-
-// Or set manually
-let mut ctx = Context::new();
-ctx.set_string_factory(Box::new(ScriptStringFactory));
-
-// Custom factory
-ctx.set_string_factory(Box::new(MyCustomStringFactory));
-
-// Check if factory is set
-if let Some(factory) = ctx.string_factory() {
-    let value = factory.create(b"hello");
-}
-```
+| Escape | Byte |
+|--------|------|
+| `\n` | 0x0A (newline) |
+| `\r` | 0x0D (carriage return) |
+| `\t` | 0x09 (tab) |
+| `\\` | 0x5C (backslash) |
+| `\"` | 0x22 (double quote) |
+| `\'` | 0x27 (single quote) |
+| `\0` | 0x00 (null byte) |
+| `\xNN` | 0xNN (hex byte) |
 
 ### Key Files
 
-- `crates/angelscript-core/src/string_factory.rs` - StringFactory trait
-- `crates/angelscript-modules/src/string.rs` - ScriptStringFactory impl
-- `src/context.rs` - Context integration
-- `crates/angelscript-core/src/error.rs` - NoStringFactory error variant
-- `claude/tasks/32_string_factory.md` - Full task spec
+- `crates/angelscript-parser/src/ast/expr.rs` - LiteralKind enum change
+- `crates/angelscript-parser/src/ast/expr_parser.rs` - Escape sequence processing
+- `crates/angelscript-core/src/error.rs` - InvalidEscapeSequence error
+- `claude/tasks/32b_ast_string_bytes.md` - Full task spec
 
 ---
 
 ## Complete
 
-Task 32 is complete. The string factory pattern enables:
-- Custom string implementations for string literals
-- Raw byte input (no UTF-8 assumption)
-- Default ScriptStringFactory via `with_default_modules()`
-- Clear error when no factory is configured
+Task 32b is complete. The AST now stores string literals as raw bytes:
+- `LiteralKind::String(Vec<u8>)` instead of `LiteralKind::String(String)`
+- Full escape sequence processing (\n, \r, \t, \\, \", \', \0, \xNN)
+- Heredoc strings preserve raw bytes (no escape processing)
+- 8 new tests for escape sequence handling
+- All 601 parser tests pass
 
 ## Next Steps
 

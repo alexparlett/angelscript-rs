@@ -155,6 +155,8 @@ pub enum ParseErrorKind {
     MissingSemicolon,
     /// General syntax error.
     InvalidSyntax,
+    /// Invalid escape sequence in string literal.
+    InvalidEscapeSequence,
 
     // Modifier errors
     /// Invalid modifier for this context.
@@ -200,6 +202,7 @@ impl ParseErrorKind {
             ParseErrorKind::MismatchedDelimiter => "mismatched delimiter",
             ParseErrorKind::MissingSemicolon => "missing semicolon",
             ParseErrorKind::InvalidSyntax => "invalid syntax",
+            ParseErrorKind::InvalidEscapeSequence => "invalid escape sequence",
             ParseErrorKind::InvalidModifier => "invalid modifier",
             ParseErrorKind::ConflictingModifiers => "conflicting modifiers",
             ParseErrorKind::InternalError => "internal error",

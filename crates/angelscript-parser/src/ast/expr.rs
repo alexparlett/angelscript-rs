@@ -105,8 +105,8 @@ pub enum LiteralKind {
     Double(f64),
     /// Boolean literal
     Bool(bool),
-    /// String literal
-    String(String),
+    /// String literal (raw bytes - factory interprets encoding)
+    String(Vec<u8>),
     /// Null literal
     Null,
 }
@@ -557,7 +557,7 @@ mod tests {
         let bool_lit = LiteralKind::Bool(false);
         assert!(matches!(bool_lit, LiteralKind::Bool(false)));
 
-        let str_lit = LiteralKind::String("hello".to_string());
+        let str_lit = LiteralKind::String(b"hello".to_vec());
         assert!(matches!(str_lit, LiteralKind::String(_)));
 
         let null_lit = LiteralKind::Null;
@@ -587,7 +587,7 @@ mod tests {
         let arena = Bump::new();
 
         let index = arena.alloc(Expr::Literal(LiteralExpr {
-            kind: LiteralKind::String("value".to_string()),
+            kind: LiteralKind::String(b"value".to_vec()),
             span: Span::new(1, 10, 7),
         }));
         let item = IndexItem {
