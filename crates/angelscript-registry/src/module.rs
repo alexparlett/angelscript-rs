@@ -18,7 +18,10 @@
 //! context.install(module);
 //! ```
 
-use angelscript_core::{Any, ClassMeta, FuncdefMeta, FunctionMeta, InterfaceMeta};
+use angelscript_core::{
+    Any, ClassMeta, FuncdefMeta, FunctionMeta, GlobalPropertyEntry, IntoGlobalProperty,
+    InterfaceMeta, TypeHash, TypeSource,
+};
 
 /// A module containing pending type and function registrations.
 ///
@@ -39,6 +42,8 @@ pub struct Module {
     pub interfaces: Vec<InterfaceMeta>,
     /// Pending funcdef registrations.
     pub funcdefs: Vec<FuncdefMeta>,
+    /// Pending global property registrations.
+    pub globals: Vec<GlobalPropertyEntry>,
 }
 
 impl Module {
@@ -145,12 +150,62 @@ impl Module {
         self
     }
 
+    /// Register a global property.
+    ///
+    /// Primitives are registered as constants (immutable).
+    /// `Arc<RwLock<T>>` is registered as mutable shared state.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// use std::sync::{Arc, RwLock};
+    ///
+    /// // Primitive constants
+    /// let module = Module::new()
+    ///     .global("PI", 3.14159f64)      // const double PI
+    ///     .global("MAX", 100i32);        // const int MAX
+    ///
+    /// // Mutable shared state
+    /// let score = Arc::new(RwLock::new(0i32));
+    /// let module = Module::new()
+    ///     .global("score", score);       // int score (mutable)
+    /// ```
+    pub fn global<V: IntoGlobalProperty>(mut self, name: &str, value: V) -> Self {
+        let implementation = value.into_global_impl();
+        let data_type = implementation.data_type();
+        let is_const = V::is_inherently_const();
+        let qualified_name = self.qualify_name(name);
+
+        let entry = GlobalPropertyEntry {
+            name: name.to_string(),
+            type_hash: TypeHash::from_name(&qualified_name),
+            qualified_name,
+            data_type,
+            is_const,
+            source: TypeSource::ffi_untyped(),
+            implementation,
+        };
+
+        self.globals.push(entry);
+        self
+    }
+
+    /// Helper to qualify a name with the module's namespace.
+    fn qualify_name(&self, name: &str) -> String {
+        if self.namespace.is_empty() {
+            name.to_string()
+        } else {
+            format!("{}::{}", self.qualified_namespace(), name)
+        }
+    }
+
     /// Check if the module is empty.
     pub fn is_empty(&self) -> bool {
         self.classes.is_empty()
             && self.functions.is_empty()
             && self.interfaces.is_empty()
             && self.funcdefs.is_empty()
+            && self.globals.is_empty()
     }
 
     /// Get the total number of pending registrations.
@@ -159,6 +214,7 @@ impl Module {
             + self.functions.len()
             + self.interfaces.len()
             + self.funcdefs.len()
+            + self.globals.len()
     }
 }
 
@@ -388,5 +444,36 @@ mod tests {
         assert_eq!(module.functions.len(), 1);
         assert!(module.interfaces.is_empty());
         assert!(module.funcdefs.is_empty());
+    }
+
+    #[test]
+    fn module_with_global_constant() {
+        let module = Module::new()
+            .global("GRAVITY", 9.81f64)
+            .global("MAX_PLAYERS", 64i32);
+
+        assert_eq!(module.len(), 2);
+        assert_eq!(module.globals.len(), 2);
+
+        let gravity = &module.globals[0];
+        assert_eq!(gravity.name, "GRAVITY");
+        assert_eq!(gravity.qualified_name, "GRAVITY");
+        assert!(gravity.is_const);
+
+        let max = &module.globals[1];
+        assert_eq!(max.name, "MAX_PLAYERS");
+        assert!(max.is_const);
+    }
+
+    #[test]
+    fn module_with_global_in_namespace() {
+        let module = Module::in_namespace(&["physics"])
+            .global("GRAVITY", 9.81f64);
+
+        assert_eq!(module.globals.len(), 1);
+        let gravity = &module.globals[0];
+        assert_eq!(gravity.name, "GRAVITY");
+        assert_eq!(gravity.qualified_name, "physics::GRAVITY");
+        assert_eq!(gravity.type_hash, TypeHash::from_name("physics::GRAVITY"));
     }
 }
