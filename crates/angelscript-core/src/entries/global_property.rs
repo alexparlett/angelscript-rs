@@ -85,6 +85,8 @@ impl ConstantValue {
 pub struct GlobalPropertyEntry {
     /// Simple name (e.g., "PI")
     pub name: String,
+    /// Namespace path (e.g., `["math"]`).
+    pub namespace: Vec<String>,
     /// Qualified name including namespace (e.g., "math::PI")
     pub qualified_name: String,
     /// Type hash for lookup
@@ -100,14 +102,15 @@ pub struct GlobalPropertyEntry {
 }
 
 impl GlobalPropertyEntry {
-    /// Create a new constant global property.
+    /// Create a new constant global property in the global namespace.
     pub fn constant(name: impl Into<String>, value: ConstantValue) -> Self {
         let name = name.into();
         let data_type = value.data_type();
         Self {
+            name: name.clone(),
+            namespace: Vec::new(),
             qualified_name: name.clone(),
             type_hash: TypeHash::from_name(&name),
-            name,
             data_type,
             is_const: true,
             source: TypeSource::ffi_untyped(),
@@ -115,7 +118,20 @@ impl GlobalPropertyEntry {
         }
     }
 
+    /// Set the namespace and update qualified name.
+    pub fn with_namespace(mut self, namespace: Vec<String>) -> Self {
+        self.namespace = namespace.clone();
+        if namespace.is_empty() {
+            self.qualified_name = self.name.clone();
+        } else {
+            self.qualified_name = format!("{}::{}", namespace.join("::"), self.name);
+        }
+        self.type_hash = TypeHash::from_name(&self.qualified_name);
+        self
+    }
+
     /// Set the qualified name (including namespace).
+    #[deprecated(note = "Use with_namespace instead for consistency")]
     pub fn with_qualified_name(mut self, qualified_name: impl Into<String>) -> Self {
         self.qualified_name = qualified_name.into();
         self.type_hash = TypeHash::from_name(&self.qualified_name);

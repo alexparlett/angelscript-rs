@@ -93,7 +93,7 @@ impl Context {
 
         // Install classes
         for class_meta in module.classes {
-            self.install_class(&qualified_ns, class_meta)?;
+            self.install_class(&module.namespace, &qualified_ns, class_meta)?;
         }
 
         // Install functions - pass associated_type for methods, None for globals
@@ -103,12 +103,12 @@ impl Context {
 
         // Install interfaces
         for interface_meta in module.interfaces {
-            self.install_interface(&qualified_ns, interface_meta)?;
+            self.install_interface(&module.namespace, &qualified_ns, interface_meta)?;
         }
 
         // Install funcdefs
         for funcdef_meta in module.funcdefs {
-            self.install_funcdef(&qualified_ns, funcdef_meta)?;
+            self.install_funcdef(&module.namespace, &qualified_ns, funcdef_meta)?;
         }
 
         Ok(())
@@ -154,16 +154,17 @@ impl Context {
     // Private installation helpers
     // =========================================================================
 
-    fn install_class(&mut self, namespace: &str, meta: ClassMeta) -> Result<(), ContextError> {
-        let qualified_name = if namespace.is_empty() {
+    fn install_class(&mut self, namespace: &[String], qualified_ns: &str, meta: ClassMeta) -> Result<(), ContextError> {
+        let qualified_name = if qualified_ns.is_empty() {
             meta.name.to_string()
         } else {
-            format!("{}::{}", namespace, meta.name)
+            format!("{}::{}", qualified_ns, meta.name)
         };
 
         // Create the class entry
         let mut class_entry = ClassEntry::new(
             meta.name,
+            namespace.to_vec(),
             &qualified_name,
             meta.type_hash,
             meta.type_kind,
@@ -358,17 +359,19 @@ impl Context {
 
     fn install_interface(
         &mut self,
-        namespace: &str,
+        namespace: &[String],
+        qualified_ns: &str,
         meta: InterfaceMeta,
     ) -> Result<(), ContextError> {
-        let qualified_name = if namespace.is_empty() {
+        let qualified_name = if qualified_ns.is_empty() {
             meta.name.to_string()
         } else {
-            format!("{}::{}", namespace, meta.name)
+            format!("{}::{}", qualified_ns, meta.name)
         };
 
         let mut entry = InterfaceEntry::new(
             meta.name,
+            namespace.to_vec(),
             &qualified_name,
             meta.type_hash,
             TypeSource::ffi_untyped(),
@@ -399,11 +402,11 @@ impl Context {
         Ok(())
     }
 
-    fn install_funcdef(&mut self, namespace: &str, meta: FuncdefMeta) -> Result<(), ContextError> {
-        let qualified_name = if namespace.is_empty() {
+    fn install_funcdef(&mut self, namespace: &[String], qualified_ns: &str, meta: FuncdefMeta) -> Result<(), ContextError> {
+        let qualified_name = if qualified_ns.is_empty() {
             meta.name.to_string()
         } else {
-            format!("{}::{}", namespace, meta.name)
+            format!("{}::{}", qualified_ns, meta.name)
         };
 
         let params: Vec<DataType> = meta
@@ -416,6 +419,7 @@ impl Context {
         let entry = if let Some(parent_hash) = meta.parent_type {
             FuncdefEntry::new_child(
                 meta.name,
+                namespace.to_vec(),
                 &qualified_name,
                 meta.type_hash,
                 TypeSource::ffi_untyped(),
@@ -426,6 +430,7 @@ impl Context {
         } else {
             FuncdefEntry::new(
                 meta.name,
+                namespace.to_vec(),
                 &qualified_name,
                 meta.type_hash,
                 TypeSource::ffi_untyped(),

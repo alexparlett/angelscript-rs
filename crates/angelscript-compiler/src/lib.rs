@@ -10,13 +10,16 @@
 //! ## Modules
 //!
 //! - [`bytecode`]: Bytecode types (OpCode, BytecodeChunk, ConstantPool)
+//! - [`context`]: Compilation context with namespace-aware resolution
 //! - [`conversion`]: Type conversion tracking for overload resolution
 //! - [`expr_info`]: Expression type information
 
 pub mod bytecode;
+pub mod context;
 mod conversion;
 mod expr_info;
 
+pub use context::{CompilationContext, Scope};
 pub use conversion::{Conversion, ConversionKind};
 pub use expr_info::ExprInfo;
 
