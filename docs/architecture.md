@@ -1,10 +1,10 @@
-# Architecture Design
+# Architecture Overview
 
-> **Status**: DRAFT - Pending confirmation
+This document provides a high-level overview of the AngelScript-Rust engine architecture.
 
 ## Goal
 
-Execute AngelScript code from Rust, with the ability to register Rust types and functions.
+Execute AngelScript code from Rust, with the ability to register Rust types and functions through a macro-based FFI system.
 
 ## Target Use Cases
 
@@ -16,316 +16,214 @@ Each entity has a script object instance. Thousands of instances, short executio
 
 **Key requirement**: Compile once, instantiate many times with isolated state.
 
-## Architecture
+## Crate Structure
+
+```
+angelscript (main crate)
+├── angelscript-core       # Shared types (TypeHash, DataType, TypeEntry, FunctionDef)
+├── angelscript-parser     # Lexer, AST, and parser
+├── angelscript-macros     # Procedural macros for FFI
+├── angelscript-registry   # SymbolRegistry and Module
+├── angelscript-compiler   # 2-pass compilation
+└── angelscript-modules    # Standard library (string, array, dictionary, math)
+```
+
+### Dependency Graph
+
+```
+angelscript-core  ←─────────────────────────────┐
+       ↑                                        │
+       │                                        │
+angelscript-parser    angelscript-registry ─────┤
+       ↑                     ↑                  │
+       │                     │                  │
+       └─────── angelscript-compiler ───────────┘
+                      ↑
+                      │
+               angelscript (main)
+                      │
+            angelscript-modules
+```
+
+## Core Concepts
+
+### TypeHash
+
+A deterministic 64-bit hash uniquely identifying types, functions, and methods. Same name always produces the same hash, enabling forward references and unified FFI/script identity. See [Symbol Registry](./symbol-registry.md) for details.
+
+### DataType
+
+Complete type representation including modifiers: `const`, handle (`@`), and reference modes (`&in`, `&out`, `&inout`).
+
+### TypeEntry
+
+Registry storage for all type kinds: primitives, classes, interfaces, enums, funcdefs, and template parameters.
+
+### TypeKind
+
+Memory semantics classification:
+- **Value**: Stack-allocated, copied on assignment (optionally POD)
+- **Reference**: Heap-allocated via factory, uses ref counting
+- **ScriptObject**: Script-defined classes
+
+## FFI Flow
+
+The FFI system connects Rust types to AngelScript through a pipeline:
+
+```
+┌──────────────────────────────────────────────────────────────────────────┐
+│                           COMPILE TIME                                    │
+├──────────────────────────────────────────────────────────────────────────┤
+│                                                                          │
+│  #[derive(Any)]              #[function]                                 │
+│  struct Player { ... }  ───► impl Player { fn update() }                 │
+│         │                           │                                    │
+│         ▼                           ▼                                    │
+│    ClassMeta                  FunctionMeta                               │
+│  (type_hash, properties)    (params, return_type, behavior)             │
+│         │                           │                                    │
+│         └───────────┬───────────────┘                                    │
+│                     ▼                                                    │
+│              Module::new()                                               │
+│                .ty::<Player>()                                           │
+│                .function(Player::update__meta)                           │
+│                     │                                                    │
+└─────────────────────┼────────────────────────────────────────────────────┘
+                      │
+┌─────────────────────┼────────────────────────────────────────────────────┐
+│                     ▼              INITIALIZATION                        │
+├──────────────────────────────────────────────────────────────────────────┤
+│                                                                          │
+│              Context::install(module)                                    │
+│                     │                                                    │
+│                     ▼                                                    │
+│    ┌────────────────────────────────────┐                               │
+│    │         SymbolRegistry             │                               │
+│    ├────────────────────────────────────┤                               │
+│    │ types: HashMap<TypeHash, TypeEntry>│ ◄── ClassEntry, EnumEntry... │
+│    │ functions: HashMap<TypeHash, Func> │ ◄── FunctionEntry + NativeFn │
+│    │ overloads: HashMap<String, Vec<H>> │                               │
+│    └────────────────────────────────────┘                               │
+│                                                                          │
+└──────────────────────────────────────────────────────────────────────────┘
+                      │
+┌─────────────────────┼────────────────────────────────────────────────────┐
+│                     ▼              COMPILATION                           │
+├──────────────────────────────────────────────────────────────────────────┤
+│                                                                          │
+│    Script Source ──► Parser ──► AST                                      │
+│                                  │                                       │
+│                     ┌────────────┴────────────┐                         │
+│                     ▼                         ▼                         │
+│              Pass 1: Registration      Pass 2: Compilation              │
+│              - Register script types   - Type checking                  │
+│              - Register signatures     - Overload resolution            │
+│              - Build inheritance       - Bytecode generation            │
+│                     │                         │                         │
+│                     ▼                         ▼                         │
+│              Script types added        CompiledModule                   │
+│              to SymbolRegistry         (bytecode, metadata)             │
+│                                                                          │
+└──────────────────────────────────────────────────────────────────────────┘
+                      │
+┌─────────────────────┼────────────────────────────────────────────────────┐
+│                     ▼              RUNTIME                               │
+├──────────────────────────────────────────────────────────────────────────┤
+│                                                                          │
+│    Engine (immutable, Arc-shared)                                        │
+│      │                                                                   │
+│      ├──► SymbolRegistry (FFI + script types/functions)                 │
+│      └──► CompiledModules (bytecode)                                    │
+│                     │                                                    │
+│                     ▼                                                    │
+│    Runtime (mutable, per-world)                                          │
+│      │                                                                   │
+│      ├──► Object Pool (script instances)                                │
+│      └──► Global Variables                                              │
+│                     │                                                    │
+│                     ▼                                                    │
+│    VM (transient, reusable)                                              │
+│      │                                                                   │
+│      ├──► Executes bytecode                                             │
+│      ├──► Calls FFI functions via NativeFn                              │
+│      └──► Manages call/value stacks                                     │
+│                                                                          │
+└──────────────────────────────────────────────────────────────────────────┘
+```
+
+### Key Points
+
+1. **Macros generate metadata** - `#[derive(Any)]` produces `ClassMeta`, `#[function]` produces `FunctionMeta`
+
+2. **Module collects metadata** - `Module` is a builder that gathers type and function metadata before installation
+
+3. **Installation populates registry** - `Context::install()` converts metadata to `TypeEntry`/`FunctionEntry` and stores them in `SymbolRegistry`
+
+4. **Compilation uses registry** - Both FFI and script types live in the same registry, enabling seamless interop
+
+5. **Runtime dispatches via NativeFn** - FFI functions store a `NativeFn` pointer that the VM calls directly
+
+## Parser
+
+The parser uses recursive descent to produce a typed AST. Key components:
+
+- **Lexer**: Tokenizes source with span tracking for error messages
+- **AST**: Declarations (classes, functions), statements (if, while, for), expressions
+- **Parser**: Single-pass recursive descent, produces `Vec<Decl>`
+
+## Compiler
+
+Two-pass compilation:
+
+**Pass 1 - Registration**: Collects all type and function declarations without resolving bodies. Registers script classes, interfaces, enums, funcdefs. Builds inheritance chains and validates template instantiations.
+
+**Pass 2 - Compilation**: Resolves types, performs semantic analysis, generates bytecode. Handles type checking, overload resolution, implicit conversions, and control flow analysis.
+
+## Runtime Architecture
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │                      Engine (Arc<Engine>)                       │
-│  ┌────────────────────────────────────────────────────────────┐ │
-│  │ Types: Vec3(value), AiAgent(ref), Player(script class)     │ │
-│  │ Functions: sqrt, print, spawn_enemy                        │ │
-│  │ Compiled: "game.as" → AST/bytecode                         │ │
-│  └────────────────────────────────────────────────────────────┘ │
-│  Immutable after setup, shared via Arc                          │
+│  Immutable after setup, shared across threads                   │
+│  Contains: SymbolRegistry, CompiledModules                      │
 └─────────────────────────────────────────────────────────────────┘
                                 │
                                 ▼
 ┌─────────────────────────────────────────────────────────────────┐
 │                      Runtime<'engine>                           │
-│  ┌────────────────────────────────────────────────────────────┐ │
-│  │ Object Pool:                                               │ │
-│  │   [0] AiAgent { native Rust data }                         │ │
-│  │   [1] Enemy { script class instance }                      │ │
-│  │   [2] AiAgent { native Rust data }                         │ │
-│  │   [3] (free)                                               │ │
-│  └────────────────────────────────────────────────────────────┘ │
-│  ┌────────────────────────────────────────────────────────────┐ │
-│  │ Globals: game_time=0.0, difficulty=2                       │ │
-│  └────────────────────────────────────────────────────────────┘ │
-│  ┌────────────────────────────────────────────────────────────┐ │
-│  │ Callbacks: on_damage → FuncRef { ... }                     │ │
-│  └────────────────────────────────────────────────────────────┘ │
-│  Mutable, one per "world", owns all script objects              │
+│  Mutable, one per "world"                                       │
+│  Contains: Object Pool, Globals, Callbacks                      │
 └─────────────────────────────────────────────────────────────────┘
                                 │
                                 ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│                            Vm                                   │
-│  ┌──────────────────────┐  ┌────────────────────────────────┐  │
-│  │ Call Stack:          │  │ Value Stack:                   │  │
-│  │   [0] main()         │  │   [0] 42                       │  │
-│  │   [1] enemy.update() │  │   [1] Handle(1)                │  │
-│  └──────────────────────┘  └────────────────────────────────┘  │
-│  Transient, reusable, borrows &mut Runtime during execution     │
+│                            VM                                   │
+│  Transient, reusable                                            │
+│  Contains: Call Stack, Value Stack                              │
+│  Borrows &mut Runtime during execution                          │
 └─────────────────────────────────────────────────────────────────┘
-```
-
-## Core Types
-
-### Engine
-
-Central registry. Immutable after setup, shared everywhere.
-
-```rust
-pub struct Engine {
-    /// Type definitions (primitives + registered + script-defined)
-    types: Vec<TypeDef>,
-    type_by_name: HashMap<String, TypeId>,
-    
-    /// Global functions (registered + script-defined)
-    functions: Vec<FunctionDef>,
-    func_by_name: HashMap<String, FunctionId>,
-    
-    /// Compiled script code
-    scripts: HashMap<String, CompiledScript>,
-}
-```
-
-### Runtime
-
-Owns all script objects for one "world". Mutable.
-
-```rust
-pub struct Runtime<'e> {
-    engine: &'e Engine,
-    objects: ObjectPool,
-    globals: HashMap<String, Value>,
-    callbacks: HashMap<String, FuncRef>,
-}
-```
-
-### Vm
-
-Execution machinery. Transient, reusable, stateless between calls.
-
-```rust
-pub struct Vm {
-    frames: Vec<CallFrame>,
-    stack: Vec<Value>,
-}
 ```
 
 ### Handle
 
-Lightweight reference into Runtime's object pool.
+Lightweight 8-byte reference into Runtime's object pool (index + generation for safe reuse).
 
-```rust
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub struct Handle {
-    index: u32,
-    generation: u32,
-}
-```
+### Reference Counting
 
-#### Handle Reference Counting
-
-**Important:** Reference counting (AddRef/Release) is the **VM's responsibility**, NOT the compiler's.
-
-- **Compiler Role:** The semantic analyzer validates handle types and emits appropriate bytecode for handle operations (assignment, parameter passing, null checks).
-- **VM Role:** The virtual machine tracks reference counts and manages object lifetimes by calling AddRef/Release at runtime.
-
-This separation ensures:
-1. The compiler stays type-safe and focused on validation
-2. The VM handles runtime memory management details
-3. Native types can provide their own AddRef/Release implementations
-
-**Note:** The `@+` auto-handle feature (mentioned in AngelScript docs for FFI) is also a VM-level feature for automatic handle wrapping at native function boundaries, not a compiler-time type modifier.
-
-### Value
-
-Runtime representation of script values.
-
-```rust
-#[derive(Clone, Debug)]
-pub enum Value {
-    // Primitives (inline)
-    Void,
-    Bool(bool),
-    Int8(i8),
-    Int16(i16),
-    Int32(i32),
-    Int64(i64),
-    UInt8(u8),
-    UInt16(u16),
-    UInt32(u32),
-    UInt64(u64),
-    Float(f32),
-    Double(f64),
-    
-    // Value types (inline, copied on assignment)
-    // e.g., Vec3 stored directly in Value
-    
-    // Reference types (handle into pool)
-    Object(Handle),
-    Null,
-    
-    // Special
-    Enum { type_id: TypeId, value: i64 },
-    Func(FuncRef),
-}
-```
-
-### FuncRef
-
-Reference to a callable script function (for funcdefs/callbacks).
-
-```rust
-#[derive(Clone)]
-pub struct FuncRef {
-    function_id: FunctionId,
-    bound_object: Option<Handle>,  // For delegates
-}
-```
-
-## Value Types vs Reference Types
-
-| Kind | Storage | Assignment | Example |
-|------|---------|------------|---------|
-| Value | Inline in `Value` | Copy | `Vec3`, `int`, `float` |
-| Reference | Runtime's object pool | Handle (8 bytes) | `AiAgent`, `Player`, script classes |
-
-```as
-// Value type - copied
-Vec3 a = Vec3(1, 2, 3);
-Vec3 b = a;  // b is a copy
-
-// Reference type - handle
-AiAgent@ a = AiAgent();
-AiAgent@ b = a;  // b points to same object
-```
-
-## Registration API
-
-All registration happens on `Engine` before freezing:
-
-```rust
-let mut engine = Engine::new();
-
-// === Global functions ===
-engine.register_fn("print", |s: &str| println!("{}", s));
-engine.register_fn("sqrt", f64::sqrt);
-
-// Functions that need runtime access
-engine.register_fn("spawn_enemy", |runtime: &mut Runtime, pos: Vec3| -> Handle {
-    runtime.create("Enemy", &[pos.into()])
-});
-
-// === Value type ===
-engine.register_type::<Vec3>("Vec3")
-    .value_type()
-    .constructor(|x: f64, y: f64, z: f64| Vec3::new(x, y, z))
-    .property("x", |v: &Vec3| v.x, |v: &mut Vec3, x| v.x = x)
-    .property("y", |v: &Vec3| v.y, |v: &mut Vec3, y| v.y = y)
-    .property("z", |v: &Vec3| v.z, |v: &mut Vec3, z| v.z = z)
-    .method("length", |v: &Vec3| v.length())
-    .op_add(|a: &Vec3, b: &Vec3| *a + *b)
-    .build()?;
-
-// === Reference type ===
-engine.register_type::<AiAgent>("AiAgent")
-    .reference_type()
-    .constructor(|| AiAgent::new())
-    .method("think", |a: &mut AiAgent, dt: f64| a.think(dt))
-    .build()?;
-
-// === Enum ===
-engine.register_enum("Color")
-    .value("Red", 0)
-    .value("Green", 1)
-    .value("Blue", 2)
-    .build()?;
-
-// Compile scripts
-engine.compile("game", source)?;
-
-// Freeze
-let engine = Arc::new(engine);
-```
-
-## Example Usage
-
-### Engine-Level (Pattern A)
-
-```rust
-let engine = Arc::new(engine);
-let mut runtime = Runtime::new(&engine);
-let mut vm = Vm::new();
-
-// Run main game script
-vm.call(&mut runtime, "main", &[])?;
-```
-
-### Per-Entity ECS (Pattern B)
-
-```rust
-let engine = Arc::new(engine);
-let mut runtime = Runtime::new(&engine);
-
-// Spawn 1000 goblins - handles into runtime's pool
-let goblins: Vec<Handle> = (0..1000)
-    .map(|_| runtime.create("GoblinBrain", &[]).unwrap())
-    .collect::<Vec<_>>();
-
-// ECS component just holds the handle
-struct ScriptComponent {
-    handle: Handle,  // 8 bytes
-}
-
-// Update loop - reuse Vm
-let mut vm = Vm::new();
-for goblin in &goblins {
-    vm.call_method(&mut runtime, *goblin, "update", &[dt.into()])?;
-}
-```
-
-## Open Design Questions
-
-These need to be resolved before implementation:
-
-### 1. ScriptObject vs NativeObject
-- How do script classes inherit from native types?
-- How do interfaces work across the boundary?
-- See: [Follow-up #1]
-
-### 2. Memory Management
-- When is it safe to drop objects from the pool?
-- How do we detect unreachable objects?
-- Reference counting? Tracing GC? Manual?
-- See: [Follow-up #2]
-
-### 3. Native Function Dispatch
-- How to convert Value → Rust types for function calls?
-- How to handle various function signatures ergonomically?
-- See: [Follow-up #3]
-
-## Implementation Order
-
-1. **Lexer** - Tokenize source (reference C++ tokenizer)
-2. **AST** - Define syntax tree nodes
-3. **Parser** - Recursive descent parser
-4. **Types** - TypeId, TypeDef, basic type system
-5. **Engine** - Registration API
-6. **Runtime** - Object pool, handles
-7. **Vm** - Expression and statement execution
-8. **Integration** - Compile and run scripts
+Reference counting is the **VM's responsibility**, not the compiler's. The compiler validates handle types and emits bytecode; the VM tracks counts and manages lifetimes. Native types can provide custom AddRef/Release behaviors.
 
 ## Differences from C++ AngelScript
 
 | C++ AngelScript | Our Design |
 |-----------------|------------|
 | `asIScriptEngine` | `Engine` (Arc-shared) |
-| `asIScriptModule` | Compiled into Engine, no separate type |
+| `asIScriptModule` | Compiled into Engine |
 | `asIScriptContext` | `Vm` (stateless, reusable) |
 | `asIScriptObject` | `Handle` into `Runtime`'s pool |
-| Ref counting (AddRef/Release) | TBD - see Follow-up #2 |
-| Separate module namespaces | Single namespace (for now) |
+| Sequential TypeId | Deterministic `TypeHash` |
+| Interior mutability | Clear ownership, no `Rc<RefCell<>>` in API |
 
-## Comparison to Rune.rs
+## Related Documentation
 
-| Rune | Our Design |
-|------|------------|
-| `Unit` = compiled code | `Engine` holds compiled code |
-| `Vm` = execution + heap | Split: `Runtime` (heap) + `Vm` (execution) |
-| One Vm per execution | One `Runtime` per world, `Vm` is transient |
-
-The split allows thousands of script objects in one Runtime, with a single reusable Vm for execution.
+- [Symbol Registry](./symbol-registry.md) - TypeHash, DataType, and SymbolRegistry details
+- [FFI Guide](./ffi.md) - Macro reference for registering Rust types
