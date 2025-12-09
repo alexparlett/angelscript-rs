@@ -52,28 +52,52 @@ pub enum Operator {
     // === Binary Operators ===
     /// `+` addition
     Add,
+    /// `+` addition (reverse - called on right operand)
+    AddR,
     /// `-` subtraction
     Sub,
+    /// `-` subtraction (reverse)
+    SubR,
     /// `*` multiplication
     Mul,
+    /// `*` multiplication (reverse)
+    MulR,
     /// `/` division
     Div,
+    /// `/` division (reverse)
+    DivR,
     /// `%` modulo
     Mod,
+    /// `%` modulo (reverse)
+    ModR,
     /// `**` power
     Pow,
+    /// `**` power (reverse)
+    PowR,
     /// `&` bitwise AND
     And,
+    /// `&` bitwise AND (reverse)
+    AndR,
     /// `|` bitwise OR
     Or,
+    /// `|` bitwise OR (reverse)
+    OrR,
     /// `^` bitwise XOR
     Xor,
+    /// `^` bitwise XOR (reverse)
+    XorR,
     /// `<<` left shift
     Shl,
+    /// `<<` left shift (reverse)
+    ShlR,
     /// `>>` arithmetic right shift
     Shr,
+    /// `>>` arithmetic right shift (reverse)
+    ShrR,
     /// `>>>` logical right shift
     Ushr,
+    /// `>>>` logical right shift (reverse)
+    UshrR,
 
     // === Comparison Operators ===
     /// `opCmp` - returns int for ordering
@@ -96,10 +120,32 @@ pub enum Operator {
     PostDec,
 
     // === Index and Call ===
-    /// `[]` index access
+    /// `[]` index access (returns reference)
     Index,
+    /// `[]` index getter (returns value)
+    IndexGet,
+    /// `[]` index setter (sets value)
+    IndexSet,
     /// `()` function call
     Call,
+
+    // === Foreach Operators ===
+    /// Begin foreach iteration
+    ForBegin,
+    /// Check if foreach iteration is complete
+    ForEnd,
+    /// Advance to next foreach element
+    ForNext,
+    /// Get current foreach value (single value)
+    ForValue,
+    /// Get foreach value at index 0 (multi-value iteration)
+    ForValue0,
+    /// Get foreach value at index 1 (multi-value iteration)
+    ForValue1,
+    /// Get foreach value at index 2 (multi-value iteration)
+    ForValue2,
+    /// Get foreach value at index 3 (multi-value iteration)
+    ForValue3,
 
     // === Conversion ===
     /// Explicit value conversion (`opConv`)
@@ -137,17 +183,29 @@ impl Operator {
 
             // Binary
             Operator::Add => "opAdd",
+            Operator::AddR => "opAdd_r",
             Operator::Sub => "opSub",
+            Operator::SubR => "opSub_r",
             Operator::Mul => "opMul",
+            Operator::MulR => "opMul_r",
             Operator::Div => "opDiv",
+            Operator::DivR => "opDiv_r",
             Operator::Mod => "opMod",
+            Operator::ModR => "opMod_r",
             Operator::Pow => "opPow",
+            Operator::PowR => "opPow_r",
             Operator::And => "opAnd",
+            Operator::AndR => "opAnd_r",
             Operator::Or => "opOr",
+            Operator::OrR => "opOr_r",
             Operator::Xor => "opXor",
+            Operator::XorR => "opXor_r",
             Operator::Shl => "opShl",
+            Operator::ShlR => "opShl_r",
             Operator::Shr => "opShr",
+            Operator::ShrR => "opShr_r",
             Operator::Ushr => "opUShr",
+            Operator::UshrR => "opUShr_r",
 
             // Comparison
             Operator::Cmp => "opCmp",
@@ -163,7 +221,19 @@ impl Operator {
 
             // Index and Call
             Operator::Index => "opIndex",
+            Operator::IndexGet => "get_opIndex",
+            Operator::IndexSet => "set_opIndex",
             Operator::Call => "opCall",
+
+            // Foreach
+            Operator::ForBegin => "opForBegin",
+            Operator::ForEnd => "opForEnd",
+            Operator::ForNext => "opForNext",
+            Operator::ForValue => "opForValue",
+            Operator::ForValue0 => "opForValue0",
+            Operator::ForValue1 => "opForValue1",
+            Operator::ForValue2 => "opForValue2",
+            Operator::ForValue3 => "opForValue3",
 
             // Conversion
             Operator::Conv => "opConv",
@@ -227,6 +297,80 @@ impl Operator {
     pub const fn is_implicit(&self) -> bool {
         matches!(self, Operator::ImplConv | Operator::ImplCast)
     }
+
+    /// Check if this is a binary operator (including reverse variants).
+    pub const fn is_binary(&self) -> bool {
+        matches!(
+            self,
+            Operator::Add
+                | Operator::AddR
+                | Operator::Sub
+                | Operator::SubR
+                | Operator::Mul
+                | Operator::MulR
+                | Operator::Div
+                | Operator::DivR
+                | Operator::Mod
+                | Operator::ModR
+                | Operator::Pow
+                | Operator::PowR
+                | Operator::And
+                | Operator::AndR
+                | Operator::Or
+                | Operator::OrR
+                | Operator::Xor
+                | Operator::XorR
+                | Operator::Shl
+                | Operator::ShlR
+                | Operator::Shr
+                | Operator::ShrR
+                | Operator::Ushr
+                | Operator::UshrR
+        )
+    }
+
+    /// Check if this is a reverse binary operator.
+    /// Reverse operators are called on the right operand when the left doesn't support the operation.
+    pub const fn is_reverse(&self) -> bool {
+        matches!(
+            self,
+            Operator::AddR
+                | Operator::SubR
+                | Operator::MulR
+                | Operator::DivR
+                | Operator::ModR
+                | Operator::PowR
+                | Operator::AndR
+                | Operator::OrR
+                | Operator::XorR
+                | Operator::ShlR
+                | Operator::ShrR
+                | Operator::UshrR
+        )
+    }
+
+    /// Check if this is an index operator.
+    pub const fn is_index(&self) -> bool {
+        matches!(
+            self,
+            Operator::Index | Operator::IndexGet | Operator::IndexSet
+        )
+    }
+
+    /// Check if this is a foreach operator.
+    pub const fn is_foreach(&self) -> bool {
+        matches!(
+            self,
+            Operator::ForBegin
+                | Operator::ForEnd
+                | Operator::ForNext
+                | Operator::ForValue
+                | Operator::ForValue0
+                | Operator::ForValue1
+                | Operator::ForValue2
+                | Operator::ForValue3
+        )
+    }
 }
 
 impl fmt::Display for Operator {
@@ -242,10 +386,15 @@ mod tests {
     #[test]
     fn method_names() {
         assert_eq!(Operator::Add.method_name(), "opAdd");
+        assert_eq!(Operator::AddR.method_name(), "opAdd_r");
         assert_eq!(Operator::Assign.method_name(), "opAssign");
         assert_eq!(Operator::Cmp.method_name(), "opCmp");
         assert_eq!(Operator::Index.method_name(), "opIndex");
+        assert_eq!(Operator::IndexGet.method_name(), "get_opIndex");
+        assert_eq!(Operator::IndexSet.method_name(), "set_opIndex");
         assert_eq!(Operator::Conv.method_name(), "opConv");
+        assert_eq!(Operator::ForBegin.method_name(), "opForBegin");
+        assert_eq!(Operator::ForValue.method_name(), "opForValue");
     }
 
     #[test]
@@ -293,5 +442,47 @@ mod tests {
     fn display() {
         assert_eq!(format!("{}", Operator::Add), "opAdd");
         assert_eq!(format!("{}", Operator::Equals), "opEquals");
+    }
+
+    #[test]
+    fn is_binary() {
+        assert!(Operator::Add.is_binary());
+        assert!(Operator::AddR.is_binary());
+        assert!(Operator::Sub.is_binary());
+        assert!(Operator::Ushr.is_binary());
+        assert!(Operator::UshrR.is_binary());
+        assert!(!Operator::Neg.is_binary());
+        assert!(!Operator::Index.is_binary());
+    }
+
+    #[test]
+    fn is_reverse() {
+        assert!(Operator::AddR.is_reverse());
+        assert!(Operator::SubR.is_reverse());
+        assert!(Operator::UshrR.is_reverse());
+        assert!(!Operator::Add.is_reverse());
+        assert!(!Operator::Sub.is_reverse());
+        assert!(!Operator::Neg.is_reverse());
+    }
+
+    #[test]
+    fn is_index() {
+        assert!(Operator::Index.is_index());
+        assert!(Operator::IndexGet.is_index());
+        assert!(Operator::IndexSet.is_index());
+        assert!(!Operator::Add.is_index());
+        assert!(!Operator::Call.is_index());
+    }
+
+    #[test]
+    fn is_foreach() {
+        assert!(Operator::ForBegin.is_foreach());
+        assert!(Operator::ForEnd.is_foreach());
+        assert!(Operator::ForNext.is_foreach());
+        assert!(Operator::ForValue.is_foreach());
+        assert!(Operator::ForValue0.is_foreach());
+        assert!(Operator::ForValue1.is_foreach());
+        assert!(!Operator::Add.is_foreach());
+        assert!(!Operator::Index.is_foreach());
     }
 }
