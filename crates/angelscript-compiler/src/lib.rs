@@ -9,32 +9,45 @@
 //!
 //! ## Modules
 //!
-//! - [`types`]: Core type definitions (TypeHash, DataType, TypeDef, FunctionDef, ExprInfo, TypeBehaviors)
-//! - [`registry`]: Script type and function registry
-//! - [`context`]: Compilation context with name resolution
-//! - [`passes`]: Compiler passes (registration and compilation)
+//! - [`bytecode`]: Bytecode types (OpCode, BytecodeChunk, ConstantPool)
+//! - [`conversion`]: Type conversion tracking for overload resolution
+//! - [`expr_info`]: Expression type information
 
-use angelscript_core::CompilationError;
+pub mod bytecode;
+mod conversion;
+mod expr_info;
+
+pub use conversion::{Conversion, ConversionKind};
+pub use expr_info::ExprInfo;
+
+// Re-export CompilationError from core for convenience
+pub use angelscript_core::CompilationError;
+
 use angelscript_parser::ast::Script;
 
 /// A compiled module containing bytecode and metadata.
 #[derive(Debug, Default)]
 pub struct CompiledModule {
-    /// Compiled functions
+    /// Compiled functions.
     pub functions: Vec<CompiledFunction>,
+    /// Module-level constant pool.
+    pub constants: bytecode::ConstantPool,
 }
 
 /// A compiled function.
 #[derive(Debug)]
 pub struct CompiledFunction {
+    /// Function name.
     pub name: String,
+    /// Compiled bytecode.
+    pub bytecode: bytecode::BytecodeChunk,
 }
 
 /// Result of compilation.
 pub struct CompilationResult {
-    /// The compiled module
+    /// The compiled module.
     pub module: CompiledModule,
-    /// Any errors that occurred
+    /// Any errors that occurred.
     pub errors: Vec<CompilationError>,
 }
 
@@ -66,6 +79,7 @@ impl Compiler {
                 if let Item::Function(f) = item {
                     Some(CompiledFunction {
                         name: f.name.to_string(),
+                        bytecode: bytecode::BytecodeChunk::new(),
                     })
                 } else {
                     None
@@ -74,7 +88,10 @@ impl Compiler {
             .collect();
 
         CompilationResult {
-            module: CompiledModule { functions },
+            module: CompiledModule {
+                functions,
+                constants: bytecode::ConstantPool::new(),
+            },
             errors: vec![],
         }
     }
