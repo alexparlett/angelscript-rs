@@ -4,6 +4,7 @@
 //! and associativity using the Pratt parsing algorithm.
 
 use crate::ast::{AssignOp, BinaryOp, Ident, ParseError, ParseErrorKind, PostfixOp, Scope, UnaryOp};
+use angelscript_core::Span;
 use crate::ast::expr::*;
 use crate::lexer::TokenKind;
 use super::parser::Parser;
@@ -183,18 +184,10 @@ impl<'ast> Parser<'ast> {
 
             TokenKind::StringLiteral | TokenKind::HeredocLiteral => {
                 self.advance();
-                // Remove quotes
-                let content = if token.lexeme.starts_with("\"\"\"") {
-                    // Heredoc
-                    token.lexeme.trim_start_matches("\"\"\"")
-                        .trim_end_matches("\"\"\"")
-                        .to_string()
-                } else {
-                    // Regular string
-                    token.lexeme.trim_matches('"').to_string()
-                };
+                let is_heredoc = token.lexeme.starts_with("\"\"\"");
+                let bytes = self.process_string_bytes(token.lexeme, is_heredoc, token.span)?;
                 Ok(self.arena.alloc(Expr::Literal(LiteralExpr {
-                    kind: LiteralKind::String(content),
+                    kind: LiteralKind::String(bytes),
                     span: token.span,
                 })))
             }
@@ -853,6 +846,88 @@ impl<'ast> Parser<'ast> {
 
         Ok(Argument { name, value, span })
     }
+
+    /// Process a string literal, handling escape sequences and returning raw bytes.
+    ///
+    /// Supports escape sequences:
+    /// - `\n` (newline), `\r` (carriage return), `\t` (tab)
+    /// - `\\` (backslash), `\"` (double quote), `\'` (single quote)
+    /// - `\0` (null byte)
+    /// - `\xNN` (hex byte, e.g., `\xFF`)
+    fn process_string_bytes(&mut self, lexeme: &str, is_heredoc: bool, span: Span) -> Result<Vec<u8>, ParseError> {
+        let content = if is_heredoc {
+            // Heredoc: strip """ from both ends
+            lexeme.trim_start_matches("\"\"\"").trim_end_matches("\"\"\"")
+        } else {
+            // Regular string: strip surrounding quotes
+            let trimmed = lexeme.trim_start_matches('"').trim_start_matches('\'');
+            trimmed.trim_end_matches('"').trim_end_matches('\'')
+        };
+
+        // Heredocs don't process escape sequences
+        if is_heredoc {
+            return Ok(content.as_bytes().to_vec());
+        }
+
+        let mut bytes = Vec::with_capacity(content.len());
+        let mut chars = content.chars().peekable();
+
+        while let Some(c) = chars.next() {
+            if c == '\\' {
+                match chars.next() {
+                    Some('n') => bytes.push(0x0A),
+                    Some('r') => bytes.push(0x0D),
+                    Some('t') => bytes.push(0x09),
+                    Some('\\') => bytes.push(0x5C),
+                    Some('"') => bytes.push(0x22),
+                    Some('\'') => bytes.push(0x27),
+                    Some('0') => bytes.push(0x00),
+                    Some('x') => {
+                        // Hex escape: \xNN
+                        let hex: String = chars.by_ref().take(2).collect();
+                        if hex.len() != 2 {
+                            return Err(ParseError::new(
+                                ParseErrorKind::InvalidEscapeSequence,
+                                span,
+                                format!("incomplete hex escape sequence: \\x{}", hex),
+                            ));
+                        }
+                        match u8::from_str_radix(&hex, 16) {
+                            Ok(byte) => bytes.push(byte),
+                            Err(_) => {
+                                return Err(ParseError::new(
+                                    ParseErrorKind::InvalidEscapeSequence,
+                                    span,
+                                    format!("invalid hex escape sequence: \\x{}", hex),
+                                ));
+                            }
+                        }
+                    }
+                    Some(other) => {
+                        return Err(ParseError::new(
+                            ParseErrorKind::InvalidEscapeSequence,
+                            span,
+                            format!("unknown escape sequence: \\{}", other),
+                        ));
+                    }
+                    None => {
+                        return Err(ParseError::new(
+                            ParseErrorKind::InvalidEscapeSequence,
+                            span,
+                            "incomplete escape sequence at end of string".to_string(),
+                        ));
+                    }
+                }
+            } else {
+                // Regular character - encode as UTF-8 bytes
+                let mut buf = [0u8; 4];
+                let encoded = c.encode_utf8(&mut buf);
+                bytes.extend_from_slice(encoded.as_bytes());
+            }
+        }
+
+        Ok(bytes)
+    }
 }
 
 #[cfg(test)]
@@ -1069,7 +1144,7 @@ mod tests {
         match expr {
             Expr::Literal(lit) => {
                 if let LiteralKind::String(s) = &lit.kind {
-                    assert_eq!(s, "hello world");
+                    assert_eq!(s, b"hello world");
                 } else {
                     panic!("Expected string literal");
                 }
@@ -2205,6 +2280,123 @@ string""""#, &arena);
                 assert!(matches!(bin.op, BinaryOp::ShiftLeft));
             }
             _ => panic!("Expected binary expression"),
+        }
+    }
+
+    // ========================================================================
+    // String Escape Sequence Tests
+    // ========================================================================
+
+    #[test]
+    fn parse_string_escape_sequences() {
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new(r#""a\nb\tc""#, &arena);
+        let expr = parser.parse_expr(0).unwrap();
+        match expr {
+            Expr::Literal(lit) => {
+                if let LiteralKind::String(s) = &lit.kind {
+                    // a, newline, b, tab, c
+                    assert_eq!(s, &[0x61, 0x0A, 0x62, 0x09, 0x63]);
+                } else {
+                    panic!("Expected string literal");
+                }
+            }
+            _ => panic!("Expected literal"),
+        }
+    }
+
+    #[test]
+    fn parse_string_hex_escape() {
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new(r#""\xFF\x00""#, &arena);
+        let expr = parser.parse_expr(0).unwrap();
+        match expr {
+            Expr::Literal(lit) => {
+                if let LiteralKind::String(s) = &lit.kind {
+                    assert_eq!(s, &[0xFF, 0x00]);
+                } else {
+                    panic!("Expected string literal");
+                }
+            }
+            _ => panic!("Expected literal"),
+        }
+    }
+
+    #[test]
+    fn parse_string_all_escape_sequences() {
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new(r#""\n\r\t\\\"\'\0""#, &arena);
+        let expr = parser.parse_expr(0).unwrap();
+        match expr {
+            Expr::Literal(lit) => {
+                if let LiteralKind::String(s) = &lit.kind {
+                    assert_eq!(s, &[0x0A, 0x0D, 0x09, 0x5C, 0x22, 0x27, 0x00]);
+                } else {
+                    panic!("Expected string literal");
+                }
+            }
+            _ => panic!("Expected literal"),
+        }
+    }
+
+    #[test]
+    fn parse_heredoc_no_escape_processing() {
+        let arena = bumpalo::Bump::new();
+        // Heredoc should NOT process escape sequences
+        let mut parser = Parser::new(r#""""raw\nstring""""#, &arena);
+        let expr = parser.parse_expr(0).unwrap();
+        match expr {
+            Expr::Literal(lit) => {
+                if let LiteralKind::String(s) = &lit.kind {
+                    // Should contain literal backslash-n, not newline
+                    assert_eq!(s, b"raw\\nstring");
+                } else {
+                    panic!("Expected string literal");
+                }
+            }
+            _ => panic!("Expected literal"),
+        }
+    }
+
+    #[test]
+    fn parse_string_invalid_escape_sequence() {
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new(r#""\z""#, &arena);
+        let result = parser.parse_expr(0);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn parse_string_incomplete_hex_escape() {
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new(r#""\xF""#, &arena);
+        let result = parser.parse_expr(0);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn parse_string_invalid_hex_escape() {
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new(r#""\xGG""#, &arena);
+        let result = parser.parse_expr(0);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn parse_string_mixed_content() {
+        let arena = bumpalo::Bump::new();
+        let mut parser = Parser::new(r#""hello\x20world""#, &arena);
+        let expr = parser.parse_expr(0).unwrap();
+        match expr {
+            Expr::Literal(lit) => {
+                if let LiteralKind::String(s) = &lit.kind {
+                    // hello<space>world
+                    assert_eq!(s, b"hello world");
+                } else {
+                    panic!("Expected string literal");
+                }
+            }
+            _ => panic!("Expected literal"),
         }
     }
 }
