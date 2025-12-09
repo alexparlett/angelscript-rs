@@ -449,16 +449,16 @@ mod tests {
     #[test]
     fn module_with_global_constant() {
         let module = Module::new()
-            .global("PI", 3.14159f64)
+            .global("GRAVITY", 9.81f64)
             .global("MAX_PLAYERS", 64i32);
 
         assert_eq!(module.len(), 2);
         assert_eq!(module.globals.len(), 2);
 
-        let pi = &module.globals[0];
-        assert_eq!(pi.name, "PI");
-        assert_eq!(pi.qualified_name, "PI");
-        assert!(pi.is_const);
+        let gravity = &module.globals[0];
+        assert_eq!(gravity.name, "GRAVITY");
+        assert_eq!(gravity.qualified_name, "GRAVITY");
+        assert!(gravity.is_const);
 
         let max = &module.globals[1];
         assert_eq!(max.name, "MAX_PLAYERS");
@@ -467,13 +467,13 @@ mod tests {
 
     #[test]
     fn module_with_global_in_namespace() {
-        let module = Module::in_namespace(&["math"])
-            .global("PI", 3.14159f64);
+        let module = Module::in_namespace(&["physics"])
+            .global("GRAVITY", 9.81f64);
 
         assert_eq!(module.globals.len(), 1);
-        let pi = &module.globals[0];
-        assert_eq!(pi.name, "PI");
-        assert_eq!(pi.qualified_name, "math::PI");
-        assert_eq!(pi.type_hash, TypeHash::from_name("math::PI"));
+        let gravity = &module.globals[0];
+        assert_eq!(gravity.name, "GRAVITY");
+        assert_eq!(gravity.qualified_name, "physics::GRAVITY");
+        assert_eq!(gravity.type_hash, TypeHash::from_name("physics::GRAVITY"));
     }
 }

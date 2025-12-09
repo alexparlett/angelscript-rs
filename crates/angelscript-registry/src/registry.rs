@@ -680,11 +680,11 @@ mod tests {
 
         let mut registry = SymbolRegistry::new();
 
-        let entry = GlobalPropertyEntry::constant("PI", ConstantValue::Double(3.14159));
+        let entry = GlobalPropertyEntry::constant("GRAVITY", ConstantValue::Double(9.81));
         registry.register_global(entry).unwrap();
 
         assert_eq!(registry.global_count(), 1);
-        assert!(registry.contains_global(TypeHash::from_name("PI")));
+        assert!(registry.contains_global(TypeHash::from_name("GRAVITY")));
     }
 
     #[test]
@@ -707,8 +707,8 @@ mod tests {
 
         let mut registry = SymbolRegistry::new();
 
-        let entry1 = GlobalPropertyEntry::constant("PI", ConstantValue::Double(3.14));
-        let entry2 = GlobalPropertyEntry::constant("PI", ConstantValue::Double(3.14159));
+        let entry1 = GlobalPropertyEntry::constant("SPEED", ConstantValue::Double(100.0));
+        let entry2 = GlobalPropertyEntry::constant("SPEED", ConstantValue::Double(200.0));
 
         registry.register_global(entry1).unwrap();
         let result = registry.register_global(entry2);
@@ -723,10 +723,10 @@ mod tests {
         let mut registry = SymbolRegistry::new();
 
         registry
-            .register_global(GlobalPropertyEntry::constant("PI", ConstantValue::Double(3.14)))
+            .register_global(GlobalPropertyEntry::constant("GRAVITY", ConstantValue::Double(9.81)))
             .unwrap();
         registry
-            .register_global(GlobalPropertyEntry::constant("E", ConstantValue::Double(2.71)))
+            .register_global(GlobalPropertyEntry::constant("SPEED", ConstantValue::Double(100.0)))
             .unwrap();
 
         let globals: Vec<_> = registry.globals().collect();
