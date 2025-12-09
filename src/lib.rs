@@ -96,6 +96,8 @@ pub use angelscript_core::{
     ReturnMode, ReturnMeta, GenericParamMeta, ListPatternMeta,
     // Native function types for generic calling convention
     CallContext,
+    // String factory trait
+    StringFactory,
 };
 
 // Re-export proc macros

@@ -281,14 +281,14 @@ fn factory_handles_non_utf8() {
 
 ## Acceptance Criteria
 
-- [ ] `StringFactory` trait defined in main crate
-- [ ] `ScriptStringFactory` implemented in angelscript-modules
-- [ ] `Context::set_string_factory()` method added
-- [ ] `Context::string_factory()` getter added
-- [ ] `with_default_modules()` sets default factory
-- [ ] `NoStringFactory` error variant added to compiler
-- [ ] Factory handles non-UTF8 bytes gracefully
-- [ ] All tests pass
+- [x] `StringFactory` trait defined in angelscript-core
+- [x] `ScriptStringFactory` implemented in angelscript-modules
+- [x] `Context::set_string_factory()` method added
+- [x] `Context::string_factory()` getter added
+- [x] `with_default_modules()` sets default factory
+- [x] `NoStringFactory` error variant added to compiler
+- [x] Factory handles non-UTF8 bytes gracefully
+- [x] All tests pass
 
 ## Next Phase
 

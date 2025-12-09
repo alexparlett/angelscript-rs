@@ -66,6 +66,9 @@ pub mod any_type;
 // Metadata types for proc-macros
 pub mod meta;
 
+// String factory trait
+mod string_factory;
+
 // TypeHash and related
 pub use type_hash::{hash_constants, primitives, TypeHash};
 
@@ -173,3 +176,6 @@ pub use meta::{
     GenericParamMeta,
     ListPatternMeta,
 };
+
+// String factory trait
+pub use string_factory::StringFactory;

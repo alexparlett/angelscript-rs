@@ -580,6 +580,36 @@ impl AsRef<[u8]> for ScriptString {
 }
 
 // =========================================================================
+// STRING FACTORY
+// =========================================================================
+
+/// Default string factory that creates [`ScriptString`] values.
+///
+/// This factory interprets raw bytes as UTF-8, using lossy conversion
+/// for invalid sequences. It's automatically set by `Context::with_default_modules()`.
+///
+/// # Example
+///
+/// ```ignore
+/// use angelscript_modules::string::ScriptStringFactory;
+///
+/// ctx.set_string_factory(Box::new(ScriptStringFactory));
+/// ```
+pub struct ScriptStringFactory;
+
+impl angelscript_core::StringFactory for ScriptStringFactory {
+    fn create(&self, data: &[u8]) -> Box<dyn std::any::Any + Send + Sync> {
+        // Interpret as UTF-8, lossy conversion for invalid sequences
+        let s = String::from_utf8_lossy(data);
+        Box::new(ScriptString::from(s.as_ref()))
+    }
+
+    fn type_hash(&self) -> angelscript_core::TypeHash {
+        <ScriptString as angelscript_core::Any>::type_hash()
+    }
+}
+
+// =========================================================================
 // MODULE CREATION
 // =========================================================================
 
@@ -814,5 +844,42 @@ mod tests {
         use angelscript_registry::HasClassMeta;
         let meta = ScriptString::__as_type_meta();
         assert_eq!(meta.name, "string");
+    }
+
+    #[test]
+    fn test_script_string_factory_creates_string() {
+        use angelscript_core::StringFactory;
+        let factory = ScriptStringFactory;
+        let value = factory.create(b"hello world");
+        let s = value.downcast::<ScriptString>().unwrap();
+        assert_eq!(s.as_str(), "hello world");
+    }
+
+    #[test]
+    fn test_script_string_factory_type_hash() {
+        use angelscript_core::{Any, StringFactory};
+        let factory = ScriptStringFactory;
+        assert_eq!(factory.type_hash(), ScriptString::type_hash());
+    }
+
+    #[test]
+    fn test_script_string_factory_handles_non_utf8() {
+        use angelscript_core::StringFactory;
+        let factory = ScriptStringFactory;
+        // Invalid UTF-8 sequence followed by valid ASCII
+        let data = vec![0xFF, 0xFE, b'a', b'b', b'c'];
+        let value = factory.create(&data);
+        let s = value.downcast::<ScriptString>().unwrap();
+        // from_utf8_lossy replaces invalid sequences with replacement character
+        assert!(s.as_str().contains("abc"));
+    }
+
+    #[test]
+    fn test_script_string_factory_empty() {
+        use angelscript_core::StringFactory;
+        let factory = ScriptStringFactory;
+        let value = factory.create(b"");
+        let s = value.downcast::<ScriptString>().unwrap();
+        assert!(s.is_empty());
     }
 }

@@ -9,7 +9,7 @@ use thiserror::Error;
 use angelscript_core::{
     ClassEntry, ClassMeta, DataType, FuncdefEntry, FuncdefMeta, FunctionDef, FunctionEntry,
     FunctionMeta, FunctionTraits, InterfaceEntry, InterfaceMeta, MethodSignature, Param,
-    PropertyEntry, TemplateParamEntry, TypeHash, TypeSource, Visibility,
+    PropertyEntry, StringFactory, TemplateParamEntry, TypeHash, TypeSource, Visibility,
 };
 use angelscript_registry::{Module, SymbolRegistry};
 
@@ -35,6 +35,9 @@ use crate::unit::Unit;
 /// ```
 pub struct Context {
     registry: SymbolRegistry,
+    /// The string factory for creating string literal values.
+    /// If None, string literals will produce a compile error.
+    string_factory: Option<Box<dyn StringFactory>>,
 }
 
 impl Context {
@@ -42,13 +45,15 @@ impl Context {
     pub fn new() -> Self {
         Self {
             registry: SymbolRegistry::with_primitives(),
+            string_factory: None,
         }
     }
 
     /// Create a context with default modules pre-installed.
     ///
     /// This registers the standard library types (string, array, dictionary, etc.)
-    /// in addition to primitives.
+    /// in addition to primitives. Also sets the default string factory for
+    /// string literals.
     pub fn with_default_modules() -> Result<Self, ContextError> {
         let mut ctx = Self::new();
 
@@ -58,6 +63,9 @@ impl Context {
         ctx.install(angelscript_modules::dictionary::module())?;
         ctx.install(angelscript_modules::math::module())?;
         ctx.install(angelscript_modules::std::module())?;
+
+        // Set default string factory
+        ctx.set_string_factory(Box::new(angelscript_modules::string::ScriptStringFactory));
 
         Ok(ctx)
     }
@@ -109,6 +117,32 @@ impl Context {
     /// Get a reference to the type registry.
     pub fn registry(&self) -> &SymbolRegistry {
         &self.registry
+    }
+
+    /// Set a custom string factory.
+    ///
+    /// The string factory creates string values from raw byte data when
+    /// the VM loads string constants. This allows custom string implementations
+    /// (interned strings, OsString, etc.).
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// use angelscript_modules::string::ScriptStringFactory;
+    ///
+    /// ctx.set_string_factory(Box::new(ScriptStringFactory));
+    /// ```
+    pub fn set_string_factory(&mut self, factory: Box<dyn StringFactory>) {
+        self.string_factory = Some(factory);
+    }
+
+    /// Get the string factory (for compiler/VM use).
+    ///
+    /// Returns `None` if no string factory has been configured.
+    /// Use `with_default_modules()` to get a context with the default
+    /// `ScriptStringFactory` already set.
+    pub fn string_factory(&self) -> Option<&dyn StringFactory> {
+        self.string_factory.as_deref()
     }
 
     /// Create a new compilation unit from this context.
@@ -631,5 +665,31 @@ mod tests {
         // Verify the template param uses the qualified name
         let t_param = ctx.registry().get(TypeHash::from_name("std::vector::T"));
         assert!(t_param.is_some(), "TemplateParamEntry should use qualified name 'std::vector::T'");
+    }
+
+    #[test]
+    fn context_string_factory_not_set() {
+        let ctx = Context::new();
+        assert!(ctx.string_factory().is_none());
+    }
+
+    #[test]
+    fn context_string_factory_set_by_default_modules() {
+        use angelscript_modules::string::ScriptString;
+
+        let ctx = Context::with_default_modules().unwrap();
+        let factory = ctx.string_factory().expect("should have factory");
+        assert_eq!(factory.type_hash(), <ScriptString as angelscript_core::Any>::type_hash());
+    }
+
+    #[test]
+    fn context_custom_string_factory() {
+        use angelscript_modules::string::ScriptStringFactory;
+
+        let mut ctx = Context::new();
+        ctx.set_string_factory(Box::new(ScriptStringFactory));
+
+        let factory = ctx.string_factory().unwrap();
+        assert_eq!(factory.type_hash(), TypeHash::from_name("string"));
     }
 }

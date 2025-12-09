@@ -1,85 +1,64 @@
-# Current Task: Global Properties (Task 25)
+# Current Task: String Factory Configuration (Task 32)
 
 **Status:** Complete
 **Date:** 2025-12-09
-**Branch:** 025-adding-global-properties
+**Branch:** 032-string-factory
 
 ---
 
-## Task 25: Global Properties
+## Task 32: String Factory Configuration
 
-Enables FFI registration of global properties accessible from scripts.
+Added `StringFactory` trait and configuration to `Context` for custom string
+literal handling. This allows users to configure custom string implementations
+(interned strings, OsString, ASCII-optimized, etc.).
 
-### Phase 1: Core Types ✓ (Committed: 9106321)
+### Implementation Summary
 
-| Type | Location | Purpose |
-|------|----------|---------|
-| `ConstantValue` | entries/global_property.rs | Primitive constants (Copy) |
-| `GlobalPropertyEntry` | entries/global_property.rs | Complete entry with metadata |
-| `GlobalPropertyImpl` | entries/global_property.rs | Storage: Constant/Mutable/Script |
-| `GlobalPropertyAccessor` | entries/global_property.rs | Type-erased read/write for Arc<RwLock<T>> |
-| `IntoGlobalProperty` | entries/global_property.rs | Conversion trait (primitives + Arc<RwLock<T>>) |
-| `PropertyError` | entries/global_property.rs | Error type (→ RuntimeError) |
-| `GlobalMeta` | meta.rs | Macro-generated metadata |
+| Component | Location | Purpose |
+|-----------|----------|---------|
+| `StringFactory` trait | angelscript-core/src/string_factory.rs | Trait for creating string values from raw bytes |
+| `ScriptStringFactory` | angelscript-modules/src/string.rs | Default factory using ScriptString |
+| `Context::set_string_factory()` | src/context.rs | Set custom string factory |
+| `Context::string_factory()` | src/context.rs | Get current string factory |
+| `NoStringFactory` error | angelscript-core/src/error.rs | Compile error when no factory configured |
 
-### Phase 2: Registry & Module ✓
+### API Usage
 
-- [x] **Step 6:** Add globals storage to SymbolRegistry
-  - Added `globals: FxHashMap<TypeHash, GlobalPropertyEntry>` field
-  - Added `register_global()`, `get_global()`, `get_global_by_name()`, `contains_global()`, `globals()`, `global_count()`
-  - No separate `global_by_name` map needed - `TypeHash::from_name()` computes hash directly
-- [x] **Step 7:** Add `global()` to Module
-  - Added `globals: Vec<GlobalPropertyEntry>` field
-  - Added `global<V: IntoGlobalProperty>(name, value)` builder method
-  - Updated `is_empty()` and `len()` to include globals
-  - Helper `qualify_name()` for namespace-qualified names
-- [x] `global_meta()` not needed - uses `IntoGlobalProperty` trait
-
-**Key fix:** Changed `GlobalPropertyImpl::data_type()` to return `DataType` directly instead of `Option<DataType>` since all variants always have a data type.
-
-### Phase 3: Macro ✗ (Not Needed)
-
-The `#[angelscript::global]` macro was determined to be unnecessary since `Module::global()` already handles primitives directly via the `IntoGlobalProperty` trait.
-
----
-
-## Design Summary
-
-**Two property types:**
-1. **Constants** - Primitives via `ConstantValue`, immutable, can inline
-2. **Mutable** - `Arc<RwLock<T>>` for shared state with scripts
-
-**API:**
 ```rust
-// Primitive constants
-Module::new()
-    .global("PI", 3.14159f64)           // const double PI
-    .global("MAX", 100i32);             // const int MAX
+// Using default modules (sets ScriptStringFactory automatically)
+let ctx = Context::with_default_modules()?;
 
-// Mutable shared state
-let score = Arc::new(RwLock::new(0i32));
-Module::new()
-    .global("score", score.clone());    // int score
+// Or set manually
+let mut ctx = Context::new();
+ctx.set_string_factory(Box::new(ScriptStringFactory));
 
-// With namespace
-Module::in_namespace(&["math"])
-    .global("PI", 3.14159f64);          // math::PI
+// Custom factory
+ctx.set_string_factory(Box::new(MyCustomStringFactory));
+
+// Check if factory is set
+if let Some(factory) = ctx.string_factory() {
+    let value = factory.create(b"hello");
+}
 ```
 
----
+### Key Files
 
-## Key Files
-
-- `crates/angelscript-core/src/entries/global_property.rs` - Core types
-- `crates/angelscript-core/src/meta.rs` - GlobalMeta
-- `crates/angelscript-registry/src/registry.rs` - SymbolRegistry with globals
-- `crates/angelscript-registry/src/module.rs` - Module API with global()
-- `claude/tasks/25_global_properties.md` - Full task spec
+- `crates/angelscript-core/src/string_factory.rs` - StringFactory trait
+- `crates/angelscript-modules/src/string.rs` - ScriptStringFactory impl
+- `src/context.rs` - Context integration
+- `crates/angelscript-core/src/error.rs` - NoStringFactory error variant
+- `claude/tasks/32_string_factory.md` - Full task spec
 
 ---
 
 ## Complete
 
-Task 25 is complete. Global properties can be registered via:
-- `Module::global("name", value)` for primitives and `Arc<RwLock<T>>`
-- `SymbolRegistry::register_global(entry)` for direct registration
+Task 32 is complete. The string factory pattern enables:
+- Custom string implementations for string literals
+- Raw byte input (no UTF-8 assumption)
+- Default ScriptStringFactory via `with_default_modules()`
+- Clear error when no factory is configured
+
+## Next Steps
+
+Task 33: Compilation Context - wraps TypeRegistry with compilation state
