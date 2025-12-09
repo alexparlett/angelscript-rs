@@ -59,8 +59,8 @@ all-features = true
 no-deps = true
 
 [[test]]
-name = "module"
-path = "tests/module_tests.rs"
+name = "unit"
+path = "tests/unit_tests.rs"
 
 [[bench]]
 name = "module_benchmarks"

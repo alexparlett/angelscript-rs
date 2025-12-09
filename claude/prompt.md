@@ -1,237 +1,74 @@
-# Current Task: Compiler Rewrite
+# Current Task: Compiler Implementation
 
-**Status:** In Progress
-**Date:** 2025-12-07
-**Branch:** compiler-rewrite
+**Status:** Planning Complete - Ready for Implementation
+**Date:** 2025-12-08
+**Branch:** task/01-unified-type-registry
 
 ---
 
 ## Current State Summary
 
 **Parser:** 100% Complete
-**Semantic Analysis:** 100% Complete
-**Test Status:** 2440+ library tests passing
+**FFI:** 100% Complete
+**Compiler:** Task breakdown complete (17 tasks)
 
 ---
 
-## Task 26: Compiler Rewrite - 2-Pass Architecture
+## Compiler Tasks (31-47)
 
-See `/claude/tasks/26_compiler_rewrite.md` for full details.
+All task files created in `claude/tasks/`:
 
-### Completed Tasks
-
-| # | Task | Description | Status |
-|---|------|-------------|--------|
-| 1 | Workspace Setup | Create workspace Cargo.toml, crate skeleton, lib.rs with re-exports | ✅ Complete |
-| 2 | Types: TypeHash | Move TypeHash to compiler crate, add Display, make Copy | ✅ Complete |
-| 3 | Types: DataType | Move DataType, make Copy, add Display, RefModifier | ✅ Complete |
-| 4 | Types: TypeDef + FunctionDef | Create clean TypeDef enum and FunctionDef struct | ✅ Complete |
-| 5 | Types: ExprInfo | Create ExprInfo (renamed from ExprContext) | ✅ Complete |
-| 6 | ScriptRegistry + Registry trait | Implement clean registry, Registry trait for unification | ✅ Complete |
-| 7a | angelscript-core crate | Shared types for FFI and compiler crates | ✅ Complete |
-| 7b | FFI + Parser Crates | Create angelscript-ffi and angelscript-parser, unify FunctionDef | ✅ Complete |
-| 7c | CompilationContext | Implement unified CompilationContext with FfiRegistry + ScriptRegistry | ✅ Complete |
-
-### Task 26.7c Summary (Just Completed)
-
-**Implemented CompilationContext** in `crates/angelscript-compiler/src/context.rs`:
-- Unified facade for FFI + Script registry lookups
-- No `FunctionRef` enum needed - `get_function()` returns `Option<&FunctionDef>` directly
-- Namespace management: `enter_namespace()`, `exit_namespace()`, `add_import()`
-- Name resolution: `resolve_type()` with namespace rules
-- All unified lookup methods for types, functions, behaviors, methods, operators, properties
-- 36 unit tests passing
-
-### Next Task
-
-**Task 26.8: Pass 1: RegistrationPass** - Type + function registration with complete signatures
+| Task | File | Description | Status |
+|------|------|-------------|--------|
+| 31 | `31_compiler_foundation.md` | Core types, bytecode, opcodes | Pending |
+| 32 | `32_string_factory.md` | String literal factory config | Pending |
+| 33 | `33_compilation_context.md` | Unified type lookup | Pending |
+| 34 | `34_type_resolution.md` | TypeExpr → DataType | Pending |
+| 35 | `35_template_instantiation.md` | Template types, functions, cache | Pending |
+| 36 | `36_conversion_system.md` | Type conversions with costs | Pending |
+| 37 | `37_overload_resolution.md` | Function/operator selection | Pending |
+| 38 | `38_registration_pass.md` | Pass 1 - declarations | Pending |
+| 39 | `39_local_scope.md` | Variable tracking, captures | Pending |
+| 40 | `40_bytecode_emitter.md` | Instruction emission, jumps | Pending |
+| 41 | `41_expression_basics.md` | Literals, identifiers, operators | Pending |
+| 42 | `42_expression_calls.md` | Function/method calls | Pending |
+| 43 | `43_expression_advanced.md` | Cast, lambda, ternary | Pending |
+| 44 | `44_statement_basics.md` | Blocks, var decl, if, while | Pending |
+| 45 | `45_statement_loops.md` | For, foreach, switch | Pending |
+| 46 | `46_function_compilation.md` | Pass 2 orchestration | Pending |
+| 47 | `47_integration_testing.md` | All tests passing, performance | Pending |
 
 ---
 
-## Task 1: Unified Type Registry - Phase 3 Task 1 Complete
+## Key Design Documents
 
-See `/claude/tasks/01_unified-type-registry.md` for full details.
-
-### Phase 3 Task 1 Summary (Just Completed)
-
-**Implemented `SymbolRegistry` in `crates/angelscript-registry/src/registry.rs`:**
-
-- Unified storage for all types (`FxHashMap<TypeHash, TypeEntry>`)
-- Single source of truth for ALL functions (global + methods + operators + behaviors)
-- Template callback storage (`FxHashMap<TypeHash, TemplateCallback>`) for validation callbacks
-- Added `operators` field to `TypeBehaviors` in `angelscript-core` (prerequisite)
-
-**Storage Model:**
-- Types: `SymbolRegistry.types` - All TypeEntry variants
-- Functions: `SymbolRegistry.functions` - Single source of truth
-- Template Callbacks: `SymbolRegistry.template_callbacks` - Specific `Fn(&TemplateInstanceInfo) -> TemplateValidation` signature
-
-**API Methods:**
-- Basic lookup: `get()`, `get_by_name()`, `get_function()`, `get_function_overloads()`
-- Registration: `register_type()`, `register_function()`, `register_primitive()`, `register_template_callback()`
-- Iteration: `types()`, `classes()`, `enums()`, `interfaces()`, `funcdefs()`, `functions()`
-- Inheritance: `base_class_chain()`, `all_methods()`, `all_properties()`
-- Namespace: `types_in_namespace()`, `namespaces()`
-- Template: `validate_template_instance()`
-
-**Tests:** 326 unit tests passing (314 core + 12 registry)
-
-### Phase 4 Summary (Just Completed)
-
-**Implemented `angelscript-macros` crate with proc macros:**
-
-- `#[derive(Any)]` - Generates `Any` trait + `ClassMeta` with properties
-- `#[angelscript::function]` - Generates `FunctionMeta` with behaviors/operators
-- `#[angelscript::interface]` - Generates `InterfaceMeta` from traits
-- `#[angelscript::funcdef]` - Generates `FuncdefMeta` from type aliases
-
-**Added meta types to `angelscript-core`:**
-- `ClassMeta`, `PropertyMeta` - For class registration
-- `FunctionMeta`, `ParamMeta`, `Behavior` - For function registration
-- `InterfaceMeta`, `InterfaceMethodMeta` - For interface definitions
-- `FuncdefMeta` - For function pointer types
-
-**Deferred (need VM/runtime):**
-- `#[angelscript::param]` - Generic calling convention
-- `#[angelscript::template_callback]` - Template validation
-- `#[angelscript::list_pattern]` - List initialization
-
-**Tests:** 20 macro integration tests passing
-
-### Phase 5 Summary (Complete)
-
-**Implemented Module builder in `crates/angelscript-registry/src/module.rs`:**
-- `Module::new()` - Root namespace module
-- `Module::in_namespace(&["std", "string"])` - Namespaced module
-- `.class::<T>()` - Register class via `HasClassMeta` trait
-- `.class_meta()`, `.function()`, `.interface()`, `.funcdef()` - Direct metadata registration
-- `qualified_namespace()` - Returns "std::string" format
-
-### Phase 6 Summary (Just Completed)
-
-**Updated Context and Unit to use SymbolRegistry:**
-- `Context` now owns a `SymbolRegistry` (created with primitives in `new()`)
-- `Context::install(Module)` converts metadata to registry entries and registers them
-- `Context::registry()` provides access to the registry
-- `Unit::type_count()` queries the context's registry
-- Removed seal() - simplified API, trust the user
-- Exported `Module`, `HasClassMeta`, `SymbolRegistry` from main crate
-
-**API:**
-```rust
-let mut ctx = Context::new();
-ctx.install(Module::new().class::<MyClass>())?;
-let ctx = Arc::new(ctx);
-let unit = ctx.create_unit()?;
-```
-
-### Phase 7 Summary (Just Completed)
-
-**Created `crates/angelscript-modules` for stdlib types:**
-- `ScriptArray` - Type-erased `array<T>` template with ref counting
-- `ScriptDict` - Type-erased `dictionary<K,V>` template with ref counting
-- Placeholder `math` and `std` modules (global functions deferred)
-
-**Fixed `#[derive(Any)]` macro:**
-- Now generates `impl HasClassMeta` trait (was only generating `__as_type_meta()` method)
-- Enables `Module::class::<T>()` syntax
-
-**Tests:** 22 angelscript-modules tests + 33 main crate tests passing
-
-### Task 1: Unified Type Registry - COMPLETE
-
-All 7 phases complete. See `/claude/tasks/01_unified-type-registry.md`.
-
-### Next Task
-
-**Task 26.8: Pass 1: RegistrationPass** - Type + function registration with complete signatures
+- `claude/compiler_design.md` - Master compiler design (includes Section 17: Template Instantiation)
+- `claude/plans/cuddly-puzzling-newt.md` - Template instantiation detailed design
 
 ---
 
-## Task 28: Unified Error Types - COMPLETE
+## Next Steps
 
-See `/claude/tasks/28_unified_error_types.md` for full details.
-
-### Completed Tasks
-
-| # | Task | Description | Status |
-|---|------|-------------|--------|
-| 1 | Move Span to core | Moved `Span` from parser to angelscript-core | ✅ Complete |
-| 2 | Create core error types | Defined `AngelScriptError` and phase-specific errors in core | ✅ Complete |
-| 3 | Migrate parser errors | Parser now uses `LexError`, `ParseError`, `ParseErrorKind`, `ParseErrors` from core | ✅ Complete |
-| 4 | Consolidate registration errors | Merged `FfiRegistryError` + `ModuleError` → `RegistrationError` | ✅ Complete |
-| 5 | Migrate compiler errors | Compiler now uses `CompilationError` from core | ✅ Complete |
-| 6 | Migrate main crate errors | Updated `ContextError`, `BuildError` with helper methods | ✅ Complete |
-| 7 | Update public API | Exposed all error types in public API | ✅ Complete |
-
-### Task 28.6 & 28.7 Summary (Just Completed)
-
-**Updated public API exports in `src/lib.rs`:**
-- Exported `AngelScriptError`, `LexError`, `ParseError`, `ParseErrorKind`, `ParseErrors`
-- Exported `RegistrationError`, `CompilationError`, `RuntimeError`, `Span`
-
-**Added helper methods to `BuildError`:**
-- `into_errors()` - Converts to `Vec<AngelScriptError>` for unified handling
-- `first_error()` - Gets first error as `AngelScriptError`
-
-**Added helper methods to `ContextError`:**
-- `into_errors()` - Converts to `Vec<AngelScriptError>` for unified handling
-- `first_error()` - Gets first error as `AngelScriptError`
-
-**Tests:** 47 library tests passing
-
-### Next Task
-
-**Task 26.8: Pass 1: RegistrationPass** - Type + function registration with complete signatures
-
-### Deferred
-
-**Task 19: FFI Default Args** - Deferred until after new compiler passes (Tasks 8-15) are built.
-See `/claude/tasks/19_ffi_default_args.md` for details.
-
----
-
-## Quick Reference
-
-**Task File:** `/claude/tasks/26_compiler_rewrite.md`
-**Decisions Log:** `/claude/decisions.md`
+1. Start with Task 31: Compiler Foundation
+2. Each task is independently implementable and committable
+3. Tasks should be implemented in order (dependencies flow forward)
 
 ---
 
 ## Architecture Overview
 
-### Crates (in `crates/`):
-```
-angelscript-core/       →  Shared types (TypeHash, DataType, TypeDef, FunctionDef, etc.)
-angelscript-registry/   →  SymbolRegistry, Module builder
-angelscript-macros/     →  Proc macros (#[derive(Any)], #[angelscript::function], etc.)
-angelscript-modules/    →  Stdlib types (array, dictionary)
-angelscript-parser/     →  Lexer + AST + Parser
-angelscript-compiler/   →  2-pass compiler (registration + compilation)
-```
+**Two-pass compilation:**
+1. **Registration Pass (Task 38):** Walk AST, register types and function signatures
+2. **Compilation Pass (Task 46):** Generate bytecode for function bodies
 
-### Dependency Graph:
-```
-angelscript-core  ←─────────────────────────────┐
-       ↑                                        │
-       │                                        │
-angelscript-parser    angelscript-registry ─────┤
-       ↑                     ↑                  │
-       │                     │                  │
-       │             angelscript-macros         │
-       │                     │                  │
-       │             angelscript-modules ───────┤
-       │                     │                  │
-       └─────── angelscript-compiler ───────────┘
-                      ↑
-                      │
-               angelscript (main)
-```
+**Bidirectional type checking:**
+- `infer(expr)` - Synthesize type from expression
+- `check(expr, expected)` - Verify expression has expected type
 
-### Key Benefits
-- 2 passes instead of 3 - Faster compilation
-- No format!() overhead - Proper type resolution
-- Better testability - Independent components
-- DataType as Copy - Eliminates 175+ clone() calls
-- Shared core types - No circular dependencies
-- ~8,000 lines deleted after migration
+**Key types:**
+- `TypeHash` - 64-bit Copy type for O(1) lookups
+- `DataType` - Type with modifiers (const, handle, ref)
+- `ExprInfo` - Expression result (data_type, is_lvalue, is_mutable)
+- `BytecodeChunk` - Instructions + debug info (stored in `FunctionImpl::Script`)
+- `ConstantPool` - Module-level constants with deduplication
+- `CompiledModule` - Shared constants + list of compiled functions (bytecode in registry)

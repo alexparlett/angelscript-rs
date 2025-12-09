@@ -8,6 +8,7 @@ This document provides comprehensive documentation for all procedural macros in 
 2. [#[angelscript_macros::function]](#function) - Function registration
 3. [#[angelscript_macros::interface]](#interface) - Interface definition
 4. [#[angelscript_macros::funcdef]](#funcdef) - Function pointer types
+5. [#[angelscript_macros::global]](#global) - Global constant registration
 
 ---
 
@@ -534,6 +535,95 @@ Generated metadata function: `__as_MyCallback_funcdef_meta()` etc.
 
 ---
 
+## #[angelscript_macros::global]
+
+Registers a Rust constant as an AngelScript global constant. This macro only supports primitive types (integers, floats, bools).
+
+### Attributes
+
+| Attribute | Description |
+|-----------|-------------|
+| `name = "Name"` | Override the AngelScript constant name (default: Rust const name) |
+| `namespace = "ns"` | Namespace path for the constant |
+
+### Supported Types
+
+Only primitive types are supported:
+- `bool`
+- `i8`, `i16`, `i32`, `i64`
+- `u8`, `u16`, `u32`, `u64`
+- `f32`, `f64`
+
+### Examples
+
+#### Basic Constant
+
+```rust
+#[angelscript_macros::global]
+pub const PI: f64 = 3.14159265358979;
+```
+
+#### With Namespace
+
+```rust
+#[angelscript_macros::global(namespace = "math")]
+pub const E: f64 = 2.71828182845905;
+
+#[angelscript_macros::global(namespace = "math")]
+pub const TAU: f64 = 6.28318530717959;
+```
+
+#### With Name Override
+
+```rust
+#[angelscript_macros::global(name = "MAX_INT", namespace = "limits")]
+pub const I32_MAX: i32 = i32::MAX;
+
+#[angelscript_macros::global(name = "MIN_INT", namespace = "limits")]
+pub const I32_MIN: i32 = i32::MIN;
+```
+
+### Generated Code
+
+The macro generates a metadata function:
+
+```rust
+pub fn PI__global_meta() -> GlobalMeta {
+    GlobalMeta {
+        name: "PI",
+        namespace: None,
+        value: ConstantValue::Double(3.14159265358979),
+    }
+}
+```
+
+### Module Registration
+
+Register constants using `global_meta()`:
+
+```rust
+pub fn math_module() -> Module {
+    Module::in_namespace(&["math"])
+        .global_meta(PI__global_meta)
+        .global_meta(E__global_meta)
+        .global_meta(TAU__global_meta)
+}
+```
+
+### Note on Mutable Globals
+
+This macro only supports **immutable constants**. For mutable global properties that scripts can modify, use the explicit `Module::global()` API with `Arc<RwLock<T>>`:
+
+```rust
+let score = Arc::new(RwLock::new(0i32));
+Module::new()
+    .global("g_score", score.clone());  // Mutable int
+```
+
+See [Task 25](../claude/tasks/25_global_properties.md) for the full global properties design.
+
+---
+
 ## Module Registration
 
 All metadata is collected into `Module` instances for registration:
@@ -718,4 +808,11 @@ pub trait MyInterface {
 ```rust
 #[angelscript_macros::funcdef(name = "...")]
 pub type MyCallback = fn(i32) -> bool;
+```
+
+### Global Constant
+
+```rust
+#[angelscript_macros::global(name = "...", namespace = "...")]
+pub const MY_CONST: f64 = 3.14;
 ```
