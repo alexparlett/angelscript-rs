@@ -32,9 +32,9 @@
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use angelscript_core::{
-    ClassEntry, EnumEntry, FuncdefEntry, FunctionEntry, InterfaceEntry, PrimitiveEntry,
-    PrimitiveKind, PropertyEntry, RegistrationError, TemplateInstanceInfo, TemplateParamEntry,
-    TemplateValidation, TypeEntry, TypeHash,
+    ClassEntry, EnumEntry, FuncdefEntry, FunctionEntry, GlobalPropertyEntry, InterfaceEntry,
+    PrimitiveEntry, PrimitiveKind, PropertyEntry, RegistrationError, TemplateInstanceInfo,
+    TemplateParamEntry, TemplateValidation, TypeEntry, TypeHash,
 };
 
 /// Type-erased template validation callback.
@@ -69,6 +69,10 @@ pub struct SymbolRegistry {
     /// Stored separately because they have a specific signature different from
     /// normal native functions that use `CallContext`.
     template_callbacks: FxHashMap<TypeHash, TemplateCallback>,
+
+    /// Global properties by hash (O(1) lookup).
+    /// Hash is computed from qualified name via `TypeHash::from_name()`.
+    globals: FxHashMap<TypeHash, GlobalPropertyEntry>,
 }
 
 impl SymbolRegistry {
@@ -374,6 +378,52 @@ impl SymbolRegistry {
     }
 
     // ==========================================================================
+    // Global Properties
+    // ==========================================================================
+
+    /// Register a global property.
+    ///
+    /// Returns an error if a global with the same qualified name already exists.
+    pub fn register_global(&mut self, entry: GlobalPropertyEntry) -> Result<(), RegistrationError> {
+        let hash = entry.type_hash;
+
+        if self.globals.contains_key(&hash) {
+            return Err(RegistrationError::DuplicateRegistration {
+                name: entry.qualified_name.clone(),
+                kind: "global property".to_string(),
+            });
+        }
+
+        self.globals.insert(hash, entry);
+        Ok(())
+    }
+
+    /// Get a global property by its hash.
+    pub fn get_global(&self, hash: TypeHash) -> Option<&GlobalPropertyEntry> {
+        self.globals.get(&hash)
+    }
+
+    /// Get a global property by its qualified name.
+    pub fn get_global_by_name(&self, name: &str) -> Option<&GlobalPropertyEntry> {
+        self.globals.get(&TypeHash::from_name(name))
+    }
+
+    /// Check if a global property exists by hash.
+    pub fn contains_global(&self, hash: TypeHash) -> bool {
+        self.globals.contains_key(&hash)
+    }
+
+    /// Iterate over all global properties.
+    pub fn globals(&self) -> impl Iterator<Item = &GlobalPropertyEntry> {
+        self.globals.values()
+    }
+
+    /// Get the number of registered global properties.
+    pub fn global_count(&self) -> usize {
+        self.globals.len()
+    }
+
+    // ==========================================================================
     // Template Support
     // ==========================================================================
 
@@ -400,6 +450,7 @@ impl std::fmt::Debug for SymbolRegistry {
         f.debug_struct("SymbolRegistry")
             .field("types", &self.types.len())
             .field("functions", &self.functions.len())
+            .field("globals", &self.globals.len())
             .field("namespaces", &self.namespaces.len())
             .field("template_callbacks", &self.template_callbacks.len())
             .finish()
@@ -621,5 +672,64 @@ mod tests {
         let debug_str = format!("{:?}", registry);
         assert!(debug_str.contains("SymbolRegistry"));
         assert!(debug_str.contains("types"));
+    }
+
+    #[test]
+    fn register_global_property() {
+        use angelscript_core::ConstantValue;
+
+        let mut registry = SymbolRegistry::new();
+
+        let entry = GlobalPropertyEntry::constant("PI", ConstantValue::Double(3.14159));
+        registry.register_global(entry).unwrap();
+
+        assert_eq!(registry.global_count(), 1);
+        assert!(registry.contains_global(TypeHash::from_name("PI")));
+    }
+
+    #[test]
+    fn get_global_by_name() {
+        use angelscript_core::ConstantValue;
+
+        let mut registry = SymbolRegistry::new();
+
+        let entry = GlobalPropertyEntry::constant("MAX_PLAYERS", ConstantValue::Int32(64));
+        registry.register_global(entry).unwrap();
+
+        let global = registry.get_global_by_name("MAX_PLAYERS").unwrap();
+        assert_eq!(global.name, "MAX_PLAYERS");
+        assert!(global.is_const);
+    }
+
+    #[test]
+    fn duplicate_global_error() {
+        use angelscript_core::ConstantValue;
+
+        let mut registry = SymbolRegistry::new();
+
+        let entry1 = GlobalPropertyEntry::constant("PI", ConstantValue::Double(3.14));
+        let entry2 = GlobalPropertyEntry::constant("PI", ConstantValue::Double(3.14159));
+
+        registry.register_global(entry1).unwrap();
+        let result = registry.register_global(entry2);
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn iterate_globals() {
+        use angelscript_core::ConstantValue;
+
+        let mut registry = SymbolRegistry::new();
+
+        registry
+            .register_global(GlobalPropertyEntry::constant("PI", ConstantValue::Double(3.14)))
+            .unwrap();
+        registry
+            .register_global(GlobalPropertyEntry::constant("E", ConstantValue::Double(2.71)))
+            .unwrap();
+
+        let globals: Vec<_> = registry.globals().collect();
+        assert_eq!(globals.len(), 2);
     }
 }

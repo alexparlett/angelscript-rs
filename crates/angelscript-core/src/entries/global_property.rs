@@ -149,13 +149,11 @@ pub enum GlobalPropertyImpl {
 
 impl GlobalPropertyImpl {
     /// Get the data type for this property implementation.
-    ///
-    /// Returns `None` for `Script` variants (type must be tracked separately).
-    pub fn data_type(&self) -> Option<DataType> {
+    pub fn data_type(&self) -> DataType {
         match self {
-            GlobalPropertyImpl::Constant(value) => Some(value.data_type()),
-            GlobalPropertyImpl::Mutable(accessor) => Some(accessor.data_type()),
-            GlobalPropertyImpl::Script { data_type, .. } => Some(*data_type),
+            GlobalPropertyImpl::Constant(value) => value.data_type(),
+            GlobalPropertyImpl::Mutable(accessor) => accessor.data_type(),
+            GlobalPropertyImpl::Script { data_type, .. } => *data_type,
         }
     }
 }
@@ -445,12 +443,12 @@ mod tests {
     fn into_global_property_impl_data_types() {
         // Test that we can get data_type from the impl
         let impl_i32 = 42i32.into_global_impl();
-        let dt = impl_i32.data_type().unwrap();
+        let dt = impl_i32.data_type();
         assert_eq!(dt.type_hash, primitives::INT32);
         assert!(dt.is_const);
 
         let impl_f64 = 3.14f64.into_global_impl();
-        let dt = impl_f64.data_type().unwrap();
+        let dt = impl_f64.data_type();
         assert_eq!(dt.type_hash, primitives::DOUBLE);
         assert!(dt.is_const);
     }
@@ -465,7 +463,7 @@ mod tests {
         assert!(matches!(impl_arc, GlobalPropertyImpl::Mutable(_)));
 
         // Get data_type from the impl
-        let dt = impl_arc.data_type().unwrap();
+        let dt = impl_arc.data_type();
         assert_eq!(dt.type_hash, primitives::INT32);
         assert!(!dt.is_const); // Arc<RwLock<T>> is mutable by default
     }

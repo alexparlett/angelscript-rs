@@ -1,74 +1,86 @@
-# Current Task: Compiler Implementation
+# Current Task: Global Properties (Task 25)
 
-**Status:** Planning Complete - Ready for Implementation
-**Date:** 2025-12-08
-**Branch:** task/01-unified-type-registry
-
----
-
-## Current State Summary
-
-**Parser:** 100% Complete
-**FFI:** 100% Complete
-**Compiler:** Task breakdown complete (17 tasks)
+**Status:** Phase 2 Complete
+**Date:** 2025-12-09
+**Branch:** 025-adding-global-properties
 
 ---
 
-## Compiler Tasks (31-47)
+## Task 25: Global Properties
 
-All task files created in `claude/tasks/`:
+Enables FFI registration of global properties accessible from scripts.
 
-| Task | File | Description | Status |
-|------|------|-------------|--------|
-| 31 | `31_compiler_foundation.md` | Core types, bytecode, opcodes | Pending |
-| 32 | `32_string_factory.md` | String literal factory config | Pending |
-| 33 | `33_compilation_context.md` | Unified type lookup | Pending |
-| 34 | `34_type_resolution.md` | TypeExpr → DataType | Pending |
-| 35 | `35_template_instantiation.md` | Template types, functions, cache | Pending |
-| 36 | `36_conversion_system.md` | Type conversions with costs | Pending |
-| 37 | `37_overload_resolution.md` | Function/operator selection | Pending |
-| 38 | `38_registration_pass.md` | Pass 1 - declarations | Pending |
-| 39 | `39_local_scope.md` | Variable tracking, captures | Pending |
-| 40 | `40_bytecode_emitter.md` | Instruction emission, jumps | Pending |
-| 41 | `41_expression_basics.md` | Literals, identifiers, operators | Pending |
-| 42 | `42_expression_calls.md` | Function/method calls | Pending |
-| 43 | `43_expression_advanced.md` | Cast, lambda, ternary | Pending |
-| 44 | `44_statement_basics.md` | Blocks, var decl, if, while | Pending |
-| 45 | `45_statement_loops.md` | For, foreach, switch | Pending |
-| 46 | `46_function_compilation.md` | Pass 2 orchestration | Pending |
-| 47 | `47_integration_testing.md` | All tests passing, performance | Pending |
+### Phase 1: Core Types ✓ (Committed: 9106321)
 
----
+| Type | Location | Purpose |
+|------|----------|---------|
+| `ConstantValue` | entries/global_property.rs | Primitive constants (Copy) |
+| `GlobalPropertyEntry` | entries/global_property.rs | Complete entry with metadata |
+| `GlobalPropertyImpl` | entries/global_property.rs | Storage: Constant/Mutable/Script |
+| `GlobalPropertyAccessor` | entries/global_property.rs | Type-erased read/write for Arc<RwLock<T>> |
+| `IntoGlobalProperty` | entries/global_property.rs | Conversion trait (primitives + Arc<RwLock<T>>) |
+| `PropertyError` | entries/global_property.rs | Error type (→ RuntimeError) |
+| `GlobalMeta` | meta.rs | Macro-generated metadata |
 
-## Key Design Documents
+### Phase 2: Registry & Module ✓
 
-- `claude/compiler_design.md` - Master compiler design (includes Section 17: Template Instantiation)
-- `claude/plans/cuddly-puzzling-newt.md` - Template instantiation detailed design
+- [x] **Step 6:** Add globals storage to SymbolRegistry
+  - Added `globals: FxHashMap<TypeHash, GlobalPropertyEntry>` field
+  - Added `register_global()`, `get_global()`, `get_global_by_name()`, `contains_global()`, `globals()`, `global_count()`
+  - No separate `global_by_name` map needed - `TypeHash::from_name()` computes hash directly
+- [x] **Step 7:** Add `global()` to Module
+  - Added `globals: Vec<GlobalPropertyEntry>` field
+  - Added `global<V: IntoGlobalProperty>(name, value)` builder method
+  - Updated `is_empty()` and `len()` to include globals
+  - Helper `qualify_name()` for namespace-qualified names
+- [x] `global_meta()` not needed - uses `IntoGlobalProperty` trait
 
----
+**Key fix:** Changed `GlobalPropertyImpl::data_type()` to return `DataType` directly instead of `Option<DataType>` since all variants always have a data type.
 
-## Next Steps
+### Phase 3: Macro (Pending)
 
-1. Start with Task 31: Compiler Foundation
-2. Each task is independently implementable and committable
-3. Tasks should be implemented in order (dependencies flow forward)
+- [ ] **Step 9:** Add `#[angelscript::global]` attribute macro
+- [ ] **Step 10:** Comprehensive tests
 
 ---
 
-## Architecture Overview
+## Design Summary
 
-**Two-pass compilation:**
-1. **Registration Pass (Task 38):** Walk AST, register types and function signatures
-2. **Compilation Pass (Task 46):** Generate bytecode for function bodies
+**Two property types:**
+1. **Constants** - Primitives via `ConstantValue`, immutable, can inline
+2. **Mutable** - `Arc<RwLock<T>>` for shared state with scripts
 
-**Bidirectional type checking:**
-- `infer(expr)` - Synthesize type from expression
-- `check(expr, expected)` - Verify expression has expected type
+**API:**
+```rust
+// Primitive constants
+Module::new()
+    .global("PI", 3.14159f64)           // const double PI
+    .global("MAX", 100i32);             // const int MAX
 
-**Key types:**
-- `TypeHash` - 64-bit Copy type for O(1) lookups
-- `DataType` - Type with modifiers (const, handle, ref)
-- `ExprInfo` - Expression result (data_type, is_lvalue, is_mutable)
-- `BytecodeChunk` - Instructions + debug info (stored in `FunctionImpl::Script`)
-- `ConstantPool` - Module-level constants with deduplication
-- `CompiledModule` - Shared constants + list of compiled functions (bytecode in registry)
+// Mutable shared state
+let score = Arc::new(RwLock::new(0i32));
+Module::new()
+    .global("score", score.clone());    // int score
+
+// With namespace
+Module::in_namespace(&["math"])
+    .global("PI", 3.14159f64);          // math::PI
+```
+
+---
+
+## Key Files
+
+- `crates/angelscript-core/src/entries/global_property.rs` - Core types
+- `crates/angelscript-core/src/meta.rs` - GlobalMeta
+- `crates/angelscript-registry/src/registry.rs` - SymbolRegistry with globals
+- `crates/angelscript-registry/src/module.rs` - Module API with global()
+- `claude/tasks/25_global_properties.md` - Full task spec
+
+---
+
+## Next Step
+
+Phase 3: Add `#[angelscript::global]` attribute macro
+- Located in `crates/angelscript-macros/`
+- Generate `GlobalMeta` from static declarations
