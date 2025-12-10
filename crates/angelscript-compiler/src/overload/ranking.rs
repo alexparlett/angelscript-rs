@@ -141,19 +141,27 @@ fn format_type(hash: TypeHash, ctx: &CompilationContext<'_>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::conversion::Conversion;
+    use crate::conversion::{Conversion, ConversionKind};
 
     fn make_match(hash: u64, cost: u32, exact_count: usize, total_args: usize) -> OverloadMatch {
         let mut conversions = Vec::with_capacity(total_args);
 
         for i in 0..total_args {
             if i < exact_count {
-                conversions.push(Some(Conversion::identity()));
+                conversions.push(Some(Conversion {
+                    kind: ConversionKind::Identity,
+                    cost: Conversion::COST_EXACT,
+                    is_implicit: true,
+                }));
             } else {
-                conversions.push(Some(Conversion::primitive_widening(
-                    angelscript_core::primitives::INT32,
-                    angelscript_core::primitives::INT64,
-                )));
+                conversions.push(Some(Conversion {
+                    kind: ConversionKind::Primitive {
+                        from: angelscript_core::primitives::INT32,
+                        to: angelscript_core::primitives::INT64,
+                    },
+                    cost: Conversion::COST_PRIMITIVE_WIDENING,
+                    is_implicit: true,
+                }));
             }
         }
 

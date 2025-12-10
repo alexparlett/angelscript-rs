@@ -257,23 +257,23 @@ mod tests {
     }
 
     #[test]
-    fn single_candidate_no_match() {
+    fn single_candidate_narrowing_allowed() {
+        // AngelScript allows implicit narrowing conversions
         let mut registry = setup_registry_with_primitives();
         let func = make_function("foo", vec![int_param("x")]);
         let func_hash = func.def.func_hash;
         registry.register_function(func).unwrap();
 
         let ctx = CompilationContext::new(&registry);
-        // Pass int64 to int32 parameter (narrowing, not implicit)
+        // Pass int64 to int32 parameter - narrowing is allowed implicitly in AngelScript
         let arg_types = vec![DataType::simple(primitives::INT64)];
 
         let result = resolve_overload(&[func_hash], &arg_types, &ctx, Span::default());
 
-        assert!(result.is_err());
-        assert!(matches!(
-            result.unwrap_err(),
-            CompilationError::NoMatchingOverload { .. }
-        ));
+        assert!(result.is_ok());
+        let m = result.unwrap();
+        assert_eq!(m.func_hash, func_hash);
+        assert!(m.total_cost > 0); // Narrowing has a cost
     }
 
     #[test]
@@ -363,5 +363,85 @@ mod tests {
             result.unwrap_err(),
             CompilationError::Internal { .. }
         ));
+    }
+
+    #[test]
+    fn default_parameter_allows_fewer_args() {
+        let mut registry = setup_registry_with_primitives();
+
+        // foo(int x, int y = 10) - second param has default
+        let param_types: Vec<_> = vec![primitives::INT32, primitives::INT32];
+        let hash = TypeHash::from_function("foo", &param_types);
+        let def = FunctionDef::new(
+            hash,
+            "foo".to_string(),
+            vec![],
+            vec![
+                Param::new("x", DataType::simple(primitives::INT32)),
+                Param::with_default("y", DataType::simple(primitives::INT32)),
+            ],
+            DataType::void(),
+            None,
+            FunctionTraits::default(),
+            false,
+            Visibility::Public,
+        );
+        let func = FunctionEntry::ffi(def);
+        let func_hash = func.def.func_hash;
+        registry.register_function(func).unwrap();
+
+        let ctx = CompilationContext::new(&registry);
+
+        // Call with only one argument - should succeed because y has default
+        let arg_types = vec![DataType::simple(primitives::INT32)];
+        let result = resolve_overload(&[func_hash], &arg_types, &ctx, Span::default());
+
+        assert!(result.is_ok());
+        let m = result.unwrap();
+        assert_eq!(m.func_hash, func_hash);
+        assert_eq!(m.arg_conversions.len(), 2);
+        assert!(m.arg_conversions[0].is_some()); // First arg has conversion
+        assert!(m.arg_conversions[1].is_none()); // Second arg uses default
+    }
+
+    #[test]
+    fn default_parameter_with_all_args_provided() {
+        let mut registry = setup_registry_with_primitives();
+
+        // foo(int x, int y = 10)
+        let param_types: Vec<_> = vec![primitives::INT32, primitives::INT32];
+        let hash = TypeHash::from_function("foo", &param_types);
+        let def = FunctionDef::new(
+            hash,
+            "foo".to_string(),
+            vec![],
+            vec![
+                Param::new("x", DataType::simple(primitives::INT32)),
+                Param::with_default("y", DataType::simple(primitives::INT32)),
+            ],
+            DataType::void(),
+            None,
+            FunctionTraits::default(),
+            false,
+            Visibility::Public,
+        );
+        let func = FunctionEntry::ffi(def);
+        let func_hash = func.def.func_hash;
+        registry.register_function(func).unwrap();
+
+        let ctx = CompilationContext::new(&registry);
+
+        // Call with both arguments
+        let arg_types = vec![
+            DataType::simple(primitives::INT32),
+            DataType::simple(primitives::INT32),
+        ];
+        let result = resolve_overload(&[func_hash], &arg_types, &ctx, Span::default());
+
+        assert!(result.is_ok());
+        let m = result.unwrap();
+        assert_eq!(m.arg_conversions.len(), 2);
+        assert!(m.arg_conversions[0].is_some()); // Both args have conversions
+        assert!(m.arg_conversions[1].is_some());
     }
 }

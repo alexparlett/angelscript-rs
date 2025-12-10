@@ -529,5 +529,562 @@ mod tests {
                 ..
             }
         ));
+
+        // Shift right
+        let result =
+            resolve_binary_operator(&left, &right, BinaryOp::ShiftRight, &ctx, Span::default());
+        assert!(matches!(
+            result.unwrap(),
+            OperatorResolution::Primitive {
+                opcode: OpCode::Shr,
+                ..
+            }
+        ));
+
+        // Unsigned shift right
+        let result = resolve_binary_operator(
+            &left,
+            &right,
+            BinaryOp::ShiftRightUnsigned,
+            &ctx,
+            Span::default(),
+        );
+        assert!(matches!(
+            result.unwrap(),
+            OperatorResolution::Primitive {
+                opcode: OpCode::Ushr,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn i64_arithmetic_operations() {
+        let registry = SymbolRegistry::with_primitives();
+        let ctx = CompilationContext::new(&registry);
+
+        let left = DataType::simple(primitives::INT64);
+        let right = DataType::simple(primitives::INT64);
+
+        // Add
+        let result = resolve_binary_operator(&left, &right, BinaryOp::Add, &ctx, Span::default());
+        assert!(matches!(
+            result.unwrap(),
+            OperatorResolution::Primitive {
+                opcode: OpCode::AddI64,
+                ..
+            }
+        ));
+
+        // Sub
+        let result = resolve_binary_operator(&left, &right, BinaryOp::Sub, &ctx, Span::default());
+        assert!(matches!(
+            result.unwrap(),
+            OperatorResolution::Primitive {
+                opcode: OpCode::SubI64,
+                ..
+            }
+        ));
+
+        // Mul
+        let result = resolve_binary_operator(&left, &right, BinaryOp::Mul, &ctx, Span::default());
+        assert!(matches!(
+            result.unwrap(),
+            OperatorResolution::Primitive {
+                opcode: OpCode::MulI64,
+                ..
+            }
+        ));
+
+        // Div
+        let result = resolve_binary_operator(&left, &right, BinaryOp::Div, &ctx, Span::default());
+        assert!(matches!(
+            result.unwrap(),
+            OperatorResolution::Primitive {
+                opcode: OpCode::DivI64,
+                ..
+            }
+        ));
+
+        // Mod
+        let result = resolve_binary_operator(&left, &right, BinaryOp::Mod, &ctx, Span::default());
+        assert!(matches!(
+            result.unwrap(),
+            OperatorResolution::Primitive {
+                opcode: OpCode::ModI64,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn i64_comparison_operations() {
+        let registry = SymbolRegistry::with_primitives();
+        let ctx = CompilationContext::new(&registry);
+
+        let left = DataType::simple(primitives::INT64);
+        let right = DataType::simple(primitives::INT64);
+
+        let result = resolve_binary_operator(&left, &right, BinaryOp::Less, &ctx, Span::default());
+        assert!(matches!(
+            result.unwrap(),
+            OperatorResolution::Primitive {
+                opcode: OpCode::LtI64,
+                result_type,
+            } if result_type.type_hash == primitives::BOOL
+        ));
+
+        let result =
+            resolve_binary_operator(&left, &right, BinaryOp::LessEqual, &ctx, Span::default());
+        assert!(matches!(
+            result.unwrap(),
+            OperatorResolution::Primitive {
+                opcode: OpCode::LeI64,
+                ..
+            }
+        ));
+
+        let result =
+            resolve_binary_operator(&left, &right, BinaryOp::Greater, &ctx, Span::default());
+        assert!(matches!(
+            result.unwrap(),
+            OperatorResolution::Primitive {
+                opcode: OpCode::GtI64,
+                ..
+            }
+        ));
+
+        let result =
+            resolve_binary_operator(&left, &right, BinaryOp::GreaterEqual, &ctx, Span::default());
+        assert!(matches!(
+            result.unwrap(),
+            OperatorResolution::Primitive {
+                opcode: OpCode::GeI64,
+                ..
+            }
+        ));
+
+        let result = resolve_binary_operator(&left, &right, BinaryOp::Equal, &ctx, Span::default());
+        assert!(matches!(
+            result.unwrap(),
+            OperatorResolution::Primitive {
+                opcode: OpCode::EqI64,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn f64_arithmetic_operations() {
+        let registry = SymbolRegistry::with_primitives();
+        let ctx = CompilationContext::new(&registry);
+
+        let left = DataType::simple(primitives::DOUBLE);
+        let right = DataType::simple(primitives::DOUBLE);
+
+        let result = resolve_binary_operator(&left, &right, BinaryOp::Add, &ctx, Span::default());
+        assert!(matches!(
+            result.unwrap(),
+            OperatorResolution::Primitive {
+                opcode: OpCode::AddF64,
+                ..
+            }
+        ));
+
+        let result = resolve_binary_operator(&left, &right, BinaryOp::Sub, &ctx, Span::default());
+        assert!(matches!(
+            result.unwrap(),
+            OperatorResolution::Primitive {
+                opcode: OpCode::SubF64,
+                ..
+            }
+        ));
+
+        let result = resolve_binary_operator(&left, &right, BinaryOp::Mul, &ctx, Span::default());
+        assert!(matches!(
+            result.unwrap(),
+            OperatorResolution::Primitive {
+                opcode: OpCode::MulF64,
+                ..
+            }
+        ));
+
+        let result = resolve_binary_operator(&left, &right, BinaryOp::Div, &ctx, Span::default());
+        assert!(matches!(
+            result.unwrap(),
+            OperatorResolution::Primitive {
+                opcode: OpCode::DivF64,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn f64_comparison_operations() {
+        let registry = SymbolRegistry::with_primitives();
+        let ctx = CompilationContext::new(&registry);
+
+        let left = DataType::simple(primitives::DOUBLE);
+        let right = DataType::simple(primitives::DOUBLE);
+
+        let result = resolve_binary_operator(&left, &right, BinaryOp::Less, &ctx, Span::default());
+        assert!(matches!(
+            result.unwrap(),
+            OperatorResolution::Primitive {
+                opcode: OpCode::LtF64,
+                ..
+            }
+        ));
+
+        let result =
+            resolve_binary_operator(&left, &right, BinaryOp::LessEqual, &ctx, Span::default());
+        assert!(matches!(
+            result.unwrap(),
+            OperatorResolution::Primitive {
+                opcode: OpCode::LeF64,
+                ..
+            }
+        ));
+
+        let result =
+            resolve_binary_operator(&left, &right, BinaryOp::Greater, &ctx, Span::default());
+        assert!(matches!(
+            result.unwrap(),
+            OperatorResolution::Primitive {
+                opcode: OpCode::GtF64,
+                ..
+            }
+        ));
+
+        let result =
+            resolve_binary_operator(&left, &right, BinaryOp::GreaterEqual, &ctx, Span::default());
+        assert!(matches!(
+            result.unwrap(),
+            OperatorResolution::Primitive {
+                opcode: OpCode::GeF64,
+                ..
+            }
+        ));
+
+        let result = resolve_binary_operator(&left, &right, BinaryOp::Equal, &ctx, Span::default());
+        assert!(matches!(
+            result.unwrap(),
+            OperatorResolution::Primitive {
+                opcode: OpCode::EqF64,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn f32_comparison_operations() {
+        let registry = SymbolRegistry::with_primitives();
+        let ctx = CompilationContext::new(&registry);
+
+        let left = DataType::simple(primitives::FLOAT);
+        let right = DataType::simple(primitives::FLOAT);
+
+        let result =
+            resolve_binary_operator(&left, &right, BinaryOp::LessEqual, &ctx, Span::default());
+        assert!(matches!(
+            result.unwrap(),
+            OperatorResolution::Primitive {
+                opcode: OpCode::LeF32,
+                ..
+            }
+        ));
+
+        let result =
+            resolve_binary_operator(&left, &right, BinaryOp::Greater, &ctx, Span::default());
+        assert!(matches!(
+            result.unwrap(),
+            OperatorResolution::Primitive {
+                opcode: OpCode::GtF32,
+                ..
+            }
+        ));
+
+        let result =
+            resolve_binary_operator(&left, &right, BinaryOp::GreaterEqual, &ctx, Span::default());
+        assert!(matches!(
+            result.unwrap(),
+            OperatorResolution::Primitive {
+                opcode: OpCode::GeF32,
+                ..
+            }
+        ));
+
+        let result = resolve_binary_operator(&left, &right, BinaryOp::Equal, &ctx, Span::default());
+        assert!(matches!(
+            result.unwrap(),
+            OperatorResolution::Primitive {
+                opcode: OpCode::EqF32,
+                ..
+            }
+        ));
+
+        let result = resolve_binary_operator(&left, &right, BinaryOp::Less, &ctx, Span::default());
+        assert!(matches!(
+            result.unwrap(),
+            OperatorResolution::Primitive {
+                opcode: OpCode::LtF32,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn f32_arithmetic_sub_div() {
+        let registry = SymbolRegistry::with_primitives();
+        let ctx = CompilationContext::new(&registry);
+
+        let left = DataType::simple(primitives::FLOAT);
+        let right = DataType::simple(primitives::FLOAT);
+
+        let result = resolve_binary_operator(&left, &right, BinaryOp::Sub, &ctx, Span::default());
+        assert!(matches!(
+            result.unwrap(),
+            OperatorResolution::Primitive {
+                opcode: OpCode::SubF32,
+                ..
+            }
+        ));
+
+        let result = resolve_binary_operator(&left, &right, BinaryOp::Div, &ctx, Span::default());
+        assert!(matches!(
+            result.unwrap(),
+            OperatorResolution::Primitive {
+                opcode: OpCode::DivF32,
+                ..
+            }
+        ));
+
+        let result = resolve_binary_operator(&left, &right, BinaryOp::Add, &ctx, Span::default());
+        assert!(matches!(
+            result.unwrap(),
+            OperatorResolution::Primitive {
+                opcode: OpCode::AddF32,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn i32_remaining_arithmetic() {
+        let registry = SymbolRegistry::with_primitives();
+        let ctx = CompilationContext::new(&registry);
+
+        let left = DataType::simple(primitives::INT32);
+        let right = DataType::simple(primitives::INT32);
+
+        let result = resolve_binary_operator(&left, &right, BinaryOp::Sub, &ctx, Span::default());
+        assert!(matches!(
+            result.unwrap(),
+            OperatorResolution::Primitive {
+                opcode: OpCode::SubI32,
+                ..
+            }
+        ));
+
+        let result = resolve_binary_operator(&left, &right, BinaryOp::Mul, &ctx, Span::default());
+        assert!(matches!(
+            result.unwrap(),
+            OperatorResolution::Primitive {
+                opcode: OpCode::MulI32,
+                ..
+            }
+        ));
+
+        let result = resolve_binary_operator(&left, &right, BinaryOp::Div, &ctx, Span::default());
+        assert!(matches!(
+            result.unwrap(),
+            OperatorResolution::Primitive {
+                opcode: OpCode::DivI32,
+                ..
+            }
+        ));
+
+        let result = resolve_binary_operator(&left, &right, BinaryOp::Mod, &ctx, Span::default());
+        assert!(matches!(
+            result.unwrap(),
+            OperatorResolution::Primitive {
+                opcode: OpCode::ModI32,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn i32_remaining_comparisons() {
+        let registry = SymbolRegistry::with_primitives();
+        let ctx = CompilationContext::new(&registry);
+
+        let left = DataType::simple(primitives::INT32);
+        let right = DataType::simple(primitives::INT32);
+
+        let result =
+            resolve_binary_operator(&left, &right, BinaryOp::LessEqual, &ctx, Span::default());
+        assert!(matches!(
+            result.unwrap(),
+            OperatorResolution::Primitive {
+                opcode: OpCode::LeI32,
+                ..
+            }
+        ));
+
+        let result =
+            resolve_binary_operator(&left, &right, BinaryOp::Greater, &ctx, Span::default());
+        assert!(matches!(
+            result.unwrap(),
+            OperatorResolution::Primitive {
+                opcode: OpCode::GtI32,
+                ..
+            }
+        ));
+
+        let result =
+            resolve_binary_operator(&left, &right, BinaryOp::GreaterEqual, &ctx, Span::default());
+        assert!(matches!(
+            result.unwrap(),
+            OperatorResolution::Primitive {
+                opcode: OpCode::GeI32,
+                ..
+            }
+        ));
+
+        let result = resolve_binary_operator(&left, &right, BinaryOp::Equal, &ctx, Span::default());
+        assert!(matches!(
+            result.unwrap(),
+            OperatorResolution::Primitive {
+                opcode: OpCode::EqI32,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn bool_equality() {
+        let registry = SymbolRegistry::with_primitives();
+        let ctx = CompilationContext::new(&registry);
+
+        let left = DataType::simple(primitives::BOOL);
+        let right = DataType::simple(primitives::BOOL);
+
+        let result = resolve_binary_operator(&left, &right, BinaryOp::Equal, &ctx, Span::default());
+        assert!(matches!(
+            result.unwrap(),
+            OperatorResolution::Primitive {
+                opcode: OpCode::EqBool,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn unary_negation_i64() {
+        let registry = SymbolRegistry::with_primitives();
+        let ctx = CompilationContext::new(&registry);
+
+        let operand = DataType::simple(primitives::INT64);
+        let result = resolve_unary_operator(&operand, UnaryOp::Neg, &ctx, Span::default());
+
+        assert!(matches!(
+            result.unwrap(),
+            OperatorResolution::Primitive {
+                opcode: OpCode::NegI64,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn unary_negation_f32() {
+        let registry = SymbolRegistry::with_primitives();
+        let ctx = CompilationContext::new(&registry);
+
+        let operand = DataType::simple(primitives::FLOAT);
+        let result = resolve_unary_operator(&operand, UnaryOp::Neg, &ctx, Span::default());
+
+        assert!(matches!(
+            result.unwrap(),
+            OperatorResolution::Primitive {
+                opcode: OpCode::NegF32,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn unary_negation_f64() {
+        let registry = SymbolRegistry::with_primitives();
+        let ctx = CompilationContext::new(&registry);
+
+        let operand = DataType::simple(primitives::DOUBLE);
+        let result = resolve_unary_operator(&operand, UnaryOp::Neg, &ctx, Span::default());
+
+        assert!(matches!(
+            result.unwrap(),
+            OperatorResolution::Primitive {
+                opcode: OpCode::NegF64,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn unary_bitwise_not() {
+        let registry = SymbolRegistry::with_primitives();
+        let ctx = CompilationContext::new(&registry);
+
+        let operand = DataType::simple(primitives::INT32);
+        let result = resolve_unary_operator(&operand, UnaryOp::BitwiseNot, &ctx, Span::default());
+
+        assert!(matches!(
+            result.unwrap(),
+            OperatorResolution::Primitive {
+                opcode: OpCode::BitNot,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn unary_plus_is_noop() {
+        let registry = SymbolRegistry::with_primitives();
+        let ctx = CompilationContext::new(&registry);
+
+        // Test all numeric types
+        for type_hash in [
+            primitives::INT32,
+            primitives::INT64,
+            primitives::FLOAT,
+            primitives::DOUBLE,
+        ] {
+            let operand = DataType::simple(type_hash);
+            let result = resolve_unary_operator(&operand, UnaryOp::Plus, &ctx, Span::default());
+            assert!(result.is_ok());
+            match result.unwrap() {
+                OperatorResolution::Primitive { result_type, .. } => {
+                    assert_eq!(result_type.type_hash, type_hash);
+                }
+                _ => panic!("Expected primitive resolution"),
+            }
+        }
+    }
+
+    #[test]
+    fn unary_operator_on_unsupported_type_fails() {
+        let registry = SymbolRegistry::with_primitives();
+        let ctx = CompilationContext::new(&registry);
+
+        // Try negation on bool - should fail
+        let operand = DataType::simple(primitives::BOOL);
+        let result = resolve_unary_operator(&operand, UnaryOp::Neg, &ctx, Span::default());
+
+        assert!(result.is_err());
+        assert!(matches!(
+            result.unwrap_err(),
+            CompilationError::NoOperator { .. }
+        ));
     }
 }
