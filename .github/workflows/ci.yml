@@ -120,6 +120,9 @@ jobs:
             ${{ runner.os }}-cargo-coverage-
             ${{ runner.os }}-cargo-
 
+      - name: Install lcov
+        run: sudo apt-get install -y lcov
+
       - name: Run tests with coverage
         run: |
           cargo llvm-cov nextest --all-features --workspace \
