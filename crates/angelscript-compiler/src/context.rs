@@ -59,6 +59,357 @@ impl Scope {
 }
 
 // ============================================================================
+// LocalScope - Function-local variable tracking
+// ============================================================================
+
+/// Information about a local variable.
+#[derive(Debug, Clone)]
+pub struct LocalVar {
+    /// Variable name
+    pub name: String,
+    /// Variable type
+    pub data_type: DataType,
+    /// Stack slot index
+    pub slot: u32,
+    /// Scope depth where declared
+    pub depth: u32,
+    /// Whether variable is const
+    pub is_const: bool,
+    /// Whether variable has been initialized
+    pub is_initialized: bool,
+    /// Source location of declaration
+    pub span: Span,
+}
+
+/// Information about a captured variable (for lambdas).
+#[derive(Debug, Clone)]
+pub struct CapturedVar {
+    /// Original variable name
+    pub name: String,
+    /// Type of captured variable
+    pub data_type: DataType,
+    /// Index in capture array
+    pub capture_index: usize,
+    /// Whether captured by reference
+    pub by_reference: bool,
+    /// Original slot (if from enclosing function)
+    pub original_slot: Option<u32>,
+    /// Whether the original is const
+    pub is_const: bool,
+}
+
+/// Result of variable lookup.
+#[derive(Debug, Clone)]
+pub enum VarLookup {
+    /// Variable found in local scope
+    Local(LocalVar),
+    /// Variable captured from enclosing scope
+    Captured(CapturedVar),
+}
+
+/// Scope-related errors.
+#[derive(Debug, Clone)]
+pub enum ScopeError {
+    /// Variable redeclared in same scope
+    Redeclaration {
+        name: String,
+        original_span: Span,
+        new_span: Span,
+    },
+}
+
+/// Local scope for a function being compiled.
+///
+/// Tracks local variables, handles nested block scopes, and manages
+/// lambda captures. This is separate from `Scope` which handles
+/// namespace-level symbols (types, functions, globals).
+#[derive(Debug)]
+pub struct LocalScope {
+    /// Variables by name in current scope chain
+    variables: FxHashMap<String, LocalVar>,
+
+    /// Current scope depth (0 = function scope)
+    scope_depth: u32,
+
+    /// Stack of shadowed variables (shadowing_depth, name, old_var)
+    /// When we shadow a variable, we save the old one here along with the depth
+    /// at which the shadowing occurred (not the depth of the original variable)
+    shadowed: Vec<(u32, String, LocalVar)>,
+
+    /// Next available stack slot
+    next_slot: u32,
+
+    /// Maximum slot used (for stack frame size)
+    max_slot: u32,
+
+    /// Captured variables (for lambdas)
+    captures: Vec<CapturedVar>,
+
+    /// Parent scope (for nested functions/lambdas)
+    parent: Option<Box<LocalScope>>,
+}
+
+impl LocalScope {
+    /// Create a new local scope for a function.
+    pub fn new() -> Self {
+        Self {
+            variables: FxHashMap::default(),
+            scope_depth: 0,
+            shadowed: Vec::new(),
+            next_slot: 0,
+            max_slot: 0,
+            captures: Vec::new(),
+            parent: None,
+        }
+    }
+
+    /// Create a nested scope (for lambdas).
+    pub fn nested(parent: LocalScope) -> Self {
+        Self {
+            variables: FxHashMap::default(),
+            scope_depth: 0,
+            shadowed: Vec::new(),
+            next_slot: 0,
+            max_slot: 0,
+            captures: Vec::new(),
+            parent: Some(Box::new(parent)),
+        }
+    }
+
+    // ==========================================================================
+    // Scope Management
+    // ==========================================================================
+
+    /// Enter a new scope (block, if body, loop body, etc.).
+    pub fn push_scope(&mut self) {
+        self.scope_depth += 1;
+    }
+
+    /// Exit the current scope, removing variables declared in it.
+    pub fn pop_scope(&mut self) {
+        // Remove all variables declared at current depth
+        self.variables.retain(|_, var| var.depth < self.scope_depth);
+
+        // Restore any shadowed variables from this depth
+        // The shadowing_depth tells us when the shadowing occurred
+        while let Some(&(shadowing_depth, _, _)) = self.shadowed.last() {
+            if shadowing_depth == self.scope_depth {
+                let (_, name, var) = self.shadowed.pop().unwrap();
+                self.variables.insert(name, var);
+            } else {
+                break;
+            }
+        }
+
+        // Note: we don't decrease next_slot here because stack slots
+        // can be reused but the max must account for all simultaneously live vars
+
+        self.scope_depth -= 1;
+    }
+
+    /// Get current scope depth.
+    pub fn depth(&self) -> u32 {
+        self.scope_depth
+    }
+
+    // ==========================================================================
+    // Variable Declaration
+    // ==========================================================================
+
+    /// Declare a new local variable.
+    ///
+    /// Returns the slot number, or error if already declared at same depth.
+    pub fn declare(
+        &mut self,
+        name: String,
+        data_type: DataType,
+        is_const: bool,
+        span: Span,
+    ) -> Result<u32, ScopeError> {
+        // Check for redeclaration at same scope depth
+        if let Some(existing) = self.variables.get(&name) {
+            if existing.depth == self.scope_depth {
+                return Err(ScopeError::Redeclaration {
+                    name: name.clone(),
+                    original_span: existing.span,
+                    new_span: span,
+                });
+            }
+            // Shadowing is allowed - save the old variable with the current depth
+            // (the depth at which shadowing is occurring)
+            self.shadowed
+                .push((self.scope_depth, name.clone(), existing.clone()));
+        }
+
+        let slot = self.allocate_slot();
+
+        let var = LocalVar {
+            name: name.clone(),
+            data_type,
+            slot,
+            depth: self.scope_depth,
+            is_const,
+            is_initialized: false,
+            span,
+        };
+
+        self.variables.insert(name, var);
+
+        Ok(slot)
+    }
+
+    /// Declare a function parameter.
+    ///
+    /// Parameters are at depth 0 and always initialized.
+    pub fn declare_param(
+        &mut self,
+        name: String,
+        data_type: DataType,
+        is_const: bool,
+        span: Span,
+    ) -> Result<u32, ScopeError> {
+        if self.variables.contains_key(&name) {
+            return Err(ScopeError::Redeclaration {
+                name: name.clone(),
+                original_span: span,
+                new_span: span,
+            });
+        }
+
+        let slot = self.allocate_slot();
+
+        let var = LocalVar {
+            name: name.clone(),
+            data_type,
+            slot,
+            depth: 0,
+            is_const,
+            is_initialized: true, // Parameters are always initialized
+            span,
+        };
+
+        self.variables.insert(name, var);
+
+        Ok(slot)
+    }
+
+    /// Mark a variable as initialized.
+    pub fn mark_initialized(&mut self, name: &str) {
+        if let Some(var) = self.variables.get_mut(name) {
+            var.is_initialized = true;
+        }
+    }
+
+    fn allocate_slot(&mut self) -> u32 {
+        let slot = self.next_slot;
+        self.next_slot += 1;
+        self.max_slot = self.max_slot.max(self.next_slot);
+        slot
+    }
+
+    // ==========================================================================
+    // Variable Lookup
+    // ==========================================================================
+
+    /// Look up a variable by name (local only, no capture).
+    pub fn get(&self, name: &str) -> Option<&LocalVar> {
+        self.variables.get(name)
+    }
+
+    /// Look up a variable, checking parent scopes for captures.
+    pub fn get_or_capture(&mut self, name: &str) -> Option<VarLookup> {
+        // First check local scope
+        if let Some(var) = self.variables.get(name) {
+            return Some(VarLookup::Local(var.clone()));
+        }
+
+        // Check if already captured
+        if let Some(capture) = self.captures.iter().find(|c| c.name == name) {
+            return Some(VarLookup::Captured(capture.clone()));
+        }
+
+        // Check parent scope and capture if found
+        if let Some(parent) = &mut self.parent
+            && let Some(lookup) = parent.get_or_capture(name)
+        {
+            match lookup {
+                VarLookup::Local(var) => {
+                    // Capture from parent
+                    let capture = CapturedVar {
+                        name: name.to_string(),
+                        data_type: var.data_type,
+                        capture_index: self.captures.len(),
+                        by_reference: true, // Default to by-reference capture
+                        original_slot: Some(var.slot),
+                        is_const: var.is_const,
+                    };
+                    self.captures.push(capture.clone());
+                    return Some(VarLookup::Captured(capture));
+                }
+                VarLookup::Captured(cap) => {
+                    // Re-capture from parent's captures
+                    let capture = CapturedVar {
+                        name: name.to_string(),
+                        data_type: cap.data_type,
+                        capture_index: self.captures.len(),
+                        by_reference: cap.by_reference,
+                        original_slot: None,
+                        is_const: cap.is_const,
+                    };
+                    self.captures.push(capture.clone());
+                    return Some(VarLookup::Captured(capture));
+                }
+            }
+        }
+
+        None
+    }
+
+    /// Check if a name is declared in the current scope (not parent scopes).
+    pub fn is_declared_in_current_scope(&self, name: &str) -> bool {
+        self.variables
+            .get(name)
+            .map(|v| v.depth == self.scope_depth)
+            .unwrap_or(false)
+    }
+
+    // ==========================================================================
+    // Accessors
+    // ==========================================================================
+
+    /// Get the maximum stack frame size needed.
+    pub fn frame_size(&self) -> u32 {
+        self.max_slot
+    }
+
+    /// Get all captured variables.
+    pub fn captures(&self) -> &[CapturedVar] {
+        &self.captures
+    }
+
+    /// Check if there are any captures (i.e., this is a closure).
+    pub fn has_captures(&self) -> bool {
+        !self.captures.is_empty()
+    }
+
+    /// Iterate over all variables in scope.
+    pub fn iter(&self) -> impl Iterator<Item = &LocalVar> {
+        self.variables.values()
+    }
+
+    /// Take the parent scope (for returning from lambda compilation).
+    pub fn take_parent(&mut self) -> Option<LocalScope> {
+        self.parent.take().map(|b| *b)
+    }
+}
+
+impl Default for LocalScope {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+// ============================================================================
 // NoOpCallbacks (default template validation)
 // ============================================================================
 
@@ -108,6 +459,9 @@ pub struct CompilationContext<'a> {
 
     /// Template instance cache for avoiding duplicate instantiation
     template_cache: TemplateInstanceCache,
+
+    /// Local scope for function compilation (None when not in a function)
+    local_scope: Option<LocalScope>,
 }
 
 impl<'a> CompilationContext<'a> {
@@ -121,6 +475,7 @@ impl<'a> CompilationContext<'a> {
             imports: Vec::new(),
             errors: Vec::new(),
             template_cache: TemplateInstanceCache::new(),
+            local_scope: None,
         };
         // Build initial scope with global namespace
         ctx.rebuild_scope();
@@ -498,6 +853,138 @@ impl<'a> CompilationContext<'a> {
             self.global_registry,
             &callbacks,
         )
+    }
+
+    // ========================================================================
+    // Local Scope Management (for function compilation)
+    // ========================================================================
+
+    /// Begin compiling a function - creates a new local scope.
+    pub fn begin_function(&mut self) {
+        self.local_scope = Some(LocalScope::new());
+    }
+
+    /// End function compilation - returns the local scope with frame info.
+    ///
+    /// Returns `None` if not in a function.
+    pub fn end_function(&mut self) -> Option<LocalScope> {
+        self.local_scope.take()
+    }
+
+    /// Check if currently compiling a function.
+    pub fn in_function(&self) -> bool {
+        self.local_scope.is_some()
+    }
+
+    /// Enter a nested block scope (if body, loop body, etc.).
+    ///
+    /// Panics if not in a function.
+    pub fn push_local_scope(&mut self) {
+        self.local_scope
+            .as_mut()
+            .expect("push_local_scope called outside function")
+            .push_scope();
+    }
+
+    /// Exit the current block scope.
+    ///
+    /// Panics if not in a function.
+    pub fn pop_local_scope(&mut self) {
+        self.local_scope
+            .as_mut()
+            .expect("pop_local_scope called outside function")
+            .pop_scope();
+    }
+
+    /// Declare a local variable in the current scope.
+    ///
+    /// Returns the stack slot, or error if redeclared.
+    /// Panics if not in a function.
+    pub fn declare_local(
+        &mut self,
+        name: String,
+        data_type: DataType,
+        is_const: bool,
+        span: Span,
+    ) -> Result<u32, ScopeError> {
+        self.local_scope
+            .as_mut()
+            .expect("declare_local called outside function")
+            .declare(name, data_type, is_const, span)
+    }
+
+    /// Declare a function parameter.
+    ///
+    /// Parameters are always initialized.
+    /// Panics if not in a function.
+    pub fn declare_param(
+        &mut self,
+        name: String,
+        data_type: DataType,
+        is_const: bool,
+        span: Span,
+    ) -> Result<u32, ScopeError> {
+        self.local_scope
+            .as_mut()
+            .expect("declare_param called outside function")
+            .declare_param(name, data_type, is_const, span)
+    }
+
+    /// Mark a local variable as initialized.
+    ///
+    /// Panics if not in a function.
+    pub fn mark_local_initialized(&mut self, name: &str) {
+        self.local_scope
+            .as_mut()
+            .expect("mark_local_initialized called outside function")
+            .mark_initialized(name);
+    }
+
+    /// Look up a local variable by name.
+    ///
+    /// Returns `None` if not in a function or variable not found.
+    pub fn get_local(&self, name: &str) -> Option<&LocalVar> {
+        self.local_scope.as_ref()?.get(name)
+    }
+
+    /// Look up a variable, capturing from parent scopes if in a lambda.
+    ///
+    /// Returns `None` if not in a function or variable not found.
+    pub fn get_local_or_capture(&mut self, name: &str) -> Option<VarLookup> {
+        self.local_scope.as_mut()?.get_or_capture(name)
+    }
+
+    /// Get the local scope (if in a function).
+    pub fn local_scope(&self) -> Option<&LocalScope> {
+        self.local_scope.as_ref()
+    }
+
+    /// Begin compiling a lambda - creates nested scope from current.
+    ///
+    /// The current scope becomes the parent of the new lambda scope.
+    /// Panics if not in a function.
+    pub fn begin_lambda(&mut self) {
+        let parent = self
+            .local_scope
+            .take()
+            .expect("begin_lambda called outside function");
+        self.local_scope = Some(LocalScope::nested(parent));
+    }
+
+    /// End lambda compilation - restores parent scope.
+    ///
+    /// Returns the lambda's local scope (with captures).
+    /// Panics if not in a lambda or no parent scope.
+    pub fn end_lambda(&mut self) -> LocalScope {
+        let mut lambda_scope = self
+            .local_scope
+            .take()
+            .expect("end_lambda called without active scope");
+        let parent = lambda_scope
+            .take_parent()
+            .expect("end_lambda called but no parent scope");
+        self.local_scope = Some(parent);
+        lambda_scope
     }
 
     // ========================================================================
@@ -1221,5 +1708,316 @@ mod tests {
         // Errors should be cleared
         assert!(!ctx.has_errors());
         assert!(ctx.errors().is_empty());
+    }
+
+    // =========================================================================
+    // LocalScope Tests
+    // =========================================================================
+
+    #[test]
+    fn local_scope_declare_variable() {
+        use angelscript_core::primitives;
+
+        let mut scope = LocalScope::new();
+        let slot = scope
+            .declare(
+                "x".into(),
+                DataType::simple(primitives::INT32),
+                false,
+                Span::default(),
+            )
+            .unwrap();
+        assert_eq!(slot, 0);
+
+        let var = scope.get("x");
+        assert!(var.is_some());
+        assert_eq!(var.unwrap().slot, 0);
+        assert!(!var.unwrap().is_initialized);
+    }
+
+    #[test]
+    fn local_scope_redeclaration_error() {
+        use angelscript_core::primitives;
+
+        let mut scope = LocalScope::new();
+        scope
+            .declare(
+                "x".into(),
+                DataType::simple(primitives::INT32),
+                false,
+                Span::default(),
+            )
+            .unwrap();
+
+        let result = scope.declare(
+            "x".into(),
+            DataType::simple(primitives::INT32),
+            false,
+            Span::default(),
+        );
+        assert!(matches!(result, Err(ScopeError::Redeclaration { .. })));
+    }
+
+    #[test]
+    fn local_scope_shadowing_allowed() {
+        use angelscript_core::primitives;
+
+        let mut scope = LocalScope::new();
+        scope
+            .declare(
+                "x".into(),
+                DataType::simple(primitives::INT32),
+                false,
+                Span::default(),
+            )
+            .unwrap();
+
+        scope.push_scope();
+        let result = scope.declare(
+            "x".into(),
+            DataType::simple(primitives::FLOAT),
+            false,
+            Span::default(),
+        );
+        assert!(result.is_ok());
+
+        // Inner x is float
+        let var = scope.get("x").unwrap();
+        assert_eq!(var.data_type.type_hash, primitives::FLOAT);
+
+        scope.pop_scope();
+
+        // Outer x is int again
+        let var = scope.get("x").unwrap();
+        assert_eq!(var.data_type.type_hash, primitives::INT32);
+    }
+
+    #[test]
+    fn local_scope_pop_removes_vars() {
+        use angelscript_core::primitives;
+
+        let mut scope = LocalScope::new();
+        scope.push_scope();
+        scope
+            .declare(
+                "x".into(),
+                DataType::simple(primitives::INT32),
+                false,
+                Span::default(),
+            )
+            .unwrap();
+        scope.pop_scope();
+
+        assert!(scope.get("x").is_none());
+    }
+
+    #[test]
+    fn local_scope_frame_size() {
+        use angelscript_core::primitives;
+
+        let mut scope = LocalScope::new();
+        scope
+            .declare(
+                "a".into(),
+                DataType::simple(primitives::INT32),
+                false,
+                Span::default(),
+            )
+            .unwrap();
+        scope
+            .declare(
+                "b".into(),
+                DataType::simple(primitives::INT32),
+                false,
+                Span::default(),
+            )
+            .unwrap();
+
+        scope.push_scope();
+        scope
+            .declare(
+                "c".into(),
+                DataType::simple(primitives::INT32),
+                false,
+                Span::default(),
+            )
+            .unwrap();
+        scope.pop_scope();
+
+        // Frame size should be 3 (max slots used)
+        assert_eq!(scope.frame_size(), 3);
+    }
+
+    #[test]
+    fn local_scope_lambda_capture() {
+        use angelscript_core::primitives;
+
+        let mut outer = LocalScope::new();
+        outer
+            .declare(
+                "x".into(),
+                DataType::simple(primitives::INT32),
+                false,
+                Span::default(),
+            )
+            .unwrap();
+
+        let mut inner = LocalScope::nested(outer);
+
+        let lookup = inner.get_or_capture("x");
+        assert!(matches!(lookup, Some(VarLookup::Captured(_))));
+        assert_eq!(inner.captures().len(), 1);
+        assert!(inner.has_captures());
+    }
+
+    #[test]
+    fn local_scope_params_are_initialized() {
+        use angelscript_core::primitives;
+
+        let mut scope = LocalScope::new();
+        scope
+            .declare_param(
+                "arg".into(),
+                DataType::simple(primitives::INT32),
+                false,
+                Span::default(),
+            )
+            .unwrap();
+
+        let var = scope.get("arg").unwrap();
+        assert!(var.is_initialized);
+    }
+
+    #[test]
+    fn local_scope_mark_initialized() {
+        use angelscript_core::primitives;
+
+        let mut scope = LocalScope::new();
+        scope
+            .declare(
+                "x".into(),
+                DataType::simple(primitives::INT32),
+                false,
+                Span::default(),
+            )
+            .unwrap();
+
+        assert!(!scope.get("x").unwrap().is_initialized);
+        scope.mark_initialized("x");
+        assert!(scope.get("x").unwrap().is_initialized);
+    }
+
+    #[test]
+    fn context_local_scope_lifecycle() {
+        use angelscript_core::primitives;
+
+        let registry = SymbolRegistry::with_primitives();
+        let mut ctx = CompilationContext::new(&registry);
+
+        // Not in function initially
+        assert!(!ctx.in_function());
+        assert!(ctx.local_scope().is_none());
+
+        // Begin function
+        ctx.begin_function();
+        assert!(ctx.in_function());
+        assert!(ctx.local_scope().is_some());
+
+        // Declare a variable
+        let slot = ctx
+            .declare_local(
+                "x".into(),
+                DataType::simple(primitives::INT32),
+                false,
+                Span::default(),
+            )
+            .unwrap();
+        assert_eq!(slot, 0);
+
+        // Look it up
+        let var = ctx.get_local("x");
+        assert!(var.is_some());
+
+        // End function
+        let scope = ctx.end_function().unwrap();
+        assert_eq!(scope.frame_size(), 1);
+        assert!(!ctx.in_function());
+    }
+
+    #[test]
+    fn context_nested_local_scopes() {
+        use angelscript_core::primitives;
+
+        let registry = SymbolRegistry::with_primitives();
+        let mut ctx = CompilationContext::new(&registry);
+
+        ctx.begin_function();
+
+        // Declare in function scope
+        ctx.declare_local(
+            "outer".into(),
+            DataType::simple(primitives::INT32),
+            false,
+            Span::default(),
+        )
+        .unwrap();
+
+        // Enter block
+        ctx.push_local_scope();
+        ctx.declare_local(
+            "inner".into(),
+            DataType::simple(primitives::FLOAT),
+            false,
+            Span::default(),
+        )
+        .unwrap();
+
+        // Both visible
+        assert!(ctx.get_local("outer").is_some());
+        assert!(ctx.get_local("inner").is_some());
+
+        // Exit block
+        ctx.pop_local_scope();
+
+        // Only outer visible
+        assert!(ctx.get_local("outer").is_some());
+        assert!(ctx.get_local("inner").is_none());
+
+        ctx.end_function();
+    }
+
+    #[test]
+    fn context_lambda_capture() {
+        use angelscript_core::primitives;
+
+        let registry = SymbolRegistry::with_primitives();
+        let mut ctx = CompilationContext::new(&registry);
+
+        ctx.begin_function();
+
+        // Declare variable in outer function
+        ctx.declare_local(
+            "captured".into(),
+            DataType::simple(primitives::INT32),
+            false,
+            Span::default(),
+        )
+        .unwrap();
+
+        // Begin lambda
+        ctx.begin_lambda();
+
+        // Try to access the variable - should capture it
+        let lookup = ctx.get_local_or_capture("captured");
+        assert!(matches!(lookup, Some(VarLookup::Captured(_))));
+
+        // End lambda
+        let lambda_scope = ctx.end_lambda();
+        assert_eq!(lambda_scope.captures().len(), 1);
+
+        // Back in outer function
+        assert!(ctx.get_local("captured").is_some());
+
+        ctx.end_function();
     }
 }
