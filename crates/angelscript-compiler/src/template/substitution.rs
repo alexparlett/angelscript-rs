@@ -67,11 +67,8 @@ pub fn substitute_params(params: &[Param], subst_map: &SubstitutionMap) -> Vec<P
     params
         .iter()
         .map(|p| {
-            let substituted = substitute_type_with_handle_const(
-                p.data_type,
-                subst_map,
-                p.if_handle_then_const,
-            );
+            let substituted =
+                substitute_type_with_handle_const(p.data_type, subst_map, p.if_handle_then_const);
             Param {
                 name: p.name.clone(),
                 data_type: substituted,
@@ -112,7 +109,7 @@ pub fn substitute_type_with_handle_const(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use angelscript_core::{primitives, RefModifier};
+    use angelscript_core::{RefModifier, primitives};
 
     fn make_template_param(name: &str) -> TypeHash {
         TypeHash::from_name(name)
@@ -136,12 +133,9 @@ mod tests {
         let string_type = DataType::simple(primitives::STRING);
         let int_type = DataType::simple(primitives::INT32);
 
-        let map = build_substitution_map(
-            &[k_hash, v_hash],
-            &[string_type, int_type],
-            Span::default(),
-        )
-        .unwrap();
+        let map =
+            build_substitution_map(&[k_hash, v_hash], &[string_type, int_type], Span::default())
+                .unwrap();
 
         assert_eq!(map.len(), 2);
         assert_eq!(map.get(&k_hash), Some(&string_type));

@@ -47,7 +47,9 @@ pub fn validate_template_instance<T: TemplateCallback>(
     if !validation.is_valid {
         return Err(CompilationError::TemplateValidationFailed {
             template: template_name.to_string(),
-            message: validation.error.unwrap_or_else(|| "validation failed".to_string()),
+            message: validation
+                .error
+                .unwrap_or_else(|| "validation failed".to_string()),
             span,
         });
     }

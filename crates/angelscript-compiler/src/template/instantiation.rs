@@ -83,7 +83,9 @@ pub fn instantiate_template_type<T: TemplateCallback>(
         if !validation.is_valid {
             return Err(CompilationError::TemplateValidationFailed {
                 template: template_name.clone(),
-                message: validation.error.unwrap_or_else(|| "validation failed".to_string()),
+                message: validation
+                    .error
+                    .unwrap_or_else(|| "validation failed".to_string()),
                 span,
             });
         }
@@ -126,10 +128,9 @@ pub fn instantiate_template_type<T: TemplateCallback>(
     registry
         .register_type(instance.into())
         .map_err(|e| match e {
-            RegistrationError::DuplicateType(name) => CompilationError::DuplicateDefinition {
-                name,
-                span,
-            },
+            RegistrationError::DuplicateType(name) => {
+                CompilationError::DuplicateDefinition { name, span }
+            }
             _ => CompilationError::Other {
                 message: e.to_string(),
                 span,
@@ -163,9 +164,10 @@ pub fn instantiate_template_type<T: TemplateCallback>(
 
             // Add method to instance
             if let Some(instance_entry) = registry.get_mut(instance_hash)
-                && let Some(class) = instance_entry.as_class_mut() {
-                    class.methods.push(inst_method_hash);
-                }
+                && let Some(class) = instance_entry.as_class_mut()
+            {
+                class.methods.push(inst_method_hash);
+            }
         }
     }
 
@@ -226,11 +228,7 @@ pub fn instantiate_template_function(
     let inst_return = substitute_type(template_def.return_type, &subst_map);
 
     // 7. Create instance
-    let inst_name = format!(
-        "{}<{}>",
-        template_def.name,
-        format_type_args(type_args)
-    );
+    let inst_name = format!("{}<{}>", template_def.name, format_type_args(type_args));
 
     let inst_def = FunctionDef::new(
         instance_hash,
@@ -305,9 +303,11 @@ pub fn instantiate_child_funcdef(
             span,
         })?;
 
-    let parent_hash = funcdef.parent_type.ok_or_else(|| CompilationError::Internal {
-        message: "Child funcdef must have parent".to_string(),
-    })?;
+    let parent_hash = funcdef
+        .parent_type
+        .ok_or_else(|| CompilationError::Internal {
+            message: "Child funcdef must have parent".to_string(),
+        })?;
 
     // Clone data we need
     let funcdef_name = funcdef.name.clone();
@@ -346,7 +346,8 @@ pub fn instantiate_child_funcdef(
     let inst_return = substitute_type(funcdef_return, &subst_map);
 
     // Create instance name (e.g., "array<int>::Callback")
-    let parent_instance_name = format_template_instance_name(&parent_template_name, parent_type_args);
+    let parent_instance_name =
+        format_template_instance_name(&parent_template_name, parent_type_args);
     let inst_qualified_name = format!("{}::{}", parent_instance_name, funcdef_name);
 
     // Get or create instantiated parent (we need the parent instance to exist)
@@ -465,8 +466,8 @@ pub fn format_type_args(type_args: &[DataType]) -> String {
 mod tests {
     use super::*;
     use angelscript_core::{
-        entries::TypeSource, primitives, FunctionTraits, Param, TemplateParamEntry,
-        TemplateValidation, TypeKind, Visibility,
+        FunctionTraits, Param, TemplateParamEntry, TemplateValidation, TypeKind, Visibility,
+        entries::TypeSource, primitives,
     };
 
     struct NoOpCallbacks;
@@ -686,10 +687,7 @@ mod tests {
 
     #[test]
     fn format_template_instance_name_single_arg() {
-        let name = format_template_instance_name(
-            "array",
-            &[DataType::simple(primitives::INT32)],
-        );
+        let name = format_template_instance_name("array", &[DataType::simple(primitives::INT32)]);
         assert!(name.starts_with("array<"));
         assert!(name.ends_with(">"));
     }
@@ -706,5 +704,904 @@ mod tests {
         assert!(name.starts_with("dict<"));
         assert!(name.contains(", "));
         assert!(name.ends_with(">"));
+    }
+
+    // === Tests for instantiate_template_function ===
+
+    fn create_identity_template_function(registry: &mut SymbolRegistry) -> TypeHash {
+        // Create template param T
+        let func_hash = TypeHash::from_name("identity");
+        let t_param = TemplateParamEntry::for_template("T", 0, func_hash, "identity");
+        let t_hash = t_param.type_hash;
+        registry.register_type(t_param.into()).unwrap();
+
+        // Create identity<T>(T value) -> T
+        let func_def = FunctionDef::new_template(
+            func_hash,
+            "identity".to_string(),
+            vec![],
+            vec![Param::new("value", DataType::simple(t_hash))],
+            DataType::simple(t_hash),
+            None,
+            FunctionTraits::default(),
+            false,
+            Visibility::Public,
+            vec![t_hash],
+        );
+
+        let func_entry = FunctionEntry::ffi(func_def);
+        registry.register_function(func_entry).unwrap();
+
+        func_hash
+    }
+
+    #[test]
+    fn instantiate_template_function_simple() {
+        let mut registry = SymbolRegistry::new();
+        registry.register_all_primitives();
+        let global_registry = SymbolRegistry::new();
+
+        let identity_hash = create_identity_template_function(&mut registry);
+
+        let mut cache = TemplateInstanceCache::new();
+
+        let int_type = DataType::simple(primitives::INT32);
+        let result = instantiate_template_function(
+            identity_hash,
+            &[int_type],
+            Span::default(),
+            &mut cache,
+            &mut registry,
+            &global_registry,
+        );
+
+        assert!(result.is_ok());
+        let instance_hash = result.unwrap();
+
+        // Verify instance exists
+        let instance = registry.get_function(instance_hash).unwrap();
+        assert_eq!(
+            instance.def.params[0].data_type.type_hash,
+            primitives::INT32
+        );
+        assert_eq!(instance.def.return_type.type_hash, primitives::INT32);
+    }
+
+    #[test]
+    fn instantiate_template_function_cache_hit() {
+        let mut registry = SymbolRegistry::new();
+        registry.register_all_primitives();
+        let global_registry = SymbolRegistry::new();
+
+        let identity_hash = create_identity_template_function(&mut registry);
+
+        let mut cache = TemplateInstanceCache::new();
+
+        let int_type = DataType::simple(primitives::INT32);
+
+        // First instantiation
+        let hash1 = instantiate_template_function(
+            identity_hash,
+            &[int_type],
+            Span::default(),
+            &mut cache,
+            &mut registry,
+            &global_registry,
+        )
+        .unwrap();
+
+        // Second instantiation should hit cache
+        let hash2 = instantiate_template_function(
+            identity_hash,
+            &[int_type],
+            Span::default(),
+            &mut cache,
+            &mut registry,
+            &global_registry,
+        )
+        .unwrap();
+
+        assert_eq!(hash1, hash2);
+    }
+
+    #[test]
+    fn instantiate_template_function_not_a_template() {
+        let mut registry = SymbolRegistry::new();
+        registry.register_all_primitives();
+        let global_registry = SymbolRegistry::new();
+
+        // Create a non-template function
+        let func_hash = TypeHash::from_name("regular_func");
+        let func_def = FunctionDef::new(
+            func_hash,
+            "regular_func".to_string(),
+            vec![],
+            vec![],
+            DataType::void(),
+            None,
+            FunctionTraits::default(),
+            false,
+            Visibility::Public,
+        );
+        registry
+            .register_function(FunctionEntry::ffi(func_def))
+            .unwrap();
+
+        let mut cache = TemplateInstanceCache::new();
+
+        let int_type = DataType::simple(primitives::INT32);
+        let result = instantiate_template_function(
+            func_hash,
+            &[int_type],
+            Span::default(),
+            &mut cache,
+            &mut registry,
+            &global_registry,
+        );
+
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            CompilationError::NotATemplate { name, .. } => {
+                assert_eq!(name, "regular_func");
+            }
+            e => panic!("Expected NotATemplate, got {:?}", e),
+        }
+    }
+
+    #[test]
+    fn instantiate_template_function_not_found() {
+        let mut registry = SymbolRegistry::new();
+        let global_registry = SymbolRegistry::new();
+
+        let mut cache = TemplateInstanceCache::new();
+
+        let nonexistent_hash = TypeHash::from_name("nonexistent");
+        let int_type = DataType::simple(primitives::INT32);
+        let result = instantiate_template_function(
+            nonexistent_hash,
+            &[int_type],
+            Span::default(),
+            &mut cache,
+            &mut registry,
+            &global_registry,
+        );
+
+        assert!(result.is_err());
+        matches!(
+            result.unwrap_err(),
+            CompilationError::FunctionNotFound { .. }
+        );
+    }
+
+    #[test]
+    fn instantiate_template_function_already_in_registry() {
+        let mut registry = SymbolRegistry::new();
+        registry.register_all_primitives();
+        let global_registry = SymbolRegistry::new();
+
+        let identity_hash = create_identity_template_function(&mut registry);
+
+        // Pre-register the instance in the registry (simulating FFI specialization)
+        let int_type = DataType::simple(primitives::INT32);
+        let instance_hash = TypeHash::from_template_instance(identity_hash, &[primitives::INT32]);
+
+        let inst_def = FunctionDef::new(
+            instance_hash,
+            "identity<int>".to_string(),
+            vec![],
+            vec![Param::new("value", int_type)],
+            int_type,
+            None,
+            FunctionTraits::default(),
+            true, // native
+            Visibility::Public,
+        );
+        registry
+            .register_function(FunctionEntry::ffi(inst_def))
+            .unwrap();
+
+        let mut cache = TemplateInstanceCache::new();
+
+        // Should detect already registered and return that hash
+        let result = instantiate_template_function(
+            identity_hash,
+            &[int_type],
+            Span::default(),
+            &mut cache,
+            &mut registry,
+            &global_registry,
+        );
+
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), instance_hash);
+        // Cache should now have the instance
+        assert!(cache.has_function_instance(identity_hash, &[primitives::INT32]));
+    }
+
+    // === Tests for instantiate_child_funcdef ===
+
+    fn create_array_with_callback(registry: &mut SymbolRegistry) -> (TypeHash, TypeHash) {
+        let array_hash = TypeHash::from_name("array");
+
+        // Create template param T
+        let t_param = TemplateParamEntry::for_template("T", 0, array_hash, "array");
+        let t_hash = t_param.type_hash;
+        registry.register_type(t_param.into()).unwrap();
+
+        // Create array template
+        let array_entry = ClassEntry::new(
+            "array",
+            vec![],
+            "array",
+            array_hash,
+            TypeKind::reference(),
+            TypeSource::ffi_untyped(),
+        )
+        .with_template_params(vec![t_hash]);
+
+        registry.register_type(array_entry.into()).unwrap();
+
+        // Create child funcdef: array::Callback(const T&in) -> bool
+        let callback_hash = TypeHash::from_name("array::Callback");
+        let callback_entry = FuncdefEntry::new_child(
+            "Callback",
+            vec![],
+            "array::Callback",
+            callback_hash,
+            TypeSource::ffi_untyped(),
+            vec![DataType::with_ref_in(t_hash)],
+            DataType::simple(primitives::BOOL),
+            array_hash,
+        );
+        registry.register_type(callback_entry.into()).unwrap();
+
+        (array_hash, callback_hash)
+    }
+
+    #[test]
+    fn instantiate_child_funcdef_simple() {
+        let mut registry = SymbolRegistry::new();
+        registry.register_all_primitives();
+        let global_registry = SymbolRegistry::new();
+
+        let (array_hash, callback_hash) = create_array_with_callback(&mut registry);
+
+        // First instantiate the parent type
+        let mut cache = TemplateInstanceCache::new();
+        let callbacks = NoOpCallbacks;
+        let int_type = DataType::simple(primitives::INT32);
+
+        let _array_int_hash = instantiate_template_type(
+            array_hash,
+            &[int_type],
+            Span::default(),
+            &mut cache,
+            &mut registry,
+            &global_registry,
+            &callbacks,
+        )
+        .unwrap();
+
+        // Now instantiate the child funcdef
+        let result = instantiate_child_funcdef(
+            callback_hash,
+            &[int_type],
+            Span::default(),
+            &mut cache,
+            &mut registry,
+            &global_registry,
+        );
+
+        assert!(result.is_ok());
+        let instance_hash = result.unwrap();
+
+        // Verify instance exists
+        let instance = registry.get(instance_hash).unwrap();
+        let funcdef = instance.as_funcdef().unwrap();
+        assert_eq!(funcdef.params[0].type_hash, primitives::INT32);
+        assert_eq!(funcdef.return_type.type_hash, primitives::BOOL);
+    }
+
+    #[test]
+    fn instantiate_child_funcdef_cache_hit() {
+        let mut registry = SymbolRegistry::new();
+        registry.register_all_primitives();
+        let global_registry = SymbolRegistry::new();
+
+        let (array_hash, callback_hash) = create_array_with_callback(&mut registry);
+
+        let mut cache = TemplateInstanceCache::new();
+        let callbacks = NoOpCallbacks;
+        let int_type = DataType::simple(primitives::INT32);
+
+        // First instantiate the parent type
+        instantiate_template_type(
+            array_hash,
+            &[int_type],
+            Span::default(),
+            &mut cache,
+            &mut registry,
+            &global_registry,
+            &callbacks,
+        )
+        .unwrap();
+
+        // First instantiation
+        let hash1 = instantiate_child_funcdef(
+            callback_hash,
+            &[int_type],
+            Span::default(),
+            &mut cache,
+            &mut registry,
+            &global_registry,
+        )
+        .unwrap();
+
+        // Second instantiation should hit cache
+        let hash2 = instantiate_child_funcdef(
+            callback_hash,
+            &[int_type],
+            Span::default(),
+            &mut cache,
+            &mut registry,
+            &global_registry,
+        )
+        .unwrap();
+
+        assert_eq!(hash1, hash2);
+    }
+
+    #[test]
+    fn instantiate_child_funcdef_parent_not_instantiated() {
+        let mut registry = SymbolRegistry::new();
+        registry.register_all_primitives();
+        let global_registry = SymbolRegistry::new();
+
+        let (_array_hash, callback_hash) = create_array_with_callback(&mut registry);
+
+        let mut cache = TemplateInstanceCache::new();
+        let int_type = DataType::simple(primitives::INT32);
+
+        // Try to instantiate child funcdef without instantiating parent first
+        let result = instantiate_child_funcdef(
+            callback_hash,
+            &[int_type],
+            Span::default(),
+            &mut cache,
+            &mut registry,
+            &global_registry,
+        );
+
+        assert!(result.is_err());
+        matches!(result.unwrap_err(), CompilationError::UnknownType { .. });
+    }
+
+    // === Tests for validation callback failure ===
+
+    struct FailingCallbacks;
+
+    impl TemplateCallback for FailingCallbacks {
+        fn has_template_callback(&self, _: TypeHash) -> bool {
+            true
+        }
+        fn validate_template_instance(
+            &self,
+            _: TypeHash,
+            _: &TemplateInstanceInfo,
+        ) -> TemplateValidation {
+            TemplateValidation::invalid("type not allowed")
+        }
+    }
+
+    #[test]
+    fn instantiate_template_type_validation_failure() {
+        let mut registry = SymbolRegistry::new();
+        registry.register_all_primitives();
+        let global_registry = SymbolRegistry::new();
+
+        let array_hash = create_array_template(&mut registry);
+
+        let mut cache = TemplateInstanceCache::new();
+        let callbacks = FailingCallbacks;
+
+        let int_type = DataType::simple(primitives::INT32);
+        let result = instantiate_template_type(
+            array_hash,
+            &[int_type],
+            Span::default(),
+            &mut cache,
+            &mut registry,
+            &global_registry,
+            &callbacks,
+        );
+
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            CompilationError::TemplateValidationFailed {
+                template, message, ..
+            } => {
+                assert_eq!(template, "array");
+                assert!(message.contains("type not allowed"));
+            }
+            e => panic!("Expected TemplateValidationFailed, got {:?}", e),
+        }
+    }
+
+    // === Tests for properties substitution ===
+
+    #[test]
+    fn instantiate_template_with_properties() {
+        let mut registry = SymbolRegistry::new();
+        registry.register_all_primitives();
+        let global_registry = SymbolRegistry::new();
+
+        let container_hash = TypeHash::from_name("Container");
+
+        // Create template param T
+        let t_param = TemplateParamEntry::for_template("T", 0, container_hash, "Container");
+        let t_hash = t_param.type_hash;
+        registry.register_type(t_param.into()).unwrap();
+
+        // Create Container template with a property of type T
+        use angelscript_core::PropertyEntry;
+
+        let mut container = ClassEntry::new(
+            "Container",
+            vec![],
+            "Container",
+            container_hash,
+            TypeKind::reference(),
+            TypeSource::ffi_untyped(),
+        )
+        .with_template_params(vec![t_hash]);
+
+        container.properties.push(PropertyEntry::new(
+            "value",
+            DataType::simple(t_hash),
+            Visibility::Public,
+            None,
+            None,
+        ));
+
+        registry.register_type(container.into()).unwrap();
+
+        let mut cache = TemplateInstanceCache::new();
+        let callbacks = NoOpCallbacks;
+
+        let int_type = DataType::simple(primitives::INT32);
+        let result = instantiate_template_type(
+            container_hash,
+            &[int_type],
+            Span::default(),
+            &mut cache,
+            &mut registry,
+            &global_registry,
+            &callbacks,
+        );
+
+        assert!(result.is_ok());
+        let instance_hash = result.unwrap();
+
+        // Verify property type was substituted
+        let instance = registry.get(instance_hash).unwrap().as_class().unwrap();
+        assert_eq!(instance.properties.len(), 1);
+        assert_eq!(
+            instance.properties[0].data_type.type_hash,
+            primitives::INT32
+        );
+    }
+
+    // === Tests for base class substitution ===
+
+    #[test]
+    fn instantiate_template_with_base_class() {
+        let mut registry = SymbolRegistry::new();
+        registry.register_all_primitives();
+        let global_registry = SymbolRegistry::new();
+
+        // Create a base class
+        let base_hash = TypeHash::from_name("BaseClass");
+        let base = ClassEntry::new(
+            "BaseClass",
+            vec![],
+            "BaseClass",
+            base_hash,
+            TypeKind::reference(),
+            TypeSource::ffi_untyped(),
+        );
+        registry.register_type(base.into()).unwrap();
+
+        let derived_hash = TypeHash::from_name("Derived");
+
+        // Create template param T
+        let t_param = TemplateParamEntry::for_template("T", 0, derived_hash, "Derived");
+        let t_hash = t_param.type_hash;
+        registry.register_type(t_param.into()).unwrap();
+
+        // Create Derived template with a base class
+        let mut derived = ClassEntry::new(
+            "Derived",
+            vec![],
+            "Derived",
+            derived_hash,
+            TypeKind::reference(),
+            TypeSource::ffi_untyped(),
+        )
+        .with_template_params(vec![t_hash]);
+
+        derived.base_class = Some(base_hash);
+
+        registry.register_type(derived.into()).unwrap();
+
+        let mut cache = TemplateInstanceCache::new();
+        let callbacks = NoOpCallbacks;
+
+        let int_type = DataType::simple(primitives::INT32);
+        let result = instantiate_template_type(
+            derived_hash,
+            &[int_type],
+            Span::default(),
+            &mut cache,
+            &mut registry,
+            &global_registry,
+            &callbacks,
+        );
+
+        assert!(result.is_ok());
+        let instance_hash = result.unwrap();
+
+        // Verify base class was preserved
+        let instance = registry.get(instance_hash).unwrap().as_class().unwrap();
+        assert_eq!(instance.base_class, Some(base_hash));
+    }
+
+    // === Tests for FFI specialization in registry ===
+
+    #[test]
+    fn instantiate_template_type_already_in_registry() {
+        let mut registry = SymbolRegistry::new();
+        registry.register_all_primitives();
+        let global_registry = SymbolRegistry::new();
+
+        let array_hash = create_array_template(&mut registry);
+
+        // Pre-register the instance (simulating FFI specialization)
+        let int_type = DataType::simple(primitives::INT32);
+        let instance_hash = TypeHash::from_template_instance(array_hash, &[primitives::INT32]);
+
+        let pre_registered = ClassEntry::new(
+            "array<int>",
+            vec![],
+            "array<int>",
+            instance_hash,
+            TypeKind::reference(),
+            TypeSource::ffi_untyped(),
+        )
+        .with_template_instance(array_hash, vec![int_type]);
+
+        registry.register_type(pre_registered.into()).unwrap();
+
+        let mut cache = TemplateInstanceCache::new();
+        let callbacks = NoOpCallbacks;
+
+        // Should detect already registered and return that hash
+        let result = instantiate_template_type(
+            array_hash,
+            &[int_type],
+            Span::default(),
+            &mut cache,
+            &mut registry,
+            &global_registry,
+            &callbacks,
+        );
+
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), instance_hash);
+        // Cache should now have the instance
+        assert!(cache.has_type_instance(array_hash, &[primitives::INT32]));
+    }
+
+    #[test]
+    fn instantiate_template_type_already_in_global_registry() {
+        let mut registry = SymbolRegistry::new();
+        registry.register_all_primitives();
+        let mut global_registry = SymbolRegistry::new();
+
+        let array_hash = create_array_template(&mut registry);
+
+        // Pre-register the instance in GLOBAL registry (simulating FFI specialization)
+        let int_type = DataType::simple(primitives::INT32);
+        let instance_hash = TypeHash::from_template_instance(array_hash, &[primitives::INT32]);
+
+        let pre_registered = ClassEntry::new(
+            "array<int>",
+            vec![],
+            "array<int>",
+            instance_hash,
+            TypeKind::reference(),
+            TypeSource::ffi_untyped(),
+        )
+        .with_template_instance(array_hash, vec![int_type]);
+
+        global_registry
+            .register_type(pre_registered.into())
+            .unwrap();
+
+        let mut cache = TemplateInstanceCache::new();
+        let callbacks = NoOpCallbacks;
+
+        // Should detect already registered in global registry and return that hash
+        let result = instantiate_template_type(
+            array_hash,
+            &[int_type],
+            Span::default(),
+            &mut cache,
+            &mut registry,
+            &global_registry,
+            &callbacks,
+        );
+
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), instance_hash);
+        // Cache should now have the instance
+        assert!(cache.has_type_instance(array_hash, &[primitives::INT32]));
+    }
+
+    #[test]
+    fn instantiate_template_function_already_in_global_registry() {
+        let mut registry = SymbolRegistry::new();
+        registry.register_all_primitives();
+        let mut global_registry = SymbolRegistry::new();
+
+        let identity_hash = create_identity_template_function(&mut registry);
+
+        // Pre-register the instance in GLOBAL registry (simulating FFI specialization)
+        let int_type = DataType::simple(primitives::INT32);
+        let instance_hash = TypeHash::from_template_instance(identity_hash, &[primitives::INT32]);
+
+        let inst_def = FunctionDef::new(
+            instance_hash,
+            "identity<int>".to_string(),
+            vec![],
+            vec![Param::new("value", int_type)],
+            int_type,
+            None,
+            FunctionTraits::default(),
+            true, // native
+            Visibility::Public,
+        );
+        global_registry
+            .register_function(FunctionEntry::ffi(inst_def))
+            .unwrap();
+
+        let mut cache = TemplateInstanceCache::new();
+
+        // Should detect already registered in global registry and return that hash
+        let result = instantiate_template_function(
+            identity_hash,
+            &[int_type],
+            Span::default(),
+            &mut cache,
+            &mut registry,
+            &global_registry,
+        );
+
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), instance_hash);
+        // Cache should now have the instance
+        assert!(cache.has_function_instance(identity_hash, &[primitives::INT32]));
+    }
+
+    // === Tests for script function implementation ===
+
+    #[test]
+    fn instantiate_template_function_with_script_impl() {
+        use angelscript_core::{UnitId, entries::FunctionSource};
+
+        let mut registry = SymbolRegistry::new();
+        registry.register_all_primitives();
+        let global_registry = SymbolRegistry::new();
+
+        // Create template param T
+        let func_hash = TypeHash::from_name("script_func");
+        let t_param = TemplateParamEntry::for_template("T", 0, func_hash, "script_func");
+        let t_hash = t_param.type_hash;
+        registry.register_type(t_param.into()).unwrap();
+
+        // Create script template function
+        let func_def = FunctionDef::new_template(
+            func_hash,
+            "script_func".to_string(),
+            vec![],
+            vec![Param::new("value", DataType::simple(t_hash))],
+            DataType::simple(t_hash),
+            None,
+            FunctionTraits::default(),
+            false,
+            Visibility::Public,
+            vec![t_hash],
+        );
+
+        let func_entry = FunctionEntry::new(
+            func_def,
+            FunctionImpl::Script {
+                unit_id: UnitId::new(42),
+            },
+            FunctionSource::script(Span::default()),
+        );
+        registry.register_function(func_entry).unwrap();
+
+        let mut cache = TemplateInstanceCache::new();
+
+        let int_type = DataType::simple(primitives::INT32);
+        let result = instantiate_template_function(
+            func_hash,
+            &[int_type],
+            Span::default(),
+            &mut cache,
+            &mut registry,
+            &global_registry,
+        );
+
+        assert!(result.is_ok());
+        let instance_hash = result.unwrap();
+
+        // Verify implementation is still Script with same unit_id
+        let instance = registry.get_function(instance_hash).unwrap();
+        assert!(
+            matches!(instance.implementation, FunctionImpl::Script { unit_id } if unit_id == UnitId::new(42))
+        );
+    }
+
+    // === Test for unknown type error ===
+
+    #[test]
+    fn instantiate_template_type_unknown() {
+        let mut registry = SymbolRegistry::new();
+        let global_registry = SymbolRegistry::new();
+
+        let mut cache = TemplateInstanceCache::new();
+        let callbacks = NoOpCallbacks;
+
+        let nonexistent_hash = TypeHash::from_name("nonexistent");
+        let int_type = DataType::simple(primitives::INT32);
+        let result = instantiate_template_type(
+            nonexistent_hash,
+            &[int_type],
+            Span::default(),
+            &mut cache,
+            &mut registry,
+            &global_registry,
+            &callbacks,
+        );
+
+        assert!(result.is_err());
+        matches!(result.unwrap_err(), CompilationError::UnknownType { .. });
+    }
+
+    // === Test for child funcdef not a funcdef error ===
+
+    #[test]
+    fn instantiate_child_funcdef_not_a_funcdef() {
+        let mut registry = SymbolRegistry::new();
+        registry.register_all_primitives();
+        let global_registry = SymbolRegistry::new();
+
+        // Use a regular class hash instead of a funcdef
+        let class_hash = TypeHash::from_name("SomeClass");
+        let class = ClassEntry::new(
+            "SomeClass",
+            vec![],
+            "SomeClass",
+            class_hash,
+            TypeKind::reference(),
+            TypeSource::ffi_untyped(),
+        );
+        registry.register_type(class.into()).unwrap();
+
+        let mut cache = TemplateInstanceCache::new();
+        let int_type = DataType::simple(primitives::INT32);
+
+        let result = instantiate_child_funcdef(
+            class_hash,
+            &[int_type],
+            Span::default(),
+            &mut cache,
+            &mut registry,
+            &global_registry,
+        );
+
+        assert!(result.is_err());
+        // Should fail because SomeClass is not a funcdef
+        matches!(result.unwrap_err(), CompilationError::UnknownType { .. });
+    }
+
+    // === Test for global funcdef (no parent) ===
+
+    #[test]
+    fn instantiate_child_funcdef_no_parent() {
+        let mut registry = SymbolRegistry::new();
+        registry.register_all_primitives();
+        let global_registry = SymbolRegistry::new();
+
+        // Create a global funcdef (not a child)
+        let funcdef_hash = TypeHash::from_name("GlobalCallback");
+        let funcdef = FuncdefEntry::ffi(
+            "GlobalCallback",
+            vec![DataType::simple(primitives::INT32)],
+            DataType::simple(primitives::BOOL),
+        );
+        registry.register_type(funcdef.into()).unwrap();
+
+        let mut cache = TemplateInstanceCache::new();
+        let int_type = DataType::simple(primitives::INT32);
+
+        let result = instantiate_child_funcdef(
+            funcdef_hash,
+            &[int_type],
+            Span::default(),
+            &mut cache,
+            &mut registry,
+            &global_registry,
+        );
+
+        assert!(result.is_err());
+        // Should fail because GlobalCallback has no parent
+        matches!(result.unwrap_err(), CompilationError::Internal { .. });
+    }
+
+    // === Test for child funcdef parent not a template ===
+
+    #[test]
+    fn instantiate_child_funcdef_parent_not_template() {
+        let mut registry = SymbolRegistry::new();
+        registry.register_all_primitives();
+        let global_registry = SymbolRegistry::new();
+
+        // Create a non-template parent class
+        let parent_hash = TypeHash::from_name("NonTemplate");
+        let parent = ClassEntry::new(
+            "NonTemplate",
+            vec![],
+            "NonTemplate",
+            parent_hash,
+            TypeKind::reference(),
+            TypeSource::ffi_untyped(),
+        );
+        registry.register_type(parent.into()).unwrap();
+
+        // Create child funcdef with non-template parent
+        let callback_hash = TypeHash::from_name("NonTemplate::Callback");
+        let callback = FuncdefEntry::new_child(
+            "Callback",
+            vec![],
+            "NonTemplate::Callback",
+            callback_hash,
+            TypeSource::ffi_untyped(),
+            vec![DataType::simple(primitives::INT32)],
+            DataType::simple(primitives::BOOL),
+            parent_hash,
+        );
+        registry.register_type(callback.into()).unwrap();
+
+        let mut cache = TemplateInstanceCache::new();
+        let int_type = DataType::simple(primitives::INT32);
+
+        let result = instantiate_child_funcdef(
+            callback_hash,
+            &[int_type],
+            Span::default(),
+            &mut cache,
+            &mut registry,
+            &global_registry,
+        );
+
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            CompilationError::NotATemplate { name, .. } => {
+                assert_eq!(name, "NonTemplate");
+            }
+            e => panic!("Expected NotATemplate, got {:?}", e),
+        }
     }
 }

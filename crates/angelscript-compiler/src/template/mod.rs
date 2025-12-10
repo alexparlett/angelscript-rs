@@ -22,6 +22,6 @@ pub use instantiation::{
     instantiate_template_function, instantiate_template_type,
 };
 pub use substitution::{
-    build_substitution_map, substitute_params, substitute_type, SubstitutionMap,
+    SubstitutionMap, build_substitution_map, substitute_params, substitute_type,
 };
-pub use validation::{validate_template_instance, TemplateCallback};
+pub use validation::{TemplateCallback, validate_template_instance};
