@@ -1,56 +1,59 @@
-# Current Task: Type Resolution (Task 34)
+# Current Task: Template Instantiation (Task 35)
 
-**Status:** Core Complete (templates pending Task 35)
+**Status:** Core Complete
 **Date:** 2025-12-10
-**Branch:** 034-type-resolution
+**Branch:** 035-template-instantiation
 
 ---
 
-## Task 34: Type Resolution
+## Task 35: Template Instantiation
 
-Implemented the `TypeResolver` that converts AST `TypeExpr` nodes into semantic `DataType` values.
+Implemented the template instantiation system in `crates/angelscript-compiler/src/template/`.
 
 ### Implementation Summary
 
 | Component | Location | Purpose |
 |-----------|----------|---------|
-| `TypeResolver` | `crates/angelscript-compiler/src/type_resolver.rs` | Converts AST types to DataType |
-| Primitive mapping | `primitive_to_hash()` | Maps PrimitiveType enum to TypeHash constants |
-| Modifier handling | `resolve()` | Applies const, handle, handle-to-const flags |
-| Parameter resolution | `resolve_param()` | Handles reference modifiers (&in, &out, &inout) |
+| `TemplateInstanceCache` | `template/cache.rs` | Caches (template, args) → instance hash |
+| `SubstitutionMap` | `template/substitution.rs` | Maps template params to concrete types |
+| `substitute_type` | `template/substitution.rs` | Replaces template params in types |
+| `instantiate_template_type` | `template/instantiation.rs` | Instantiates template classes |
+| `instantiate_template_function` | `template/instantiation.rs` | Instantiates template functions |
+| `instantiate_child_funcdef` | `template/instantiation.rs` | Instantiates child funcdefs |
+| `TemplateCallback` trait | `template/validation.rs` | Validates instantiation via callbacks |
 
 ### Key Features
 
-- **Primitive resolution**: void, bool, int, int8, int16, int64, uint, uint8, uint16, uint64, float, double
-- **Named type resolution**: Uses `ctx.resolve_type()` for O(1) scope lookup
-- **Qualified types**: Builds qualified name from scope segments (e.g., `Game::Player`)
-- **Type modifiers**:
-  - `const` → `is_const = true`
-  - `@` → `is_handle = true`
-  - `@ const` → `is_handle_to_const = true`
-- **Reference modifiers**: `&in` → In, `&out` → Out, `&inout` → InOut, `&` → InOut
+- **Cache-first lookup**: Checks cache before computing hashes
+- **FFI specialization priority**: Pre-registered instances take precedence
+- **Method instantiation**: Automatically instantiates methods with substituted types
+- **Modifier preservation**: const, handle, ref modifiers preserved through substitution
+- **Validation callbacks**: Custom validation (e.g., hashable keys for dict)
+- **Child funcdef support**: `array<int>::Callback` style nested types
+
+### New Error Types (CompilationError)
+
+- `TemplateArgCountMismatch { expected, got, span }`
+- `NotATemplate { name, span }`
+- `TemplateValidationFailed { template, message, span }`
+- `FunctionNotFound { name, span }`
+- `Internal { message }`
 
 ### Tests
 
-18 tests covering:
-- All primitive types
-- Named types (global and namespaced)
-- Const and handle modifiers
-- Handle-to-const combinations
-- Qualified type paths
-- All reference modifier types
-- Error cases (unknown types, auto, template params)
+103 compiler tests including:
+- Cache operations (6 tests)
+- Substitution logic (11 tests)
+- Type instantiation with methods (4 tests)
+- Validation callbacks (6 tests)
 
 ---
 
-## Complete
+## Remaining Work
 
-Core type resolution is complete. Template instantiation (Task 35) will add:
-- Template type arguments (`array<int>`)
-- Template instance caching
-- Array type sugar (`int[]` → `array<int>`)
+- **TypeResolver integration**: Wire template instantiation into `TypeResolver` when resolving template arguments
+- **Nested templates**: `array<array<int>>` requires recursive instantiation in TypeResolver
 
 ## Next Steps
 
-- Task 35: Template Instantiation
-- Task 36: Conversion System
+- Task 36: Conversion System (type conversions with costs)

@@ -1027,16 +1027,16 @@ mod tests {
 
 ## Acceptance Criteria
 
-- [ ] Template types instantiate correctly
-- [ ] Template functions instantiate correctly
-- [ ] Child funcdefs instantiate correctly
-- [ ] Cache prevents duplicate instantiation
-- [ ] FFI specializations take priority over generic instantiation
-- [ ] Nested templates work (e.g., `array<array<int>>`)
-- [ ] Type substitution preserves modifiers (const, handle, ref)
-- [ ] Template validation callbacks invoked
-- [ ] Methods of template types get correct substituted signatures
-- [ ] All tests pass
+- [x] Template types instantiate correctly
+- [x] Template functions instantiate correctly
+- [x] Child funcdefs instantiate correctly
+- [x] Cache prevents duplicate instantiation
+- [x] FFI specializations take priority over generic instantiation
+- [ ] Nested templates work (e.g., `array<array<int>>`) - needs TypeResolver integration
+- [x] Type substitution preserves modifiers (const, handle, ref)
+- [x] Template validation callbacks invoked
+- [x] Methods of template types get correct substituted signatures
+- [x] All tests pass
 
 ## Next Phase
 

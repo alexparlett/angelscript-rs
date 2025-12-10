@@ -59,14 +59,26 @@ pub fn substitute_type(data_type: DataType, subst_map: &SubstitutionMap) -> Data
 }
 
 /// Substitute template parameters in function parameters.
+///
+/// Applies `if_handle_then_const` flag during substitution: if the parameter
+/// has this flag set and the substituted type is a handle, the result is
+/// handle-to-const.
 pub fn substitute_params(params: &[Param], subst_map: &SubstitutionMap) -> Vec<Param> {
     params
         .iter()
-        .map(|p| Param {
-            name: p.name.clone(),
-            data_type: substitute_type(p.data_type, subst_map),
-            has_default: p.has_default,
-            if_handle_then_const: p.if_handle_then_const,
+        .map(|p| {
+            let substituted = substitute_type_with_handle_const(
+                p.data_type,
+                subst_map,
+                p.if_handle_then_const,
+            );
+            Param {
+                name: p.name.clone(),
+                data_type: substituted,
+                has_default: p.has_default,
+                // Flag is consumed during substitution, so clear it on the result
+                if_handle_then_const: false,
+            }
         })
         .collect()
 }
