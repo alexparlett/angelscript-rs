@@ -81,11 +81,8 @@ jobs:
       - name: Build
         run: cargo build --all-targets
 
-      - name: Run unit tests (all crates)
-        run: cargo nextest run --lib --profile ci
-
-      - name: Run integration tests
-        run: cargo nextest run --test macro_tests --test macro_compile_fail --profile ci
+      - name: Run all tests
+        run: cargo nextest run --lib --test macro_tests --test macro_compile_fail --profile ci
 
       - name: Test Report
         uses: dorny/test-reporter@v1
