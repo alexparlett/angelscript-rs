@@ -22,7 +22,7 @@ use angelscript_core::{
 };
 use angelscript_registry::SymbolRegistry;
 
-use crate::scope::{LocalScope, LocalVar, ScopeError, VarLookup};
+use crate::scope::{LocalScope, LocalVar, VarLookup};
 use crate::template::{TemplateCallback, TemplateInstanceCache, instantiate_template_type};
 
 // ============================================================================
@@ -556,7 +556,7 @@ impl<'a> CompilationContext<'a> {
         data_type: DataType,
         is_const: bool,
         span: Span,
-    ) -> Result<u32, ScopeError> {
+    ) -> Result<u32, CompilationError> {
         self.local_scope
             .as_mut()
             .expect("declare_local called outside function")
@@ -573,7 +573,7 @@ impl<'a> CompilationContext<'a> {
         data_type: DataType,
         is_const: bool,
         span: Span,
-    ) -> Result<u32, ScopeError> {
+    ) -> Result<u32, CompilationError> {
         self.local_scope
             .as_mut()
             .expect("declare_param called outside function")

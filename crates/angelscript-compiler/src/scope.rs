@@ -9,7 +9,6 @@
 
 use angelscript_core::{CompilationError, DataType, Span};
 use rustc_hash::FxHashMap;
-use thiserror::Error;
 
 // ============================================================================
 // Types
@@ -58,43 +57,6 @@ pub enum VarLookup {
     Local(LocalVar),
     /// Variable captured from enclosing scope
     Captured(CapturedVar),
-}
-
-/// Scope-related errors.
-#[derive(Debug, Clone, Error)]
-pub enum ScopeError {
-    /// Variable redeclared in same scope
-    #[error("variable '{name}' redeclared in same scope")]
-    Redeclaration {
-        name: String,
-        original_span: Span,
-        new_span: Span,
-    },
-}
-
-impl ScopeError {
-    /// Get the span where this error occurred (the new declaration).
-    pub fn span(&self) -> Span {
-        match self {
-            ScopeError::Redeclaration { new_span, .. } => *new_span,
-        }
-    }
-}
-
-impl From<ScopeError> for CompilationError {
-    fn from(err: ScopeError) -> Self {
-        match err {
-            ScopeError::Redeclaration {
-                name,
-                original_span,
-                new_span,
-            } => CompilationError::VariableRedeclaration {
-                name,
-                original_span,
-                new_span,
-            },
-        }
-    }
 }
 
 // ============================================================================
@@ -208,11 +170,11 @@ impl LocalScope {
         data_type: DataType,
         is_const: bool,
         span: Span,
-    ) -> Result<u32, ScopeError> {
+    ) -> Result<u32, CompilationError> {
         // Check for redeclaration at same scope depth
         if let Some(existing) = self.variables.get(&name) {
             if existing.depth == self.scope_depth {
-                return Err(ScopeError::Redeclaration {
+                return Err(CompilationError::VariableRedeclaration {
                     name: name.clone(),
                     original_span: existing.span,
                     new_span: span,
@@ -250,11 +212,11 @@ impl LocalScope {
         data_type: DataType,
         is_const: bool,
         span: Span,
-    ) -> Result<u32, ScopeError> {
-        if self.variables.contains_key(&name) {
-            return Err(ScopeError::Redeclaration {
+    ) -> Result<u32, CompilationError> {
+        if let Some(existing) = self.variables.get(&name) {
+            return Err(CompilationError::VariableRedeclaration {
                 name: name.clone(),
-                original_span: span,
+                original_span: existing.span,
                 new_span: span,
             });
         }
@@ -438,7 +400,10 @@ mod tests {
             false,
             Span::default(),
         );
-        assert!(matches!(result, Err(ScopeError::Redeclaration { .. })));
+        assert!(matches!(
+            result,
+            Err(CompilationError::VariableRedeclaration { .. })
+        ));
     }
 
     #[test]
