@@ -3,7 +3,7 @@
 //! This module handles resolution of binary and unary operators, determining
 //! whether to use a primitive opcode or a user-defined operator method.
 
-use angelscript_core::{CompilationError, DataType, Span, TypeHash, primitives};
+use angelscript_core::{CompilationError, DataType, OperatorBehavior, Span, TypeHash, primitives};
 use angelscript_parser::ast::{BinaryOp, UnaryOp};
 
 use crate::bytecode::OpCode;
@@ -52,14 +52,15 @@ pub fn resolve_binary_operator(
     }
 
     // 2. Try left.opXxx(right)
-    let method_name = binary_op_method_name(op);
-    if let Some(resolution) = try_method_operator(left, right, &method_name, true, ctx) {
+    let op_behavior = binary_op_to_behavior(op);
+    if let Some(resolution) = try_operator_behavior(left, right, op_behavior, true, ctx) {
         return Ok(resolution);
     }
 
     // 3. Try right.opXxx_r(left) - reverse operator
-    let reverse_name = format!("{}_r", method_name);
-    if let Some(resolution) = try_method_operator(right, left, &reverse_name, false, ctx) {
+    if let Some(reverse_behavior) = binary_op_to_reverse_behavior(op)
+        && let Some(resolution) = try_operator_behavior(right, left, reverse_behavior, false, ctx)
+    {
         return Ok(resolution);
     }
 
@@ -84,8 +85,8 @@ pub fn resolve_unary_operator(
     }
 
     // Try operand.opXxx()
-    let method_name = unary_op_method_name(op);
-    if let Some(resolution) = try_unary_method_operator(operand, &method_name, ctx) {
+    let op_behavior = unary_op_to_behavior(op);
+    if let Some(resolution) = try_unary_operator_behavior(operand, op_behavior, ctx) {
         return Ok(resolution);
     }
 
@@ -235,17 +236,20 @@ fn try_primitive_unary_op(operand: &DataType, op: UnaryOp) -> Option<OperatorRes
     })
 }
 
-/// Try to resolve as an operator method call on object type.
-fn try_method_operator(
+/// Try to resolve a binary operator via TypeBehaviors.
+fn try_operator_behavior(
     object: &DataType,
     arg: &DataType,
-    method_name: &str,
+    op: OperatorBehavior,
     on_left: bool,
     ctx: &CompilationContext<'_>,
 ) -> Option<OperatorResolution> {
-    let methods = ctx.find_methods(object.type_hash, method_name);
+    // Get the type entry and its behaviors
+    let type_entry = ctx.get_type(object.type_hash)?;
+    let class = type_entry.as_class()?;
+    let operators = class.behaviors.get_operator(op)?;
 
-    for method_hash in methods {
+    for &method_hash in operators {
         let func = ctx.get_function(method_hash)?;
         let def = &func.def;
 
@@ -270,15 +274,18 @@ fn try_method_operator(
     None
 }
 
-/// Try to resolve as a unary operator method.
-fn try_unary_method_operator(
+/// Try to resolve a unary operator via TypeBehaviors.
+fn try_unary_operator_behavior(
     operand: &DataType,
-    method_name: &str,
+    op: OperatorBehavior,
     ctx: &CompilationContext<'_>,
 ) -> Option<OperatorResolution> {
-    let methods = ctx.find_methods(operand.type_hash, method_name);
+    // Get the type entry and its behaviors
+    let type_entry = ctx.get_type(operand.type_hash)?;
+    let class = type_entry.as_class()?;
+    let operators = class.behaviors.get_operator(op)?;
 
-    for method_hash in methods {
+    for &method_hash in operators {
         let func = ctx.get_function(method_hash)?;
         let def = &func.def;
 
@@ -298,45 +305,65 @@ fn try_unary_method_operator(
     None
 }
 
-/// Get the method name for a binary operator.
-fn binary_op_method_name(op: BinaryOp) -> String {
+/// Map a binary operator to its OperatorBehavior enum.
+fn binary_op_to_behavior(op: BinaryOp) -> OperatorBehavior {
     match op {
-        BinaryOp::Add => "opAdd",
-        BinaryOp::Sub => "opSub",
-        BinaryOp::Mul => "opMul",
-        BinaryOp::Div => "opDiv",
-        BinaryOp::Mod => "opMod",
-        BinaryOp::Pow => "opPow",
-        BinaryOp::Equal | BinaryOp::NotEqual => "opEquals",
+        BinaryOp::Add => OperatorBehavior::OpAdd,
+        BinaryOp::Sub => OperatorBehavior::OpSub,
+        BinaryOp::Mul => OperatorBehavior::OpMul,
+        BinaryOp::Div => OperatorBehavior::OpDiv,
+        BinaryOp::Mod => OperatorBehavior::OpMod,
+        BinaryOp::Pow => OperatorBehavior::OpPow,
+        BinaryOp::Equal | BinaryOp::NotEqual => OperatorBehavior::OpEquals,
         BinaryOp::Less | BinaryOp::LessEqual | BinaryOp::Greater | BinaryOp::GreaterEqual => {
-            "opCmp"
+            OperatorBehavior::OpCmp
         }
-        BinaryOp::BitwiseAnd => "opAnd",
-        BinaryOp::BitwiseOr => "opOr",
-        BinaryOp::BitwiseXor => "opXor",
-        BinaryOp::ShiftLeft => "opShl",
-        BinaryOp::ShiftRight => "opShr",
-        BinaryOp::ShiftRightUnsigned => "opUshr",
-        BinaryOp::LogicalAnd => "opLogAnd",
-        BinaryOp::LogicalOr => "opLogOr",
-        BinaryOp::LogicalXor => "opLogXor",
-        BinaryOp::Is | BinaryOp::NotIs => "opIs",
+        BinaryOp::BitwiseAnd => OperatorBehavior::OpAnd,
+        BinaryOp::BitwiseOr => OperatorBehavior::OpOr,
+        BinaryOp::BitwiseXor => OperatorBehavior::OpXor,
+        BinaryOp::ShiftLeft => OperatorBehavior::OpShl,
+        BinaryOp::ShiftRight => OperatorBehavior::OpShr,
+        BinaryOp::ShiftRightUnsigned => OperatorBehavior::OpUShr,
+        BinaryOp::LogicalAnd | BinaryOp::LogicalOr | BinaryOp::LogicalXor => {
+            // Logical operators don't have method overloads in AngelScript
+            // They use short-circuit evaluation on bool values
+            OperatorBehavior::OpEquals // Placeholder - won't match
+        }
+        BinaryOp::Is | BinaryOp::NotIs => OperatorBehavior::OpEquals, // Identity is built-in
     }
-    .to_string()
 }
 
-/// Get the method name for a unary operator.
-fn unary_op_method_name(op: UnaryOp) -> String {
+/// Map a binary operator to its reverse OperatorBehavior enum.
+fn binary_op_to_reverse_behavior(op: BinaryOp) -> Option<OperatorBehavior> {
+    Some(match op {
+        BinaryOp::Add => OperatorBehavior::OpAddR,
+        BinaryOp::Sub => OperatorBehavior::OpSubR,
+        BinaryOp::Mul => OperatorBehavior::OpMulR,
+        BinaryOp::Div => OperatorBehavior::OpDivR,
+        BinaryOp::Mod => OperatorBehavior::OpModR,
+        BinaryOp::Pow => OperatorBehavior::OpPowR,
+        BinaryOp::BitwiseAnd => OperatorBehavior::OpAndR,
+        BinaryOp::BitwiseOr => OperatorBehavior::OpOrR,
+        BinaryOp::BitwiseXor => OperatorBehavior::OpXorR,
+        BinaryOp::ShiftLeft => OperatorBehavior::OpShlR,
+        BinaryOp::ShiftRight => OperatorBehavior::OpShrR,
+        BinaryOp::ShiftRightUnsigned => OperatorBehavior::OpUShrR,
+        // Comparison and logical ops don't have reverse
+        _ => return None,
+    })
+}
+
+/// Map a unary operator to its OperatorBehavior enum.
+fn unary_op_to_behavior(op: UnaryOp) -> OperatorBehavior {
     match op {
-        UnaryOp::Neg => "opNeg",
-        UnaryOp::Plus => "opPos",
-        UnaryOp::LogicalNot => "opNot",
-        UnaryOp::BitwiseNot => "opCom",
-        UnaryOp::PreInc => "opPreInc",
-        UnaryOp::PreDec => "opPreDec",
-        UnaryOp::HandleOf => "opHandleOf",
+        UnaryOp::Neg => OperatorBehavior::OpNeg,
+        UnaryOp::Plus => OperatorBehavior::OpNeg, // No OpPos - unary plus is identity
+        UnaryOp::LogicalNot => OperatorBehavior::OpNeg, // No OpNot for logical not
+        UnaryOp::BitwiseNot => OperatorBehavior::OpCom,
+        UnaryOp::PreInc => OperatorBehavior::OpPreInc,
+        UnaryOp::PreDec => OperatorBehavior::OpPreDec,
+        UnaryOp::HandleOf => OperatorBehavior::OpNeg, // HandleOf is built-in
     }
-    .to_string()
 }
 
 /// Format a type hash as a readable name.
