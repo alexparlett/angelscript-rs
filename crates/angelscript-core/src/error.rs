@@ -508,14 +508,16 @@ pub enum CompilationError {
         span: Span,
     },
 
-    /// A type name is ambiguous (multiple candidates).
-    #[error("at {span}: ambiguous type '{name}': could be {candidates}")]
-    AmbiguousType {
-        /// The ambiguous type name.
+    /// A symbol name is ambiguous (multiple candidates from different namespaces).
+    #[error("at {span}: ambiguous {kind} '{name}': could be {candidates}")]
+    AmbiguousSymbol {
+        /// What kind of symbol (e.g., "type", "function", "global variable").
+        kind: String,
+        /// The ambiguous symbol name.
         name: String,
         /// Description of the possible candidates.
         candidates: String,
-        /// Where the type was referenced.
+        /// Where the symbol was referenced.
         span: Span,
     },
 
@@ -579,7 +581,7 @@ impl CompilationError {
             CompilationError::UnknownType { span, .. } => *span,
             CompilationError::UnknownFunction { span, .. } => *span,
             CompilationError::UnknownVariable { span, .. } => *span,
-            CompilationError::AmbiguousType { span, .. } => *span,
+            CompilationError::AmbiguousSymbol { span, .. } => *span,
             CompilationError::TypeMismatch { span, .. } => *span,
             CompilationError::InvalidOperation { span, .. } => *span,
             CompilationError::CircularInheritance { span, .. } => *span,

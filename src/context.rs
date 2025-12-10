@@ -93,7 +93,7 @@ impl Context {
 
         // Install classes
         for class_meta in module.classes {
-            self.install_class(&qualified_ns, class_meta)?;
+            self.install_class(&module.namespace, &qualified_ns, class_meta)?;
         }
 
         // Install functions - pass associated_type for methods, None for globals
@@ -103,12 +103,12 @@ impl Context {
 
         // Install interfaces
         for interface_meta in module.interfaces {
-            self.install_interface(&qualified_ns, interface_meta)?;
+            self.install_interface(&module.namespace, &qualified_ns, interface_meta)?;
         }
 
         // Install funcdefs
         for funcdef_meta in module.funcdefs {
-            self.install_funcdef(&qualified_ns, funcdef_meta)?;
+            self.install_funcdef(&module.namespace, &qualified_ns, funcdef_meta)?;
         }
 
         Ok(())
@@ -154,16 +154,17 @@ impl Context {
     // Private installation helpers
     // =========================================================================
 
-    fn install_class(&mut self, namespace: &str, meta: ClassMeta) -> Result<(), ContextError> {
-        let qualified_name = if namespace.is_empty() {
+    fn install_class(&mut self, namespace: &[String], qualified_ns: &str, meta: ClassMeta) -> Result<(), ContextError> {
+        let qualified_name = if qualified_ns.is_empty() {
             meta.name.to_string()
         } else {
-            format!("{}::{}", namespace, meta.name)
+            format!("{}::{}", qualified_ns, meta.name)
         };
 
         // Create the class entry
         let mut class_entry = ClassEntry::new(
             meta.name,
+            namespace.to_vec(),
             &qualified_name,
             meta.type_hash,
             meta.type_kind,
@@ -358,17 +359,19 @@ impl Context {
 
     fn install_interface(
         &mut self,
-        namespace: &str,
+        namespace: &[String],
+        qualified_ns: &str,
         meta: InterfaceMeta,
     ) -> Result<(), ContextError> {
-        let qualified_name = if namespace.is_empty() {
+        let qualified_name = if qualified_ns.is_empty() {
             meta.name.to_string()
         } else {
-            format!("{}::{}", namespace, meta.name)
+            format!("{}::{}", qualified_ns, meta.name)
         };
 
         let mut entry = InterfaceEntry::new(
             meta.name,
+            namespace.to_vec(),
             &qualified_name,
             meta.type_hash,
             TypeSource::ffi_untyped(),
@@ -399,11 +402,11 @@ impl Context {
         Ok(())
     }
 
-    fn install_funcdef(&mut self, namespace: &str, meta: FuncdefMeta) -> Result<(), ContextError> {
-        let qualified_name = if namespace.is_empty() {
+    fn install_funcdef(&mut self, namespace: &[String], qualified_ns: &str, meta: FuncdefMeta) -> Result<(), ContextError> {
+        let qualified_name = if qualified_ns.is_empty() {
             meta.name.to_string()
         } else {
-            format!("{}::{}", namespace, meta.name)
+            format!("{}::{}", qualified_ns, meta.name)
         };
 
         let params: Vec<DataType> = meta
@@ -416,6 +419,7 @@ impl Context {
         let entry = if let Some(parent_hash) = meta.parent_type {
             FuncdefEntry::new_child(
                 meta.name,
+                namespace.to_vec(),
                 &qualified_name,
                 meta.type_hash,
                 TypeSource::ffi_untyped(),
@@ -426,6 +430,7 @@ impl Context {
         } else {
             FuncdefEntry::new(
                 meta.name,
+                namespace.to_vec(),
                 &qualified_name,
                 meta.type_hash,
                 TypeSource::ffi_untyped(),
@@ -533,6 +538,110 @@ mod tests {
             .registry()
             .get(TypeHash::from_name("Game::Entity"))
             .is_some());
+    }
+
+    #[test]
+    fn context_install_class_sets_namespace_field() {
+        let mut ctx = Context::new();
+
+        let mut module = Module::in_namespace(&["Game", "Entities"]);
+        module.classes.push(ClassMeta {
+            name: "Player",
+            type_hash: TypeHash::from_name("Game::Entities::Player"),
+            type_kind: TypeKind::reference(),
+            properties: vec![],
+            template_params: vec![],
+            specialization_of: None,
+            specialization_args: vec![],
+        });
+        ctx.install(module).unwrap();
+
+        let entry = ctx.registry().get(TypeHash::from_name("Game::Entities::Player")).unwrap();
+        let class = entry.as_class().unwrap();
+        assert_eq!(class.namespace, vec!["Game".to_string(), "Entities".to_string()]);
+        assert_eq!(class.qualified_name, "Game::Entities::Player");
+    }
+
+    #[test]
+    fn context_install_class_global_namespace() {
+        let mut ctx = Context::new();
+
+        let mut module = Module::new();
+        module.classes.push(ClassMeta {
+            name: "Singleton",
+            type_hash: TypeHash::from_name("Singleton"),
+            type_kind: TypeKind::reference(),
+            properties: vec![],
+            template_params: vec![],
+            specialization_of: None,
+            specialization_args: vec![],
+        });
+        ctx.install(module).unwrap();
+
+        let entry = ctx.registry().get(TypeHash::from_name("Singleton")).unwrap();
+        let class = entry.as_class().unwrap();
+        assert!(class.namespace.is_empty());
+        assert_eq!(class.qualified_name, "Singleton");
+    }
+
+    #[test]
+    fn context_install_interface_sets_namespace_field() {
+        let mut ctx = Context::new();
+
+        let mut module = Module::in_namespace(&["Game"]);
+        module.interfaces.push(InterfaceMeta {
+            name: "IDrawable",
+            type_hash: TypeHash::from_name("Game::IDrawable"),
+            methods: vec![],
+        });
+        ctx.install(module).unwrap();
+
+        let entry = ctx.registry().get(TypeHash::from_name("Game::IDrawable")).unwrap();
+        let interface = entry.as_interface().unwrap();
+        assert_eq!(interface.namespace, vec!["Game".to_string()]);
+        assert_eq!(interface.qualified_name, "Game::IDrawable");
+    }
+
+    #[test]
+    fn context_install_funcdef_sets_namespace_field() {
+        let mut ctx = Context::new();
+
+        let mut module = Module::in_namespace(&["Events"]);
+        module.funcdefs.push(FuncdefMeta {
+            name: "EventCallback",
+            type_hash: TypeHash::from_name("Events::EventCallback"),
+            param_types: vec![primitives::INT32],
+            return_type: primitives::VOID,
+            parent_type: None,
+        });
+        ctx.install(module).unwrap();
+
+        let entry = ctx.registry().get(TypeHash::from_name("Events::EventCallback")).unwrap();
+        let funcdef = entry.as_funcdef().unwrap();
+        assert_eq!(funcdef.namespace, vec!["Events".to_string()]);
+        assert_eq!(funcdef.qualified_name, "Events::EventCallback");
+    }
+
+    #[test]
+    fn context_namespace_index_populated() {
+        let mut ctx = Context::new();
+
+        let mut module = Module::in_namespace(&["Game"]);
+        module.classes.push(ClassMeta {
+            name: "Player",
+            type_hash: TypeHash::from_name("Game::Player"),
+            type_kind: TypeKind::reference(),
+            properties: vec![],
+            template_params: vec![],
+            specialization_of: None,
+            specialization_args: vec![],
+        });
+        ctx.install(module).unwrap();
+
+        // Verify namespace index is populated
+        let types = ctx.registry().get_namespace_types("Game");
+        assert!(types.is_some());
+        assert!(types.unwrap().get("Player").is_some());
     }
 
     #[test]

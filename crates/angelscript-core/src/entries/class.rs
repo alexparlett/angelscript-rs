@@ -15,6 +15,8 @@ use super::{PropertyEntry, TypeSource};
 pub struct ClassEntry {
     /// Unqualified name.
     pub name: String,
+    /// Namespace path (e.g., `["Game", "Entities"]`).
+    pub namespace: Vec<String>,
     /// Fully qualified name (with namespace).
     pub qualified_name: String,
     /// Type hash for identity.
@@ -59,6 +61,7 @@ impl ClassEntry {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         name: impl Into<String>,
+        namespace: Vec<String>,
         qualified_name: impl Into<String>,
         type_hash: TypeHash,
         type_kind: TypeKind,
@@ -66,6 +69,7 @@ impl ClassEntry {
     ) -> Self {
         Self {
             name: name.into(),
+            namespace,
             qualified_name: qualified_name.into(),
             type_hash,
             type_kind,
@@ -83,23 +87,24 @@ impl ClassEntry {
         }
     }
 
-    /// Create an FFI class entry.
+    /// Create an FFI class entry in the global namespace.
     pub fn ffi(name: impl Into<String>, type_kind: TypeKind) -> Self {
         let name = name.into();
         let type_hash = TypeHash::from_name(&name);
-        Self::new(name.clone(), name, type_hash, type_kind, TypeSource::ffi_untyped())
+        Self::new(name.clone(), Vec::new(), name, type_hash, type_kind, TypeSource::ffi_untyped())
     }
 
     /// Create a script class entry.
     pub fn script(
         name: impl Into<String>,
+        namespace: Vec<String>,
         qualified_name: impl Into<String>,
         source: TypeSource,
     ) -> Self {
         let name = name.into();
         let qualified_name = qualified_name.into();
         let type_hash = TypeHash::from_name(&qualified_name);
-        Self::new(name, qualified_name, type_hash, TypeKind::ScriptObject, source)
+        Self::new(name, namespace, qualified_name, type_hash, TypeKind::ScriptObject, source)
     }
 
     // === Builder Methods ===
@@ -207,6 +212,7 @@ mod tests {
 
         assert_eq!(entry.name, "Player");
         assert_eq!(entry.qualified_name, "Player");
+        assert!(entry.namespace.is_empty(), "ffi() should create empty namespace");
         assert!(entry.source.is_ffi());
         assert!(entry.is_reference_type());
         assert!(!entry.is_template());
@@ -214,11 +220,29 @@ mod tests {
     }
 
     #[test]
+    fn class_entry_with_namespace() {
+        let entry = ClassEntry::new(
+            "Enemy",
+            vec!["Game".to_string(), "Entities".to_string()],
+            "Game::Entities::Enemy",
+            TypeHash::from_name("Game::Entities::Enemy"),
+            TypeKind::reference(),
+            TypeSource::ffi_untyped(),
+        );
+
+        assert_eq!(entry.name, "Enemy");
+        assert_eq!(entry.namespace, vec!["Game".to_string(), "Entities".to_string()]);
+        assert_eq!(entry.qualified_name, "Game::Entities::Enemy");
+        assert_eq!(entry.type_hash, TypeHash::from_name("Game::Entities::Enemy"));
+    }
+
+    #[test]
     fn class_entry_script() {
         let source = TypeSource::script(crate::UnitId::new(0), crate::Span::new(1, 0, 10));
-        let entry = ClassEntry::script("Entity", "Game::Entity", source);
+        let entry = ClassEntry::script("Entity", vec!["Game".to_string()], "Game::Entity", source);
 
         assert_eq!(entry.name, "Entity");
+        assert_eq!(entry.namespace, vec!["Game".to_string()]);
         assert_eq!(entry.qualified_name, "Game::Entity");
         assert!(entry.source.is_script());
         assert!(entry.is_script_object());

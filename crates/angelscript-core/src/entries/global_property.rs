@@ -85,6 +85,8 @@ impl ConstantValue {
 pub struct GlobalPropertyEntry {
     /// Simple name (e.g., "PI")
     pub name: String,
+    /// Namespace path (e.g., `["math"]`).
+    pub namespace: Vec<String>,
     /// Qualified name including namespace (e.g., "math::PI")
     pub qualified_name: String,
     /// Type hash for lookup
@@ -100,14 +102,15 @@ pub struct GlobalPropertyEntry {
 }
 
 impl GlobalPropertyEntry {
-    /// Create a new constant global property.
+    /// Create a new constant global property in the global namespace.
     pub fn constant(name: impl Into<String>, value: ConstantValue) -> Self {
         let name = name.into();
         let data_type = value.data_type();
         Self {
+            name: name.clone(),
+            namespace: Vec::new(),
             qualified_name: name.clone(),
             type_hash: TypeHash::from_name(&name),
-            name,
             data_type,
             is_const: true,
             source: TypeSource::ffi_untyped(),
@@ -115,7 +118,20 @@ impl GlobalPropertyEntry {
         }
     }
 
+    /// Set the namespace and update qualified name.
+    pub fn with_namespace(mut self, namespace: Vec<String>) -> Self {
+        self.namespace = namespace.clone();
+        if namespace.is_empty() {
+            self.qualified_name = self.name.clone();
+        } else {
+            self.qualified_name = format!("{}::{}", namespace.join("::"), self.name);
+        }
+        self.type_hash = TypeHash::from_name(&self.qualified_name);
+        self
+    }
+
     /// Set the qualified name (including namespace).
+    #[deprecated(note = "Use with_namespace instead for consistency")]
     pub fn with_qualified_name(mut self, qualified_name: impl Into<String>) -> Self {
         self.qualified_name = qualified_name.into();
         self.type_hash = TypeHash::from_name(&self.qualified_name);
@@ -351,13 +367,34 @@ mod tests {
     }
 
     #[test]
-    fn global_property_entry_with_namespace() {
+    fn global_property_entry_with_namespace_deprecated() {
+        #[allow(deprecated)]
         let entry = GlobalPropertyEntry::constant("PI", ConstantValue::Double(std::f64::consts::PI))
             .with_qualified_name("math::PI");
 
         assert_eq!(entry.name, "PI");
         assert_eq!(entry.qualified_name, "math::PI");
         assert_eq!(entry.type_hash, TypeHash::from_name("math::PI"));
+    }
+
+    #[test]
+    fn global_property_entry_with_namespace() {
+        let entry = GlobalPropertyEntry::constant("MAX_SPEED", ConstantValue::Double(100.0))
+            .with_namespace(vec!["Game".to_string(), "Config".to_string()]);
+
+        assert_eq!(entry.name, "MAX_SPEED");
+        assert_eq!(entry.namespace, vec!["Game".to_string(), "Config".to_string()]);
+        assert_eq!(entry.qualified_name, "Game::Config::MAX_SPEED");
+        assert_eq!(entry.type_hash, TypeHash::from_name("Game::Config::MAX_SPEED"));
+    }
+
+    #[test]
+    fn global_property_entry_empty_namespace() {
+        let entry = GlobalPropertyEntry::constant("GRAVITY", ConstantValue::Double(9.81));
+
+        assert_eq!(entry.name, "GRAVITY");
+        assert!(entry.namespace.is_empty());
+        assert_eq!(entry.qualified_name, "GRAVITY");
     }
 
     #[test]

@@ -178,6 +178,7 @@ impl Module {
 
         let entry = GlobalPropertyEntry {
             name: name.to_string(),
+            namespace: self.namespace.clone(),
             type_hash: TypeHash::from_name(&qualified_name),
             qualified_name,
             data_type,

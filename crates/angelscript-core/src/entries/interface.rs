@@ -13,6 +13,8 @@ use super::TypeSource;
 pub struct InterfaceEntry {
     /// Unqualified name.
     pub name: String,
+    /// Namespace path (e.g., `["Game", "Interfaces"]`).
+    pub namespace: Vec<String>,
     /// Fully qualified name (with namespace).
     pub qualified_name: String,
     /// Type hash for identity.
@@ -29,12 +31,14 @@ impl InterfaceEntry {
     /// Create a new interface entry.
     pub fn new(
         name: impl Into<String>,
+        namespace: Vec<String>,
         qualified_name: impl Into<String>,
         type_hash: TypeHash,
         source: TypeSource,
     ) -> Self {
         Self {
             name: name.into(),
+            namespace,
             qualified_name: qualified_name.into(),
             type_hash,
             source,
@@ -43,13 +47,14 @@ impl InterfaceEntry {
         }
     }
 
-    /// Create an FFI interface entry.
+    /// Create an FFI interface entry in the global namespace.
     pub fn ffi(name: impl Into<String>) -> Self {
         let name = name.into();
         let type_hash = TypeHash::from_name(&name);
         Self {
-            qualified_name: name.clone(),
-            name,
+            name: name.clone(),
+            namespace: Vec::new(),
+            qualified_name: name,
             type_hash,
             source: TypeSource::ffi_untyped(),
             methods: Vec::new(),
@@ -91,9 +96,26 @@ mod tests {
 
         assert_eq!(entry.name, "IDrawable");
         assert_eq!(entry.qualified_name, "IDrawable");
+        assert!(entry.namespace.is_empty(), "ffi() should create empty namespace");
         assert!(entry.source.is_ffi());
         assert!(entry.methods.is_empty());
         assert!(entry.base_interfaces.is_empty());
+    }
+
+    #[test]
+    fn interface_entry_with_namespace() {
+        let entry = InterfaceEntry::new(
+            "IUpdatable",
+            vec!["Game".to_string(), "Interfaces".to_string()],
+            "Game::Interfaces::IUpdatable",
+            TypeHash::from_name("Game::Interfaces::IUpdatable"),
+            TypeSource::ffi_untyped(),
+        );
+
+        assert_eq!(entry.name, "IUpdatable");
+        assert_eq!(entry.namespace, vec!["Game".to_string(), "Interfaces".to_string()]);
+        assert_eq!(entry.qualified_name, "Game::Interfaces::IUpdatable");
+        assert_eq!(entry.type_hash, TypeHash::from_name("Game::Interfaces::IUpdatable"));
     }
 
     #[test]

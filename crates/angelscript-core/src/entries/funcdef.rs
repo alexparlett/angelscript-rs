@@ -14,6 +14,8 @@ use super::TypeSource;
 pub struct FuncdefEntry {
     /// Unqualified name.
     pub name: String,
+    /// Namespace path (e.g., `["Game", "Callbacks"]`).
+    pub namespace: Vec<String>,
     /// Fully qualified name (with namespace).
     pub qualified_name: String,
     /// Type hash for identity.
@@ -33,6 +35,7 @@ impl FuncdefEntry {
     /// Create a new funcdef entry.
     pub fn new(
         name: impl Into<String>,
+        namespace: Vec<String>,
         qualified_name: impl Into<String>,
         type_hash: TypeHash,
         source: TypeSource,
@@ -41,6 +44,7 @@ impl FuncdefEntry {
     ) -> Self {
         Self {
             name: name.into(),
+            namespace,
             qualified_name: qualified_name.into(),
             type_hash,
             source,
@@ -53,6 +57,7 @@ impl FuncdefEntry {
     /// Create a new funcdef entry with a parent type (child funcdef).
     pub fn new_child(
         name: impl Into<String>,
+        namespace: Vec<String>,
         qualified_name: impl Into<String>,
         type_hash: TypeHash,
         source: TypeSource,
@@ -62,6 +67,7 @@ impl FuncdefEntry {
     ) -> Self {
         Self {
             name: name.into(),
+            namespace,
             qualified_name: qualified_name.into(),
             type_hash,
             source,
@@ -71,7 +77,7 @@ impl FuncdefEntry {
         }
     }
 
-    /// Create an FFI funcdef entry.
+    /// Create an FFI funcdef entry in the global namespace.
     pub fn ffi(
         name: impl Into<String>,
         params: Vec<DataType>,
@@ -80,8 +86,9 @@ impl FuncdefEntry {
         let name = name.into();
         let type_hash = TypeHash::from_name(&name);
         Self {
-            qualified_name: name.clone(),
-            name,
+            name: name.clone(),
+            namespace: Vec::new(),
+            qualified_name: name,
             type_hash,
             source: TypeSource::ffi_untyped(),
             params,
@@ -121,9 +128,28 @@ mod tests {
 
         assert_eq!(entry.name, "Callback");
         assert_eq!(entry.qualified_name, "Callback");
+        assert!(entry.namespace.is_empty(), "ffi() should create empty namespace");
         assert_eq!(entry.param_count(), 1);
         assert!(!entry.returns_void());
         assert!(entry.source.is_ffi());
+    }
+
+    #[test]
+    fn funcdef_entry_with_namespace() {
+        let entry = FuncdefEntry::new(
+            "EventHandler",
+            vec!["Events".to_string()],
+            "Events::EventHandler",
+            TypeHash::from_name("Events::EventHandler"),
+            TypeSource::ffi_untyped(),
+            vec![DataType::simple(primitives::INT32)],
+            DataType::void(),
+        );
+
+        assert_eq!(entry.name, "EventHandler");
+        assert_eq!(entry.namespace, vec!["Events".to_string()]);
+        assert_eq!(entry.qualified_name, "Events::EventHandler");
+        assert_eq!(entry.type_hash, TypeHash::from_name("Events::EventHandler"));
     }
 
     #[test]

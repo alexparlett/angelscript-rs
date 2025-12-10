@@ -13,10 +13,18 @@ Implement the second pass of the compiler that generates bytecode for function b
 
 ## Dependencies
 
-- Task 37: Registration Pass (provides function signatures)
-- Task 43-43: Statement Compilation
+- Task 33: Compilation Context (provides namespace management and O(1) resolution)
+- Task 38: Registration Pass (provides function signatures)
+- Task 43-44: Statement Compilation
 - Task 40-41: Expression Compilation
 - Task 39: Bytecode Emitter
+
+## Key Integration with Task 33
+
+Uses CompilationContext namespace management:
+- `ctx.enter_namespace(ns)` - Enter namespace for method compilation
+- `ctx.exit_namespace()` - Exit namespace after processing
+- `ctx.resolve_type()` / `ctx.resolve_function()` - O(1) lookups via Scope
 
 ## Files to Create/Modify
 
@@ -89,11 +97,11 @@ impl<'ctx> CompilationPass<'ctx> {
             }
 
             Decl::Namespace { name, declarations } => {
-                self.ctx.push_namespace(name.clone());
+                self.ctx.enter_namespace(name);
                 for inner in declarations {
                     self.compile_decl(inner, output)?;
                 }
-                self.ctx.pop_namespace();
+                self.ctx.exit_namespace();
             }
 
             Decl::Import(_) | Decl::Typedef(_) | Decl::Funcdef(_) => {

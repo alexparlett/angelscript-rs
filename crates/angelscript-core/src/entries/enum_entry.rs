@@ -13,6 +13,8 @@ use super::{EnumValue, TypeSource};
 pub struct EnumEntry {
     /// Unqualified name.
     pub name: String,
+    /// Namespace path (e.g., `["Game", "Types"]`).
+    pub namespace: Vec<String>,
     /// Fully qualified name (with namespace).
     pub qualified_name: String,
     /// Type hash for identity.
@@ -27,12 +29,14 @@ impl EnumEntry {
     /// Create a new enum entry.
     pub fn new(
         name: impl Into<String>,
+        namespace: Vec<String>,
         qualified_name: impl Into<String>,
         type_hash: TypeHash,
         source: TypeSource,
     ) -> Self {
         Self {
             name: name.into(),
+            namespace,
             qualified_name: qualified_name.into(),
             type_hash,
             source,
@@ -40,13 +44,14 @@ impl EnumEntry {
         }
     }
 
-    /// Create an FFI enum entry.
+    /// Create an FFI enum entry in the global namespace.
     pub fn ffi(name: impl Into<String>) -> Self {
         let name = name.into();
         let type_hash = TypeHash::from_name(&name);
         Self {
-            qualified_name: name.clone(),
-            name,
+            name: name.clone(),
+            namespace: Vec::new(),
+            qualified_name: name,
             type_hash,
             source: TypeSource::ffi_untyped(),
             values: Vec::new(),
@@ -94,8 +99,27 @@ mod tests {
 
         assert_eq!(entry.name, "Color");
         assert_eq!(entry.qualified_name, "Color");
+        assert!(entry.namespace.is_empty(), "ffi() should create empty namespace");
         assert_eq!(entry.values.len(), 3);
         assert!(entry.source.is_ffi());
+    }
+
+    #[test]
+    fn enum_entry_with_namespace() {
+        let entry = EnumEntry::new(
+            "Status",
+            vec!["Game".to_string()],
+            "Game::Status",
+            TypeHash::from_name("Game::Status"),
+            TypeSource::ffi_untyped(),
+        )
+        .with_value("Active", 1)
+        .with_value("Inactive", 0);
+
+        assert_eq!(entry.name, "Status");
+        assert_eq!(entry.namespace, vec!["Game".to_string()]);
+        assert_eq!(entry.qualified_name, "Game::Status");
+        assert_eq!(entry.type_hash, TypeHash::from_name("Game::Status"));
     }
 
     #[test]

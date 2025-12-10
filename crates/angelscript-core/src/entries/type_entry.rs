@@ -67,6 +67,19 @@ impl TypeEntry {
         }
     }
 
+    /// Get the namespace path.
+    /// Returns an empty slice for primitives and template parameters.
+    pub fn namespace(&self) -> &[String] {
+        match self {
+            TypeEntry::Primitive(_) => &[],
+            TypeEntry::Class(e) => &e.namespace,
+            TypeEntry::Enum(e) => &e.namespace,
+            TypeEntry::Interface(e) => &e.namespace,
+            TypeEntry::Funcdef(e) => &e.namespace,
+            TypeEntry::TemplateParam(_) => &[],
+        }
+    }
+
     /// Get the source (FFI or script). Returns None for primitives.
     pub fn source(&self) -> Option<&TypeSource> {
         match self {

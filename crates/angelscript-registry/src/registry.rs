@@ -73,6 +73,18 @@ pub struct SymbolRegistry {
     /// Global properties by hash (O(1) lookup).
     /// Hash is computed from qualified name via `TypeHash::from_name()`.
     globals: FxHashMap<TypeHash, GlobalPropertyEntry>,
+
+    // === Namespace-Partitioned Indexes (for O(1) scope building) ===
+
+    /// Types indexed by namespace: namespace -> (simple_name -> hash).
+    types_by_namespace: FxHashMap<String, FxHashMap<String, TypeHash>>,
+
+    /// Functions indexed by namespace: namespace -> (simple_name -> [hashes]).
+    /// Multiple hashes because functions can have overloads.
+    functions_by_namespace: FxHashMap<String, FxHashMap<String, Vec<TypeHash>>>,
+
+    /// Globals indexed by namespace: namespace -> (simple_name -> hash).
+    globals_by_namespace: FxHashMap<String, FxHashMap<String, TypeHash>>,
 }
 
 impl SymbolRegistry {
@@ -152,13 +164,23 @@ impl SymbolRegistry {
     /// Returns an error if a type with the same hash already exists.
     pub fn register_type(&mut self, entry: TypeEntry) -> Result<(), RegistrationError> {
         let hash = entry.type_hash();
-        let name = entry.qualified_name().to_string();
+        let qualified_name = entry.qualified_name().to_string();
+        let simple_name = entry.name().to_string();
+        let namespace = entry.namespace().join("::");
 
         if self.types.contains_key(&hash) {
-            return Err(RegistrationError::DuplicateType(name));
+            return Err(RegistrationError::DuplicateType(qualified_name));
         }
 
-        self.type_by_name.insert(name, hash);
+        // Add to namespace index (skip template params - they belong to their owner)
+        if !entry.is_template_param() {
+            self.types_by_namespace
+                .entry(namespace)
+                .or_default()
+                .insert(simple_name, hash);
+        }
+
+        self.type_by_name.insert(qualified_name, hash);
         self.types.insert(hash, entry);
         Ok(())
     }
@@ -168,17 +190,29 @@ impl SymbolRegistry {
     /// Returns an error if a function with the same hash already exists.
     pub fn register_function(&mut self, entry: FunctionEntry) -> Result<(), RegistrationError> {
         let hash = entry.def.func_hash;
-        let name = entry.def.qualified_name();
+        let qualified_name = entry.def.qualified_name();
+        let simple_name = entry.def.name.clone();
+        let namespace = entry.def.namespace.join("::");
 
         if self.functions.contains_key(&hash) {
             return Err(RegistrationError::DuplicateRegistration {
-                name: name.to_string(),
+                name: qualified_name.to_string(),
                 kind: "function".to_string(),
             });
         }
 
+        // Add to namespace index (only for global functions, not methods)
+        if entry.def.object_type.is_none() {
+            self.functions_by_namespace
+                .entry(namespace)
+                .or_default()
+                .entry(simple_name)
+                .or_default()
+                .push(hash);
+        }
+
         self.function_overloads
-            .entry(name.to_string())
+            .entry(qualified_name.to_string())
             .or_default()
             .push(hash);
         self.functions.insert(hash, entry);
@@ -188,9 +222,17 @@ impl SymbolRegistry {
     /// Register a primitive type.
     ///
     /// Primitives are always registered (no duplicate check).
+    /// They are always in the global namespace (empty string key).
     pub fn register_primitive(&mut self, entry: PrimitiveEntry) {
         let hash = entry.type_hash;
         let name = entry.name().to_string();
+
+        // Add to namespace index (global namespace = empty string)
+        self.types_by_namespace
+            .entry(String::new())
+            .or_default()
+            .insert(name.clone(), hash);
+
         self.type_by_name.insert(name, hash);
         self.types.insert(hash, TypeEntry::Primitive(entry));
     }
@@ -386,6 +428,8 @@ impl SymbolRegistry {
     /// Returns an error if a global with the same qualified name already exists.
     pub fn register_global(&mut self, entry: GlobalPropertyEntry) -> Result<(), RegistrationError> {
         let hash = entry.type_hash;
+        let simple_name = entry.name.clone();
+        let namespace = entry.namespace.join("::");
 
         if self.globals.contains_key(&hash) {
             return Err(RegistrationError::DuplicateRegistration {
@@ -393,6 +437,12 @@ impl SymbolRegistry {
                 kind: "global property".to_string(),
             });
         }
+
+        // Add to namespace index
+        self.globals_by_namespace
+            .entry(namespace)
+            .or_default()
+            .insert(simple_name, hash);
 
         self.globals.insert(hash, entry);
         Ok(())
@@ -421,6 +471,35 @@ impl SymbolRegistry {
     /// Get the number of registered global properties.
     pub fn global_count(&self) -> usize {
         self.globals.len()
+    }
+
+    // ==========================================================================
+    // Namespace Index Access
+    // ==========================================================================
+
+    /// Get all types in a namespace.
+    ///
+    /// Returns a map of simple name -> TypeHash for all types in the namespace.
+    /// Use empty string for the global namespace.
+    pub fn get_namespace_types(&self, namespace: &str) -> Option<&FxHashMap<String, TypeHash>> {
+        self.types_by_namespace.get(namespace)
+    }
+
+    /// Get all functions in a namespace.
+    ///
+    /// Returns a map of simple name -> Vec<TypeHash> for all functions in the namespace.
+    /// Multiple hashes per name indicate overloads.
+    /// Use empty string for the global namespace.
+    pub fn get_namespace_functions(&self, namespace: &str) -> Option<&FxHashMap<String, Vec<TypeHash>>> {
+        self.functions_by_namespace.get(namespace)
+    }
+
+    /// Get all globals in a namespace.
+    ///
+    /// Returns a map of simple name -> TypeHash for all global properties in the namespace.
+    /// Use empty string for the global namespace.
+    pub fn get_namespace_globals(&self, namespace: &str) -> Option<&FxHashMap<String, TypeHash>> {
+        self.globals_by_namespace.get(namespace)
     }
 
     // ==========================================================================
@@ -731,5 +810,239 @@ mod tests {
 
         let globals: Vec<_> = registry.globals().collect();
         assert_eq!(globals.len(), 2);
+    }
+
+    // =========================================================================
+    // Namespace Index Tests
+    // =========================================================================
+
+    #[test]
+    fn namespace_index_types_global_namespace() {
+        let mut registry = SymbolRegistry::new();
+
+        // Register a class in the global namespace (empty namespace)
+        let class = ClassEntry::ffi("Player", TypeKind::reference());
+        let hash = class.type_hash;
+        registry.register_type(class.into()).unwrap();
+
+        // Should be indexed under empty string namespace
+        let types = registry.get_namespace_types("").unwrap();
+        assert_eq!(types.get("Player"), Some(&hash));
+    }
+
+    #[test]
+    fn namespace_index_types_with_namespace() {
+        use angelscript_core::TypeSource;
+
+        let mut registry = SymbolRegistry::new();
+
+        // Register a class in Game namespace
+        let class = ClassEntry::new(
+            "Player",
+            vec!["Game".to_string()],
+            "Game::Player",
+            TypeHash::from_name("Game::Player"),
+            TypeKind::reference(),
+            TypeSource::ffi_untyped(),
+        );
+        let hash = class.type_hash;
+        registry.register_type(class.into()).unwrap();
+
+        // Should be indexed under "Game" namespace
+        let types = registry.get_namespace_types("Game").unwrap();
+        assert_eq!(types.get("Player"), Some(&hash));
+
+        // Should NOT be in global namespace
+        assert!(registry.get_namespace_types("").is_none() ||
+                registry.get_namespace_types("").unwrap().get("Player").is_none());
+    }
+
+    #[test]
+    fn namespace_index_types_nested_namespace() {
+        use angelscript_core::TypeSource;
+
+        let mut registry = SymbolRegistry::new();
+
+        // Register class in Game::Entities namespace
+        let class = ClassEntry::new(
+            "Enemy",
+            vec!["Game".to_string(), "Entities".to_string()],
+            "Game::Entities::Enemy",
+            TypeHash::from_name("Game::Entities::Enemy"),
+            TypeKind::reference(),
+            TypeSource::ffi_untyped(),
+        );
+        let hash = class.type_hash;
+        registry.register_type(class.into()).unwrap();
+
+        // Should be indexed under "Game::Entities" namespace
+        let types = registry.get_namespace_types("Game::Entities").unwrap();
+        assert_eq!(types.get("Enemy"), Some(&hash));
+    }
+
+    #[test]
+    fn namespace_index_functions_global_namespace() {
+        let mut registry = SymbolRegistry::new();
+
+        let def = FunctionDef::new(
+            TypeHash::from_function("print", &[primitives::INT32]),
+            "print".to_string(),
+            vec![],
+            vec![],
+            DataType::void(),
+            None,
+            FunctionTraits::default(),
+            false,
+            Visibility::Public,
+        );
+        let hash = def.func_hash;
+        registry.register_function(FunctionEntry::ffi(def)).unwrap();
+
+        // Should be indexed under empty string namespace
+        let funcs = registry.get_namespace_functions("").unwrap();
+        assert!(funcs.get("print").unwrap().contains(&hash));
+    }
+
+    #[test]
+    fn namespace_index_functions_with_namespace() {
+        let mut registry = SymbolRegistry::new();
+
+        let mut def = FunctionDef::new(
+            TypeHash::from_function("Game::log", &[primitives::INT32]),
+            "log".to_string(),
+            vec![],
+            vec![],
+            DataType::void(),
+            None,
+            FunctionTraits::default(),
+            false,
+            Visibility::Public,
+        );
+        def.namespace = vec!["Game".to_string()];
+        let hash = def.func_hash;
+        registry.register_function(FunctionEntry::ffi(def)).unwrap();
+
+        // Should be indexed under "Game" namespace
+        let funcs = registry.get_namespace_functions("Game").unwrap();
+        assert!(funcs.get("log").unwrap().contains(&hash));
+    }
+
+    #[test]
+    fn namespace_index_functions_overloads() {
+        let mut registry = SymbolRegistry::new();
+
+        // Register two overloads of the same function
+        let mut def1 = FunctionDef::new(
+            TypeHash::from_function("Game::log", &[primitives::INT32]),
+            "log".to_string(),
+            vec![],
+            vec![],
+            DataType::void(),
+            None,
+            FunctionTraits::default(),
+            false,
+            Visibility::Public,
+        );
+        def1.namespace = vec!["Game".to_string()];
+        let hash1 = def1.func_hash;
+
+        let mut def2 = FunctionDef::new(
+            TypeHash::from_function("Game::log", &[primitives::STRING]),
+            "log".to_string(),
+            vec![],
+            vec![],
+            DataType::void(),
+            None,
+            FunctionTraits::default(),
+            false,
+            Visibility::Public,
+        );
+        def2.namespace = vec!["Game".to_string()];
+        let hash2 = def2.func_hash;
+
+        registry.register_function(FunctionEntry::ffi(def1)).unwrap();
+        registry.register_function(FunctionEntry::ffi(def2)).unwrap();
+
+        // Both overloads should be indexed under "Game" namespace
+        let funcs = registry.get_namespace_functions("Game").unwrap();
+        let log_overloads = funcs.get("log").unwrap();
+        assert_eq!(log_overloads.len(), 2);
+        assert!(log_overloads.contains(&hash1));
+        assert!(log_overloads.contains(&hash2));
+    }
+
+    #[test]
+    fn namespace_index_methods_not_indexed() {
+        let mut registry = SymbolRegistry::new();
+
+        // Register a method (has object_type)
+        let def = FunctionDef::new(
+            TypeHash::from_function("Player::update", &[]),
+            "update".to_string(),
+            vec![],
+            vec![],
+            DataType::void(),
+            Some(TypeHash::from_name("Player")),  // object_type makes it a method
+            FunctionTraits::default(),
+            false,
+            Visibility::Public,
+        );
+        registry.register_function(FunctionEntry::ffi(def)).unwrap();
+
+        // Methods should NOT be indexed by namespace (only global functions are)
+        assert!(registry.get_namespace_functions("").is_none() ||
+                registry.get_namespace_functions("").unwrap().get("update").is_none());
+    }
+
+    #[test]
+    fn namespace_index_globals_global_namespace() {
+        use angelscript_core::ConstantValue;
+
+        let mut registry = SymbolRegistry::new();
+
+        let entry = GlobalPropertyEntry::constant("GRAVITY", ConstantValue::Double(9.81));
+        let hash = entry.type_hash;
+        registry.register_global(entry).unwrap();
+
+        // Should be indexed under empty string namespace
+        let globals = registry.get_namespace_globals("").unwrap();
+        assert_eq!(globals.get("GRAVITY"), Some(&hash));
+    }
+
+    #[test]
+    fn namespace_index_globals_with_namespace() {
+        use angelscript_core::ConstantValue;
+
+        let mut registry = SymbolRegistry::new();
+
+        let mut entry = GlobalPropertyEntry::constant("MAX_ENEMIES", ConstantValue::Int32(100));
+        entry = entry.with_namespace(vec!["Game".to_string()]);
+        let hash = entry.type_hash;
+        registry.register_global(entry).unwrap();
+
+        // Should be indexed under "Game" namespace
+        let globals = registry.get_namespace_globals("Game").unwrap();
+        assert_eq!(globals.get("MAX_ENEMIES"), Some(&hash));
+    }
+
+    #[test]
+    fn namespace_index_empty_namespace_returns_none() {
+        let registry = SymbolRegistry::new();
+
+        // Empty registry should return None for any namespace
+        assert!(registry.get_namespace_types("Game").is_none());
+        assert!(registry.get_namespace_functions("Game").is_none());
+        assert!(registry.get_namespace_globals("Game").is_none());
+    }
+
+    #[test]
+    fn namespace_index_primitives_in_global_namespace() {
+        let registry = SymbolRegistry::with_primitives();
+
+        // Primitives should be indexed in global namespace
+        let types = registry.get_namespace_types("").unwrap();
+        assert!(types.get("int").is_some());
+        assert!(types.get("float").is_some());
+        assert!(types.get("bool").is_some());
     }
 }
