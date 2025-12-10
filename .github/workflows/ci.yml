@@ -94,7 +94,6 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      checks: write
       pull-requests: write
     steps:
       - uses: actions/checkout@v4
@@ -124,16 +123,7 @@ jobs:
       - name: Run tests with coverage
         run: |
           cargo llvm-cov nextest --all-features --workspace \
-            --profile ci \
             --lcov --output-path lcov.info
-
-      - name: Test Report
-        uses: dorny/test-reporter@v1
-        if: always()
-        with:
-          name: Coverage Test Results
-          path: target/nextest/ci/junit.xml
-          reporter: java-junit
 
       - name: Coverage Report
         uses: zgosalvez/github-actions-report-lcov@v4
