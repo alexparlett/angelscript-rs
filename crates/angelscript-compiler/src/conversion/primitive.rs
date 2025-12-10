@@ -1,0 +1,320 @@
+//! Primitive type conversions.
+//!
+//! This module handles conversions between primitive types (integers, floats, bool).
+
+use angelscript_core::{DataType, TypeHash, primitives};
+
+use super::{Conversion, ConversionKind};
+
+/// Find primitive type conversion.
+pub fn find_primitive_conversion(source: &DataType, target: &DataType) -> Option<Conversion> {
+    let from = source.type_hash;
+    let to = target.type_hash;
+
+    // Integer widening (always implicit, low cost)
+    if is_integer_widening(from, to) {
+        return Some(Conversion {
+            kind: ConversionKind::Primitive { from, to },
+            cost: Conversion::COST_PRIMITIVE_WIDENING,
+            is_implicit: true,
+        });
+    }
+
+    // Integer narrowing (implicit but higher cost in AngelScript)
+    if is_integer_narrowing(from, to) {
+        return Some(Conversion {
+            kind: ConversionKind::Primitive { from, to },
+            cost: Conversion::COST_PRIMITIVE_NARROWING,
+            is_implicit: true, // AngelScript allows implicit narrowing
+        });
+    }
+
+    // Integer to float (implicit)
+    if is_int_to_float(from, to) {
+        return Some(Conversion {
+            kind: ConversionKind::Primitive { from, to },
+            cost: Conversion::COST_PRIMITIVE_WIDENING,
+            is_implicit: true,
+        });
+    }
+
+    // Float to integer (implicit with truncation)
+    if is_float_to_int(from, to) {
+        return Some(Conversion {
+            kind: ConversionKind::Primitive { from, to },
+            cost: Conversion::COST_PRIMITIVE_NARROWING + 1, // Extra cost for truncation
+            is_implicit: true,
+        });
+    }
+
+    // Float widening/narrowing
+    if is_float_conversion(from, to) {
+        return Some(Conversion {
+            kind: ConversionKind::Primitive { from, to },
+            cost: Conversion::COST_PRIMITIVE_WIDENING,
+            is_implicit: true,
+        });
+    }
+
+    None
+}
+
+fn is_integer_widening(from: TypeHash, to: TypeHash) -> bool {
+    matches!(
+        (from, to),
+        // Signed widening
+        (primitives::INT8, primitives::INT16)
+            | (primitives::INT8, primitives::INT32)
+            | (primitives::INT8, primitives::INT64)
+            | (primitives::INT16, primitives::INT32)
+            | (primitives::INT16, primitives::INT64)
+            | (primitives::INT32, primitives::INT64)
+            // Unsigned widening
+            | (primitives::UINT8, primitives::UINT16)
+            | (primitives::UINT8, primitives::UINT32)
+            | (primitives::UINT8, primitives::UINT64)
+            | (primitives::UINT16, primitives::UINT32)
+            | (primitives::UINT16, primitives::UINT64)
+            | (primitives::UINT32, primitives::UINT64)
+            // Unsigned to larger signed
+            | (primitives::UINT8, primitives::INT16)
+            | (primitives::UINT8, primitives::INT32)
+            | (primitives::UINT8, primitives::INT64)
+            | (primitives::UINT16, primitives::INT32)
+            | (primitives::UINT16, primitives::INT64)
+            | (primitives::UINT32, primitives::INT64)
+    )
+}
+
+fn is_integer_narrowing(from: TypeHash, to: TypeHash) -> bool {
+    matches!(
+        (from, to),
+        // Signed narrowing
+        (primitives::INT64, primitives::INT32)
+            | (primitives::INT64, primitives::INT16)
+            | (primitives::INT64, primitives::INT8)
+            | (primitives::INT32, primitives::INT16)
+            | (primitives::INT32, primitives::INT8)
+            | (primitives::INT16, primitives::INT8)
+            // Unsigned narrowing
+            | (primitives::UINT64, primitives::UINT32)
+            | (primitives::UINT64, primitives::UINT16)
+            | (primitives::UINT64, primitives::UINT8)
+            | (primitives::UINT32, primitives::UINT16)
+            | (primitives::UINT32, primitives::UINT8)
+            | (primitives::UINT16, primitives::UINT8)
+            // Cross-sign conversions (same size)
+            | (primitives::INT8, primitives::UINT8)
+            | (primitives::UINT8, primitives::INT8)
+            | (primitives::INT16, primitives::UINT16)
+            | (primitives::UINT16, primitives::INT16)
+            | (primitives::INT32, primitives::UINT32)
+            | (primitives::UINT32, primitives::INT32)
+            | (primitives::INT64, primitives::UINT64)
+            | (primitives::UINT64, primitives::INT64)
+    )
+}
+
+fn is_int_to_float(from: TypeHash, to: TypeHash) -> bool {
+    let is_int = matches!(
+        from,
+        primitives::INT8
+            | primitives::INT16
+            | primitives::INT32
+            | primitives::INT64
+            | primitives::UINT8
+            | primitives::UINT16
+            | primitives::UINT32
+            | primitives::UINT64
+    );
+    let is_float = matches!(to, primitives::FLOAT | primitives::DOUBLE);
+    is_int && is_float
+}
+
+fn is_float_to_int(from: TypeHash, to: TypeHash) -> bool {
+    let is_float = matches!(from, primitives::FLOAT | primitives::DOUBLE);
+    let is_int = matches!(
+        to,
+        primitives::INT8
+            | primitives::INT16
+            | primitives::INT32
+            | primitives::INT64
+            | primitives::UINT8
+            | primitives::UINT16
+            | primitives::UINT32
+            | primitives::UINT64
+    );
+    is_float && is_int
+}
+
+fn is_float_conversion(from: TypeHash, to: TypeHash) -> bool {
+    matches!(
+        (from, to),
+        (primitives::FLOAT, primitives::DOUBLE) | (primitives::DOUBLE, primitives::FLOAT)
+    )
+}
+
+/// Check if a type hash is a primitive numeric type.
+pub fn is_primitive_numeric(hash: TypeHash) -> bool {
+    matches!(
+        hash,
+        primitives::INT8
+            | primitives::INT16
+            | primitives::INT32
+            | primitives::INT64
+            | primitives::UINT8
+            | primitives::UINT16
+            | primitives::UINT32
+            | primitives::UINT64
+            | primitives::FLOAT
+            | primitives::DOUBLE
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn integer_widening_int8_to_int16() {
+        let from = DataType::simple(primitives::INT8);
+        let to = DataType::simple(primitives::INT16);
+        let conv = find_primitive_conversion(&from, &to);
+
+        assert!(conv.is_some());
+        let conv = conv.unwrap();
+        assert!(conv.is_implicit);
+        assert_eq!(conv.cost, Conversion::COST_PRIMITIVE_WIDENING);
+    }
+
+    #[test]
+    fn integer_widening_int32_to_int64() {
+        let from = DataType::simple(primitives::INT32);
+        let to = DataType::simple(primitives::INT64);
+        let conv = find_primitive_conversion(&from, &to);
+
+        assert!(conv.is_some());
+        let conv = conv.unwrap();
+        assert!(conv.is_implicit);
+    }
+
+    #[test]
+    fn integer_narrowing_int64_to_int32() {
+        let from = DataType::simple(primitives::INT64);
+        let to = DataType::simple(primitives::INT32);
+        let conv = find_primitive_conversion(&from, &to);
+
+        assert!(conv.is_some());
+        let conv = conv.unwrap();
+        assert!(conv.is_implicit); // AngelScript allows implicit narrowing
+        assert_eq!(conv.cost, Conversion::COST_PRIMITIVE_NARROWING);
+    }
+
+    #[test]
+    fn int_to_float() {
+        let from = DataType::simple(primitives::INT32);
+        let to = DataType::simple(primitives::FLOAT);
+        let conv = find_primitive_conversion(&from, &to);
+
+        assert!(conv.is_some());
+        let conv = conv.unwrap();
+        assert!(conv.is_implicit);
+    }
+
+    #[test]
+    fn int_to_double() {
+        let from = DataType::simple(primitives::INT32);
+        let to = DataType::simple(primitives::DOUBLE);
+        let conv = find_primitive_conversion(&from, &to);
+
+        assert!(conv.is_some());
+        assert!(conv.unwrap().is_implicit);
+    }
+
+    #[test]
+    fn float_to_int() {
+        let from = DataType::simple(primitives::FLOAT);
+        let to = DataType::simple(primitives::INT32);
+        let conv = find_primitive_conversion(&from, &to);
+
+        assert!(conv.is_some());
+        let conv = conv.unwrap();
+        assert!(conv.is_implicit);
+        // Higher cost due to truncation
+        assert!(conv.cost > Conversion::COST_PRIMITIVE_NARROWING);
+    }
+
+    #[test]
+    fn float_to_double() {
+        let from = DataType::simple(primitives::FLOAT);
+        let to = DataType::simple(primitives::DOUBLE);
+        let conv = find_primitive_conversion(&from, &to);
+
+        assert!(conv.is_some());
+        assert!(conv.unwrap().is_implicit);
+    }
+
+    #[test]
+    fn double_to_float() {
+        let from = DataType::simple(primitives::DOUBLE);
+        let to = DataType::simple(primitives::FLOAT);
+        let conv = find_primitive_conversion(&from, &to);
+
+        assert!(conv.is_some());
+        assert!(conv.unwrap().is_implicit);
+    }
+
+    #[test]
+    fn unsigned_to_larger_signed() {
+        let from = DataType::simple(primitives::UINT8);
+        let to = DataType::simple(primitives::INT16);
+        let conv = find_primitive_conversion(&from, &to);
+
+        assert!(conv.is_some());
+        let conv = conv.unwrap();
+        assert!(conv.is_implicit);
+        assert_eq!(conv.cost, Conversion::COST_PRIMITIVE_WIDENING);
+    }
+
+    #[test]
+    fn cross_sign_same_size() {
+        let from = DataType::simple(primitives::INT32);
+        let to = DataType::simple(primitives::UINT32);
+        let conv = find_primitive_conversion(&from, &to);
+
+        assert!(conv.is_some());
+        let conv = conv.unwrap();
+        assert!(conv.is_implicit);
+        assert_eq!(conv.cost, Conversion::COST_PRIMITIVE_NARROWING);
+    }
+
+    #[test]
+    fn no_conversion_for_same_type() {
+        let from = DataType::simple(primitives::INT32);
+        let to = DataType::simple(primitives::INT32);
+        let conv = find_primitive_conversion(&from, &to);
+
+        // Identity is handled at higher level, not here
+        assert!(conv.is_none());
+    }
+
+    #[test]
+    fn no_conversion_for_non_primitives() {
+        let player_hash = TypeHash::from_name("Player");
+        let from = DataType::simple(player_hash);
+        let to = DataType::simple(primitives::INT32);
+        let conv = find_primitive_conversion(&from, &to);
+
+        assert!(conv.is_none());
+    }
+
+    #[test]
+    fn is_primitive_numeric_works() {
+        assert!(is_primitive_numeric(primitives::INT32));
+        assert!(is_primitive_numeric(primitives::FLOAT));
+        assert!(is_primitive_numeric(primitives::DOUBLE));
+        assert!(!is_primitive_numeric(primitives::BOOL));
+        assert!(!is_primitive_numeric(primitives::VOID));
+        assert!(!is_primitive_numeric(TypeHash::from_name("Player")));
+    }
+}
