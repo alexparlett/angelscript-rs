@@ -95,6 +95,7 @@ jobs:
     permissions:
       contents: read
       checks: write
+      pull-requests: write
     steps:
       - uses: actions/checkout@v4
 
@@ -134,7 +135,10 @@ jobs:
           path: target/nextest/ci/junit.xml
           reporter: java-junit
 
-      - name: Check coverage threshold (85%)
-        run: |
-          cargo llvm-cov report --fail-under-lines 85
+      - name: Coverage Report
+        uses: zgosalvez/github-actions-report-lcov@v4
+        with:
+          coverage-files: lcov.info
+          minimum-coverage: 85
+          github-token: ${{ secrets.GITHUB_TOKEN }}
 
