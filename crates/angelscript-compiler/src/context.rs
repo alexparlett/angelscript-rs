@@ -852,13 +852,21 @@ mod tests {
         assert!(!ctx.has_errors(), "First import should not cause error");
 
         ctx.add_import("NamespaceB");
-        assert!(ctx.has_errors(), "Second import with conflicting name should cause ambiguity error");
+        assert!(
+            ctx.has_errors(),
+            "Second import with conflicting name should cause ambiguity error"
+        );
 
         // Verify it's the right error type
         let errors = ctx.errors();
         assert_eq!(errors.len(), 1);
         match &errors[0] {
-            CompilationError::AmbiguousSymbol { kind, name, candidates, .. } => {
+            CompilationError::AmbiguousSymbol {
+                kind,
+                name,
+                candidates,
+                ..
+            } => {
                 assert_eq!(kind, "type");
                 assert_eq!(name, "Player");
                 assert!(candidates.contains("NamespaceA::Player"));
@@ -903,7 +911,10 @@ mod tests {
         ctx.enter_namespace("Game");
 
         // NO error - current namespace legitimately shadows import
-        assert!(!ctx.has_errors(), "Current namespace shadowing import should NOT cause error");
+        assert!(
+            !ctx.has_errors(),
+            "Current namespace shadowing import should NOT cause error"
+        );
 
         // Player should resolve to Game::Player
         let resolved = ctx.resolve_type("Player");
@@ -941,7 +952,10 @@ mod tests {
         ctx.add_import("Utils");
 
         // NO error - imports shadow global namespace
-        assert!(!ctx.has_errors(), "Import shadowing global namespace should NOT cause error");
+        assert!(
+            !ctx.has_errors(),
+            "Import shadowing global namespace should NOT cause error"
+        );
 
         // Helper should resolve to Utils::Helper (import shadows global)
         let resolved = ctx.resolve_type("Helper");
@@ -969,13 +983,21 @@ mod tests {
         assert!(!ctx.has_errors(), "First import should not cause error");
 
         ctx.add_import("ConfigB");
-        assert!(ctx.has_errors(), "Second import with conflicting global should cause ambiguity error");
+        assert!(
+            ctx.has_errors(),
+            "Second import with conflicting global should cause ambiguity error"
+        );
 
         // Verify it's the right error type
         let errors = ctx.errors();
         assert_eq!(errors.len(), 1);
         match &errors[0] {
-            CompilationError::AmbiguousSymbol { kind, name, candidates, .. } => {
+            CompilationError::AmbiguousSymbol {
+                kind,
+                name,
+                candidates,
+                ..
+            } => {
                 assert_eq!(kind, "global variable");
                 assert_eq!(name, "MAX_VALUE");
                 assert!(candidates.contains("ConfigA::MAX_VALUE"));
@@ -1007,7 +1029,10 @@ mod tests {
         ctx.enter_namespace("Game");
 
         // NO error - current namespace shadows import
-        assert!(!ctx.has_errors(), "Current namespace shadowing imported global should NOT cause error");
+        assert!(
+            !ctx.has_errors(),
+            "Current namespace shadowing imported global should NOT cause error"
+        );
 
         // SPEED should resolve to Game::SPEED
         let resolved = ctx.resolve_global("SPEED");
@@ -1097,7 +1122,10 @@ mod tests {
         ctx.add_import("Utils");
 
         // NO error - imports shadow global namespace
-        assert!(!ctx.has_errors(), "Import shadowing global namespace for globals should NOT cause error");
+        assert!(
+            !ctx.has_errors(),
+            "Import shadowing global namespace for globals should NOT cause error"
+        );
 
         // CONFIG should resolve to Utils::CONFIG (import shadows global)
         let resolved = ctx.resolve_global("CONFIG");

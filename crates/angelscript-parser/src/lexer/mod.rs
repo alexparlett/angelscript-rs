@@ -13,7 +13,7 @@ use std::collections::VecDeque;
 
 use bumpalo::Bump;
 
-use cursor::{is_ident_continue, is_ident_continue_ascii, is_ident_start, Cursor};
+use cursor::{Cursor, is_ident_continue, is_ident_continue_ascii, is_ident_start};
 use token::lookup_keyword;
 
 pub use angelscript_core::{LexError, Span};

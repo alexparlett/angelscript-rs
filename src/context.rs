@@ -481,7 +481,7 @@ pub enum ContextError {
 #[allow(clippy::arc_with_non_send_sync)]
 mod tests {
     use super::*;
-    use angelscript_core::{primitives, TypeKind};
+    use angelscript_core::{TypeKind, primitives};
 
     #[test]
     fn context_new() {
