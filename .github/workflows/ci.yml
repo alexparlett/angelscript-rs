@@ -54,6 +54,9 @@ jobs:
   test:
     name: Tests
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      checks: write
     steps:
       - uses: actions/checkout@v4
 
@@ -76,7 +79,15 @@ jobs:
             ${{ runner.os }}-cargo-
 
       - name: Run all tests
-        run: cargo nextest run --workspace
+        run: cargo nextest run --workspace --profile ci
+
+      - name: Test Report
+        uses: dorny/test-reporter@v1
+        if: always()
+        with:
+          name: Test Results
+          path: target/nextest/ci/junit.xml
+          reporter: java-junit
 
   coverage:
     name: Code Coverage
@@ -89,10 +100,8 @@ jobs:
         with:
           components: llvm-tools-preview
 
-      - name: Install cargo-llvm-cov and nextest
-        uses: taiki-e/install-action@v2
-        with:
-          tool: cargo-llvm-cov,nextest
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@cargo-llvm-cov
 
       - name: Cache cargo registry
         uses: actions/cache@v4
@@ -108,7 +117,7 @@ jobs:
 
       - name: Run tests with coverage
         run: |
-          cargo llvm-cov nextest --all-features --workspace \
+          cargo llvm-cov --all-features --workspace --lib \
             --fail-under-lines 85
 
       - name: Generate coverage summary
