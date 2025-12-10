@@ -82,7 +82,7 @@ jobs:
         run: cargo build --all-targets
 
       - name: Run all tests
-        run: cargo nextest run --workspace --profile ci -E 'not test(module_tests)'
+        run: cargo nextest run --workspace --profile ci -E 'not test(unit_tests)'
 
       - name: Test Report
         uses: dorny/test-reporter@v1
