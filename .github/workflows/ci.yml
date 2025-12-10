@@ -54,11 +54,17 @@ jobs:
   test:
     name: Tests
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      checks: write
     steps:
       - uses: actions/checkout@v4
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
+
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@nextest
 
       - name: Cache cargo registry
         uses: actions/cache@v4
@@ -72,16 +78,16 @@ jobs:
             ${{ runner.os }}-cargo-test-
             ${{ runner.os }}-cargo-
 
-      - name: Build
-        run: cargo build --all-targets
+      - name: Run all tests
+        run: cargo nextest run --workspace --profile ci
 
-      - name: Run unit tests (all crates)
-        run: cargo test --lib
-
-      - name: Run integration tests
-        run: |
-          cargo test --test macro_tests
-          cargo test --test macro_compile_fail
+      - name: Test Report
+        uses: dorny/test-reporter@v1
+        if: always()
+        with:
+          name: Test Results
+          path: target/nextest/ci/junit.xml
+          reporter: java-junit
 
   coverage:
     name: Code Coverage
@@ -109,26 +115,14 @@ jobs:
             ${{ runner.os }}-cargo-coverage-
             ${{ runner.os }}-cargo-
 
-      - name: Generate coverage report
+      - name: Run tests with coverage
         run: |
-          cargo llvm-cov --all-features --workspace \
-            --lib \
-            --lcov --output-path lcov.info
-          cargo llvm-cov --all-features --workspace \
-            --test macro_tests --test macro_compile_fail \
-            --lcov --output-path lcov-integration.info --no-clean
-
-      - name: Check coverage threshold (85%)
-        run: |
-          cargo llvm-cov --all-features --workspace \
-            --lib \
+          cargo llvm-cov --all-features --workspace --lib \
             --fail-under-lines 85
 
-      - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v4
-        with:
-          files: lcov.info,lcov-integration.info
-          fail_ci_if_error: false
-          verbose: true
-        env:
-          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+      - name: Generate coverage summary
+        run: |
+          echo "## Code Coverage" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          cargo llvm-cov report >> $GITHUB_STEP_SUMMARY
+
