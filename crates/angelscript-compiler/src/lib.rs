@@ -11,19 +11,22 @@
 //!
 //! - [`bytecode`]: Bytecode types (OpCode, BytecodeChunk, ConstantPool)
 //! - [`context`]: Compilation context with namespace-aware resolution
-//! - [`conversion`]: Type conversion tracking for overload resolution
+//! - [`conversion`]: Type conversion system for type checking and overload resolution
 //! - [`expr_info`]: Expression type information
 //! - [`type_resolver`]: Type resolution from AST to semantic types
 
 pub mod bytecode;
 pub mod context;
-mod conversion;
+pub mod conversion;
 mod expr_info;
 pub mod template;
 pub mod type_resolver;
 
 pub use context::{CompilationContext, Scope};
-pub use conversion::{Conversion, ConversionKind};
+pub use conversion::{
+    Conversion, ConversionKind, can_implicitly_convert, find_conversion, find_handle_conversion,
+    find_primitive_conversion,
+};
 pub use expr_info::ExprInfo;
 pub use type_resolver::TypeResolver;
 
