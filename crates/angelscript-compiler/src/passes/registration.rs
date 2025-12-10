@@ -347,13 +347,7 @@ impl<'a, 'reg> RegistrationPass<'a, 'reg> {
 
             let param_hashes: Vec<TypeHash> =
                 params.iter().map(|p| p.data_type.type_hash).collect();
-            let func_hash = TypeHash::from_method(
-                class_hash,
-                &method_name,
-                &param_hashes,
-                accessor.is_const,
-                false,
-            );
+            let func_hash = TypeHash::from_method(class_hash, &method_name, &param_hashes);
 
             let mut traits = FunctionTraits::default();
             if accessor.is_const {
@@ -463,7 +457,7 @@ impl<'a, 'reg> RegistrationPass<'a, 'reg> {
 
     fn visit_destructor(&mut self, dtor: &FunctionDecl<'_>, class_hash: TypeHash) {
         // Destructor has no parameters and no return value
-        let func_hash = TypeHash::from_method(class_hash, "~", &[], false, false);
+        let func_hash = TypeHash::from_method(class_hash, "~", &[]);
 
         let class_name = self
             .ctx
@@ -572,8 +566,7 @@ impl<'a, 'reg> RegistrationPass<'a, 'reg> {
             }
         };
 
-        let func_hash =
-            TypeHash::from_method(iface_hash, &name, &param_hashes, method.is_const, false);
+        let func_hash = TypeHash::from_method(iface_hash, &name, &param_hashes);
 
         let traits = FunctionTraits {
             is_const: method.is_const,
@@ -683,7 +676,7 @@ impl<'a, 'reg> RegistrationPass<'a, 'reg> {
 
         // Compute function hash
         let func_hash = if let Some(obj) = object_type {
-            TypeHash::from_method(obj, &name, &param_hashes, func.is_const, false)
+            TypeHash::from_method(obj, &name, &param_hashes)
         } else {
             let qualified_name = self.qualified_name(&name);
             TypeHash::from_function(&qualified_name, &param_hashes)
@@ -1037,7 +1030,7 @@ impl<'a, 'reg> RegistrationPass<'a, 'reg> {
             ref_modifier: RefModifier::InOut,
         };
 
-        let func_hash = TypeHash::from_method(class_hash, "opAssign", &param_hashes, false, false);
+        let func_hash = TypeHash::from_method(class_hash, "opAssign", &param_hashes);
 
         let func_def = FunctionDef::new(
             func_hash,

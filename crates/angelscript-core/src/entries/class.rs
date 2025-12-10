@@ -3,6 +3,8 @@
 //! This module provides `ClassEntry` for class types, including template
 //! definitions and template instances.
 
+use rustc_hash::FxHashMap;
+
 use crate::{DataType, TypeBehaviors, TypeHash, TypeKind};
 
 use super::{PropertyEntry, TypeSource};
@@ -35,8 +37,9 @@ pub struct ClassEntry {
     // === Members ===
     /// Lifecycle behaviors (constructors, factories, destructor, etc.).
     pub behaviors: TypeBehaviors,
-    /// Method function hashes (actual FunctionEntry stored in registry).
-    pub methods: Vec<TypeHash>,
+    /// Method function hashes indexed by name for O(1) lookup.
+    /// Maps method name to list of overload hashes (actual FunctionEntry stored in registry).
+    pub methods: FxHashMap<String, Vec<TypeHash>>,
     /// Virtual properties (backed by getter/setter methods).
     pub properties: Vec<PropertyEntry>,
 
@@ -77,7 +80,7 @@ impl ClassEntry {
             base_class: None,
             interfaces: Vec::new(),
             behaviors: TypeBehaviors::default(),
-            methods: Vec::new(),
+            methods: FxHashMap::default(),
             properties: Vec::new(),
             template_params: Vec::new(),
             template: None,
@@ -135,10 +138,23 @@ impl ClassEntry {
         self
     }
 
-    /// Add a method by its function hash.
-    pub fn with_method(mut self, method_hash: TypeHash) -> Self {
-        self.methods.push(method_hash);
+    /// Add a method by name and function hash.
+    ///
+    /// Methods with the same name are stored together as overloads.
+    pub fn with_method(mut self, name: impl Into<String>, method_hash: TypeHash) -> Self {
+        self.methods
+            .entry(name.into())
+            .or_default()
+            .push(method_hash);
         self
+    }
+
+    /// Add a method by name and function hash (mutable version).
+    pub fn add_method(&mut self, name: impl Into<String>, method_hash: TypeHash) {
+        self.methods
+            .entry(name.into())
+            .or_default()
+            .push(method_hash);
     }
 
     /// Add a property.
@@ -201,7 +217,19 @@ impl ClassEntry {
 
     /// Check if this class has a method with the given hash.
     pub fn has_method(&self, method_hash: TypeHash) -> bool {
-        self.methods.contains(&method_hash)
+        self.methods
+            .values()
+            .any(|overloads| overloads.contains(&method_hash))
+    }
+
+    /// Find all method overloads by name. Returns empty slice if not found.
+    pub fn find_methods(&self, name: &str) -> &[TypeHash] {
+        self.methods.get(name).map(|v| v.as_slice()).unwrap_or(&[])
+    }
+
+    /// Get all method hashes (flattened from all names).
+    pub fn all_methods(&self) -> impl Iterator<Item = TypeHash> + '_ {
+        self.methods.values().flatten().copied()
     }
 
     /// Find a property by name.
@@ -295,9 +323,11 @@ mod tests {
     #[test]
     fn class_entry_with_method() {
         let method_hash = TypeHash::from_name("Entity::update");
-        let entry = ClassEntry::ffi("Entity", TypeKind::reference()).with_method(method_hash);
+        let entry =
+            ClassEntry::ffi("Entity", TypeKind::reference()).with_method("update", method_hash);
 
         assert_eq!(entry.methods.len(), 1);
+        assert_eq!(entry.find_methods("update"), &[method_hash]);
         assert!(entry.has_method(method_hash));
         assert!(!entry.has_method(TypeHash::from_name("nonexistent")));
     }

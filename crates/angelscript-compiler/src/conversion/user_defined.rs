@@ -55,11 +55,11 @@ fn find_implicit_conv_method(
 ) -> Option<TypeHash> {
     let class = ctx.get_type(source)?.as_class()?;
 
-    for &method_hash in &class.methods {
+    // Use O(1) lookup by method name
+    for &method_hash in class.find_methods("opImplConv") {
         if let Some(func) = ctx.get_function(method_hash) {
-            let def = &func.def;
             // opImplConv with return type matching target
-            if def.name == "opImplConv" && def.return_type.type_hash == target {
+            if func.def.return_type.type_hash == target {
                 return Some(method_hash);
             }
         }
@@ -100,11 +100,11 @@ fn find_cast_method(
 ) -> Option<TypeHash> {
     let class = ctx.get_type(source)?.as_class()?;
 
-    for &method_hash in &class.methods {
+    // Use O(1) lookup by method name
+    for &method_hash in class.find_methods("opCast") {
         if let Some(func) = ctx.get_function(method_hash) {
-            let def = &func.def;
             // opCast with return type matching target
-            if def.name == "opCast" && def.return_type.type_hash == target {
+            if func.def.return_type.type_hash == target {
                 return Some(method_hash);
             }
         }
@@ -130,11 +130,11 @@ mod tests {
         let target_hash = TypeHash::from_name("Target");
 
         // Create opImplConv method hash
-        let impl_conv_hash = TypeHash::from_method(source_hash, "opImplConv", &[], true, false);
+        let impl_conv_hash = TypeHash::from_method(source_hash, "opImplConv", &[]);
 
         // Create Source class with opImplConv method
         let mut source_class = ClassEntry::ffi("Source", TypeKind::reference());
-        source_class.methods.push(impl_conv_hash);
+        source_class.add_method("opImplConv", impl_conv_hash);
         registry.register_type(source_class.into()).unwrap();
 
         // Register opImplConv method
@@ -211,11 +211,11 @@ mod tests {
 
         let source_hash = TypeHash::from_name("Source");
         let target_hash = TypeHash::from_name("Target");
-        let cast_hash = TypeHash::from_method(source_hash, "opCast", &[], true, false);
+        let cast_hash = TypeHash::from_method(source_hash, "opCast", &[]);
 
         // Create Source class with opCast method
         let mut source_class = ClassEntry::ffi("Source", TypeKind::reference());
-        source_class.methods.push(cast_hash);
+        source_class.add_method("opCast", cast_hash);
         registry.register_type(source_class.into()).unwrap();
 
         // Register opCast method

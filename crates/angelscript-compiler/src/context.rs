@@ -419,19 +419,13 @@ impl<'a> CompilationContext<'a> {
             .or_else(|| self.global_registry.get_global(hash))
     }
 
-    /// Find methods on a type by name.
+    /// Find methods on a type by name. O(1) lookup via method name index.
     pub fn find_methods(&self, type_hash: TypeHash, name: &str) -> Vec<TypeHash> {
         let mut methods = Vec::new();
 
         // Check type in unit registry
         if let Some(class) = self.unit_registry.get(type_hash).and_then(|e| e.as_class()) {
-            for &method_hash in &class.methods {
-                if let Some(func) = self.get_function(method_hash)
-                    && func.def.name == name
-                {
-                    methods.push(method_hash);
-                }
-            }
+            methods.extend_from_slice(class.find_methods(name));
         }
 
         // Check type in global registry
@@ -440,13 +434,7 @@ impl<'a> CompilationContext<'a> {
             .get(type_hash)
             .and_then(|e| e.as_class())
         {
-            for &method_hash in &class.methods {
-                if let Some(func) = self.get_function(method_hash)
-                    && func.def.name == name
-                {
-                    methods.push(method_hash);
-                }
-            }
+            methods.extend_from_slice(class.find_methods(name));
         }
 
         methods

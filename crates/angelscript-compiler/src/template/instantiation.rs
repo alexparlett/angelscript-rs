@@ -72,7 +72,12 @@ pub fn instantiate_template_type<T: TemplateCallback>(
     let template_source = template.source.clone();
     let template_type_kind = template.type_kind.clone();
     let template_base = template.base_class;
-    let template_methods = template.methods.clone();
+    // Collect method hashes with their names for later registration
+    let template_methods: Vec<(String, TypeHash)> = template
+        .methods
+        .iter()
+        .flat_map(|(name, hashes)| hashes.iter().map(move |&h| (name.clone(), h)))
+        .collect();
     let template_properties = template.properties.clone();
     let template_behaviors = template.behaviors.clone();
 
@@ -142,7 +147,7 @@ pub fn instantiate_template_type<T: TemplateCallback>(
     cache.cache_type_instance(template_hash, arg_hashes.clone(), instance_hash);
 
     // 13. Instantiate methods
-    for method_hash in &template_methods {
+    for (method_name, method_hash) in &template_methods {
         let method = registry
             .get_function(*method_hash)
             .or_else(|| global_registry.get_function(*method_hash));
@@ -163,11 +168,11 @@ pub fn instantiate_template_type<T: TemplateCallback>(
                 registry,
             )?;
 
-            // Add method to instance
+            // Add method to instance with its name
             if let Some(instance_entry) = registry.get_mut(instance_hash)
                 && let Some(class) = instance_entry.as_class_mut()
             {
-                class.methods.push(inst_method_hash);
+                class.add_method(method_name, inst_method_hash);
             }
         }
     }
@@ -413,13 +418,8 @@ fn instantiate_method_for_type(
     // Compute instance method hash
     let param_hashes: Vec<TypeHash> = inst_params.iter().map(|p| p.data_type.type_hash).collect();
 
-    let instance_method_hash = TypeHash::from_method(
-        parent_instance_hash,
-        &method_def.name,
-        &param_hashes,
-        method_def.traits.is_const,
-        inst_return.is_const,
-    );
+    let instance_method_hash =
+        TypeHash::from_method(parent_instance_hash, &method_def.name, &param_hashes);
 
     // Check if already instantiated
     if registry.contains_function(instance_method_hash) {
@@ -534,7 +534,7 @@ mod tests {
         registry.register_type(array_entry.into()).unwrap();
 
         // Create push method: void push(const T&in)
-        let push_hash = TypeHash::from_method(array_hash, "push", &[t_hash], false, false);
+        let push_hash = TypeHash::from_method(array_hash, "push", &[t_hash]);
         let push_def = FunctionDef::new(
             push_hash,
             "push".to_string(),
@@ -554,7 +554,7 @@ mod tests {
         if let Some(entry) = registry.get_mut(array_hash)
             && let Some(class) = entry.as_class_mut()
         {
-            class.methods.push(push_hash);
+            class.add_method("push", push_hash);
         }
 
         array_hash
