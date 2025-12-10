@@ -48,6 +48,10 @@ xxhash-rust.workspace = true
 criterion.workspace = true
 puffin.workspace = true
 trybuild = "1.0"
+cargo-husky = { version = "1", features = ["user-hooks"] }
+
+[package.metadata.husky.hooks]
+pre-commit = "cargo fmt --all -- --check"
 
 [features]
 default = []
