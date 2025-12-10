@@ -17,8 +17,8 @@
 //! ```ignore
 //! use angelscript_compiler::{CompilationContext, TypeResolver};
 //!
-//! let ctx = CompilationContext::new(&registry);
-//! let resolver = TypeResolver::new(&ctx);
+//! let mut ctx = CompilationContext::new(&registry);
+//! let mut resolver = TypeResolver::new(&mut ctx);
 //!
 //! // Resolve "const int@"
 //! let data_type = resolver.resolve(&type_expr)?;
@@ -34,13 +34,14 @@ use crate::context::CompilationContext;
 /// Resolves AST type expressions to semantic DataTypes.
 ///
 /// Uses the compilation context's materialized scope for O(1) type name resolution.
+/// Template instantiation is performed when resolving types with template arguments.
 pub struct TypeResolver<'a, 'reg> {
-    ctx: &'a CompilationContext<'reg>,
+    ctx: &'a mut CompilationContext<'reg>,
 }
 
 impl<'a, 'reg> TypeResolver<'a, 'reg> {
     /// Create a new type resolver with the given compilation context.
-    pub fn new(ctx: &'a CompilationContext<'reg>) -> Self {
+    pub fn new(ctx: &'a mut CompilationContext<'reg>) -> Self {
         Self { ctx }
     }
 
@@ -51,9 +52,8 @@ impl<'a, 'reg> TypeResolver<'a, 'reg> {
     /// - Named types (resolved via context)
     /// - Scoped types (Namespace::Type)
     /// - Type modifiers (const, handle, handle-to-const)
-    ///
-    /// Template arguments are not yet supported (Task 35).
-    pub fn resolve(&self, type_expr: &TypeExpr<'_>) -> Result<DataType, CompilationError> {
+    /// - Template instantiation (e.g., `array<int>`)
+    pub fn resolve(&mut self, type_expr: &TypeExpr<'_>) -> Result<DataType, CompilationError> {
         // Resolve the base type first
         let base_hash = self.resolve_base(type_expr)?;
 
@@ -86,7 +86,7 @@ impl<'a, 'reg> TypeResolver<'a, 'reg> {
     /// This is used for function parameters where reference modifiers (&in, &out, &inout)
     /// are allowed.
     pub fn resolve_param(
-        &self,
+        &mut self,
         param_type: &angelscript_parser::ast::ParamType<'_>,
     ) -> Result<DataType, CompilationError> {
         let mut data_type = self.resolve(&param_type.ty)?;
@@ -104,15 +104,29 @@ impl<'a, 'reg> TypeResolver<'a, 'reg> {
     }
 
     /// Resolve the base type hash from a TypeExpr.
-    fn resolve_base(&self, type_expr: &TypeExpr<'_>) -> Result<TypeHash, CompilationError> {
-        // Check for template arguments (not yet supported)
-        if !type_expr.template_args.is_empty() {
-            return Err(CompilationError::Other {
-                message: "template instantiation not yet supported (Task 35)".to_string(),
-                span: type_expr.span,
-            });
-        }
+    fn resolve_base(&mut self, type_expr: &TypeExpr<'_>) -> Result<TypeHash, CompilationError> {
+        // First resolve the base type name (without template args)
+        let base_hash = self.resolve_base_name(type_expr)?;
 
+        // If there are template arguments, instantiate the template
+        if !type_expr.template_args.is_empty() {
+            // Resolve each template argument type (recursive - handles nested templates)
+            let mut resolved_args = Vec::with_capacity(type_expr.template_args.len());
+            for arg in type_expr.template_args {
+                let arg_type = self.resolve(arg)?;
+                resolved_args.push(arg_type);
+            }
+
+            // Instantiate the template with the resolved arguments
+            self.ctx
+                .instantiate_template(base_hash, &resolved_args, type_expr.span)
+        } else {
+            Ok(base_hash)
+        }
+    }
+
+    /// Resolve just the base type name (without template arguments).
+    fn resolve_base_name(&self, type_expr: &TypeExpr<'_>) -> Result<TypeHash, CompilationError> {
         match &type_expr.base {
             TypeBase::Primitive(prim) => Ok(self.primitive_to_hash(*prim)),
 
@@ -252,8 +266,8 @@ mod tests {
     #[test]
     fn resolve_void() {
         let registry = SymbolRegistry::with_primitives();
-        let ctx = CompilationContext::new(&registry);
-        let resolver = TypeResolver::new(&ctx);
+        let mut ctx = CompilationContext::new(&registry);
+        let mut resolver = TypeResolver::new(&mut ctx);
 
         let type_expr = make_primitive_type(PrimitiveType::Void);
         let result = resolver.resolve(&type_expr).unwrap();
@@ -266,8 +280,8 @@ mod tests {
     #[test]
     fn resolve_int() {
         let registry = SymbolRegistry::with_primitives();
-        let ctx = CompilationContext::new(&registry);
-        let resolver = TypeResolver::new(&ctx);
+        let mut ctx = CompilationContext::new(&registry);
+        let mut resolver = TypeResolver::new(&mut ctx);
 
         let type_expr = make_primitive_type(PrimitiveType::Int);
         let result = resolver.resolve(&type_expr).unwrap();
@@ -278,8 +292,8 @@ mod tests {
     #[test]
     fn resolve_all_primitives() {
         let registry = SymbolRegistry::with_primitives();
-        let ctx = CompilationContext::new(&registry);
-        let resolver = TypeResolver::new(&ctx);
+        let mut ctx = CompilationContext::new(&registry);
+        let mut resolver = TypeResolver::new(&mut ctx);
 
         let cases = [
             (PrimitiveType::Void, primitives::VOID),
@@ -310,8 +324,8 @@ mod tests {
     #[test]
     fn resolve_const_int() {
         let registry = SymbolRegistry::with_primitives();
-        let ctx = CompilationContext::new(&registry);
-        let resolver = TypeResolver::new(&ctx);
+        let mut ctx = CompilationContext::new(&registry);
+        let mut resolver = TypeResolver::new(&mut ctx);
 
         let mut type_expr = make_primitive_type(PrimitiveType::Int);
         type_expr.is_const = true;
@@ -338,8 +352,8 @@ mod tests {
         );
         registry.register_type(class.into()).unwrap();
 
-        let ctx = CompilationContext::new(&registry);
-        let resolver = TypeResolver::new(&ctx);
+        let mut ctx = CompilationContext::new(&registry);
+        let mut resolver = TypeResolver::new(&mut ctx);
 
         let type_expr = TypeExpr::named(Ident::new("Player", Span::new(1, 1, 6)));
         let result = resolver.resolve(&type_expr).unwrap();
@@ -352,8 +366,8 @@ mod tests {
     #[test]
     fn resolve_unknown_type_error() {
         let registry = SymbolRegistry::with_primitives();
-        let ctx = CompilationContext::new(&registry);
-        let resolver = TypeResolver::new(&ctx);
+        let mut ctx = CompilationContext::new(&registry);
+        let mut resolver = TypeResolver::new(&mut ctx);
 
         let type_expr = TypeExpr::named(Ident::new("Unknown", Span::new(1, 1, 7)));
         let result = resolver.resolve(&type_expr);
@@ -382,8 +396,8 @@ mod tests {
         );
         registry.register_type(class.into()).unwrap();
 
-        let ctx = CompilationContext::new(&registry);
-        let resolver = TypeResolver::new(&ctx);
+        let mut ctx = CompilationContext::new(&registry);
+        let mut resolver = TypeResolver::new(&mut ctx);
 
         let arena = Bump::new();
         let suffixes = arena.alloc_slice_copy(&[TypeSuffix::Handle { is_const: false }]);
@@ -419,8 +433,8 @@ mod tests {
         );
         registry.register_type(class.into()).unwrap();
 
-        let ctx = CompilationContext::new(&registry);
-        let resolver = TypeResolver::new(&ctx);
+        let mut ctx = CompilationContext::new(&registry);
+        let mut resolver = TypeResolver::new(&mut ctx);
 
         let arena = Bump::new();
         let suffixes = arena.alloc_slice_copy(&[TypeSuffix::Handle { is_const: true }]);
@@ -457,8 +471,8 @@ mod tests {
         );
         registry.register_type(class.into()).unwrap();
 
-        let ctx = CompilationContext::new(&registry);
-        let resolver = TypeResolver::new(&ctx);
+        let mut ctx = CompilationContext::new(&registry);
+        let mut resolver = TypeResolver::new(&mut ctx);
 
         let arena = Bump::new();
         let suffixes = arena.alloc_slice_copy(&[TypeSuffix::Handle { is_const: true }]);
@@ -496,8 +510,8 @@ mod tests {
         );
         registry.register_type(class.into()).unwrap();
 
-        let ctx = CompilationContext::new(&registry);
-        let resolver = TypeResolver::new(&ctx);
+        let mut ctx = CompilationContext::new(&registry);
+        let mut resolver = TypeResolver::new(&mut ctx);
 
         let arena = Bump::new();
         let segments = arena.alloc_slice_copy(&[Ident::new("Game", Span::new(1, 1, 4))]);
@@ -520,8 +534,8 @@ mod tests {
     #[test]
     fn resolve_param_with_ref_in() {
         let registry = SymbolRegistry::with_primitives();
-        let ctx = CompilationContext::new(&registry);
-        let resolver = TypeResolver::new(&ctx);
+        let mut ctx = CompilationContext::new(&registry);
+        let mut resolver = TypeResolver::new(&mut ctx);
 
         let type_expr = make_primitive_type(PrimitiveType::Int);
         let param_type = ParamType::new(type_expr, RefKind::RefIn, Span::new(1, 1, 7));
@@ -535,8 +549,8 @@ mod tests {
     #[test]
     fn resolve_param_with_ref_out() {
         let registry = SymbolRegistry::with_primitives();
-        let ctx = CompilationContext::new(&registry);
-        let resolver = TypeResolver::new(&ctx);
+        let mut ctx = CompilationContext::new(&registry);
+        let mut resolver = TypeResolver::new(&mut ctx);
 
         let type_expr = make_primitive_type(PrimitiveType::Int);
         let param_type = ParamType::new(type_expr, RefKind::RefOut, Span::new(1, 1, 8));
@@ -550,8 +564,8 @@ mod tests {
     #[test]
     fn resolve_param_with_ref_inout() {
         let registry = SymbolRegistry::with_primitives();
-        let ctx = CompilationContext::new(&registry);
-        let resolver = TypeResolver::new(&ctx);
+        let mut ctx = CompilationContext::new(&registry);
+        let mut resolver = TypeResolver::new(&mut ctx);
 
         let type_expr = make_primitive_type(PrimitiveType::Int);
         let param_type = ParamType::new(type_expr, RefKind::RefInOut, Span::new(1, 1, 10));
@@ -565,8 +579,8 @@ mod tests {
     #[test]
     fn resolve_param_plain_ref() {
         let registry = SymbolRegistry::with_primitives();
-        let ctx = CompilationContext::new(&registry);
-        let resolver = TypeResolver::new(&ctx);
+        let mut ctx = CompilationContext::new(&registry);
+        let mut resolver = TypeResolver::new(&mut ctx);
 
         let type_expr = make_primitive_type(PrimitiveType::Int);
         let param_type = ParamType::new(type_expr, RefKind::Ref, Span::new(1, 1, 4));
@@ -581,8 +595,8 @@ mod tests {
     #[test]
     fn resolve_param_by_value() {
         let registry = SymbolRegistry::with_primitives();
-        let ctx = CompilationContext::new(&registry);
-        let resolver = TypeResolver::new(&ctx);
+        let mut ctx = CompilationContext::new(&registry);
+        let mut resolver = TypeResolver::new(&mut ctx);
 
         let type_expr = make_primitive_type(PrimitiveType::Int);
         let param_type = ParamType::new(type_expr, RefKind::None, Span::new(1, 1, 3));
@@ -596,8 +610,8 @@ mod tests {
     #[test]
     fn resolve_auto_type_error() {
         let registry = SymbolRegistry::with_primitives();
-        let ctx = CompilationContext::new(&registry);
-        let resolver = TypeResolver::new(&ctx);
+        let mut ctx = CompilationContext::new(&registry);
+        let mut resolver = TypeResolver::new(&mut ctx);
 
         let type_expr = TypeExpr::new(false, None, TypeBase::Auto, &[], &[], Span::new(1, 1, 4));
 
@@ -608,8 +622,8 @@ mod tests {
     #[test]
     fn resolve_unknown_base_error() {
         let registry = SymbolRegistry::with_primitives();
-        let ctx = CompilationContext::new(&registry);
-        let resolver = TypeResolver::new(&ctx);
+        let mut ctx = CompilationContext::new(&registry);
+        let mut resolver = TypeResolver::new(&mut ctx);
 
         let type_expr = TypeExpr::new(false, None, TypeBase::Unknown, &[], &[], Span::new(1, 1, 1));
 
@@ -637,7 +651,7 @@ mod tests {
         // Enter the Game namespace
         ctx.enter_namespace("Game");
 
-        let resolver = TypeResolver::new(&ctx);
+        let mut resolver = TypeResolver::new(&mut ctx);
 
         // Should resolve unqualified "Entity" to Game::Entity
         let type_expr = TypeExpr::named(Ident::new("Entity", Span::new(1, 1, 6)));
@@ -676,7 +690,7 @@ mod tests {
         // Enter the Game namespace
         ctx.enter_namespace("Game");
 
-        let resolver = TypeResolver::new(&ctx);
+        let mut resolver = TypeResolver::new(&mut ctx);
 
         // Without ::, "Helper" should resolve to Game::Helper (current namespace)
         let unqualified = TypeExpr::named(Ident::new("Helper", Span::new(1, 1, 6)));
@@ -723,7 +737,7 @@ mod tests {
         // Enter some other namespace
         ctx.enter_namespace("Game");
 
-        let resolver = TypeResolver::new(&ctx);
+        let mut resolver = TypeResolver::new(&mut ctx);
 
         let arena = Bump::new();
         // ::Utils::Logger - absolute path to Utils::Logger
@@ -748,8 +762,8 @@ mod tests {
     #[test]
     fn resolve_absolute_unknown_type_error() {
         let registry = SymbolRegistry::with_primitives();
-        let ctx = CompilationContext::new(&registry);
-        let resolver = TypeResolver::new(&ctx);
+        let mut ctx = CompilationContext::new(&registry);
+        let mut resolver = TypeResolver::new(&mut ctx);
 
         // ::Unknown - absolute path to non-existent type
         let scope = angelscript_parser::ast::Scope::new(true, &[], Span::new(1, 1, 2));
@@ -770,5 +784,243 @@ mod tests {
             }
             other => panic!("expected UnknownType error, got {:?}", other),
         }
+    }
+
+    // =========================================================================
+    // Template Instantiation Tests
+    // =========================================================================
+
+    use angelscript_core::{
+        FunctionDef, FunctionEntry, FunctionTraits, Param, TemplateParamEntry, Visibility,
+        entries::TypeSource,
+    };
+
+    /// Helper to create an array template with a push method.
+    fn create_array_template(registry: &mut SymbolRegistry) -> TypeHash {
+        let array_hash = TypeHash::from_name("array");
+
+        // Create template param T
+        let t_param = TemplateParamEntry::for_template("T", 0, array_hash, "array");
+        let t_hash = t_param.type_hash;
+        registry.register_type(t_param.into()).unwrap();
+
+        // Create array template
+        let array_entry = ClassEntry::new(
+            "array",
+            vec![],
+            "array",
+            array_hash,
+            TypeKind::reference(),
+            TypeSource::ffi_untyped(),
+        )
+        .with_template_params(vec![t_hash]);
+
+        registry.register_type(array_entry.into()).unwrap();
+
+        // Create push method: void push(const T&in)
+        let push_hash = TypeHash::from_method(array_hash, "push", &[t_hash], false, false);
+        let push_def = FunctionDef::new(
+            push_hash,
+            "push".to_string(),
+            vec![],
+            vec![Param::new("value", DataType::with_ref_in(t_hash))],
+            DataType::void(),
+            Some(array_hash),
+            FunctionTraits::default(),
+            false,
+            Visibility::Public,
+        );
+        registry
+            .register_function(FunctionEntry::ffi(push_def))
+            .unwrap();
+
+        // Add method to class
+        if let Some(entry) = registry.get_mut(array_hash)
+            && let Some(class) = entry.as_class_mut()
+        {
+            class.methods.push(push_hash);
+        }
+
+        array_hash
+    }
+
+    #[test]
+    fn resolve_simple_template_instantiation() {
+        use bumpalo::Bump;
+
+        let mut registry = SymbolRegistry::with_primitives();
+        create_array_template(&mut registry);
+
+        let mut ctx = CompilationContext::new(&registry);
+        let mut resolver = TypeResolver::new(&mut ctx);
+
+        let arena = Bump::new();
+        // Create array<int> type expression
+        let int_type_expr = TypeExpr::primitive(PrimitiveType::Int, Span::new(1, 7, 3));
+        let template_args = arena.alloc_slice_copy(&[int_type_expr]);
+
+        let type_expr = TypeExpr::new(
+            false,
+            None,
+            TypeBase::Named(Ident::new("array", Span::new(1, 1, 5))),
+            template_args,
+            &[],
+            Span::new(1, 1, 11),
+        );
+
+        let result = resolver.resolve(&type_expr);
+        assert!(result.is_ok(), "Failed to resolve array<int>: {:?}", result);
+
+        let data_type = result.unwrap();
+
+        // Verify the instance was created
+        let instance = ctx.get_type(data_type.type_hash);
+        assert!(instance.is_some(), "Instance should exist in registry");
+
+        let class = instance.unwrap().as_class().unwrap();
+        assert!(class.is_template_instance());
+        assert_eq!(class.qualified_name, "array<int>");
+    }
+
+    #[test]
+    fn resolve_nested_template_instantiation() {
+        use bumpalo::Bump;
+
+        let mut registry = SymbolRegistry::with_primitives();
+        create_array_template(&mut registry);
+
+        let mut ctx = CompilationContext::new(&registry);
+        let mut resolver = TypeResolver::new(&mut ctx);
+
+        let arena = Bump::new();
+
+        // Create array<array<int>> type expression
+        // First, inner: array<int>
+        let int_type_expr = TypeExpr::primitive(PrimitiveType::Int, Span::new(1, 13, 3));
+        let inner_template_args = arena.alloc_slice_copy(&[int_type_expr]);
+        let inner_array = TypeExpr::new(
+            false,
+            None,
+            TypeBase::Named(Ident::new("array", Span::new(1, 7, 5))),
+            inner_template_args,
+            &[],
+            Span::new(1, 7, 11),
+        );
+
+        // Outer: array<array<int>>
+        let outer_template_args = arena.alloc_slice_copy(&[inner_array]);
+        let outer_array = TypeExpr::new(
+            false,
+            None,
+            TypeBase::Named(Ident::new("array", Span::new(1, 1, 5))),
+            outer_template_args,
+            &[],
+            Span::new(1, 1, 18),
+        );
+
+        let result = resolver.resolve(&outer_array);
+        assert!(
+            result.is_ok(),
+            "Failed to resolve array<array<int>>: {:?}",
+            result
+        );
+
+        let outer_type = result.unwrap();
+
+        // Verify the outer instance was created
+        let outer_instance = ctx.get_type(outer_type.type_hash);
+        assert!(outer_instance.is_some(), "Outer instance should exist");
+
+        let outer_class = outer_instance.unwrap().as_class().unwrap();
+        assert!(outer_class.is_template_instance());
+        assert_eq!(outer_class.qualified_name, "array<array<int>>");
+
+        // Verify the inner instance was also created
+        let inner_hash =
+            TypeHash::from_template_instance(TypeHash::from_name("array"), &[primitives::INT32]);
+        let inner_instance = ctx.get_type(inner_hash);
+        assert!(inner_instance.is_some(), "Inner instance should exist");
+
+        let inner_class = inner_instance.unwrap().as_class().unwrap();
+        assert!(inner_class.is_template_instance());
+        assert_eq!(inner_class.qualified_name, "array<int>");
+    }
+
+    #[test]
+    fn resolve_template_not_a_template_error() {
+        use bumpalo::Bump;
+
+        let mut registry = SymbolRegistry::with_primitives();
+
+        // Register a non-template class
+        let player = ClassEntry::new(
+            "Player",
+            vec![],
+            "Player",
+            TypeHash::from_name("Player"),
+            TypeKind::reference(),
+            TypeSource::ffi_untyped(),
+        );
+        registry.register_type(player.into()).unwrap();
+
+        let mut ctx = CompilationContext::new(&registry);
+        let mut resolver = TypeResolver::new(&mut ctx);
+
+        let arena = Bump::new();
+        // Try to instantiate Player<int> - should fail
+        let int_type_expr = TypeExpr::primitive(PrimitiveType::Int, Span::new(1, 8, 3));
+        let template_args = arena.alloc_slice_copy(&[int_type_expr]);
+
+        let type_expr = TypeExpr::new(
+            false,
+            None,
+            TypeBase::Named(Ident::new("Player", Span::new(1, 1, 6))),
+            template_args,
+            &[],
+            Span::new(1, 1, 12),
+        );
+
+        let result = resolver.resolve(&type_expr);
+        assert!(result.is_err());
+
+        match result.unwrap_err() {
+            CompilationError::NotATemplate { name, .. } => {
+                assert_eq!(name, "Player");
+            }
+            other => panic!("expected NotATemplate error, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn resolve_template_caches_instances() {
+        use bumpalo::Bump;
+
+        let mut registry = SymbolRegistry::with_primitives();
+        create_array_template(&mut registry);
+
+        let mut ctx = CompilationContext::new(&registry);
+        let mut resolver = TypeResolver::new(&mut ctx);
+
+        let arena = Bump::new();
+
+        // Create array<int> type expression
+        let int_type_expr = TypeExpr::primitive(PrimitiveType::Int, Span::new(1, 7, 3));
+        let template_args = arena.alloc_slice_copy(&[int_type_expr]);
+
+        let type_expr = TypeExpr::new(
+            false,
+            None,
+            TypeBase::Named(Ident::new("array", Span::new(1, 1, 5))),
+            template_args,
+            &[],
+            Span::new(1, 1, 11),
+        );
+
+        // Resolve twice
+        let result1 = resolver.resolve(&type_expr).unwrap();
+        let result2 = resolver.resolve(&type_expr).unwrap();
+
+        // Should return same hash (cached)
+        assert_eq!(result1.type_hash, result2.type_hash);
     }
 }

@@ -95,7 +95,8 @@ pub fn instantiate_template_type<T: TemplateCallback>(
     let subst_map = build_substitution_map(&template_params, type_args, span)?;
 
     // 7. Create instance entry
-    let instance_name = format_template_instance_name(&template_name, type_args);
+    let instance_name =
+        format_template_instance_name(&template_name, type_args, registry, global_registry);
 
     let mut instance = ClassEntry::new(
         &instance_name,
@@ -228,7 +229,11 @@ pub fn instantiate_template_function(
     let inst_return = substitute_type(template_def.return_type, &subst_map);
 
     // 7. Create instance
-    let inst_name = format!("{}<{}>", template_def.name, format_type_args(type_args));
+    let inst_name = format!(
+        "{}<{}>",
+        template_def.name,
+        format_type_args(type_args, registry, global_registry)
+    );
 
     let inst_def = FunctionDef::new(
         instance_hash,
@@ -346,8 +351,12 @@ pub fn instantiate_child_funcdef(
     let inst_return = substitute_type(funcdef_return, &subst_map);
 
     // Create instance name (e.g., "array<int>::Callback")
-    let parent_instance_name =
-        format_template_instance_name(&parent_template_name, parent_type_args);
+    let parent_instance_name = format_template_instance_name(
+        &parent_template_name,
+        parent_type_args,
+        registry,
+        global_registry,
+    );
     let inst_qualified_name = format!("{}::{}", parent_instance_name, funcdef_name);
 
     // Get or create instantiated parent (we need the parent instance to exist)
@@ -448,16 +457,34 @@ fn instantiate_method_for_type(
 }
 
 /// Format template instance name: "array<int>" or "dict<string, int>".
-pub fn format_template_instance_name(base_name: &str, type_args: &[DataType]) -> String {
-    let args_str = format_type_args(type_args);
+pub fn format_template_instance_name(
+    base_name: &str,
+    type_args: &[DataType],
+    registry: &SymbolRegistry,
+    global_registry: &SymbolRegistry,
+) -> String {
+    let args_str = format_type_args(type_args, registry, global_registry);
     format!("{}<{}>", base_name, args_str)
 }
 
 /// Format type arguments as comma-separated string.
-pub fn format_type_args(type_args: &[DataType]) -> String {
+///
+/// Looks up actual type names from the registry. Falls back to hex hash if not found.
+pub fn format_type_args(
+    type_args: &[DataType],
+    registry: &SymbolRegistry,
+    global_registry: &SymbolRegistry,
+) -> String {
     type_args
         .iter()
-        .map(|t| format!("{:?}", t.type_hash)) // TODO: Use proper type names
+        .map(|t| {
+            // Try to look up the type name from registries
+            registry
+                .get(t.type_hash)
+                .or_else(|| global_registry.get(t.type_hash))
+                .map(|entry| entry.qualified_name().to_string())
+                .unwrap_or_else(|| format!("{:?}", t.type_hash))
+        })
         .collect::<Vec<_>>()
         .join(", ")
 }
@@ -524,10 +551,10 @@ mod tests {
             .unwrap();
 
         // Add method to class
-        if let Some(entry) = registry.get_mut(array_hash) {
-            if let Some(class) = entry.as_class_mut() {
-                class.methods.push(push_hash);
-            }
+        if let Some(entry) = registry.get_mut(array_hash)
+            && let Some(class) = entry.as_class_mut()
+        {
+            class.methods.push(push_hash);
         }
 
         array_hash
@@ -687,23 +714,35 @@ mod tests {
 
     #[test]
     fn format_template_instance_name_single_arg() {
-        let name = format_template_instance_name("array", &[DataType::simple(primitives::INT32)]);
-        assert!(name.starts_with("array<"));
-        assert!(name.ends_with(">"));
+        let mut registry = SymbolRegistry::new();
+        registry.register_all_primitives();
+        let global_registry = SymbolRegistry::new();
+
+        let name = format_template_instance_name(
+            "array",
+            &[DataType::simple(primitives::INT32)],
+            &registry,
+            &global_registry,
+        );
+        assert_eq!(name, "array<int>");
     }
 
     #[test]
     fn format_template_instance_name_multiple_args() {
+        let mut registry = SymbolRegistry::new();
+        registry.register_all_primitives();
+        let global_registry = SymbolRegistry::new();
+
         let name = format_template_instance_name(
             "dict",
             &[
-                DataType::simple(primitives::STRING),
+                DataType::simple(primitives::FLOAT),
                 DataType::simple(primitives::INT32),
             ],
+            &registry,
+            &global_registry,
         );
-        assert!(name.starts_with("dict<"));
-        assert!(name.contains(", "));
-        assert!(name.ends_with(">"));
+        assert_eq!(name, "dict<float, int>");
     }
 
     // === Tests for instantiate_template_function ===

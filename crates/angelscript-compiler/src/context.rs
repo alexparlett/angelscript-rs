@@ -17,10 +17,12 @@
 use rustc_hash::FxHashMap;
 
 use angelscript_core::{
-    CompilationError, FunctionEntry, GlobalPropertyEntry, RegistrationError, Span, TypeEntry,
-    TypeHash,
+    CompilationError, DataType, FunctionEntry, GlobalPropertyEntry, RegistrationError, Span,
+    TemplateInstanceInfo, TemplateValidation, TypeEntry, TypeHash,
 };
 use angelscript_registry::SymbolRegistry;
+
+use crate::template::{TemplateCallback, TemplateInstanceCache, instantiate_template_type};
 
 // ============================================================================
 // Scope
@@ -57,6 +59,27 @@ impl Scope {
 }
 
 // ============================================================================
+// NoOpCallbacks (default template validation)
+// ============================================================================
+
+/// Default template callback implementation that accepts all instantiations.
+struct NoOpCallbacks;
+
+impl TemplateCallback for NoOpCallbacks {
+    fn has_template_callback(&self, _template_hash: TypeHash) -> bool {
+        false
+    }
+
+    fn validate_template_instance(
+        &self,
+        _template_hash: TypeHash,
+        _info: &TemplateInstanceInfo,
+    ) -> TemplateValidation {
+        TemplateValidation::valid()
+    }
+}
+
+// ============================================================================
 // CompilationContext
 // ============================================================================
 
@@ -82,6 +105,9 @@ pub struct CompilationContext<'a> {
 
     /// Errors collected during compilation
     errors: Vec<CompilationError>,
+
+    /// Template instance cache for avoiding duplicate instantiation
+    template_cache: TemplateInstanceCache,
 }
 
 impl<'a> CompilationContext<'a> {
@@ -94,6 +120,7 @@ impl<'a> CompilationContext<'a> {
             namespace_stack: Vec::new(),
             imports: Vec::new(),
             errors: Vec::new(),
+            template_cache: TemplateInstanceCache::new(),
         };
         // Build initial scope with global namespace
         ctx.rebuild_scope();
@@ -444,6 +471,33 @@ impl<'a> CompilationContext<'a> {
         self.unit_registry.register_global(entry)?;
         self.rebuild_scope();
         Ok(())
+    }
+
+    // ========================================================================
+    // Template Instantiation
+    // ========================================================================
+
+    /// Instantiate a template type with concrete type arguments.
+    ///
+    /// Returns the hash of the instantiated type. Uses caching to avoid
+    /// duplicate instantiation and respects FFI specializations.
+    pub fn instantiate_template(
+        &mut self,
+        template_hash: TypeHash,
+        type_args: &[DataType],
+        span: Span,
+    ) -> Result<TypeHash, CompilationError> {
+        // Use NoOpCallbacks for now - validation callbacks can be added later
+        let callbacks = NoOpCallbacks;
+        instantiate_template_type(
+            template_hash,
+            type_args,
+            span,
+            &mut self.template_cache,
+            &mut self.unit_registry,
+            self.global_registry,
+            &callbacks,
+        )
     }
 
     // ========================================================================

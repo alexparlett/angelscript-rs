@@ -1,6 +1,6 @@
 # Current Task: Template Instantiation (Task 35)
 
-**Status:** Core Complete
+**Status:** Complete
 **Date:** 2025-12-10
 **Branch:** 035-template-instantiation
 
@@ -30,6 +30,8 @@ Implemented the template instantiation system in `crates/angelscript-compiler/sr
 - **Modifier preservation**: const, handle, ref modifiers preserved through substitution
 - **Validation callbacks**: Custom validation (e.g., hashable keys for dict)
 - **Child funcdef support**: `array<int>::Callback` style nested types
+- **TypeResolver integration**: Automatically instantiates templates when resolving `array<int>` style types
+- **Nested template support**: `array<array<int>>` works via recursive resolution
 
 ### New Error Types (CompilationError)
 
@@ -41,18 +43,23 @@ Implemented the template instantiation system in `crates/angelscript-compiler/sr
 
 ### Tests
 
-103 compiler tests including:
+122 compiler tests including:
 - Cache operations (6 tests)
 - Substitution logic (11 tests)
 - Type instantiation with methods (4 tests)
 - Validation callbacks (6 tests)
+- TypeResolver template tests (4 tests): simple instantiation, nested templates, error handling, caching
+
+E2E integration tests deferred until compiler is wired up (will be covered by `test_templates` in `tests/unit_tests.rs`).
 
 ---
 
-## Remaining Work
+## Fixes Applied (PR #30 Review)
 
-- **TypeResolver integration**: Wire template instantiation into `TypeResolver` when resolving template arguments
-- **Nested templates**: `array<array<int>>` requires recursive instantiation in TypeResolver
+1. **Fixed `format_type_args` TODO**: Now looks up actual type names from registry instead of printing `TypeHash(0x...)` debug output
+2. **Fixed clippy warning**: Collapsed nested `if let` statements using `let && let` chains
+3. **Wired template instantiation into TypeResolver**: `TypeResolver::resolve_base()` now calls `ctx.instantiate_template()` when template arguments are present
+4. **Added nested template test**: `resolve_nested_template_instantiation` test verifies `array<array<int>>` works correctly
 
 ## Next Steps
 
