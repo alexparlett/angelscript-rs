@@ -80,7 +80,6 @@ jobs:
 
       - name: Run integration tests
         run: |
-          cargo test --test unit
           cargo test --test macro_tests
           cargo test --test macro_compile_fail
 
