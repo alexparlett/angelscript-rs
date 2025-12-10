@@ -23,7 +23,7 @@
 //! cargo bench --features profile-with-puffin -- "stress_5000" --test
 //! ```
 
-#![allow(clippy::arc_with_non_send_sync, clippy::collapsible_if)]
+#![allow(clippy::collapsible_if)]
 
 use angelscript::Context;
 use criterion::{Criterion, Throughput, criterion_group, criterion_main};

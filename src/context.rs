@@ -469,6 +469,9 @@ impl Default for Context {
     }
 }
 
+unsafe impl Send for Context {}
+unsafe impl Sync for Context {}
+
 /// Errors that can occur during context operations.
 #[derive(Debug, Error)]
 pub enum ContextError {
@@ -478,7 +481,6 @@ pub enum ContextError {
 }
 
 #[cfg(test)]
-#[allow(clippy::arc_with_non_send_sync)]
 mod tests {
     use super::*;
     use angelscript_core::{TypeKind, primitives};

@@ -3,8 +3,6 @@
 //! These tests validate the full build pipeline (parsing + compilation)
 //! against complete AngelScript programs.
 
-#![allow(clippy::arc_with_non_send_sync)]
-
 use angelscript::{Context, Unit};
 use std::path::PathBuf;
 use std::sync::Arc;
