@@ -654,20 +654,20 @@ mod tests {
 
 ## Acceptance Criteria
 
-- [ ] Classes registered with correct hash and qualified name
-- [ ] Methods registered with object_type set
-- [ ] Interfaces registered with method list
-- [ ] Enums registered with values
-- [ ] Namespace handling works correctly
-- [ ] Base class resolution works
-- [ ] Interface implementation recorded
-- [ ] Constructors/destructors registered
-- [ ] Funcdefs registered
-- [ ] **Script global variables registered with GlobalPropertyImpl::Script { slot }**
-- [ ] **Const globals have is_const = true**
-- [ ] **Global slot allocation is sequential (0, 1, 2, ...)**
-- [ ] **Namespaced globals use qualified name for hash**
-- [ ] All tests pass
+- [x] Classes registered with correct hash and qualified name
+- [x] Methods registered with object_type set
+- [x] Interfaces registered with method list
+- [x] Enums registered with values
+- [x] Namespace handling works correctly
+- [x] Base class resolution works
+- [x] Interface implementation recorded
+- [x] Constructors/destructors registered
+- [x] Funcdefs registered
+- [x] **Script global variables registered with GlobalPropertyImpl::Script { slot }**
+- [x] **Const globals have is_const = true**
+- [x] **Global slot allocation is sequential (0, 1, 2, ...)**
+- [x] **Namespaced globals use qualified name for hash**
+- [x] All tests pass
 
 ## Next Phase
 

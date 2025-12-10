@@ -19,12 +19,14 @@ pub mod bytecode;
 pub mod context;
 mod conversion;
 mod expr_info;
+pub mod passes;
 pub mod template;
 pub mod type_resolver;
 
 pub use context::{CompilationContext, Scope};
 pub use conversion::{Conversion, ConversionKind};
 pub use expr_info::ExprInfo;
+pub use passes::{RegistrationOutput, RegistrationPass};
 pub use type_resolver::TypeResolver;
 
 // Re-export CompilationError from core for convenience
