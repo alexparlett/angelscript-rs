@@ -7,8 +7,9 @@
 //! - Variable shadowing with proper restoration on scope exit
 //! - Lambda variable capture
 
-use angelscript_core::{DataType, Span};
+use angelscript_core::{CompilationError, DataType, Span};
 use rustc_hash::FxHashMap;
+use thiserror::Error;
 
 // ============================================================================
 // Types
@@ -60,14 +61,37 @@ pub enum VarLookup {
 }
 
 /// Scope-related errors.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Error)]
 pub enum ScopeError {
     /// Variable redeclared in same scope
+    #[error("variable '{name}' redeclared in same scope")]
     Redeclaration {
         name: String,
         original_span: Span,
         new_span: Span,
     },
+}
+
+impl ScopeError {
+    /// Get the span where this error occurred (the new declaration).
+    pub fn span(&self) -> Span {
+        match self {
+            ScopeError::Redeclaration { new_span, .. } => *new_span,
+        }
+    }
+}
+
+impl From<ScopeError> for CompilationError {
+    fn from(err: ScopeError) -> Self {
+        match err {
+            ScopeError::Redeclaration { name, new_span, .. } => {
+                CompilationError::DuplicateDefinition {
+                    name,
+                    span: new_span,
+                }
+            }
+        }
+    }
 }
 
 // ============================================================================
