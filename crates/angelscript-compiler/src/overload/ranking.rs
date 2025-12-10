@@ -46,7 +46,7 @@ pub fn find_best_match(
     // Check for ambiguity (same cost)
     if best.total_cost == second.total_cost {
         // Try tie-breakers
-        if let Some(winner) = break_tie(best, second) {
+        if let Some(winner) = break_tie(best, second, ctx) {
             return Ok(winner.clone());
         }
 
@@ -65,11 +65,16 @@ pub fn find_best_match(
 
 /// Try to break a tie between two candidates with equal cost.
 ///
-/// Tie-breaking rules:
+/// Tie-breaking rules (in order):
 /// 1. Prefer more exact matches over conversions
-/// 2. (Future) Prefer non-template over template instantiation
-fn break_tie<'a>(a: &'a OverloadMatch, b: &'a OverloadMatch) -> Option<&'a OverloadMatch> {
-    // Count exact matches (identity conversions)
+/// 2. Prefer non-template function over template instantiation
+/// 3. Prefer parameter types that are more derived in inheritance hierarchy
+fn break_tie<'a>(
+    a: &'a OverloadMatch,
+    b: &'a OverloadMatch,
+    ctx: &CompilationContext<'_>,
+) -> Option<&'a OverloadMatch> {
+    // Rule 1: Count exact matches (identity conversions)
     let a_exact = count_exact_matches(a);
     let b_exact = count_exact_matches(b);
 
@@ -80,11 +85,102 @@ fn break_tie<'a>(a: &'a OverloadMatch, b: &'a OverloadMatch) -> Option<&'a Overl
         return Some(b);
     }
 
-    // TODO: Additional tie-breakers:
-    // - Prefer non-template over template instantiation
-    // - Prefer more derived class in inheritance hierarchy
+    // Rule 2: Prefer non-template over template instantiation
+    let a_is_template = ctx
+        .get_function(a.func_hash)
+        .is_some_and(|f| f.def.is_template());
+    let b_is_template = ctx
+        .get_function(b.func_hash)
+        .is_some_and(|f| f.def.is_template());
 
-    None // Truly ambiguous
+    if !a_is_template && b_is_template {
+        return Some(a);
+    }
+    if a_is_template && !b_is_template {
+        return Some(b);
+    }
+
+    // Rule 3: Prefer more derived parameter types
+    if let Some(winner) = prefer_more_derived(a, b, ctx) {
+        return Some(winner);
+    }
+
+    None // Truly ambiguous - user should use explicit cast or different overload
+}
+
+/// Prefer the candidate whose parameter types are more derived.
+///
+/// If candidate A has a parameter type that is derived from B's parameter type,
+/// A is preferred (more specific match).
+fn prefer_more_derived<'a>(
+    a: &'a OverloadMatch,
+    b: &'a OverloadMatch,
+    ctx: &CompilationContext<'_>,
+) -> Option<&'a OverloadMatch> {
+    let func_a = ctx.get_function(a.func_hash)?;
+    let func_b = ctx.get_function(b.func_hash)?;
+
+    let params_a = &func_a.def.params;
+    let params_b = &func_b.def.params;
+
+    // Must have same number of parameters to compare
+    if params_a.len() != params_b.len() {
+        return None;
+    }
+
+    let mut a_more_derived = 0;
+    let mut b_more_derived = 0;
+
+    for (pa, pb) in params_a.iter().zip(params_b.iter()) {
+        let type_a = pa.data_type.type_hash;
+        let type_b = pb.data_type.type_hash;
+
+        // If same type, no preference
+        if type_a == type_b {
+            continue;
+        }
+
+        // Check if A's type is derived from B's type
+        if is_derived_from(type_a, type_b, ctx) {
+            a_more_derived += 1;
+        } else if is_derived_from(type_b, type_a, ctx) {
+            b_more_derived += 1;
+        }
+    }
+
+    // Only prefer if one is strictly more derived without the other being more derived elsewhere
+    if a_more_derived > 0 && b_more_derived == 0 {
+        return Some(a);
+    }
+    if b_more_derived > 0 && a_more_derived == 0 {
+        return Some(b);
+    }
+
+    None
+}
+
+/// Check if `derived` is derived from `base` in the class hierarchy.
+fn is_derived_from(derived: TypeHash, base: TypeHash, ctx: &CompilationContext<'_>) -> bool {
+    let Some(entry) = ctx.get_type(derived) else {
+        return false;
+    };
+
+    let Some(class) = entry.as_class() else {
+        return false;
+    };
+
+    // Check direct base class
+    if let Some(base_class) = class.base_class {
+        if base_class == base {
+            return true;
+        }
+        // Recursively check the base class's ancestors
+        if is_derived_from(base_class, base, ctx) {
+            return true;
+        }
+    }
+
+    false
 }
 
 /// Count the number of exact (identity) matches in the conversions.
@@ -233,5 +329,268 @@ mod tests {
             result.unwrap_err(),
             CompilationError::AmbiguousOverload { .. }
         ));
+    }
+
+    #[test]
+    fn non_template_preferred_over_template() {
+        use angelscript_core::{
+            DataType, FunctionDef, FunctionEntry, FunctionTraits, Param, Visibility, primitives,
+        };
+        use angelscript_registry::SymbolRegistry;
+
+        let mut registry = SymbolRegistry::with_primitives();
+
+        // Non-template function: foo(int)
+        let non_template_hash = TypeHash::from_function("foo_nontemplate", &[primitives::INT32]);
+        let non_template_func = FunctionEntry::ffi(FunctionDef::new(
+            non_template_hash,
+            "foo".to_string(),
+            vec![],
+            vec![Param::new("x", DataType::simple(primitives::INT32))],
+            DataType::void(),
+            None,
+            FunctionTraits::default(),
+            false,
+            Visibility::Public,
+        ));
+        registry.register_function(non_template_func).unwrap();
+
+        // Template function: foo<T>(T)
+        let template_param = TypeHash::from_name("T");
+        let template_hash = TypeHash::from_function("foo_template", &[primitives::INT32]);
+        let template_func = FunctionEntry::ffi(FunctionDef::new_template(
+            template_hash,
+            "foo".to_string(),
+            vec![],
+            vec![Param::new("x", DataType::simple(primitives::INT32))],
+            DataType::void(),
+            None,
+            FunctionTraits::default(),
+            false,
+            Visibility::Public,
+            vec![template_param],
+        ));
+        registry.register_function(template_func).unwrap();
+
+        let ctx = CompilationContext::new(&registry);
+
+        // Both have same cost and same exact matches
+        let m_non_template = OverloadMatch {
+            func_hash: non_template_hash,
+            arg_conversions: vec![Some(Conversion {
+                kind: ConversionKind::Identity,
+                cost: Conversion::COST_EXACT,
+                is_implicit: true,
+            })],
+            total_cost: 0,
+        };
+        let m_template = OverloadMatch {
+            func_hash: template_hash,
+            arg_conversions: vec![Some(Conversion {
+                kind: ConversionKind::Identity,
+                cost: Conversion::COST_EXACT,
+                is_implicit: true,
+            })],
+            total_cost: 0,
+        };
+
+        let viable = vec![m_non_template.clone(), m_template];
+        let result = find_best_match(&viable, &[], &ctx, Span::default());
+
+        assert!(result.is_ok());
+        // Non-template should win
+        assert_eq!(result.unwrap().func_hash, non_template_hash);
+    }
+
+    #[test]
+    fn more_derived_parameter_wins_tie() {
+        use angelscript_core::entries::TypeSource;
+        use angelscript_core::{
+            ClassEntry, DataType, FunctionDef, FunctionEntry, FunctionTraits, Param, TypeKind,
+            Visibility,
+        };
+        use angelscript_registry::SymbolRegistry;
+
+        let mut registry = SymbolRegistry::with_primitives();
+
+        // Create base class: Entity
+        let entity_hash = TypeHash::from_name("Entity");
+        let entity_class = ClassEntry::new(
+            "Entity",
+            vec![],
+            "Entity",
+            entity_hash,
+            TypeKind::reference(),
+            TypeSource::ffi_untyped(),
+        );
+        registry.register_type(entity_class.into()).unwrap();
+
+        // Create derived class: Player : Entity
+        let player_hash = TypeHash::from_name("Player");
+        let player_class = ClassEntry::new(
+            "Player",
+            vec![],
+            "Player",
+            player_hash,
+            TypeKind::reference(),
+            TypeSource::ffi_untyped(),
+        )
+        .with_base(entity_hash);
+        registry.register_type(player_class.into()).unwrap();
+
+        // Function taking Entity: process(Entity)
+        let func_entity_hash = TypeHash::from_function("process_entity", &[entity_hash]);
+        let func_entity = FunctionEntry::ffi(FunctionDef::new(
+            func_entity_hash,
+            "process".to_string(),
+            vec![],
+            vec![Param::new("e", DataType::simple(entity_hash))],
+            DataType::void(),
+            None,
+            FunctionTraits::default(),
+            false,
+            Visibility::Public,
+        ));
+        registry.register_function(func_entity).unwrap();
+
+        // Function taking Player: process(Player)
+        let func_player_hash = TypeHash::from_function("process_player", &[player_hash]);
+        let func_player = FunctionEntry::ffi(FunctionDef::new(
+            func_player_hash,
+            "process".to_string(),
+            vec![],
+            vec![Param::new("p", DataType::simple(player_hash))],
+            DataType::void(),
+            None,
+            FunctionTraits::default(),
+            false,
+            Visibility::Public,
+        ));
+        registry.register_function(func_player).unwrap();
+
+        let ctx = CompilationContext::new(&registry);
+
+        // Both have same cost and same exact matches
+        let m_entity = OverloadMatch {
+            func_hash: func_entity_hash,
+            arg_conversions: vec![Some(Conversion {
+                kind: ConversionKind::Identity,
+                cost: Conversion::COST_EXACT,
+                is_implicit: true,
+            })],
+            total_cost: 0,
+        };
+        let m_player = OverloadMatch {
+            func_hash: func_player_hash,
+            arg_conversions: vec![Some(Conversion {
+                kind: ConversionKind::Identity,
+                cost: Conversion::COST_EXACT,
+                is_implicit: true,
+            })],
+            total_cost: 0,
+        };
+
+        let viable = vec![m_entity, m_player.clone()];
+        let result = find_best_match(&viable, &[], &ctx, Span::default());
+
+        assert!(result.is_ok());
+        // Player (more derived) should win
+        assert_eq!(result.unwrap().func_hash, func_player_hash);
+    }
+
+    #[test]
+    fn is_derived_from_direct() {
+        use angelscript_core::entries::TypeSource;
+        use angelscript_core::{ClassEntry, TypeKind};
+        use angelscript_registry::SymbolRegistry;
+
+        let mut registry = SymbolRegistry::with_primitives();
+
+        let base_hash = TypeHash::from_name("Base");
+        let base_class = ClassEntry::new(
+            "Base",
+            vec![],
+            "Base",
+            base_hash,
+            TypeKind::reference(),
+            TypeSource::ffi_untyped(),
+        );
+        registry.register_type(base_class.into()).unwrap();
+
+        let derived_hash = TypeHash::from_name("Derived");
+        let derived_class = ClassEntry::new(
+            "Derived",
+            vec![],
+            "Derived",
+            derived_hash,
+            TypeKind::reference(),
+            TypeSource::ffi_untyped(),
+        )
+        .with_base(base_hash);
+        registry.register_type(derived_class.into()).unwrap();
+
+        let ctx = CompilationContext::new(&registry);
+
+        assert!(is_derived_from(derived_hash, base_hash, &ctx));
+        assert!(!is_derived_from(base_hash, derived_hash, &ctx));
+        assert!(!is_derived_from(base_hash, base_hash, &ctx));
+    }
+
+    #[test]
+    fn is_derived_from_transitive() {
+        use angelscript_core::entries::TypeSource;
+        use angelscript_core::{ClassEntry, TypeKind};
+        use angelscript_registry::SymbolRegistry;
+
+        let mut registry = SymbolRegistry::with_primitives();
+
+        // Grandparent
+        let grandparent_hash = TypeHash::from_name("Grandparent");
+        let grandparent_class = ClassEntry::new(
+            "Grandparent",
+            vec![],
+            "Grandparent",
+            grandparent_hash,
+            TypeKind::reference(),
+            TypeSource::ffi_untyped(),
+        );
+        registry.register_type(grandparent_class.into()).unwrap();
+
+        // Parent : Grandparent
+        let parent_hash = TypeHash::from_name("Parent");
+        let parent_class = ClassEntry::new(
+            "Parent",
+            vec![],
+            "Parent",
+            parent_hash,
+            TypeKind::reference(),
+            TypeSource::ffi_untyped(),
+        )
+        .with_base(grandparent_hash);
+        registry.register_type(parent_class.into()).unwrap();
+
+        // Child : Parent
+        let child_hash = TypeHash::from_name("Child");
+        let child_class = ClassEntry::new(
+            "Child",
+            vec![],
+            "Child",
+            child_hash,
+            TypeKind::reference(),
+            TypeSource::ffi_untyped(),
+        )
+        .with_base(parent_hash);
+        registry.register_type(child_class.into()).unwrap();
+
+        let ctx = CompilationContext::new(&registry);
+
+        // Child derives from Parent
+        assert!(is_derived_from(child_hash, parent_hash, &ctx));
+        // Child derives from Grandparent (transitively)
+        assert!(is_derived_from(child_hash, grandparent_hash, &ctx));
+        // Parent derives from Grandparent
+        assert!(is_derived_from(parent_hash, grandparent_hash, &ctx));
+        // Not the other way around
+        assert!(!is_derived_from(grandparent_hash, child_hash, &ctx));
     }
 }
