@@ -131,6 +131,8 @@ pub use any::Any;
 
 // Registry entry types
 pub use entries::{
+    // Auto-generated function kinds
+    AutoGenKind,
     ClassEntry,
     // Global property types
     ConstantValue,

@@ -37,7 +37,7 @@ pub use common::{EnumValue, PropertyEntry};
 pub use class::ClassEntry;
 pub use enum_entry::EnumEntry;
 pub use funcdef::FuncdefEntry;
-pub use function::{FunctionEntry, FunctionImpl};
+pub use function::{AutoGenKind, FunctionEntry, FunctionImpl};
 pub use interface::InterfaceEntry;
 pub use primitive::PrimitiveEntry;
 pub use template_param::TemplateParamEntry;

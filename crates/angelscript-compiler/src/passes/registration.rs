@@ -31,8 +31,8 @@
 
 use angelscript_core::{
     ClassEntry, CompilationError, DataType, EnumEntry, FuncdefEntry, FunctionDef, FunctionEntry,
-    FunctionTraits, GlobalPropertyEntry, GlobalPropertyImpl, InterfaceEntry, Param, Span, TypeHash,
-    TypeKind, TypeSource, UnitId, Visibility,
+    FunctionSource, FunctionTraits, GlobalPropertyEntry, GlobalPropertyImpl, InterfaceEntry, Param,
+    RefModifier, Span, TypeHash, TypeKind, TypeSource, UnitId, Visibility,
 };
 use angelscript_parser::ast::{
     ClassDecl, ClassMember, EnumDecl, Enumerator, FieldDecl, FuncdefDecl, FunctionDecl,
@@ -68,10 +68,20 @@ pub struct RegistrationPass<'a, 'reg> {
     globals_registered: usize,
     /// Next slot index for script global variables.
     next_global_slot: u32,
-    /// Track which classes have user-defined constructors.
+    /// All script classes registered in this pass (for auto-generation).
+    registered_classes: Vec<TypeHash>,
+    /// Track which classes have any user-defined constructor.
     classes_with_constructor: Vec<TypeHash>,
-    /// Track which classes have user-defined destructors.
-    classes_with_destructor: Vec<TypeHash>,
+    /// Track which classes have a user-defined copy constructor.
+    classes_with_copy_constructor: Vec<TypeHash>,
+    /// Track which classes have a user-defined opAssign.
+    classes_with_op_assign: Vec<TypeHash>,
+    /// Track which classes have deleted default constructor.
+    classes_with_deleted_default_ctor: Vec<TypeHash>,
+    /// Track which classes have deleted copy constructor.
+    classes_with_deleted_copy_ctor: Vec<TypeHash>,
+    /// Track which classes have deleted opAssign.
+    classes_with_deleted_op_assign: Vec<TypeHash>,
 }
 
 impl<'a, 'reg> RegistrationPass<'a, 'reg> {
@@ -84,8 +94,13 @@ impl<'a, 'reg> RegistrationPass<'a, 'reg> {
             functions_registered: 0,
             globals_registered: 0,
             next_global_slot: 0,
+            registered_classes: Vec::new(),
             classes_with_constructor: Vec::new(),
-            classes_with_destructor: Vec::new(),
+            classes_with_copy_constructor: Vec::new(),
+            classes_with_op_assign: Vec::new(),
+            classes_with_deleted_default_ctor: Vec::new(),
+            classes_with_deleted_copy_ctor: Vec::new(),
+            classes_with_deleted_op_assign: Vec::new(),
         }
     }
 
@@ -97,7 +112,7 @@ impl<'a, 'reg> RegistrationPass<'a, 'reg> {
         }
 
         // Auto-generate missing default members
-        // (deferred - will be implemented when needed)
+        self.generate_defaults();
 
         RegistrationOutput {
             types_registered: self.types_registered,
@@ -199,6 +214,7 @@ impl<'a, 'reg> RegistrationPass<'a, 'reg> {
             return;
         }
         self.types_registered += 1;
+        self.registered_classes.push(type_hash);
 
         // Register class members
         for member in class.members {
@@ -206,12 +222,19 @@ impl<'a, 'reg> RegistrationPass<'a, 'reg> {
                 ClassMember::Method(method) => {
                     // Check if this is a constructor or destructor
                     if method.is_constructor() {
-                        self.classes_with_constructor.push(type_hash);
                         self.visit_constructor(method, type_hash);
                     } else if method.is_destructor {
-                        self.classes_with_destructor.push(type_hash);
                         self.visit_destructor(method, type_hash);
                     } else {
+                        // Check if this is opAssign
+                        if method.name.name == "opAssign" {
+                            if method.attrs.delete {
+                                // Deleted opAssign - track it but don't register
+                                self.classes_with_deleted_op_assign.push(type_hash);
+                                continue;
+                            }
+                            self.classes_with_op_assign.push(type_hash);
+                        }
                         self.visit_function(method, Some(type_hash));
                     }
                 }
@@ -227,9 +250,6 @@ impl<'a, 'reg> RegistrationPass<'a, 'reg> {
                 }
             }
         }
-
-        // Add methods to the class entry
-        // (Methods are registered separately, we need to update the class entry)
     }
 
     /// Resolve base class and interfaces from inheritance list.
@@ -371,6 +391,43 @@ impl<'a, 'reg> RegistrationPass<'a, 'reg> {
         let params = self.resolve_params(ctor.params, ctor.span);
         let param_hashes: Vec<TypeHash> = params.iter().map(|p| p.data_type.type_hash).collect();
 
+        // Check if this is deleted
+        let is_deleted = ctor.attrs.delete;
+
+        // Check if this is a copy constructor (single param of const ClassName &in)
+        let is_copy_constructor = params.len() == 1 && {
+            let param = &params[0];
+            param.data_type.type_hash == class_hash
+                && param.data_type.is_const
+                && param.data_type.ref_modifier == RefModifier::In
+        };
+
+        // Check if this is a default constructor (no params)
+        let is_default_constructor = params.is_empty();
+
+        // Track user-defined or deleted constructors to prevent auto-generation
+        if is_deleted {
+            // Track deleted constructors - these prevent auto-generation
+            if is_default_constructor {
+                self.classes_with_deleted_default_ctor.push(class_hash);
+            }
+            if is_copy_constructor {
+                self.classes_with_deleted_copy_ctor.push(class_hash);
+            }
+            // Any constructor (deleted or not) counts as "having a constructor"
+            // to prevent default constructor auto-generation
+            self.classes_with_constructor.push(class_hash);
+            // Deleted constructors are not registered - they don't exist
+            return;
+        }
+
+        // Track that this class has a user-defined constructor
+        self.classes_with_constructor.push(class_hash);
+
+        if is_copy_constructor {
+            self.classes_with_copy_constructor.push(class_hash);
+        }
+
         let func_hash = TypeHash::from_constructor(class_hash, &param_hashes);
 
         let class_name = self
@@ -391,7 +448,7 @@ impl<'a, 'reg> RegistrationPass<'a, 'reg> {
             convert_visibility(ctor.visibility),
         );
 
-        let source = angelscript_core::FunctionSource::script(ctor.span);
+        let source = FunctionSource::script(ctor.span);
         let entry = FunctionEntry::script(func_def, self.unit_id, source);
 
         if let Err(e) = self.ctx.register_function(entry) {
@@ -822,6 +879,193 @@ impl<'a, 'reg> RegistrationPass<'a, 'reg> {
             ns.split("::").map(String::from).collect()
         }
     }
+
+    // ==========================================================================
+    // Auto-Generation
+    // ==========================================================================
+
+    /// Generate default constructors, copy constructors, and opAssign for classes
+    /// that don't have user-defined versions and haven't been explicitly deleted.
+    fn generate_defaults(&mut self) {
+        // Clone the list to avoid borrow issues
+        let classes: Vec<TypeHash> = self.registered_classes.clone();
+
+        for class_hash in classes {
+            // Get class info
+            let (class_name, namespace) = match self.ctx.get_type(class_hash) {
+                Some(entry) => {
+                    if let Some(class) = entry.as_class() {
+                        (class.name.clone(), class.namespace.clone())
+                    } else {
+                        continue;
+                    }
+                }
+                None => continue,
+            };
+
+            // Generate default constructor if no user-defined constructor exists
+            // and it hasn't been explicitly deleted
+            let has_constructor = self.classes_with_constructor.contains(&class_hash);
+            let deleted_default = self.classes_with_deleted_default_ctor.contains(&class_hash);
+            if !has_constructor && !deleted_default {
+                self.generate_default_constructor(class_hash, &class_name, &namespace);
+            }
+
+            // Generate copy constructor if no user-defined copy constructor exists
+            // and it hasn't been explicitly deleted
+            let has_copy_ctor = self.classes_with_copy_constructor.contains(&class_hash);
+            let deleted_copy = self.classes_with_deleted_copy_ctor.contains(&class_hash);
+            if !has_copy_ctor && !deleted_copy {
+                self.generate_copy_constructor(class_hash, &class_name, &namespace);
+            }
+
+            // Generate opAssign if no user-defined opAssign exists
+            // and it hasn't been explicitly deleted
+            let has_op_assign = self.classes_with_op_assign.contains(&class_hash);
+            let deleted_op_assign = self.classes_with_deleted_op_assign.contains(&class_hash);
+            if !has_op_assign && !deleted_op_assign {
+                self.generate_op_assign(class_hash, &class_name, &namespace);
+            }
+        }
+    }
+
+    /// Generate a default constructor (no parameters) for a class.
+    fn generate_default_constructor(
+        &mut self,
+        class_hash: TypeHash,
+        class_name: &str,
+        namespace: &[String],
+    ) {
+        let func_hash = TypeHash::from_constructor(class_hash, &[]);
+
+        let func_def = FunctionDef::new(
+            func_hash,
+            class_name.to_string(),
+            namespace.to_vec(),
+            vec![], // No parameters
+            DataType::void(),
+            Some(class_hash),
+            FunctionTraits::constructor(),
+            false,
+            Visibility::Public,
+        );
+
+        let source = FunctionSource::auto_generated();
+        let entry = FunctionEntry::auto_default_constructor(func_def, source);
+
+        if let Err(e) = self.ctx.register_function(entry) {
+            self.ctx.add_error(CompilationError::Other {
+                message: format!(
+                    "failed to register auto-generated default constructor for {}: {}",
+                    class_name, e
+                ),
+                span: Span::default(),
+            });
+        } else {
+            self.functions_registered += 1;
+        }
+    }
+
+    /// Generate a copy constructor (takes `const ClassName &in`) for a class.
+    fn generate_copy_constructor(
+        &mut self,
+        class_hash: TypeHash,
+        class_name: &str,
+        namespace: &[String],
+    ) {
+        // Parameter type: const ClassName &in
+        let param_type = DataType {
+            type_hash: class_hash,
+            is_const: true,
+            is_handle: false,
+            is_handle_to_const: false,
+            ref_modifier: RefModifier::In,
+        };
+
+        let params = vec![Param::new("other", param_type)];
+        let param_hashes: Vec<TypeHash> = params.iter().map(|p| p.data_type.type_hash).collect();
+        let func_hash = TypeHash::from_constructor(class_hash, &param_hashes);
+
+        let func_def = FunctionDef::new(
+            func_hash,
+            class_name.to_string(),
+            namespace.to_vec(),
+            params,
+            DataType::void(),
+            Some(class_hash),
+            FunctionTraits::constructor(),
+            false,
+            Visibility::Public,
+        );
+
+        let source = FunctionSource::auto_generated();
+        let entry = FunctionEntry::auto_copy_constructor(func_def, source);
+
+        if let Err(e) = self.ctx.register_function(entry) {
+            self.ctx.add_error(CompilationError::Other {
+                message: format!(
+                    "failed to register auto-generated copy constructor for {}: {}",
+                    class_name, e
+                ),
+                span: Span::default(),
+            });
+        } else {
+            self.functions_registered += 1;
+        }
+    }
+
+    /// Generate opAssign (takes `const ClassName &in`, returns `ClassName&`) for a class.
+    fn generate_op_assign(&mut self, class_hash: TypeHash, class_name: &str, namespace: &[String]) {
+        // Parameter type: const ClassName &in
+        let param_type = DataType {
+            type_hash: class_hash,
+            is_const: true,
+            is_handle: false,
+            is_handle_to_const: false,
+            ref_modifier: RefModifier::In,
+        };
+
+        let params = vec![Param::new("other", param_type)];
+        let param_hashes: Vec<TypeHash> = params.iter().map(|p| p.data_type.type_hash).collect();
+
+        // Return type: ClassName& (reference to self)
+        let return_type = DataType {
+            type_hash: class_hash,
+            is_const: false,
+            is_handle: false,
+            is_handle_to_const: false,
+            ref_modifier: RefModifier::InOut,
+        };
+
+        let func_hash = TypeHash::from_method(class_hash, "opAssign", &param_hashes, false, false);
+
+        let func_def = FunctionDef::new(
+            func_hash,
+            "opAssign".to_string(),
+            namespace.to_vec(),
+            params,
+            return_type,
+            Some(class_hash),
+            FunctionTraits::default(),
+            false,
+            Visibility::Public,
+        );
+
+        let source = FunctionSource::auto_generated();
+        let entry = FunctionEntry::auto_op_assign(func_def, source);
+
+        if let Err(e) = self.ctx.register_function(entry) {
+            self.ctx.add_error(CompilationError::Other {
+                message: format!(
+                    "failed to register auto-generated opAssign for {}: {}",
+                    class_name, e
+                ),
+                span: Span::default(),
+            });
+        } else {
+            self.functions_registered += 1;
+        }
+    }
 }
 
 // ==========================================================================
@@ -881,7 +1125,8 @@ mod tests {
         let output = pass.run(&script);
 
         assert_eq!(output.types_registered, 1); // Player class
-        assert_eq!(output.functions_registered, 2); // update, getHealth
+        // update, getHealth + auto-generated (default ctor, copy ctor, opAssign)
+        assert_eq!(output.functions_registered, 5);
         assert!(output.errors.is_empty());
     }
 
@@ -1065,7 +1310,8 @@ mod tests {
         let output = pass.run(&script);
 
         assert_eq!(output.types_registered, 1);
-        assert_eq!(output.functions_registered, 2); // Two constructors
+        // Two user-defined constructors + auto-generated copy constructor + auto-generated opAssign
+        assert_eq!(output.functions_registered, 4);
         assert!(output.errors.is_empty());
     }
 
@@ -1084,7 +1330,8 @@ mod tests {
         let output = pass.run(&script);
 
         assert_eq!(output.types_registered, 1);
-        assert_eq!(output.functions_registered, 1); // Destructor
+        // Destructor + auto-generated (default ctor, copy ctor, opAssign)
+        assert_eq!(output.functions_registered, 4);
         assert!(output.errors.is_empty());
     }
 
@@ -1124,5 +1371,180 @@ mod tests {
         } else {
             panic!("Expected Script implementation");
         }
+    }
+
+    // ==========================================================================
+    // Auto-generation tests
+    // ==========================================================================
+
+    #[test]
+    fn auto_generate_default_constructor() {
+        let (registry, arena) = setup_context();
+        // Class with no constructor - should auto-generate default constructor
+        let source = "class Player {}";
+        let script = Parser::parse(source, &arena).unwrap();
+
+        let mut ctx = CompilationContext::new(&registry);
+        let pass = RegistrationPass::new(&mut ctx, UnitId::new(0));
+        let output = pass.run(&script);
+
+        assert_eq!(output.types_registered, 1);
+        // Should have auto-generated: default constructor, copy constructor, opAssign
+        assert_eq!(output.functions_registered, 3);
+        assert!(output.errors.is_empty());
+    }
+
+    #[test]
+    fn no_auto_generate_when_constructor_exists() {
+        let (registry, arena) = setup_context();
+        // Class with explicit constructor - should NOT auto-generate default constructor
+        // but should still auto-generate copy constructor and opAssign
+        let source = r#"
+            class Player {
+                Player(int health) {}
+            }
+        "#;
+        let script = Parser::parse(source, &arena).unwrap();
+
+        let mut ctx = CompilationContext::new(&registry);
+        let pass = RegistrationPass::new(&mut ctx, UnitId::new(0));
+        let output = pass.run(&script);
+
+        assert_eq!(output.types_registered, 1);
+        // user-defined constructor + auto-generated copy constructor + auto-generated opAssign
+        assert_eq!(output.functions_registered, 3);
+        assert!(output.errors.is_empty());
+    }
+
+    #[test]
+    fn no_auto_generate_when_copy_constructor_exists() {
+        let (registry, arena) = setup_context();
+        // Class with explicit copy constructor
+        let source = r#"
+            class Player {
+                Player(const Player &in other) {}
+            }
+        "#;
+        let script = Parser::parse(source, &arena).unwrap();
+
+        let mut ctx = CompilationContext::new(&registry);
+        let pass = RegistrationPass::new(&mut ctx, UnitId::new(0));
+        let output = pass.run(&script);
+
+        assert_eq!(output.types_registered, 1);
+        // user-defined copy constructor (also counts as constructor) + auto-generated opAssign
+        // No default constructor or copy constructor auto-generated
+        assert_eq!(output.functions_registered, 2);
+        assert!(output.errors.is_empty());
+    }
+
+    #[test]
+    fn no_auto_generate_when_op_assign_exists() {
+        let (registry, arena) = setup_context();
+        // Class with explicit opAssign
+        let source = r#"
+            class Player {
+                Player& opAssign(const Player &in other) { return this; }
+            }
+        "#;
+        let script = Parser::parse(source, &arena).unwrap();
+
+        let mut ctx = CompilationContext::new(&registry);
+        let pass = RegistrationPass::new(&mut ctx, UnitId::new(0));
+        let output = pass.run(&script);
+
+        assert_eq!(output.types_registered, 1);
+        // user-defined opAssign + auto-generated default constructor + auto-generated copy constructor
+        assert_eq!(output.functions_registered, 3);
+        assert!(output.errors.is_empty());
+    }
+
+    #[test]
+    fn deleted_default_constructor_prevents_auto_generation() {
+        let (registry, arena) = setup_context();
+        // Class with deleted default constructor
+        let source = r#"
+            class NonDefaultConstructible {
+                NonDefaultConstructible() delete;
+            }
+        "#;
+        let script = Parser::parse(source, &arena).unwrap();
+
+        let mut ctx = CompilationContext::new(&registry);
+        let pass = RegistrationPass::new(&mut ctx, UnitId::new(0));
+        let output = pass.run(&script);
+
+        assert_eq!(output.types_registered, 1);
+        // deleted default constructor is not registered
+        // auto-generated copy constructor + auto-generated opAssign
+        assert_eq!(output.functions_registered, 2);
+        assert!(output.errors.is_empty());
+    }
+
+    #[test]
+    fn deleted_copy_constructor_prevents_auto_generation() {
+        let (registry, arena) = setup_context();
+        // Class with deleted copy constructor
+        let source = r#"
+            class NonCopyable {
+                NonCopyable(const NonCopyable &in) delete;
+            }
+        "#;
+        let script = Parser::parse(source, &arena).unwrap();
+
+        let mut ctx = CompilationContext::new(&registry);
+        let pass = RegistrationPass::new(&mut ctx, UnitId::new(0));
+        let output = pass.run(&script);
+
+        assert_eq!(output.types_registered, 1);
+        // deleted copy constructor is not registered (also counts as constructor so no default auto-gen)
+        // auto-generated opAssign only
+        assert_eq!(output.functions_registered, 1);
+        assert!(output.errors.is_empty());
+    }
+
+    #[test]
+    fn deleted_op_assign_prevents_auto_generation() {
+        let (registry, arena) = setup_context();
+        // Class with deleted opAssign
+        let source = r#"
+            class NonAssignable {
+                NonAssignable& opAssign(const NonAssignable &in) delete;
+            }
+        "#;
+        let script = Parser::parse(source, &arena).unwrap();
+
+        let mut ctx = CompilationContext::new(&registry);
+        let pass = RegistrationPass::new(&mut ctx, UnitId::new(0));
+        let output = pass.run(&script);
+
+        assert_eq!(output.types_registered, 1);
+        // deleted opAssign is not registered
+        // auto-generated default constructor + auto-generated copy constructor
+        assert_eq!(output.functions_registered, 2);
+        assert!(output.errors.is_empty());
+    }
+
+    #[test]
+    fn all_deleted_prevents_all_auto_generation() {
+        let (registry, arena) = setup_context();
+        // Class with all special members deleted
+        let source = r#"
+            class Static {
+                Static() delete;
+                Static(const Static &in) delete;
+                Static& opAssign(const Static &in) delete;
+            }
+        "#;
+        let script = Parser::parse(source, &arena).unwrap();
+
+        let mut ctx = CompilationContext::new(&registry);
+        let pass = RegistrationPass::new(&mut ctx, UnitId::new(0));
+        let output = pass.run(&script);
+
+        assert_eq!(output.types_registered, 1);
+        // All deleted - no functions registered
+        assert_eq!(output.functions_registered, 0);
+        assert!(output.errors.is_empty());
     }
 }
