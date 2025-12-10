@@ -54,9 +54,6 @@ jobs:
   test:
     name: Tests
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      checks: write
     steps:
       - uses: actions/checkout@v4
 
@@ -79,15 +76,7 @@ jobs:
             ${{ runner.os }}-cargo-
 
       - name: Run all tests
-        run: cargo nextest run --workspace --profile ci
-
-      - name: Test Report
-        uses: dorny/test-reporter@v1
-        if: always()
-        with:
-          name: Test Results
-          path: target/nextest/ci/junit.xml
-          reporter: java-junit
+        run: cargo nextest run --workspace
 
   coverage:
     name: Code Coverage
