@@ -216,6 +216,14 @@ mod tests {
         Param::new(name.to_string(), DataType::simple(primitives::DOUBLE))
     }
 
+    fn int16_param(name: &str) -> Param {
+        Param::new(name.to_string(), DataType::simple(primitives::INT16))
+    }
+
+    fn uint16_param(name: &str) -> Param {
+        Param::new(name.to_string(), DataType::simple(primitives::UINT16))
+    }
+
     #[test]
     fn single_candidate_exact_match() {
         let mut registry = setup_registry_with_primitives();
@@ -304,26 +312,21 @@ mod tests {
     fn multiple_candidates_same_cost_is_ambiguous() {
         let mut registry = setup_registry_with_primitives();
 
-        // foo(int64)
-        let func_int64 = make_function("foo", vec![int64_param("x")]);
-        let hash_int64 = func_int64.def.func_hash;
-        registry.register_function(func_int64).unwrap();
+        // foo(int16)
+        let func_int16 = make_function("foo", vec![int16_param("x")]);
+        let hash_int16 = func_int16.def.func_hash;
+        registry.register_function(func_int16).unwrap();
 
-        // foo(double)
-        let func_double = make_function("foo", vec![double_param("x")]);
-        let hash_double = func_double.def.func_hash;
-        registry.register_function(func_double).unwrap();
+        // foo(int32)
+        let func_int32 = make_function("foo", vec![int_param("x")]);
+        let hash_int32 = func_int32.def.func_hash;
+        registry.register_function(func_int32).unwrap();
 
         let ctx = CompilationContext::new(&registry);
-        // Both int32->int64 and int32->double are widening with same cost
-        let arg_types = vec![DataType::simple(primitives::INT32)];
+        // Both int8->int16 and int8->int32 are signed widening with same cost
+        let arg_types = vec![DataType::simple(primitives::INT8)];
 
-        let result = resolve_overload(
-            &[hash_int64, hash_double],
-            &arg_types,
-            &ctx,
-            Span::default(),
-        );
+        let result = resolve_overload(&[hash_int16, hash_int32], &arg_types, &ctx, Span::default());
 
         // Both have same cost and same number of exact matches (0), so it's ambiguous
         assert!(result.is_err());
