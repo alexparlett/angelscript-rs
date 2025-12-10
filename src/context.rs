@@ -541,6 +541,110 @@ mod tests {
     }
 
     #[test]
+    fn context_install_class_sets_namespace_field() {
+        let mut ctx = Context::new();
+
+        let mut module = Module::in_namespace(&["Game", "Entities"]);
+        module.classes.push(ClassMeta {
+            name: "Player",
+            type_hash: TypeHash::from_name("Game::Entities::Player"),
+            type_kind: TypeKind::reference(),
+            properties: vec![],
+            template_params: vec![],
+            specialization_of: None,
+            specialization_args: vec![],
+        });
+        ctx.install(module).unwrap();
+
+        let entry = ctx.registry().get(TypeHash::from_name("Game::Entities::Player")).unwrap();
+        let class = entry.as_class().unwrap();
+        assert_eq!(class.namespace, vec!["Game".to_string(), "Entities".to_string()]);
+        assert_eq!(class.qualified_name, "Game::Entities::Player");
+    }
+
+    #[test]
+    fn context_install_class_global_namespace() {
+        let mut ctx = Context::new();
+
+        let mut module = Module::new();
+        module.classes.push(ClassMeta {
+            name: "Singleton",
+            type_hash: TypeHash::from_name("Singleton"),
+            type_kind: TypeKind::reference(),
+            properties: vec![],
+            template_params: vec![],
+            specialization_of: None,
+            specialization_args: vec![],
+        });
+        ctx.install(module).unwrap();
+
+        let entry = ctx.registry().get(TypeHash::from_name("Singleton")).unwrap();
+        let class = entry.as_class().unwrap();
+        assert!(class.namespace.is_empty());
+        assert_eq!(class.qualified_name, "Singleton");
+    }
+
+    #[test]
+    fn context_install_interface_sets_namespace_field() {
+        let mut ctx = Context::new();
+
+        let mut module = Module::in_namespace(&["Game"]);
+        module.interfaces.push(InterfaceMeta {
+            name: "IDrawable",
+            type_hash: TypeHash::from_name("Game::IDrawable"),
+            methods: vec![],
+        });
+        ctx.install(module).unwrap();
+
+        let entry = ctx.registry().get(TypeHash::from_name("Game::IDrawable")).unwrap();
+        let interface = entry.as_interface().unwrap();
+        assert_eq!(interface.namespace, vec!["Game".to_string()]);
+        assert_eq!(interface.qualified_name, "Game::IDrawable");
+    }
+
+    #[test]
+    fn context_install_funcdef_sets_namespace_field() {
+        let mut ctx = Context::new();
+
+        let mut module = Module::in_namespace(&["Events"]);
+        module.funcdefs.push(FuncdefMeta {
+            name: "EventCallback",
+            type_hash: TypeHash::from_name("Events::EventCallback"),
+            param_types: vec![primitives::INT32],
+            return_type: primitives::VOID,
+            parent_type: None,
+        });
+        ctx.install(module).unwrap();
+
+        let entry = ctx.registry().get(TypeHash::from_name("Events::EventCallback")).unwrap();
+        let funcdef = entry.as_funcdef().unwrap();
+        assert_eq!(funcdef.namespace, vec!["Events".to_string()]);
+        assert_eq!(funcdef.qualified_name, "Events::EventCallback");
+    }
+
+    #[test]
+    fn context_namespace_index_populated() {
+        let mut ctx = Context::new();
+
+        let mut module = Module::in_namespace(&["Game"]);
+        module.classes.push(ClassMeta {
+            name: "Player",
+            type_hash: TypeHash::from_name("Game::Player"),
+            type_kind: TypeKind::reference(),
+            properties: vec![],
+            template_params: vec![],
+            specialization_of: None,
+            specialization_args: vec![],
+        });
+        ctx.install(module).unwrap();
+
+        // Verify namespace index is populated
+        let types = ctx.registry().get_namespace_types("Game");
+        assert!(types.is_some());
+        assert!(types.unwrap().get("Player").is_some());
+    }
+
+    #[test]
     fn context_install_duplicate_type_fails() {
         let mut ctx = Context::new();
 

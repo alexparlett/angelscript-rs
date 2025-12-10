@@ -367,13 +367,34 @@ mod tests {
     }
 
     #[test]
-    fn global_property_entry_with_namespace() {
+    fn global_property_entry_with_namespace_deprecated() {
+        #[allow(deprecated)]
         let entry = GlobalPropertyEntry::constant("PI", ConstantValue::Double(std::f64::consts::PI))
             .with_qualified_name("math::PI");
 
         assert_eq!(entry.name, "PI");
         assert_eq!(entry.qualified_name, "math::PI");
         assert_eq!(entry.type_hash, TypeHash::from_name("math::PI"));
+    }
+
+    #[test]
+    fn global_property_entry_with_namespace() {
+        let entry = GlobalPropertyEntry::constant("MAX_SPEED", ConstantValue::Double(100.0))
+            .with_namespace(vec!["Game".to_string(), "Config".to_string()]);
+
+        assert_eq!(entry.name, "MAX_SPEED");
+        assert_eq!(entry.namespace, vec!["Game".to_string(), "Config".to_string()]);
+        assert_eq!(entry.qualified_name, "Game::Config::MAX_SPEED");
+        assert_eq!(entry.type_hash, TypeHash::from_name("Game::Config::MAX_SPEED"));
+    }
+
+    #[test]
+    fn global_property_entry_empty_namespace() {
+        let entry = GlobalPropertyEntry::constant("GRAVITY", ConstantValue::Double(9.81));
+
+        assert_eq!(entry.name, "GRAVITY");
+        assert!(entry.namespace.is_empty());
+        assert_eq!(entry.qualified_name, "GRAVITY");
     }
 
     #[test]

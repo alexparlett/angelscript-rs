@@ -212,10 +212,28 @@ mod tests {
 
         assert_eq!(entry.name, "Player");
         assert_eq!(entry.qualified_name, "Player");
+        assert!(entry.namespace.is_empty(), "ffi() should create empty namespace");
         assert!(entry.source.is_ffi());
         assert!(entry.is_reference_type());
         assert!(!entry.is_template());
         assert!(!entry.is_template_instance());
+    }
+
+    #[test]
+    fn class_entry_with_namespace() {
+        let entry = ClassEntry::new(
+            "Enemy",
+            vec!["Game".to_string(), "Entities".to_string()],
+            "Game::Entities::Enemy",
+            TypeHash::from_name("Game::Entities::Enemy"),
+            TypeKind::reference(),
+            TypeSource::ffi_untyped(),
+        );
+
+        assert_eq!(entry.name, "Enemy");
+        assert_eq!(entry.namespace, vec!["Game".to_string(), "Entities".to_string()]);
+        assert_eq!(entry.qualified_name, "Game::Entities::Enemy");
+        assert_eq!(entry.type_hash, TypeHash::from_name("Game::Entities::Enemy"));
     }
 
     #[test]

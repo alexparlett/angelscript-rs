@@ -128,9 +128,28 @@ mod tests {
 
         assert_eq!(entry.name, "Callback");
         assert_eq!(entry.qualified_name, "Callback");
+        assert!(entry.namespace.is_empty(), "ffi() should create empty namespace");
         assert_eq!(entry.param_count(), 1);
         assert!(!entry.returns_void());
         assert!(entry.source.is_ffi());
+    }
+
+    #[test]
+    fn funcdef_entry_with_namespace() {
+        let entry = FuncdefEntry::new(
+            "EventHandler",
+            vec!["Events".to_string()],
+            "Events::EventHandler",
+            TypeHash::from_name("Events::EventHandler"),
+            TypeSource::ffi_untyped(),
+            vec![DataType::simple(primitives::INT32)],
+            DataType::void(),
+        );
+
+        assert_eq!(entry.name, "EventHandler");
+        assert_eq!(entry.namespace, vec!["Events".to_string()]);
+        assert_eq!(entry.qualified_name, "Events::EventHandler");
+        assert_eq!(entry.type_hash, TypeHash::from_name("Events::EventHandler"));
     }
 
     #[test]

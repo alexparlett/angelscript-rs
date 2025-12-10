@@ -99,8 +99,27 @@ mod tests {
 
         assert_eq!(entry.name, "Color");
         assert_eq!(entry.qualified_name, "Color");
+        assert!(entry.namespace.is_empty(), "ffi() should create empty namespace");
         assert_eq!(entry.values.len(), 3);
         assert!(entry.source.is_ffi());
+    }
+
+    #[test]
+    fn enum_entry_with_namespace() {
+        let entry = EnumEntry::new(
+            "Status",
+            vec!["Game".to_string()],
+            "Game::Status",
+            TypeHash::from_name("Game::Status"),
+            TypeSource::ffi_untyped(),
+        )
+        .with_value("Active", 1)
+        .with_value("Inactive", 0);
+
+        assert_eq!(entry.name, "Status");
+        assert_eq!(entry.namespace, vec!["Game".to_string()]);
+        assert_eq!(entry.qualified_name, "Game::Status");
+        assert_eq!(entry.type_hash, TypeHash::from_name("Game::Status"));
     }
 
     #[test]
