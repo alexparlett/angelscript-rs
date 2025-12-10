@@ -3,7 +3,7 @@
 //! This is a placeholder implementation for FFI registration.
 //! The actual storage and runtime implementation will be handled by the VM.
 
-use angelscript_core::AnyRef;
+use angelscript_core::Dynamic;
 use angelscript_macros::Any;
 use angelscript_registry::Module;
 
@@ -132,35 +132,35 @@ impl ScriptArray {
 
     /// Insert element at position.
     #[angelscript_macros::function(instance, name = "insertAt")]
-    pub fn insert_at(&mut self, index: u32, #[template("T")] value: AnyRef<'static>) {
+    pub fn insert_at(&mut self, index: u32, #[template("T")] value: Dynamic) {
         let _ = (index, value);
         todo!()
     }
 
     /// Insert element at the end.
     #[angelscript_macros::function(instance, name = "insertLast")]
-    pub fn insert_last(&mut self, #[template("T")] value: AnyRef<'static>) {
+    pub fn insert_last(&mut self, #[template("T")] value: Dynamic) {
         let _ = value;
         todo!()
     }
 
     /// Find first occurrence of value.
     #[angelscript_macros::function(instance, const)]
-    pub fn find(&self, #[template("T")] value: AnyRef<'static>) -> i32 {
+    pub fn find(&self, #[template("T")] value: Dynamic) -> i32 {
         let _ = value;
         todo!()
     }
 
     /// Find first occurrence of value starting from `start`.
     #[angelscript_macros::function(instance, const, name = "findFrom")]
-    pub fn find_from(&self, start: u32, #[template("T")] value: AnyRef<'static>) -> i32 {
+    pub fn find_from(&self, start: u32, #[template("T")] value: Dynamic) -> i32 {
         let _ = (start, value);
         todo!()
     }
 
     /// Check if array contains value.
     #[angelscript_macros::function(instance, const)]
-    pub fn contains(&self, #[template("T")] value: AnyRef<'static>) -> bool {
+    pub fn contains(&self, #[template("T")] value: Dynamic) -> bool {
         let _ = value;
         todo!()
     }
@@ -171,14 +171,16 @@ impl ScriptArray {
 
     /// Index operator (mutable).
     #[angelscript_macros::function(instance, operator = Operator::Index)]
-    pub fn op_index(&mut self, index: u32) -> AnyRef<'static> {
+    #[returns(template = "T")]
+    pub fn op_index(&mut self, index: u32) -> Dynamic {
         let _ = index;
         todo!()
     }
 
     /// Index operator (const).
     #[angelscript_macros::function(instance, const, operator = Operator::Index)]
-    pub fn op_index_const(&self, index: u32) -> AnyRef<'static> {
+    #[returns(template = "T")]
+    pub fn op_index_const(&self, index: u32) -> Dynamic {
         let _ = index;
         todo!()
     }

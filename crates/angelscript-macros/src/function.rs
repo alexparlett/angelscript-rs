@@ -78,10 +78,17 @@ fn function_inner(attrs: &FunctionAttrs, input: &ItemFn) -> syn::Result<TokenStr
                 // if_handle_then_const only applies to generic calling convention
                 // For non-generic params, it's always false
 
+                // For template params, use SELF as placeholder - resolved at instantiation
+                let type_hash = if p.template_param.is_some() {
+                    quote! { ::angelscript_core::primitives::SELF }
+                } else {
+                    quote! { <#ty as ::angelscript_core::Any>::type_hash() }
+                };
+
                 quote! {
                     ::angelscript_core::ParamMeta {
                         name: #name,
-                        type_hash: <#ty as ::angelscript_core::Any>::type_hash(),
+                        type_hash: #type_hash,
                         default_value: #default_value,
                         template_param: #template_param,
                         if_handle_then_const: false,
@@ -199,6 +206,7 @@ fn function_inner(attrs: &FunctionAttrs, input: &ItemFn) -> syn::Result<TokenStr
             fn_inputs,
             fn_output,
             is_generic,
+            true, // is_unit_struct
         );
         let meta_body = generate_meta_body(native_fn_token);
 
@@ -230,8 +238,14 @@ fn function_inner(attrs: &FunctionAttrs, input: &ItemFn) -> syn::Result<TokenStr
 
         // Generate NativeFn for method
         let fn_name_str = fn_name.to_string();
-        let native_fn_token =
-            generate_native_fn(&fn_name_str, fn_name, fn_inputs, fn_output, is_generic);
+        let native_fn_token = generate_native_fn(
+            &fn_name_str,
+            fn_name,
+            fn_inputs,
+            fn_output,
+            is_generic,
+            false,
+        );
         let meta_body = generate_meta_body(native_fn_token);
 
         Ok(quote! {
@@ -424,8 +438,11 @@ fn generate_return_meta(
 ) -> TokenStream2 {
     match return_attrs {
         Some(attrs) => {
-            // Get return type - explicit from attribute or from function signature
-            let type_hash = if let Some(ty) = &attrs.return_type {
+            // Get return type - template params use SELF, explicit type, or infer from signature
+            let type_hash = if attrs.template_param.is_some() {
+                // Template return type - use SELF placeholder, resolved at instantiation
+                quote! { Some(::angelscript_core::primitives::SELF) }
+            } else if let Some(ty) = &attrs.return_type {
                 quote! { Some(<#ty as ::angelscript_core::Any>::type_hash()) }
             } else {
                 match fn_output {
@@ -581,12 +598,16 @@ fn strip_reference(ty: &Type) -> TokenStream2 {
 /// calls the mangled function, and sets the return value.
 ///
 /// For methods, handles extracting `this` from slot 0.
+///
+/// `is_unit_struct` indicates if this is for a standalone function (unit struct pattern)
+/// vs a method in an impl block.
 fn generate_native_fn(
     fn_name: &str,
     mangled_fn_name: &syn::Ident,
     fn_inputs: &syn::punctuated::Punctuated<FnArg, syn::token::Comma>,
     fn_output: &ReturnType,
     is_generic: bool,
+    is_unit_struct: bool,
 ) -> TokenStream2 {
     // For generic calling convention functions, skip NativeFn generation for now
     // (they use different calling semantics - raw CallContext access)
@@ -622,12 +643,36 @@ fn generate_native_fn(
         }
     });
 
-    // Check if all parameters are supported - if any are unsupported, return None
-    for (_, ty) in &params {
-        if !is_supported_param_type(ty) {
-            return quote! { None };
+    // Check if any parameter is a non-primitive &T - this creates a borrow conflict with &mut self
+    // because both borrow from the same CallContext slots
+    let has_ref_param = params.iter().any(|(_, ty)| {
+        if let Type::Reference(type_ref) = ty {
+            // Check if inner type is a primitive (primitives are copied, not borrowed)
+            let inner = &type_ref.elem;
+            let inner_str = quote!(#inner).to_string();
+            !matches!(
+                inner_str.as_str(),
+                "i8" | "i16"
+                    | "i32"
+                    | "i64"
+                    | "u8"
+                    | "u16"
+                    | "u32"
+                    | "u64"
+                    | "isize"
+                    | "usize"
+                    | "f32"
+                    | "f64"
+                    | "bool"
+            )
+        } else {
+            false
         }
-    }
+    });
+
+    // For &mut self methods with &T params, we need special handling to avoid borrow conflicts
+    // We'll use unsafe pointer access to work around the borrow checker
+    let needs_unsafe_self_access = receiver_is_mut && has_ref_param;
 
     // Generate extraction code for each parameter
     let extractions: Vec<_> = params
@@ -639,39 +684,6 @@ fn generate_native_fn(
     // Generate function call arguments
     let arg_names: Vec<_> = params.iter().map(|(name, _)| name.clone()).collect();
 
-    // Generate the call expression
-    let call_expr = if has_receiver {
-        // Method call: need to extract `this` first
-        if receiver_is_mut {
-            // Mutable self not yet supported - would need arg_slot_mut or similar
-            // Return None for native_fn to skip generation
-            return quote! { None };
-        }
-
-        quote! {
-            {
-                let __this_slot = __ctx.arg_slot(0)?;
-                let __this: &Self = match __this_slot {
-                    ::angelscript_core::Dynamic::Native(boxed) => {
-                        boxed.downcast_ref::<Self>().ok_or_else(|| {
-                            ::angelscript_core::NativeError::other("failed to downcast this")
-                        })?
-                    }
-                    _ => return Err(::angelscript_core::NativeError::Conversion(
-                        ::angelscript_core::ConversionError::TypeMismatch {
-                            expected: "Native",
-                            actual: __this_slot.type_name(),
-                        }
-                    )),
-                };
-                __this.#mangled_fn_name(#(#arg_names),*)
-            }
-        }
-    } else {
-        // Free function call
-        quote! { #mangled_fn_name(#(#arg_names),*) }
-    };
-
     // Generate return handling - returns None if return type not supported
     let return_handling = match generate_return_handling_code(fn_output) {
         Some(code) => code,
@@ -681,49 +693,177 @@ fn generate_native_fn(
     // Generate the arg_offset for methods (1 for methods with self, 0 for free functions)
     let _arg_offset = if has_receiver { 1usize } else { 0usize };
 
-    quote! {
-        Some(::angelscript_core::NativeFn::new(
-            ::angelscript_core::TypeHash::from_name(#fn_name),
-            |__ctx: &mut ::angelscript_core::CallContext| {
-                #(#extractions)*
-                let __result = { #call_expr };
-                #return_handling
-                Ok(())
-            }
-        ))
-    }
-}
-
-/// Check if a parameter type is supported for NativeFn generation.
-fn is_supported_param_type(ty: &Type) -> bool {
-    // Get the base type (strip references)
-    let base_ty = match ty {
-        Type::Reference(type_ref) => type_ref.elem.as_ref(),
-        _ => ty,
+    // Helper to check if a type is a non-primitive reference
+    let is_non_primitive_ref = |ty: &Type| -> bool {
+        if let Type::Reference(type_ref) = ty {
+            let inner = &type_ref.elem;
+            let inner_str = quote!(#inner).to_string();
+            !matches!(
+                inner_str.as_str(),
+                "i8" | "i16"
+                    | "i32"
+                    | "i64"
+                    | "u8"
+                    | "u16"
+                    | "u32"
+                    | "u64"
+                    | "isize"
+                    | "usize"
+                    | "f32"
+                    | "f64"
+                    | "bool"
+            )
+        } else {
+            false
+        }
     };
 
-    let type_str = quote!(#base_ty).to_string();
-    matches!(
-        type_str.as_str(),
-        "i8" | "i16"
-            | "i32"
-            | "i64"
-            | "u8"
-            | "u16"
-            | "u32"
-            | "u64"
-            | "isize"
-            | "usize"
-            | "f32"
-            | "f64"
-            | "bool"
-    )
+    // For &mut self methods with &T params, we need a different code structure
+    // to avoid borrow conflicts. We use unsafe pointer access.
+    if needs_unsafe_self_access {
+        // Find which params are non-primitive &T and need special handling
+        let ref_params: Vec<_> = params
+            .iter()
+            .enumerate()
+            .filter(|(_, (_, ty))| is_non_primitive_ref(ty))
+            .map(|(i, (name, ty))| {
+                let base_ty = if let Type::Reference(type_ref) = ty {
+                    type_ref.elem.as_ref().clone()
+                } else {
+                    ty.clone()
+                };
+                (i, name.clone(), base_ty)
+            })
+            .collect();
+
+        // Generate extractions for primitive params only (they don't hold borrows)
+        let non_ref_extractions: Vec<_> = params
+            .iter()
+            .enumerate()
+            .filter(|(_, (_, ty))| !is_non_primitive_ref(ty))
+            .map(|(i, (name, ty))| generate_param_extraction(name, ty, i))
+            .collect();
+
+        // Generate pointer extraction for &T params
+        let ref_extractions: Vec<_> = ref_params
+            .iter()
+            .map(|(i, name, base_ty)| {
+                quote! {
+                    let #name: &#base_ty = {
+                        let __slot = __ctx.arg_slot(#i)?;
+                        match __slot {
+                            ::angelscript_core::Dynamic::Native(boxed) => {
+                                boxed.downcast_ref::<#base_ty>().ok_or_else(|| {
+                                    ::angelscript_core::NativeError::other(
+                                        concat!("failed to downcast argument ", stringify!(#name))
+                                    )
+                                })?
+                            }
+                            _ => return Err(::angelscript_core::NativeError::Conversion(
+                                ::angelscript_core::ConversionError::TypeMismatch {
+                                    expected: "native",
+                                    actual: __slot.type_name(),
+                                }
+                            )),
+                        }
+                    };
+                    // Convert to raw pointer to break the borrow
+                    let #name: *const #base_ty = #name;
+                }
+            })
+            .collect();
+
+        // Generate the unsafe dereference for &T params in the call
+        let unsafe_derefs: Vec<_> = ref_params
+            .iter()
+            .map(|(_, name, base_ty)| {
+                quote! { let #name: &#base_ty = unsafe { &*#name }; }
+            })
+            .collect();
+
+        // Suppress unused warnings - keeping code for when VM CallContext is designed
+        let _ = (
+            &non_ref_extractions,
+            &ref_extractions,
+            &unsafe_derefs,
+            &arg_names,
+            &return_handling,
+        );
+        let _ = mangled_fn_name;
+
+        quote! {
+            Some(::angelscript_core::NativeFn::new(
+                ::angelscript_core::TypeHash::from_name(#fn_name),
+                |_ctx: &mut ::angelscript_core::CallContext| {
+                    // TODO: Implementation pending VM design
+                    // Intended implementation (needs_unsafe_self_access case):
+                    // #(#non_ref_extractions)*
+                    // #(#ref_extractions)*
+                    // let __result = {
+                    //     let __this: &mut Self = _ctx.this_mut::<Self>()?;
+                    //     #(#unsafe_derefs)*
+                    //     __this.fn_name(#(#arg_names),*)
+                    // };
+                    // #return_handling
+                    let _ = _ctx;
+                    todo!("NativeFn body pending VM CallContext design")
+                }
+            ))
+        }
+    } else {
+        // Normal case - no borrow conflicts
+        let call_expr = if has_receiver {
+            // Method call: need to extract `this` first
+            if receiver_is_mut {
+                // Mutable self - use this_mut()
+                quote! {
+                    {
+                        let __this: &mut Self = _ctx.this_mut::<Self>()?;
+                        __this.#mangled_fn_name(#(#arg_names),*)
+                    }
+                }
+            } else {
+                // Immutable self - use this()
+                quote! {
+                    {
+                        let __this: &Self = _ctx.this::<Self>()?;
+                        __this.#mangled_fn_name(#(#arg_names),*)
+                    }
+                }
+            }
+        } else if is_unit_struct {
+            // True free function (unit struct pattern) - no Self:: prefix
+            quote! { #mangled_fn_name(#(#arg_names),*) }
+        } else {
+            // Associated function call (no self receiver but in impl block)
+            // Use Self:: prefix since this is generated inside an impl block
+            quote! { Self::#mangled_fn_name(#(#arg_names),*) }
+        };
+
+        // Suppress unused warnings - keeping code for when VM CallContext is designed
+        let _ = (&extractions, &call_expr, &return_handling);
+
+        quote! {
+            Some(::angelscript_core::NativeFn::new(
+                ::angelscript_core::TypeHash::from_name(#fn_name),
+                |_ctx: &mut ::angelscript_core::CallContext| {
+                    // TODO: Implementation pending VM design
+                    // Intended implementation:
+                    // #(#extractions)*
+                    // let __result = { #call_expr };
+                    // #return_handling
+                    let _ = _ctx;
+                    todo!("NativeFn body pending VM CallContext design")
+                }
+            ))
+        }
+    }
 }
 
 /// Generate code to extract a parameter from CallContext.
 fn generate_param_extraction(name: &syn::Ident, ty: &Type, index: usize) -> TokenStream2 {
     // Get the base type (strip references)
-    let (base_ty, is_ref, _is_mut) = match ty {
+    let (base_ty, is_ref, is_mut) = match ty {
         Type::Reference(type_ref) => {
             let is_mut = type_ref.mutability.is_some();
             (type_ref.elem.as_ref(), true, is_mut)
@@ -784,9 +924,32 @@ fn generate_param_extraction(name: &syn::Ident, ty: &Type, index: usize) -> Toke
         }
         _ => {
             // Non-primitive type - try to extract from Native or Object
-            if is_ref {
+            if is_ref && is_mut {
+                // &mut T - mutable borrow from slot
                 quote! {
-                    let #name: #ty = {
+                    let #name: &mut #base_ty = {
+                        let __slot = __ctx.arg_slot_mut(#index)?;
+                        match __slot {
+                            ::angelscript_core::Dynamic::Native(boxed) => {
+                                boxed.downcast_mut::<#base_ty>().ok_or_else(|| {
+                                    ::angelscript_core::NativeError::other(
+                                        concat!("failed to downcast argument ", stringify!(#name))
+                                    )
+                                })?
+                            }
+                            _ => return Err(::angelscript_core::NativeError::Conversion(
+                                ::angelscript_core::ConversionError::TypeMismatch {
+                                    expected: "native",
+                                    actual: __slot.type_name(),
+                                }
+                            )),
+                        }
+                    };
+                }
+            } else if is_ref {
+                // &T - immutable borrow from slot
+                quote! {
+                    let #name: &#base_ty = {
                         let __slot = __ctx.arg_slot(#index)?;
                         match __slot {
                             ::angelscript_core::Dynamic::Native(boxed) => {
@@ -806,11 +969,11 @@ fn generate_param_extraction(name: &syn::Ident, ty: &Type, index: usize) -> Toke
                     };
                 }
             } else {
-                // Value type - for now just return error
-                // Full implementation would clone from Native or similar
+                // Owned value type - not yet supported
+                // Future: will need VM memory model decisions for clone vs move semantics
                 quote! {
                     let #name: #ty = return Err(::angelscript_core::NativeError::other(
-                        concat!("value type extraction not yet supported for ", stringify!(#name))
+                        concat!("owned value type extraction not yet supported for ", stringify!(#name))
                     ));
                 }
             }
@@ -849,9 +1012,12 @@ fn generate_return_handling_code(fn_output: &ReturnType) -> Option<TokenStream2>
                     __ctx.set_return_slot(::angelscript_core::Dynamic::Void);
                 }),
                 _ => {
-                    // Non-primitive type - not yet supported
-                    // TODO: Add support for Send+Sync types via Box<dyn Any + Send + Sync>
-                    None
+                    // Non-primitive type - wrap in Dynamic::Native
+                    Some(quote! {
+                        __ctx.set_return_slot(::angelscript_core::Dynamic::Native(
+                            Box::new(__result)
+                        ));
+                    })
                 }
             }
         }
