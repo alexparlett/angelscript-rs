@@ -91,7 +91,14 @@ impl ClassEntry {
     pub fn ffi(name: impl Into<String>, type_kind: TypeKind) -> Self {
         let name = name.into();
         let type_hash = TypeHash::from_name(&name);
-        Self::new(name.clone(), Vec::new(), name, type_hash, type_kind, TypeSource::ffi_untyped())
+        Self::new(
+            name.clone(),
+            Vec::new(),
+            name,
+            type_hash,
+            type_kind,
+            TypeSource::ffi_untyped(),
+        )
     }
 
     /// Create a script class entry.
@@ -104,7 +111,14 @@ impl ClassEntry {
         let name = name.into();
         let qualified_name = qualified_name.into();
         let type_hash = TypeHash::from_name(&qualified_name);
-        Self::new(name, namespace, qualified_name, type_hash, TypeKind::ScriptObject, source)
+        Self::new(
+            name,
+            namespace,
+            qualified_name,
+            type_hash,
+            TypeKind::ScriptObject,
+            source,
+        )
     }
 
     // === Builder Methods ===
@@ -212,7 +226,10 @@ mod tests {
 
         assert_eq!(entry.name, "Player");
         assert_eq!(entry.qualified_name, "Player");
-        assert!(entry.namespace.is_empty(), "ffi() should create empty namespace");
+        assert!(
+            entry.namespace.is_empty(),
+            "ffi() should create empty namespace"
+        );
         assert!(entry.source.is_ffi());
         assert!(entry.is_reference_type());
         assert!(!entry.is_template());
@@ -231,9 +248,15 @@ mod tests {
         );
 
         assert_eq!(entry.name, "Enemy");
-        assert_eq!(entry.namespace, vec!["Game".to_string(), "Entities".to_string()]);
+        assert_eq!(
+            entry.namespace,
+            vec!["Game".to_string(), "Entities".to_string()]
+        );
         assert_eq!(entry.qualified_name, "Game::Entities::Enemy");
-        assert_eq!(entry.type_hash, TypeHash::from_name("Game::Entities::Enemy"));
+        assert_eq!(
+            entry.type_hash,
+            TypeHash::from_name("Game::Entities::Enemy")
+        );
     }
 
     #[test]
@@ -291,8 +314,8 @@ mod tests {
     #[test]
     fn class_entry_template() {
         let t_hash = TypeHash::from_name("array::T");
-        let entry = ClassEntry::ffi("array", TypeKind::reference())
-            .with_template_params(vec![t_hash]);
+        let entry =
+            ClassEntry::ffi("array", TypeKind::reference()).with_template_params(vec![t_hash]);
 
         assert!(entry.is_template());
         assert!(!entry.is_template_instance());

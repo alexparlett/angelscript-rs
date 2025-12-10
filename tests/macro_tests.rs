@@ -6,10 +6,10 @@
 //! - `#[interface]` - Interface definitions
 //! - `#[funcdef]` - Function pointer types
 
+#![allow(non_snake_case, dead_code, unused_variables)]
+
 use angelscript::{
-    Any, TypeHash, Behavior,
-    HasClassMeta, HasFunctionMeta,
-    function, interface, funcdef,
+    Any, Behavior, HasClassMeta, HasFunctionMeta, TypeHash, funcdef, function, interface,
 };
 
 // ============================================================================
@@ -121,7 +121,11 @@ fn derive_any_properties() {
     assert!(!id.set);
 
     // Check position property (renamed)
-    let pos = meta.properties.iter().find(|p| p.name == "position").unwrap();
+    let pos = meta
+        .properties
+        .iter()
+        .find(|p| p.name == "position")
+        .unwrap();
     assert!(pos.get);
     assert!(pos.set);
 }
@@ -156,7 +160,12 @@ fn derive_any_template_multi_param() {
 
 /// Test `#[derive(Any)]` template specialization.
 #[derive(Any)]
-#[angelscript(name = "Array<int>", reference, specialization_of = "Array", specialization_args(i32))]
+#[angelscript(
+    name = "Array<int>",
+    reference,
+    specialization_of = "Array",
+    specialization_args(i32)
+)]
 struct ArrayInt {
     data: Vec<i32>,
 }
@@ -324,12 +333,18 @@ struct Vector2 {
 impl Vector2 {
     #[function(operator = Operator::Add)]
     fn op_add(&self, other: &Vector2) -> Vector2 {
-        Vector2 { x: self.x + other.x, y: self.y + other.y }
+        Vector2 {
+            x: self.x + other.x,
+            y: self.y + other.y,
+        }
     }
 
     #[function(operator = Operator::Mul)]
     fn op_mul(&self, scalar: f32) -> Vector2 {
-        Vector2 { x: self.x * scalar, y: self.y * scalar }
+        Vector2 {
+            x: self.x * scalar,
+            y: self.y * scalar,
+        }
     }
 
     #[function(operator = Operator::Equals)]
@@ -662,8 +677,7 @@ fn derive_any_no_properties() {
 
 /// Function with no parameters and void return.
 #[function]
-fn do_nothing() {
-}
+fn do_nothing() {}
 
 #[test]
 fn function_void_void() {
@@ -673,8 +687,7 @@ fn function_void_void() {
 
 /// Interface with no methods.
 #[interface]
-trait EmptyInterface {
-}
+trait EmptyInterface {}
 
 #[test]
 fn interface_empty() {
@@ -731,8 +744,7 @@ fn module_registration_methods() {
 fn module_registration_interface() {
     use angelscript::Module;
 
-    let module = Module::new()
-        .interface(__as_Drawable_interface_meta());
+    let module = Module::new().interface(__as_Drawable_interface_meta());
 
     assert_eq!(module.interfaces.len(), 1);
 }
@@ -741,8 +753,7 @@ fn module_registration_interface() {
 fn module_registration_funcdef() {
     use angelscript::Module;
 
-    let module = Module::new()
-        .funcdef(__as_Callback_funcdef_meta());
+    let module = Module::new().funcdef(__as_Callback_funcdef_meta());
 
     assert_eq!(module.funcdefs.len(), 1);
 }
@@ -1016,8 +1027,7 @@ fn function_generic_variable_param() {
 /// Generic function with variadic parameters.
 #[function(generic)]
 #[param(variadic)]
-fn generic_variadic(_values: i32) {
-}
+fn generic_variadic(_values: i32) {}
 
 #[test]
 fn function_generic_variadic_param() {
@@ -1030,8 +1040,7 @@ fn function_generic_variadic_param() {
 /// Generic function with in reference.
 #[function(generic)]
 #[param(in)]
-fn generic_in_param(_value: i32) {
-}
+fn generic_in_param(_value: i32) {}
 
 #[test]
 fn function_generic_in_ref() {
@@ -1043,8 +1052,7 @@ fn function_generic_in_ref() {
 /// Generic function with out reference.
 #[function(generic)]
 #[param(out)]
-fn generic_out_param(_value: i32) {
-}
+fn generic_out_param(_value: i32) {}
 
 #[test]
 fn function_generic_out_ref() {
@@ -1056,8 +1064,7 @@ fn function_generic_out_ref() {
 /// Generic function with inout reference.
 #[function(generic)]
 #[param(inout)]
-fn generic_inout_param(_value: i32) {
-}
+fn generic_inout_param(_value: i32) {}
 
 #[test]
 fn function_generic_inout_ref() {
@@ -1069,8 +1076,7 @@ fn function_generic_inout_ref() {
 /// Generic function with explicit type.
 #[function(generic)]
 #[param(type = i32)]
-fn generic_explicit_type(_value: i32) {
-}
+fn generic_explicit_type(_value: i32) {}
 
 #[test]
 fn function_generic_explicit_type() {
@@ -1083,8 +1089,7 @@ fn function_generic_explicit_type() {
 /// Generic function with default value.
 #[function(generic)]
 #[param(variable, default = "-1")]
-fn generic_with_default(_value: i32) {
-}
+fn generic_with_default(_value: i32) {}
 
 #[test]
 fn function_generic_default_value() {
@@ -1096,8 +1101,7 @@ fn function_generic_default_value() {
 /// Generic function with if_handle_then_const.
 #[function(generic)]
 #[param(variable, if_handle_then_const)]
-fn generic_handle_const(_value: i32) {
-}
+fn generic_handle_const(_value: i32) {}
 
 #[test]
 fn function_generic_if_handle_then_const() {
@@ -1212,8 +1216,7 @@ impl ListPatternTest {
 
     #[function(list_construct)]
     #[list_pattern(fixed(i32, f32, bool))]
-    fn from_fixed(&mut self, _a: i32, _b: f32, _c: bool) {
-    }
+    fn from_fixed(&mut self, _a: i32, _b: f32, _c: bool) {}
 
     #[function(list_construct)]
     #[list_pattern(repeat_tuple(i32, f32))]
@@ -1257,17 +1260,23 @@ struct OperatorTest {
 impl OperatorTest {
     #[function(operator = Operator::Sub)]
     fn op_sub(&self, other: &OperatorTest) -> OperatorTest {
-        OperatorTest { value: self.value - other.value }
+        OperatorTest {
+            value: self.value - other.value,
+        }
     }
 
     #[function(operator = Operator::Div)]
     fn op_div(&self, other: &OperatorTest) -> OperatorTest {
-        OperatorTest { value: self.value / other.value }
+        OperatorTest {
+            value: self.value / other.value,
+        }
     }
 
     #[function(operator = Operator::Mod)]
     fn op_mod(&self, other: &OperatorTest) -> OperatorTest {
-        OperatorTest { value: self.value % other.value }
+        OperatorTest {
+            value: self.value % other.value,
+        }
     }
 
     #[function(operator = Operator::Neg)]
@@ -1338,8 +1347,7 @@ struct Copyable {
 
 impl Copyable {
     #[function(constructor, copy)]
-    fn copy_construct(&mut self, _other: &Copyable) {
-    }
+    fn copy_construct(&mut self, _other: &Copyable) {}
 }
 
 #[test]
@@ -1361,8 +1369,7 @@ struct ContainerBase {
 
 impl ContainerBase {
     #[function]
-    fn push(&mut self, #[template("T")] _value: i32) {
-    }
+    fn push(&mut self, #[template("T")] _value: i32) {}
 }
 
 #[test]
@@ -1448,8 +1455,7 @@ impl ConstTest {
 
     /// Instance method (explicit).
     #[function(instance)]
-    fn instance_method(&self) {
-    }
+    fn instance_method(&self) {}
 }
 
 #[test]
@@ -1494,8 +1500,7 @@ struct TemplateBoolTest {
 
 impl TemplateBoolTest {
     #[function(template)]
-    fn with_template_flag(&self) {
-    }
+    fn with_template_flag(&self) {}
 }
 
 #[test]
@@ -1515,8 +1520,7 @@ fn function_template_bool_flag() {
 #[param(variable)]
 #[param(in)]
 #[param(out)]
-fn generic_multi_params(_a: i32, _b: i32, _c: i32) {
-}
+fn generic_multi_params(_a: i32, _b: i32, _c: i32) {}
 
 #[test]
 fn function_generic_multi_params() {
@@ -1558,8 +1562,7 @@ fn function_return_combined() {
 /// Generic function with combined param attributes.
 #[function(generic)]
 #[param(variable, in, default = "0", if_handle_then_const)]
-fn generic_combined_param(_value: i32) {
-}
+fn generic_combined_param(_value: i32) {}
 
 #[test]
 fn function_generic_combined_param() {
@@ -1578,8 +1581,7 @@ fn function_generic_combined_param() {
 #[function(generic)]
 #[param(type = i32, in)]
 #[param(type = f32, out)]
-fn generic_typed_params(_a: i32, _b: f32) {
-}
+fn generic_typed_params(_a: i32, _b: f32) {}
 
 #[test]
 fn function_generic_typed_params() {
@@ -1611,8 +1613,7 @@ fn function_inline_returns_attr() {
 
 /// Tests empty template string edge case.
 #[function(template = "")]
-fn empty_template_string(_value: i32) {
-}
+fn empty_template_string(_value: i32) {}
 
 #[test]
 fn function_empty_template_string() {

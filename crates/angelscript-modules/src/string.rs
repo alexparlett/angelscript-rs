@@ -30,6 +30,7 @@ impl ScriptString {
 
     /// Create from a string slice.
     #[inline]
+    #[allow(clippy::should_implement_trait)]
     pub fn from_str(s: &str) -> Self {
         Self(s.to_string())
     }
@@ -791,7 +792,10 @@ mod tests {
     fn test_replace() {
         let s = ScriptString::from("hello hello");
         assert_eq!(s.replace_all("hello".into(), "hi".into()).as_str(), "hi hi");
-        assert_eq!(s.replace_first("hello".into(), "hi".into()).as_str(), "hi hello");
+        assert_eq!(
+            s.replace_first("hello".into(), "hi".into()).as_str(),
+            "hi hello"
+        );
     }
 
     #[test]

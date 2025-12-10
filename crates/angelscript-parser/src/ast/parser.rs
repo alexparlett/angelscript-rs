@@ -3,7 +3,10 @@
 //! Provides the main [`Parser`] struct with token navigation and basic
 //! parsing infrastructure.
 
-use super::{ParseError, ParseErrorKind, ParseErrors, Expr, Stmt, TypeExpr, Script, FunctionSignatureDecl, PropertyDecl, FuncdefDecl, DeclModifiers, Item};
+use super::{
+    DeclModifiers, Expr, FuncdefDecl, FunctionSignatureDecl, Item, ParseError, ParseErrorKind,
+    ParseErrors, PropertyDecl, Script, Stmt, TypeExpr,
+};
 use crate::lexer::{Lexer, Span, Token, TokenKind};
 use bumpalo::Bump;
 
@@ -226,7 +229,9 @@ impl<'ast> Parser<'ast> {
 
         while !self.is_eof() {
             // If we just passed a semicolon, we're at a statement boundary
-            if self.buffer.get(self.position.saturating_sub(1))
+            if self
+                .buffer
+                .get(self.position.saturating_sub(1))
                 .is_some_and(|t| t.kind == TokenKind::Semicolon)
             {
                 // Only stop if we've advanced at least once
@@ -257,13 +262,13 @@ impl<'ast> Parser<'ast> {
                     // Otherwise, advance past this sync point token
                     self.advance();
                 }
-                
+
                 // For RightBrace, always advance past it
                 TokenKind::RightBrace => {
                     self.advance();
                     return;
                 }
-                
+
                 _ => {
                     self.advance();
                 }
@@ -367,17 +372,13 @@ impl<'ast> Parser<'ast> {
         }
 
         // Skip template arguments
-        if self.check(TokenKind::Less)
-            && !self.try_skip_template_args() {
-                return false;
-            }
+        if self.check(TokenKind::Less) && !self.try_skip_template_args() {
+            return false;
+        }
 
         // Skip type suffixes (@, &)
         // Note: [] is NOT a type suffix - it's only an index operator
-        while matches!(
-            self.peek().kind,
-            TokenKind::At | TokenKind::Amp
-        ) {
+        while matches!(self.peek().kind, TokenKind::At | TokenKind::Amp) {
             if self.eat(TokenKind::At).is_some() {
                 self.eat(TokenKind::Const);
             } else if self.eat(TokenKind::Amp).is_some() {
@@ -706,7 +707,10 @@ impl<'ast> Parser<'ast> {
     /// let prop = Parser::property_decl("MyClass@ obj", &arena).unwrap();
     /// assert!(prop.ty.has_handle());
     /// ```
-    pub fn property_decl(source: &str, arena: &'ast Bump) -> Result<PropertyDecl<'ast>, ParseErrors> {
+    pub fn property_decl(
+        source: &str,
+        arena: &'ast Bump,
+    ) -> Result<PropertyDecl<'ast>, ParseErrors> {
         let mut parser = Parser::new(source, arena);
 
         let result = parser.parse_property_decl();
@@ -752,7 +756,10 @@ impl<'ast> Parser<'ast> {
     /// let sig = Parser::function_decl("void print(const string& in msg)", &arena).unwrap();
     /// assert_eq!(sig.params.len(), 1);
     /// ```
-    pub fn function_decl(source: &str, arena: &'ast Bump) -> Result<FunctionSignatureDecl<'ast>, ParseErrors> {
+    pub fn function_decl(
+        source: &str,
+        arena: &'ast Bump,
+    ) -> Result<FunctionSignatureDecl<'ast>, ParseErrors> {
         let mut parser = Parser::new(source, arena);
 
         let result = parser.parse_function_signature();
@@ -831,7 +838,6 @@ impl<'ast> Parser<'ast> {
             }
         }
     }
-
 }
 
 #[cfg(test)]
@@ -924,8 +930,16 @@ mod tests {
         let arena = bumpalo::Bump::new();
         let mut parser = Parser::new(source, &arena);
 
-        parser.error(ParseErrorKind::ExpectedToken, Span::new(1, 1, 3), "test error 1");
-        parser.error(ParseErrorKind::ExpectedToken, Span::new(1, 5, 1), "test error 2");
+        parser.error(
+            ParseErrorKind::ExpectedToken,
+            Span::new(1, 1, 3),
+            "test error 1",
+        );
+        parser.error(
+            ParseErrorKind::ExpectedToken,
+            Span::new(1, 5, 1),
+            "test error 2",
+        );
 
         assert_eq!(parser.errors.len(), 2);
     }
@@ -1096,13 +1110,13 @@ mod tests {
     #[test]
     fn is_primitive_type_all_types() {
         let types = vec![
-            "void", "bool", "int", "int8", "int16", "int64",
-            "uint", "uint8", "uint16", "uint64", "float", "double", "auto"
+            "void", "bool", "int", "int8", "int16", "int64", "uint", "uint8", "uint16", "uint64",
+            "float", "double", "auto",
         ];
 
         for ty in types {
-        let arena = bumpalo::Bump::new();
-        let mut parser = Parser::new(ty, &arena);
+            let arena = bumpalo::Bump::new();
+            let mut parser = Parser::new(ty, &arena);
             assert!(parser.is_primitive_type(), "Failed for type: {}", ty);
         }
     }
@@ -1153,8 +1167,8 @@ mod tests {
         ];
 
         for test in tests {
-        let arena = bumpalo::Bump::new();
-        let mut parser = Parser::new(test, &arena);
+            let arena = bumpalo::Bump::new();
+            let mut parser = Parser::new(test, &arena);
             assert!(parser.is_var_decl(), "Failed for: {}", test);
         }
     }
@@ -1177,16 +1191,16 @@ mod tests {
 
     #[test]
     fn is_var_decl_not_a_declaration() {
-        let tests = vec![
-            "if (x)",
-            "return x;",
-            "break;",
-        ];
+        let tests = vec!["if (x)", "return x;", "break;"];
 
         for test in tests {
-        let arena = bumpalo::Bump::new();
-        let mut parser = Parser::new(test, &arena);
-            assert!(!parser.is_var_decl(), "Incorrectly identified as var decl: {}", test);
+            let arena = bumpalo::Bump::new();
+            let mut parser = Parser::new(test, &arena);
+            assert!(
+                !parser.is_var_decl(),
+                "Incorrectly identified as var decl: {}",
+                test
+            );
         }
     }
 

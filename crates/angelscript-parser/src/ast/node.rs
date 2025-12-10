@@ -18,10 +18,7 @@ pub struct Ident<'ast> {
 impl<'ast> Ident<'ast> {
     /// Create a new identifier.
     pub fn new(name: &'ast str, span: Span) -> Self {
-        Self {
-            name,
-            span,
-        }
+        Self { name, span }
     }
 }
 
@@ -88,9 +85,10 @@ impl<'ast> fmt::Display for Scope<'ast> {
 }
 
 /// Visibility modifier for class members and declarations.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum Visibility {
     /// Public (default)
+    #[default]
     Public,
     /// Private (not accessible outside class)
     Private,
@@ -99,11 +97,6 @@ pub enum Visibility {
 }
 
 impl Visibility {
-    /// Get the default visibility (public).
-    pub fn default() -> Self {
-        Self::Public
-    }
-
     /// Check if this is public.
     pub fn is_public(&self) -> bool {
         matches!(self, Self::Public)

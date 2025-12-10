@@ -2,9 +2,9 @@
 //!
 //! Provides basic I/O functions with format string support.
 
+use crate::ScriptString;
 use angelscript_core::CallContext;
 use angelscript_registry::Module;
-use crate::ScriptString;
 
 // =============================================================================
 // OUTPUT FUNCTIONS

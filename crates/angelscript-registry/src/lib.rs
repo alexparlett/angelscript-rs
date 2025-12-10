@@ -44,20 +44,33 @@ mod module;
 mod registry;
 
 pub use module::{HasClassMeta, HasFunctionMeta, IntoFunctionMeta, Module};
-pub use registry::{TemplateCallback, SymbolRegistry};
+pub use registry::{SymbolRegistry, TemplateCallback};
 
 // Re-export from core for backwards compatibility during transition
 pub use angelscript_core::{
-    // Native function types
-    NativeFn, NativeCallable, VmSlot, ObjectHandle, ObjectHeap, CallContext,
-    // Error types
-    ConversionError, NativeError,
-    // List buffer types
-    ListBuffer, TupleListBuffer, ListPattern,
-    // Template types
-    TemplateInstanceInfo, TemplateValidation,
     // Any type support
-    AnyRef, AnyRefMut,
+    AnyRef,
+    AnyRefMut,
+    CallContext,
+    // Error types
+    ConversionError,
     // Core types
-    DataType, RefModifier, TypeHash, TypeKind,
+    DataType,
+    // List buffer types
+    ListBuffer,
+    ListPattern,
+    NativeCallable,
+    NativeError,
+    // Native function types
+    NativeFn,
+    ObjectHandle,
+    ObjectHeap,
+    RefModifier,
+    // Template types
+    TemplateInstanceInfo,
+    TemplateValidation,
+    TupleListBuffer,
+    TypeHash,
+    TypeKind,
+    VmSlot,
 };

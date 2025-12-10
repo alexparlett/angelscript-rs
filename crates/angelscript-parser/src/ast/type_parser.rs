@@ -8,10 +8,10 @@
 //! - Type modifiers (const, references, handles)
 //! - Array and handle suffixes
 
-use crate::ast::{Ident, ParseError, ParseErrorKind, RefKind, Scope};
-use crate::ast::types::*;
-use crate::lexer::{self, Span, TokenKind};
 use super::parser::Parser;
+use crate::ast::types::*;
+use crate::ast::{Ident, ParseError, ParseErrorKind, RefKind, Scope};
+use crate::lexer::{self, Span, TokenKind};
 
 impl<'ast> Parser<'ast> {
     /// Parse a complete type expression.
@@ -46,22 +46,32 @@ impl<'ast> Parser<'ast> {
         let suffixes = self.parse_type_suffixes()?;
 
         let end_span = if !suffixes.is_empty() {
-            self.buffer.get(self.position.saturating_sub(1))
+            self.buffer
+                .get(self.position.saturating_sub(1))
                 .map(|t| t.span)
                 .unwrap_or(start_span)
         } else if !template_args.is_empty() {
-            self.buffer.get(self.position.saturating_sub(1))
+            self.buffer
+                .get(self.position.saturating_sub(1))
                 .map(|t| t.span)
                 .unwrap_or(start_span)
         } else {
-            self.buffer.get(self.position.saturating_sub(1))
+            self.buffer
+                .get(self.position.saturating_sub(1))
                 .map(|t| t.span)
                 .unwrap_or(start_span)
         };
 
         let span = start_span.merge(end_span);
 
-        Ok(TypeExpr::new(is_const, scope, base, template_args, suffixes, span))
+        Ok(TypeExpr::new(
+            is_const,
+            scope,
+            base,
+            template_args,
+            suffixes,
+            span,
+        ))
     }
 
     /// Parse a return type (type with optional & reference).
@@ -76,9 +86,12 @@ impl<'ast> Parser<'ast> {
         let ty = self.parse_type()?;
         let is_ref = self.eat(TokenKind::Amp).is_some();
         let span = if is_ref {
-            ty.span.merge(self.buffer.get(self.position.saturating_sub(1))
-                .map(|t| t.span)
-                .unwrap_or(ty.span))
+            ty.span.merge(
+                self.buffer
+                    .get(self.position.saturating_sub(1))
+                    .map(|t| t.span)
+                    .unwrap_or(ty.span),
+            )
         } else {
             ty.span
         };
@@ -115,9 +128,10 @@ impl<'ast> Parser<'ast> {
         };
 
         let span = ty.span.merge(
-            self.buffer.get(self.position.saturating_sub(1))
+            self.buffer
+                .get(self.position.saturating_sub(1))
                 .map(|t| t.span)
-                .unwrap_or(ty.span)
+                .unwrap_or(ty.span),
         );
 
         Ok(ParamType::new(ty, ref_kind, span))
@@ -167,12 +181,14 @@ impl<'ast> Parser<'ast> {
                         return Err(crate::ast::ParseError::new(
                             crate::ast::ParseErrorKind::NotImplemented,
                             span,
-                            "template arguments in scope resolution are not supported"
+                            "template arguments in scope resolution are not supported",
                         ));
                     }
 
                     self.expect(TokenKind::ColonColon)?;
-                    last_span = self.buffer.get(self.position.saturating_sub(1))
+                    last_span = self
+                        .buffer
+                        .get(self.position.saturating_sub(1))
                         .map(|t| t.span)
                         .unwrap_or(last_span);
 
@@ -278,22 +294,26 @@ impl<'ast> Parser<'ast> {
             TokenKind::Class => {
                 self.advance();
                 let ident_token = self.expect(TokenKind::Identifier)?;
-                Ok(TypeBase::TemplateParam(Ident::new(ident_token.lexeme, ident_token.span)))
+                Ok(TypeBase::TemplateParam(Ident::new(
+                    ident_token.lexeme,
+                    ident_token.span,
+                )))
             }
 
             // User-defined type (identifier)
             TokenKind::Identifier => {
                 let ident_token = self.advance();
-                Ok(TypeBase::Named(Ident::new(ident_token.lexeme, ident_token.span)))
+                Ok(TypeBase::Named(Ident::new(
+                    ident_token.lexeme,
+                    ident_token.span,
+                )))
             }
 
-            _ => {
-                Err(ParseError::new(
-                    ParseErrorKind::ExpectedType,
-                    token.span,
-                    format!("expected type, found {}", token.kind),
-                ))
-            }
+            _ => Err(ParseError::new(
+                ParseErrorKind::ExpectedType,
+                token.span,
+                format!("expected type, found {}", token.kind),
+            )),
         }
     }
 
@@ -368,7 +388,7 @@ impl<'ast> Parser<'ast> {
     fn split_greater_greater_greater(&mut self) {
         if self.check(TokenKind::GreaterGreaterGreater) {
             let token = self.buffer[self.position];
-            
+
             // Replace >>> with three > tokens
             let first_greater = lexer::Token {
                 kind: TokenKind::Greater,
@@ -485,7 +505,10 @@ mod tests {
         let mut parser = Parser::new("MyClass@", &arena);
         let ty = parser.parse_type().unwrap();
         assert_eq!(ty.suffixes.len(), 1);
-        assert!(matches!(ty.suffixes[0], TypeSuffix::Handle { is_const: false }));
+        assert!(matches!(
+            ty.suffixes[0],
+            TypeSuffix::Handle { is_const: false }
+        ));
     }
 
     #[test]
@@ -494,7 +517,10 @@ mod tests {
         let mut parser = Parser::new("MyClass@ const", &arena);
         let ty = parser.parse_type().unwrap();
         assert_eq!(ty.suffixes.len(), 1);
-        assert!(matches!(ty.suffixes[0], TypeSuffix::Handle { is_const: true }));
+        assert!(matches!(
+            ty.suffixes[0],
+            TypeSuffix::Handle { is_const: true }
+        ));
     }
 
     #[test]
@@ -514,7 +540,10 @@ mod tests {
         assert!(ty.is_const);
         assert_eq!(ty.template_args.len(), 1);
         assert_eq!(ty.suffixes.len(), 1);
-        assert!(matches!(ty.suffixes[0], TypeSuffix::Handle { is_const: true }));
+        assert!(matches!(
+            ty.suffixes[0],
+            TypeSuffix::Handle { is_const: true }
+        ));
     }
 
     #[test]
@@ -523,7 +552,10 @@ mod tests {
         let mut parser = Parser::new("int&", &arena);
         let ret_ty = parser.parse_return_type().unwrap();
         assert!(ret_ty.is_ref);
-        assert!(matches!(ret_ty.ty.base, TypeBase::Primitive(PrimitiveType::Int)));
+        assert!(matches!(
+            ret_ty.ty.base,
+            TypeBase::Primitive(PrimitiveType::Int)
+        ));
     }
 
     #[test]
@@ -577,17 +609,20 @@ mod tests {
         let arena = bumpalo::Bump::new();
         let mut parser = Parser::new("array<array<int>>", &arena);
         let ty = parser.parse_type().unwrap();
-        
+
         // Should parse as array with template arg of (array with template arg of int)
         assert!(matches!(ty.base, TypeBase::Named(_)));
         assert_eq!(ty.template_args.len(), 1);
-        
+
         let inner_ty = &ty.template_args[0];
         assert!(matches!(inner_ty.base, TypeBase::Named(_)));
         assert_eq!(inner_ty.template_args.len(), 1);
-        
+
         let innermost_ty = &inner_ty.template_args[0];
-        assert!(matches!(innermost_ty.base, TypeBase::Primitive(PrimitiveType::Int)));
+        assert!(matches!(
+            innermost_ty.base,
+            TypeBase::Primitive(PrimitiveType::Int)
+        ));
     }
 
     #[test]
@@ -595,7 +630,7 @@ mod tests {
         let arena = bumpalo::Bump::new();
         let mut parser = Parser::new("array<array<array<int>>>", &arena);
         let ty = parser.parse_type().unwrap();
-        
+
         // Should handle even deeper nesting
         assert!(matches!(ty.base, TypeBase::Named(_)));
         assert_eq!(ty.template_args.len(), 1);
@@ -608,30 +643,30 @@ mod tests {
         let arena = bumpalo::Bump::new();
         let mut parser = Parser::new("array<array<weakref<Foo<string>>>>", &arena);
         let ty = parser.parse_type().unwrap();
-        
+
         // Verify outer array
         assert!(matches!(ty.base, TypeBase::Named(_)));
         assert_eq!(ty.template_args.len(), 1);
-        
+
         // Verify second level array
         let level2 = &ty.template_args[0];
         assert!(matches!(level2.base, TypeBase::Named(_)));
         assert_eq!(level2.template_args.len(), 1);
-        
+
         // Verify third level weakref
         let level3 = &level2.template_args[0];
         assert!(matches!(level3.base, TypeBase::Named(_)));
         assert_eq!(level3.template_args.len(), 1);
-        
+
         // Verify fourth level Foo
         let level4 = &level3.template_args[0];
         assert!(matches!(level4.base, TypeBase::Named(_)));
         assert_eq!(level4.template_args.len(), 1);
-        
+
         // Verify innermost string (also a registered type)
         let level5 = &level4.template_args[0];
         assert!(matches!(level5.base, TypeBase::Named(_)));
-        
+
         // Verify no extra nesting
         assert!(level5.template_args.is_empty());
     }
@@ -642,18 +677,18 @@ mod tests {
         let arena = bumpalo::Bump::new();
         let mut parser = Parser::new("array<dict<array<map<vector<int>>>>>", &arena);
         let ty = parser.parse_type().unwrap();
-        
+
         // Just verify it parses without error and has correct structure
         assert!(matches!(ty.base, TypeBase::Named(_)));
         assert_eq!(ty.template_args.len(), 1);
-        
+
         // Verify the nesting goes at least 3 levels deep
         let level2 = &ty.template_args[0];
         assert_eq!(level2.template_args.len(), 1);
-        
+
         let level3 = &level2.template_args[0];
         assert_eq!(level3.template_args.len(), 1);
-        
+
         // Continue to deeper levels
         let level4 = &level3.template_args[0];
         assert_eq!(level4.template_args.len(), 1);
@@ -663,7 +698,10 @@ mod tests {
 
         // Verify 6th level (int inside vector) is a primitive
         let level6 = &level5.template_args[0];
-        assert!(matches!(level6.base, TypeBase::Primitive(PrimitiveType::Int)));
+        assert!(matches!(
+            level6.base,
+            TypeBase::Primitive(PrimitiveType::Int)
+        ));
     }
 
     #[test]
@@ -685,12 +723,20 @@ mod tests {
         // Walk down 9 levels
         let mut current = &ty;
         for level in 1..=9 {
-            assert_eq!(current.template_args.len(), 1, "Level {} should have 1 arg", level);
+            assert_eq!(
+                current.template_args.len(),
+                1,
+                "Level {} should have 1 arg",
+                level
+            );
             current = &current.template_args[0];
         }
 
         // Level 10 should have no args (it's 'j' with no template)
-        assert!(current.template_args.is_empty(), "Innermost type should have no args");
+        assert!(
+            current.template_args.is_empty(),
+            "Innermost type should have no args"
+        );
     }
 
     // ========================================================================

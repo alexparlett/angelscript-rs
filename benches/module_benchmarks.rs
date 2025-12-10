@@ -23,8 +23,10 @@
 //! cargo bench --features profile-with-puffin -- "stress_5000" --test
 //! ```
 
+#![allow(clippy::arc_with_non_send_sync, clippy::collapsible_if)]
+
 use angelscript::Context;
-use criterion::{criterion_group, criterion_main, Criterion, Throughput};
+use criterion::{Criterion, Throughput, criterion_group, criterion_main};
 use std::hint::black_box;
 use std::sync::Arc;
 
@@ -101,7 +103,10 @@ fn print_profiling_stats() {
 
     for frame in view.recent_frames() {
         frame_count += 1;
-        let Ok(unpacked) = frame.unpacked() else { continue };
+        let unpacked = match frame.unpacked() {
+            Ok(u) => u,
+            Err(_) => continue,
+        };
         for (_thread_info, stream_info) in unpacked.thread_streams.iter() {
             let reader = Reader::from_start(&stream_info.stream);
             if let Ok(scopes) = reader.read_top_scopes() {
@@ -131,8 +136,16 @@ fn print_profiling_stats() {
 
         for (name, ns) in &entries {
             let ns = **ns;
-            let avg_ns = if frame_count > 0 { ns / frame_count } else { ns };
-            let pct = if total_ns > 0 { ns as f64 / total_ns as f64 * 100.0 } else { 0.0 };
+            let avg_ns = if frame_count > 0 {
+                ns / frame_count
+            } else {
+                ns
+            };
+            let pct = if total_ns > 0 {
+                ns as f64 / total_ns as f64 * 100.0
+            } else {
+                0.0
+            };
             println!(
                 "  {:30} {:>10.2?} avg ({:>5.1}%)",
                 name,
@@ -143,7 +156,11 @@ fn print_profiling_stats() {
 
         if frame_count > 0 {
             let avg_total = total_ns / frame_count;
-            println!("  {:30} {:>10.2?}", "TOTAL", std::time::Duration::from_nanos(avg_total as u64));
+            println!(
+                "  {:30} {:>10.2?}",
+                "TOTAL",
+                std::time::Duration::from_nanos(avg_total as u64)
+            );
         }
     }
     println!("=====================================\n");
@@ -229,8 +246,7 @@ fn size_based_benchmarks(c: &mut Criterion) {
     group.bench_function("xxlarge_1000_lines", |b| {
         b.iter(|| {
             let mut unit = ctx.create_unit().unwrap();
-            unit.add_source("test.as", black_box(xlarge_1000))
-                .unwrap();
+            unit.add_source("test.as", black_box(xlarge_1000)).unwrap();
             unit.build().unwrap();
             black_box(unit.function_count())
         });
@@ -242,8 +258,7 @@ fn size_based_benchmarks(c: &mut Criterion) {
     group.bench_function("stress_5000_lines", |b| {
         b.iter(|| {
             let mut unit = ctx.create_unit().unwrap();
-            unit.add_source("test.as", black_box(xxlarge_5000))
-                .unwrap();
+            unit.add_source("test.as", black_box(xxlarge_5000)).unwrap();
             unit.build().unwrap();
             end_profiling_frame();
             black_box(unit.function_count())
@@ -293,8 +308,7 @@ fn feature_specific_benchmarks(c: &mut Criterion) {
     group.bench_function("classes", |b| {
         b.iter(|| {
             let mut unit = ctx.create_unit().unwrap();
-            unit.add_source("test.as", black_box(class_basic))
-                .unwrap();
+            unit.add_source("test.as", black_box(class_basic)).unwrap();
             unit.build().unwrap();
             black_box(unit.function_count())
         });
@@ -305,8 +319,7 @@ fn feature_specific_benchmarks(c: &mut Criterion) {
     group.bench_function("inheritance", |b| {
         b.iter(|| {
             let mut unit = ctx.create_unit().unwrap();
-            unit.add_source("test.as", black_box(inheritance))
-                .unwrap();
+            unit.add_source("test.as", black_box(inheritance)).unwrap();
             unit.build().unwrap();
             black_box(unit.function_count())
         });
@@ -339,8 +352,7 @@ fn feature_specific_benchmarks(c: &mut Criterion) {
     group.bench_function("expressions", |b| {
         b.iter(|| {
             let mut unit = ctx.create_unit().unwrap();
-            unit.add_source("test.as", black_box(expressions))
-                .unwrap();
+            unit.add_source("test.as", black_box(expressions)).unwrap();
             unit.build().unwrap();
             black_box(unit.function_count())
         });
@@ -351,8 +363,7 @@ fn feature_specific_benchmarks(c: &mut Criterion) {
     group.bench_function("control_flow", |b| {
         b.iter(|| {
             let mut unit = ctx.create_unit().unwrap();
-            unit.add_source("test.as", black_box(control_flow))
-                .unwrap();
+            unit.add_source("test.as", black_box(control_flow)).unwrap();
             unit.build().unwrap();
             black_box(unit.function_count())
         });

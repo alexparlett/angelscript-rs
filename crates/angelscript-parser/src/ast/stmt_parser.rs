@@ -3,11 +3,11 @@
 //! Implements parsing of all statement types including control flow,
 //! loops, variable declarations, and blocks.
 
-use crate::ast::{Ident, ParseError, ParseErrorKind};
-use crate::ast::stmt::*;
-use crate::ast::expr::Expr;
-use crate::lexer::TokenKind;
 use super::parser::Parser;
+use crate::ast::expr::Expr;
+use crate::ast::stmt::*;
+use crate::ast::{Ident, ParseError, ParseErrorKind};
+use crate::lexer::TokenKind;
 use bumpalo::collections::Vec as BVec;
 
 impl<'ast> Parser<'ast> {
@@ -103,7 +103,10 @@ impl<'ast> Parser<'ast> {
     }
 
     /// Parse a variable declarator (name with optional initializer).
-    fn parse_var_declarator(&mut self, var_type: &crate::ast::types::TypeExpr<'ast>) -> Result<VarDeclarator<'ast>, ParseError> {
+    fn parse_var_declarator(
+        &mut self,
+        var_type: &crate::ast::types::TypeExpr<'ast>,
+    ) -> Result<VarDeclarator<'ast>, ParseError> {
         let name_token = self.expect(TokenKind::Identifier)?;
         let name = Ident::new(name_token.lexeme, name_token.span);
 
@@ -132,8 +135,11 @@ impl<'ast> Parser<'ast> {
 
     /// Parse constructor call arguments for variable initialization.
     /// This handles: `Point p(1, 2);` as a call expression.
-    fn parse_constructor_call(&mut self, ty: &crate::ast::types::TypeExpr<'ast>) -> Result<&'ast Expr<'ast>, ParseError> {
-        use crate::ast::expr::{CallExpr, Argument, IdentExpr};
+    fn parse_constructor_call(
+        &mut self,
+        ty: &crate::ast::types::TypeExpr<'ast>,
+    ) -> Result<&'ast Expr<'ast>, ParseError> {
+        use crate::ast::expr::{Argument, CallExpr, IdentExpr};
 
         let start_span = self.expect(TokenKind::LeftParen)?.span;
 
@@ -143,7 +149,9 @@ impl<'ast> Parser<'ast> {
         if !self.check(TokenKind::RightParen) {
             loop {
                 // Parse optional named argument
-                let name = if self.check(TokenKind::Identifier) && self.peek_nth(1).kind == TokenKind::Colon {
+                let name = if self.check(TokenKind::Identifier)
+                    && self.peek_nth(1).kind == TokenKind::Colon
+                {
                     let ident = self.advance();
                     self.expect(TokenKind::Colon)?;
                     Some(Ident::new(ident.lexeme, ident.span))
@@ -174,13 +182,9 @@ impl<'ast> Parser<'ast> {
             crate::ast::types::TypeBase::Named(name) => (ty.scope, *name),
             _ => {
                 return Err(ParseError::new(
-
                     ParseErrorKind::InvalidExpression,
-
                     ty.span,
-
                     "constructor call requires a named type",
-
                 ));
             }
         };
@@ -366,7 +370,7 @@ impl<'ast> Parser<'ast> {
                 return Err(ParseError::new(
                     ParseErrorKind::InternalError,
                     span,
-                    "parse_var_decl() returned non-VarDecl statement"
+                    "parse_var_decl() returned non-VarDecl statement",
                 ));
             }
         } else {
@@ -411,7 +415,8 @@ impl<'ast> Parser<'ast> {
     ///
     /// Grammar: `'foreach' '(' TYPE IDENTIFIER (',' TYPE IDENTIFIER)* ':' ASSIGN ')' STATEMENT`
     pub fn parse_foreach(&mut self) -> Result<Stmt<'ast>, ParseError> {
-        let start_span = self.eat_contextual("foreach")
+        let start_span = self
+            .eat_contextual("foreach")
             .ok_or_else(|| {
                 let span = self.peek().span;
                 ParseError::new(
@@ -432,16 +437,16 @@ impl<'ast> Parser<'ast> {
             // Validate that we have a valid variable declaration start
             // Variables in foreach can start with types (keywords, identifiers) or reference (&)
             // Note: We check BEFORE the colon check to catch trailing commas
-            if !self.is_type_start() && !self.check(TokenKind::Amp) && !self.check(TokenKind::Colon) {
+            if !self.is_type_start() && !self.check(TokenKind::Amp) && !self.check(TokenKind::Colon)
+            {
                 let token = *self.peek();
                 return Err(ParseError::new(
-
                     crate::ast::ParseErrorKind::ExpectedToken,
-
                     token.span,
-
-                    format!("expected variable declaration or ':' after ',' in foreach, found {}", token.kind),
-
+                    format!(
+                        "expected variable declaration or ':' after ',' in foreach, found {}",
+                        token.kind
+                    ),
                 ));
             }
 
@@ -449,13 +454,9 @@ impl<'ast> Parser<'ast> {
             if self.check(TokenKind::Colon) {
                 let span = self.peek().span;
                 return Err(ParseError::new(
-
                     crate::ast::ParseErrorKind::InvalidSyntax,
-
                     span,
-
                     "trailing comma before ':' in foreach is not allowed",
-
                 ));
             }
 
@@ -559,13 +560,9 @@ impl<'ast> Parser<'ast> {
         if stmts.is_empty() && self.check(TokenKind::RightBrace) {
             let err_span = self.peek().span;
             return Err(ParseError::new(
-
                 ParseErrorKind::ExpectedStatement,
-
                 err_span,
-
                 "switch case must have at least one statement (did you mean to use fall-through?)",
-
             ));
         }
 
@@ -598,7 +595,6 @@ impl<'ast> Parser<'ast> {
             span,
         })))
     }
-
 }
 
 #[cfg(test)]
@@ -928,12 +924,10 @@ mod tests {
         let mut parser = Parser::new("for (i = 0; i < 10; i++) { }", &arena);
         let stmt = parser.parse_statement().unwrap();
         match stmt {
-            Stmt::For(for_stmt) => {
-                match for_stmt.init {
-                    Some(ForInit::Expr(_)) => {}
-                    _ => panic!("Expected expression init"),
-                }
-            }
+            Stmt::For(for_stmt) => match for_stmt.init {
+                Some(ForInit::Expr(_)) => {}
+                _ => panic!("Expected expression init"),
+            },
             _ => panic!("Expected for statement"),
         }
     }
@@ -967,7 +961,8 @@ mod tests {
     #[test]
     fn parse_switch_multiple_cases() {
         let arena = bumpalo::Bump::new();
-        let mut parser = Parser::new(r#"
+        let mut parser = Parser::new(
+            r#"
             switch (x) {
                 case 1:
                     a = 1;
@@ -978,7 +973,9 @@ mod tests {
                 default:
                     a = 0;
             }
-        "#, &arena);
+        "#,
+            &arena,
+        );
         let stmt = parser.parse_statement().unwrap();
         match stmt {
             Stmt::Switch(switch) => {
@@ -991,7 +988,8 @@ mod tests {
     #[test]
     fn parse_switch_multiple_case_labels() {
         let arena = bumpalo::Bump::new();
-        let mut parser = Parser::new(r#"
+        let mut parser = Parser::new(
+            r#"
             switch (x) {
                 case 1:
                 case 2:
@@ -999,7 +997,9 @@ mod tests {
                     a = 123;
                     break;
             }
-        "#, &arena);
+        "#,
+            &arena,
+        );
         let stmt = parser.parse_statement().unwrap();
         match stmt {
             Stmt::Switch(switch) => {
@@ -1014,7 +1014,8 @@ mod tests {
     #[test]
     fn parse_switch_fallthrough() {
         let arena = bumpalo::Bump::new();
-        let mut parser = Parser::new(r#"
+        let mut parser = Parser::new(
+            r#"
             switch (x) {
                 case 1:
                     a = 1;
@@ -1022,7 +1023,9 @@ mod tests {
                     b = 2;
                     break;
             }
-        "#, &arena);
+        "#,
+            &arena,
+        );
         let stmt = parser.parse_statement().unwrap();
         match stmt {
             Stmt::Switch(switch) => {
@@ -1036,12 +1039,15 @@ mod tests {
     fn parse_switch_empty_case_error() {
         // Last case with no statements should be a parse error
         let arena = bumpalo::Bump::new();
-        let mut parser = Parser::new(r#"
+        let mut parser = Parser::new(
+            r#"
             switch (x) {
                 case 1:
                 default:
             }
-        "#, &arena);
+        "#,
+            &arena,
+        );
         let result = parser.parse_statement();
         assert!(result.is_err());
         // Record the error so we can check it
@@ -1055,14 +1061,17 @@ mod tests {
     fn parse_switch_empty_intermediate_case_ok() {
         // Empty intermediate cases are OK (fall-through)
         let arena = bumpalo::Bump::new();
-        let mut parser = Parser::new(r#"
+        let mut parser = Parser::new(
+            r#"
             switch (x) {
                 case 1:
                 case 2:
                     doSomething();
                     break;
             }
-        "#, &arena);
+        "#,
+            &arena,
+        );
         let stmt = parser.parse_statement().unwrap();
         match stmt {
             Stmt::Switch(switch) => {
@@ -1077,7 +1086,8 @@ mod tests {
     #[test]
     fn parse_if_else_if_chain() {
         let arena = bumpalo::Bump::new();
-        let mut parser = Parser::new(r#"
+        let mut parser = Parser::new(
+            r#"
             if (x > 10)
                 a = 1;
             else if (x > 5)
@@ -1086,7 +1096,9 @@ mod tests {
                 a = 3;
             else
                 a = 0;
-        "#, &arena);
+        "#,
+            &arena,
+        );
         let stmt = parser.parse_statement().unwrap();
         match stmt {
             Stmt::If(if_stmt) => {
@@ -1107,12 +1119,10 @@ mod tests {
         let mut parser = Parser::new("while (true) { x++; }", &arena);
         let stmt = parser.parse_statement().unwrap();
         match stmt {
-            Stmt::While(while_stmt) => {
-                match &while_stmt.body {
-                    Stmt::Block(_) => {}
-                    _ => panic!("Expected block body"),
-                }
-            }
+            Stmt::While(while_stmt) => match &while_stmt.body {
+                Stmt::Block(_) => {}
+                _ => panic!("Expected block body"),
+            },
             _ => panic!("Expected while statement"),
         }
     }
@@ -1123,12 +1133,10 @@ mod tests {
         let mut parser = Parser::new("while (x > 0) x--;", &arena);
         let stmt = parser.parse_statement().unwrap();
         match stmt {
-            Stmt::While(while_stmt) => {
-                match &while_stmt.body {
-                    Stmt::Expr(_) => {}
-                    _ => panic!("Expected expr statement body"),
-                }
-            }
+            Stmt::While(while_stmt) => match &while_stmt.body {
+                Stmt::Expr(_) => {}
+                _ => panic!("Expected expr statement body"),
+            },
             _ => panic!("Expected while statement"),
         }
     }
@@ -1147,13 +1155,16 @@ mod tests {
     #[test]
     fn parse_nested_loops() {
         let arena = bumpalo::Bump::new();
-        let mut parser = Parser::new(r#"
+        let mut parser = Parser::new(
+            r#"
             for (int i = 0; i < 10; i++) {
                 for (int j = 0; j < 10; j++) {
                     matrix[i, j] = 0;
                 }
             }
-        "#, &arena);
+        "#,
+            &arena,
+        );
         let stmt = parser.parse_statement().unwrap();
         match stmt {
             Stmt::For(for_stmt) => {
@@ -1176,12 +1187,15 @@ mod tests {
     #[test]
     fn parse_nested_if_in_loop() {
         let arena = bumpalo::Bump::new();
-        let mut parser = Parser::new(r#"
+        let mut parser = Parser::new(
+            r#"
             while (true) {
                 if (x > 0)
                     break;
             }
-        "#, &arena);
+        "#,
+            &arena,
+        );
         let stmt = parser.parse_statement().unwrap();
         match stmt {
             Stmt::While(_) => {}
@@ -1270,7 +1284,8 @@ mod tests {
     #[test]
     fn parse_switch_with_fallthrough_coverage() {
         let arena = bumpalo::Bump::new();
-        let mut parser = Parser::new(r#"
+        let mut parser = Parser::new(
+            r#"
             switch (x) {
                 case 1:
                 case 2:
@@ -1280,7 +1295,9 @@ mod tests {
                 default:
                     doDefault();
             }
-        "#, &arena);
+        "#,
+            &arena,
+        );
         let stmt = parser.parse_statement().unwrap();
         assert!(matches!(stmt, Stmt::Switch(_)));
     }
@@ -1342,7 +1359,8 @@ mod tests {
     #[test]
     fn parse_try_catch_with_statements_coverage() {
         let arena = bumpalo::Bump::new();
-        let mut parser = Parser::new(r#"
+        let mut parser = Parser::new(
+            r#"
             try {
                 x = riskyOperation();
                 y = anotherRisky();
@@ -1350,7 +1368,9 @@ mod tests {
                 handleError();
                 logError();
             }
-        "#, &arena);
+        "#,
+            &arena,
+        );
         let stmt = parser.parse_statement().unwrap();
         match stmt {
             Stmt::TryCatch(try_catch) => {
@@ -1364,7 +1384,8 @@ mod tests {
     #[test]
     fn parse_chained_else_if_coverage() {
         let arena = bumpalo::Bump::new();
-        let mut parser = Parser::new(r#"
+        let mut parser = Parser::new(
+            r#"
             if (x == 1)
                 a();
             else if (x == 2)
@@ -1373,7 +1394,9 @@ mod tests {
                 c();
             else
                 d();
-        "#, &arena);
+        "#,
+            &arena,
+        );
         let stmt = parser.parse_statement().unwrap();
         match stmt {
             Stmt::If(if_stmt) => {
@@ -1394,14 +1417,12 @@ mod tests {
         let mut parser = Parser::new("while (x > 0) { x--; y++; }", &arena);
         let stmt = parser.parse_statement().unwrap();
         match stmt {
-            Stmt::While(while_stmt) => {
-                match &while_stmt.body {
-                    Stmt::Block(block) => {
-                        assert_eq!(block.stmts.len(), 2);
-                    }
-                    _ => panic!("Expected block body"),
+            Stmt::While(while_stmt) => match &while_stmt.body {
+                Stmt::Block(block) => {
+                    assert_eq!(block.stmts.len(), 2);
                 }
-            }
+                _ => panic!("Expected block body"),
+            },
             _ => panic!("Expected while statement"),
         }
     }
@@ -1412,14 +1433,12 @@ mod tests {
         let mut parser = Parser::new("do { x--; y++; } while (x > 0);", &arena);
         let stmt = parser.parse_statement().unwrap();
         match stmt {
-            Stmt::DoWhile(do_while) => {
-                match &do_while.body {
-                    Stmt::Block(block) => {
-                        assert_eq!(block.stmts.len(), 2);
-                    }
-                    _ => panic!("Expected block body"),
+            Stmt::DoWhile(do_while) => match &do_while.body {
+                Stmt::Block(block) => {
+                    assert_eq!(block.stmts.len(), 2);
                 }
-            }
+                _ => panic!("Expected block body"),
+            },
             _ => panic!("Expected do-while statement"),
         }
     }
@@ -1496,12 +1515,10 @@ mod tests {
         let mut parser = Parser::new("for (i = 0; i < 10; i++) { }", &arena);
         let stmt = parser.parse_statement().unwrap();
         match stmt {
-            Stmt::For(for_stmt) => {
-                match &for_stmt.init {
-                    Some(ForInit::Expr(_)) => {}
-                    _ => panic!("Expected expression init"),
-                }
-            }
+            Stmt::For(for_stmt) => match &for_stmt.init {
+                Some(ForInit::Expr(_)) => {}
+                _ => panic!("Expected expression init"),
+            },
             _ => panic!("Expected for statement"),
         }
     }
@@ -1546,12 +1563,10 @@ mod tests {
         let mut parser = Parser::new("for (int i = 0; i < 10; i++) { }", &arena);
         let stmt = parser.parse_statement().unwrap();
         match stmt {
-            Stmt::For(for_stmt) => {
-                match &for_stmt.init {
-                    Some(ForInit::VarDecl(_)) => {}
-                    _ => panic!("Expected var decl init"),
-                }
-            }
+            Stmt::For(for_stmt) => match &for_stmt.init {
+                Some(ForInit::VarDecl(_)) => {}
+                _ => panic!("Expected var decl init"),
+            },
             _ => panic!("Expected for statement"),
         }
     }
@@ -1612,5 +1627,4 @@ mod tests {
             _ => panic!("Expected switch statement"),
         }
     }
-
 }

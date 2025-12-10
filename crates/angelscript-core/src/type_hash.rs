@@ -164,7 +164,9 @@ impl TypeHash {
                 .copied()
                 .unwrap_or_else(|| hash_constants::PARAM_MARKERS[0].wrapping_add(i as u64));
             // Use wrapping_mul to make parameter order matter (not commutative like XOR)
-            hash = hash.wrapping_mul(hash_constants::SEP).wrapping_add(marker ^ param.0);
+            hash = hash
+                .wrapping_mul(hash_constants::SEP)
+                .wrapping_add(marker ^ param.0);
         }
         TypeHash(hash)
     }
@@ -175,17 +177,27 @@ impl TypeHash {
     /// Parameter order matters. The `is_const` flag indicates if this is a const method,
     /// and `return_is_const` indicates if the return type is const-qualified.
     #[inline]
-    pub fn from_method(owner: TypeHash, name: &str, param_hashes: &[TypeHash], is_const: bool, return_is_const: bool) -> Self {
+    pub fn from_method(
+        owner: TypeHash,
+        name: &str,
+        param_hashes: &[TypeHash],
+        is_const: bool,
+        return_is_const: bool,
+    ) -> Self {
         // Include const flags in initial hash computation
-        let const_modifier = if is_const { 0x1 } else { 0x0 } | if return_is_const { 0x2 } else { 0x0 };
-        let mut hash = hash_constants::METHOD ^ owner.0 ^ xxh64(name.as_bytes(), 0) ^ const_modifier;
+        let const_modifier =
+            if is_const { 0x1 } else { 0x0 } | if return_is_const { 0x2 } else { 0x0 };
+        let mut hash =
+            hash_constants::METHOD ^ owner.0 ^ xxh64(name.as_bytes(), 0) ^ const_modifier;
         for (i, param) in param_hashes.iter().enumerate() {
             let marker = hash_constants::PARAM_MARKERS
                 .get(i)
                 .copied()
                 .unwrap_or_else(|| hash_constants::PARAM_MARKERS[0].wrapping_add(i as u64));
             // Use wrapping_mul to make parameter order matter (not commutative like XOR)
-            hash = hash.wrapping_mul(hash_constants::SEP).wrapping_add(marker ^ param.0);
+            hash = hash
+                .wrapping_mul(hash_constants::SEP)
+                .wrapping_add(marker ^ param.0);
         }
         TypeHash(hash)
     }
@@ -203,7 +215,9 @@ impl TypeHash {
                 .copied()
                 .unwrap_or_else(|| hash_constants::PARAM_MARKERS[0].wrapping_add(i as u64));
             // Use wrapping_mul to make parameter order matter (not commutative like XOR)
-            hash = hash.wrapping_mul(hash_constants::SEP).wrapping_add(marker ^ param.0);
+            hash = hash
+                .wrapping_mul(hash_constants::SEP)
+                .wrapping_add(marker ^ param.0);
         }
         TypeHash(hash)
     }
@@ -214,17 +228,26 @@ impl TypeHash {
     /// `opAdd` from a regular method named "opAdd". The `is_const` flag indicates if this
     /// is a const method, and `return_is_const` indicates if the return type is const-qualified.
     #[inline]
-    pub fn from_operator(owner: TypeHash, operator_name: &str, param_hashes: &[TypeHash], is_const: bool, return_is_const: bool) -> Self {
+    pub fn from_operator(
+        owner: TypeHash,
+        operator_name: &str,
+        param_hashes: &[TypeHash],
+        is_const: bool,
+        return_is_const: bool,
+    ) -> Self {
         let name_hash = xxh64(operator_name.as_bytes(), 0);
         // Include const flags in initial hash computation
-        let const_modifier = if is_const { 0x1 } else { 0x0 } | if return_is_const { 0x2 } else { 0x0 };
+        let const_modifier =
+            if is_const { 0x1 } else { 0x0 } | if return_is_const { 0x2 } else { 0x0 };
         let mut hash = hash_constants::OPERATOR ^ owner.0 ^ name_hash ^ const_modifier;
         for (i, param) in param_hashes.iter().enumerate() {
             let marker = hash_constants::PARAM_MARKERS
                 .get(i)
                 .copied()
                 .unwrap_or_else(|| hash_constants::PARAM_MARKERS[0].wrapping_add(i as u64));
-            hash = hash.wrapping_mul(hash_constants::SEP).wrapping_add(marker ^ param.0);
+            hash = hash
+                .wrapping_mul(hash_constants::SEP)
+                .wrapping_add(marker ^ param.0);
         }
         TypeHash(hash)
     }
@@ -253,7 +276,9 @@ impl TypeHash {
                 .copied()
                 .unwrap_or_else(|| hash_constants::PARAM_MARKERS[0].wrapping_add(i as u64));
             // Use wrapping_mul to make type argument order matter (not commutative like XOR)
-            hash = hash.wrapping_mul(hash_constants::SEP).wrapping_add(marker ^ arg.0);
+            hash = hash
+                .wrapping_mul(hash_constants::SEP)
+                .wrapping_add(marker ^ arg.0);
         }
         TypeHash(hash)
     }
@@ -512,12 +537,15 @@ mod tests {
         let int_hash = TypeHash::from_name("int");
         let float_hash = TypeHash::from_name("float");
 
-        let dict_string_int = TypeHash::from_template_instance(dict_template, &[string_hash, int_hash]);
-        let dict_string_float = TypeHash::from_template_instance(dict_template, &[string_hash, float_hash]);
-        let dict_int_string = TypeHash::from_template_instance(dict_template, &[int_hash, string_hash]);
+        let dict_string_int =
+            TypeHash::from_template_instance(dict_template, &[string_hash, int_hash]);
+        let dict_string_float =
+            TypeHash::from_template_instance(dict_template, &[string_hash, float_hash]);
+        let dict_int_string =
+            TypeHash::from_template_instance(dict_template, &[int_hash, string_hash]);
 
         assert_ne!(dict_string_int, dict_string_float);
-        assert_ne!(dict_string_int, dict_int_string);  // Order matters
+        assert_ne!(dict_string_int, dict_int_string); // Order matters
     }
 
     #[test]
@@ -603,7 +631,11 @@ mod tests {
         ];
 
         let unique: HashSet<_> = primitives.iter().collect();
-        assert_eq!(unique.len(), primitives.len(), "All primitive hashes should be unique");
+        assert_eq!(
+            unique.len(),
+            primitives.len(),
+            "All primitive hashes should be unique"
+        );
     }
 
     #[test]

@@ -3,11 +3,13 @@
 //! This module implements expression parsing with proper operator precedence
 //! and associativity using the Pratt parsing algorithm.
 
-use crate::ast::{AssignOp, BinaryOp, Ident, ParseError, ParseErrorKind, PostfixOp, Scope, UnaryOp};
-use angelscript_core::Span;
-use crate::ast::expr::*;
-use crate::lexer::TokenKind;
 use super::parser::Parser;
+use crate::ast::expr::*;
+use crate::ast::{
+    AssignOp, BinaryOp, Ident, ParseError, ParseErrorKind, PostfixOp, Scope, UnaryOp,
+};
+use crate::lexer::TokenKind;
+use angelscript_core::Span;
 
 impl<'ast> Parser<'ast> {
     /// Parse an expression with a minimum binding power.
@@ -17,7 +19,7 @@ impl<'ast> Parser<'ast> {
     pub fn parse_expr(&mut self, min_bp: u8) -> Result<&'ast Expr<'ast>, ParseError> {
         // Parse the prefix expression (literals, identifiers, unary ops, etc.)
         let mut lhs = self.parse_prefix()?;
-        
+
         // Now parse infix and postfix operators
         loop {
             // Check for postfix operators (highest precedence)
@@ -29,10 +31,12 @@ impl<'ast> Parser<'ast> {
 
                 let op_token = self.advance();
                 let span = lhs.span().merge(op_token.span);
-                lhs = self.arena.alloc(Expr::Postfix(self.arena.alloc(PostfixExpr {
-                    operand: lhs,
-                    op: postfix_op,
-                    span,
+                lhs = self
+                    .arena
+                    .alloc(Expr::Postfix(self.arena.alloc(PostfixExpr {
+                        operand: lhs,
+                        op: postfix_op,
+                        span,
                     })));
                 continue;
             }
@@ -163,7 +167,9 @@ impl<'ast> Parser<'ast> {
 
             TokenKind::FloatLiteral => {
                 self.advance();
-                let value = token.lexeme.trim_end_matches('f')
+                let value = token
+                    .lexeme
+                    .trim_end_matches('f')
                     .trim_end_matches('F')
                     .parse::<f32>()
                     .unwrap_or(0.0);
@@ -242,24 +248,16 @@ impl<'ast> Parser<'ast> {
             }
 
             // Cast expression
-            TokenKind::Cast => {
-                self.parse_cast()
-            }
+            TokenKind::Cast => self.parse_cast(),
 
             // Lambda expression
-            _ if self.check_contextual("function") => {
-                self.parse_lambda()
-            }
+            _ if self.check_contextual("function") => self.parse_lambda(),
 
             // Initializer list
-            TokenKind::LeftBrace => {
-                self.parse_init_list()
-            }
+            TokenKind::LeftBrace => self.parse_init_list(),
 
             // Identifier or constructor call
-            TokenKind::Identifier | TokenKind::ColonColon => {
-                self.parse_ident_or_constructor()
-            }
+            TokenKind::Identifier | TokenKind::ColonColon => self.parse_ident_or_constructor(),
 
             // Super keyword (for base class constructor calls)
             TokenKind::Super => {
@@ -286,26 +284,33 @@ impl<'ast> Parser<'ast> {
             }
 
             // Type keywords (for constructor calls)
-            TokenKind::Void | TokenKind::Bool | TokenKind::Int | TokenKind::Int8
-            | TokenKind::Int16 | TokenKind::Int64 | TokenKind::UInt | TokenKind::UInt8
-            | TokenKind::UInt16 | TokenKind::UInt64 | TokenKind::Float | TokenKind::Double
-            | TokenKind::Auto => {
-                self.parse_ident_or_constructor()
-            }
+            TokenKind::Void
+            | TokenKind::Bool
+            | TokenKind::Int
+            | TokenKind::Int8
+            | TokenKind::Int16
+            | TokenKind::Int64
+            | TokenKind::UInt
+            | TokenKind::UInt8
+            | TokenKind::UInt16
+            | TokenKind::UInt64
+            | TokenKind::Float
+            | TokenKind::Double
+            | TokenKind::Auto => self.parse_ident_or_constructor(),
 
-            _ => {
-                Err(ParseError::new(
+            _ => Err(ParseError::new(
                 ParseErrorKind::ExpectedExpression,
                 token.span,
                 format!("expected expression, found {}", token.kind),
-                
-            ))
-            }
+            )),
         }
     }
 
     /// Parse member access (dot operator).
-    fn parse_member_access(&mut self, object: &'ast Expr<'ast>) -> Result<&'ast Expr<'ast>, ParseError> {
+    fn parse_member_access(
+        &mut self,
+        object: &'ast Expr<'ast>,
+    ) -> Result<&'ast Expr<'ast>, ParseError> {
         let dot_span = self.expect(TokenKind::Dot)?.span;
 
         // The member must be an identifier
@@ -316,9 +321,10 @@ impl<'ast> Parser<'ast> {
         if self.check(TokenKind::LeftParen) {
             let args = self.parse_arguments()?;
             let span = object.span().merge(
-                self.buffer.get(self.position.saturating_sub(1))
+                self.buffer
+                    .get(self.position.saturating_sub(1))
                     .map(|t| t.span)
-                    .unwrap_or(dot_span)
+                    .unwrap_or(dot_span),
             );
 
             Ok(self.arena.alloc(Expr::Member(self.arena.alloc(MemberExpr {
@@ -344,9 +350,10 @@ impl<'ast> Parser<'ast> {
     fn parse_call(&mut self, callee: &'ast Expr<'ast>) -> Result<&'ast Expr<'ast>, ParseError> {
         let args = self.parse_arguments()?;
         let span = callee.span().merge(
-            self.buffer.get(self.position.saturating_sub(1))
+            self.buffer
+                .get(self.position.saturating_sub(1))
                 .map(|t| t.span)
-                .unwrap_or(callee.span())
+                .unwrap_or(callee.span()),
         );
 
         Ok(self.arena.alloc(Expr::Call(self.arena.alloc(CallExpr {
@@ -387,7 +394,8 @@ impl<'ast> Parser<'ast> {
         let start_span = self.peek().span;
 
         // Check for named index: identifier :
-        let name = if self.check(TokenKind::Identifier) && self.peek_nth(1).kind == TokenKind::Colon {
+        let name = if self.check(TokenKind::Identifier) && self.peek_nth(1).kind == TokenKind::Colon
+        {
             let ident_token = self.advance();
             self.expect(TokenKind::Colon)?; // Validate colon is present
             Some(Ident::new(ident_token.lexeme, ident_token.span))
@@ -402,19 +410,24 @@ impl<'ast> Parser<'ast> {
     }
 
     /// Parse ternary conditional (condition ? then : else).
-    fn parse_ternary(&mut self, condition: &'ast Expr<'ast>) -> Result<&'ast Expr<'ast>, ParseError> {
+    fn parse_ternary(
+        &mut self,
+        condition: &'ast Expr<'ast>,
+    ) -> Result<&'ast Expr<'ast>, ParseError> {
         self.expect(TokenKind::Question)?;
         let then_expr = self.parse_expr(0)?;
         self.expect(TokenKind::Colon)?;
         let else_expr = self.parse_expr(1)?; // Right-associative
         let span = condition.span().merge(else_expr.span());
 
-        Ok(self.arena.alloc(Expr::Ternary(self.arena.alloc(TernaryExpr {
-            condition,
-            then_expr,
-            else_expr,
-            span,
-        }))))
+        Ok(self
+            .arena
+            .alloc(Expr::Ternary(self.arena.alloc(TernaryExpr {
+                condition,
+                then_expr,
+                else_expr,
+                span,
+            }))))
     }
 
     /// Parse cast expression: cast<Type>(expr)
@@ -436,7 +449,8 @@ impl<'ast> Parser<'ast> {
 
     /// Parse lambda expression: function(params) { body }
     fn parse_lambda(&mut self) -> Result<&'ast Expr<'ast>, ParseError> {
-        let start_span = self.eat_contextual("function")
+        let start_span = self
+            .eat_contextual("function")
             .ok_or_else(|| {
                 let span = self.peek().span;
                 ParseError::new(
@@ -496,7 +510,7 @@ impl<'ast> Parser<'ast> {
                 let token = self.advance();
                 Some(Ident::new(token.lexeme, token.span))
             } else {
-                None  // Type without name (e.g., function(int, int))
+                None // Type without name (e.g., function(int, int))
             };
             (Some(param_ty), param_name)
         } else if self.check(TokenKind::Identifier) {
@@ -574,7 +588,7 @@ impl<'ast> Parser<'ast> {
                 Err(ParseError::new(
                     ParseErrorKind::InternalError,
                     span,
-                    "parse_init_list() returned non-InitList expression"
+                    "parse_init_list() returned non-InitList expression",
                 ))
             }
         } else {
@@ -606,9 +620,10 @@ impl<'ast> Parser<'ast> {
             if self.check(TokenKind::LeftParen) {
                 let args = self.parse_arguments()?;
                 let span = start_span.merge(
-                    self.buffer.get(self.position.saturating_sub(1))
+                    self.buffer
+                        .get(self.position.saturating_sub(1))
                         .map(|t| t.span)
-                        .unwrap_or(ty.span)
+                        .unwrap_or(ty.span),
                 );
 
                 // Primitive types: Type(expr) is always a cast (primitives have no constructors)
@@ -618,13 +633,12 @@ impl<'ast> Parser<'ast> {
                     // Must have exactly one argument for cast
                     if args.len() != 1 {
                         return Err(ParseError::new(
-
                             ParseErrorKind::InvalidExpression,
-
                             span,
-
-                            format!("primitive cast requires exactly one argument, found {}", args.len()),
-
+                            format!(
+                                "primitive cast requires exactly one argument, found {}",
+                                args.len()
+                            ),
                         ));
                     }
 
@@ -640,13 +654,9 @@ impl<'ast> Parser<'ast> {
                         crate::ast::types::TypeBase::Named(name) => (ty.scope, name),
                         _ => {
                             return Err(ParseError::new(
-
                                 ParseErrorKind::ExpectedIdentifier,
-
                                 ty.span,
-
                                 "expected identifier",
-
                             ));
                         }
                     };
@@ -668,13 +678,12 @@ impl<'ast> Parser<'ast> {
                 // Lookahead said it was constructor call, but '(' is missing
                 let token = *self.peek();
                 Err(ParseError::new(
-
                     ParseErrorKind::ExpectedToken,
-
                     token.span,
-
-                    format!("expected '(' after type name for constructor call, found {}", token.kind),
-
+                    format!(
+                        "expected '(' after type name for constructor call, found {}",
+                        token.kind
+                    ),
                 ))
             }
         } else {
@@ -697,7 +706,9 @@ impl<'ast> Parser<'ast> {
             let mut ident = Ident::new(ident_token.lexeme, ident_token.span);
             let mut segments = bumpalo::collections::Vec::new_in(self.arena);
 
-            while self.check(TokenKind::ColonColon) && self.peek_nth(1).kind == TokenKind::Identifier {
+            while self.check(TokenKind::ColonColon)
+                && self.peek_nth(1).kind == TokenKind::Identifier
+            {
                 // Build scope path
                 self.advance(); // consume ::
 
@@ -765,7 +776,7 @@ impl<'ast> Parser<'ast> {
 
         // Must be followed by '(' to be constructor
         let result = self.check(TokenKind::LeftParen);
-        
+
         self.position = saved_pos;
         result
     }
@@ -783,7 +794,7 @@ impl<'ast> Parser<'ast> {
 
         while depth > 0 && !self.is_eof() && iterations < MAX_ITERATIONS {
             iterations += 1;
-            
+
             match self.peek().kind {
                 TokenKind::Less => {
                     depth += 1;
@@ -833,7 +844,8 @@ impl<'ast> Parser<'ast> {
         let start_span = self.peek().span;
 
         // Check for named argument: identifier :
-        let name = if self.check(TokenKind::Identifier) && self.peek_nth(1).kind == TokenKind::Colon {
+        let name = if self.check(TokenKind::Identifier) && self.peek_nth(1).kind == TokenKind::Colon
+        {
             let ident_token = self.advance();
             self.expect(TokenKind::Colon)?; // Validate colon is present
             Some(Ident::new(ident_token.lexeme, ident_token.span))
@@ -854,10 +866,17 @@ impl<'ast> Parser<'ast> {
     /// - `\\` (backslash), `\"` (double quote), `\'` (single quote)
     /// - `\0` (null byte)
     /// - `\xNN` (hex byte, e.g., `\xFF`)
-    fn process_string_bytes(&mut self, lexeme: &str, is_heredoc: bool, span: Span) -> Result<Vec<u8>, ParseError> {
+    fn process_string_bytes(
+        &mut self,
+        lexeme: &str,
+        is_heredoc: bool,
+        span: Span,
+    ) -> Result<Vec<u8>, ParseError> {
         let content = if is_heredoc {
             // Heredoc: strip """ from both ends
-            lexeme.trim_start_matches("\"\"\"").trim_end_matches("\"\"\"")
+            lexeme
+                .trim_start_matches("\"\"\"")
+                .trim_end_matches("\"\"\"")
         } else {
             // Regular string: strip surrounding quotes
             let trimmed = lexeme.trim_start_matches('"').trim_start_matches('\'');
@@ -1226,7 +1245,7 @@ mod tests {
         for (op_str, expected_op) in operators {
             let source = format!("a {} b", op_str);
             let arena = bumpalo::Bump::new();
-        let mut parser = Parser::new(&source, &arena);
+            let mut parser = Parser::new(&source, &arena);
             let expr = parser.parse_expr(0).unwrap();
             match expr {
                 Expr::Binary(bin) => {
@@ -1259,7 +1278,7 @@ mod tests {
         for (op_str, expected_op) in operators {
             let source = format!("{}x", op_str);
             let arena = bumpalo::Bump::new();
-        let mut parser = Parser::new(&source, &arena);
+            let mut parser = Parser::new(&source, &arena);
             let expr = parser.parse_expr(0).unwrap();
             match expr {
                 Expr::Unary(un) => {
@@ -1328,7 +1347,7 @@ mod tests {
         for (op_str, expected_op) in operators {
             let source = format!("x {} 42", op_str);
             let arena = bumpalo::Bump::new();
-        let mut parser = Parser::new(&source, &arena);
+            let mut parser = Parser::new(&source, &arena);
             let expr = parser.parse_expr(0).unwrap();
             match expr {
                 Expr::Assign(assign) => {
@@ -1353,14 +1372,12 @@ mod tests {
         let mut parser = Parser::new("obj.foo(1, 2, 3)", &arena);
         let expr = parser.parse_expr(0).unwrap();
         match expr {
-            Expr::Member(mem) => {
-                match mem.member {
-                    MemberAccess::Method { ref args, .. } => {
-                        assert_eq!(args.len(), 3);
-                    }
-                    _ => panic!("Expected method call"),
+            Expr::Member(mem) => match mem.member {
+                MemberAccess::Method { ref args, .. } => {
+                    assert_eq!(args.len(), 3);
                 }
-            }
+                _ => panic!("Expected method call"),
+            },
             _ => panic!("Expected member expression with method call"),
         }
     }
@@ -1371,14 +1388,12 @@ mod tests {
         let mut parser = Parser::new("obj.bar()", &arena);
         let expr = parser.parse_expr(0).unwrap();
         match expr {
-            Expr::Member(mem) => {
-                match mem.member {
-                    MemberAccess::Method { ref args, .. } => {
-                        assert_eq!(args.len(), 0);
-                    }
-                    _ => panic!("Expected method call"),
+            Expr::Member(mem) => match mem.member {
+                MemberAccess::Method { ref args, .. } => {
+                    assert_eq!(args.len(), 0);
                 }
-            }
+                _ => panic!("Expected method call"),
+            },
             _ => panic!("Expected member expression with method call"),
         }
     }
@@ -1389,15 +1404,13 @@ mod tests {
         let mut parser = Parser::new("obj.foo(x: 42)", &arena);
         let expr = parser.parse_expr(0).unwrap();
         match expr {
-            Expr::Member(mem) => {
-                match mem.member {
-                    MemberAccess::Method { ref args, .. } => {
-                        assert_eq!(args.len(), 1);
-                        assert!(args[0].name.is_some());
-                    }
-                    _ => panic!("Expected method call"),
+            Expr::Member(mem) => match mem.member {
+                MemberAccess::Method { ref args, .. } => {
+                    assert_eq!(args.len(), 1);
+                    assert!(args[0].name.is_some());
                 }
-            }
+                _ => panic!("Expected method call"),
+            },
             _ => panic!("Expected member expression with method call"),
         }
     }
@@ -1881,9 +1894,12 @@ mod tests {
     #[test]
     fn parse_heredoc_string_coverage() {
         let arena = bumpalo::Bump::new();
-        let mut parser = Parser::new(r#""""multi
+        let mut parser = Parser::new(
+            r#""""multi
 line
-string""""#, &arena);
+string""""#,
+            &arena,
+        );
         let expr = parser.parse_expr(0).unwrap();
         match expr {
             Expr::Literal(lit) => {
@@ -2242,7 +2258,10 @@ string""""#, &arena);
     #[test]
     fn parse_many_primitive_type_casts() {
         // Test all primitive type keywords for constructor-style casts
-        let types = vec!["int8", "int16", "int64", "uint", "uint8", "uint16", "uint64", "float", "double", "bool"];
+        let types = vec![
+            "int8", "int16", "int64", "uint", "uint8", "uint16", "uint64", "float", "double",
+            "bool",
+        ];
 
         for ty in types {
             let source = format!("{}(42)", ty);

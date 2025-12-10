@@ -353,7 +353,7 @@ mod tests {
 
     #[test]
     fn all_stmt_span_variants() {
-        use crate::ast::types::{TypeExpr, PrimitiveType};
+        use crate::ast::types::{PrimitiveType, TypeExpr};
         use bumpalo::Bump;
 
         let arena = Bump::new();

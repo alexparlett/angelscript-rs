@@ -34,7 +34,7 @@
 //! }
 //! ```
 
-use crate::{primitives, TypeHash};
+use crate::{TypeHash, primitives};
 
 /// Trait for types that can be registered with AngelScript.
 ///

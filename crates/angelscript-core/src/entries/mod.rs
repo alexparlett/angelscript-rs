@@ -15,17 +15,17 @@
 //! - [`TypeSource`], [`FunctionSource`] - Origin tracking (FFI vs script)
 //! - [`PropertyEntry`], [`EnumValue`] - Member types
 
-mod source;
-mod common;
-mod primitive;
-mod template_param;
-mod enum_entry;
-mod interface;
-mod funcdef;
 mod class;
+mod common;
+mod enum_entry;
+mod funcdef;
 mod function;
-mod type_entry;
 mod global_property;
+mod interface;
+mod primitive;
+mod source;
+mod template_param;
+mod type_entry;
 
 // Source tracking
 pub use source::{FunctionSource, TypeSource};
@@ -34,13 +34,13 @@ pub use source::{FunctionSource, TypeSource};
 pub use common::{EnumValue, PropertyEntry};
 
 // Individual entry types
+pub use class::ClassEntry;
+pub use enum_entry::EnumEntry;
+pub use funcdef::FuncdefEntry;
+pub use function::{FunctionEntry, FunctionImpl};
+pub use interface::InterfaceEntry;
 pub use primitive::PrimitiveEntry;
 pub use template_param::TemplateParamEntry;
-pub use enum_entry::EnumEntry;
-pub use interface::InterfaceEntry;
-pub use funcdef::FuncdefEntry;
-pub use class::ClassEntry;
-pub use function::{FunctionEntry, FunctionImpl};
 
 // Unified type entry
 pub use type_entry::TypeEntry;

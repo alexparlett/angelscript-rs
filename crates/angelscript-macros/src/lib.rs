@@ -25,11 +25,11 @@
 
 use proc_macro::TokenStream;
 
+mod attrs;
 mod derive_any;
+mod funcdef;
 mod function;
 mod interface;
-mod funcdef;
-mod attrs;
 
 /// Derive the `Any` trait for a type.
 ///

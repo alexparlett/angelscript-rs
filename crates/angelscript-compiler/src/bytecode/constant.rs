@@ -43,8 +43,8 @@ pub struct ConstantPool {
 enum ConstantKey {
     Int(i64),
     Uint(u64),
-    Float32(u32),  // Bit pattern for hashing
-    Float64(u64),  // Bit pattern for hashing
+    Float32(u32), // Bit pattern for hashing
+    Float64(u64), // Bit pattern for hashing
     StringData(Vec<u8>),
     TypeHash(TypeHash),
 }
@@ -177,7 +177,10 @@ mod tests {
         let mut pool = ConstantPool::new();
         let idx = pool.add_string(b"hello".to_vec());
         assert_eq!(idx, 0);
-        assert_eq!(pool.get(idx), Some(&Constant::StringData(b"hello".to_vec())));
+        assert_eq!(
+            pool.get(idx),
+            Some(&Constant::StringData(b"hello".to_vec()))
+        );
     }
 
     #[test]

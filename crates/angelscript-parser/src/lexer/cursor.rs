@@ -80,6 +80,7 @@ impl<'src> Cursor<'src> {
 
     /// Check if the current character satisfies a predicate.
     #[inline]
+    #[allow(dead_code)]
     pub fn check(&self, f: impl Fn(char) -> bool) -> bool {
         self.peek().is_some_and(f)
     }
@@ -172,6 +173,7 @@ impl<'src> Cursor<'src> {
     /// Consume characters while the predicate matches.
     ///
     /// Returns the consumed slice.
+    #[allow(dead_code)]
     pub fn eat_while(&mut self, f: impl Fn(char) -> bool) -> &'src str {
         let start = self.offset as usize;
         while self.check(&f) {
@@ -246,7 +248,7 @@ mod tests {
         assert_eq!(cursor.peek(), Some('e'));
         assert_eq!(cursor.offset(), 1);
     }
-    
+
     #[test]
     fn cursor_eat() {
         let mut cursor = Cursor::new("hello");

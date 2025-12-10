@@ -32,11 +32,11 @@
 //! The visitor pattern allows for extensible AST traversal without
 //! modifying the AST types themselves.
 
+use crate::ast::Script;
 use crate::ast::decl::*;
 use crate::ast::expr::*;
 use crate::ast::stmt::*;
 use crate::ast::types::*;
-use crate::ast::Script;
 
 /// Visitor trait for traversing AST nodes.
 ///
@@ -345,7 +345,10 @@ pub fn walk_item<'src, 'ast, V: Visitor<'ast>>(visitor: &mut V, item: &Item<'ast
 }
 
 /// Walk a function declaration.
-pub fn walk_function_decl<'src, 'ast, V: Visitor<'ast>>(visitor: &mut V, func: &FunctionDecl<'ast>) {
+pub fn walk_function_decl<'src, 'ast, V: Visitor<'ast>>(
+    visitor: &mut V,
+    func: &FunctionDecl<'ast>,
+) {
     // Visit return type
     if let Some(return_type) = &func.return_type {
         visitor.visit_return_type(return_type);
@@ -373,7 +376,10 @@ pub fn walk_class_decl<'src, 'ast, V: Visitor<'ast>>(visitor: &mut V, class: &Cl
 }
 
 /// Walk an interface declaration.
-pub fn walk_interface_decl<'src, 'ast, V: Visitor<'ast>>(visitor: &mut V, interface: &InterfaceDecl<'ast>) {
+pub fn walk_interface_decl<'src, 'ast, V: Visitor<'ast>>(
+    visitor: &mut V,
+    interface: &InterfaceDecl<'ast>,
+) {
     for member in interface.members {
         visitor.visit_interface_member(member);
     }
@@ -389,7 +395,10 @@ pub fn walk_enum_decl<'src, 'ast, V: Visitor<'ast>>(visitor: &mut V, enum_decl: 
 }
 
 /// Walk a global variable declaration.
-pub fn walk_global_var_decl<'src, 'ast, V: Visitor<'ast>>(visitor: &mut V, var: &GlobalVarDecl<'ast>) {
+pub fn walk_global_var_decl<'src, 'ast, V: Visitor<'ast>>(
+    visitor: &mut V,
+    var: &GlobalVarDecl<'ast>,
+) {
     visitor.visit_type_expr(&var.ty);
     if let Some(init) = &var.init {
         visitor.visit_expr(init);
@@ -397,19 +406,28 @@ pub fn walk_global_var_decl<'src, 'ast, V: Visitor<'ast>>(visitor: &mut V, var: 
 }
 
 /// Walk a namespace declaration.
-pub fn walk_namespace_decl<'src, 'ast, V: Visitor<'ast>>(visitor: &mut V, namespace: &NamespaceDecl<'ast>) {
+pub fn walk_namespace_decl<'src, 'ast, V: Visitor<'ast>>(
+    visitor: &mut V,
+    namespace: &NamespaceDecl<'ast>,
+) {
     for item in namespace.items {
         visitor.visit_item(item);
     }
 }
 
 /// Walk a typedef declaration.
-pub fn walk_typedef_decl<'src, 'ast, V: Visitor<'ast>>(visitor: &mut V, typedef: &TypedefDecl<'ast>) {
+pub fn walk_typedef_decl<'src, 'ast, V: Visitor<'ast>>(
+    visitor: &mut V,
+    typedef: &TypedefDecl<'ast>,
+) {
     visitor.visit_type_expr(&typedef.base_type);
 }
 
 /// Walk a funcdef declaration.
-pub fn walk_funcdef_decl<'src, 'ast, V: Visitor<'ast>>(visitor: &mut V, funcdef: &FuncdefDecl<'ast>) {
+pub fn walk_funcdef_decl<'src, 'ast, V: Visitor<'ast>>(
+    visitor: &mut V,
+    funcdef: &FuncdefDecl<'ast>,
+) {
     visitor.visit_return_type(&funcdef.return_type);
     for param in funcdef.params {
         visitor.visit_param_type(&param.ty);
@@ -438,7 +456,10 @@ pub fn walk_import_decl<'src, 'ast, V: Visitor<'ast>>(visitor: &mut V, import: &
 // === Class Members ===
 
 /// Walk a class member.
-pub fn walk_class_member<'src, 'ast, V: Visitor<'ast>>(visitor: &mut V, member: &ClassMember<'ast>) {
+pub fn walk_class_member<'src, 'ast, V: Visitor<'ast>>(
+    visitor: &mut V,
+    member: &ClassMember<'ast>,
+) {
     match member {
         ClassMember::Method(method) => visitor.visit_function_decl(method),
         ClassMember::Field(field) => visitor.visit_field_decl(field),
@@ -456,7 +477,10 @@ pub fn walk_field_decl<'src, 'ast, V: Visitor<'ast>>(visitor: &mut V, field: &Fi
 }
 
 /// Walk a virtual property declaration.
-pub fn walk_virtual_property_decl<'src, 'ast, V: Visitor<'ast>>(visitor: &mut V, prop: &VirtualPropertyDecl<'ast>) {
+pub fn walk_virtual_property_decl<'src, 'ast, V: Visitor<'ast>>(
+    visitor: &mut V,
+    prop: &VirtualPropertyDecl<'ast>,
+) {
     visitor.visit_return_type(&prop.ty);
     for accessor in prop.accessors {
         visitor.visit_property_accessor(accessor);
@@ -464,7 +488,10 @@ pub fn walk_virtual_property_decl<'src, 'ast, V: Visitor<'ast>>(visitor: &mut V,
 }
 
 /// Walk a property accessor.
-pub fn walk_property_accessor<'src, 'ast, V: Visitor<'ast>>(visitor: &mut V, accessor: &PropertyAccessor<'ast>) {
+pub fn walk_property_accessor<'src, 'ast, V: Visitor<'ast>>(
+    visitor: &mut V,
+    accessor: &PropertyAccessor<'ast>,
+) {
     if let Some(body) = &accessor.body {
         visitor.visit_block(body);
     }
@@ -473,7 +500,10 @@ pub fn walk_property_accessor<'src, 'ast, V: Visitor<'ast>>(visitor: &mut V, acc
 // === Interface Members ===
 
 /// Walk an interface member.
-pub fn walk_interface_member<'src, 'ast, V: Visitor<'ast>>(visitor: &mut V, member: &InterfaceMember<'ast>) {
+pub fn walk_interface_member<'src, 'ast, V: Visitor<'ast>>(
+    visitor: &mut V,
+    member: &InterfaceMember<'ast>,
+) {
     match member {
         InterfaceMember::Method(method) => visitor.visit_interface_method(method),
         InterfaceMember::VirtualProperty(prop) => visitor.visit_virtual_property_decl(prop),
@@ -481,7 +511,10 @@ pub fn walk_interface_member<'src, 'ast, V: Visitor<'ast>>(visitor: &mut V, memb
 }
 
 /// Walk an interface method.
-pub fn walk_interface_method<'src, 'ast, V: Visitor<'ast>>(visitor: &mut V, method: &InterfaceMethod<'ast>) {
+pub fn walk_interface_method<'src, 'ast, V: Visitor<'ast>>(
+    visitor: &mut V,
+    method: &InterfaceMethod<'ast>,
+) {
     visitor.visit_return_type(&method.return_type);
     for param in method.params {
         visitor.visit_param_type(&param.ty);
@@ -616,7 +649,10 @@ pub fn walk_switch_stmt<'src, 'ast, V: Visitor<'ast>>(visitor: &mut V, stmt: &Sw
 }
 
 /// Walk a try-catch statement.
-pub fn walk_try_catch_stmt<'src, 'ast, V: Visitor<'ast>>(visitor: &mut V, stmt: &TryCatchStmt<'ast>) {
+pub fn walk_try_catch_stmt<'src, 'ast, V: Visitor<'ast>>(
+    visitor: &mut V,
+    stmt: &TryCatchStmt<'ast>,
+) {
     visitor.visit_block(&stmt.try_block);
     visitor.visit_block(&stmt.catch_block);
 }
@@ -723,7 +759,10 @@ pub fn walk_lambda_expr<'src, 'ast, V: Visitor<'ast>>(visitor: &mut V, expr: &La
 }
 
 /// Walk an initializer list expression.
-pub fn walk_init_list_expr<'src, 'ast, V: Visitor<'ast>>(visitor: &mut V, expr: &InitListExpr<'ast>) {
+pub fn walk_init_list_expr<'src, 'ast, V: Visitor<'ast>>(
+    visitor: &mut V,
+    expr: &InitListExpr<'ast>,
+) {
     if let Some(ty) = &expr.ty {
         visitor.visit_type_expr(ty);
     }
@@ -914,7 +953,8 @@ mod tests {
         // Parse a simple script with two functions
         let source = "void foo() {} int bar() { return 0; }";
         let arena = bumpalo::Bump::new();
-        let script = crate::ast::Parser::parse(source, &arena).expect("Failed to parse test script");
+        let script =
+            crate::ast::Parser::parse(source, &arena).expect("Failed to parse test script");
 
         let mut counter = FunctionCounter { count: 0 };
         walk_script(&mut counter, &script);
@@ -939,8 +979,8 @@ mod tests {
 
     #[test]
     fn test_binary_expr_traversal() {
-        use crate::ast::expr::{Expr, BinaryExpr, IdentExpr, LiteralExpr, LiteralKind};
         use crate::ast::BinaryOp;
+        use crate::ast::expr::{BinaryExpr, Expr, IdentExpr, LiteralExpr, LiteralKind};
         use bumpalo::Bump;
         let arena = Bump::new();
 
@@ -1731,7 +1771,10 @@ mod tests {
         let arena = bumpalo::Bump::new();
         let script = crate::ast::Parser::parse(source, &arena).expect("Failed to parse");
 
-        let mut counter = BreakContinueCounter { breaks: 0, continues: 0 };
+        let mut counter = BreakContinueCounter {
+            breaks: 0,
+            continues: 0,
+        };
         walk_script(&mut counter, &script);
 
         assert_eq!(counter.breaks, 1);

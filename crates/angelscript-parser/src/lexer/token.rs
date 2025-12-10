@@ -942,7 +942,10 @@ mod tests {
         assert_eq!(TokenKind::CaretEqual.description(), "'^='");
         assert_eq!(TokenKind::LessLessEqual.description(), "'<<='");
         assert_eq!(TokenKind::GreaterGreaterEqual.description(), "'>>='");
-        assert_eq!(TokenKind::GreaterGreaterGreaterEqual.description(), "'>>>='");
+        assert_eq!(
+            TokenKind::GreaterGreaterGreaterEqual.description(),
+            "'>>>='"
+        );
     }
 
     #[test]

@@ -9,10 +9,10 @@
 //! - Typedefs and funcdefs
 //! - Imports and mixins
 
-use crate::ast::{DeclModifiers, FuncAttr, Ident, Visibility};
 use crate::ast::expr::{Expr, IdentExpr};
 use crate::ast::stmt::Block;
 use crate::ast::types::{ParamType, ReturnType, TypeExpr};
+use crate::ast::{DeclModifiers, FuncAttr, Ident, Visibility};
 use angelscript_core::Span;
 
 /// A top-level item in a script.
@@ -524,7 +524,7 @@ mod tests {
 
     #[test]
     fn all_item_span_variants() {
-        use crate::ast::types::{TypeExpr, PrimitiveType, ReturnType};
+        use crate::ast::types::{PrimitiveType, ReturnType, TypeExpr};
 
         // Function
         let func_item = Item::Function(FunctionDecl {
@@ -589,7 +589,8 @@ mod tests {
         // Namespace
         let arena = bumpalo::Bump::new();
         let ns_item = Item::Namespace(NamespaceDecl {
-            path: bumpalo::vec![in &arena; Ident::new("Game", Span::new(1, 11, 4))].into_bump_slice(),
+            path: bumpalo::vec![in &arena; Ident::new("Game", Span::new(1, 11, 4))]
+                .into_bump_slice(),
             items: &[],
             span: Span::new(1, 1, 20),
         });
@@ -674,8 +675,8 @@ mod tests {
 
     #[test]
     fn function_param_with_default() {
-        use crate::ast::types::{ParamType, TypeExpr, PrimitiveType};
         use crate::ast::expr::{Expr, LiteralExpr, LiteralKind};
+        use crate::ast::types::{ParamType, PrimitiveType, TypeExpr};
         use bumpalo::Bump;
         let arena = Bump::new();
 
@@ -699,7 +700,7 @@ mod tests {
 
     #[test]
     fn function_param_variadic() {
-        use crate::ast::types::{ParamType, TypeExpr, PrimitiveType};
+        use crate::ast::types::{ParamType, PrimitiveType, TypeExpr};
 
         let param = FunctionParam {
             ty: ParamType::new(
@@ -718,7 +719,7 @@ mod tests {
 
     #[test]
     fn class_member_variants() {
-        use crate::ast::types::{TypeExpr, PrimitiveType};
+        use crate::ast::types::{PrimitiveType, TypeExpr};
 
         let method = ClassMember::Method(FunctionDecl {
             modifiers: DeclModifiers::new(),
@@ -747,7 +748,7 @@ mod tests {
 
     #[test]
     fn interface_member_variants() {
-        use crate::ast::types::{ReturnType, TypeExpr, PrimitiveType};
+        use crate::ast::types::{PrimitiveType, ReturnType, TypeExpr};
 
         let method = InterfaceMember::Method(InterfaceMethod {
             return_type: ReturnType::new(
@@ -782,8 +783,8 @@ mod tests {
 
     #[test]
     fn field_with_init() {
-        use crate::ast::types::{TypeExpr, PrimitiveType};
         use crate::ast::expr::{Expr, LiteralExpr, LiteralKind};
+        use crate::ast::types::{PrimitiveType, TypeExpr};
         use bumpalo::Bump;
         let arena = Bump::new();
 
@@ -827,7 +828,8 @@ mod tests {
             path: bumpalo::vec![in &arena;
                 Ident::new("Game", Span::new(1, 11, 4)),
                 Ident::new("Utils", Span::new(1, 17, 5)),
-            ].into_bump_slice(),
+            ]
+            .into_bump_slice(),
             items: &[],
             span: Span::new(1, 1, 30),
         };

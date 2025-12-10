@@ -36,7 +36,7 @@
 //! module.ty::<Player>()?;
 //! ```
 
-use crate::{ConstantValue, TypeHash, TypeKind, Operator, RefModifier};
+use crate::{ConstantValue, Operator, RefModifier, TypeHash, TypeKind};
 
 // =============================================================================
 // Return Mode Types
@@ -389,7 +389,7 @@ impl Behavior {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{primitives, RefModifier};
+    use crate::{RefModifier, primitives};
 
     #[test]
     fn class_meta_basic() {
@@ -479,15 +479,13 @@ mod tests {
         let meta = FunctionMeta {
             name: "update",
             as_name: None,
-            params: vec![
-                ParamMeta {
-                    name: "dt",
-                    type_hash: primitives::FLOAT,
-                    default_value: None,
-                    template_param: None,
-                    if_handle_then_const: false,
-                },
-            ],
+            params: vec![ParamMeta {
+                name: "dt",
+                type_hash: primitives::FLOAT,
+                default_value: None,
+                template_param: None,
+                if_handle_then_const: false,
+            }],
             generic_params: vec![],
             return_meta: ReturnMeta::default(),
             is_method: true,
@@ -549,7 +547,10 @@ mod tests {
         };
 
         assert!(meta.behavior.as_ref().unwrap().is_operator());
-        assert_eq!(meta.behavior.as_ref().unwrap().as_operator(), Some(Operator::Add));
+        assert_eq!(
+            meta.behavior.as_ref().unwrap().as_operator(),
+            Some(Operator::Add)
+        );
     }
 
     #[test]
@@ -558,15 +559,13 @@ mod tests {
             name: "push",
             as_name: None,
             params: vec![],
-            generic_params: vec![
-                GenericParamMeta {
-                    type_hash: primitives::VARIABLE_PARAM, // variable type
-                    ref_mode: RefModifier::In,
-                    is_variadic: false,
-                    default_value: None,
-                    if_handle_then_const: false,
-                },
-            ],
+            generic_params: vec![GenericParamMeta {
+                type_hash: primitives::VARIABLE_PARAM, // variable type
+                ref_mode: RefModifier::In,
+                is_variadic: false,
+                default_value: None,
+                if_handle_then_const: false,
+            }],
             return_meta: ReturnMeta::default(),
             is_method: true,
             associated_type: None,
@@ -633,10 +632,8 @@ mod tests {
         }
 
         // Repeat tuple pattern (key-value)
-        let repeat_tuple = ListPatternMeta::RepeatTuple(vec![
-            primitives::STRING,
-            primitives::INT32,
-        ]);
+        let repeat_tuple =
+            ListPatternMeta::RepeatTuple(vec![primitives::STRING, primitives::INT32]);
         if let ListPatternMeta::RepeatTuple(types) = repeat_tuple {
             assert_eq!(types.len(), 2);
         }
@@ -806,7 +803,9 @@ mod tests {
 
         // Test value_fn
         let value = meta.value();
-        assert!(matches!(value, ConstantValue::Double(v) if (v - std::f64::consts::PI).abs() < 0.0001));
+        assert!(
+            matches!(value, ConstantValue::Double(v) if (v - std::f64::consts::PI).abs() < 0.0001)
+        );
     }
 
     #[test]

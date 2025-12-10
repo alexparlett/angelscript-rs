@@ -89,7 +89,6 @@ impl<'ast> Script<'ast> {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -507,7 +506,7 @@ mod tests {
     fn parse_expression_with_accumulated_errors() {
         let arena = bumpalo::Bump::new();
         // Expression that may accumulate errors during parsing
-        let source = "a.b.c.";  // Trailing dot
+        let source = "a.b.c."; // Trailing dot
         let result = Parser::expression(source, &arena);
         // Should fail
         assert!(result.is_err());
@@ -517,7 +516,7 @@ mod tests {
     fn parse_statement_accumulated_errors() {
         let arena = bumpalo::Bump::new();
         // Statement that accumulates errors
-        let source = "if (";  // Incomplete if
+        let source = "if ("; // Incomplete if
         let result = Parser::statement(source, &arena);
         // Should fail
         assert!(result.is_err());
@@ -527,7 +526,7 @@ mod tests {
     fn parse_type_accumulated_errors() {
         let arena = bumpalo::Bump::new();
         // Type with incomplete template
-        let source = "array<";  // Incomplete template
+        let source = "array<"; // Incomplete template
         let result = Parser::type_expr(source, &arena);
         // Should fail
         assert!(result.is_err());

@@ -20,7 +20,10 @@ pub enum ConversionError {
 
     /// Integer overflow during conversion
     #[error("integer overflow: value {value} does not fit in {target_type}")]
-    IntegerOverflow { value: i64, target_type: &'static str },
+    IntegerOverflow {
+        value: i64,
+        target_type: &'static str,
+    },
 
     /// Float conversion error
     #[error("float conversion error: value {value} cannot be represented as {target_type}")]
@@ -55,7 +58,10 @@ pub enum NativeError {
 
     /// Type mismatch for `this` reference
     #[error("'this' type mismatch: expected {expected:?}, got {actual:?}")]
-    ThisTypeMismatch { expected: TypeHash, actual: TypeHash },
+    ThisTypeMismatch {
+        expected: TypeHash,
+        actual: TypeHash,
+    },
 
     /// Stale object handle (object was freed)
     #[error("stale object handle: object at index {index} has been freed")]

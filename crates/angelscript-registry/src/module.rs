@@ -19,8 +19,8 @@
 //! ```
 
 use angelscript_core::{
-    Any, ClassMeta, FuncdefMeta, FunctionMeta, GlobalPropertyEntry, IntoGlobalProperty,
-    InterfaceMeta, TypeHash, TypeSource,
+    Any, ClassMeta, FuncdefMeta, FunctionMeta, GlobalPropertyEntry, InterfaceMeta,
+    IntoGlobalProperty, TypeHash, TypeSource,
 };
 
 /// A module containing pending type and function registrations.
@@ -94,7 +94,6 @@ impl Module {
         self.classes.push(T::__as_type_meta());
         self
     }
-
 
     /// Register a function using its macro-generated metadata.
     ///
@@ -264,7 +263,6 @@ impl IntoFunctionMeta for FunctionMeta {
         self
     }
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -468,8 +466,7 @@ mod tests {
 
     #[test]
     fn module_with_global_in_namespace() {
-        let module = Module::in_namespace(&["physics"])
-            .global("GRAVITY", 9.81f64);
+        let module = Module::in_namespace(&["physics"]).global("GRAVITY", 9.81f64);
 
         assert_eq!(module.globals.len(), 1);
         let gravity = &module.globals[0];

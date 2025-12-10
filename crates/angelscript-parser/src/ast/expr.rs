@@ -26,8 +26,8 @@
 //! 15. Prefix unary (-, !, ~, ++, --, @)
 //! 16. Postfix (call, index, member, ++, --)
 
-use crate::ast::{AssignOp, BinaryOp, Ident, PostfixOp, Scope, UnaryOp};
 use crate::ast::types::{ParamType, ReturnType, TypeExpr};
+use crate::ast::{AssignOp, BinaryOp, Ident, PostfixOp, Scope, UnaryOp};
 use angelscript_core::Span;
 
 /// An expression.
@@ -235,7 +235,10 @@ pub enum MemberAccess<'ast> {
     /// Field access: obj.field
     Field(Ident<'ast>),
     /// Method call: obj.method(args)
-    Method { name: Ident<'ast>, args: &'ast [Argument<'ast>] },
+    Method {
+        name: Ident<'ast>,
+        args: &'ast [Argument<'ast>],
+    },
 }
 
 /// A postfix operation (++ or --).
@@ -504,7 +507,10 @@ mod tests {
             span: Span::new(1, 12, 2),
         }));
         let cast = Expr::Cast(arena.alloc(CastExpr {
-            target_type: TypeExpr::primitive(crate::ast::types::PrimitiveType::Float, Span::new(1, 6, 5)),
+            target_type: TypeExpr::primitive(
+                crate::ast::types::PrimitiveType::Float,
+                Span::new(1, 6, 5),
+            ),
             expr,
             span: Span::new(1, 1, 13),
         }));
@@ -620,7 +626,7 @@ mod tests {
 
     #[test]
     fn lambda_param_with_type() {
-        use crate::ast::types::{ParamType, TypeExpr, PrimitiveType};
+        use crate::ast::types::{ParamType, PrimitiveType, TypeExpr};
 
         let param = LambdaParam {
             ty: Some(ParamType::new(

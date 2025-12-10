@@ -6,8 +6,8 @@
 use crate::TypeHash;
 
 use super::{
-    ClassEntry, EnumEntry, FuncdefEntry, InterfaceEntry, PrimitiveEntry,
-    TemplateParamEntry, TypeSource,
+    ClassEntry, EnumEntry, FuncdefEntry, InterfaceEntry, PrimitiveEntry, TemplateParamEntry,
+    TypeSource,
 };
 
 /// Unified type entry for registry storage.
@@ -15,6 +15,7 @@ use super::{
 /// Wraps all type kinds in a single enum for unified storage, iteration,
 /// and lookup in the registry.
 #[derive(Debug, Clone, PartialEq)]
+#[allow(clippy::large_enum_variant)]
 pub enum TypeEntry {
     /// Primitive type (int, float, bool, etc.).
     Primitive(PrimitiveEntry),
@@ -260,7 +261,7 @@ impl From<TemplateParamEntry> for TypeEntry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{primitives, DataType, PrimitiveKind, TypeKind};
+    use crate::{DataType, PrimitiveKind, TypeKind, primitives};
 
     #[test]
     fn type_entry_primitive() {
@@ -333,8 +334,8 @@ mod tests {
     #[test]
     fn type_entry_template() {
         let t_hash = TypeHash::from_name("array::T");
-        let class = ClassEntry::ffi("array", TypeKind::reference())
-            .with_template_params(vec![t_hash]);
+        let class =
+            ClassEntry::ffi("array", TypeKind::reference()).with_template_params(vec![t_hash]);
         let entry: TypeEntry = class.into();
 
         assert!(entry.is_template());

@@ -16,23 +16,23 @@ pub enum BinaryOp {
     LogicalOr,
     /// `^^` or `xor`
     LogicalXor,
-    
+
     // Logical AND (precedence 4)
     /// `&&` or `and`
     LogicalAnd,
-    
+
     // Bitwise OR (precedence 5)
     /// `|`
     BitwiseOr,
-    
+
     // Bitwise XOR (precedence 6)
     /// `^`
     BitwiseXor,
-    
+
     // Bitwise AND (precedence 7)
     /// `&`
     BitwiseAnd,
-    
+
     // Equality (precedence 8)
     /// `==`
     Equal,
@@ -42,7 +42,7 @@ pub enum BinaryOp {
     Is,
     /// `!is`
     NotIs,
-    
+
     // Relational (precedence 9)
     /// `<`
     Less,
@@ -52,7 +52,7 @@ pub enum BinaryOp {
     Greater,
     /// `>=`
     GreaterEqual,
-    
+
     // Bitwise shift (precedence 10)
     /// `<<`
     ShiftLeft,
@@ -60,13 +60,13 @@ pub enum BinaryOp {
     ShiftRight,
     /// `>>>`
     ShiftRightUnsigned,
-    
+
     // Additive (precedence 11)
     /// `+`
     Add,
     /// `-`
     Sub,
-    
+
     // Multiplicative (precedence 12)
     /// `*`
     Mul,
@@ -74,7 +74,7 @@ pub enum BinaryOp {
     Div,
     /// `%`
     Mod,
-    
+
     // Power (precedence 13)
     /// `**`
     Pow,
@@ -91,34 +91,34 @@ impl BinaryOp {
         match self {
             // Precedence 3 - Logical OR (left-associative)
             LogicalOr | LogicalXor => (3, 4),
-            
+
             // Precedence 4 - Logical AND (left-associative)
             LogicalAnd => (5, 6),
-            
+
             // Precedence 5 - Bitwise OR (left-associative)
             BitwiseOr => (7, 8),
-            
+
             // Precedence 6 - Bitwise XOR (left-associative)
             BitwiseXor => (9, 10),
-            
+
             // Precedence 7 - Bitwise AND (left-associative)
             BitwiseAnd => (11, 12),
-            
+
             // Precedence 8 - Equality (left-associative)
             Equal | NotEqual | Is | NotIs => (13, 14),
-            
+
             // Precedence 9 - Relational (left-associative)
             Less | LessEqual | Greater | GreaterEqual => (15, 16),
-            
+
             // Precedence 10 - Bitwise shift (left-associative)
             ShiftLeft | ShiftRight | ShiftRightUnsigned => (17, 18),
-            
+
             // Precedence 11 - Additive (left-associative)
             Add | Sub => (19, 20),
-            
+
             // Precedence 12 - Multiplicative (left-associative)
             Mul | Div | Mod => (21, 22),
-            
+
             // Precedence 13 - Power (right-associative)
             Pow => (24, 23), // Note: right-associative
         }
@@ -127,7 +127,7 @@ impl BinaryOp {
     /// Try to convert a token kind to a binary operator.
     pub fn from_token(token: TokenKind) -> Option<Self> {
         use TokenKind::*;
-        
+
         Some(match token {
             PipePipe | Or => BinaryOp::LogicalOr,
             CaretCaret | Xor => BinaryOp::LogicalXor,
@@ -226,12 +226,12 @@ impl UnaryOp {
     /// Try to convert a token kind to a unary operator.
     pub fn from_token(token: TokenKind) -> Option<Self> {
         use TokenKind::*;
-        
+
         Some(match token {
             Minus => UnaryOp::Neg,
             Plus => UnaryOp::Plus,
             Bang | Not => UnaryOp::LogicalNot,
-            Tilde =>UnaryOp:: BitwiseNot,
+            Tilde => UnaryOp::BitwiseNot,
             PlusPlus => UnaryOp::PreInc,
             MinusMinus => UnaryOp::PreDec,
             At => UnaryOp::HandleOf,
@@ -275,7 +275,7 @@ impl PostfixOp {
     pub fn from_token(token: TokenKind) -> Option<Self> {
         use PostfixOp::*;
         use TokenKind::*;
-        
+
         Some(match token {
             PlusPlus => PostInc,
             MinusMinus => PostDec,
@@ -338,7 +338,7 @@ impl AssignOp {
     pub fn from_token(token: TokenKind) -> Option<Self> {
         use AssignOp::*;
         use TokenKind::*;
-        
+
         Some(match token {
             Equal => Assign,
             PlusEqual => AddAssign,
@@ -395,12 +395,12 @@ mod tests {
         let (or_l, or_r) = BinaryOp::LogicalOr.binding_power();
         let (add_l, add_r) = BinaryOp::Add.binding_power();
         let (mul_l, mul_r) = BinaryOp::Mul.binding_power();
-        
+
         assert!(or_l < add_l);
         assert!(add_l < mul_l);
 
         // Left-associative: right_bp > left_bp
-        assert!(or_r > or_l);   // || is left-associative
+        assert!(or_r > or_l); // || is left-associative
         assert!(add_r > add_l);
         assert!(mul_r > mul_l); // * is left-associative
 
@@ -411,14 +411,8 @@ mod tests {
 
     #[test]
     fn operator_from_token() {
-        assert_eq!(
-            BinaryOp::from_token(TokenKind::Plus),
-            Some(BinaryOp::Add)
-        );
-        assert_eq!(
-            UnaryOp::from_token(TokenKind::Minus),
-            Some(UnaryOp::Neg)
-        );
+        assert_eq!(BinaryOp::from_token(TokenKind::Plus), Some(BinaryOp::Add));
+        assert_eq!(UnaryOp::from_token(TokenKind::Minus), Some(UnaryOp::Neg));
         assert_eq!(
             AssignOp::from_token(TokenKind::PlusEqual),
             Some(AssignOp::AddAssign)
@@ -454,31 +448,91 @@ mod tests {
     #[test]
     fn all_binary_ops_from_token() {
         // Test all BinaryOp variants can be created from tokens
-        assert_eq!(BinaryOp::from_token(TokenKind::PipePipe), Some(BinaryOp::LogicalOr));
-        assert_eq!(BinaryOp::from_token(TokenKind::Or), Some(BinaryOp::LogicalOr));
-        assert_eq!(BinaryOp::from_token(TokenKind::CaretCaret), Some(BinaryOp::LogicalXor));
-        assert_eq!(BinaryOp::from_token(TokenKind::Xor), Some(BinaryOp::LogicalXor));
-        assert_eq!(BinaryOp::from_token(TokenKind::AmpAmp), Some(BinaryOp::LogicalAnd));
-        assert_eq!(BinaryOp::from_token(TokenKind::And), Some(BinaryOp::LogicalAnd));
-        assert_eq!(BinaryOp::from_token(TokenKind::Pipe), Some(BinaryOp::BitwiseOr));
-        assert_eq!(BinaryOp::from_token(TokenKind::Caret), Some(BinaryOp::BitwiseXor));
-        assert_eq!(BinaryOp::from_token(TokenKind::Amp), Some(BinaryOp::BitwiseAnd));
-        assert_eq!(BinaryOp::from_token(TokenKind::EqualEqual), Some(BinaryOp::Equal));
-        assert_eq!(BinaryOp::from_token(TokenKind::BangEqual), Some(BinaryOp::NotEqual));
+        assert_eq!(
+            BinaryOp::from_token(TokenKind::PipePipe),
+            Some(BinaryOp::LogicalOr)
+        );
+        assert_eq!(
+            BinaryOp::from_token(TokenKind::Or),
+            Some(BinaryOp::LogicalOr)
+        );
+        assert_eq!(
+            BinaryOp::from_token(TokenKind::CaretCaret),
+            Some(BinaryOp::LogicalXor)
+        );
+        assert_eq!(
+            BinaryOp::from_token(TokenKind::Xor),
+            Some(BinaryOp::LogicalXor)
+        );
+        assert_eq!(
+            BinaryOp::from_token(TokenKind::AmpAmp),
+            Some(BinaryOp::LogicalAnd)
+        );
+        assert_eq!(
+            BinaryOp::from_token(TokenKind::And),
+            Some(BinaryOp::LogicalAnd)
+        );
+        assert_eq!(
+            BinaryOp::from_token(TokenKind::Pipe),
+            Some(BinaryOp::BitwiseOr)
+        );
+        assert_eq!(
+            BinaryOp::from_token(TokenKind::Caret),
+            Some(BinaryOp::BitwiseXor)
+        );
+        assert_eq!(
+            BinaryOp::from_token(TokenKind::Amp),
+            Some(BinaryOp::BitwiseAnd)
+        );
+        assert_eq!(
+            BinaryOp::from_token(TokenKind::EqualEqual),
+            Some(BinaryOp::Equal)
+        );
+        assert_eq!(
+            BinaryOp::from_token(TokenKind::BangEqual),
+            Some(BinaryOp::NotEqual)
+        );
         assert_eq!(BinaryOp::from_token(TokenKind::Is), Some(BinaryOp::Is));
-        assert_eq!(BinaryOp::from_token(TokenKind::NotIs), Some(BinaryOp::NotIs));
+        assert_eq!(
+            BinaryOp::from_token(TokenKind::NotIs),
+            Some(BinaryOp::NotIs)
+        );
         assert_eq!(BinaryOp::from_token(TokenKind::Less), Some(BinaryOp::Less));
-        assert_eq!(BinaryOp::from_token(TokenKind::LessEqual), Some(BinaryOp::LessEqual));
-        assert_eq!(BinaryOp::from_token(TokenKind::Greater), Some(BinaryOp::Greater));
-        assert_eq!(BinaryOp::from_token(TokenKind::GreaterEqual), Some(BinaryOp::GreaterEqual));
-        assert_eq!(BinaryOp::from_token(TokenKind::LessLess), Some(BinaryOp::ShiftLeft));
-        assert_eq!(BinaryOp::from_token(TokenKind::GreaterGreater), Some(BinaryOp::ShiftRight));
-        assert_eq!(BinaryOp::from_token(TokenKind::GreaterGreaterGreater), Some(BinaryOp::ShiftRightUnsigned));
+        assert_eq!(
+            BinaryOp::from_token(TokenKind::LessEqual),
+            Some(BinaryOp::LessEqual)
+        );
+        assert_eq!(
+            BinaryOp::from_token(TokenKind::Greater),
+            Some(BinaryOp::Greater)
+        );
+        assert_eq!(
+            BinaryOp::from_token(TokenKind::GreaterEqual),
+            Some(BinaryOp::GreaterEqual)
+        );
+        assert_eq!(
+            BinaryOp::from_token(TokenKind::LessLess),
+            Some(BinaryOp::ShiftLeft)
+        );
+        assert_eq!(
+            BinaryOp::from_token(TokenKind::GreaterGreater),
+            Some(BinaryOp::ShiftRight)
+        );
+        assert_eq!(
+            BinaryOp::from_token(TokenKind::GreaterGreaterGreater),
+            Some(BinaryOp::ShiftRightUnsigned)
+        );
         assert_eq!(BinaryOp::from_token(TokenKind::Minus), Some(BinaryOp::Sub));
         assert_eq!(BinaryOp::from_token(TokenKind::Star), Some(BinaryOp::Mul));
         assert_eq!(BinaryOp::from_token(TokenKind::Slash), Some(BinaryOp::Div));
-        assert_eq!(BinaryOp::from_token(TokenKind::Percent), Some(BinaryOp::Mod));
-        assert_eq!(BinaryOp::from_token(TokenKind::StarStar), Some(BinaryOp::Pow));
+        assert_eq!(
+            BinaryOp::from_token(TokenKind::Percent),
+            Some(BinaryOp::Mod)
+        );
+        assert_eq!(
+            BinaryOp::from_token(TokenKind::StarStar),
+            Some(BinaryOp::Pow)
+        );
 
         // Test invalid token returns None
         assert_eq!(BinaryOp::from_token(TokenKind::Semicolon), None);
@@ -515,12 +569,28 @@ mod tests {
     fn all_binary_ops_binding_power() {
         // Test that all operators have valid binding powers
         let ops = vec![
-            BinaryOp::LogicalOr, BinaryOp::LogicalXor, BinaryOp::LogicalAnd,
-            BinaryOp::BitwiseOr, BinaryOp::BitwiseXor, BinaryOp::BitwiseAnd,
-            BinaryOp::Equal, BinaryOp::NotEqual, BinaryOp::Is, BinaryOp::NotIs,
-            BinaryOp::Less, BinaryOp::LessEqual, BinaryOp::Greater, BinaryOp::GreaterEqual,
-            BinaryOp::ShiftLeft, BinaryOp::ShiftRight, BinaryOp::ShiftRightUnsigned,
-            BinaryOp::Add, BinaryOp::Sub, BinaryOp::Mul, BinaryOp::Div, BinaryOp::Mod,
+            BinaryOp::LogicalOr,
+            BinaryOp::LogicalXor,
+            BinaryOp::LogicalAnd,
+            BinaryOp::BitwiseOr,
+            BinaryOp::BitwiseXor,
+            BinaryOp::BitwiseAnd,
+            BinaryOp::Equal,
+            BinaryOp::NotEqual,
+            BinaryOp::Is,
+            BinaryOp::NotIs,
+            BinaryOp::Less,
+            BinaryOp::LessEqual,
+            BinaryOp::Greater,
+            BinaryOp::GreaterEqual,
+            BinaryOp::ShiftLeft,
+            BinaryOp::ShiftRight,
+            BinaryOp::ShiftRightUnsigned,
+            BinaryOp::Add,
+            BinaryOp::Sub,
+            BinaryOp::Mul,
+            BinaryOp::Div,
+            BinaryOp::Mod,
             BinaryOp::Pow,
         ];
 
@@ -552,11 +622,26 @@ mod tests {
     fn all_unary_ops_from_token() {
         assert_eq!(UnaryOp::from_token(TokenKind::Minus), Some(UnaryOp::Neg));
         assert_eq!(UnaryOp::from_token(TokenKind::Plus), Some(UnaryOp::Plus));
-        assert_eq!(UnaryOp::from_token(TokenKind::Bang), Some(UnaryOp::LogicalNot));
-        assert_eq!(UnaryOp::from_token(TokenKind::Not), Some(UnaryOp::LogicalNot));
-        assert_eq!(UnaryOp::from_token(TokenKind::Tilde), Some(UnaryOp::BitwiseNot));
-        assert_eq!(UnaryOp::from_token(TokenKind::PlusPlus), Some(UnaryOp::PreInc));
-        assert_eq!(UnaryOp::from_token(TokenKind::MinusMinus), Some(UnaryOp::PreDec));
+        assert_eq!(
+            UnaryOp::from_token(TokenKind::Bang),
+            Some(UnaryOp::LogicalNot)
+        );
+        assert_eq!(
+            UnaryOp::from_token(TokenKind::Not),
+            Some(UnaryOp::LogicalNot)
+        );
+        assert_eq!(
+            UnaryOp::from_token(TokenKind::Tilde),
+            Some(UnaryOp::BitwiseNot)
+        );
+        assert_eq!(
+            UnaryOp::from_token(TokenKind::PlusPlus),
+            Some(UnaryOp::PreInc)
+        );
+        assert_eq!(
+            UnaryOp::from_token(TokenKind::MinusMinus),
+            Some(UnaryOp::PreDec)
+        );
         assert_eq!(UnaryOp::from_token(TokenKind::At), Some(UnaryOp::HandleOf));
 
         // Invalid token
@@ -586,8 +671,14 @@ mod tests {
 
     #[test]
     fn all_postfix_ops_from_token() {
-        assert_eq!(PostfixOp::from_token(TokenKind::PlusPlus), Some(PostfixOp::PostInc));
-        assert_eq!(PostfixOp::from_token(TokenKind::MinusMinus), Some(PostfixOp::PostDec));
+        assert_eq!(
+            PostfixOp::from_token(TokenKind::PlusPlus),
+            Some(PostfixOp::PostInc)
+        );
+        assert_eq!(
+            PostfixOp::from_token(TokenKind::MinusMinus),
+            Some(PostfixOp::PostDec)
+        );
 
         // Invalid token
         assert_eq!(PostfixOp::from_token(TokenKind::Semicolon), None);
@@ -611,19 +702,58 @@ mod tests {
 
     #[test]
     fn all_assign_ops_from_token() {
-        assert_eq!(AssignOp::from_token(TokenKind::Equal), Some(AssignOp::Assign));
-        assert_eq!(AssignOp::from_token(TokenKind::PlusEqual), Some(AssignOp::AddAssign));
-        assert_eq!(AssignOp::from_token(TokenKind::MinusEqual), Some(AssignOp::SubAssign));
-        assert_eq!(AssignOp::from_token(TokenKind::StarEqual), Some(AssignOp::MulAssign));
-        assert_eq!(AssignOp::from_token(TokenKind::SlashEqual), Some(AssignOp::DivAssign));
-        assert_eq!(AssignOp::from_token(TokenKind::PercentEqual), Some(AssignOp::ModAssign));
-        assert_eq!(AssignOp::from_token(TokenKind::StarStarEqual), Some(AssignOp::PowAssign));
-        assert_eq!(AssignOp::from_token(TokenKind::AmpEqual), Some(AssignOp::AndAssign));
-        assert_eq!(AssignOp::from_token(TokenKind::PipeEqual), Some(AssignOp::OrAssign));
-        assert_eq!(AssignOp::from_token(TokenKind::CaretEqual), Some(AssignOp::XorAssign));
-        assert_eq!(AssignOp::from_token(TokenKind::LessLessEqual), Some(AssignOp::ShlAssign));
-        assert_eq!(AssignOp::from_token(TokenKind::GreaterGreaterEqual), Some(AssignOp::ShrAssign));
-        assert_eq!(AssignOp::from_token(TokenKind::GreaterGreaterGreaterEqual), Some(AssignOp::UshrAssign));
+        assert_eq!(
+            AssignOp::from_token(TokenKind::Equal),
+            Some(AssignOp::Assign)
+        );
+        assert_eq!(
+            AssignOp::from_token(TokenKind::PlusEqual),
+            Some(AssignOp::AddAssign)
+        );
+        assert_eq!(
+            AssignOp::from_token(TokenKind::MinusEqual),
+            Some(AssignOp::SubAssign)
+        );
+        assert_eq!(
+            AssignOp::from_token(TokenKind::StarEqual),
+            Some(AssignOp::MulAssign)
+        );
+        assert_eq!(
+            AssignOp::from_token(TokenKind::SlashEqual),
+            Some(AssignOp::DivAssign)
+        );
+        assert_eq!(
+            AssignOp::from_token(TokenKind::PercentEqual),
+            Some(AssignOp::ModAssign)
+        );
+        assert_eq!(
+            AssignOp::from_token(TokenKind::StarStarEqual),
+            Some(AssignOp::PowAssign)
+        );
+        assert_eq!(
+            AssignOp::from_token(TokenKind::AmpEqual),
+            Some(AssignOp::AndAssign)
+        );
+        assert_eq!(
+            AssignOp::from_token(TokenKind::PipeEqual),
+            Some(AssignOp::OrAssign)
+        );
+        assert_eq!(
+            AssignOp::from_token(TokenKind::CaretEqual),
+            Some(AssignOp::XorAssign)
+        );
+        assert_eq!(
+            AssignOp::from_token(TokenKind::LessLessEqual),
+            Some(AssignOp::ShlAssign)
+        );
+        assert_eq!(
+            AssignOp::from_token(TokenKind::GreaterGreaterEqual),
+            Some(AssignOp::ShrAssign)
+        );
+        assert_eq!(
+            AssignOp::from_token(TokenKind::GreaterGreaterGreaterEqual),
+            Some(AssignOp::UshrAssign)
+        );
 
         // Invalid token
         assert_eq!(AssignOp::from_token(TokenKind::Semicolon), None);

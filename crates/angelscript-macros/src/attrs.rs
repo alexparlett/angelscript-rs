@@ -1,9 +1,9 @@
 //! Attribute parsing utilities for AngelScript macros.
 
 use syn::{
+    Attribute, Expr, Ident, LitStr, Token,
     parse::{Parse, ParseStream},
     punctuated::Punctuated,
-    Attribute, Expr, Ident, LitStr, Token,
 };
 
 /// Parsed `#[angelscript(...)]` attributes on a type.
@@ -140,7 +140,10 @@ impl TypeAttrs {
                 } else {
                     return Err(meta.error(format!(
                         "unknown angelscript attribute: {}",
-                        meta.path.get_ident().map(|i| i.to_string()).unwrap_or_default()
+                        meta.path
+                            .get_ident()
+                            .map(|i| i.to_string())
+                            .unwrap_or_default()
                     )));
                 }
                 Ok(())
@@ -172,7 +175,10 @@ impl FieldAttrs {
                 } else {
                     return Err(meta.error(format!(
                         "unknown angelscript field attribute: {}",
-                        meta.path.get_ident().map(|i| i.to_string()).unwrap_or_default()
+                        meta.path
+                            .get_ident()
+                            .map(|i| i.to_string())
+                            .unwrap_or_default()
                     )));
                 }
                 Ok(())
@@ -227,7 +233,7 @@ impl FunctionAttrs {
                             return Err(syn::Error::new(
                                 ident.span(),
                                 format!("unknown function attribute: {}", name),
-                            ))
+                            ));
                         }
                     }
                 }
@@ -235,7 +241,11 @@ impl FunctionAttrs {
                     let name_str = name.to_string();
                     match name_str.as_str() {
                         "name" => {
-                            if let Expr::Lit(syn::ExprLit { lit: syn::Lit::Str(s), .. }) = value {
+                            if let Expr::Lit(syn::ExprLit {
+                                lit: syn::Lit::Str(s),
+                                ..
+                            }) = value
+                            {
                                 result.name = Some(s.value());
                             } else {
                                 return Err(syn::Error::new(
@@ -245,7 +255,11 @@ impl FunctionAttrs {
                             }
                         }
                         "property_name" => {
-                            if let Expr::Lit(syn::ExprLit { lit: syn::Lit::Str(s), .. }) = value {
+                            if let Expr::Lit(syn::ExprLit {
+                                lit: syn::Lit::Str(s),
+                                ..
+                            }) = value
+                            {
                                 result.property_name = Some(s.value());
                             } else {
                                 return Err(syn::Error::new(
@@ -289,7 +303,11 @@ impl FunctionAttrs {
                             }
                         }
                         "template" => {
-                            if let Expr::Lit(syn::ExprLit { lit: syn::Lit::Str(s), .. }) = value {
+                            if let Expr::Lit(syn::ExprLit {
+                                lit: syn::Lit::Str(s),
+                                ..
+                            }) = value
+                            {
                                 result.template = Some(s.value());
                             } else {
                                 return Err(syn::Error::new(
@@ -302,7 +320,7 @@ impl FunctionAttrs {
                             return Err(syn::Error::new(
                                 name.span(),
                                 format!("unknown function attribute: {}", name_str),
-                            ))
+                            ));
                         }
                     }
                 }
@@ -396,7 +414,10 @@ impl ParamAttrs {
             } else {
                 return Err(meta.error(format!(
                     "unknown param attribute: {}",
-                    meta.path.get_ident().map(|i| i.to_string()).unwrap_or_default()
+                    meta.path
+                        .get_ident()
+                        .map(|i| i.to_string())
+                        .unwrap_or_default()
                 )));
             }
             Ok(())
@@ -476,7 +497,10 @@ impl ReturnAttrs {
             } else {
                 return Err(meta.error(format!(
                     "unknown return attribute: {}",
-                    meta.path.get_ident().map(|i| i.to_string()).unwrap_or_default()
+                    meta.path
+                        .get_ident()
+                        .map(|i| i.to_string())
+                        .unwrap_or_default()
                 )));
             }
             Ok(())
@@ -555,7 +579,10 @@ impl ListPatternAttrs {
             } else {
                 return Err(meta.error(format!(
                     "unknown list_pattern attribute: {}",
-                    meta.path.get_ident().map(|i| i.to_string()).unwrap_or_default()
+                    meta.path
+                        .get_ident()
+                        .map(|i| i.to_string())
+                        .unwrap_or_default()
                 )));
             }
             Ok(())
@@ -563,7 +590,9 @@ impl ListPatternAttrs {
 
         pattern
             .map(|p| ListPatternAttrs { pattern: p })
-            .ok_or_else(|| syn::Error::new_spanned(attr, "list_pattern requires a pattern specification"))
+            .ok_or_else(|| {
+                syn::Error::new_spanned(attr, "list_pattern requires a pattern specification")
+            })
     }
 
     /// Find and parse the first `#[list_pattern(...)]` attribute from a list.
@@ -596,4 +625,3 @@ impl Parse for FunctionAttrItem {
         }
     }
 }
-

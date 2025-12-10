@@ -42,11 +42,7 @@ impl PropertyEntry {
     }
 
     /// Create a read-only property.
-    pub fn read_only(
-        name: impl Into<String>,
-        data_type: DataType,
-        getter: TypeHash,
-    ) -> Self {
+    pub fn read_only(name: impl Into<String>, data_type: DataType, getter: TypeHash) -> Self {
         Self {
             name: name.into(),
             data_type,
@@ -127,12 +123,8 @@ mod tests {
     fn property_entry_read_write() {
         let getter = TypeHash::from_name("get_name");
         let setter = TypeHash::from_name("set_name");
-        let prop = PropertyEntry::read_write(
-            "name",
-            DataType::simple(primitives::STRING),
-            getter,
-            setter,
-        );
+        let prop =
+            PropertyEntry::read_write("name", DataType::simple(primitives::STRING), getter, setter);
         assert!(prop.is_read_write());
         assert!(!prop.is_read_only());
         assert!(!prop.is_write_only());

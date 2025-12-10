@@ -48,6 +48,7 @@ xxhash-rust.workspace = true
 criterion.workspace = true
 puffin.workspace = true
 trybuild = "1.0"
+cargo-husky = { version = "1", default-features = false, features = ["precommit-hook", "run-cargo-fmt"] }
 
 [features]
 default = []

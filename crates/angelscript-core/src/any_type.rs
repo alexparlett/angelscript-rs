@@ -812,7 +812,7 @@ mod tests {
 
 // === Any trait implementation for AnyRef<'static> ===
 
-use crate::{Any as AsTrait, primitives, TypeHash};
+use crate::{Any as AsTrait, TypeHash, primitives};
 
 impl AsTrait for AnyRef<'static> {
     fn type_hash() -> TypeHash {

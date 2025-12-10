@@ -9,8 +9,8 @@
 use std::any::{Any, TypeId};
 use std::fmt;
 
-use crate::native_error::NativeError;
 use crate::TypeHash;
+use crate::native_error::NativeError;
 
 /// Type-erased native function.
 ///
@@ -270,10 +270,12 @@ impl ObjectHeap {
     /// Increment reference count.
     pub fn add_ref(&mut self, handle: ObjectHandle) -> bool {
         if let Some(slot) = self.slots.get_mut(handle.index as usize)
-            && slot.generation == handle.generation && slot.value.is_some() {
-                slot.ref_count = slot.ref_count.saturating_add(1);
-                return true;
-            }
+            && slot.generation == handle.generation
+            && slot.value.is_some()
+        {
+            slot.ref_count = slot.ref_count.saturating_add(1);
+            return true;
+        }
         false
     }
 
@@ -282,26 +284,29 @@ impl ObjectHeap {
     /// Returns true if the object was freed.
     pub fn release(&mut self, handle: ObjectHandle) -> bool {
         if let Some(slot) = self.slots.get_mut(handle.index as usize)
-            && slot.generation == handle.generation && slot.value.is_some() {
-                slot.ref_count = slot.ref_count.saturating_sub(1);
-                if slot.ref_count == 0 {
-                    slot.value = None;
-                    slot.generation = slot.generation.wrapping_add(1);
-                    self.free_list.push(handle.index);
-                    return true;
-                }
+            && slot.generation == handle.generation
+            && slot.value.is_some()
+        {
+            slot.ref_count = slot.ref_count.saturating_sub(1);
+            if slot.ref_count == 0 {
+                slot.value = None;
+                slot.generation = slot.generation.wrapping_add(1);
+                self.free_list.push(handle.index);
+                return true;
             }
+        }
         false
     }
 
     /// Free object immediately (for scoped types).
     pub fn free(&mut self, handle: ObjectHandle) {
         if let Some(slot) = self.slots.get_mut(handle.index as usize)
-            && slot.generation == handle.generation {
-                slot.value = None;
-                slot.generation = slot.generation.wrapping_add(1);
-                self.free_list.push(handle.index);
-            }
+            && slot.generation == handle.generation
+        {
+            slot.value = None;
+            slot.generation = slot.generation.wrapping_add(1);
+            self.free_list.push(handle.index);
+        }
     }
 
     /// Get the reference count for an object.
@@ -376,20 +381,21 @@ impl<'vm> CallContext<'vm> {
     /// Get a raw reference to an argument slot.
     pub fn arg_slot(&self, index: usize) -> Result<&VmSlot, NativeError> {
         let slot_index = self.arg_offset + index;
-        self.slots.get(slot_index).ok_or(NativeError::ArgumentIndexOutOfBounds {
-            index,
-            count: self.arg_count(),
-        })
+        self.slots
+            .get(slot_index)
+            .ok_or(NativeError::ArgumentIndexOutOfBounds {
+                index,
+                count: self.arg_count(),
+            })
     }
 
     /// Get a mutable reference to an argument slot.
     pub fn arg_slot_mut(&mut self, index: usize) -> Result<&mut VmSlot, NativeError> {
         let slot_index = self.arg_offset + index;
         let count = self.arg_count();
-        self.slots.get_mut(slot_index).ok_or(NativeError::ArgumentIndexOutOfBounds {
-            index,
-            count,
-        })
+        self.slots
+            .get_mut(slot_index)
+            .ok_or(NativeError::ArgumentIndexOutOfBounds { index, count })
     }
 
     // Note: this<T>, this_mut<T>, arg<T>, set_return<T> methods are deferred
@@ -528,10 +534,7 @@ mod tests {
     #[test]
     fn call_context_method_arg_offset() {
         // For methods, slot 0 is `this`, so arg_offset = 1
-        let mut slots = vec![
-            VmSlot::Native(Box::new(42i32)),
-            VmSlot::Int(42),
-        ];
+        let mut slots = vec![VmSlot::Native(Box::new(42i32)), VmSlot::Int(42)];
         let mut ret = VmSlot::Void;
         let mut heap = ObjectHeap::new();
 
@@ -615,7 +618,11 @@ mod tests {
         assert!(VmSlot::NullHandle.clone_if_possible().is_some());
 
         // Cannot clone Native
-        assert!(VmSlot::Native(Box::new(42i32)).clone_if_possible().is_none());
+        assert!(
+            VmSlot::Native(Box::new(42i32))
+                .clone_if_possible()
+                .is_none()
+        );
 
         // Can clone Object handle
         let mut heap = ObjectHeap::new();
@@ -634,7 +641,10 @@ mod tests {
     #[test]
     fn object_heap_default() {
         let heap = ObjectHeap::default();
-        assert_eq!(format!("{:?}", heap), "ObjectHeap { slot_count: 0, free_count: 0 }");
+        assert_eq!(
+            format!("{:?}", heap),
+            "ObjectHeap { slot_count: 0, free_count: 0 }"
+        );
     }
 
     #[test]

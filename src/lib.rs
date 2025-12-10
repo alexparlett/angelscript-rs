@@ -66,22 +66,15 @@ mod context;
 mod unit;
 
 // Re-export compilation unit API (recommended for most users)
-pub use unit::{Unit, BuildError, UnitError};
+pub use unit::{BuildError, Unit, UnitError};
 
 // Re-export context API
 pub use context::{Context, ContextError};
 
 // Re-export error types from core for unified error handling
 pub use angelscript_core::{
-    AngelScriptError,
-    LexError,
-    ParseError,
-    ParseErrorKind,
-    ParseErrors,
-    RegistrationError,
-    CompilationError,
-    RuntimeError,
-    Span,
+    AngelScriptError, CompilationError, LexError, ParseError, ParseErrorKind, ParseErrors,
+    RegistrationError, RuntimeError, Span,
 };
 
 // Re-export common types
@@ -89,19 +82,31 @@ pub use angelscript_core::{ReferenceKind, TypeKind};
 
 // Re-export types needed for proc macros
 pub use angelscript_core::{
-    Any, TypeHash, Operator, RefModifier,
-    ClassMeta, FunctionMeta, PropertyMeta, ParamMeta, Behavior,
-    InterfaceMeta, InterfaceMethodMeta, FuncdefMeta,
-    // Enhanced function metadata types
-    ReturnMode, ReturnMeta, GenericParamMeta, ListPatternMeta,
+    Any,
+    Behavior,
     // Native function types for generic calling convention
     CallContext,
+    ClassMeta,
+    FuncdefMeta,
+    FunctionMeta,
+    GenericParamMeta,
+    InterfaceMeta,
+    InterfaceMethodMeta,
+    ListPatternMeta,
+    Operator,
+    ParamMeta,
+    PropertyMeta,
+    RefModifier,
+    ReturnMeta,
+    // Enhanced function metadata types
+    ReturnMode,
     // String factory trait
     StringFactory,
+    TypeHash,
 };
 
 // Re-export proc macros
-pub use angelscript_macros::{Any, function, interface, funcdef};
+pub use angelscript_macros::{Any, funcdef, function, interface};
 
 // Re-export Module and registry types
-pub use angelscript_registry::{Module, HasClassMeta, HasFunctionMeta, SymbolRegistry};
+pub use angelscript_registry::{HasClassMeta, HasFunctionMeta, Module, SymbolRegistry};

@@ -27,13 +27,13 @@
 //! context.install(math_module);
 //! ```
 
-pub mod string;
 pub mod array;
 pub mod dictionary;
 pub mod math;
 pub mod std;
+pub mod string;
 
 // Re-export the types for convenience
-pub use string::ScriptString;
 pub use array::ScriptArray;
 pub use dictionary::ScriptDict;
+pub use string::ScriptString;
