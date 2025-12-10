@@ -656,18 +656,11 @@ mod tests {
         let class = registry.get(array_int).unwrap().as_class().unwrap();
         assert!(!class.methods.is_empty());
 
-        let push_method = class
-            .methods
-            .iter()
-            .find(|m| {
-                registry
-                    .get_function(**m)
-                    .map(|f| f.def.name == "push")
-                    .unwrap_or(false)
-            })
-            .unwrap();
+        // Find the push method using the new FxHashMap<String, Vec<TypeHash>> structure
+        let push_methods = class.find_methods("push");
+        assert!(!push_methods.is_empty(), "push method should exist");
 
-        let push = registry.get_function(*push_method).unwrap();
+        let push = registry.get_function(push_methods[0]).unwrap();
         assert_eq!(push.def.params[0].data_type.type_hash, primitives::INT32);
     }
 
