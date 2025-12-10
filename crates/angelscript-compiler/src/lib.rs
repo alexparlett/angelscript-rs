@@ -13,6 +13,7 @@
 //! - [`context`]: Compilation context with namespace-aware resolution
 //! - [`conversion`]: Type conversion system for type checking and overload resolution
 //! - [`expr_info`]: Expression type information
+//! - [`scope`]: Local scope management for function compilation
 //! - [`type_resolver`]: Type resolution from AST to semantic types
 
 pub mod bytecode;
@@ -20,6 +21,7 @@ pub mod context;
 pub mod conversion;
 mod expr_info;
 pub mod passes;
+pub mod scope;
 pub mod template;
 pub mod type_resolver;
 
@@ -30,6 +32,7 @@ pub use conversion::{
 };
 pub use expr_info::ExprInfo;
 pub use passes::{RegistrationOutput, RegistrationPass};
+pub use scope::{CapturedVar, LocalScope, LocalVar, VarLookup};
 pub use type_resolver::TypeResolver;
 
 // Re-export CompilationError from core for convenience

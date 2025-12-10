@@ -1,63 +1,59 @@
-# Current Task: Registration Pass (Task 38)
+# Current Task: Local Scope & Variables (Task 39)
 
 **Status:** Complete
 **Date:** 2025-12-10
-**Branch:** 038-registration-pass
+**Branch:** 039-local-scope
 
 ---
 
-## Task 38: Registration Pass (Pass 1)
+## Task 39: Local Scope & Variables
 
-Implemented the registration pass (Pass 1 of the two-pass compiler) in `crates/angelscript-compiler/src/passes/`.
+Implemented function-local variable tracking in `CompilationContext` via a new `LocalScope` struct.
 
 ### Implementation Summary
 
 | Component | Location | Purpose |
 |-----------|----------|---------|
-| `RegistrationPass` | `passes/registration.rs` | Walks AST and registers all declarations |
-| `RegistrationOutput` | `passes/registration.rs` | Statistics and errors from pass |
-
-### Registered Items
-
-- **Classes**: With base class resolution, interface implementation, final/abstract modifiers
-- **Interfaces**: With base interfaces and method registration
-- **Enums**: With sequential value assignment and explicit value support
-- **Functions**: Global functions with full signature resolution
-- **Methods**: Class methods including const methods
-- **Constructors**: Overloaded constructor support
-- **Destructors**: Single destructor per class
-- **Global Variables**: With slot allocation (sequential), const support
-- **Funcdefs**: Function pointer types
-- **Namespaces**: Namespace enter/exit with qualified name building
-- **Using Directives**: Import namespaces for resolution
+| `LocalVar` | `scope.rs` | Tracks local variable info (name, type, slot, depth, const, initialized) |
+| `CapturedVar` | `scope.rs` | Tracks captured variables for lambdas |
+| `VarLookup` | `scope.rs` | Enum for variable lookup result (Local or Captured) |
+| `LocalScope` | `scope.rs` | Function-local scope manager |
 
 ### Key Features
 
-- **Namespace management**: Uses CompilationContext's enter/exit namespace
-- **Type resolution**: Resolves types using TypeResolver during registration
-- **Slot allocation**: Sequential global variable slot assignment (0, 1, 2, ...)
-- **Error collection**: Continues registration despite errors, collects all
-- **Constructor/destructor tracking**: Tracks which classes have user-defined versions
+- **Stack slot allocation**: Variables assigned sequential slots, tracks max for frame size
+- **Block scope management**: `push_scope()`/`pop_scope()` for if/while/for bodies
+- **Variable shadowing**: Inner blocks can shadow outer variables (properly restored on pop)
+- **Redeclaration detection**: Error with both original and new spans via `CompilationError::VariableRedeclaration`
+- **Lambda captures**: `get_or_capture()` automatically captures from parent scopes
+- **Initialization tracking**: Variables track whether they've been initialized
+- **Const support**: Variables can be marked as const
+
+### CompilationContext Integration
+
+New methods on `CompilationContext`:
+- `begin_function()` / `end_function()` - Create/finalize local scope
+- `in_function()` - Check if compiling a function
+- `push_local_scope()` / `pop_local_scope()` - Block scope management
+- `declare_local()` / `declare_param()` - Variable declaration
+- `mark_local_initialized()` - Mark variable initialized
+- `get_local()` / `get_local_or_capture()` - Variable lookup
+- `begin_lambda()` / `end_lambda()` - Lambda scope management
+
+### File Organization
+
+- `scope.rs` - LocalScope types, implementation, and unit tests (~550 lines)
+- `context.rs` - CompilationContext with LocalScope integration (~500 lines)
 
 ### Tests
 
-135 compiler tests pass including new tests:
-- `register_simple_class`
-- `register_class_with_methods`
-- `register_namespace`
-- `register_global_variable`
-- `register_const_global`
-- `register_enum`
-- `register_interface`
-- `register_funcdef`
-- `register_global_function`
-- `register_namespaced_global`
-- `register_constructor`
-- `register_destructor`
-- `global_slot_allocation_is_sequential`
+13 tests total:
+- 9 unit tests in `scope.rs` for LocalScope functionality
+- 4 integration tests in `context.rs` for CompilationContext + LocalScope
 
 ---
 
 ## Next Steps
 
-- Task 39: Local Scope - variable tracking and scope management for function bodies
+- Task 36: Conversion System (type conversions with costs)
+- Task 40: Overload Resolution (if applicable)

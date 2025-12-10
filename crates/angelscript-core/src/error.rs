@@ -557,6 +557,17 @@ pub enum CompilationError {
         span: Span,
     },
 
+    /// A variable was redeclared in the same scope.
+    #[error("at {new_span}: variable '{name}' redeclared (originally declared at {original_span})")]
+    VariableRedeclaration {
+        /// The variable name.
+        name: String,
+        /// Where the variable was originally declared.
+        original_span: Span,
+        /// Where the redeclaration occurred.
+        new_span: Span,
+    },
+
     /// A generic compilation error.
     #[error("at {span}: {message}")]
     Other {
@@ -635,6 +646,7 @@ impl CompilationError {
             CompilationError::InvalidOperation { span, .. } => *span,
             CompilationError::CircularInheritance { span, .. } => *span,
             CompilationError::DuplicateDefinition { span, .. } => *span,
+            CompilationError::VariableRedeclaration { new_span, .. } => *new_span,
             CompilationError::Other { span, .. } => *span,
             CompilationError::NoStringFactory { span } => *span,
             CompilationError::TemplateArgCountMismatch { span, .. } => *span,
