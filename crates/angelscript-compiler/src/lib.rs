@@ -12,14 +12,18 @@
 //! - [`bytecode`]: Bytecode types (OpCode, BytecodeChunk, ConstantPool)
 //! - [`context`]: Compilation context with namespace-aware resolution
 //! - [`conversion`]: Type conversion system for type checking and overload resolution
+//! - [`emit`]: High-level bytecode emitter
 //! - [`expr_info`]: Expression type information
+//! - [`overload`]: Overload resolution for function calls
 //! - [`scope`]: Local scope management for function compilation
 //! - [`type_resolver`]: Type resolution from AST to semantic types
 
 pub mod bytecode;
 pub mod context;
 pub mod conversion;
+pub mod emit;
 mod expr_info;
+pub mod overload;
 pub mod passes;
 pub mod scope;
 pub mod template;
@@ -30,7 +34,9 @@ pub use conversion::{
     Conversion, ConversionKind, can_implicitly_convert, find_conversion, find_handle_conversion,
     find_primitive_conversion,
 };
+pub use emit::{BreakError, BytecodeEmitter, JumpLabel};
 pub use expr_info::ExprInfo;
+pub use overload::{OverloadMatch, resolve_overload};
 pub use passes::{RegistrationOutput, RegistrationPass};
 pub use scope::{CapturedVar, LocalScope, LocalVar, VarLookup};
 pub use type_resolver::TypeResolver;

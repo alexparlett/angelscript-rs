@@ -467,15 +467,15 @@ mod tests {
 
 ## Acceptance Criteria
 
-- [ ] Opcodes emit correctly with operands
-- [ ] Constants added to pool and referenced
-- [ ] Forward jumps work with patching
-- [ ] Backward jumps (loops) calculate correct offset
-- [ ] Break/continue work within loops
-- [ ] Break/continue error when outside loop
-- [ ] Nested loops handled correctly
-- [ ] Line numbers tracked for debugging
-- [ ] All tests pass
+- [x] Opcodes emit correctly with operands
+- [x] Constants added to pool and referenced
+- [x] Forward jumps work with patching
+- [x] Backward jumps (loops) calculate correct offset
+- [x] Break/continue work within loops
+- [x] Break/continue error when outside loop
+- [x] Nested loops handled correctly
+- [x] Line numbers tracked for debugging
+- [x] All tests pass
 
 ## Next Phase
 

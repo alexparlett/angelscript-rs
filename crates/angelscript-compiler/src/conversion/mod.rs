@@ -105,27 +105,79 @@ pub enum ConversionKind {
         /// The enum type hash.
         enum_type: TypeHash,
     },
+
+    /// Reference cast - derived handle to base handle.
+    /// This includes both class hierarchy (derived to base) and interface casts.
+    ReferenceCast {
+        /// The target type hash (base class or interface).
+        target: TypeHash,
+    },
+
+    /// Variable argument type (?).
+    /// Used when a function accepts any type via '?' parameter.
+    VarArg,
 }
 
 impl Conversion {
+    // Cost constants follow AngelScript's overload resolution priority order.
+    // Lower cost = better match. The ordering determines which overload wins.
+    //
+    // AngelScript priority (best to worst):
+    // 1. no conversion needed
+    // 2. conversion to const
+    // 3. enum to integer of same size
+    // 4. enum to integer of different size
+    // 5. size of primitive type increases (widening)
+    // 6. size of primitive type decreases (narrowing)
+    // 7. signed to unsigned integer
+    // 8. unsigned to signed integer
+    // 9. integer to float
+    // 10. float to integer
+    // 11. reference cast
+    // 12. object to primitive (user-defined)
+    // 13. conversion to object (user-defined)
+    // 14. variable argument type
+
     /// Cost for exact match (identity conversion).
     pub const COST_EXACT: u32 = 0;
     /// Cost for adding const qualifier.
     pub const COST_CONST_ADDITION: u32 = 1;
+    /// Cost for enum to integer of same size.
+    pub const COST_ENUM_SAME_SIZE: u32 = 2;
+    /// Cost for enum to integer of different size.
+    pub const COST_ENUM_DIFF_SIZE: u32 = 3;
     /// Cost for primitive widening (int8 -> int32, float -> double).
-    pub const COST_PRIMITIVE_WIDENING: u32 = 2;
+    pub const COST_PRIMITIVE_WIDENING: u32 = 4;
     /// Cost for primitive narrowing (int32 -> int8, double -> float).
-    pub const COST_PRIMITIVE_NARROWING: u32 = 4;
-    /// Cost for enum to/from integer conversion.
-    pub const COST_ENUM_CONVERSION: u32 = 3;
-    /// Cost for derived-to-base conversion.
-    pub const COST_DERIVED_TO_BASE: u32 = 5;
-    /// Cost for class-to-interface conversion.
-    pub const COST_CLASS_TO_INTERFACE: u32 = 6;
-    /// Cost for user-defined implicit conversion.
-    pub const COST_USER_IMPLICIT: u32 = 10;
+    pub const COST_PRIMITIVE_NARROWING: u32 = 5;
+    /// Cost for signed to unsigned integer conversion.
+    pub const COST_SIGNED_TO_UNSIGNED: u32 = 6;
+    /// Cost for unsigned to signed integer conversion.
+    pub const COST_UNSIGNED_TO_SIGNED: u32 = 7;
+    /// Cost for integer to float conversion.
+    pub const COST_INT_TO_FLOAT: u32 = 8;
+    /// Cost for float to integer conversion.
+    pub const COST_FLOAT_TO_INT: u32 = 9;
+    /// Cost for reference cast (derived handle to base handle).
+    pub const COST_REFERENCE_CAST: u32 = 10;
+    /// Cost for user-defined object to primitive conversion.
+    pub const COST_OBJECT_TO_PRIMITIVE: u32 = 11;
+    /// Cost for user-defined conversion to object.
+    pub const COST_TO_OBJECT: u32 = 12;
+    /// Cost for variable argument type (?).
+    pub const COST_VAR_ARG: u32 = 13;
     /// Cost marker for explicit-only conversions (not usable implicitly).
     pub const COST_EXPLICIT_ONLY: u32 = 100;
+
+    // Legacy aliases for backwards compatibility with existing code
+    /// Cost for enum to/from integer conversion (legacy, use COST_ENUM_SAME_SIZE or COST_ENUM_DIFF_SIZE).
+    pub const COST_ENUM_CONVERSION: u32 = Self::COST_ENUM_SAME_SIZE;
+    /// Cost for derived-to-base conversion.
+    pub const COST_DERIVED_TO_BASE: u32 = Self::COST_REFERENCE_CAST;
+    /// Cost for class-to-interface conversion.
+    pub const COST_CLASS_TO_INTERFACE: u32 = Self::COST_REFERENCE_CAST;
+    /// Cost for user-defined implicit conversion.
+    pub const COST_USER_IMPLICIT: u32 = Self::COST_TO_OBJECT;
 
     /// Create an identity conversion (no conversion needed).
     pub(crate) fn identity() -> Self {
@@ -156,6 +208,8 @@ pub fn find_conversion(
     target: &DataType,
     ctx: &CompilationContext<'_>,
 ) -> Option<Conversion> {
+    use angelscript_core::primitives;
+
     // 1. Identity check (exact match including modifiers)
     if source == target {
         return Some(Conversion::identity());
@@ -199,6 +253,16 @@ pub fn find_conversion(
         return Some(conv);
     }
 
+    // 8. Variable argument type (?) - accepts any type
+    // This is the lowest priority implicit conversion
+    if target.type_hash == primitives::VARIABLE_PARAM {
+        return Some(Conversion {
+            kind: ConversionKind::VarArg,
+            cost: Conversion::COST_VAR_ARG,
+            is_implicit: true,
+        });
+    }
+
     None
 }
 
@@ -214,20 +278,31 @@ pub fn can_implicitly_convert(
 }
 
 /// Find class hierarchy conversion (derived to base, class to interface).
+///
+/// For handle types, this is a "reference cast" with cost COST_REFERENCE_CAST.
+/// For value types, this uses DerivedToBase/ClassToInterface with same cost.
 fn find_hierarchy_conversion(
     source: &DataType,
     target: &DataType,
     ctx: &CompilationContext<'_>,
 ) -> Option<Conversion> {
     let source_class = ctx.get_type(source.type_hash)?.as_class()?;
+    let is_handle_conversion = source.is_handle && target.is_handle;
 
     // Derived to base class
     if is_derived_from(source.type_hash, target.type_hash, ctx) {
-        return Some(Conversion {
-            kind: ConversionKind::DerivedToBase {
+        let kind = if is_handle_conversion {
+            ConversionKind::ReferenceCast {
+                target: target.type_hash,
+            }
+        } else {
+            ConversionKind::DerivedToBase {
                 base: target.type_hash,
-            },
-            cost: Conversion::COST_DERIVED_TO_BASE,
+            }
+        };
+        return Some(Conversion {
+            kind,
+            cost: Conversion::COST_REFERENCE_CAST,
             is_implicit: true,
         });
     }
@@ -240,11 +315,18 @@ fn find_hierarchy_conversion(
             .and_then(|t| t.as_interface())
             .is_some()
         {
-            return Some(Conversion {
-                kind: ConversionKind::ClassToInterface {
+            let kind = if is_handle_conversion {
+                ConversionKind::ReferenceCast {
+                    target: target.type_hash,
+                }
+            } else {
+                ConversionKind::ClassToInterface {
                     interface: target.type_hash,
-                },
-                cost: Conversion::COST_CLASS_TO_INTERFACE,
+                }
+            };
+            return Some(Conversion {
+                kind,
+                cost: Conversion::COST_REFERENCE_CAST,
                 is_implicit: true,
             });
         }
@@ -270,11 +352,15 @@ fn is_derived_from(source: TypeHash, target: TypeHash, ctx: &CompilationContext<
 }
 
 /// Find enum conversion (enum to int, int to enum).
+///
+/// AngelScript enums default to int (32-bit). Same-size conversions have
+/// lower cost than different-size conversions.
 fn find_enum_conversion(
     source: &DataType,
     target: &DataType,
     ctx: &CompilationContext<'_>,
 ) -> Option<Conversion> {
+    use angelscript_core::primitives;
     use primitive::is_primitive_numeric;
 
     // Enum to integer
@@ -284,9 +370,15 @@ fn find_enum_conversion(
         .is_some()
         && is_primitive_numeric(target.type_hash)
     {
+        // Enums default to int32, so int32 is "same size"
+        let cost = if target.type_hash == primitives::INT32 {
+            Conversion::COST_ENUM_SAME_SIZE
+        } else {
+            Conversion::COST_ENUM_DIFF_SIZE
+        };
         return Some(Conversion {
             kind: ConversionKind::EnumToInt,
-            cost: Conversion::COST_ENUM_CONVERSION,
+            cost,
             is_implicit: true,
         });
     }
@@ -298,11 +390,17 @@ fn find_enum_conversion(
             .and_then(|t| t.as_enum())
             .is_some()
     {
+        // Enums default to int32, so int32 is "same size"
+        let cost = if source.type_hash == primitives::INT32 {
+            Conversion::COST_ENUM_SAME_SIZE
+        } else {
+            Conversion::COST_ENUM_DIFF_SIZE
+        };
         return Some(Conversion {
             kind: ConversionKind::IntToEnum {
                 enum_type: target.type_hash,
             },
-            cost: Conversion::COST_ENUM_CONVERSION,
+            cost,
             is_implicit: true,
         });
     }

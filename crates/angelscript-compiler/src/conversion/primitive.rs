@@ -11,7 +11,7 @@ pub fn find_primitive_conversion(source: &DataType, target: &DataType) -> Option
     let from = source.type_hash;
     let to = target.type_hash;
 
-    // Integer widening (always implicit, low cost)
+    // Integer widening (always implicit)
     if is_integer_widening(from, to) {
         return Some(Conversion {
             kind: ConversionKind::Primitive { from, to },
@@ -29,29 +29,47 @@ pub fn find_primitive_conversion(source: &DataType, target: &DataType) -> Option
         });
     }
 
-    // Integer to float (implicit)
+    // Sign conversions (same size, different signedness)
+    if let Some(cost) = get_sign_conversion_cost(from, to) {
+        return Some(Conversion {
+            kind: ConversionKind::Primitive { from, to },
+            cost,
+            is_implicit: true,
+        });
+    }
+
+    // Integer to float (implicit, but lower priority than sign conversions)
     if is_int_to_float(from, to) {
         return Some(Conversion {
             kind: ConversionKind::Primitive { from, to },
-            cost: Conversion::COST_PRIMITIVE_WIDENING,
+            cost: Conversion::COST_INT_TO_FLOAT,
             is_implicit: true,
         });
     }
 
-    // Float to integer (implicit with truncation)
+    // Float to integer (implicit with truncation, lowest priority for primitives)
     if is_float_to_int(from, to) {
         return Some(Conversion {
             kind: ConversionKind::Primitive { from, to },
-            cost: Conversion::COST_PRIMITIVE_NARROWING + 1, // Extra cost for truncation
+            cost: Conversion::COST_FLOAT_TO_INT,
             is_implicit: true,
         });
     }
 
-    // Float widening/narrowing
-    if is_float_conversion(from, to) {
+    // Float widening (float -> double)
+    if from == primitives::FLOAT && to == primitives::DOUBLE {
         return Some(Conversion {
             kind: ConversionKind::Primitive { from, to },
             cost: Conversion::COST_PRIMITIVE_WIDENING,
+            is_implicit: true,
+        });
+    }
+
+    // Float narrowing (double -> float)
+    if from == primitives::DOUBLE && to == primitives::FLOAT {
+        return Some(Conversion {
+            kind: ConversionKind::Primitive { from, to },
+            cost: Conversion::COST_PRIMITIVE_NARROWING,
             is_implicit: true,
         });
     }
@@ -103,16 +121,35 @@ fn is_integer_narrowing(from: TypeHash, to: TypeHash) -> bool {
             | (primitives::UINT32, primitives::UINT16)
             | (primitives::UINT32, primitives::UINT8)
             | (primitives::UINT16, primitives::UINT8)
-            // Cross-sign conversions (same size)
-            | (primitives::INT8, primitives::UINT8)
-            | (primitives::UINT8, primitives::INT8)
-            | (primitives::INT16, primitives::UINT16)
-            | (primitives::UINT16, primitives::INT16)
-            | (primitives::INT32, primitives::UINT32)
-            | (primitives::UINT32, primitives::INT32)
-            | (primitives::INT64, primitives::UINT64)
-            | (primitives::UINT64, primitives::INT64)
     )
+}
+
+/// Get the cost for sign conversion (same size, different signedness).
+/// Returns None if not a sign conversion.
+fn get_sign_conversion_cost(from: TypeHash, to: TypeHash) -> Option<u32> {
+    // Signed to unsigned (same size)
+    if matches!(
+        (from, to),
+        (primitives::INT8, primitives::UINT8)
+            | (primitives::INT16, primitives::UINT16)
+            | (primitives::INT32, primitives::UINT32)
+            | (primitives::INT64, primitives::UINT64)
+    ) {
+        return Some(Conversion::COST_SIGNED_TO_UNSIGNED);
+    }
+
+    // Unsigned to signed (same size)
+    if matches!(
+        (from, to),
+        (primitives::UINT8, primitives::INT8)
+            | (primitives::UINT16, primitives::INT16)
+            | (primitives::UINT32, primitives::INT32)
+            | (primitives::UINT64, primitives::INT64)
+    ) {
+        return Some(Conversion::COST_UNSIGNED_TO_SIGNED);
+    }
+
+    None
 }
 
 fn is_int_to_float(from: TypeHash, to: TypeHash) -> bool {
@@ -145,13 +182,6 @@ fn is_float_to_int(from: TypeHash, to: TypeHash) -> bool {
             | primitives::UINT64
     );
     is_float && is_int
-}
-
-fn is_float_conversion(from: TypeHash, to: TypeHash) -> bool {
-    matches!(
-        (from, to),
-        (primitives::FLOAT, primitives::DOUBLE) | (primitives::DOUBLE, primitives::FLOAT)
-    )
 }
 
 /// Check if a type hash is a primitive numeric type.
@@ -285,7 +315,8 @@ mod tests {
         assert!(conv.is_some());
         let conv = conv.unwrap();
         assert!(conv.is_implicit);
-        assert_eq!(conv.cost, Conversion::COST_PRIMITIVE_NARROWING);
+        // Sign conversions have their own cost, higher than narrowing
+        assert_eq!(conv.cost, Conversion::COST_SIGNED_TO_UNSIGNED);
     }
 
     #[test]
