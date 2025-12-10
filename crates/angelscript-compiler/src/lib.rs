@@ -19,6 +19,7 @@ pub mod bytecode;
 pub mod context;
 mod conversion;
 mod expr_info;
+pub mod template;
 pub mod type_resolver;
 
 pub use context::{CompilationContext, Scope};

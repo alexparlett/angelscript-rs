@@ -574,6 +574,53 @@ pub enum CompilationError {
         /// Where the string literal occurred.
         span: Span,
     },
+
+    /// Template argument count mismatch.
+    #[error("at {span}: template expects {expected} type argument(s), got {got}")]
+    TemplateArgCountMismatch {
+        /// Expected number of type arguments.
+        expected: usize,
+        /// Actual number of type arguments provided.
+        got: usize,
+        /// Where the template was instantiated.
+        span: Span,
+    },
+
+    /// Attempted to instantiate a non-template type as a template.
+    #[error("at {span}: '{name}' is not a template")]
+    NotATemplate {
+        /// The type name.
+        name: String,
+        /// Where the template was instantiated.
+        span: Span,
+    },
+
+    /// Template validation callback rejected the instantiation.
+    #[error("at {span}: invalid template instantiation '{template}': {message}")]
+    TemplateValidationFailed {
+        /// The template name.
+        template: String,
+        /// The error message from the validation callback.
+        message: String,
+        /// Where the template was instantiated.
+        span: Span,
+    },
+
+    /// A function was not found.
+    #[error("at {span}: function not found: {name}")]
+    FunctionNotFound {
+        /// The function name.
+        name: String,
+        /// Where the function was referenced.
+        span: Span,
+    },
+
+    /// Internal compiler error.
+    #[error("internal error: {message}")]
+    Internal {
+        /// The error message.
+        message: String,
+    },
 }
 
 impl CompilationError {
@@ -590,6 +637,11 @@ impl CompilationError {
             CompilationError::DuplicateDefinition { span, .. } => *span,
             CompilationError::Other { span, .. } => *span,
             CompilationError::NoStringFactory { span } => *span,
+            CompilationError::TemplateArgCountMismatch { span, .. } => *span,
+            CompilationError::NotATemplate { span, .. } => *span,
+            CompilationError::TemplateValidationFailed { span, .. } => *span,
+            CompilationError::FunctionNotFound { span, .. } => *span,
+            CompilationError::Internal { .. } => Span::default(),
         }
     }
 }
