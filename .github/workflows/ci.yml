@@ -92,9 +92,6 @@ jobs:
   coverage:
     name: Code Coverage
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      pull-requests: write
     steps:
       - uses: actions/checkout@v4
 
@@ -120,18 +117,14 @@ jobs:
             ${{ runner.os }}-cargo-coverage-
             ${{ runner.os }}-cargo-
 
-      - name: Install lcov
-        run: sudo apt-get install -y lcov
-
       - name: Run tests with coverage
         run: |
           cargo llvm-cov nextest --all-features --workspace \
-            --lcov --output-path lcov.info
+            --fail-under-lines 85
 
-      - name: Coverage Report
-        uses: zgosalvez/github-actions-report-lcov@v4
-        with:
-          coverage-files: lcov.info
-          minimum-coverage: 85
-          github-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Generate coverage summary
+        run: |
+          echo "## Code Coverage" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          cargo llvm-cov report >> $GITHUB_STEP_SUMMARY
 
