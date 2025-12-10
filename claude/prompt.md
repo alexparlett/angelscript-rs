@@ -1,66 +1,63 @@
-# Current Task: Template Instantiation (Task 35)
+# Current Task: Registration Pass (Task 38)
 
 **Status:** Complete
 **Date:** 2025-12-10
-**Branch:** 035-template-instantiation
+**Branch:** 038-registration-pass
 
 ---
 
-## Task 35: Template Instantiation
+## Task 38: Registration Pass (Pass 1)
 
-Implemented the template instantiation system in `crates/angelscript-compiler/src/template/`.
+Implemented the registration pass (Pass 1 of the two-pass compiler) in `crates/angelscript-compiler/src/passes/`.
 
 ### Implementation Summary
 
 | Component | Location | Purpose |
 |-----------|----------|---------|
-| `TemplateInstanceCache` | `template/cache.rs` | Caches (template, args) → instance hash |
-| `SubstitutionMap` | `template/substitution.rs` | Maps template params to concrete types |
-| `substitute_type` | `template/substitution.rs` | Replaces template params in types |
-| `instantiate_template_type` | `template/instantiation.rs` | Instantiates template classes |
-| `instantiate_template_function` | `template/instantiation.rs` | Instantiates template functions |
-| `instantiate_child_funcdef` | `template/instantiation.rs` | Instantiates child funcdefs |
-| `TemplateCallback` trait | `template/validation.rs` | Validates instantiation via callbacks |
+| `RegistrationPass` | `passes/registration.rs` | Walks AST and registers all declarations |
+| `RegistrationOutput` | `passes/registration.rs` | Statistics and errors from pass |
+
+### Registered Items
+
+- **Classes**: With base class resolution, interface implementation, final/abstract modifiers
+- **Interfaces**: With base interfaces and method registration
+- **Enums**: With sequential value assignment and explicit value support
+- **Functions**: Global functions with full signature resolution
+- **Methods**: Class methods including const methods
+- **Constructors**: Overloaded constructor support
+- **Destructors**: Single destructor per class
+- **Global Variables**: With slot allocation (sequential), const support
+- **Funcdefs**: Function pointer types
+- **Namespaces**: Namespace enter/exit with qualified name building
+- **Using Directives**: Import namespaces for resolution
 
 ### Key Features
 
-- **Cache-first lookup**: Checks cache before computing hashes
-- **FFI specialization priority**: Pre-registered instances take precedence
-- **Method instantiation**: Automatically instantiates methods with substituted types
-- **Modifier preservation**: const, handle, ref modifiers preserved through substitution
-- **Validation callbacks**: Custom validation (e.g., hashable keys for dict)
-- **Child funcdef support**: `array<int>::Callback` style nested types
-- **TypeResolver integration**: Automatically instantiates templates when resolving `array<int>` style types
-- **Nested template support**: `array<array<int>>` works via recursive resolution
-
-### New Error Types (CompilationError)
-
-- `TemplateArgCountMismatch { expected, got, span }`
-- `NotATemplate { name, span }`
-- `TemplateValidationFailed { template, message, span }`
-- `FunctionNotFound { name, span }`
-- `Internal { message }`
+- **Namespace management**: Uses CompilationContext's enter/exit namespace
+- **Type resolution**: Resolves types using TypeResolver during registration
+- **Slot allocation**: Sequential global variable slot assignment (0, 1, 2, ...)
+- **Error collection**: Continues registration despite errors, collects all
+- **Constructor/destructor tracking**: Tracks which classes have user-defined versions
 
 ### Tests
 
-122 compiler tests including:
-- Cache operations (6 tests)
-- Substitution logic (11 tests)
-- Type instantiation with methods (4 tests)
-- Validation callbacks (6 tests)
-- TypeResolver template tests (4 tests): simple instantiation, nested templates, error handling, caching
-
-E2E integration tests deferred until compiler is wired up (will be covered by `test_templates` in `tests/unit_tests.rs`).
+135 compiler tests pass including new tests:
+- `register_simple_class`
+- `register_class_with_methods`
+- `register_namespace`
+- `register_global_variable`
+- `register_const_global`
+- `register_enum`
+- `register_interface`
+- `register_funcdef`
+- `register_global_function`
+- `register_namespaced_global`
+- `register_constructor`
+- `register_destructor`
+- `global_slot_allocation_is_sequential`
 
 ---
 
-## Fixes Applied (PR #30 Review)
-
-1. **Fixed `format_type_args` TODO**: Now looks up actual type names from registry instead of printing `TypeHash(0x...)` debug output
-2. **Fixed clippy warning**: Collapsed nested `if let` statements using `let && let` chains
-3. **Wired template instantiation into TypeResolver**: `TypeResolver::resolve_base()` now calls `ctx.instantiate_template()` when template arguments are present
-4. **Added nested template test**: `resolve_nested_template_instantiation` test verifies `array<array<int>>` works correctly
-
 ## Next Steps
 
-- Task 36: Conversion System (type conversions with costs)
+- Task 39: Local Scope - variable tracking and scope management for function bodies

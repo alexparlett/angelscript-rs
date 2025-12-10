@@ -19,6 +19,7 @@ pub mod bytecode;
 pub mod context;
 pub mod conversion;
 mod expr_info;
+pub mod passes;
 pub mod template;
 pub mod type_resolver;
 
@@ -28,6 +29,7 @@ pub use conversion::{
     find_primitive_conversion,
 };
 pub use expr_info::ExprInfo;
+pub use passes::{RegistrationOutput, RegistrationPass};
 pub use type_resolver::TypeResolver;
 
 // Re-export CompilationError from core for convenience
