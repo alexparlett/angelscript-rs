@@ -328,8 +328,8 @@ impl SymbolRegistry {
         if let Some(entry) = self.types.get(&class_hash)
             && let Some(class) = entry.as_class()
         {
-            for method_hash in &class.methods {
-                if let Some(func) = self.functions.get(method_hash) {
+            for method_hash in class.all_methods() {
+                if let Some(func) = self.functions.get(&method_hash) {
                     methods.push(func);
                 }
             }
@@ -337,8 +337,8 @@ impl SymbolRegistry {
 
         // Inherited methods
         for base in self.base_class_chain(class_hash) {
-            for method_hash in &base.methods {
-                if let Some(func) = self.functions.get(method_hash) {
+            for method_hash in base.all_methods() {
+                if let Some(func) = self.functions.get(&method_hash) {
                     methods.push(func);
                 }
             }

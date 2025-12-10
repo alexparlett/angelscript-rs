@@ -258,13 +258,7 @@ impl Context {
         // Compute function hash - use from_method for methods, from_function for globals
         let param_hashes: Vec<TypeHash> = meta.params.iter().map(|p| p.type_hash).collect();
         let func_hash = if let Some(owner) = object_type {
-            TypeHash::from_method(
-                owner,
-                name,
-                &param_hashes,
-                meta.is_const,
-                meta.return_meta.is_const,
-            )
+            TypeHash::from_method(owner, name, &param_hashes)
         } else {
             TypeHash::from_function(name, &param_hashes)
         };

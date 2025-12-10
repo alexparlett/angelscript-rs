@@ -171,24 +171,15 @@ impl TypeHash {
         TypeHash(hash)
     }
 
-    /// Create a method hash from owner type, method name, parameter type hashes, and const qualifiers.
+    /// Create a method hash from owner type, method name, and parameter type hashes.
     ///
     /// Methods are distinguished from global functions by incorporating the owner type.
-    /// Parameter order matters. The `is_const` flag indicates if this is a const method,
-    /// and `return_is_const` indicates if the return type is const-qualified.
+    /// Parameter order matters. The `is_const` property is stored on the method definition
+    /// but not part of the hash - const/non-const overloads are resolved during overload
+    /// resolution based on whether the object reference is const.
     #[inline]
-    pub fn from_method(
-        owner: TypeHash,
-        name: &str,
-        param_hashes: &[TypeHash],
-        is_const: bool,
-        return_is_const: bool,
-    ) -> Self {
-        // Include const flags in initial hash computation
-        let const_modifier =
-            if is_const { 0x1 } else { 0x0 } | if return_is_const { 0x2 } else { 0x0 };
-        let mut hash =
-            hash_constants::METHOD ^ owner.0 ^ xxh64(name.as_bytes(), 0) ^ const_modifier;
+    pub fn from_method(owner: TypeHash, name: &str, param_hashes: &[TypeHash]) -> Self {
+        let mut hash = hash_constants::METHOD ^ owner.0 ^ xxh64(name.as_bytes(), 0);
         for (i, param) in param_hashes.iter().enumerate() {
             let marker = hash_constants::PARAM_MARKERS
                 .get(i)
@@ -222,24 +213,15 @@ impl TypeHash {
         TypeHash(hash)
     }
 
-    /// Create an operator method hash from owner type, operator name, parameter type hashes, and const qualifiers.
+    /// Create an operator method hash from owner type, operator name, and parameter type hashes.
     ///
     /// Operators are like methods but use a different domain constant to distinguish
-    /// `opAdd` from a regular method named "opAdd". The `is_const` flag indicates if this
-    /// is a const method, and `return_is_const` indicates if the return type is const-qualified.
+    /// `opAdd` from a regular method named "opAdd". The `is_const` property is stored on
+    /// the method definition but not part of the hash.
     #[inline]
-    pub fn from_operator(
-        owner: TypeHash,
-        operator_name: &str,
-        param_hashes: &[TypeHash],
-        is_const: bool,
-        return_is_const: bool,
-    ) -> Self {
+    pub fn from_operator(owner: TypeHash, operator_name: &str, param_hashes: &[TypeHash]) -> Self {
         let name_hash = xxh64(operator_name.as_bytes(), 0);
-        // Include const flags in initial hash computation
-        let const_modifier =
-            if is_const { 0x1 } else { 0x0 } | if return_is_const { 0x2 } else { 0x0 };
-        let mut hash = hash_constants::OPERATOR ^ owner.0 ^ name_hash ^ const_modifier;
+        let mut hash = hash_constants::OPERATOR ^ owner.0 ^ name_hash;
         for (i, param) in param_hashes.iter().enumerate() {
             let marker = hash_constants::PARAM_MARKERS
                 .get(i)
@@ -469,8 +451,8 @@ mod tests {
         let enemy_hash = TypeHash::from_name("Enemy");
 
         // Same method name and params, different owners
-        let player_update = TypeHash::from_method(player_hash, "update", &[int_hash], false, false);
-        let enemy_update = TypeHash::from_method(enemy_hash, "update", &[int_hash], false, false);
+        let player_update = TypeHash::from_method(player_hash, "update", &[int_hash]);
+        let enemy_update = TypeHash::from_method(enemy_hash, "update", &[int_hash]);
         assert_ne!(player_update, enemy_update);
     }
 
@@ -481,7 +463,7 @@ mod tests {
 
         // Global function vs method with same name and params
         let global_func = TypeHash::from_function("update", &[int_hash]);
-        let method = TypeHash::from_method(player_hash, "update", &[int_hash], false, false);
+        let method = TypeHash::from_method(player_hash, "update", &[int_hash]);
         assert_ne!(global_func, method);
     }
 

@@ -818,7 +818,7 @@ mod tests {
         registry.register_type(array_entry.into()).unwrap();
 
         // Create push method: void push(const T&in)
-        let push_hash = TypeHash::from_method(array_hash, "push", &[t_hash], false, false);
+        let push_hash = TypeHash::from_method(array_hash, "push", &[t_hash]);
         let push_def = FunctionDef::new(
             push_hash,
             "push".to_string(),
@@ -838,7 +838,7 @@ mod tests {
         if let Some(entry) = registry.get_mut(array_hash)
             && let Some(class) = entry.as_class_mut()
         {
-            class.methods.push(push_hash);
+            class.add_method("push", push_hash);
         }
 
         array_hash
