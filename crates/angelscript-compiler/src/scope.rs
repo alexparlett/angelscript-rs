@@ -84,12 +84,15 @@ impl ScopeError {
 impl From<ScopeError> for CompilationError {
     fn from(err: ScopeError) -> Self {
         match err {
-            ScopeError::Redeclaration { name, new_span, .. } => {
-                CompilationError::DuplicateDefinition {
-                    name,
-                    span: new_span,
-                }
-            }
+            ScopeError::Redeclaration {
+                name,
+                original_span,
+                new_span,
+            } => CompilationError::VariableRedeclaration {
+                name,
+                original_span,
+                new_span,
+            },
         }
     }
 }
