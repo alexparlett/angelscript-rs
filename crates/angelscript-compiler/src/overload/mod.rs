@@ -11,10 +11,8 @@
 //! 4. Rank candidates by cost and select the best match
 //! 5. Detect and report ambiguous overloads when multiple candidates tie
 
-mod operators;
 mod ranking;
 
-pub use operators::{OperatorResolution, resolve_binary_operator, resolve_unary_operator};
 pub use ranking::find_best_match;
 
 use angelscript_core::{CompilationError, DataType, Span, TypeHash};
