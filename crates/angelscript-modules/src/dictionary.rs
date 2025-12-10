@@ -3,7 +3,7 @@
 //! This is a placeholder implementation for FFI registration.
 //! The actual storage and runtime implementation will be handled by the VM.
 
-use angelscript_core::AnyRef;
+use angelscript_core::Dynamic;
 use angelscript_macros::Any;
 use angelscript_registry::Module;
 
@@ -79,36 +79,28 @@ impl ScriptDict {
 
     /// Insert or update an entry.
     #[angelscript_macros::function(instance, name = "set")]
-    pub fn set(
-        &mut self,
-        #[template("K")] key: AnyRef<'static>,
-        #[template("V")] value: AnyRef<'static>,
-    ) {
+    pub fn set(&mut self, #[template("K")] key: Dynamic, #[template("V")] value: Dynamic) {
         let _ = (key, value);
         todo!()
     }
 
     /// Check if key exists.
     #[angelscript_macros::function(instance, const)]
-    pub fn exists(&self, #[template("K")] key: AnyRef<'static>) -> bool {
+    pub fn exists(&self, #[template("K")] key: Dynamic) -> bool {
         let _ = key;
         todo!()
     }
 
     /// Get value by key (returns bool indicating success, value via out param).
     #[angelscript_macros::function(instance, const)]
-    pub fn get(
-        &self,
-        #[template("K")] key: AnyRef<'static>,
-        #[template("V")] out_value: AnyRef<'static>,
-    ) -> bool {
+    pub fn get(&self, #[template("K")] key: Dynamic, #[template("V")] out_value: Dynamic) -> bool {
         let _ = (key, out_value);
         todo!()
     }
 
     /// Delete entry by key.
     #[angelscript_macros::function(instance)]
-    pub fn delete(&mut self, #[template("K")] key: AnyRef<'static>) -> bool {
+    pub fn delete(&mut self, #[template("K")] key: Dynamic) -> bool {
         let _ = key;
         todo!()
     }
@@ -119,14 +111,16 @@ impl ScriptDict {
 
     /// Index operator (mutable).
     #[angelscript_macros::function(instance, operator = angelscript_core::Operator::Index)]
-    pub fn op_index(&mut self, #[template("K")] key: AnyRef<'static>) -> AnyRef<'static> {
+    #[returns(template = "V")]
+    pub fn op_index(&mut self, #[template("K")] key: Dynamic) -> Dynamic {
         let _ = key;
         todo!()
     }
 
     /// Index operator (const).
     #[angelscript_macros::function(instance, const, operator = angelscript_core::Operator::Index)]
-    pub fn op_index_const(&self, #[template("K")] key: AnyRef<'static>) -> AnyRef<'static> {
+    #[returns(template = "V")]
+    pub fn op_index_const(&self, #[template("K")] key: Dynamic) -> Dynamic {
         let _ = key;
         todo!()
     }

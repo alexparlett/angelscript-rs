@@ -3,13 +3,18 @@
 //! This module provides the infrastructure for storing and calling native
 //! Rust functions from the VM.
 //!
-//! Note: Conversion traits (FromScript, ToScript) and type-dependent methods
-//! (arg<T>, set_return<T>, this<T>) are deferred until VM implementation.
+//! ## Key Types
+//!
+//! - [`Dynamic`]: Runtime value type for VM slots (primitives, objects, native values)
+//! - [`NativeFn`]: Type-erased callable wrapper for FFI functions
+//! - [`CallContext`]: Bridge between VM and Rust for function calls
+//! - [`ObjectHeap`]: Generational arena for reference-counted objects
 
 use std::any::{Any, TypeId};
 use std::fmt;
 
 use crate::TypeHash;
+use crate::convert::{FromSlot, IntoSlot};
 use crate::native_error::NativeError;
 
 /// Type-erased native function.
@@ -28,14 +33,13 @@ pub struct NativeFn {
 }
 
 impl NativeFn {
-    /// Create a new NativeFn from a callable.
-    /// Automatically assigns a unique FFI TypeHash.
-    pub fn new<F>(f: F) -> Self
+    /// Create a new NativeFn from a callable with a specific ID.
+    pub fn new<F>(id: TypeHash, f: F) -> Self
     where
         F: NativeCallable + Send + Sync + 'static,
     {
         Self {
-            id: TypeHash::from_name("test_func"),
+            id,
             inner: std::sync::Arc::new(f),
         }
     }
@@ -89,14 +93,17 @@ where
     }
 }
 
-/// A slot in the VM that holds a value.
+/// A dynamic value that can be stored in VM slots.
 ///
 /// This enum represents all possible values that can be stored in the VM's
 /// stack or registers. It uses safe Rust constructs - no raw pointers.
 ///
-/// Note: VmSlot does not implement Clone because Native values may not be cloneable.
-/// Use `VmSlot::clone_if_possible()` for slots that don't contain Native values.
-pub enum VmSlot {
+/// Similar to Rhai's `Dynamic` type, this provides a unified runtime
+/// representation for all AngelScript values.
+///
+/// Note: Dynamic does not implement Clone because Native values may not be cloneable.
+/// Use `Dynamic::clone_if_possible()` for slots that don't contain Native values.
+pub enum Dynamic {
     /// Void/empty
     Void,
     /// Integer value (i8, i16, i32, i64, u8, u16, u32, u64 all stored as i64)
@@ -116,29 +123,29 @@ pub enum VmSlot {
     NullHandle,
 }
 
-impl VmSlot {
+impl Dynamic {
     /// Get a human-readable name for this slot's type.
     pub fn type_name(&self) -> &'static str {
         match self {
-            VmSlot::Void => "void",
-            VmSlot::Int(_) => "int",
-            VmSlot::Float(_) => "float",
-            VmSlot::Bool(_) => "bool",
-            VmSlot::String(_) => "string",
-            VmSlot::Object(_) => "object",
-            VmSlot::Native(_) => "native",
-            VmSlot::NullHandle => "null",
+            Dynamic::Void => "void",
+            Dynamic::Int(_) => "int",
+            Dynamic::Float(_) => "float",
+            Dynamic::Bool(_) => "bool",
+            Dynamic::String(_) => "string",
+            Dynamic::Object(_) => "object",
+            Dynamic::Native(_) => "native",
+            Dynamic::NullHandle => "null",
         }
     }
 
     /// Check if this slot is void.
     pub fn is_void(&self) -> bool {
-        matches!(self, VmSlot::Void)
+        matches!(self, Dynamic::Void)
     }
 
     /// Check if this slot is null.
     pub fn is_null(&self) -> bool {
-        matches!(self, VmSlot::NullHandle)
+        matches!(self, Dynamic::NullHandle)
     }
 
     /// Clone the slot if it doesn't contain a Native value.
@@ -146,29 +153,46 @@ impl VmSlot {
     /// Returns None for Native values since they may not be cloneable.
     pub fn clone_if_possible(&self) -> Option<Self> {
         match self {
-            VmSlot::Void => Some(VmSlot::Void),
-            VmSlot::Int(v) => Some(VmSlot::Int(*v)),
-            VmSlot::Float(v) => Some(VmSlot::Float(*v)),
-            VmSlot::Bool(v) => Some(VmSlot::Bool(*v)),
-            VmSlot::String(s) => Some(VmSlot::String(s.clone())),
-            VmSlot::Object(h) => Some(VmSlot::Object(*h)),
-            VmSlot::Native(_) => None,
-            VmSlot::NullHandle => Some(VmSlot::NullHandle),
+            Dynamic::Void => Some(Dynamic::Void),
+            Dynamic::Int(v) => Some(Dynamic::Int(*v)),
+            Dynamic::Float(v) => Some(Dynamic::Float(*v)),
+            Dynamic::Bool(v) => Some(Dynamic::Bool(*v)),
+            Dynamic::String(s) => Some(Dynamic::String(s.clone())),
+            Dynamic::Object(h) => Some(Dynamic::Object(*h)),
+            Dynamic::Native(_) => None,
+            Dynamic::NullHandle => Some(Dynamic::NullHandle),
         }
     }
 }
 
-impl fmt::Debug for VmSlot {
+impl fmt::Debug for Dynamic {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            VmSlot::Void => write!(f, "Void"),
-            VmSlot::Int(v) => write!(f, "Int({})", v),
-            VmSlot::Float(v) => write!(f, "Float({})", v),
-            VmSlot::Bool(v) => write!(f, "Bool({})", v),
-            VmSlot::String(s) => write!(f, "String({:?})", s),
-            VmSlot::Object(h) => write!(f, "Object({:?})", h),
-            VmSlot::Native(_) => write!(f, "Native(...)"),
-            VmSlot::NullHandle => write!(f, "NullHandle"),
+            Dynamic::Void => write!(f, "Void"),
+            Dynamic::Int(v) => write!(f, "Int({})", v),
+            Dynamic::Float(v) => write!(f, "Float({})", v),
+            Dynamic::Bool(v) => write!(f, "Bool({})", v),
+            Dynamic::String(s) => write!(f, "String({:?})", s),
+            Dynamic::Object(h) => write!(f, "Object({:?})", h),
+            Dynamic::Native(_) => write!(f, "Native(...)"),
+            Dynamic::NullHandle => write!(f, "NullHandle"),
+        }
+    }
+}
+
+impl PartialEq for Dynamic {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Dynamic::Void, Dynamic::Void) => true,
+            (Dynamic::Int(a), Dynamic::Int(b)) => a == b,
+            (Dynamic::Float(a), Dynamic::Float(b)) => a == b,
+            (Dynamic::Bool(a), Dynamic::Bool(b)) => a == b,
+            (Dynamic::String(a), Dynamic::String(b)) => a == b,
+            (Dynamic::Object(a), Dynamic::Object(b)) => a == b,
+            (Dynamic::NullHandle, Dynamic::NullHandle) => true,
+            // Native values can't be compared for equality
+            (Dynamic::Native(_), Dynamic::Native(_)) => false,
+            _ => false,
         }
     }
 }
@@ -339,13 +363,30 @@ impl fmt::Debug for ObjectHeap {
 ///
 /// This bridges the VM and Rust, providing access to function arguments
 /// and the ability to set return values.
+///
+/// ## Typed Argument Access
+///
+/// Use `arg::<T>()` for typed argument extraction with automatic conversion:
+///
+/// ```ignore
+/// let x: i32 = ctx.arg(0)?;
+/// let y: f64 = ctx.arg(1)?;
+/// ```
+///
+/// ## Return Values
+///
+/// Use `set_return()` for typed return values:
+///
+/// ```ignore
+/// ctx.set_return(x + y);
+/// ```
 pub struct CallContext<'vm> {
     /// VM stack/argument slots
-    slots: &'vm mut [VmSlot],
+    slots: &'vm mut [Dynamic],
     /// Index of first argument (0 for functions, 1 for methods where 0 is `this`)
     arg_offset: usize,
     /// Return value slot
-    return_slot: &'vm mut VmSlot,
+    return_slot: &'vm mut Dynamic,
     /// Object heap for reference type access
     heap: &'vm mut ObjectHeap,
 }
@@ -360,9 +401,9 @@ impl<'vm> CallContext<'vm> {
     /// * `return_slot` - Where to store the return value
     /// * `heap` - Object heap for reference types
     pub fn new(
-        slots: &'vm mut [VmSlot],
+        slots: &'vm mut [Dynamic],
         arg_offset: usize,
-        return_slot: &'vm mut VmSlot,
+        return_slot: &'vm mut Dynamic,
         heap: &'vm mut ObjectHeap,
     ) -> Self {
         Self {
@@ -379,7 +420,7 @@ impl<'vm> CallContext<'vm> {
     }
 
     /// Get a raw reference to an argument slot.
-    pub fn arg_slot(&self, index: usize) -> Result<&VmSlot, NativeError> {
+    pub fn arg_slot(&self, index: usize) -> Result<&Dynamic, NativeError> {
         let slot_index = self.arg_offset + index;
         self.slots
             .get(slot_index)
@@ -390,7 +431,7 @@ impl<'vm> CallContext<'vm> {
     }
 
     /// Get a mutable reference to an argument slot.
-    pub fn arg_slot_mut(&mut self, index: usize) -> Result<&mut VmSlot, NativeError> {
+    pub fn arg_slot_mut(&mut self, index: usize) -> Result<&mut Dynamic, NativeError> {
         let slot_index = self.arg_offset + index;
         let count = self.arg_count();
         self.slots
@@ -398,12 +439,123 @@ impl<'vm> CallContext<'vm> {
             .ok_or(NativeError::ArgumentIndexOutOfBounds { index, count })
     }
 
-    // Note: this<T>, this_mut<T>, arg<T>, set_return<T> methods are deferred
-    // until VM implementation when conversion traits will be designed.
+    /// Get a typed argument value.
+    ///
+    /// This uses the `FromSlot` trait to convert the slot value to the
+    /// requested type. For primitives (integers, floats, bool), this
+    /// performs the appropriate conversion with bounds checking.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let x: i32 = ctx.arg(0)?;
+    /// let y: f64 = ctx.arg(1)?;
+    /// let flag: bool = ctx.arg(2)?;
+    /// ```
+    pub fn arg<T: FromSlot>(&self, index: usize) -> Result<T, NativeError> {
+        let slot = self.arg_slot(index)?;
+        T::from_slot(slot).map_err(NativeError::Conversion)
+    }
 
     /// Set the return value from a raw slot.
-    pub fn set_return_slot(&mut self, slot: VmSlot) {
+    pub fn set_return_slot(&mut self, slot: Dynamic) {
         *self.return_slot = slot;
+    }
+
+    /// Set a typed return value.
+    ///
+    /// This uses the `IntoSlot` trait to convert the value into a
+    /// Dynamic slot value.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// ctx.set_return(42i32);
+    /// ctx.set_return(3.14f64);
+    /// ctx.set_return(true);
+    /// ```
+    pub fn set_return<T: IntoSlot>(&mut self, value: T) {
+        *self.return_slot = value.into_slot();
+    }
+
+    /// Get an immutable reference to `this` for method calls.
+    ///
+    /// This extracts a reference to the receiver object from slot 0.
+    /// The type must match the expected type exactly.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - Slot 0 is not a Native value
+    /// - The native value's type doesn't match `T`
+    pub fn this<T: Any>(&self) -> Result<&T, NativeError> {
+        if self.slots.is_empty() {
+            return Err(NativeError::invalid_this("no slots available"));
+        }
+
+        match &self.slots[0] {
+            Dynamic::Native(boxed) => boxed.downcast_ref::<T>().ok_or_else(|| {
+                NativeError::invalid_this(format!(
+                    "type mismatch: expected {}, got different type",
+                    std::any::type_name::<T>()
+                ))
+            }),
+            Dynamic::Object(handle) => self.heap.get::<T>(*handle).ok_or_else(|| {
+                NativeError::invalid_this(format!(
+                    "object type mismatch or stale handle for {}",
+                    std::any::type_name::<T>()
+                ))
+            }),
+            other => Err(NativeError::invalid_this(format!(
+                "expected native or object, got {}",
+                other.type_name()
+            ))),
+        }
+    }
+
+    /// Get a mutable reference to `this` for method calls.
+    ///
+    /// This extracts a mutable reference to the receiver object from slot 0.
+    /// The type must match the expected type exactly.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - Slot 0 is not a Native value
+    /// - The native value's type doesn't match `T`
+    pub fn this_mut<T: Any>(&mut self) -> Result<&mut T, NativeError> {
+        if self.slots.is_empty() {
+            return Err(NativeError::invalid_this("no slots available"));
+        }
+
+        // We need to handle Object handles specially since they reference the heap
+        match &self.slots[0] {
+            Dynamic::Object(handle) => {
+                let handle = *handle;
+                self.heap.get_mut::<T>(handle).ok_or_else(|| {
+                    NativeError::invalid_this(format!(
+                        "object type mismatch or stale handle for {}",
+                        std::any::type_name::<T>()
+                    ))
+                })
+            }
+            Dynamic::Native(_) => {
+                // For Native, we can access it directly
+                match &mut self.slots[0] {
+                    Dynamic::Native(boxed) => boxed.downcast_mut::<T>().ok_or_else(|| {
+                        NativeError::invalid_this(format!(
+                            "type mismatch: expected {}, got different type",
+                            std::any::type_name::<T>()
+                        ))
+                    }),
+                    _ => unreachable!(),
+                }
+            }
+            other => Err(NativeError::invalid_this(format!(
+                "expected native or object, got {}",
+                other.type_name()
+            ))),
+        }
     }
 
     /// Get access to the object heap.
@@ -431,25 +583,25 @@ mod tests {
     use super::*;
 
     #[test]
-    fn vm_slot_type_names() {
-        assert_eq!(VmSlot::Void.type_name(), "void");
-        assert_eq!(VmSlot::Int(0).type_name(), "int");
-        assert_eq!(VmSlot::Float(0.0).type_name(), "float");
-        assert_eq!(VmSlot::Bool(false).type_name(), "bool");
-        assert_eq!(VmSlot::String("".into()).type_name(), "string");
-        assert_eq!(VmSlot::NullHandle.type_name(), "null");
+    fn dynamic_type_names() {
+        assert_eq!(Dynamic::Void.type_name(), "void");
+        assert_eq!(Dynamic::Int(0).type_name(), "int");
+        assert_eq!(Dynamic::Float(0.0).type_name(), "float");
+        assert_eq!(Dynamic::Bool(false).type_name(), "bool");
+        assert_eq!(Dynamic::String("".into()).type_name(), "string");
+        assert_eq!(Dynamic::NullHandle.type_name(), "null");
     }
 
     #[test]
-    fn vm_slot_is_void() {
-        assert!(VmSlot::Void.is_void());
-        assert!(!VmSlot::Int(0).is_void());
+    fn dynamic_is_void() {
+        assert!(Dynamic::Void.is_void());
+        assert!(!Dynamic::Int(0).is_void());
     }
 
     #[test]
-    fn vm_slot_is_null() {
-        assert!(VmSlot::NullHandle.is_null());
-        assert!(!VmSlot::Void.is_null());
+    fn dynamic_is_null() {
+        assert!(Dynamic::NullHandle.is_null());
+        assert!(!Dynamic::Void.is_null());
     }
 
     #[test]
@@ -523,8 +675,8 @@ mod tests {
 
     #[test]
     fn call_context_arg_count() {
-        let mut slots = vec![VmSlot::Int(1), VmSlot::Int(2), VmSlot::Int(3)];
-        let mut ret = VmSlot::Void;
+        let mut slots = vec![Dynamic::Int(1), Dynamic::Int(2), Dynamic::Int(3)];
+        let mut ret = Dynamic::Void;
         let mut heap = ObjectHeap::new();
 
         let ctx = CallContext::new(&mut slots, 0, &mut ret, &mut heap);
@@ -534,8 +686,8 @@ mod tests {
     #[test]
     fn call_context_method_arg_offset() {
         // For methods, slot 0 is `this`, so arg_offset = 1
-        let mut slots = vec![VmSlot::Native(Box::new(42i32)), VmSlot::Int(42)];
-        let mut ret = VmSlot::Void;
+        let mut slots = vec![Dynamic::Native(Box::new(42i32)), Dynamic::Int(42)];
+        let mut ret = Dynamic::Void;
         let mut heap = ObjectHeap::new();
 
         let ctx = CallContext::new(&mut slots, 1, &mut ret, &mut heap);
@@ -544,82 +696,195 @@ mod tests {
 
     #[test]
     fn native_fn_call() {
-        let native = NativeFn::new(|ctx: &mut CallContext| {
-            // Use slot-based access instead of trait-based arg()
-            let slot = ctx.arg_slot(0)?;
-            if let VmSlot::Int(a) = slot {
-                let slot2 = ctx.arg_slot(1)?;
-                if let VmSlot::Int(b) = slot2 {
-                    ctx.set_return_slot(VmSlot::Int(a + b));
-                }
-            }
+        let native = NativeFn::new(TypeHash::from_name("test_add"), |ctx: &mut CallContext| {
+            let a: i64 = ctx.arg(0)?;
+            let b: i64 = ctx.arg(1)?;
+            ctx.set_return(a + b);
             Ok(())
         });
 
-        let mut slots = vec![VmSlot::Int(10), VmSlot::Int(20)];
-        let mut ret = VmSlot::Void;
+        let mut slots = vec![Dynamic::Int(10), Dynamic::Int(20)];
+        let mut ret = Dynamic::Void;
         let mut heap = ObjectHeap::new();
 
         let mut ctx = CallContext::new(&mut slots, 0, &mut ret, &mut heap);
         native.call(&mut ctx).unwrap();
 
-        assert!(matches!(ret, VmSlot::Int(30)));
+        assert!(matches!(ret, Dynamic::Int(30)));
+    }
+
+    #[test]
+    fn call_context_typed_arg() {
+        let mut slots = vec![Dynamic::Int(42), Dynamic::Float(3.14), Dynamic::Bool(true)];
+        let mut ret = Dynamic::Void;
+        let mut heap = ObjectHeap::new();
+
+        let ctx = CallContext::new(&mut slots, 0, &mut ret, &mut heap);
+
+        let x: i32 = ctx.arg(0).unwrap();
+        assert_eq!(x, 42);
+
+        let y: f64 = ctx.arg(1).unwrap();
+        assert!((y - 3.14).abs() < 0.001);
+
+        let z: bool = ctx.arg(2).unwrap();
+        assert!(z);
+    }
+
+    #[test]
+    fn call_context_typed_return() {
+        let mut slots = vec![];
+        let mut ret = Dynamic::Void;
+        let mut heap = ObjectHeap::new();
+
+        let mut ctx = CallContext::new(&mut slots, 0, &mut ret, &mut heap);
+        ctx.set_return(42i32);
+
+        assert!(matches!(ret, Dynamic::Int(42)));
+    }
+
+    #[test]
+    fn call_context_this_native() {
+        let mut slots = vec![Dynamic::Native(Box::new(42i32)), Dynamic::Int(10)];
+        let mut ret = Dynamic::Void;
+        let mut heap = ObjectHeap::new();
+
+        let ctx = CallContext::new(&mut slots, 1, &mut ret, &mut heap);
+        let this: &i32 = ctx.this().unwrap();
+        assert_eq!(*this, 42);
+    }
+
+    #[test]
+    fn call_context_this_mut_native() {
+        let mut slots = vec![Dynamic::Native(Box::new(42i32)), Dynamic::Int(10)];
+        let mut ret = Dynamic::Void;
+        let mut heap = ObjectHeap::new();
+
+        let mut ctx = CallContext::new(&mut slots, 1, &mut ret, &mut heap);
+        let this: &mut i32 = ctx.this_mut().unwrap();
+        *this = 100;
+
+        // Verify the change
+        let ctx2 = CallContext::new(&mut slots, 1, &mut ret, &mut heap);
+        let this2: &i32 = ctx2.this().unwrap();
+        assert_eq!(*this2, 100);
+    }
+
+    #[test]
+    fn call_context_this_object() {
+        let mut heap = ObjectHeap::new();
+        let handle = heap.allocate(42i32);
+
+        let mut slots = vec![Dynamic::Object(handle), Dynamic::Int(10)];
+        let mut ret = Dynamic::Void;
+
+        let ctx = CallContext::new(&mut slots, 1, &mut ret, &mut heap);
+        let this: &i32 = ctx.this().unwrap();
+        assert_eq!(*this, 42);
+    }
+
+    #[test]
+    fn call_context_this_mut_object() {
+        let mut heap = ObjectHeap::new();
+        let handle = heap.allocate(42i32);
+
+        let mut slots = vec![Dynamic::Object(handle), Dynamic::Int(10)];
+        let mut ret = Dynamic::Void;
+
+        let mut ctx = CallContext::new(&mut slots, 1, &mut ret, &mut heap);
+        let this: &mut i32 = ctx.this_mut().unwrap();
+        *this = 100;
+
+        assert_eq!(heap.get::<i32>(handle), Some(&100));
+    }
+
+    #[test]
+    fn call_context_this_wrong_type() {
+        let mut slots = vec![Dynamic::Native(Box::new(42i32))];
+        let mut ret = Dynamic::Void;
+        let mut heap = ObjectHeap::new();
+
+        let ctx = CallContext::new(&mut slots, 0, &mut ret, &mut heap);
+        let result: Result<&String, _> = ctx.this();
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn call_context_this_no_slots() {
+        let mut slots: Vec<Dynamic> = vec![];
+        let mut ret = Dynamic::Void;
+        let mut heap = ObjectHeap::new();
+
+        let ctx = CallContext::new(&mut slots, 0, &mut ret, &mut heap);
+        let result: Result<&i32, _> = ctx.this();
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn call_context_this_not_native() {
+        let mut slots = vec![Dynamic::Int(42)];
+        let mut ret = Dynamic::Void;
+        let mut heap = ObjectHeap::new();
+
+        let ctx = CallContext::new(&mut slots, 0, &mut ret, &mut heap);
+        let result: Result<&i32, _> = ctx.this();
+        assert!(result.is_err());
     }
 
     // Additional tests for better coverage
 
     #[test]
-    fn vm_slot_debug() {
-        // Test Debug trait for VmSlot
-        let void = format!("{:?}", VmSlot::Void);
+    fn dynamic_debug() {
+        // Test Debug trait for Dynamic
+        let void = format!("{:?}", Dynamic::Void);
         assert!(void.contains("Void"));
 
-        let int = format!("{:?}", VmSlot::Int(42));
+        let int = format!("{:?}", Dynamic::Int(42));
         assert!(int.contains("42"));
 
-        let float = format!("{:?}", VmSlot::Float(3.14));
+        let float = format!("{:?}", Dynamic::Float(3.14));
         assert!(float.contains("3.14"));
 
-        let bool_slot = format!("{:?}", VmSlot::Bool(true));
+        let bool_slot = format!("{:?}", Dynamic::Bool(true));
         assert!(bool_slot.contains("true"));
 
-        let string = format!("{:?}", VmSlot::String("test".into()));
+        let string = format!("{:?}", Dynamic::String("test".into()));
         assert!(string.contains("test"));
 
-        let null = format!("{:?}", VmSlot::NullHandle);
+        let null = format!("{:?}", Dynamic::NullHandle);
         assert!(null.contains("NullHandle"));
 
-        let native = format!("{:?}", VmSlot::Native(Box::new(42i32)));
+        let native = format!("{:?}", Dynamic::Native(Box::new(42i32)));
         assert!(native.contains("Native"));
     }
 
     #[test]
-    fn vm_slot_object_type_name() {
+    fn dynamic_object_type_name() {
         let mut heap = ObjectHeap::new();
         let handle = heap.allocate(42i32);
-        let slot = VmSlot::Object(handle);
+        let slot = Dynamic::Object(handle);
         assert_eq!(slot.type_name(), "object");
     }
 
     #[test]
-    fn vm_slot_native_type_name() {
-        let slot = VmSlot::Native(Box::new(42i32));
+    fn dynamic_native_type_name() {
+        let slot = Dynamic::Native(Box::new(42i32));
         assert_eq!(slot.type_name(), "native");
     }
 
     #[test]
-    fn vm_slot_clone_if_possible() {
+    fn dynamic_clone_if_possible() {
         // Can clone primitives
-        assert!(VmSlot::Void.clone_if_possible().is_some());
-        assert!(VmSlot::Int(42).clone_if_possible().is_some());
-        assert!(VmSlot::Float(3.14).clone_if_possible().is_some());
-        assert!(VmSlot::Bool(true).clone_if_possible().is_some());
-        assert!(VmSlot::String("test".into()).clone_if_possible().is_some());
-        assert!(VmSlot::NullHandle.clone_if_possible().is_some());
+        assert!(Dynamic::Void.clone_if_possible().is_some());
+        assert!(Dynamic::Int(42).clone_if_possible().is_some());
+        assert!(Dynamic::Float(3.14).clone_if_possible().is_some());
+        assert!(Dynamic::Bool(true).clone_if_possible().is_some());
+        assert!(Dynamic::String("test".into()).clone_if_possible().is_some());
+        assert!(Dynamic::NullHandle.clone_if_possible().is_some());
 
         // Cannot clone Native
         assert!(
-            VmSlot::Native(Box::new(42i32))
+            Dynamic::Native(Box::new(42i32))
                 .clone_if_possible()
                 .is_none()
         );
@@ -627,7 +892,7 @@ mod tests {
         // Can clone Object handle
         let mut heap = ObjectHeap::new();
         let handle = heap.allocate(42i32);
-        assert!(VmSlot::Object(handle).clone_if_possible().is_some());
+        assert!(Dynamic::Object(handle).clone_if_possible().is_some());
     }
 
     #[test]
@@ -717,8 +982,8 @@ mod tests {
 
     #[test]
     fn call_context_debug() {
-        let mut slots = vec![VmSlot::Int(1), VmSlot::Int(2)];
-        let mut ret = VmSlot::Void;
+        let mut slots = vec![Dynamic::Int(1), Dynamic::Int(2)];
+        let mut ret = Dynamic::Void;
         let mut heap = ObjectHeap::new();
 
         let ctx = CallContext::new(&mut slots, 0, &mut ret, &mut heap);
@@ -729,23 +994,23 @@ mod tests {
 
     #[test]
     fn call_context_arg_slot() {
-        let mut slots = vec![VmSlot::Int(42), VmSlot::String("test".into())];
-        let mut ret = VmSlot::Void;
+        let mut slots = vec![Dynamic::Int(42), Dynamic::String("test".into())];
+        let mut ret = Dynamic::Void;
         let mut heap = ObjectHeap::new();
 
         let ctx = CallContext::new(&mut slots, 0, &mut ret, &mut heap);
 
         let slot0 = ctx.arg_slot(0).unwrap();
-        assert!(matches!(slot0, VmSlot::Int(42)));
+        assert!(matches!(slot0, Dynamic::Int(42)));
 
         let slot1 = ctx.arg_slot(1).unwrap();
-        assert!(matches!(slot1, VmSlot::String(_)));
+        assert!(matches!(slot1, Dynamic::String(_)));
     }
 
     #[test]
     fn call_context_arg_slot_out_of_bounds() {
-        let mut slots = vec![VmSlot::Int(42)];
-        let mut ret = VmSlot::Void;
+        let mut slots = vec![Dynamic::Int(42)];
+        let mut ret = Dynamic::Void;
         let mut heap = ObjectHeap::new();
 
         let ctx = CallContext::new(&mut slots, 0, &mut ret, &mut heap);
@@ -754,21 +1019,21 @@ mod tests {
 
     #[test]
     fn call_context_arg_slot_mut() {
-        let mut slots = vec![VmSlot::Int(42)];
-        let mut ret = VmSlot::Void;
+        let mut slots = vec![Dynamic::Int(42)];
+        let mut ret = Dynamic::Void;
         let mut heap = ObjectHeap::new();
 
         let mut ctx = CallContext::new(&mut slots, 0, &mut ret, &mut heap);
         let slot = ctx.arg_slot_mut(0).unwrap();
-        *slot = VmSlot::Int(100);
+        *slot = Dynamic::Int(100);
 
-        assert!(matches!(slots[0], VmSlot::Int(100)));
+        assert!(matches!(slots[0], Dynamic::Int(100)));
     }
 
     #[test]
     fn call_context_arg_slot_mut_out_of_bounds() {
-        let mut slots = vec![VmSlot::Int(42)];
-        let mut ret = VmSlot::Void;
+        let mut slots = vec![Dynamic::Int(42)];
+        let mut ret = Dynamic::Void;
         let mut heap = ObjectHeap::new();
 
         let mut ctx = CallContext::new(&mut slots, 0, &mut ret, &mut heap);
@@ -778,19 +1043,19 @@ mod tests {
     #[test]
     fn call_context_set_return_slot() {
         let mut slots = vec![];
-        let mut ret = VmSlot::Void;
+        let mut ret = Dynamic::Void;
         let mut heap = ObjectHeap::new();
 
         let mut ctx = CallContext::new(&mut slots, 0, &mut ret, &mut heap);
-        ctx.set_return_slot(VmSlot::String("result".into()));
+        ctx.set_return_slot(Dynamic::String("result".into()));
 
-        assert!(matches!(ret, VmSlot::String(_)));
+        assert!(matches!(ret, Dynamic::String(_)));
     }
 
     #[test]
     fn call_context_heap_access() {
         let mut slots = vec![];
-        let mut ret = VmSlot::Void;
+        let mut ret = Dynamic::Void;
         let mut heap = ObjectHeap::new();
         let handle = heap.allocate(42i32);
 
@@ -801,7 +1066,7 @@ mod tests {
     #[test]
     fn call_context_heap_mut_access() {
         let mut slots = vec![];
-        let mut ret = VmSlot::Void;
+        let mut ret = Dynamic::Void;
         let mut heap = ObjectHeap::new();
 
         let mut ctx = CallContext::new(&mut slots, 0, &mut ret, &mut heap);
@@ -812,7 +1077,9 @@ mod tests {
 
     #[test]
     fn native_fn_debug() {
-        let native = NativeFn::new(|_: &mut CallContext| Ok(()));
+        let native = NativeFn::new(TypeHash::from_name("test_debug"), |_: &mut CallContext| {
+            Ok(())
+        });
         let debug = format!("{:?}", native);
         assert!(debug.contains("NativeFn"));
     }

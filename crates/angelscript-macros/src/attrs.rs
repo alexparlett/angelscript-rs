@@ -464,6 +464,7 @@ pub enum ReturnModeAttr {
 /// - `handle` - Return as handle
 /// - `variable` - Variable type return (`?`)
 /// - `type = T` - Explicit return type (for generic calling conv)
+/// - `template = "T"` - Return type is a template parameter (uses SELF placeholder)
 #[derive(Debug, Default)]
 pub struct ReturnAttrs {
     /// Return mode (value, reference, handle)
@@ -474,6 +475,8 @@ pub struct ReturnAttrs {
     pub is_variable: bool,
     /// Explicit return type (for generic calling convention)
     pub return_type: Option<syn::Type>,
+    /// Template parameter name if return type is a template param
+    pub template_param: Option<String>,
 }
 
 impl ReturnAttrs {
@@ -494,6 +497,10 @@ impl ReturnAttrs {
                 let value = meta.value()?;
                 let ty: syn::Type = value.parse()?;
                 result.return_type = Some(ty);
+            } else if meta.path.is_ident("template") {
+                let value = meta.value()?;
+                let lit: syn::LitStr = value.parse()?;
+                result.template_param = Some(lit.value());
             } else {
                 return Err(meta.error(format!(
                     "unknown return attribute: {}",

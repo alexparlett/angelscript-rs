@@ -133,7 +133,7 @@ Use with `operator = Operator::X`:
 - **Comparison**: `Equals`, `Cmp`
 - **Bitwise**: `And`, `Or`, `Xor`, `Shl`, `Shr`, `Ushr`
 - **Bitwise (reverse)**: `AndR`, `OrR`, `XorR`, `ShlR`, `ShrR`, `UshrR`
-- **Assignment**: `Assign`, `AddAssign`, `SubAssign`, `MulAssign`, `DivAssign`, `ModAssign`, `PowAssign`, `AndAssign`, `OrAssign`, `XorAssign`, `ShlAssign`, `ShrAssign`, `UshrAssign`, `HndlAssign`
+- **Assignment**: `Assign`, `AddAssign`, `SubAssign`, `MulAssign`, `DivAssign`, `ModAssign`, `PowAssign`, `AndAssign`, `OrAssign`, `XorAssign`, `ShlAssign`, `ShrAssign`, `UshrAssign`
 - **Index Access**: `Index` (returns reference), `IndexGet` (returns value), `IndexSet` (sets value)
 - **Function Call**: `Call`
 - **Conversion**: `Conv`, `ImplConv`, `Cast`, `ImplCast`
@@ -842,3 +842,25 @@ pub type MyCallback = fn(i32) -> bool;
 #[angelscript_macros::global(name = "...", namespace = "...")]
 pub const MY_CONST: f64 = 3.14;
 ```
+
+---
+
+## Known Gaps / Future Work
+
+### NativeFn Body Implementation
+
+The `#[function]` macro generates `NativeFn` wrappers with placeholder bodies (`todo!()`). The actual implementation of extracting arguments from `CallContext` and calling the Rust function is pending VM design.
+
+**What's needed:**
+- Define how `CallContext` provides access to arguments (slots, stack, etc.)
+- Add conversion traits to `Any` (e.g., `from_dynamic()`, `into_dynamic()`) so non-primitive types can be extracted/returned
+- The macro should generate code like:
+  ```rust
+  let value: MyType = <MyType as Any>::from_dynamic(ctx.arg_slot(0)?)?;
+  ```
+  This lets the compiler enforce that parameter types implement `Any` at compile time.
+
+**Current state:**
+- All metadata (params, return type, operators, etc.) is correctly generated
+- `native_fn` is `Some(NativeFn { ... })` with a `todo!()` body
+- The preserved extraction logic in the macro is commented out, ready to be enabled once `CallContext` design is finalized

@@ -5,7 +5,7 @@
 
 use std::any::{Any, TypeId};
 
-use crate::native_fn::{ObjectHandle, ObjectHeap, VmSlot};
+use crate::native_fn::{Dynamic, ObjectHandle, ObjectHeap};
 
 /// Type-erased reference for `?&in` parameters.
 ///
@@ -55,20 +55,20 @@ pub enum AnyRef<'a> {
 }
 
 impl<'a> AnyRef<'a> {
-    /// Create an AnyRef from a VmSlot.
-    pub fn from_slot(slot: &'a VmSlot, heap: &'a ObjectHeap) -> Self {
+    /// Create an AnyRef from a Dynamic.
+    pub fn from_slot(slot: &'a Dynamic, heap: &'a ObjectHeap) -> Self {
         match slot {
-            VmSlot::Void => AnyRef::Void,
-            VmSlot::Int(v) => AnyRef::Int(*v),
-            VmSlot::Float(v) => AnyRef::Float(*v),
-            VmSlot::Bool(v) => AnyRef::Bool(*v),
-            VmSlot::String(s) => AnyRef::String(s),
-            VmSlot::Object(handle) => AnyRef::Object {
+            Dynamic::Void => AnyRef::Void,
+            Dynamic::Int(v) => AnyRef::Int(*v),
+            Dynamic::Float(v) => AnyRef::Float(*v),
+            Dynamic::Bool(v) => AnyRef::Bool(*v),
+            Dynamic::String(s) => AnyRef::String(s),
+            Dynamic::Object(handle) => AnyRef::Object {
                 handle: *handle,
                 heap,
             },
-            VmSlot::Native(boxed) => AnyRef::Native(boxed.as_ref()),
-            VmSlot::NullHandle => AnyRef::Null,
+            Dynamic::Native(boxed) => AnyRef::Native(boxed.as_ref()),
+            Dynamic::NullHandle => AnyRef::Null,
         }
     }
 
@@ -332,7 +332,7 @@ mod tests {
 
     #[test]
     fn any_ref_from_int() {
-        let slot = VmSlot::Int(42);
+        let slot = Dynamic::Int(42);
         let heap = ObjectHeap::new();
 
         let any = AnyRef::from_slot(&slot, &heap);
@@ -344,7 +344,7 @@ mod tests {
 
     #[test]
     fn any_ref_from_float() {
-        let slot = VmSlot::Float(3.14);
+        let slot = Dynamic::Float(3.14);
         let heap = ObjectHeap::new();
 
         let any = AnyRef::from_slot(&slot, &heap);
@@ -355,7 +355,7 @@ mod tests {
 
     #[test]
     fn any_ref_from_bool() {
-        let slot = VmSlot::Bool(true);
+        let slot = Dynamic::Bool(true);
         let heap = ObjectHeap::new();
 
         let any = AnyRef::from_slot(&slot, &heap);
@@ -366,7 +366,7 @@ mod tests {
 
     #[test]
     fn any_ref_from_string() {
-        let slot = VmSlot::String("hello".to_string());
+        let slot = Dynamic::String("hello".to_string());
         let heap = ObjectHeap::new();
 
         let any = AnyRef::from_slot(&slot, &heap);
@@ -377,7 +377,7 @@ mod tests {
 
     #[test]
     fn any_ref_from_void() {
-        let slot = VmSlot::Void;
+        let slot = Dynamic::Void;
         let heap = ObjectHeap::new();
 
         let any = AnyRef::from_slot(&slot, &heap);
@@ -387,7 +387,7 @@ mod tests {
 
     #[test]
     fn any_ref_from_null() {
-        let slot = VmSlot::NullHandle;
+        let slot = Dynamic::NullHandle;
         let heap = ObjectHeap::new();
 
         let any = AnyRef::from_slot(&slot, &heap);
@@ -399,7 +399,7 @@ mod tests {
     fn any_ref_from_object() {
         let mut heap = ObjectHeap::new();
         let handle = heap.allocate(42i32);
-        let slot = VmSlot::Object(handle);
+        let slot = Dynamic::Object(handle);
 
         let any = AnyRef::from_slot(&slot, &heap);
 
@@ -411,7 +411,7 @@ mod tests {
 
     #[test]
     fn any_ref_from_native() {
-        let slot = VmSlot::Native(Box::new(42i32));
+        let slot = Dynamic::Native(Box::new(42i32));
         let heap = ObjectHeap::new();
 
         let any = AnyRef::from_slot(&slot, &heap);
@@ -426,26 +426,26 @@ mod tests {
     fn any_ref_type_id() {
         let heap = ObjectHeap::new();
 
-        let int_slot = VmSlot::Int(42);
+        let int_slot = Dynamic::Int(42);
         let int_any = AnyRef::from_slot(&int_slot, &heap);
         assert_eq!(int_any.type_id(), TypeId::of::<i64>());
 
-        let float_slot = VmSlot::Float(3.14);
+        let float_slot = Dynamic::Float(3.14);
         let float_any = AnyRef::from_slot(&float_slot, &heap);
         assert_eq!(float_any.type_id(), TypeId::of::<f64>());
 
-        let bool_slot = VmSlot::Bool(true);
+        let bool_slot = Dynamic::Bool(true);
         let bool_any = AnyRef::from_slot(&bool_slot, &heap);
         assert_eq!(bool_any.type_id(), TypeId::of::<bool>());
 
-        let string_slot = VmSlot::String("test".to_string());
+        let string_slot = Dynamic::String("test".to_string());
         let string_any = AnyRef::from_slot(&string_slot, &heap);
         assert_eq!(string_any.type_id(), TypeId::of::<String>());
     }
 
     #[test]
     fn any_ref_downcast_wrong_type() {
-        let slot = VmSlot::Native(Box::new(42i32));
+        let slot = Dynamic::Native(Box::new(42i32));
         let heap = ObjectHeap::new();
 
         let any = AnyRef::from_slot(&slot, &heap);
@@ -534,7 +534,7 @@ mod tests {
 
     #[test]
     fn any_ref_type_id_void() {
-        let slot = VmSlot::Void;
+        let slot = Dynamic::Void;
         let heap = ObjectHeap::new();
         let any = AnyRef::from_slot(&slot, &heap);
         assert_eq!(any.type_id(), TypeId::of::<()>());
@@ -542,7 +542,7 @@ mod tests {
 
     #[test]
     fn any_ref_type_id_null() {
-        let slot = VmSlot::NullHandle;
+        let slot = Dynamic::NullHandle;
         let heap = ObjectHeap::new();
         let any = AnyRef::from_slot(&slot, &heap);
         assert_eq!(any.type_id(), TypeId::of::<()>());
@@ -552,14 +552,14 @@ mod tests {
     fn any_ref_type_id_object() {
         let mut heap = ObjectHeap::new();
         let handle = heap.allocate(42i32);
-        let slot = VmSlot::Object(handle);
+        let slot = Dynamic::Object(handle);
         let any = AnyRef::from_slot(&slot, &heap);
         assert_eq!(any.type_id(), TypeId::of::<i32>());
     }
 
     #[test]
     fn any_ref_type_id_native() {
-        let slot = VmSlot::Native(Box::new(42i32));
+        let slot = Dynamic::Native(Box::new(42i32));
         let heap = ObjectHeap::new();
         let any = AnyRef::from_slot(&slot, &heap);
         assert_eq!(any.type_id(), TypeId::of::<i32>());
@@ -569,25 +569,25 @@ mod tests {
     fn any_ref_as_accessors_wrong_type() {
         let heap = ObjectHeap::new();
 
-        let int_slot = VmSlot::Int(42);
+        let int_slot = Dynamic::Int(42);
         let int_any = AnyRef::from_slot(&int_slot, &heap);
         assert!(int_any.as_float().is_none());
         assert!(int_any.as_bool().is_none());
         assert!(int_any.as_str().is_none());
 
-        let float_slot = VmSlot::Float(3.14);
+        let float_slot = Dynamic::Float(3.14);
         let float_any = AnyRef::from_slot(&float_slot, &heap);
         assert!(float_any.as_int().is_none());
         assert!(float_any.as_bool().is_none());
         assert!(float_any.as_str().is_none());
 
-        let bool_slot = VmSlot::Bool(true);
+        let bool_slot = Dynamic::Bool(true);
         let bool_any = AnyRef::from_slot(&bool_slot, &heap);
         assert!(bool_any.as_int().is_none());
         assert!(bool_any.as_float().is_none());
         assert!(bool_any.as_str().is_none());
 
-        let string_slot = VmSlot::String("test".into());
+        let string_slot = Dynamic::String("test".into());
         let string_any = AnyRef::from_slot(&string_slot, &heap);
         assert!(string_any.as_int().is_none());
         assert!(string_any.as_float().is_none());
@@ -599,11 +599,11 @@ mod tests {
         let heap = ObjectHeap::new();
 
         // Primitives should not be downcastable (they're not objects)
-        let int_slot = VmSlot::Int(42);
+        let int_slot = Dynamic::Int(42);
         let int_any = AnyRef::from_slot(&int_slot, &heap);
         assert!(int_any.downcast::<i32>().is_none());
 
-        let float_slot = VmSlot::Float(3.14);
+        let float_slot = Dynamic::Float(3.14);
         let float_any = AnyRef::from_slot(&float_slot, &heap);
         assert!(float_any.downcast::<f64>().is_none());
     }
@@ -612,7 +612,7 @@ mod tests {
     fn any_ref_is_predicates_exhaustive() {
         let heap = ObjectHeap::new();
 
-        let void_slot = VmSlot::Void;
+        let void_slot = Dynamic::Void;
         let void_any = AnyRef::from_slot(&void_slot, &heap);
         assert!(void_any.is_void());
         assert!(!void_any.is_int());
@@ -793,7 +793,7 @@ mod tests {
     fn any_ref_debug() {
         let heap = ObjectHeap::new();
 
-        let slot = VmSlot::Int(42);
+        let slot = Dynamic::Int(42);
         let any = AnyRef::from_slot(&slot, &heap);
         let debug = format!("{:?}", any);
         assert!(debug.contains("Int"));

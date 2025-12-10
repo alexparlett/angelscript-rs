@@ -63,6 +63,9 @@ pub mod native_error;
 pub mod native_fn;
 pub mod template;
 
+// Conversion traits for FFI
+pub mod convert;
+
 // Metadata types for proc-macros
 pub mod meta;
 
@@ -100,7 +103,10 @@ pub use error::{
 };
 
 // Native function types
-pub use native_fn::{CallContext, NativeCallable, NativeFn, ObjectHandle, ObjectHeap, VmSlot};
+pub use native_fn::{CallContext, Dynamic, NativeCallable, NativeFn, ObjectHandle, ObjectHeap};
+
+// Conversion traits
+pub use convert::{FromSlot, IntoSlot};
 
 // Native error types
 pub use native_error::{ConversionError, NativeError};

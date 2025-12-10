@@ -42,6 +42,11 @@ impl TypeSource {
         TypeSource::Ffi { rust_type_id: None }
     }
 
+    /// Create an FFI source with a specific Rust type ID.
+    pub fn ffi_with_type_id(rust_type_id: Option<TypeId>) -> Self {
+        TypeSource::Ffi { rust_type_id }
+    }
+
     /// Create a script source.
     pub fn script(unit_id: UnitId, span: Span) -> Self {
         TypeSource::Script { unit_id, span }
