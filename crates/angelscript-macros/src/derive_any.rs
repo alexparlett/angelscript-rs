@@ -127,35 +127,35 @@ fn generate_type_meta(
 fn collect_properties(input: &DeriveInput) -> syn::Result<Vec<TokenStream2>> {
     let mut properties = Vec::new();
 
-    if let Data::Struct(data) = &input.data {
-        if let Fields::Named(fields) = &data.fields {
-            for field in &fields.named {
-                let field_attrs = FieldAttrs::from_attrs(&field.attrs)?;
+    if let Data::Struct(data) = &input.data
+        && let Fields::Named(fields) = &data.fields
+    {
+        for field in &fields.named {
+            let field_attrs = FieldAttrs::from_attrs(&field.attrs)?;
 
-                // Only include fields with get or set attributes
-                if !field_attrs.get && !field_attrs.set {
-                    continue;
-                }
-
-                let field_name = field.ident.as_ref().unwrap();
-                let prop_name = field_attrs
-                    .name
-                    .clone()
-                    .unwrap_or_else(|| field_name.to_string());
-                let field_ty = &field.ty;
-
-                let get = field_attrs.get;
-                let set = field_attrs.set;
-
-                properties.push(quote! {
-                    ::angelscript_core::PropertyMeta {
-                        name: #prop_name,
-                        get: #get,
-                        set: #set,
-                        type_hash: <#field_ty as ::angelscript_core::Any>::type_hash(),
-                    }
-                });
+            // Only include fields with get or set attributes
+            if !field_attrs.get && !field_attrs.set {
+                continue;
             }
+
+            let field_name = field.ident.as_ref().unwrap();
+            let prop_name = field_attrs
+                .name
+                .clone()
+                .unwrap_or_else(|| field_name.to_string());
+            let field_ty = &field.ty;
+
+            let get = field_attrs.get;
+            let set = field_attrs.set;
+
+            properties.push(quote! {
+                ::angelscript_core::PropertyMeta {
+                    name: #prop_name,
+                    get: #get,
+                    set: #set,
+                    type_hash: <#field_ty as ::angelscript_core::Any>::type_hash(),
+                }
+            });
         }
     }
 

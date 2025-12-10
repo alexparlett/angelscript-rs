@@ -15,6 +15,7 @@ use super::{
 /// Wraps all type kinds in a single enum for unified storage, iteration,
 /// and lookup in the registry.
 #[derive(Debug, Clone, PartialEq)]
+#[allow(clippy::large_enum_variant)]
 pub enum TypeEntry {
     /// Primitive type (int, float, bool, etc.).
     Primitive(PrimitiveEntry),

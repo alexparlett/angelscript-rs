@@ -695,6 +695,7 @@ impl OperatorBehavior {
 
 /// Type definition - represents a complete type in the system.
 #[derive(Debug, Clone, PartialEq)]
+#[allow(clippy::large_enum_variant)]
 pub enum TypeDef {
     /// Primitive type (int, float, bool, etc.)
     Primitive {

@@ -23,6 +23,8 @@
 //! cargo bench --features profile-with-puffin -- "stress_5000" --test
 //! ```
 
+#![allow(clippy::arc_with_non_send_sync, clippy::collapsible_if)]
+
 use angelscript::Context;
 use criterion::{Criterion, Throughput, criterion_group, criterion_main};
 use std::hint::black_box;
@@ -101,8 +103,9 @@ fn print_profiling_stats() {
 
     for frame in view.recent_frames() {
         frame_count += 1;
-        let Ok(unpacked) = frame.unpacked() else {
-            continue;
+        let unpacked = match frame.unpacked() {
+            Ok(u) => u,
+            Err(_) => continue,
         };
         for (_thread_info, stream_info) in unpacked.thread_streams.iter() {
             let reader = Reader::from_start(&stream_info.stream);

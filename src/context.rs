@@ -478,9 +478,10 @@ pub enum ContextError {
 }
 
 #[cfg(test)]
+#[allow(clippy::arc_with_non_send_sync)]
 mod tests {
     use super::*;
-    use angelscript_core::{TypeKind, primitives};
+    use angelscript_core::{primitives, TypeKind};
 
     #[test]
     fn context_new() {

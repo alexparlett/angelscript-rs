@@ -6,6 +6,8 @@
 //! - `#[interface]` - Interface definitions
 //! - `#[funcdef]` - Function pointer types
 
+#![allow(non_snake_case, dead_code, unused_variables)]
+
 use angelscript::{
     Any, Behavior, HasClassMeta, HasFunctionMeta, TypeHash, funcdef, function, interface,
 };

@@ -226,42 +226,42 @@ impl<'a> CompilationContext<'a> {
     }
 
     fn add_type_to_scope(&mut self, simple: &str, hash: TypeHash, ns: &str) {
-        if let Some(&existing) = self.scope.types.get(simple) {
-            if existing != hash {
-                let current = self.current_namespace();
+        if let Some(&existing) = self.scope.types.get(simple)
+            && existing != hash
+        {
+            let current = self.current_namespace();
 
-                // Determine if we should report an ambiguity error.
-                // Shadowing rules (in order of priority):
-                // 1. Current namespace shadows everything - NO error
-                // 2. Import shadows global namespace - NO error
-                // 3. Import conflicts with another import - ERROR (ambiguity)
+            // Determine if we should report an ambiguity error.
+            // Shadowing rules (in order of priority):
+            // 1. Current namespace shadows everything - NO error
+            // 2. Import shadows global namespace - NO error
+            // 3. Import conflicts with another import - ERROR (ambiguity)
 
-                let is_from_current_ns = ns == current && !current.is_empty();
-                let existing_is_from_global = self
+            let is_from_current_ns = ns == current && !current.is_empty();
+            let existing_is_from_global = self
+                .get_type(existing)
+                .map(|e| e.namespace().is_empty())
+                .unwrap_or(false);
+
+            // Only report ambiguity if:
+            // - New type is NOT from current namespace, AND
+            // - Existing type is NOT from global namespace (i.e., both are from imports)
+            if !is_from_current_ns && !existing_is_from_global {
+                let existing_name = self
                     .get_type(existing)
-                    .map(|e| e.namespace().is_empty())
-                    .unwrap_or(false);
+                    .map(|e| e.qualified_name().to_string())
+                    .unwrap_or_else(|| format!("{:?}", existing));
+                let new_name = self
+                    .get_type(hash)
+                    .map(|e| e.qualified_name().to_string())
+                    .unwrap_or_else(|| format!("{:?}", hash));
 
-                // Only report ambiguity if:
-                // - New type is NOT from current namespace, AND
-                // - Existing type is NOT from global namespace (i.e., both are from imports)
-                if !is_from_current_ns && !existing_is_from_global {
-                    let existing_name = self
-                        .get_type(existing)
-                        .map(|e| e.qualified_name().to_string())
-                        .unwrap_or_else(|| format!("{:?}", existing));
-                    let new_name = self
-                        .get_type(hash)
-                        .map(|e| e.qualified_name().to_string())
-                        .unwrap_or_else(|| format!("{:?}", hash));
-
-                    self.errors.push(CompilationError::AmbiguousSymbol {
-                        kind: "type".to_string(),
-                        name: simple.to_string(),
-                        candidates: format!("{}, {}", existing_name, new_name),
-                        span: Span::default(),
-                    });
-                }
+                self.errors.push(CompilationError::AmbiguousSymbol {
+                    kind: "type".to_string(),
+                    name: simple.to_string(),
+                    candidates: format!("{}, {}", existing_name, new_name),
+                    span: Span::default(),
+                });
             }
         }
         // Later additions (current namespace) shadow earlier ones (imports/global)
@@ -277,42 +277,42 @@ impl<'a> CompilationContext<'a> {
     }
 
     fn add_global_to_scope(&mut self, simple: &str, hash: TypeHash, ns: &str) {
-        if let Some(&existing) = self.scope.globals.get(simple) {
-            if existing != hash {
-                let current = self.current_namespace();
+        if let Some(&existing) = self.scope.globals.get(simple)
+            && existing != hash
+        {
+            let current = self.current_namespace();
 
-                // Determine if we should report an ambiguity error.
-                // Shadowing rules (in order of priority):
-                // 1. Current namespace shadows everything - NO error
-                // 2. Import shadows global namespace - NO error
-                // 3. Import conflicts with another import - ERROR (ambiguity)
+            // Determine if we should report an ambiguity error.
+            // Shadowing rules (in order of priority):
+            // 1. Current namespace shadows everything - NO error
+            // 2. Import shadows global namespace - NO error
+            // 3. Import conflicts with another import - ERROR (ambiguity)
 
-                let is_from_current_ns = ns == current && !current.is_empty();
-                let existing_is_from_global = self
+            let is_from_current_ns = ns == current && !current.is_empty();
+            let existing_is_from_global = self
+                .get_global_entry(existing)
+                .map(|e| e.namespace.is_empty())
+                .unwrap_or(false);
+
+            // Only report ambiguity if:
+            // - New global is NOT from current namespace, AND
+            // - Existing global is NOT from global namespace (i.e., both are from imports)
+            if !is_from_current_ns && !existing_is_from_global {
+                let existing_name = self
                     .get_global_entry(existing)
-                    .map(|e| e.namespace.is_empty())
-                    .unwrap_or(false);
+                    .map(|e| e.qualified_name.clone())
+                    .unwrap_or_else(|| format!("{:?}", existing));
+                let new_name = self
+                    .get_global_entry(hash)
+                    .map(|e| e.qualified_name.clone())
+                    .unwrap_or_else(|| format!("{:?}", hash));
 
-                // Only report ambiguity if:
-                // - New global is NOT from current namespace, AND
-                // - Existing global is NOT from global namespace (i.e., both are from imports)
-                if !is_from_current_ns && !existing_is_from_global {
-                    let existing_name = self
-                        .get_global_entry(existing)
-                        .map(|e| e.qualified_name.clone())
-                        .unwrap_or_else(|| format!("{:?}", existing));
-                    let new_name = self
-                        .get_global_entry(hash)
-                        .map(|e| e.qualified_name.clone())
-                        .unwrap_or_else(|| format!("{:?}", hash));
-
-                    self.errors.push(CompilationError::AmbiguousSymbol {
-                        kind: "global variable".to_string(),
-                        name: simple.to_string(),
-                        candidates: format!("{}, {}", existing_name, new_name),
-                        span: Span::default(),
-                    });
-                }
+                self.errors.push(CompilationError::AmbiguousSymbol {
+                    kind: "global variable".to_string(),
+                    name: simple.to_string(),
+                    candidates: format!("{}, {}", existing_name, new_name),
+                    span: Span::default(),
+                });
             }
         }
         self.scope.globals.insert(simple.to_string(), hash);
@@ -394,10 +394,10 @@ impl<'a> CompilationContext<'a> {
         // Check type in unit registry
         if let Some(class) = self.unit_registry.get(type_hash).and_then(|e| e.as_class()) {
             for &method_hash in &class.methods {
-                if let Some(func) = self.get_function(method_hash) {
-                    if func.def.name == name {
-                        methods.push(method_hash);
-                    }
+                if let Some(func) = self.get_function(method_hash)
+                    && func.def.name == name
+                {
+                    methods.push(method_hash);
                 }
             }
         }
@@ -409,10 +409,10 @@ impl<'a> CompilationContext<'a> {
             .and_then(|e| e.as_class())
         {
             for &method_hash in &class.methods {
-                if let Some(func) = self.get_function(method_hash) {
-                    if func.def.name == name {
-                        methods.push(method_hash);
-                    }
+                if let Some(func) = self.get_function(method_hash)
+                    && func.def.name == name
+                {
+                    methods.push(method_hash);
                 }
             }
         }

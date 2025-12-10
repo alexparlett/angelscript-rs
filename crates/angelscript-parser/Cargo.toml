@@ -7,3 +7,8 @@ edition = "2024"
 angelscript-core.workspace = true
 bumpalo.workspace = true
 thiserror.workspace = true
+profiling = { workspace = true, optional = true }
+
+[features]
+default = []
+profiling = ["dep:profiling"]

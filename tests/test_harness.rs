@@ -4,6 +4,8 @@
 //! This module provides utilities for loading and testing AngelScript files,
 //! validating parse results, and checking error conditions.
 
+#![allow(clippy::missing_transmute_annotations)]
+
 use angelscript_parser::ast::{
     Block, ClassDecl, ClassMember, EnumDecl, Expr, ForInit, FunctionDecl, GlobalVarDecl,
     InterfaceDecl, Item, ParseError, Parser, Script, Stmt,

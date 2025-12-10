@@ -55,6 +55,7 @@ impl FuncdefEntry {
     }
 
     /// Create a new funcdef entry with a parent type (child funcdef).
+    #[allow(clippy::too_many_arguments)]
     pub fn new_child(
         name: impl Into<String>,
         namespace: Vec<String>,

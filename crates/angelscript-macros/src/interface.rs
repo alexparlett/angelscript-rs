@@ -96,10 +96,7 @@ fn interface_inner(attrs: &InterfaceAttrs, input: &ItemTrait) -> syn::Result<Tok
         .collect();
 
     // Generate filtered trait items (strip #[function] attributes)
-    let filtered_items: Vec<_> = trait_items
-        .iter()
-        .map(|item| filter_trait_item_attrs(item))
-        .collect();
+    let filtered_items: Vec<_> = trait_items.iter().map(filter_trait_item_attrs).collect();
 
     // Generate the metadata function
     let meta_fn_name = syn::Ident::new(
