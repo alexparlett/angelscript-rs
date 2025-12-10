@@ -127,19 +127,21 @@ impl<'a, 'reg> TypeResolver<'a, 'reg> {
                     } else {
                         // Relative qualified name (Namespace::Type)
                         let qualified = self.build_qualified_name(scope, ident.name);
-                        self.ctx.resolve_type(&qualified).ok_or(CompilationError::UnknownType {
-                            name: qualified,
-                            span: type_expr.span,
-                        })
+                        self.ctx
+                            .resolve_type(&qualified)
+                            .ok_or(CompilationError::UnknownType {
+                                name: qualified,
+                                span: type_expr.span,
+                            })
                     }
                 } else {
                     // Simple unqualified name - use scope lookup
-                    self.ctx.resolve_type(ident.name).ok_or_else(|| {
-                        CompilationError::UnknownType {
+                    self.ctx
+                        .resolve_type(ident.name)
+                        .ok_or_else(|| CompilationError::UnknownType {
                             name: ident.name.to_string(),
                             span: type_expr.span,
-                        }
-                    })
+                        })
                 }
             }
 
@@ -499,8 +501,7 @@ mod tests {
 
         let arena = Bump::new();
         let segments = arena.alloc_slice_copy(&[Ident::new("Game", Span::new(1, 1, 4))]);
-        let scope =
-            angelscript_parser::ast::Scope::new(false, segments, Span::new(1, 1, 4));
+        let scope = angelscript_parser::ast::Scope::new(false, segments, Span::new(1, 1, 4));
 
         let type_expr = TypeExpr::new(
             false,
@@ -598,14 +599,7 @@ mod tests {
         let ctx = CompilationContext::new(&registry);
         let resolver = TypeResolver::new(&ctx);
 
-        let type_expr = TypeExpr::new(
-            false,
-            None,
-            TypeBase::Auto,
-            &[],
-            &[],
-            Span::new(1, 1, 4),
-        );
+        let type_expr = TypeExpr::new(false, None, TypeBase::Auto, &[], &[], Span::new(1, 1, 4));
 
         let result = resolver.resolve(&type_expr);
         assert!(result.is_err());
@@ -617,14 +611,7 @@ mod tests {
         let ctx = CompilationContext::new(&registry);
         let resolver = TypeResolver::new(&ctx);
 
-        let type_expr = TypeExpr::new(
-            false,
-            None,
-            TypeBase::Unknown,
-            &[],
-            &[],
-            Span::new(1, 1, 1),
-        );
+        let type_expr = TypeExpr::new(false, None, TypeBase::Unknown, &[], &[], Span::new(1, 1, 1));
 
         let result = resolver.resolve(&type_expr);
         assert!(result.is_err());
@@ -765,11 +752,7 @@ mod tests {
         let resolver = TypeResolver::new(&ctx);
 
         // ::Unknown - absolute path to non-existent type
-        let scope = angelscript_parser::ast::Scope::new(
-            true,
-            &[],
-            Span::new(1, 1, 2),
-        );
+        let scope = angelscript_parser::ast::Scope::new(true, &[], Span::new(1, 1, 2));
         let absolute = TypeExpr::new(
             false,
             Some(scope),
