@@ -44,24 +44,25 @@ mod module;
 mod registry;
 
 pub use module::{HasClassMeta, HasFunctionMeta, IntoFunctionMeta, Module};
-pub use registry::{SymbolRegistry, TemplateCallback};
+pub use registry::SymbolRegistry;
 
 // Re-export from core for backwards compatibility during transition
 pub use angelscript_core::{
     // Any type support
     AnyRef,
     AnyRefMut,
+    // Native function types
     CallContext,
     // Error types
     ConversionError,
     // Core types
     DataType,
+    Dynamic,
     // List buffer types
     ListBuffer,
     ListPattern,
     NativeCallable,
     NativeError,
-    // Native function types
     NativeFn,
     ObjectHandle,
     ObjectHeap,
@@ -72,5 +73,4 @@ pub use angelscript_core::{
     TupleListBuffer,
     TypeHash,
     TypeKind,
-    VmSlot,
 };

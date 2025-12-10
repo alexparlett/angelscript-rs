@@ -156,10 +156,6 @@ pub enum Operator {
     Cast,
     /// Implicit handle cast (`opImplCast`)
     ImplCast,
-
-    // === Handle Assignment ===
-    /// `@=` handle assignment for generic handle types
-    HndlAssign,
 }
 
 impl Operator {
@@ -240,9 +236,6 @@ impl Operator {
             Operator::ImplConv => "opImplConv",
             Operator::Cast => "opCast",
             Operator::ImplCast => "opImplCast",
-
-            // Handle
-            Operator::HndlAssign => "opHndlAssign",
         }
     }
 
@@ -263,7 +256,6 @@ impl Operator {
                 | Operator::ShlAssign
                 | Operator::ShrAssign
                 | Operator::UshrAssign
-                | Operator::HndlAssign
         )
     }
 
@@ -401,7 +393,6 @@ mod tests {
     fn is_assignment() {
         assert!(Operator::Assign.is_assignment());
         assert!(Operator::AddAssign.is_assignment());
-        assert!(Operator::HndlAssign.is_assignment());
         assert!(!Operator::Add.is_assignment());
         assert!(!Operator::Cmp.is_assignment());
     }

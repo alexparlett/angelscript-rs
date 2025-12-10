@@ -1742,3 +1742,108 @@ fn interface_with_default_impl() {
     let meta = __as_InterfaceWithDefault_interface_meta();
     assert_eq!(meta.methods.len(), 2);
 }
+
+// ============================================================================
+// REQUIREMENT-BASED TESTS (Should FAIL initially, driving implementation)
+// ============================================================================
+// These tests verify the REQUIREMENTS, not the current implementation.
+// They should fail until the FFI registration gaps are fixed.
+
+use std::any::TypeId;
+
+/// Verify that ClassMeta captures Rust's TypeId for runtime type verification.
+/// This enables safe downcasting of FFI objects.
+#[test]
+fn class_meta_captures_rust_type_id() {
+    let meta = Vec3::__as_type_meta();
+    assert!(
+        meta.rust_type_id.is_some(),
+        "ClassMeta should capture rust_type_id for runtime type verification"
+    );
+    assert_eq!(
+        meta.rust_type_id,
+        Some(TypeId::of::<Vec3>()),
+        "rust_type_id should match TypeId::of::<Vec3>()"
+    );
+}
+
+/// Verify that FunctionMeta captures the actual callable NativeFn.
+/// This enables the VM to invoke FFI functions.
+#[test]
+fn function_meta_captures_native_fn() {
+    let meta = <add_numbers as HasFunctionMeta>::__as_fn_meta();
+    assert!(
+        meta.native_fn.is_some(),
+        "FunctionMeta should capture native_fn for VM invocation"
+    );
+}
+
+/// Verify that method FunctionMeta captures the actual callable NativeFn.
+/// NOTE: Currently returns None for &mut self methods - needs mutable slot access.
+#[test]
+#[ignore = "requires mutable CallContext slot access for &mut self"]
+fn method_meta_captures_native_fn() {
+    let meta = Counter::increment__meta();
+    assert!(
+        meta.native_fn.is_some(),
+        "Method FunctionMeta should capture native_fn"
+    );
+}
+
+/// Verify that constructor FunctionMeta captures the actual callable NativeFn.
+/// NOTE: Currently returns None for non-primitive return types - needs Phase 2 conversion traits.
+#[test]
+#[ignore = "requires Phase 2 conversion traits for Self return type"]
+fn constructor_meta_captures_native_fn() {
+    let meta = Constructable::create__meta();
+    assert!(
+        meta.native_fn.is_some(),
+        "Constructor FunctionMeta should capture native_fn"
+    );
+}
+
+/// Verify that operator FunctionMeta captures the actual callable NativeFn.
+/// NOTE: Currently returns None for non-primitive params - needs Phase 2 conversion traits.
+#[test]
+#[ignore = "requires Phase 2 conversion traits for &Vector2 param type"]
+fn operator_meta_captures_native_fn() {
+    let meta = Vector2::op_add__meta();
+    assert!(
+        meta.native_fn.is_some(),
+        "Operator FunctionMeta should capture native_fn"
+    );
+}
+
+/// Verify that NativeFn is actually callable and produces correct results.
+/// This tests the full invoke path: extract args from CallContext, call function, set return.
+#[test]
+fn native_fn_is_callable() {
+    use angelscript_core::{CallContext, Dynamic, ObjectHeap};
+
+    let meta = <add_numbers as HasFunctionMeta>::__as_fn_meta();
+    let native = meta.native_fn.expect("native_fn should be Some");
+
+    // Set up CallContext with args: add_numbers(10, 20)
+    let mut args = vec![Dynamic::Int(10), Dynamic::Int(20)];
+    let mut ret = Dynamic::Void;
+    let mut heap = ObjectHeap::new();
+    let mut ctx = CallContext::new(&mut args, 0, &mut ret, &mut heap);
+
+    native.call(&mut ctx).expect("call should succeed");
+    assert_eq!(ret, Dynamic::Int(30), "10 + 20 should equal 30");
+}
+
+/// Verify that NativeFn has the correct TypeHash based on function name.
+/// This ensures each function gets a unique ID, not a hardcoded placeholder.
+#[test]
+fn native_fn_has_correct_type_hash() {
+    let meta = <add_numbers as HasFunctionMeta>::__as_fn_meta();
+    let native = meta.native_fn.expect("native_fn should be Some");
+
+    // The NativeFn ID should match the function name hash
+    assert_eq!(
+        native.id,
+        TypeHash::from_name("add_numbers"),
+        "NativeFn should have TypeHash matching function name"
+    );
+}

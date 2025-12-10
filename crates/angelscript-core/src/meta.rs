@@ -36,7 +36,8 @@
 //! module.ty::<Player>()?;
 //! ```
 
-use crate::{ConstantValue, Operator, RefModifier, TypeHash, TypeKind};
+use crate::{ConstantValue, NativeFn, Operator, RefModifier, TypeHash, TypeKind};
+use std::any::TypeId;
 
 // =============================================================================
 // Return Mode Types
@@ -123,6 +124,9 @@ pub struct ClassMeta {
     pub type_hash: TypeHash,
     /// Type kind (value, reference, etc.).
     pub type_kind: TypeKind,
+    /// Rust TypeId for runtime type verification.
+    /// Used when values pass between Rust and script for safe downcasting.
+    pub rust_type_id: Option<TypeId>,
     /// Properties derived from fields with `#[angelscript(get, set)]`.
     pub properties: Vec<PropertyMeta>,
     /// Template parameter names (empty if not a template).
@@ -156,6 +160,9 @@ pub struct FunctionMeta {
     pub name: &'static str,
     /// Override name for AngelScript (None = use `name`).
     pub as_name: Option<&'static str>,
+    /// The wrapped native function callable.
+    /// This is the actual Rust function wrapped for FFI invocation.
+    pub native_fn: Option<NativeFn>,
     /// Parameter metadata (for normal calling convention).
     pub params: Vec<ParamMeta>,
     /// Generic parameter metadata (for generic calling convention).
@@ -397,6 +404,7 @@ mod tests {
             name: "Player",
             type_hash: TypeHash::from_name("Player"),
             type_kind: TypeKind::reference(),
+            rust_type_id: None,
             properties: vec![],
             template_params: vec![],
             specialization_of: None,
@@ -415,6 +423,7 @@ mod tests {
             name: "Entity",
             type_hash: TypeHash::from_name("Entity"),
             type_kind: TypeKind::reference(),
+            rust_type_id: None,
             properties: vec![
                 PropertyMeta {
                     name: "health",
@@ -447,6 +456,7 @@ mod tests {
             name: "array",
             type_hash: TypeHash::from_name("array"),
             type_kind: TypeKind::reference(),
+            rust_type_id: None,
             properties: vec![],
             template_params: vec!["T"],
             specialization_of: None,
@@ -463,6 +473,7 @@ mod tests {
             name: "myTemplate<float>",
             type_hash: TypeHash::from_name("myTemplate<float>"),
             type_kind: TypeKind::reference(),
+            rust_type_id: None,
             properties: vec![],
             template_params: vec![],
             specialization_of: Some("myTemplate"),
@@ -479,6 +490,7 @@ mod tests {
         let meta = FunctionMeta {
             name: "update",
             as_name: None,
+            native_fn: None,
             params: vec![ParamMeta {
                 name: "dt",
                 type_hash: primitives::FLOAT,
@@ -510,6 +522,7 @@ mod tests {
         let meta = FunctionMeta {
             name: "Player",
             as_name: None,
+            native_fn: None,
             params: vec![],
             generic_params: vec![],
             return_meta: ReturnMeta::default(),
@@ -532,6 +545,7 @@ mod tests {
         let meta = FunctionMeta {
             name: "add",
             as_name: None,
+            native_fn: None,
             params: vec![],
             generic_params: vec![],
             return_meta: ReturnMeta::default(),
@@ -558,6 +572,7 @@ mod tests {
         let meta = FunctionMeta {
             name: "push",
             as_name: None,
+            native_fn: None,
             params: vec![],
             generic_params: vec![GenericParamMeta {
                 type_hash: primitives::VARIABLE_PARAM, // variable type
@@ -667,6 +682,7 @@ mod tests {
         let meta = FunctionMeta {
             name: "test",
             as_name: None,
+            native_fn: None,
             params: vec![],
             generic_params: vec![
                 GenericParamMeta {

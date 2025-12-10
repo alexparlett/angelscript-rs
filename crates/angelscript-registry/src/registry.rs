@@ -33,15 +33,9 @@ use rustc_hash::{FxHashMap, FxHashSet};
 
 use angelscript_core::{
     ClassEntry, EnumEntry, FuncdefEntry, FunctionEntry, GlobalPropertyEntry, InterfaceEntry,
-    PrimitiveEntry, PrimitiveKind, PropertyEntry, RegistrationError, TemplateInstanceInfo,
-    TemplateParamEntry, TemplateValidation, TypeEntry, TypeHash,
+    PrimitiveEntry, PrimitiveKind, PropertyEntry, RegistrationError, TemplateParamEntry, TypeEntry,
+    TypeHash,
 };
-
-/// Type-erased template validation callback.
-///
-/// Called at compile-time to validate template instantiation.
-/// Returns validation result indicating if the instantiation is valid.
-pub type TemplateCallback = Box<dyn Fn(&TemplateInstanceInfo) -> TemplateValidation + Send + Sync>;
 
 /// Unified type and function registry.
 ///
@@ -63,11 +57,6 @@ pub struct SymbolRegistry {
 
     /// Registered namespaces.
     namespaces: FxHashSet<String>,
-
-    /// Template validation callbacks.
-    /// Stored separately because they have a specific signature different from
-    /// normal native functions that use `CallContext`.
-    template_callbacks: FxHashMap<TypeHash, TemplateCallback>,
 
     /// Global properties by hash (O(1) lookup).
     /// Hash is computed from qualified name via `TypeHash::from_name()`.
@@ -254,11 +243,6 @@ impl SymbolRegistry {
     /// Register a namespace.
     pub fn register_namespace(&mut self, ns: impl Into<String>) {
         self.namespaces.insert(ns.into());
-    }
-
-    /// Register a template validation callback.
-    pub fn register_template_callback(&mut self, template: TypeHash, callback: TemplateCallback) {
-        self.template_callbacks.insert(template, callback);
     }
 
     // ==========================================================================
@@ -502,27 +486,6 @@ impl SymbolRegistry {
     pub fn get_namespace_globals(&self, namespace: &str) -> Option<&FxHashMap<String, TypeHash>> {
         self.globals_by_namespace.get(namespace)
     }
-
-    // ==========================================================================
-    // Template Support
-    // ==========================================================================
-
-    /// Validate a template instantiation using the registered callback.
-    ///
-    /// Returns `TemplateValidation::valid()` if no callback is registered.
-    pub fn validate_template_instance(&self, info: &TemplateInstanceInfo) -> TemplateValidation {
-        let template_hash = TypeHash::from_name(&info.template_name);
-        if let Some(callback) = self.template_callbacks.get(&template_hash) {
-            callback(info)
-        } else {
-            TemplateValidation::valid()
-        }
-    }
-
-    /// Check if a template has a validation callback registered.
-    pub fn has_template_callback(&self, template: TypeHash) -> bool {
-        self.template_callbacks.contains_key(&template)
-    }
 }
 
 impl std::fmt::Debug for SymbolRegistry {
@@ -532,7 +495,6 @@ impl std::fmt::Debug for SymbolRegistry {
             .field("functions", &self.functions.len())
             .field("globals", &self.globals.len())
             .field("namespaces", &self.namespaces.len())
-            .field("template_callbacks", &self.template_callbacks.len())
             .finish()
     }
 }
@@ -711,43 +673,6 @@ mod tests {
         assert!(registry.has_namespace("Game"));
         assert!(registry.has_namespace("Game::Entities"));
         assert!(!registry.has_namespace("Unknown"));
-    }
-
-    #[test]
-    fn template_callback() {
-        let mut registry = SymbolRegistry::new();
-
-        let array_hash = TypeHash::from_name("array");
-        registry.register_template_callback(
-            array_hash,
-            Box::new(|info| {
-                if info.sub_types.is_empty() {
-                    TemplateValidation::invalid("array requires a type argument")
-                } else if info.sub_types[0].is_void() {
-                    TemplateValidation::invalid("array cannot hold void")
-                } else {
-                    TemplateValidation::valid()
-                }
-            }),
-        );
-
-        assert!(registry.has_template_callback(array_hash));
-
-        // Valid instantiation
-        let valid_info =
-            TemplateInstanceInfo::new("array", vec![DataType::simple(primitives::INT32)]);
-        let result = registry.validate_template_instance(&valid_info);
-        assert!(result.is_valid);
-
-        // Invalid instantiation (void)
-        let void_info = TemplateInstanceInfo::new("array", vec![DataType::void()]);
-        let result = registry.validate_template_instance(&void_info);
-        assert!(!result.is_valid);
-
-        // No callback registered - should return valid
-        let dict_info = TemplateInstanceInfo::new("dictionary", vec![]);
-        let result = registry.validate_template_instance(&dict_info);
-        assert!(result.is_valid);
     }
 
     #[test]

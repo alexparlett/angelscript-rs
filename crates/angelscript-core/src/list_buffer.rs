@@ -19,7 +19,7 @@
 //! from initialization list expressions before calling the native function.
 
 use crate::TypeHash;
-use crate::native_fn::VmSlot;
+use crate::native_fn::Dynamic;
 
 /// Buffer containing initialization list data.
 ///
@@ -40,7 +40,7 @@ use crate::native_fn::VmSlot;
 #[derive(Debug)]
 pub struct ListBuffer<'a> {
     /// Raw element data
-    elements: &'a [VmSlot],
+    elements: &'a [Dynamic],
     /// Element type (for type checking)
     element_type: TypeHash,
 }
@@ -50,9 +50,9 @@ impl<'a> ListBuffer<'a> {
     ///
     /// # Parameters
     ///
-    /// - `elements`: The VmSlot values from the initialization list
+    /// - `elements`: The Dynamic values from the initialization list
     /// - `element_type`: The expected type ID of each element
-    pub fn new(elements: &'a [VmSlot], element_type: TypeHash) -> Self {
+    pub fn new(elements: &'a [Dynamic], element_type: TypeHash) -> Self {
         Self {
             elements,
             element_type,
@@ -75,19 +75,19 @@ impl<'a> ListBuffer<'a> {
     ///
     /// Returns `None` if index is out of bounds.
     #[inline]
-    pub fn get(&self, index: usize) -> Option<&VmSlot> {
+    pub fn get(&self, index: usize) -> Option<&Dynamic> {
         self.elements.get(index)
     }
 
     /// Get the underlying slice of elements.
     #[inline]
-    pub fn as_slice(&self) -> &[VmSlot] {
+    pub fn as_slice(&self) -> &[Dynamic] {
         self.elements
     }
 
     /// Iterate over elements.
     #[inline]
-    pub fn iter(&self) -> impl Iterator<Item = &VmSlot> {
+    pub fn iter(&self) -> impl Iterator<Item = &Dynamic> {
         self.elements.iter()
     }
 
@@ -99,8 +99,8 @@ impl<'a> ListBuffer<'a> {
 }
 
 impl<'a> IntoIterator for &'a ListBuffer<'a> {
-    type Item = &'a VmSlot;
-    type IntoIter = std::slice::Iter<'a, VmSlot>;
+    type Item = &'a Dynamic;
+    type IntoIter = std::slice::Iter<'a, Dynamic>;
 
     fn into_iter(self) -> Self::IntoIter {
         self.elements.iter()
@@ -128,7 +128,7 @@ impl<'a> IntoIterator for &'a ListBuffer<'a> {
 #[derive(Debug)]
 pub struct TupleListBuffer<'a> {
     /// Tuples stored as flattened array
-    data: &'a [VmSlot],
+    data: &'a [Dynamic],
     /// Number of elements per tuple
     tuple_size: usize,
     /// Types of each tuple element
@@ -148,7 +148,7 @@ impl<'a> TupleListBuffer<'a> {
     ///
     /// Panics if `element_types.len() != tuple_size` or if `data.len()` is
     /// not divisible by `tuple_size`.
-    pub fn new(data: &'a [VmSlot], tuple_size: usize, element_types: Vec<TypeHash>) -> Self {
+    pub fn new(data: &'a [Dynamic], tuple_size: usize, element_types: Vec<TypeHash>) -> Self {
         assert_eq!(
             element_types.len(),
             tuple_size,
@@ -191,7 +191,7 @@ impl<'a> TupleListBuffer<'a> {
     /// Get tuple at index as slice.
     ///
     /// Returns `None` if index is out of bounds.
-    pub fn get_tuple(&self, index: usize) -> Option<&[VmSlot]> {
+    pub fn get_tuple(&self, index: usize) -> Option<&[Dynamic]> {
         let start = index * self.tuple_size;
         let end = start + self.tuple_size;
         if end <= self.data.len() {
@@ -218,7 +218,7 @@ impl<'a> TupleListBuffer<'a> {
     /// Iterate over tuples.
     ///
     /// Each iteration yields a slice of `tuple_size` elements.
-    pub fn iter(&self) -> impl Iterator<Item = &[VmSlot]> {
+    pub fn iter(&self) -> impl Iterator<Item = &[Dynamic]> {
         self.data.chunks_exact(self.tuple_size)
     }
 }
@@ -304,7 +304,7 @@ mod tests {
 
     #[test]
     fn test_list_buffer_with_elements() {
-        let elements = vec![VmSlot::Int(1), VmSlot::Int(2), VmSlot::Int(3)];
+        let elements = vec![Dynamic::Int(1), Dynamic::Int(2), Dynamic::Int(3)];
         let buffer = ListBuffer::new(&elements, primitive_hashes::INT32);
 
         assert!(!buffer.is_empty());
@@ -314,18 +314,18 @@ mod tests {
 
     #[test]
     fn test_list_buffer_get() {
-        let elements = vec![VmSlot::Int(10), VmSlot::Int(20), VmSlot::Int(30)];
+        let elements = vec![Dynamic::Int(10), Dynamic::Int(20), Dynamic::Int(30)];
         let buffer = ListBuffer::new(&elements, primitive_hashes::INT32);
 
-        assert!(matches!(buffer.get(0), Some(VmSlot::Int(10))));
-        assert!(matches!(buffer.get(1), Some(VmSlot::Int(20))));
-        assert!(matches!(buffer.get(2), Some(VmSlot::Int(30))));
+        assert!(matches!(buffer.get(0), Some(Dynamic::Int(10))));
+        assert!(matches!(buffer.get(1), Some(Dynamic::Int(20))));
+        assert!(matches!(buffer.get(2), Some(Dynamic::Int(30))));
         assert!(buffer.get(3).is_none());
     }
 
     #[test]
     fn test_list_buffer_iter() {
-        let elements = vec![VmSlot::Int(1), VmSlot::Int(2)];
+        let elements = vec![Dynamic::Int(1), Dynamic::Int(2)];
         let buffer = ListBuffer::new(&elements, primitive_hashes::INT32);
 
         let collected: Vec<_> = buffer.iter().collect();
@@ -334,7 +334,7 @@ mod tests {
 
     #[test]
     fn test_list_buffer_into_iter() {
-        let elements = vec![VmSlot::Int(1), VmSlot::Int(2)];
+        let elements = vec![Dynamic::Int(1), Dynamic::Int(2)];
         let buffer = ListBuffer::new(&elements, primitive_hashes::INT32);
 
         let mut count = 0;
@@ -361,10 +361,10 @@ mod tests {
     #[test]
     fn test_tuple_list_buffer_with_pairs() {
         let data = vec![
-            VmSlot::String("a".into()),
-            VmSlot::Int(1),
-            VmSlot::String("b".into()),
-            VmSlot::Int(2),
+            Dynamic::String("a".into()),
+            Dynamic::Int(1),
+            Dynamic::String("b".into()),
+            Dynamic::Int(2),
         ];
         let buffer = TupleListBuffer::new(
             &data,
@@ -380,10 +380,10 @@ mod tests {
     #[test]
     fn test_tuple_list_buffer_get_tuple() {
         let data = vec![
-            VmSlot::String("key1".into()),
-            VmSlot::Int(100),
-            VmSlot::String("key2".into()),
-            VmSlot::Int(200),
+            Dynamic::String("key1".into()),
+            Dynamic::Int(100),
+            Dynamic::String("key2".into()),
+            Dynamic::Int(200),
         ];
         let buffer = TupleListBuffer::new(
             &data,
@@ -393,12 +393,12 @@ mod tests {
 
         let tuple0 = buffer.get_tuple(0).unwrap();
         assert_eq!(tuple0.len(), 2);
-        assert!(matches!(&tuple0[0], VmSlot::String(s) if s == "key1"));
-        assert!(matches!(tuple0[1], VmSlot::Int(100)));
+        assert!(matches!(&tuple0[0], Dynamic::String(s) if s == "key1"));
+        assert!(matches!(tuple0[1], Dynamic::Int(100)));
 
         let tuple1 = buffer.get_tuple(1).unwrap();
-        assert!(matches!(&tuple1[0], VmSlot::String(s) if s == "key2"));
-        assert!(matches!(tuple1[1], VmSlot::Int(200)));
+        assert!(matches!(&tuple1[0], Dynamic::String(s) if s == "key2"));
+        assert!(matches!(tuple1[1], Dynamic::Int(200)));
 
         assert!(buffer.get_tuple(2).is_none());
     }
@@ -423,12 +423,12 @@ mod tests {
     #[test]
     fn test_tuple_list_buffer_iter() {
         let data = vec![
-            VmSlot::String("a".into()),
-            VmSlot::Int(1),
-            VmSlot::String("b".into()),
-            VmSlot::Int(2),
-            VmSlot::String("c".into()),
-            VmSlot::Int(3),
+            Dynamic::String("a".into()),
+            Dynamic::Int(1),
+            Dynamic::String("b".into()),
+            Dynamic::Int(2),
+            Dynamic::String("c".into()),
+            Dynamic::Int(3),
         ];
         let buffer = TupleListBuffer::new(
             &data,
@@ -452,7 +452,7 @@ mod tests {
     #[test]
     #[should_panic(expected = "data length must be divisible by tuple_size")]
     fn test_tuple_list_buffer_invalid_data_length_panics() {
-        let data = vec![VmSlot::Int(1), VmSlot::Int(2), VmSlot::Int(3)]; // 3 elements
+        let data = vec![Dynamic::Int(1), Dynamic::Int(2), Dynamic::Int(3)]; // 3 elements
         TupleListBuffer::new(
             &data,
             2,

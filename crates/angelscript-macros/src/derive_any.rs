@@ -113,6 +113,7 @@ fn generate_type_meta(
                     name: #as_name,
                     type_hash: <#name as ::angelscript_core::Any>::type_hash(),
                     type_kind: #type_kind_tokens,
+                    rust_type_id: Some(::std::any::TypeId::of::<#name>()),
                     properties: vec![#(#properties),*],
                     #template_tokens
                     specialization_of: #specialization_of_token,

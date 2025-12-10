@@ -133,7 +133,7 @@ Use with `operator = Operator::X`:
 - **Comparison**: `Equals`, `Cmp`
 - **Bitwise**: `And`, `Or`, `Xor`, `Shl`, `Shr`, `Ushr`
 - **Bitwise (reverse)**: `AndR`, `OrR`, `XorR`, `ShlR`, `ShrR`, `UshrR`
-- **Assignment**: `Assign`, `AddAssign`, `SubAssign`, `MulAssign`, `DivAssign`, `ModAssign`, `PowAssign`, `AndAssign`, `OrAssign`, `XorAssign`, `ShlAssign`, `ShrAssign`, `UshrAssign`, `HndlAssign`
+- **Assignment**: `Assign`, `AddAssign`, `SubAssign`, `MulAssign`, `DivAssign`, `ModAssign`, `PowAssign`, `AndAssign`, `OrAssign`, `XorAssign`, `ShlAssign`, `ShrAssign`, `UshrAssign`
 - **Index Access**: `Index` (returns reference), `IndexGet` (returns value), `IndexSet` (sets value)
 - **Function Call**: `Call`
 - **Conversion**: `Conv`, `ImplConv`, `Cast`, `ImplCast`
