@@ -470,15 +470,15 @@ mod tests {
 
 ## Acceptance Criteria
 
-- [ ] Single candidate resolution works
-- [ ] Multiple candidates ranked by conversion cost
-- [ ] Exact matches preferred over conversions
-- [ ] Ambiguous overloads detected and reported
-- [ ] Default parameters handled correctly
-- [ ] Primitive operators resolved to opcodes
-- [ ] User-defined operators (opAdd, etc.) found
-- [ ] Reverse operators (opAdd_r) checked
-- [ ] All tests pass
+- [x] Single candidate resolution works
+- [x] Multiple candidates ranked by conversion cost
+- [x] Exact matches preferred over conversions
+- [x] Ambiguous overloads detected and reported
+- [x] Default parameters handled correctly
+- [x] Primitive operators resolved to opcodes
+- [x] User-defined operators (opAdd, etc.) found
+- [x] Reverse operators (opAdd_r) checked
+- [x] All tests pass
 
 ## Next Phase
 

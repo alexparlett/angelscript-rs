@@ -632,6 +632,41 @@ pub enum CompilationError {
         /// The error message.
         message: String,
     },
+
+    /// No matching overload found for function call.
+    #[error("at {span}: no matching overload for '{name}({args})'")]
+    NoMatchingOverload {
+        /// The function name.
+        name: String,
+        /// The argument types as a string.
+        args: String,
+        /// Where the call occurred.
+        span: Span,
+    },
+
+    /// Multiple overloads match with equal priority (ambiguous).
+    #[error("at {span}: ambiguous call to '{name}': {candidates}")]
+    AmbiguousOverload {
+        /// The function name.
+        name: String,
+        /// Description of the ambiguous candidates.
+        candidates: String,
+        /// Where the call occurred.
+        span: Span,
+    },
+
+    /// No operator found for operand types.
+    #[error("at {span}: no operator '{op}' for types '{left}' and '{right}'")]
+    NoOperator {
+        /// The operator (e.g., "+", "-").
+        op: String,
+        /// The left operand type.
+        left: String,
+        /// The right operand type.
+        right: String,
+        /// Where the operation occurred.
+        span: Span,
+    },
 }
 
 impl CompilationError {
@@ -654,6 +689,9 @@ impl CompilationError {
             CompilationError::TemplateValidationFailed { span, .. } => *span,
             CompilationError::FunctionNotFound { span, .. } => *span,
             CompilationError::Internal { .. } => Span::default(),
+            CompilationError::NoMatchingOverload { span, .. } => *span,
+            CompilationError::AmbiguousOverload { span, .. } => *span,
+            CompilationError::NoOperator { span, .. } => *span,
         }
     }
 }
