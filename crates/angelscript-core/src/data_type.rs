@@ -371,6 +371,31 @@ impl DataType {
     pub const fn is_void(&self) -> bool {
         self.type_hash.0 == crate::primitives::VOID.0
     }
+
+    /// Returns true if this type is null literal.
+    #[inline]
+    pub const fn is_null(&self) -> bool {
+        self.type_hash.0 == crate::primitives::NULL.0
+    }
+
+    /// Returns a copy of this type as a handle.
+    #[inline]
+    pub const fn as_handle(self) -> Self {
+        Self {
+            is_handle: true,
+            ..self
+        }
+    }
+
+    /// Returns a copy of this type as a handle to const.
+    #[inline]
+    pub const fn as_handle_to_const(self) -> Self {
+        Self {
+            is_handle: true,
+            is_handle_to_const: true,
+            ..self
+        }
+    }
 }
 
 impl Display for DataType {
@@ -567,6 +592,33 @@ mod tests {
     #[test]
     fn ref_modifier_default() {
         assert_eq!(RefModifier::default(), RefModifier::None);
+    }
+
+    #[test]
+    fn is_null() {
+        let null_type = DataType::null_literal();
+        assert!(null_type.is_null());
+
+        let int_type = DataType::simple(primitives::INT32);
+        assert!(!int_type.is_null());
+    }
+
+    #[test]
+    fn as_handle_method() {
+        let dt = DataType::simple(primitives::INT32);
+        let handle = dt.as_handle();
+        assert!(handle.is_handle);
+        assert!(!handle.is_handle_to_const);
+        assert_eq!(handle.type_hash, primitives::INT32);
+    }
+
+    #[test]
+    fn as_handle_to_const_method() {
+        let dt = DataType::simple(primitives::INT32);
+        let handle = dt.as_handle_to_const();
+        assert!(handle.is_handle);
+        assert!(handle.is_handle_to_const);
+        assert_eq!(handle.type_hash, primitives::INT32);
     }
 
     #[test]
