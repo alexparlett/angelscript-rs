@@ -325,10 +325,10 @@ impl<'pool> BytecodeEmitter<'pool> {
 
     /// Emit a break statement.
     ///
-    /// Returns an error if not inside a loop.
+    /// Returns an error if not inside a breakable context (loop or switch).
     pub fn emit_break(&mut self) -> Result<(), BreakError> {
-        if !self.jumps.in_loop() {
-            return Err(BreakError::NotInLoop);
+        if !self.jumps.in_breakable() {
+            return Err(BreakError::NotInBreakable);
         }
         let label = self.emit_jump(OpCode::Jump);
         self.jumps.add_break(label);
@@ -352,6 +352,52 @@ impl<'pool> BytecodeEmitter<'pool> {
     /// Get current loop nesting depth.
     pub fn loop_depth(&self) -> usize {
         self.jumps.loop_depth()
+    }
+
+    // ==========================================================================
+    // Switch Control
+    // ==========================================================================
+
+    /// Enter a switch context.
+    ///
+    /// Call this at the start of a switch statement.
+    /// Switch statements support break but not continue.
+    pub fn enter_switch(&mut self) {
+        self.jumps.enter_switch();
+    }
+
+    /// Exit a switch context.
+    ///
+    /// Patches all break jumps to the current position.
+    /// Call this after the switch body.
+    pub fn exit_switch(&mut self) {
+        let break_labels = self.jumps.exit_switch();
+        for label in break_labels {
+            self.patch_jump(label);
+        }
+    }
+
+    /// Check if currently inside a switch.
+    pub fn in_switch(&self) -> bool {
+        self.jumps.in_switch()
+    }
+
+    /// Check if currently inside any breakable context (loop or switch).
+    pub fn in_breakable(&self) -> bool {
+        self.jumps.in_breakable()
+    }
+
+    /// Update the continue target for the innermost loop.
+    ///
+    /// This is useful for `for` loops where the continue target is
+    /// the update expression, not the condition.
+    pub fn set_continue_target(&mut self, target: usize) {
+        self.jumps.set_continue_target(target);
+    }
+
+    /// Get current breakable nesting depth (loops and switches).
+    pub fn breakable_depth(&self) -> usize {
+        self.jumps.breakable_depth()
     }
 
     // ==========================================================================
@@ -516,14 +562,19 @@ impl JumpLabel {
 /// Error from break/continue statements.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BreakError {
-    /// Break or continue used outside of a loop.
+    /// Continue used outside of a loop (switches don't support continue).
     NotInLoop,
+    /// Break used outside of a breakable context (loop or switch).
+    NotInBreakable,
 }
 
 impl std::fmt::Display for BreakError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            BreakError::NotInLoop => write!(f, "break/continue statement not inside a loop"),
+            BreakError::NotInLoop => write!(f, "continue statement not inside a loop"),
+            BreakError::NotInBreakable => {
+                write!(f, "break statement not inside a loop or switch")
+            }
         }
     }
 }
@@ -626,12 +677,12 @@ mod tests {
     }
 
     #[test]
-    fn break_outside_loop() {
+    fn break_outside_breakable() {
         let mut constants = ConstantPool::new();
         let mut emitter = BytecodeEmitter::new(&mut constants);
 
         let result = emitter.emit_break();
-        assert!(matches!(result, Err(BreakError::NotInLoop)));
+        assert!(matches!(result, Err(BreakError::NotInBreakable)));
     }
 
     #[test]
@@ -1005,5 +1056,164 @@ mod tests {
         let label = emitter.emit_jump(OpCode::Jump); // offset 1
 
         assert_eq!(label.offset(), 2); // Points to placeholder u16
+    }
+
+    // ==========================================================================
+    // Switch Tests
+    // ==========================================================================
+
+    #[test]
+    fn switch_break() {
+        let mut constants = ConstantPool::new();
+        let mut emitter = BytecodeEmitter::new(&mut constants);
+
+        emitter.enter_switch();
+        assert!(emitter.in_switch());
+        assert!(emitter.in_breakable());
+        assert!(!emitter.in_loop());
+
+        emitter.emit(OpCode::PushOne);
+        emitter.emit_break().unwrap(); // break works in switch
+        emitter.emit(OpCode::PushZero);
+
+        emitter.exit_switch();
+        assert!(!emitter.in_switch());
+
+        let chunk = emitter.finish();
+        assert_eq!(chunk.read_op(0), Some(OpCode::PushOne));
+        assert_eq!(chunk.read_op(1), Some(OpCode::Jump)); // break
+    }
+
+    #[test]
+    fn switch_continue_error() {
+        let mut constants = ConstantPool::new();
+        let mut emitter = BytecodeEmitter::new(&mut constants);
+
+        emitter.enter_switch();
+
+        // Continue should error in switch (no enclosing loop)
+        let result = emitter.emit_continue();
+        assert!(matches!(result, Err(BreakError::NotInLoop)));
+    }
+
+    #[test]
+    fn switch_inside_loop() {
+        let mut constants = ConstantPool::new();
+        let mut emitter = BytecodeEmitter::new(&mut constants);
+
+        let loop_start = emitter.current_offset();
+        emitter.enter_loop(loop_start);
+
+        emitter.enter_switch();
+        assert!(emitter.in_loop());
+        assert!(emitter.in_switch());
+        assert_eq!(emitter.loop_depth(), 1);
+        assert_eq!(emitter.breakable_depth(), 2);
+
+        // Break targets switch
+        emitter.emit_break().unwrap();
+        // Continue skips switch, targets loop
+        emitter.emit_continue().unwrap();
+
+        emitter.exit_switch();
+        emitter.exit_loop();
+    }
+
+    #[test]
+    fn loop_inside_switch() {
+        let mut constants = ConstantPool::new();
+        let mut emitter = BytecodeEmitter::new(&mut constants);
+
+        emitter.enter_switch();
+
+        let loop_start = emitter.current_offset();
+        emitter.enter_loop(loop_start);
+        assert!(emitter.in_loop());
+        assert!(emitter.in_switch());
+        assert_eq!(emitter.loop_depth(), 1);
+        assert_eq!(emitter.breakable_depth(), 2);
+
+        emitter.exit_loop();
+        assert!(!emitter.in_loop());
+        assert!(emitter.in_switch());
+
+        emitter.exit_switch();
+    }
+
+    #[test]
+    fn set_continue_target() {
+        let mut constants = ConstantPool::new();
+        let mut emitter = BytecodeEmitter::new(&mut constants);
+
+        let loop_start = emitter.current_offset();
+        emitter.enter_loop(loop_start);
+
+        // Emit some instructions to advance the offset
+        emitter.emit(OpCode::PushTrue);
+        emitter.emit(OpCode::Pop);
+
+        // Update continue target to a later point
+        let new_target = emitter.current_offset();
+        emitter.set_continue_target(new_target);
+
+        // Emit more instructions
+        emitter.emit(OpCode::PushFalse);
+
+        // Continue should jump to the updated target (new_target)
+        emitter.emit_continue().unwrap();
+
+        emitter.exit_loop();
+    }
+
+    #[test]
+    fn set_continue_target_skips_switch() {
+        let mut constants = ConstantPool::new();
+        let mut emitter = BytecodeEmitter::new(&mut constants);
+
+        let loop_start = emitter.current_offset();
+        emitter.enter_loop(loop_start);
+        emitter.enter_switch();
+
+        // Emit some instructions
+        emitter.emit(OpCode::PushTrue);
+
+        // Update continue target - should update the loop, not the switch
+        let new_target = emitter.current_offset();
+        emitter.set_continue_target(new_target);
+
+        emitter.exit_switch();
+
+        // Emit more instructions after switch
+        emitter.emit(OpCode::PushFalse);
+
+        // Continue should jump to the updated target
+        emitter.emit_continue().unwrap();
+        emitter.exit_loop();
+    }
+
+    #[test]
+    fn breakable_depth() {
+        let mut constants = ConstantPool::new();
+        let mut emitter = BytecodeEmitter::new(&mut constants);
+
+        assert_eq!(emitter.breakable_depth(), 0);
+
+        emitter.enter_loop(0);
+        assert_eq!(emitter.breakable_depth(), 1);
+
+        emitter.enter_switch();
+        assert_eq!(emitter.breakable_depth(), 2);
+
+        emitter.enter_loop(0);
+        assert_eq!(emitter.breakable_depth(), 3);
+
+        emitter.exit_loop();
+        assert_eq!(emitter.breakable_depth(), 2);
+
+        emitter.exit_switch();
+        assert_eq!(emitter.breakable_depth(), 1);
+
+        emitter.exit_loop();
+        assert_eq!(emitter.breakable_depth(), 0);
     }
 }
