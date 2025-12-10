@@ -82,7 +82,7 @@ jobs:
         run: cargo build --all-targets
 
       - name: Run all tests
-        run: cargo nextest run --lib --test macro_tests --test macro_compile_fail --profile ci
+        run: cargo nextest run --workspace --test macro_tests --test macro_compile_fail --profile ci
 
       - name: Test Report
         uses: dorny/test-reporter@v1
