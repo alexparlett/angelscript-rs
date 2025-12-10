@@ -1,16 +1,19 @@
 # Task 34: Type Resolution
 
+**Status:** In Progress (Core complete, templates pending Task 35)
+**Branch:** 034-type-resolution
+
 ## Overview
 
 Implement the `TypeResolver` that converts AST `TypeExpr` nodes into semantic `DataType` values. This includes handling primitives, user types, templates, handles, arrays, and const modifiers.
 
 ## Goals
 
-1. Resolve simple type names to TypeHash using `ctx.resolve_type()` (O(1) via materialized scope)
-2. Handle type modifiers (const, handle @, reference &)
-3. Instantiate templates via `TemplateInstantiator` (Task 35)
-4. Support array types
-5. Use CompilationContext's layered lookup (unit registry → global registry)
+1. ✅ Resolve simple type names to TypeHash using `ctx.resolve_type()` (O(1) via materialized scope)
+2. ✅ Handle type modifiers (const, handle @, reference &)
+3. ⏳ Instantiate templates via `TemplateInstantiator` (Task 35)
+4. ⏳ Support array types (Task 35)
+5. ✅ Use CompilationContext's layered lookup (unit registry → global registry)
 
 ## Dependencies
 
@@ -503,16 +506,45 @@ mod tests {
 
 ## Acceptance Criteria
 
-- [ ] Simple type names resolve correctly
-- [ ] Qualified paths (foo::bar::Type) resolve
-- [ ] Handle suffix (@) sets is_handle flag
-- [ ] Const modifier sets is_const flag
-- [ ] Reference modifiers (&in, &out, &inout) set ref_modifier
-- [ ] Templates instantiate with type arguments
-- [ ] Template instances are cached
-- [ ] Array types create array<T> instances
-- [ ] All tests pass
+- [x] Simple type names resolve correctly
+- [x] Qualified paths (foo::bar::Type) resolve
+- [x] Handle suffix (@) sets is_handle flag
+- [x] Const modifier sets is_const flag
+- [x] Reference modifiers (&in, &out, &inout) set ref_modifier
+- [ ] Templates instantiate with type arguments (Task 35)
+- [ ] Template instances are cached (Task 35)
+- [ ] Array types create array<T> instances (Task 35)
+- [x] All tests pass (18 type_resolver tests)
+
+## Implementation Summary
+
+### Files Created
+- `crates/angelscript-compiler/src/type_resolver.rs` - TypeResolver implementation
+
+### TypeResolver API
+```rust
+pub struct TypeResolver<'a, 'reg> {
+    ctx: &'a CompilationContext<'reg>,
+}
+
+impl TypeResolver {
+    pub fn new(ctx: &CompilationContext) -> Self;
+    pub fn resolve(&self, type_expr: &TypeExpr) -> Result<DataType, CompilationError>;
+    pub fn resolve_param(&self, param_type: &ParamType) -> Result<DataType, CompilationError>;
+}
+```
+
+### Features Implemented
+- Primitive type resolution (void, int, float, bool, etc.)
+- Named type resolution via O(1) scope lookup
+- Qualified type resolution (Namespace::Type)
+- Const modifier handling (is_const flag)
+- Handle suffix handling (@ sets is_handle)
+- Handle-to-const handling (@ const sets is_handle_to_const)
+- Reference modifiers for parameters (&in, &out, &inout)
+- Proper error messages for unknown types
 
 ## Next Phase
 
+Task 35: Template Instantiation - template type arguments and caching
 Task 36: Conversion System - type conversion rules and costs

@@ -13,15 +13,18 @@
 //! - [`context`]: Compilation context with namespace-aware resolution
 //! - [`conversion`]: Type conversion tracking for overload resolution
 //! - [`expr_info`]: Expression type information
+//! - [`type_resolver`]: Type resolution from AST to semantic types
 
 pub mod bytecode;
 pub mod context;
 mod conversion;
 mod expr_info;
+pub mod type_resolver;
 
 pub use context::{CompilationContext, Scope};
 pub use conversion::{Conversion, ConversionKind};
 pub use expr_info::ExprInfo;
+pub use type_resolver::TypeResolver;
 
 // Re-export CompilationError from core for convenience
 pub use angelscript_core::CompilationError;
