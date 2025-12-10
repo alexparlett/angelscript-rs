@@ -154,7 +154,12 @@ impl Context {
     // Private installation helpers
     // =========================================================================
 
-    fn install_class(&mut self, namespace: &[String], qualified_ns: &str, meta: ClassMeta) -> Result<(), ContextError> {
+    fn install_class(
+        &mut self,
+        namespace: &[String],
+        qualified_ns: &str,
+        meta: ClassMeta,
+    ) -> Result<(), ContextError> {
         let qualified_name = if qualified_ns.is_empty() {
             meta.name.to_string()
         } else {
@@ -252,7 +257,13 @@ impl Context {
         // Compute function hash - use from_method for methods, from_function for globals
         let param_hashes: Vec<TypeHash> = meta.params.iter().map(|p| p.type_hash).collect();
         let func_hash = if let Some(owner) = object_type {
-            TypeHash::from_method(owner, name, &param_hashes, meta.is_const, meta.return_meta.is_const)
+            TypeHash::from_method(
+                owner,
+                name,
+                &param_hashes,
+                meta.is_const,
+                meta.return_meta.is_const,
+            )
         } else {
             TypeHash::from_function(name, &param_hashes)
         };
@@ -402,7 +413,12 @@ impl Context {
         Ok(())
     }
 
-    fn install_funcdef(&mut self, namespace: &[String], qualified_ns: &str, meta: FuncdefMeta) -> Result<(), ContextError> {
+    fn install_funcdef(
+        &mut self,
+        namespace: &[String],
+        qualified_ns: &str,
+        meta: FuncdefMeta,
+    ) -> Result<(), ContextError> {
         let qualified_name = if qualified_ns.is_empty() {
             meta.name.to_string()
         } else {
@@ -464,7 +480,7 @@ pub enum ContextError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use angelscript_core::{primitives, TypeKind};
+    use angelscript_core::{TypeKind, primitives};
 
     #[test]
     fn context_new() {
@@ -534,10 +550,11 @@ mod tests {
         ctx.install(module).unwrap();
 
         assert!(ctx.registry().has_namespace("Game"));
-        assert!(ctx
-            .registry()
-            .get(TypeHash::from_name("Game::Entity"))
-            .is_some());
+        assert!(
+            ctx.registry()
+                .get(TypeHash::from_name("Game::Entity"))
+                .is_some()
+        );
     }
 
     #[test]
@@ -556,9 +573,15 @@ mod tests {
         });
         ctx.install(module).unwrap();
 
-        let entry = ctx.registry().get(TypeHash::from_name("Game::Entities::Player")).unwrap();
+        let entry = ctx
+            .registry()
+            .get(TypeHash::from_name("Game::Entities::Player"))
+            .unwrap();
         let class = entry.as_class().unwrap();
-        assert_eq!(class.namespace, vec!["Game".to_string(), "Entities".to_string()]);
+        assert_eq!(
+            class.namespace,
+            vec!["Game".to_string(), "Entities".to_string()]
+        );
         assert_eq!(class.qualified_name, "Game::Entities::Player");
     }
 
@@ -578,7 +601,10 @@ mod tests {
         });
         ctx.install(module).unwrap();
 
-        let entry = ctx.registry().get(TypeHash::from_name("Singleton")).unwrap();
+        let entry = ctx
+            .registry()
+            .get(TypeHash::from_name("Singleton"))
+            .unwrap();
         let class = entry.as_class().unwrap();
         assert!(class.namespace.is_empty());
         assert_eq!(class.qualified_name, "Singleton");
@@ -596,7 +622,10 @@ mod tests {
         });
         ctx.install(module).unwrap();
 
-        let entry = ctx.registry().get(TypeHash::from_name("Game::IDrawable")).unwrap();
+        let entry = ctx
+            .registry()
+            .get(TypeHash::from_name("Game::IDrawable"))
+            .unwrap();
         let interface = entry.as_interface().unwrap();
         assert_eq!(interface.namespace, vec!["Game".to_string()]);
         assert_eq!(interface.qualified_name, "Game::IDrawable");
@@ -616,7 +645,10 @@ mod tests {
         });
         ctx.install(module).unwrap();
 
-        let entry = ctx.registry().get(TypeHash::from_name("Events::EventCallback")).unwrap();
+        let entry = ctx
+            .registry()
+            .get(TypeHash::from_name("Events::EventCallback"))
+            .unwrap();
         let funcdef = entry.as_funcdef().unwrap();
         assert_eq!(funcdef.namespace, vec!["Events".to_string()]);
         assert_eq!(funcdef.qualified_name, "Events::EventCallback");
@@ -690,7 +722,10 @@ mod tests {
 
         // Verify the template param entry was registered
         let t_param = ctx.registry().get(TypeHash::from_name("array::T"));
-        assert!(t_param.is_some(), "TemplateParamEntry for 'T' should be registered");
+        assert!(
+            t_param.is_some(),
+            "TemplateParamEntry for 'T' should be registered"
+        );
         assert!(t_param.unwrap().as_template_param().is_some());
     }
 
@@ -713,8 +748,14 @@ mod tests {
         // Verify both template params were registered
         let k_param = ctx.registry().get(TypeHash::from_name("dict::K"));
         let v_param = ctx.registry().get(TypeHash::from_name("dict::V"));
-        assert!(k_param.is_some(), "TemplateParamEntry for 'K' should be registered");
-        assert!(v_param.is_some(), "TemplateParamEntry for 'V' should be registered");
+        assert!(
+            k_param.is_some(),
+            "TemplateParamEntry for 'K' should be registered"
+        );
+        assert!(
+            v_param.is_some(),
+            "TemplateParamEntry for 'V' should be registered"
+        );
 
         // Verify the class entry has the correct template_params hashes
         let class_entry = ctx.registry().get(TypeHash::from_name("dict")).unwrap();
@@ -751,7 +792,10 @@ mod tests {
 
         // Verify the template param entry was registered
         let t_param = ctx.registry().get(TypeHash::from_name("identity::T"));
-        assert!(t_param.is_some(), "TemplateParamEntry for function 'T' should be registered");
+        assert!(
+            t_param.is_some(),
+            "TemplateParamEntry for function 'T' should be registered"
+        );
         assert!(t_param.unwrap().as_template_param().is_some());
     }
 
@@ -773,7 +817,10 @@ mod tests {
 
         // Verify the template param uses the qualified name
         let t_param = ctx.registry().get(TypeHash::from_name("std::vector::T"));
-        assert!(t_param.is_some(), "TemplateParamEntry should use qualified name 'std::vector::T'");
+        assert!(
+            t_param.is_some(),
+            "TemplateParamEntry should use qualified name 'std::vector::T'"
+        );
     }
 
     #[test]
@@ -788,7 +835,10 @@ mod tests {
 
         let ctx = Context::with_default_modules().unwrap();
         let factory = ctx.string_factory().expect("should have factory");
-        assert_eq!(factory.type_hash(), <ScriptString as angelscript_core::Any>::type_hash());
+        assert_eq!(
+            factory.type_hash(),
+            <ScriptString as angelscript_core::Any>::type_hash()
+        );
     }
 
     #[test]

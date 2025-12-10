@@ -5,8 +5,8 @@
 //! validating parse results, and checking error conditions.
 
 use angelscript_parser::ast::{
-    Block, ClassDecl, ClassMember, EnumDecl, Expr, ForInit, FunctionDecl,
-    GlobalVarDecl, InterfaceDecl, Item, Parser, ParseError, Script, Stmt,
+    Block, ClassDecl, ClassMember, EnumDecl, Expr, ForInit, FunctionDecl, GlobalVarDecl,
+    InterfaceDecl, Item, ParseError, Parser, Script, Stmt,
 };
 use bumpalo::Bump;
 use std::fs;
@@ -39,8 +39,7 @@ impl TestHarness {
     }
 
     /// Load and parse an AngelScript file
-    pub fn load_and_parse<'ast>(&self, filename: &str) -> TestResult<'ast>
-    {
+    pub fn load_and_parse<'ast>(&self, filename: &str) -> TestResult<'ast> {
         let arena = Bump::new();
         let path = self.test_scripts_dir.join(filename);
         let source = fs::read_to_string(&path)

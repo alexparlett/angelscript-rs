@@ -10,9 +10,9 @@ use std::collections::VecDeque;
 
 use bumpalo::Bump;
 
-use super::cursor::{is_ident_continue, is_ident_continue_ascii, is_ident_start, Cursor};
+use super::cursor::{Cursor, is_ident_continue, is_ident_continue_ascii, is_ident_start};
+use super::token::{Token, TokenKind, lookup_keyword};
 use angelscript_core::{LexError, Span};
-use super::token::{lookup_keyword, Token, TokenKind};
 
 /// Lexer for AngelScript source code.
 ///
@@ -133,10 +133,17 @@ impl<'src, 'ast> Lexer<'src, 'ast> {
 
     /// Create a token from start position to current position.
     /// Copies the lexeme into the arena.
-    fn make_token(&self, kind: TokenKind, start_line: u32, start_col: u32, start_offset: u32) -> Token<'ast> {
+    fn make_token(
+        &self,
+        kind: TokenKind,
+        start_line: u32,
+        start_col: u32,
+        start_offset: u32,
+    ) -> Token<'ast> {
         let len = self.cursor.offset() - start_offset;
         let span = Span::new(start_line, start_col, len);
-        let src_lexeme = &self.cursor.source()[start_offset as usize..self.cursor.offset() as usize];
+        let src_lexeme =
+            &self.cursor.source()[start_offset as usize..self.cursor.offset() as usize];
         // Copy lexeme into arena
         let lexeme = self.arena.alloc_str(src_lexeme);
         Token::new(kind, lexeme, span)
@@ -192,7 +199,12 @@ impl<'src, 'ast> Lexer<'src, 'ast> {
     }
 
     /// Scan a block comment `/* ... */`.
-    fn scan_block_comment(&mut self, start_line: u32, start_col: u32, start_offset: u32) -> Token<'ast> {
+    fn scan_block_comment(
+        &mut self,
+        start_line: u32,
+        start_col: u32,
+        start_offset: u32,
+    ) -> Token<'ast> {
         loop {
             match self.cursor.peek() {
                 None => {
@@ -222,7 +234,13 @@ impl<'src, 'ast> Lexer<'src, 'ast> {
     // =========================================
 
     /// Scan a string literal starting with the given quote character.
-    fn scan_string(&mut self, quote: char, start_line: u32, start_col: u32, start_offset: u32) -> Token<'ast> {
+    fn scan_string(
+        &mut self,
+        quote: char,
+        start_line: u32,
+        start_col: u32,
+        start_offset: u32,
+    ) -> Token<'ast> {
         self.cursor.advance(); // consume opening quote
 
         // Check for heredoc `"""`
@@ -292,7 +310,12 @@ impl<'src, 'ast> Lexer<'src, 'ast> {
                 Some('"') => {
                     if self.cursor.check_str("\"\"\"") {
                         self.cursor.advance_bytes(3);
-                        return self.make_token(TokenKind::HeredocLiteral, start_line, start_col, start_offset);
+                        return self.make_token(
+                            TokenKind::HeredocLiteral,
+                            start_line,
+                            start_col,
+                            start_offset,
+                        );
                     }
                     self.cursor.advance();
                 }
@@ -311,26 +334,33 @@ impl<'src, 'ast> Lexer<'src, 'ast> {
     fn scan_number(&mut self, start_line: u32, start_col: u32, start_offset: u32) -> Token<'ast> {
         // Check for radix prefix
         if self.cursor.peek() == Some('0')
-            && let Some(radix_char) = self.cursor.peek_nth(1) {
-                let radix = match radix_char {
-                    'b' | 'B' => Some(2),
-                    'o' | 'O' => Some(8),
-                    'd' | 'D' => Some(10),
-                    'x' | 'X' => Some(16),
-                    _ => None,
-                };
+            && let Some(radix_char) = self.cursor.peek_nth(1)
+        {
+            let radix = match radix_char {
+                'b' | 'B' => Some(2),
+                'o' | 'O' => Some(8),
+                'd' | 'D' => Some(10),
+                'x' | 'X' => Some(16),
+                _ => None,
+            };
 
-                if let Some(radix) = radix {
-                    return self.scan_radix_number(start_line, start_col, start_offset, radix);
-                }
+            if let Some(radix) = radix {
+                return self.scan_radix_number(start_line, start_col, start_offset, radix);
             }
+        }
 
         // Regular decimal number
         self.scan_decimal_number(start_line, start_col, start_offset)
     }
 
     /// Scan a number with an explicit radix prefix (0x, 0b, 0o, 0d).
-    fn scan_radix_number(&mut self, start_line: u32, start_col: u32, start_offset: u32, radix: u32) -> Token<'ast> {
+    fn scan_radix_number(
+        &mut self,
+        start_line: u32,
+        start_col: u32,
+        start_offset: u32,
+        radix: u32,
+    ) -> Token<'ast> {
         self.cursor.advance(); // '0'
         self.cursor.advance(); // radix letter
 
@@ -361,7 +391,12 @@ impl<'src, 'ast> Lexer<'src, 'ast> {
     }
 
     /// Scan a decimal number (integer or floating-point).
-    fn scan_decimal_number(&mut self, start_line: u32, start_col: u32, start_offset: u32) -> Token<'ast> {
+    fn scan_decimal_number(
+        &mut self,
+        start_line: u32,
+        start_col: u32,
+        start_offset: u32,
+    ) -> Token<'ast> {
         // Integer part (may be empty for `.5`)
         self.consume_decimal_digits();
 
@@ -406,7 +441,8 @@ impl<'src, 'ast> Lexer<'src, 'ast> {
     /// Consume decimal digits (including underscores as separators).
     fn consume_decimal_digits(&mut self) {
         // Use ASCII-optimized path since digits are always ASCII
-        self.cursor.eat_while_ascii(|b| b.is_ascii_digit() || b == b'_');
+        self.cursor
+            .eat_while_ascii(|b| b.is_ascii_digit() || b == b'_');
     }
 
     // =========================================
@@ -414,7 +450,12 @@ impl<'src, 'ast> Lexer<'src, 'ast> {
     // =========================================
 
     /// Scan an identifier or keyword.
-    fn scan_identifier(&mut self, start_line: u32, start_col: u32, start_offset: u32) -> Token<'ast> {
+    fn scan_identifier(
+        &mut self,
+        start_line: u32,
+        start_col: u32,
+        start_offset: u32,
+    ) -> Token<'ast> {
         // Use ASCII-optimized path since identifiers are always ASCII
         self.cursor.eat_while_ascii(is_ident_continue_ascii);
 
@@ -453,15 +494,30 @@ impl<'src, 'ast> Lexer<'src, 'ast> {
             ('.', _) => TokenKind::Dot,
 
             // Two-character operators
-            (':', Some(':')) => { self.cursor.advance(); TokenKind::ColonColon }
+            (':', Some(':')) => {
+                self.cursor.advance();
+                TokenKind::ColonColon
+            }
             (':', _) => TokenKind::Colon,
 
-            ('+', Some('+')) => { self.cursor.advance(); TokenKind::PlusPlus }
-            ('+', Some('=')) => { self.cursor.advance(); TokenKind::PlusEqual }
+            ('+', Some('+')) => {
+                self.cursor.advance();
+                TokenKind::PlusPlus
+            }
+            ('+', Some('=')) => {
+                self.cursor.advance();
+                TokenKind::PlusEqual
+            }
             ('+', _) => TokenKind::Plus,
 
-            ('-', Some('-')) => { self.cursor.advance(); TokenKind::MinusMinus }
-            ('-', Some('=')) => { self.cursor.advance(); TokenKind::MinusEqual }
+            ('-', Some('-')) => {
+                self.cursor.advance();
+                TokenKind::MinusMinus
+            }
+            ('-', Some('=')) => {
+                self.cursor.advance();
+                TokenKind::MinusEqual
+            }
             ('-', _) => TokenKind::Minus,
 
             // Star needs 3-char lookahead for **=
@@ -473,17 +529,29 @@ impl<'src, 'ast> Lexer<'src, 'ast> {
                     TokenKind::StarStar
                 }
             }
-            ('*', Some('=')) => { self.cursor.advance(); TokenKind::StarEqual }
+            ('*', Some('=')) => {
+                self.cursor.advance();
+                TokenKind::StarEqual
+            }
             ('*', _) => TokenKind::Star,
 
-            ('%', Some('=')) => { self.cursor.advance(); TokenKind::PercentEqual }
+            ('%', Some('=')) => {
+                self.cursor.advance();
+                TokenKind::PercentEqual
+            }
             ('%', _) => TokenKind::Percent,
 
-            ('=', Some('=')) => { self.cursor.advance(); TokenKind::EqualEqual }
+            ('=', Some('=')) => {
+                self.cursor.advance();
+                TokenKind::EqualEqual
+            }
             ('=', _) => TokenKind::Equal,
 
             // Bang needs special handling for !is
-            ('!', Some('=')) => { self.cursor.advance(); TokenKind::BangEqual }
+            ('!', Some('=')) => {
+                self.cursor.advance();
+                TokenKind::BangEqual
+            }
             ('!', _) => {
                 if self.cursor.check_str("is")
                     && !self.cursor.peek_nth(2).is_some_and(is_ident_continue)
@@ -496,7 +564,10 @@ impl<'src, 'ast> Lexer<'src, 'ast> {
             }
 
             // Less needs 3-char lookahead for <<=
-            ('<', Some('=')) => { self.cursor.advance(); TokenKind::LessEqual }
+            ('<', Some('=')) => {
+                self.cursor.advance();
+                TokenKind::LessEqual
+            }
             ('<', Some('<')) => {
                 self.cursor.advance();
                 if self.cursor.eat('=') {
@@ -508,7 +579,10 @@ impl<'src, 'ast> Lexer<'src, 'ast> {
             ('<', _) => TokenKind::Less,
 
             // Greater needs 4-char lookahead for >>>=
-            ('>', Some('=')) => { self.cursor.advance(); TokenKind::GreaterEqual }
+            ('>', Some('=')) => {
+                self.cursor.advance();
+                TokenKind::GreaterEqual
+            }
             ('>', Some('>')) => {
                 self.cursor.advance();
                 match self.cursor.peek() {
@@ -520,22 +594,43 @@ impl<'src, 'ast> Lexer<'src, 'ast> {
                             TokenKind::GreaterGreaterGreater
                         }
                     }
-                    Some('=') => { self.cursor.advance(); TokenKind::GreaterGreaterEqual }
+                    Some('=') => {
+                        self.cursor.advance();
+                        TokenKind::GreaterGreaterEqual
+                    }
                     _ => TokenKind::GreaterGreater,
                 }
             }
             ('>', _) => TokenKind::Greater,
 
-            ('&', Some('=')) => { self.cursor.advance(); TokenKind::AmpEqual }
-            ('&', Some('&')) => { self.cursor.advance(); TokenKind::AmpAmp }
+            ('&', Some('=')) => {
+                self.cursor.advance();
+                TokenKind::AmpEqual
+            }
+            ('&', Some('&')) => {
+                self.cursor.advance();
+                TokenKind::AmpAmp
+            }
             ('&', _) => TokenKind::Amp,
 
-            ('|', Some('=')) => { self.cursor.advance(); TokenKind::PipeEqual }
-            ('|', Some('|')) => { self.cursor.advance(); TokenKind::PipePipe }
+            ('|', Some('=')) => {
+                self.cursor.advance();
+                TokenKind::PipeEqual
+            }
+            ('|', Some('|')) => {
+                self.cursor.advance();
+                TokenKind::PipePipe
+            }
             ('|', _) => TokenKind::Pipe,
 
-            ('^', Some('=')) => { self.cursor.advance(); TokenKind::CaretEqual }
-            ('^', Some('^')) => { self.cursor.advance(); TokenKind::CaretCaret }
+            ('^', Some('=')) => {
+                self.cursor.advance();
+                TokenKind::CaretEqual
+            }
+            ('^', Some('^')) => {
+                self.cursor.advance();
+                TokenKind::CaretCaret
+            }
             ('^', _) => TokenKind::Caret,
 
             // Unrecognized character
@@ -670,7 +765,10 @@ mod tests {
     #[test]
     fn keyword_vs_identifier() {
         // "iffy" should be identifier, not "if" + "fy"
-        assert_eq!(tokenize("iffy"), vec![(TokenKind::Identifier, "iffy".to_string())]);
+        assert_eq!(
+            tokenize("iffy"),
+            vec![(TokenKind::Identifier, "iffy".to_string())]
+        );
     }
 
     // =========================================
@@ -729,7 +827,10 @@ mod tests {
     #[test]
     fn number_with_dot() {
         // .5 is a valid float
-        assert_eq!(tokenize(".5"), vec![(TokenKind::DoubleLiteral, ".5".to_string())]);
+        assert_eq!(
+            tokenize(".5"),
+            vec![(TokenKind::DoubleLiteral, ".5".to_string())]
+        );
 
         // 1. followed by non-digit is int then dot
         assert_eq!(
@@ -983,10 +1084,7 @@ string
         assert_eq!(token_kinds("!is"), vec![TokenKind::NotIs]);
 
         // ! followed by is (with space)
-        assert_eq!(
-            token_kinds("! is"),
-            vec![TokenKind::Bang, TokenKind::Is]
-        );
+        assert_eq!(token_kinds("! is"), vec![TokenKind::Bang, TokenKind::Is]);
 
         // !island should be ! + identifier
         assert_eq!(

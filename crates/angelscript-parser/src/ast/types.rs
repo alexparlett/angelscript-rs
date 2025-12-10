@@ -97,7 +97,9 @@ impl<'ast> TypeExpr<'ast> {
 
     /// Check if this type has any handles (@).
     pub fn has_handle(&self) -> bool {
-        self.suffixes.iter().any(|s| matches!(s, TypeSuffix::Handle { .. }))
+        self.suffixes
+            .iter()
+            .any(|s| matches!(s, TypeSuffix::Handle { .. }))
     }
 
     /// Check if this type is a reference type (has @ handle).
@@ -210,8 +212,14 @@ impl PrimitiveType {
     pub fn is_integer(&self) -> bool {
         matches!(
             self,
-            Self::Int | Self::Int8 | Self::Int16 | Self::Int64 |
-            Self::UInt | Self::UInt8 | Self::UInt16 | Self::UInt64
+            Self::Int
+                | Self::Int8
+                | Self::Int16
+                | Self::Int64
+                | Self::UInt
+                | Self::UInt8
+                | Self::UInt16
+                | Self::UInt64
         )
     }
 
@@ -222,18 +230,12 @@ impl PrimitiveType {
 
     /// Check if this is a signed integer type.
     pub fn is_signed(&self) -> bool {
-        matches!(
-            self,
-            Self::Int | Self::Int8 | Self::Int16 | Self::Int64
-        )
+        matches!(self, Self::Int | Self::Int8 | Self::Int16 | Self::Int64)
     }
 
     /// Check if this is an unsigned integer type.
     pub fn is_unsigned(&self) -> bool {
-        matches!(
-            self,
-            Self::UInt | Self::UInt8 | Self::UInt16 | Self::UInt64
-        )
+        matches!(self, Self::UInt | Self::UInt8 | Self::UInt16 | Self::UInt64)
     }
 }
 
@@ -375,11 +377,11 @@ mod tests {
         assert!(PrimitiveType::Int.is_integer());
         assert!(PrimitiveType::Int.is_signed());
         assert!(!PrimitiveType::Int.is_unsigned());
-        
+
         assert!(PrimitiveType::UInt.is_integer());
         assert!(PrimitiveType::UInt.is_unsigned());
         assert!(!PrimitiveType::UInt.is_signed());
-        
+
         assert!(PrimitiveType::Float.is_float());
         assert!(!PrimitiveType::Float.is_integer());
     }
@@ -433,9 +435,10 @@ mod tests {
     fn template_type_display() {
         use bumpalo::Bump;
         let arena = Bump::new();
-        let template_args = arena.alloc_slice_copy(&[
-            TypeExpr::primitive(PrimitiveType::Int, Span::new(1, 6 + 1, 9 - 6))
-        ]);
+        let template_args = arena.alloc_slice_copy(&[TypeExpr::primitive(
+            PrimitiveType::Int,
+            Span::new(1, 6 + 1, 9 - 6),
+        )]);
         let ty = TypeExpr::new(
             false,
             None,
@@ -451,12 +454,11 @@ mod tests {
     fn complex_type_display() {
         use bumpalo::Bump;
         let arena = Bump::new();
-        let template_args = arena.alloc_slice_copy(&[
-            TypeExpr::primitive(PrimitiveType::Int, Span::new(1, 12 + 1, 15 - 12))
-        ]);
-        let suffixes = arena.alloc_slice_copy(&[
-            TypeSuffix::Handle { is_const: true }
-        ]);
+        let template_args = arena.alloc_slice_copy(&[TypeExpr::primitive(
+            PrimitiveType::Int,
+            Span::new(1, 12 + 1, 15 - 12),
+        )]);
+        let suffixes = arena.alloc_slice_copy(&[TypeSuffix::Handle { is_const: true }]);
         let ty = TypeExpr::new(
             true,
             None,
@@ -567,8 +569,14 @@ mod tests {
 
     #[test]
     fn type_base_display() {
-        assert_eq!(format!("{}", TypeBase::Primitive(PrimitiveType::Int)), "int");
-        assert_eq!(format!("{}", TypeBase::Named(Ident::new("Foo", Span::new(1, 1, 3)))), "Foo");
+        assert_eq!(
+            format!("{}", TypeBase::Primitive(PrimitiveType::Int)),
+            "int"
+        );
+        assert_eq!(
+            format!("{}", TypeBase::Named(Ident::new("Foo", Span::new(1, 1, 3)))),
+            "Foo"
+        );
         assert_eq!(format!("{}", TypeBase::Auto), "auto");
         assert_eq!(format!("{}", TypeBase::Unknown), "?");
     }
@@ -576,7 +584,10 @@ mod tests {
     #[test]
     fn type_suffix_display() {
         assert_eq!(format!("{}", TypeSuffix::Handle { is_const: false }), "@");
-        assert_eq!(format!("{}", TypeSuffix::Handle { is_const: true }), "@ const");
+        assert_eq!(
+            format!("{}", TypeSuffix::Handle { is_const: true }),
+            "@ const"
+        );
     }
 
     #[test]
@@ -637,11 +648,7 @@ mod tests {
         let arena = Bump::new();
 
         let segments = arena.alloc_slice_copy(&[Ident::new("Namespace", Span::new(1, 1, 9))]);
-        let scope = Scope::new(
-            false,
-            segments,
-            Span::new(1, 1, 9),
-        );
+        let scope = Scope::new(false, segments, Span::new(1, 1, 9));
         let ty = TypeExpr::new(
             false,
             Some(scope),

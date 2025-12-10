@@ -5,7 +5,7 @@
 use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
-use syn::{parse_macro_input, ItemType, Type, TypeBareFn, ReturnType};
+use syn::{ItemType, ReturnType, Type, TypeBareFn, parse_macro_input};
 
 /// Parse funcdef attributes.
 #[derive(Debug, Default)]
@@ -48,7 +48,7 @@ enum FuncdefAttrItem {
 
 impl syn::parse::Parse for FuncdefAttrItem {
     fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
-        use syn::{Token, LitStr};
+        use syn::{LitStr, Token};
 
         let ident: syn::Ident = input.parse()?;
         let _: Token![=] = input.parse()?;
@@ -60,7 +60,10 @@ impl syn::parse::Parse for FuncdefAttrItem {
             let ty: syn::Type = input.parse()?;
             Ok(FuncdefAttrItem::Parent(ty))
         } else {
-            Err(syn::Error::new(ident.span(), format!("unknown funcdef attribute: {}", ident)))
+            Err(syn::Error::new(
+                ident.span(),
+                format!("unknown funcdef attribute: {}", ident),
+            ))
         }
     }
 }
@@ -106,9 +109,12 @@ fn funcdef_inner(attrs: &FuncdefAttrs, input: &ItemType) -> syn::Result<TokenStr
         }
     };
 
-    let param_type_tokens: Vec<_> = param_types.iter().map(|ty| {
-        quote! { <#ty as ::angelscript_core::Any>::type_hash() }
-    }).collect();
+    let param_type_tokens: Vec<_> = param_types
+        .iter()
+        .map(|ty| {
+            quote! { <#ty as ::angelscript_core::Any>::type_hash() }
+        })
+        .collect();
 
     // Generate parent_type token
     let parent_type_token = match &attrs.parent {
@@ -140,9 +146,7 @@ fn funcdef_inner(attrs: &FuncdefAttrs, input: &ItemType) -> syn::Result<TokenStr
 
 fn extract_fn_signature(bare_fn: &TypeBareFn) -> syn::Result<(Vec<syn::Type>, syn::Type)> {
     // Extract parameter types
-    let param_types: Vec<_> = bare_fn.inputs.iter()
-        .map(|arg| arg.ty.clone())
-        .collect();
+    let param_types: Vec<_> = bare_fn.inputs.iter().map(|arg| arg.ty.clone()).collect();
 
     // Extract return type
     let return_type = match &bare_fn.output {

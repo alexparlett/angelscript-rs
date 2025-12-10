@@ -78,11 +78,7 @@ impl FuncdefEntry {
     }
 
     /// Create an FFI funcdef entry in the global namespace.
-    pub fn ffi(
-        name: impl Into<String>,
-        params: Vec<DataType>,
-        return_type: DataType,
-    ) -> Self {
+    pub fn ffi(name: impl Into<String>, params: Vec<DataType>, return_type: DataType) -> Self {
         let name = name.into();
         let type_hash = TypeHash::from_name(&name);
         Self {
@@ -128,7 +124,10 @@ mod tests {
 
         assert_eq!(entry.name, "Callback");
         assert_eq!(entry.qualified_name, "Callback");
-        assert!(entry.namespace.is_empty(), "ffi() should create empty namespace");
+        assert!(
+            entry.namespace.is_empty(),
+            "ffi() should create empty namespace"
+        );
         assert_eq!(entry.param_count(), 1);
         assert!(!entry.returns_void());
         assert!(entry.source.is_ffi());

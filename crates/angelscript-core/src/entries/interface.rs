@@ -88,7 +88,7 @@ impl InterfaceEntry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{primitives, DataType};
+    use crate::{DataType, primitives};
 
     #[test]
     fn interface_entry_creation() {
@@ -96,7 +96,10 @@ mod tests {
 
         assert_eq!(entry.name, "IDrawable");
         assert_eq!(entry.qualified_name, "IDrawable");
-        assert!(entry.namespace.is_empty(), "ffi() should create empty namespace");
+        assert!(
+            entry.namespace.is_empty(),
+            "ffi() should create empty namespace"
+        );
         assert!(entry.source.is_ffi());
         assert!(entry.methods.is_empty());
         assert!(entry.base_interfaces.is_empty());
@@ -113,9 +116,15 @@ mod tests {
         );
 
         assert_eq!(entry.name, "IUpdatable");
-        assert_eq!(entry.namespace, vec!["Game".to_string(), "Interfaces".to_string()]);
+        assert_eq!(
+            entry.namespace,
+            vec!["Game".to_string(), "Interfaces".to_string()]
+        );
         assert_eq!(entry.qualified_name, "Game::Interfaces::IUpdatable");
-        assert_eq!(entry.type_hash, TypeHash::from_name("Game::Interfaces::IUpdatable"));
+        assert_eq!(
+            entry.type_hash,
+            TypeHash::from_name("Game::Interfaces::IUpdatable")
+        );
     }
 
     #[test]

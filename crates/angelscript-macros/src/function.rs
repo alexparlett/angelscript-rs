@@ -2,12 +2,12 @@
 
 use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
-use quote::{quote, format_ident};
-use syn::{parse_macro_input, ItemFn, FnArg, ReturnType, Pat, Type, Attribute};
+use quote::{format_ident, quote};
+use syn::{Attribute, FnArg, ItemFn, Pat, ReturnType, Type, parse_macro_input};
 
 use crate::attrs::{
-    FunctionAttrs, ParamAttrs, ReturnAttrs, ListPatternAttrs,
-    RefModeAttr, ReturnModeAttr, ListPatternKind,
+    FunctionAttrs, ListPatternAttrs, ListPatternKind, ParamAttrs, RefModeAttr, ReturnAttrs,
+    ReturnModeAttr,
 };
 
 pub fn function_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
@@ -43,7 +43,9 @@ fn function_inner(attrs: &FunctionAttrs, input: &ItemFn) -> syn::Result<TokenStr
     let fn_attrs = &input.attrs;
 
     // Determine if this is a method (has self parameter)
-    let is_method = fn_inputs.iter().any(|arg| matches!(arg, FnArg::Receiver(_)));
+    let is_method = fn_inputs
+        .iter()
+        .any(|arg| matches!(arg, FnArg::Receiver(_)));
 
     // Naming strategy:
     // - Methods always keep original name (can't replace with struct in impl block)
@@ -60,30 +62,33 @@ fn function_inner(attrs: &FunctionAttrs, input: &ItemFn) -> syn::Result<TokenStr
         let params = extract_params(fn_inputs)?;
 
         // Generate param tokens with defaults from #[default(...)] and template from #[template(...)] on each param
-        params.iter().map(|p| {
-            let name = &p.name;
-            let ty = strip_reference(&p.ty);
-            let default_value = match &p.default {
-                Some(val) => quote! { Some(#val) },
-                None => quote! { None },
-            };
-            let template_param = match &p.template_param {
-                Some(param_name) => quote! { Some(#param_name) },
-                None => quote! { None },
-            };
-            // if_handle_then_const only applies to generic calling convention
-            // For non-generic params, it's always false
+        params
+            .iter()
+            .map(|p| {
+                let name = &p.name;
+                let ty = strip_reference(&p.ty);
+                let default_value = match &p.default {
+                    Some(val) => quote! { Some(#val) },
+                    None => quote! { None },
+                };
+                let template_param = match &p.template_param {
+                    Some(param_name) => quote! { Some(#param_name) },
+                    None => quote! { None },
+                };
+                // if_handle_then_const only applies to generic calling convention
+                // For non-generic params, it's always false
 
-            quote! {
-                ::angelscript_core::ParamMeta {
-                    name: #name,
-                    type_hash: <#ty as ::angelscript_core::Any>::type_hash(),
-                    default_value: #default_value,
-                    template_param: #template_param,
-                    if_handle_then_const: false,
+                quote! {
+                    ::angelscript_core::ParamMeta {
+                        name: #name,
+                        type_hash: <#ty as ::angelscript_core::Any>::type_hash(),
+                        default_value: #default_value,
+                        template_param: #template_param,
+                        if_handle_then_const: false,
+                    }
                 }
-            }
-        }).collect()
+            })
+            .collect()
     };
 
     // Parse #[param(...)] attributes for generic calling convention
@@ -237,7 +242,9 @@ struct ParamInfo {
 }
 
 /// Extract parameter names, types, and defaults from function inputs.
-fn extract_params(inputs: &syn::punctuated::Punctuated<FnArg, syn::token::Comma>) -> syn::Result<Vec<ParamInfo>> {
+fn extract_params(
+    inputs: &syn::punctuated::Punctuated<FnArg, syn::token::Comma>,
+) -> syn::Result<Vec<ParamInfo>> {
     let mut params = Vec::new();
 
     for arg in inputs {
@@ -320,13 +327,17 @@ fn generate_behavior(attrs: &FunctionAttrs) -> TokenStream2 {
         FunctionKind::Release => quote! { Some(::angelscript_core::Behavior::Release) },
         FunctionKind::ListConstruct => quote! { Some(::angelscript_core::Behavior::ListConstruct) },
         FunctionKind::ListFactory => quote! { Some(::angelscript_core::Behavior::ListFactory) },
-        FunctionKind::TemplateCallback => quote! { Some(::angelscript_core::Behavior::TemplateCallback) },
+        FunctionKind::TemplateCallback => {
+            quote! { Some(::angelscript_core::Behavior::TemplateCallback) }
+        }
         FunctionKind::GcGetRefCount => quote! { Some(::angelscript_core::Behavior::GcGetRefCount) },
         FunctionKind::GcSetFlag => quote! { Some(::angelscript_core::Behavior::GcSetFlag) },
         FunctionKind::GcGetFlag => quote! { Some(::angelscript_core::Behavior::GcGetFlag) },
         FunctionKind::GcEnumRefs => quote! { Some(::angelscript_core::Behavior::GcEnumRefs) },
         FunctionKind::GcReleaseRefs => quote! { Some(::angelscript_core::Behavior::GcReleaseRefs) },
-        FunctionKind::GetWeakRefFlag => quote! { Some(::angelscript_core::Behavior::GetWeakRefFlag) },
+        FunctionKind::GetWeakRefFlag => {
+            quote! { Some(::angelscript_core::Behavior::GetWeakRefFlag) }
+        }
     }
 }
 
@@ -387,7 +398,10 @@ fn generate_generic_params(param_attrs: &[ParamAttrs]) -> Vec<TokenStream2> {
 }
 
 /// Generate ReturnMeta token from function output and #[returns] attribute.
-fn generate_return_meta(fn_output: &ReturnType, return_attrs: &Option<ReturnAttrs>) -> TokenStream2 {
+fn generate_return_meta(
+    fn_output: &ReturnType,
+    return_attrs: &Option<ReturnAttrs>,
+) -> TokenStream2 {
     match return_attrs {
         Some(attrs) => {
             // Get return type - explicit from attribute or from function signature
@@ -396,7 +410,9 @@ fn generate_return_meta(fn_output: &ReturnType, return_attrs: &Option<ReturnAttr
             } else {
                 match fn_output {
                     ReturnType::Default => quote! { None },
-                    ReturnType::Type(_, ty) => quote! { Some(<#ty as ::angelscript_core::Any>::type_hash()) },
+                    ReturnType::Type(_, ty) => {
+                        quote! { Some(<#ty as ::angelscript_core::Any>::type_hash()) }
+                    }
                 }
             };
 
@@ -495,27 +511,34 @@ fn filter_helper_attrs(attrs: &[Attribute]) -> Vec<&Attribute> {
 }
 
 /// Filter #[default] and #[template] attributes from function parameters.
-fn filter_param_attrs(inputs: &syn::punctuated::Punctuated<FnArg, syn::token::Comma>) -> TokenStream2 {
-    let filtered: Vec<_> = inputs.iter().map(|arg| {
-        match arg {
-            FnArg::Receiver(recv) => quote! { #recv },
-            FnArg::Typed(pat_type) => {
-                // Filter out #[default] and #[template] attributes
-                let filtered_attrs: Vec<_> = pat_type.attrs.iter()
-                    .filter(|attr| {
-                        !attr.path().is_ident("default") && !attr.path().is_ident("template")
-                    })
-                    .collect();
-                let pat = &pat_type.pat;
-                let ty = &pat_type.ty;
-                let colon = &pat_type.colon_token;
-                quote! {
-                    #(#filtered_attrs)*
-                    #pat #colon #ty
+fn filter_param_attrs(
+    inputs: &syn::punctuated::Punctuated<FnArg, syn::token::Comma>,
+) -> TokenStream2 {
+    let filtered: Vec<_> = inputs
+        .iter()
+        .map(|arg| {
+            match arg {
+                FnArg::Receiver(recv) => quote! { #recv },
+                FnArg::Typed(pat_type) => {
+                    // Filter out #[default] and #[template] attributes
+                    let filtered_attrs: Vec<_> = pat_type
+                        .attrs
+                        .iter()
+                        .filter(|attr| {
+                            !attr.path().is_ident("default") && !attr.path().is_ident("template")
+                        })
+                        .collect();
+                    let pat = &pat_type.pat;
+                    let ty = &pat_type.ty;
+                    let colon = &pat_type.colon_token;
+                    quote! {
+                        #(#filtered_attrs)*
+                        #pat #colon #ty
+                    }
                 }
             }
-        }
-    }).collect();
+        })
+        .collect();
 
     quote! { #(#filtered),* }
 }

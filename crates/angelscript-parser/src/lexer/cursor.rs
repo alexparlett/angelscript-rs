@@ -246,7 +246,7 @@ mod tests {
         assert_eq!(cursor.peek(), Some('e'));
         assert_eq!(cursor.offset(), 1);
     }
-    
+
     #[test]
     fn cursor_eat() {
         let mut cursor = Cursor::new("hello");

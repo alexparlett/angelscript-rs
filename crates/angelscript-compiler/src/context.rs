@@ -327,9 +327,7 @@ impl<'a> CompilationContext<'a> {
         if name.contains("::") {
             // Qualified name: bypass scope, direct registry lookup
             let hash = TypeHash::from_name(name);
-            if self.unit_registry.get(hash).is_some()
-                || self.global_registry.get(hash).is_some()
-            {
+            if self.unit_registry.get(hash).is_some() || self.global_registry.get(hash).is_some() {
                 return Some(hash);
             }
             return None;
@@ -617,7 +615,9 @@ mod tests {
 
     #[test]
     fn context_resolves_functions() {
-        use angelscript_core::{DataType, FunctionDef, FunctionEntry, FunctionTraits, Visibility, primitives};
+        use angelscript_core::{
+            DataType, FunctionDef, FunctionEntry, FunctionTraits, Visibility, primitives,
+        };
 
         let mut registry = SymbolRegistry::new();
         registry.register_all_primitives();
@@ -645,7 +645,9 @@ mod tests {
 
     #[test]
     fn context_resolves_functions_with_namespace() {
-        use angelscript_core::{DataType, FunctionDef, FunctionEntry, FunctionTraits, Visibility, primitives};
+        use angelscript_core::{
+            DataType, FunctionDef, FunctionEntry, FunctionTraits, Visibility, primitives,
+        };
 
         let mut registry = SymbolRegistry::new();
         registry.register_all_primitives();

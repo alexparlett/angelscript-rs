@@ -99,7 +99,10 @@ mod tests {
 
         assert_eq!(entry.name, "Color");
         assert_eq!(entry.qualified_name, "Color");
-        assert!(entry.namespace.is_empty(), "ffi() should create empty namespace");
+        assert!(
+            entry.namespace.is_empty(),
+            "ffi() should create empty namespace"
+        );
         assert_eq!(entry.values.len(), 3);
         assert!(entry.source.is_ffi());
     }

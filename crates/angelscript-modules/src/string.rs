@@ -791,7 +791,10 @@ mod tests {
     fn test_replace() {
         let s = ScriptString::from("hello hello");
         assert_eq!(s.replace_all("hello".into(), "hi".into()).as_str(), "hi hi");
-        assert_eq!(s.replace_first("hello".into(), "hi".into()).as_str(), "hi hello");
+        assert_eq!(
+            s.replace_first("hello".into(), "hi".into()).as_str(),
+            "hi hello"
+        );
     }
 
     #[test]

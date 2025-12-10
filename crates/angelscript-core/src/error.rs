@@ -567,7 +567,9 @@ pub enum CompilationError {
     },
 
     /// No string factory configured for string literals.
-    #[error("at {span}: no string factory configured - call Context::set_string_factory() or use with_default_modules()")]
+    #[error(
+        "at {span}: no string factory configured - call Context::set_string_factory() or use with_default_modules()"
+    )]
     NoStringFactory {
         /// Where the string literal occurred.
         span: Span,
@@ -929,7 +931,10 @@ mod tests {
     #[test]
     fn parse_error_kind_as_str() {
         assert_eq!(ParseErrorKind::ExpectedToken.as_str(), "expected token");
-        assert_eq!(ParseErrorKind::UnexpectedEof.as_str(), "unexpected end of file");
+        assert_eq!(
+            ParseErrorKind::UnexpectedEof.as_str(),
+            "unexpected end of file"
+        );
         assert_eq!(ParseErrorKind::InvalidSyntax.as_str(), "invalid syntax");
     }
 }

@@ -313,10 +313,12 @@ where
     }
 
     fn write(&self, value: Box<dyn std::any::Any + Send + Sync>) -> Result<(), PropertyError> {
-        let typed = value.downcast::<T>().map_err(|_| PropertyError::TypeMismatch {
-            expected: T::type_name(),
-            actual: "unknown",
-        })?;
+        let typed = value
+            .downcast::<T>()
+            .map_err(|_| PropertyError::TypeMismatch {
+                expected: T::type_name(),
+                actual: "unknown",
+            })?;
         let mut guard = RwLock::write(self).map_err(|_| PropertyError::LockFailed)?;
         *guard = *typed;
         Ok(())
@@ -363,14 +365,18 @@ mod tests {
         assert_eq!(entry.name, "MAX_PLAYERS");
         assert_eq!(entry.qualified_name, "MAX_PLAYERS");
         assert!(entry.is_const);
-        assert!(matches!(entry.implementation, GlobalPropertyImpl::Constant(_)));
+        assert!(matches!(
+            entry.implementation,
+            GlobalPropertyImpl::Constant(_)
+        ));
     }
 
     #[test]
     fn global_property_entry_with_namespace_deprecated() {
         #[allow(deprecated)]
-        let entry = GlobalPropertyEntry::constant("PI", ConstantValue::Double(std::f64::consts::PI))
-            .with_qualified_name("math::PI");
+        let entry =
+            GlobalPropertyEntry::constant("PI", ConstantValue::Double(std::f64::consts::PI))
+                .with_qualified_name("math::PI");
 
         assert_eq!(entry.name, "PI");
         assert_eq!(entry.qualified_name, "math::PI");
@@ -383,9 +389,15 @@ mod tests {
             .with_namespace(vec!["Game".to_string(), "Config".to_string()]);
 
         assert_eq!(entry.name, "MAX_SPEED");
-        assert_eq!(entry.namespace, vec!["Game".to_string(), "Config".to_string()]);
+        assert_eq!(
+            entry.namespace,
+            vec!["Game".to_string(), "Config".to_string()]
+        );
         assert_eq!(entry.qualified_name, "Game::Config::MAX_SPEED");
-        assert_eq!(entry.type_hash, TypeHash::from_name("Game::Config::MAX_SPEED"));
+        assert_eq!(
+            entry.type_hash,
+            TypeHash::from_name("Game::Config::MAX_SPEED")
+        );
     }
 
     #[test]
@@ -467,13 +479,21 @@ mod tests {
         assert!(bool::is_inherently_const());
 
         let impl_i32 = 42i32.into_global_impl();
-        assert!(matches!(impl_i32, GlobalPropertyImpl::Constant(ConstantValue::Int32(42))));
+        assert!(matches!(
+            impl_i32,
+            GlobalPropertyImpl::Constant(ConstantValue::Int32(42))
+        ));
 
         let impl_f64 = 3.14f64.into_global_impl();
-        assert!(matches!(impl_f64, GlobalPropertyImpl::Constant(ConstantValue::Double(v)) if (v - 3.14).abs() < 0.001));
+        assert!(
+            matches!(impl_f64, GlobalPropertyImpl::Constant(ConstantValue::Double(v)) if (v - 3.14).abs() < 0.001)
+        );
 
         let impl_bool = true.into_global_impl();
-        assert!(matches!(impl_bool, GlobalPropertyImpl::Constant(ConstantValue::Bool(true))));
+        assert!(matches!(
+            impl_bool,
+            GlobalPropertyImpl::Constant(ConstantValue::Bool(true))
+        ));
     }
 
     #[test]

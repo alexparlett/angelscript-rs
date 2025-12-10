@@ -18,8 +18,8 @@
 //! receive list data through these buffer types. The VM populates the buffers
 //! from initialization list expressions before calling the native function.
 
-use crate::native_fn::VmSlot;
 use crate::TypeHash;
+use crate::native_fn::VmSlot;
 
 /// Buffer containing initialization list data.
 ///
@@ -347,7 +347,11 @@ mod tests {
     // TupleListBuffer tests
     #[test]
     fn test_tuple_list_buffer_empty() {
-        let buffer = TupleListBuffer::new(&[], 2, vec![primitive_hashes::STRING, primitive_hashes::INT32]);
+        let buffer = TupleListBuffer::new(
+            &[],
+            2,
+            vec![primitive_hashes::STRING, primitive_hashes::INT32],
+        );
 
         assert!(buffer.is_empty());
         assert_eq!(buffer.len(), 0);
@@ -362,7 +366,11 @@ mod tests {
             VmSlot::String("b".into()),
             VmSlot::Int(2),
         ];
-        let buffer = TupleListBuffer::new(&data, 2, vec![primitive_hashes::STRING, primitive_hashes::INT32]);
+        let buffer = TupleListBuffer::new(
+            &data,
+            2,
+            vec![primitive_hashes::STRING, primitive_hashes::INT32],
+        );
 
         assert!(!buffer.is_empty());
         assert_eq!(buffer.len(), 2);
@@ -377,7 +385,11 @@ mod tests {
             VmSlot::String("key2".into()),
             VmSlot::Int(200),
         ];
-        let buffer = TupleListBuffer::new(&data, 2, vec![primitive_hashes::STRING, primitive_hashes::INT32]);
+        let buffer = TupleListBuffer::new(
+            &data,
+            2,
+            vec![primitive_hashes::STRING, primitive_hashes::INT32],
+        );
 
         let tuple0 = buffer.get_tuple(0).unwrap();
         assert_eq!(tuple0.len(), 2);
@@ -393,12 +405,19 @@ mod tests {
 
     #[test]
     fn test_tuple_list_buffer_element_types() {
-        let buffer = TupleListBuffer::new(&[], 2, vec![primitive_hashes::STRING, primitive_hashes::INT32]);
+        let buffer = TupleListBuffer::new(
+            &[],
+            2,
+            vec![primitive_hashes::STRING, primitive_hashes::INT32],
+        );
 
         assert_eq!(buffer.element_type(0), Some(primitive_hashes::STRING));
         assert_eq!(buffer.element_type(1), Some(primitive_hashes::INT32));
         assert_eq!(buffer.element_type(2), None);
-        assert_eq!(buffer.element_types(), &[primitive_hashes::STRING, primitive_hashes::INT32]);
+        assert_eq!(
+            buffer.element_types(),
+            &[primitive_hashes::STRING, primitive_hashes::INT32]
+        );
     }
 
     #[test]
@@ -411,7 +430,11 @@ mod tests {
             VmSlot::String("c".into()),
             VmSlot::Int(3),
         ];
-        let buffer = TupleListBuffer::new(&data, 2, vec![primitive_hashes::STRING, primitive_hashes::INT32]);
+        let buffer = TupleListBuffer::new(
+            &data,
+            2,
+            vec![primitive_hashes::STRING, primitive_hashes::INT32],
+        );
 
         let tuples: Vec<_> = buffer.iter().collect();
         assert_eq!(tuples.len(), 3);
@@ -430,7 +453,11 @@ mod tests {
     #[should_panic(expected = "data length must be divisible by tuple_size")]
     fn test_tuple_list_buffer_invalid_data_length_panics() {
         let data = vec![VmSlot::Int(1), VmSlot::Int(2), VmSlot::Int(3)]; // 3 elements
-        TupleListBuffer::new(&data, 2, vec![primitive_hashes::INT32, primitive_hashes::INT32]); // tuple_size=2
+        TupleListBuffer::new(
+            &data,
+            2,
+            vec![primitive_hashes::INT32, primitive_hashes::INT32],
+        ); // tuple_size=2
     }
 
     // ListPattern tests
@@ -445,7 +472,11 @@ mod tests {
         assert!(pattern.matches(&[primitive_hashes::INT32]));
 
         // Multiple elements match
-        assert!(pattern.matches(&[primitive_hashes::INT32, primitive_hashes::INT32, primitive_hashes::INT32]));
+        assert!(pattern.matches(&[
+            primitive_hashes::INT32,
+            primitive_hashes::INT32,
+            primitive_hashes::INT32
+        ]));
 
         // Different type doesn't match
         assert!(!pattern.matches(&[primitive_hashes::STRING]));
@@ -471,12 +502,17 @@ mod tests {
         assert!(!pattern.matches(&[primitive_hashes::INT32]));
 
         // Too many elements
-        assert!(!pattern.matches(&[primitive_hashes::INT32, primitive_hashes::STRING, primitive_hashes::INT32]));
+        assert!(!pattern.matches(&[
+            primitive_hashes::INT32,
+            primitive_hashes::STRING,
+            primitive_hashes::INT32
+        ]));
     }
 
     #[test]
     fn test_list_pattern_repeat_tuple() {
-        let pattern = ListPattern::repeat_tuple(vec![primitive_hashes::STRING, primitive_hashes::INT32]);
+        let pattern =
+            ListPattern::repeat_tuple(vec![primitive_hashes::STRING, primitive_hashes::INT32]);
 
         // Empty list matches
         assert!(pattern.matches(&[]));
@@ -486,9 +522,12 @@ mod tests {
 
         // Multiple tuples match
         assert!(pattern.matches(&[
-            primitive_hashes::STRING, primitive_hashes::INT32,
-            primitive_hashes::STRING, primitive_hashes::INT32,
-            primitive_hashes::STRING, primitive_hashes::INT32
+            primitive_hashes::STRING,
+            primitive_hashes::INT32,
+            primitive_hashes::STRING,
+            primitive_hashes::INT32,
+            primitive_hashes::STRING,
+            primitive_hashes::INT32
         ]));
 
         // Wrong tuple size doesn't match
@@ -528,7 +567,8 @@ mod tests {
         let fixed = ListPattern::fixed(vec![primitive_hashes::INT32, primitive_hashes::STRING]);
         assert!(matches!(fixed, ListPattern::Fixed(ref v) if v.len() == 2));
 
-        let tuple = ListPattern::repeat_tuple(vec![primitive_hashes::STRING, primitive_hashes::INT32]);
+        let tuple =
+            ListPattern::repeat_tuple(vec![primitive_hashes::STRING, primitive_hashes::INT32]);
         assert!(matches!(tuple, ListPattern::RepeatTuple(ref v) if v.len() == 2));
     }
 }

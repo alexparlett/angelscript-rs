@@ -3,9 +3,9 @@
 use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
-use syn::{parse_macro_input, DeriveInput, Data, Fields};
+use syn::{Data, DeriveInput, Fields, parse_macro_input};
 
-use crate::attrs::{TypeAttrs, FieldAttrs, TypeKindAttr};
+use crate::attrs::{FieldAttrs, TypeAttrs, TypeKindAttr};
 
 pub fn derive_any_impl(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
@@ -95,9 +95,13 @@ fn generate_type_meta(
         None => quote! { None },
     };
 
-    let specialization_args_tokens: Vec<_> = attrs.specialization_args.iter().map(|ty| {
-        quote! { <#ty as ::angelscript_core::Any>::type_hash() }
-    }).collect();
+    let specialization_args_tokens: Vec<_> = attrs
+        .specialization_args
+        .iter()
+        .map(|ty| {
+            quote! { <#ty as ::angelscript_core::Any>::type_hash() }
+        })
+        .collect();
 
     // Collect property metadata from fields
     let properties = collect_properties(input)?;
@@ -134,7 +138,10 @@ fn collect_properties(input: &DeriveInput) -> syn::Result<Vec<TokenStream2>> {
                 }
 
                 let field_name = field.ident.as_ref().unwrap();
-                let prop_name = field_attrs.name.clone().unwrap_or_else(|| field_name.to_string());
+                let prop_name = field_attrs
+                    .name
+                    .clone()
+                    .unwrap_or_else(|| field_name.to_string());
                 let field_ty = &field.ty;
 
                 let get = field_attrs.get;

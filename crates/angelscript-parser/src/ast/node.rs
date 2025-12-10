@@ -18,10 +18,7 @@ pub struct Ident<'ast> {
 impl<'ast> Ident<'ast> {
     /// Create a new identifier.
     pub fn new(name: &'ast str, span: Span) -> Self {
-        Self {
-            name,
-            span,
-        }
+        Self { name, span }
     }
 }
 

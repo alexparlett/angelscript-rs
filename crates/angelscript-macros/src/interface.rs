@@ -9,7 +9,7 @@
 use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
-use syn::{parse_macro_input, ItemTrait, TraitItem, FnArg, ReturnType, Attribute};
+use syn::{Attribute, FnArg, ItemTrait, ReturnType, TraitItem, parse_macro_input};
 
 use crate::attrs::FunctionAttrs;
 
@@ -22,7 +22,7 @@ pub struct InterfaceAttrs {
 
 impl InterfaceAttrs {
     pub fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
-        use syn::{Token, LitStr};
+        use syn::{LitStr, Token};
 
         let mut result = Self::default();
 
@@ -76,21 +76,24 @@ fn interface_inner(attrs: &InterfaceAttrs, input: &ItemTrait) -> syn::Result<Tok
 
     // Collect method signatures
     let methods = collect_method_signatures(trait_items)?;
-    let method_tokens: Vec<_> = methods.iter().map(|m| {
-        let as_name = &m.as_name;
-        let is_const = m.is_const;
-        let param_types = &m.param_types;
-        let return_type = &m.return_type;
+    let method_tokens: Vec<_> = methods
+        .iter()
+        .map(|m| {
+            let as_name = &m.as_name;
+            let is_const = m.is_const;
+            let param_types = &m.param_types;
+            let return_type = &m.return_type;
 
-        quote! {
-            ::angelscript_core::InterfaceMethodMeta {
-                name: #as_name,
-                is_const: #is_const,
-                param_types: vec![#(<#param_types as ::angelscript_core::Any>::type_hash()),*],
-                return_type: <#return_type as ::angelscript_core::Any>::type_hash(),
+            quote! {
+                ::angelscript_core::InterfaceMethodMeta {
+                    name: #as_name,
+                    is_const: #is_const,
+                    param_types: vec![#(<#param_types as ::angelscript_core::Any>::type_hash()),*],
+                    return_type: <#return_type as ::angelscript_core::Any>::type_hash(),
+                }
             }
-        }
-    }).collect();
+        })
+        .collect();
 
     // Generate filtered trait items (strip #[function] attributes)
     let filtered_items: Vec<_> = trait_items
@@ -131,7 +134,11 @@ fn filter_trait_item_attrs(item: &TraitItem) -> TokenStream2 {
                 .collect();
             let sig = &method.sig;
             let default = &method.default;
-            let semi = if default.is_none() { quote! { ; } } else { quote! {} };
+            let semi = if default.is_none() {
+                quote! { ; }
+            } else {
+                quote! {}
+            };
 
             quote! {
                 #(#filtered_attrs)*
@@ -177,7 +184,9 @@ fn collect_method_signatures(items: &[TraitItem]) -> syn::Result<Vec<MethodInfo>
             let is_const = func_attrs.is_const || inferred_const;
 
             // Collect parameter types (excluding self)
-            let param_types: Vec<_> = sig.inputs.iter()
+            let param_types: Vec<_> = sig
+                .inputs
+                .iter()
                 .filter_map(|arg| {
                     if let FnArg::Typed(pat_type) = arg {
                         Some((*pat_type.ty).clone())

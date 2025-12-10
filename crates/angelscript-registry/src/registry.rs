@@ -41,8 +41,7 @@ use angelscript_core::{
 ///
 /// Called at compile-time to validate template instantiation.
 /// Returns validation result indicating if the instantiation is valid.
-pub type TemplateCallback =
-    Box<dyn Fn(&TemplateInstanceInfo) -> TemplateValidation + Send + Sync>;
+pub type TemplateCallback = Box<dyn Fn(&TemplateInstanceInfo) -> TemplateValidation + Send + Sync>;
 
 /// Unified type and function registry.
 ///
@@ -75,7 +74,6 @@ pub struct SymbolRegistry {
     globals: FxHashMap<TypeHash, GlobalPropertyEntry>,
 
     // === Namespace-Partitioned Indexes (for O(1) scope building) ===
-
     /// Types indexed by namespace: namespace -> (simple_name -> hash).
     types_by_namespace: FxHashMap<String, FxHashMap<String, TypeHash>>,
 
@@ -490,7 +488,10 @@ impl SymbolRegistry {
     /// Returns a map of simple name -> Vec<TypeHash> for all functions in the namespace.
     /// Multiple hashes per name indicate overloads.
     /// Use empty string for the global namespace.
-    pub fn get_namespace_functions(&self, namespace: &str) -> Option<&FxHashMap<String, Vec<TypeHash>>> {
+    pub fn get_namespace_functions(
+        &self,
+        namespace: &str,
+    ) -> Option<&FxHashMap<String, Vec<TypeHash>>> {
         self.functions_by_namespace.get(namespace)
     }
 
@@ -540,7 +541,7 @@ impl std::fmt::Debug for SymbolRegistry {
 mod tests {
     use super::*;
     use angelscript_core::{
-        primitives, DataType, FunctionDef, FunctionTraits, TypeKind, Visibility,
+        DataType, FunctionDef, FunctionTraits, TypeKind, Visibility, primitives,
     };
 
     #[test]
@@ -641,8 +642,12 @@ mod tests {
             Visibility::Public,
         );
 
-        registry.register_function(FunctionEntry::ffi(def1)).unwrap();
-        registry.register_function(FunctionEntry::ffi(def2)).unwrap();
+        registry
+            .register_function(FunctionEntry::ffi(def1))
+            .unwrap();
+        registry
+            .register_function(FunctionEntry::ffi(def2))
+            .unwrap();
 
         let overloads = registry.get_function_overloads("print").unwrap();
         assert_eq!(overloads.len(), 2);
@@ -686,8 +691,7 @@ mod tests {
         let player_hash = player.type_hash;
         registry.register_type(player.into()).unwrap();
 
-        let warrior =
-            ClassEntry::ffi("Warrior", TypeKind::reference()).with_base(player_hash);
+        let warrior = ClassEntry::ffi("Warrior", TypeKind::reference()).with_base(player_hash);
         let warrior_hash = warrior.type_hash;
         registry.register_type(warrior.into()).unwrap();
 
@@ -730,7 +734,8 @@ mod tests {
         assert!(registry.has_template_callback(array_hash));
 
         // Valid instantiation
-        let valid_info = TemplateInstanceInfo::new("array", vec![DataType::simple(primitives::INT32)]);
+        let valid_info =
+            TemplateInstanceInfo::new("array", vec![DataType::simple(primitives::INT32)]);
         let result = registry.validate_template_instance(&valid_info);
         assert!(result.is_valid);
 
@@ -802,10 +807,16 @@ mod tests {
         let mut registry = SymbolRegistry::new();
 
         registry
-            .register_global(GlobalPropertyEntry::constant("GRAVITY", ConstantValue::Double(9.81)))
+            .register_global(GlobalPropertyEntry::constant(
+                "GRAVITY",
+                ConstantValue::Double(9.81),
+            ))
             .unwrap();
         registry
-            .register_global(GlobalPropertyEntry::constant("SPEED", ConstantValue::Double(100.0)))
+            .register_global(GlobalPropertyEntry::constant(
+                "SPEED",
+                ConstantValue::Double(100.0),
+            ))
             .unwrap();
 
         let globals: Vec<_> = registry.globals().collect();
@@ -853,8 +864,14 @@ mod tests {
         assert_eq!(types.get("Player"), Some(&hash));
 
         // Should NOT be in global namespace
-        assert!(registry.get_namespace_types("").is_none() ||
-                registry.get_namespace_types("").unwrap().get("Player").is_none());
+        assert!(
+            registry.get_namespace_types("").is_none()
+                || registry
+                    .get_namespace_types("")
+                    .unwrap()
+                    .get("Player")
+                    .is_none()
+        );
     }
 
     #[test]
@@ -960,8 +977,12 @@ mod tests {
         def2.namespace = vec!["Game".to_string()];
         let hash2 = def2.func_hash;
 
-        registry.register_function(FunctionEntry::ffi(def1)).unwrap();
-        registry.register_function(FunctionEntry::ffi(def2)).unwrap();
+        registry
+            .register_function(FunctionEntry::ffi(def1))
+            .unwrap();
+        registry
+            .register_function(FunctionEntry::ffi(def2))
+            .unwrap();
 
         // Both overloads should be indexed under "Game" namespace
         let funcs = registry.get_namespace_functions("Game").unwrap();
@@ -982,7 +1003,7 @@ mod tests {
             vec![],
             vec![],
             DataType::void(),
-            Some(TypeHash::from_name("Player")),  // object_type makes it a method
+            Some(TypeHash::from_name("Player")), // object_type makes it a method
             FunctionTraits::default(),
             false,
             Visibility::Public,
@@ -990,8 +1011,14 @@ mod tests {
         registry.register_function(FunctionEntry::ffi(def)).unwrap();
 
         // Methods should NOT be indexed by namespace (only global functions are)
-        assert!(registry.get_namespace_functions("").is_none() ||
-                registry.get_namespace_functions("").unwrap().get("update").is_none());
+        assert!(
+            registry.get_namespace_functions("").is_none()
+                || registry
+                    .get_namespace_functions("")
+                    .unwrap()
+                    .get("update")
+                    .is_none()
+        );
     }
 
     #[test]

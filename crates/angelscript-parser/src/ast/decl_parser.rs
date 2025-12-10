@@ -3,7 +3,7 @@
 //! Implements parsing of all top-level declarations including functions,
 //! classes, interfaces, enums, and namespaces.
 
-use crate::ast::{DeclModifiers, FuncAttr, Ident, ParseError, ParseErrorKind, PropertyAccessorKind as PropAccessorKind, Visibility};
+use super::parser::Parser;
 use crate::ast::decl::{
     ClassDecl, ClassMember, EnumDecl, Enumerator, FieldDecl, FuncdefDecl, FunctionDecl,
     FunctionParam, FunctionSignatureDecl, GlobalVarDecl, ImportDecl, InterfaceDecl,
@@ -12,15 +12,20 @@ use crate::ast::decl::{
 };
 use crate::ast::expr::IdentExpr;
 use crate::ast::types::ParamType;
+use crate::ast::{
+    DeclModifiers, FuncAttr, Ident, ParseError, ParseErrorKind,
+    PropertyAccessorKind as PropAccessorKind, Visibility,
+};
 use crate::lexer::TokenKind;
-use super::parser::Parser;
 
 impl<'ast> Parser<'ast> {
     /// Parse a complete script.
     ///
     /// This is the main entry point for parsing AngelScript source code.
     /// Returns the items slice and span for the entire script.
-    pub fn parse_script(&mut self) -> Result<(&'ast [Item<'ast>], angelscript_core::Span), ParseError> {
+    pub fn parse_script(
+        &mut self,
+    ) -> Result<(&'ast [Item<'ast>], angelscript_core::Span), ParseError> {
         let start_span = self.peek().span;
         let mut items = Vec::new();
 
@@ -74,7 +79,7 @@ impl<'ast> Parser<'ast> {
             TokenKind::Typedef => self.parse_typedef(),
             TokenKind::Import => self.parse_import(),
             TokenKind::Mixin => self.parse_mixin(modifiers),
-            
+
             // Function or global variable
             _ => {
                 // Try to parse as function or global variable
@@ -258,30 +263,31 @@ impl<'ast> Parser<'ast> {
         // Check for variadic parameter (...)
         // Used for application-registered variadic functions
         // Scripts cannot define variadic functions, but parser accepts them
-        if self.check(TokenKind::Dot) 
-            && self.peek_nth(1).kind == TokenKind::Dot 
-            && self.peek_nth(2).kind == TokenKind::Dot 
+        if self.check(TokenKind::Dot)
+            && self.peek_nth(1).kind == TokenKind::Dot
+            && self.peek_nth(2).kind == TokenKind::Dot
         {
             self.advance(); // consume first .
             self.advance(); // consume second .
             self.advance(); // consume third .
-            
+
             let span = start_span.merge(
-                self.buffer.get(self.position.saturating_sub(1))
+                self.buffer
+                    .get(self.position.saturating_sub(1))
                     .map(|t| t.span)
-                    .unwrap_or(start_span)
+                    .unwrap_or(start_span),
             );
-            
+
             // Variadic parameter has a dummy void type
             let void_ty = ParamType::new(
                 crate::ast::types::TypeExpr::primitive(
                     crate::ast::types::PrimitiveType::Void,
-                    start_span
+                    start_span,
                 ),
                 crate::ast::RefKind::None,
-                start_span
+                start_span,
             );
-            
+
             return Ok(FunctionParam {
                 ty: void_ty,
                 name: None,
@@ -379,9 +385,10 @@ impl<'ast> Parser<'ast> {
             };
 
             let span = start_span.merge(
-                self.buffer.get(self.position.saturating_sub(1))
+                self.buffer
+                    .get(self.position.saturating_sub(1))
                     .map(|t| t.span)
-                    .unwrap_or(start_span)
+                    .unwrap_or(start_span),
             );
 
             Ok(Item::Function(FunctionDecl {
@@ -401,13 +408,9 @@ impl<'ast> Parser<'ast> {
             // It's a global variable
             if return_type.is_none() {
                 return Err(ParseError::new(
-
                     ParseErrorKind::ExpectedType,
-
                     name.span,
-
                     "destructor syntax not valid for global variable",
-
                 ));
             }
 
@@ -453,9 +456,7 @@ impl<'ast> Parser<'ast> {
     /// Returns an error if:
     /// - The declaration string is malformed
     /// - There are trailing tokens after the signature
-    pub fn parse_function_signature(
-        &mut self,
-    ) -> Result<FunctionSignatureDecl<'ast>, ParseError> {
+    pub fn parse_function_signature(&mut self) -> Result<FunctionSignatureDecl<'ast>, ParseError> {
         let start_span = self.peek().span;
 
         // Parse return type
@@ -478,9 +479,10 @@ impl<'ast> Parser<'ast> {
         self.expect_eof()?;
 
         let span = start_span.merge(
-            self.buffer.get(self.position.saturating_sub(1))
+            self.buffer
+                .get(self.position.saturating_sub(1))
                 .map(|t| t.span)
-                .unwrap_or(start_span)
+                .unwrap_or(start_span),
         );
 
         Ok(FunctionSignatureDecl {
@@ -784,7 +786,10 @@ mod tests {
     #[test]
     fn parse_delete_attribute() {
         let arena = bumpalo::Bump::new();
-        let mut parser = Parser::new("class MyClass { MyClass(const MyClass& in) delete; }", &arena);
+        let mut parser = Parser::new(
+            "class MyClass { MyClass(const MyClass& in) delete; }",
+            &arena,
+        );
         let item = parser.parse_item().unwrap();
         match item {
             Item::Class(class) => {
@@ -795,7 +800,7 @@ mod tests {
                         assert!(method.attrs.delete);
                         assert!(method.body.is_none());
                     }
-                    _ => panic!("Expected method")
+                    _ => panic!("Expected method"),
                 }
             }
             _ => panic!("Expected class"),
@@ -939,7 +944,10 @@ mod tests {
     #[test]
     fn parse_class_scoped_inheritance() {
         let arena = bumpalo::Bump::new();
-        let mut parser = Parser::new("class Entity : BaseEntity, GameEngine::IRenderable { }", &arena);
+        let mut parser = Parser::new(
+            "class Entity : BaseEntity, GameEngine::IRenderable { }",
+            &arena,
+        );
         let item = parser.parse_item().unwrap();
         match item {
             Item::Class(class) => {
@@ -975,11 +983,14 @@ mod tests {
     #[test]
     fn parse_class_with_constructor() {
         let arena = bumpalo::Bump::new();
-        let mut parser = Parser::new(r#"
+        let mut parser = Parser::new(
+            r#"
             class Point {
                 Point(int x, int y) { }
             }
-        "#, &arena);
+        "#,
+            &arena,
+        );
         let item = parser.parse_item().unwrap();
         match item {
             Item::Class(class) => {
@@ -998,11 +1009,14 @@ mod tests {
     #[test]
     fn parse_class_with_destructor() {
         let arena = bumpalo::Bump::new();
-        let mut parser = Parser::new(r#"
+        let mut parser = Parser::new(
+            r#"
             class Foo {
                 ~Foo() { }
             }
-        "#, &arena);
+        "#,
+            &arena,
+        );
         let item = parser.parse_item().unwrap();
         match item {
             Item::Class(class) => {
@@ -1021,11 +1035,14 @@ mod tests {
     #[test]
     fn parse_class_with_field() {
         let arena = bumpalo::Bump::new();
-        let mut parser = Parser::new(r#"
+        let mut parser = Parser::new(
+            r#"
             class Data {
                 int value;
             }
-        "#, &arena);
+        "#,
+            &arena,
+        );
         let item = parser.parse_item().unwrap();
         match item {
             Item::Class(class) => {
@@ -1042,21 +1059,22 @@ mod tests {
     #[test]
     fn parse_class_with_field_initializer() {
         let arena = bumpalo::Bump::new();
-        let mut parser = Parser::new(r#"
+        let mut parser = Parser::new(
+            r#"
             class Data {
                 int value = 42;
             }
-        "#, &arena);
+        "#,
+            &arena,
+        );
         let item = parser.parse_item().unwrap();
         match item {
-            Item::Class(class) => {
-                match &class.members[0] {
-                    ClassMember::Field(field) => {
-                        assert!(field.init.is_some());
-                    }
-                    _ => panic!("Expected field"),
+            Item::Class(class) => match &class.members[0] {
+                ClassMember::Field(field) => {
+                    assert!(field.init.is_some());
                 }
-            }
+                _ => panic!("Expected field"),
+            },
             _ => panic!("Expected class"),
         }
     }
@@ -1064,11 +1082,14 @@ mod tests {
     #[test]
     fn parse_class_with_method() {
         let arena = bumpalo::Bump::new();
-        let mut parser = Parser::new(r#"
+        let mut parser = Parser::new(
+            r#"
             class Calculator {
                 int add(int a, int b) { return a + b; }
             }
-        "#, &arena);
+        "#,
+            &arena,
+        );
         let item = parser.parse_item().unwrap();
         match item {
             Item::Class(class) => {
@@ -1088,21 +1109,22 @@ mod tests {
     #[test]
     fn parse_class_with_const_method() {
         let arena = bumpalo::Bump::new();
-        let mut parser = Parser::new(r#"
+        let mut parser = Parser::new(
+            r#"
             class Foo {
                 int getValue() const { return 0; }
             }
-        "#, &arena);
+        "#,
+            &arena,
+        );
         let item = parser.parse_item().unwrap();
         match item {
-            Item::Class(class) => {
-                match &class.members[0] {
-                    ClassMember::Method(method) => {
-                        assert!(method.is_const);
-                    }
-                    _ => panic!("Expected method"),
+            Item::Class(class) => match &class.members[0] {
+                ClassMember::Method(method) => {
+                    assert!(method.is_const);
                 }
-            }
+                _ => panic!("Expected method"),
+            },
             _ => panic!("Expected class"),
         }
     }
@@ -1110,14 +1132,17 @@ mod tests {
     #[test]
     fn parse_class_with_virtual_property() {
         let arena = bumpalo::Bump::new();
-        let mut parser = Parser::new(r#"
+        let mut parser = Parser::new(
+            r#"
             class Foo {
                 int Value {
                     get const { return 0; }
                     set { }
                 }
             }
-        "#, &arena);
+        "#,
+            &arena,
+        );
         let item = parser.parse_item().unwrap();
         match item {
             Item::Class(class) => {
@@ -1136,11 +1161,14 @@ mod tests {
     #[test]
     fn parse_class_with_funcdef() {
         let arena = bumpalo::Bump::new();
-        let mut parser = Parser::new(r#"
+        let mut parser = Parser::new(
+            r#"
             class Foo {
                 funcdef void Callback(int x);
             }
-        "#, &arena);
+        "#,
+            &arena,
+        );
         let item = parser.parse_item().unwrap();
         match item {
             Item::Class(class) => {
@@ -1157,13 +1185,16 @@ mod tests {
     #[test]
     fn parse_class_member_visibility() {
         let arena = bumpalo::Bump::new();
-        let mut parser = Parser::new(r#"
+        let mut parser = Parser::new(
+            r#"
             class Foo {
                 private int privateField;
                 protected int protectedField;
                 int publicField;
             }
-        "#, &arena);
+        "#,
+            &arena,
+        );
         let item = parser.parse_item().unwrap();
         match item {
             Item::Class(class) => {
@@ -1233,11 +1264,14 @@ mod tests {
     #[test]
     fn parse_interface_with_method() {
         let arena = bumpalo::Bump::new();
-        let mut parser = Parser::new(r#"
+        let mut parser = Parser::new(
+            r#"
             interface IFoo {
                 void doSomething();
             }
-        "#, &arena);
+        "#,
+            &arena,
+        );
         let item = parser.parse_item().unwrap();
         match item {
             Item::Interface(iface) => {
@@ -1254,11 +1288,14 @@ mod tests {
     #[test]
     fn parse_interface_with_virtual_property() {
         let arena = bumpalo::Bump::new();
-        let mut parser = Parser::new(r#"
+        let mut parser = Parser::new(
+            r#"
             interface IFoo {
                 int Value { get const; set; }
             }
-        "#, &arena);
+        "#,
+            &arena,
+        );
         let item = parser.parse_item().unwrap();
         match item {
             Item::Interface(iface) => {
@@ -1368,12 +1405,15 @@ mod tests {
     #[test]
     fn parse_namespace_with_contents() {
         let arena = bumpalo::Bump::new();
-        let mut parser = Parser::new(r#"
+        let mut parser = Parser::new(
+            r#"
             namespace Foo {
                 void bar() { }
                 int x = 0;
             }
-        "#, &arena);
+        "#,
+            &arena,
+        );
         let item = parser.parse_item().unwrap();
         match item {
             Item::Namespace(ns) => {
@@ -1468,7 +1508,10 @@ mod tests {
     #[test]
     fn parse_funcdef_with_params() {
         let arena = bumpalo::Bump::new();
-        let mut parser = Parser::new("funcdef void EventHandler(int eventId, string data);", &arena);
+        let mut parser = Parser::new(
+            "funcdef void EventHandler(int eventId, string data);",
+            &arena,
+        );
         let item = parser.parse_item().unwrap();
         match item {
             Item::Funcdef(fd) => {
@@ -1554,11 +1597,14 @@ mod tests {
     #[test]
     fn parse_script_multiple_items() {
         let arena = bumpalo::Bump::new();
-        let mut parser = Parser::new(r#"
+        let mut parser = Parser::new(
+            r#"
             void foo() { }
             int x = 0;
             class Bar { }
-        "#, &arena);
+        "#,
+            &arena,
+        );
         let (items, _span) = parser.parse_script().unwrap();
         assert_eq!(items.len(), 3);
     }
@@ -1566,13 +1612,16 @@ mod tests {
     #[test]
     fn parse_script_with_semicolons() {
         let arena = bumpalo::Bump::new();
-        let mut parser = Parser::new(r#"
+        let mut parser = Parser::new(
+            r#"
             ;;
             void foo() { }
             ;
             int x = 0;
             ;;
-        "#, &arena);
+        "#,
+            &arena,
+        );
         let (items, _span) = parser.parse_script().unwrap();
         assert_eq!(items.len(), 2);
     }
@@ -1676,15 +1725,13 @@ mod tests {
         let mut parser = Parser::new("class Foo { Foo(int x) explicit explicit { } }", &arena);
         let item = parser.parse_item().unwrap();
         match item {
-            Item::Class(class) => {
-                match &class.members[0] {
-                    ClassMember::Method(method) => {
-                        assert!(method.attrs.explicit);
-                        assert!(!parser.errors.is_empty());
-                    }
-                    _ => panic!("Expected method"),
+            Item::Class(class) => match &class.members[0] {
+                ClassMember::Method(method) => {
+                    assert!(method.attrs.explicit);
+                    assert!(!parser.errors.is_empty());
                 }
-            }
+                _ => panic!("Expected method"),
+            },
             _ => panic!("Expected class"),
         }
     }
@@ -1692,18 +1739,19 @@ mod tests {
     #[test]
     fn parse_duplicate_property_attribute() {
         let arena = bumpalo::Bump::new();
-        let mut parser = Parser::new("class Foo { void set_x(int v) property property { } }", &arena);
+        let mut parser = Parser::new(
+            "class Foo { void set_x(int v) property property { } }",
+            &arena,
+        );
         let item = parser.parse_item().unwrap();
         match item {
-            Item::Class(class) => {
-                match &class.members[0] {
-                    ClassMember::Method(method) => {
-                        assert!(method.attrs.property);
-                        assert!(!parser.errors.is_empty());
-                    }
-                    _ => panic!("Expected method"),
+            Item::Class(class) => match &class.members[0] {
+                ClassMember::Method(method) => {
+                    assert!(method.attrs.property);
+                    assert!(!parser.errors.is_empty());
                 }
-            }
+                _ => panic!("Expected method"),
+            },
             _ => panic!("Expected class"),
         }
     }
@@ -1714,15 +1762,13 @@ mod tests {
         let mut parser = Parser::new("class Foo { Foo(const Foo& in) delete delete; }", &arena);
         let item = parser.parse_item().unwrap();
         match item {
-            Item::Class(class) => {
-                match &class.members[0] {
-                    ClassMember::Method(method) => {
-                        assert!(method.attrs.delete);
-                        assert!(!parser.errors.is_empty());
-                    }
-                    _ => panic!("Expected method"),
+            Item::Class(class) => match &class.members[0] {
+                ClassMember::Method(method) => {
+                    assert!(method.attrs.delete);
+                    assert!(!parser.errors.is_empty());
                 }
-            }
+                _ => panic!("Expected method"),
+            },
             _ => panic!("Expected class"),
         }
     }
@@ -1753,12 +1799,15 @@ mod tests {
     fn parse_class_member_parse_error_recovery() {
         // Test error recovery within class member parsing
         let arena = bumpalo::Bump::new();
-        let mut parser = Parser::new(r#"
+        let mut parser = Parser::new(
+            r#"
             class Foo {
                 this is not valid
                 int x;
             }
-        "#, &arena);
+        "#,
+            &arena,
+        );
         let item = parser.parse_item().unwrap();
         match item {
             Item::Class(class) => {
@@ -1774,23 +1823,24 @@ mod tests {
     #[test]
     fn parse_class_with_get_only_property() {
         let arena = bumpalo::Bump::new();
-        let mut parser = Parser::new(r#"
+        let mut parser = Parser::new(
+            r#"
             class Foo {
                 int Value {
                     get const { return 0; }
                 }
             }
-        "#, &arena);
+        "#,
+            &arena,
+        );
         let item = parser.parse_item().unwrap();
         match item {
-            Item::Class(class) => {
-                match &class.members[0] {
-                    ClassMember::VirtualProperty(prop) => {
-                        assert_eq!(prop.accessors.len(), 1);
-                    }
-                    _ => panic!("Expected virtual property"),
+            Item::Class(class) => match &class.members[0] {
+                ClassMember::VirtualProperty(prop) => {
+                    assert_eq!(prop.accessors.len(), 1);
                 }
-            }
+                _ => panic!("Expected virtual property"),
+            },
             _ => panic!("Expected class"),
         }
     }
@@ -1798,23 +1848,24 @@ mod tests {
     #[test]
     fn parse_class_with_set_only_property() {
         let arena = bumpalo::Bump::new();
-        let mut parser = Parser::new(r#"
+        let mut parser = Parser::new(
+            r#"
             class Foo {
                 int Value {
                     set { }
                 }
             }
-        "#, &arena);
+        "#,
+            &arena,
+        );
         let item = parser.parse_item().unwrap();
         match item {
-            Item::Class(class) => {
-                match &class.members[0] {
-                    ClassMember::VirtualProperty(prop) => {
-                        assert_eq!(prop.accessors.len(), 1);
-                    }
-                    _ => panic!("Expected virtual property"),
+            Item::Class(class) => match &class.members[0] {
+                ClassMember::VirtualProperty(prop) => {
+                    assert_eq!(prop.accessors.len(), 1);
                 }
-            }
+                _ => panic!("Expected virtual property"),
+            },
             _ => panic!("Expected class"),
         }
     }
@@ -1874,21 +1925,22 @@ mod tests {
     #[test]
     fn parse_class_with_templated_method() {
         let arena = bumpalo::Bump::new();
-        let mut parser = Parser::new(r#"
+        let mut parser = Parser::new(
+            r#"
             class Container {
                 void set<K>(K key) { }
             }
-        "#, &arena);
+        "#,
+            &arena,
+        );
         let item = parser.parse_item().unwrap();
         match item {
-            Item::Class(class) => {
-                match &class.members[0] {
-                    ClassMember::Method(method) => {
-                        assert_eq!(method.template_params.len(), 1);
-                    }
-                    _ => panic!("Expected method"),
+            Item::Class(class) => match &class.members[0] {
+                ClassMember::Method(method) => {
+                    assert_eq!(method.template_params.len(), 1);
                 }
-            }
+                _ => panic!("Expected method"),
+            },
             _ => panic!("Expected class"),
         }
     }
@@ -1896,21 +1948,22 @@ mod tests {
     #[test]
     fn parse_accessor_abstract_declaration_only() {
         let arena = bumpalo::Bump::new();
-        let mut parser = Parser::new(r#"
+        let mut parser = Parser::new(
+            r#"
             interface IFoo {
                 int Value { get const; }
             }
-        "#, &arena);
+        "#,
+            &arena,
+        );
         let item = parser.parse_item().unwrap();
         match item {
-            Item::Interface(iface) => {
-                match &iface.members[0] {
-                    InterfaceMember::VirtualProperty(prop) => {
-                        assert_eq!(prop.accessors.len(), 1);
-                    }
-                    _ => panic!("Expected virtual property"),
+            Item::Interface(iface) => match &iface.members[0] {
+                InterfaceMember::VirtualProperty(prop) => {
+                    assert_eq!(prop.accessors.len(), 1);
                 }
-            }
+                _ => panic!("Expected virtual property"),
+            },
             _ => panic!("Expected interface"),
         }
     }
@@ -1918,21 +1971,22 @@ mod tests {
     #[test]
     fn parse_interface_virtual_property_set() {
         let arena = bumpalo::Bump::new();
-        let mut parser = Parser::new(r#"
+        let mut parser = Parser::new(
+            r#"
             interface IFoo {
                 int Value { set; }
             }
-        "#, &arena);
+        "#,
+            &arena,
+        );
         let item = parser.parse_item().unwrap();
         match item {
-            Item::Interface(iface) => {
-                match &iface.members[0] {
-                    InterfaceMember::VirtualProperty(prop) => {
-                        assert_eq!(prop.accessors.len(), 1);
-                    }
-                    _ => panic!("Expected virtual property"),
+            Item::Interface(iface) => match &iface.members[0] {
+                InterfaceMember::VirtualProperty(prop) => {
+                    assert_eq!(prop.accessors.len(), 1);
                 }
-            }
+                _ => panic!("Expected virtual property"),
+            },
             _ => panic!("Expected interface"),
         }
     }
@@ -1941,11 +1995,14 @@ mod tests {
     fn parse_class_field_with_equals_init() {
         // Test field with = initialization (not constructor syntax)
         let arena = bumpalo::Bump::new();
-        let mut parser = Parser::new(r#"
+        let mut parser = Parser::new(
+            r#"
             class Foo {
                 int value = 42;
             }
-        "#, &arena);
+        "#,
+            &arena,
+        );
         let item = parser.parse_item().unwrap();
         match item {
             Item::Class(class) => {
@@ -1965,13 +2022,16 @@ mod tests {
     fn parse_separate_field_declarations() {
         // Multiple fields require separate declarations in this parser
         let arena = bumpalo::Bump::new();
-        let mut parser = Parser::new(r#"
+        let mut parser = Parser::new(
+            r#"
             class Foo {
                 int x;
                 int y;
                 int z;
             }
-        "#, &arena);
+        "#,
+            &arena,
+        );
         let item = parser.parse_item().unwrap();
         match item {
             Item::Class(class) => {
@@ -2013,21 +2073,22 @@ mod tests {
     #[test]
     fn parse_class_method_declaration_only() {
         let arena = bumpalo::Bump::new();
-        let mut parser = Parser::new(r#"
+        let mut parser = Parser::new(
+            r#"
             class Foo {
                 void abstractMethod();
             }
-        "#, &arena);
+        "#,
+            &arena,
+        );
         let item = parser.parse_item().unwrap();
         match item {
-            Item::Class(class) => {
-                match &class.members[0] {
-                    ClassMember::Method(method) => {
-                        assert!(method.body.is_none());
-                    }
-                    _ => panic!("Expected method"),
+            Item::Class(class) => match &class.members[0] {
+                ClassMember::Method(method) => {
+                    assert!(method.body.is_none());
                 }
-            }
+                _ => panic!("Expected method"),
+            },
             _ => panic!("Expected class"),
         }
     }
@@ -2035,11 +2096,14 @@ mod tests {
     #[test]
     fn parse_namespace_nested_class() {
         let arena = bumpalo::Bump::new();
-        let mut parser = Parser::new(r#"
+        let mut parser = Parser::new(
+            r#"
             namespace A {
                 class Foo { }
             }
-        "#, &arena);
+        "#,
+            &arena,
+        );
         let item = parser.parse_item().unwrap();
         match item {
             Item::Namespace(ns) => {
@@ -2099,9 +2163,10 @@ impl<'ast> Parser<'ast> {
 
         if is_forward_decl {
             let span = start_span.merge(
-                self.buffer.get(end_token_pos.unwrap())
+                self.buffer
+                    .get(end_token_pos.unwrap())
                     .map(|t| t.span)
-                    .unwrap_or(start_span)
+                    .unwrap_or(start_span),
             );
             let template_params = self.arena.alloc_slice_copy(&template_params_vec);
             let inheritance = inheritance_slice;
@@ -2164,7 +2229,7 @@ impl<'ast> Parser<'ast> {
                 return Err(ParseError::new(
                     ParseErrorKind::InternalError,
                     span,
-                    "parse_funcdef() returned non-Funcdef item"
+                    "parse_funcdef() returned non-Funcdef item",
                 ));
             }
         }
@@ -2183,8 +2248,8 @@ impl<'ast> Parser<'ast> {
         // We need to distinguish between:
         // - `MyClass() { }` (constructor)
         // - `int foo() { }` (method with return type)
-        let is_constructor = !is_destructor 
-            && self.check(TokenKind::Identifier) 
+        let is_constructor = !is_destructor
+            && self.check(TokenKind::Identifier)
             && self.peek_nth(1).kind == TokenKind::LeftParen;
 
         let (return_type, name) = if is_destructor {
@@ -2215,13 +2280,9 @@ impl<'ast> Parser<'ast> {
             // Virtual property
             if return_type.is_none() {
                 return Err(ParseError::new(
-
                     ParseErrorKind::InvalidSyntax,
-
                     name.span,
-
                     "virtual property cannot have destructor syntax",
-
                 ));
             }
 
@@ -2256,9 +2317,10 @@ impl<'ast> Parser<'ast> {
             };
 
             let span = ty_start.merge(
-                self.buffer.get(self.position.saturating_sub(1))
+                self.buffer
+                    .get(self.position.saturating_sub(1))
                     .map(|t| t.span)
-                    .unwrap_or(name.span)
+                    .unwrap_or(name.span),
             );
 
             Ok(ClassMember::Method(FunctionDecl {
@@ -2266,7 +2328,7 @@ impl<'ast> Parser<'ast> {
                 visibility,
                 return_type,
                 name,
-                template_params,  // ✅ Use method's own template params
+                template_params, // ✅ Use method's own template params
                 params,
                 is_const,
                 attrs,
@@ -2278,13 +2340,9 @@ impl<'ast> Parser<'ast> {
             // Field
             if return_type.is_none() {
                 return Err(ParseError::new(
-
                     ParseErrorKind::InvalidSyntax,
-
                     name.span,
-
                     "field cannot have destructor syntax",
-
                 ));
             }
 
@@ -2322,13 +2380,9 @@ impl<'ast> Parser<'ast> {
         } else {
             let span = self.peek().span;
             return Err(ParseError::new(
-
                 ParseErrorKind::InvalidSyntax,
-
                 span,
-
                 "expected 'get' or 'set'",
-
             ));
         };
 
@@ -2343,9 +2397,10 @@ impl<'ast> Parser<'ast> {
         };
 
         let span = start_span.merge(
-            self.buffer.get(self.position.saturating_sub(1))
+            self.buffer
+                .get(self.position.saturating_sub(1))
                 .map(|t| t.span)
-                .unwrap_or(start_span)
+                .unwrap_or(start_span),
         );
 
         Ok(PropertyAccessor {
@@ -2384,9 +2439,10 @@ impl<'ast> Parser<'ast> {
 
         if is_forward_decl {
             let span = start_span.merge(
-                self.buffer.get(end_token_pos.unwrap())
+                self.buffer
+                    .get(end_token_pos.unwrap())
                     .map(|t| t.span)
-                    .unwrap_or(start_span)
+                    .unwrap_or(start_span),
             );
             let bases = bases_slice;
             let members = self.arena.alloc_slice_copy(&[]);
@@ -2482,9 +2538,10 @@ impl<'ast> Parser<'ast> {
         // Check for forward declaration
         if self.eat(TokenKind::Semicolon).is_some() {
             let span = start_span.merge(
-                self.buffer.get(self.position.saturating_sub(1))
+                self.buffer
+                    .get(self.position.saturating_sub(1))
                     .map(|t| t.span)
-                    .unwrap_or(start_span)
+                    .unwrap_or(start_span),
             );
             return Ok(Item::Enum(EnumDecl {
                 modifiers,
@@ -2651,7 +2708,8 @@ impl<'ast> Parser<'ast> {
 
     /// Parse a mixin declaration.
     pub fn parse_mixin(&mut self, modifiers: DeclModifiers) -> Result<Item<'ast>, ParseError> {
-        let start_span = self.eat(TokenKind::Mixin)
+        let start_span = self
+            .eat(TokenKind::Mixin)
             .ok_or_else(|| {
                 let span = self.peek().span;
                 ParseError::new(
@@ -2673,7 +2731,7 @@ impl<'ast> Parser<'ast> {
             Err(ParseError::new(
                 ParseErrorKind::InternalError,
                 span,
-                "parse_class() returned non-Class item"
+                "parse_class() returned non-Class item",
             ))
         }
     }
@@ -2692,13 +2750,9 @@ impl<'ast> Parser<'ast> {
         if !self.check_contextual("from") {
             let span = self.peek().span;
             return Err(ParseError::new(
-
                 ParseErrorKind::ExpectedToken,
-
                 span,
-
                 "expected 'from' keyword in import declaration",
-
             ));
         }
         self.advance();
@@ -2731,7 +2785,10 @@ impl<'ast> Parser<'ast> {
             self.eat(TokenKind::Comma);
         }
         // Convert tokens to Idents after all parsing is done
-        Ok(tokens.into_iter().map(|(name, span)| Ident::new(name, span)).collect())
+        Ok(tokens
+            .into_iter()
+            .map(|(name, span)| Ident::new(name, span))
+            .collect())
     }
 
     /// Parse a comma-separated list of scoped identifiers (for inheritance lists).
@@ -2774,7 +2831,8 @@ impl<'ast> Parser<'ast> {
         let ident = Ident::new(ident_name, ident_span);
 
         let scope = if is_absolute || !segments.is_empty() {
-            let scope_idents: Vec<_> = segments.into_iter()
+            let scope_idents: Vec<_> = segments
+                .into_iter()
                 .map(|(name, span)| Ident::new(name, span))
                 .collect();
             let scope_span = if scope_idents.is_empty() {
@@ -2809,7 +2867,10 @@ impl<'ast> Parser<'ast> {
             tokens.push((token.lexeme, token.span));
         }
         // Convert tokens to Idents after all parsing is done
-        Ok(tokens.into_iter().map(|(name, span)| Ident::new(name, span)).collect())
+        Ok(tokens
+            .into_iter()
+            .map(|(name, span)| Ident::new(name, span))
+            .collect())
     }
 
     /// Parse template parameter names for class/funcdef declarations.
@@ -2836,7 +2897,10 @@ impl<'ast> Parser<'ast> {
         self.expect(TokenKind::Greater)?;
 
         // Convert tokens to Idents after all parsing is done
-        let params: Vec<Ident<'ast>> = tokens.into_iter().map(|(name, span)| Ident::new(name, span)).collect();
+        let params: Vec<Ident<'ast>> = tokens
+            .into_iter()
+            .map(|(name, span)| Ident::new(name, span))
+            .collect();
         let result = self.arena.alloc_slice_copy(&params);
         Ok(result)
     }

@@ -37,9 +37,9 @@
 //! ```
 
 use crate::context::Context;
+use angelscript_compiler::{CompiledModule, Compiler};
 use angelscript_core::{AngelScriptError, CompilationError};
-use angelscript_compiler::{Compiler, CompiledModule};
-use angelscript_parser::ast::{Parser, ParseError};
+use angelscript_parser::ast::{ParseError, Parser};
 use bumpalo::Bump;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -138,7 +138,11 @@ impl Unit {
     ///
     /// Returns an error if the unit has already been built.
     /// Use `update_source()` to change a file after building, or `clear()` to rebuild from scratch.
-    pub fn add_source(&mut self, filename: impl Into<String>, source: impl Into<String>) -> Result<(), UnitError> {
+    pub fn add_source(
+        &mut self,
+        filename: impl Into<String>,
+        source: impl Into<String>,
+    ) -> Result<(), UnitError> {
         if self.is_built {
             return Err(UnitError::AlreadyBuilt);
         }
@@ -172,7 +176,11 @@ impl Unit {
     /// # Errors
     ///
     /// Returns an error if the file doesn't exist in the unit.
-    pub fn update_source(&mut self, filename: impl AsRef<str>, source: impl Into<String>) -> Result<bool, UnitError> {
+    pub fn update_source(
+        &mut self,
+        filename: impl AsRef<str>,
+        source: impl Into<String>,
+    ) -> Result<bool, UnitError> {
         let filename = filename.as_ref();
 
         // Check source_hashes since sources is cleared after build
@@ -356,12 +364,13 @@ impl Unit {
     }
 }
 
-
 /// Errors that can occur when adding sources or managing the unit.
 #[derive(Debug, Clone, thiserror::Error)]
 pub enum UnitError {
     /// The unit has already been built
-    #[error("Unit has already been built. Use update_source() for hot reloading or clear() to rebuild.")]
+    #[error(
+        "Unit has already been built. Use update_source() for hot reloading or clear() to rebuild."
+    )]
     AlreadyBuilt,
 
     /// File not found in unit
@@ -403,13 +412,11 @@ impl BuildError {
     /// MultiFileNotSupported), this returns an empty vector.
     pub fn into_errors(self) -> Vec<AngelScriptError> {
         match self {
-            BuildError::ParseErrors(file_errors) => {
-                file_errors
-                    .into_iter()
-                    .flat_map(|(_, errors)| errors)
-                    .map(AngelScriptError::from)
-                    .collect()
-            }
+            BuildError::ParseErrors(file_errors) => file_errors
+                .into_iter()
+                .flat_map(|(_, errors)| errors)
+                .map(AngelScriptError::from)
+                .collect(),
             BuildError::CompilationErrors(errors) => {
                 errors.into_iter().map(AngelScriptError::from).collect()
             }
@@ -422,14 +429,12 @@ impl BuildError {
     /// This is useful when you only need to report a single error.
     pub fn first_error(&self) -> Option<AngelScriptError> {
         match self {
-            BuildError::ParseErrors(file_errors) => {
-                file_errors
-                    .iter()
-                    .flat_map(|(_, errors)| errors)
-                    .next()
-                    .cloned()
-                    .map(AngelScriptError::from)
-            }
+            BuildError::ParseErrors(file_errors) => file_errors
+                .iter()
+                .flat_map(|(_, errors)| errors)
+                .next()
+                .cloned()
+                .map(AngelScriptError::from),
             BuildError::CompilationErrors(errors) => {
                 errors.first().cloned().map(AngelScriptError::from)
             }
@@ -500,7 +505,8 @@ mod tests {
     #[test]
     fn build_fails_with_parse_errors() {
         let mut unit = Unit::new();
-        unit.add_source("bad.as", "void main() { this is invalid }").unwrap();
+        unit.add_source("bad.as", "void main() { this is invalid }")
+            .unwrap();
 
         let result = unit.build();
         assert!(matches!(result, Err(BuildError::ParseErrors(_))));
@@ -513,7 +519,9 @@ mod tests {
         unit.build().unwrap();
 
         // Update the source
-        let changed = unit.update_source("test.as", "void main() { int x; }").unwrap();
+        let changed = unit
+            .update_source("test.as", "void main() { int x; }")
+            .unwrap();
         assert!(changed);
         assert!(unit.has_pending_changes());
 
@@ -617,7 +625,8 @@ mod tests {
         assert!(unit.dirty_files().is_empty());
 
         // Update and check dirty again
-        unit.update_source("test.as", "void main() { int x; }").unwrap();
+        unit.update_source("test.as", "void main() { int x; }")
+            .unwrap();
         assert!(unit.dirty_files().contains("test.as"));
     }
 
@@ -673,9 +682,7 @@ mod tests {
             Span::new(1, 5, 3),
             "expected ';'".to_string(),
         );
-        let err = BuildError::ParseErrors(vec![
-            ("test.as".to_string(), vec![parse_err]),
-        ]);
+        let err = BuildError::ParseErrors(vec![("test.as".to_string(), vec![parse_err])]);
 
         let errors = err.into_errors();
         assert_eq!(errors.len(), 1);
@@ -726,9 +733,8 @@ mod tests {
             Span::new(2, 10, 5),
             "second".to_string(),
         );
-        let err = BuildError::ParseErrors(vec![
-            ("test.as".to_string(), vec![parse_err1, parse_err2]),
-        ]);
+        let err =
+            BuildError::ParseErrors(vec![("test.as".to_string(), vec![parse_err1, parse_err2])]);
 
         let first = err.first_error();
         assert!(first.is_some());

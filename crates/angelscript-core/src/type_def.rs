@@ -160,7 +160,11 @@ impl TypeKind {
 
     /// Create a value type kind with explicit size and alignment.
     pub const fn value_sized(size: usize, align: usize, is_pod: bool) -> Self {
-        TypeKind::Value { size, align, is_pod }
+        TypeKind::Value {
+            size,
+            align,
+            is_pod,
+        }
     }
 
     /// Create a standard reference type kind.
@@ -310,7 +314,11 @@ impl MethodSignature {
     }
 
     /// Create a new const method signature.
-    pub fn new_const(name: impl Into<String>, params: Vec<DataType>, return_type: DataType) -> Self {
+    pub fn new_const(
+        name: impl Into<String>,
+        params: Vec<DataType>,
+        return_type: DataType,
+    ) -> Self {
         Self {
             name: name.into(),
             params,
@@ -840,15 +848,21 @@ impl TypeDef {
 
     /// Check if this is a template instance.
     pub fn is_template_instance(&self) -> bool {
-        matches!(self, TypeDef::Class { template: Some(_), .. })
+        matches!(
+            self,
+            TypeDef::Class {
+                template: Some(_),
+                ..
+            }
+        )
     }
 
     /// Get the template parameter TypeHashes if this is a template definition.
     pub fn get_template_params(&self) -> Option<&[TypeHash]> {
         match self {
-            TypeDef::Class { template_params, .. } if !template_params.is_empty() => {
-                Some(template_params)
-            }
+            TypeDef::Class {
+                template_params, ..
+            } if !template_params.is_empty() => Some(template_params),
             _ => None,
         }
     }
@@ -966,7 +980,11 @@ mod tests {
 
     #[test]
     fn field_def_creation() {
-        let field = FieldDef::new("health", DataType::simple(primitives::INT32), Visibility::Public);
+        let field = FieldDef::new(
+            "health",
+            DataType::simple(primitives::INT32),
+            Visibility::Public,
+        );
         assert_eq!(field.name, "health");
         assert_eq!(field.visibility, Visibility::Public);
 
@@ -984,7 +1002,8 @@ mod tests {
         assert_eq!(sig.name, "update");
         assert!(!sig.is_const);
 
-        let const_sig = MethodSignature::new_const("get_value", vec![], DataType::simple(primitives::INT32));
+        let const_sig =
+            MethodSignature::new_const("get_value", vec![], DataType::simple(primitives::INT32));
         assert!(const_sig.is_const);
     }
 
