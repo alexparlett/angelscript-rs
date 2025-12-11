@@ -24,11 +24,13 @@ pub fn compile_binary<'ast>(
         _ => {}
     }
 
-    // Compile operands
+    // First compile left operand to infer its type
     let left_info = compiler.infer(expr.left)?;
+
+    // Compile right operand to infer its type
     let right_info = compiler.infer(expr.right)?;
 
-    // Resolve operator
+    // Resolve operator to find out what operation to perform
     let resolution = resolve_binary(
         &left_info.data_type,
         &right_info.data_type,
@@ -37,33 +39,18 @@ pub fn compile_binary<'ast>(
         expr.span,
     )?;
 
-    emit_resolution(compiler, resolution, expr.op)
-}
-
-fn emit_resolution(
-    compiler: &mut ExprCompiler<'_, '_, '_>,
-    resolution: OperatorResolution,
-    op: BinaryOp,
-) -> Result<ExprInfo> {
+    // Emit bytecode based on resolution
     match resolution {
         OperatorResolution::Primitive {
             opcode,
-            left_conv: _,
-            right_conv: _,
             result_type,
+            ..
         } => {
-            // Note: conversions need to be applied during operand compilation
-            // For now, we assume operands are on the stack in the correct order
-            // and apply any necessary conversions
-
-            // TODO: Properly handle conversions by emitting them at the right time
-            // This requires restructuring to compile operand, emit conversion,
-            // compile operand, emit conversion, then emit opcode
-
+            // For primitive operations, operands are already on the stack
             compiler.emitter().emit(opcode);
 
             // Handle NotEqual by negating the result
-            if matches!(op, BinaryOp::NotEqual) {
+            if matches!(expr.op, BinaryOp::NotEqual) {
                 compiler.emitter().emit(OpCode::Not);
             }
 
@@ -71,16 +58,27 @@ fn emit_resolution(
         }
         OperatorResolution::MethodOnLeft {
             method_hash,
-            arg_conversion,
             result_type,
+            ..
         } => {
-            if let Some(conv_opcode) = arg_conversion {
-                compiler.emitter().emit(conv_opcode);
-            }
+            // Get parameter type and re-compile with type checking
+            let param_type = compiler
+                .ctx()
+                .get_function(method_hash)
+                .and_then(|f| f.def.params.first())
+                .map(|p| p.data_type)
+                .ok_or_else(|| angelscript_core::CompilationError::Other {
+                    message: "Method signature missing parameter".to_string(),
+                    span: expr.span,
+                })?;
+
+            // Re-compile: left (receiver) and right (with conversion)
+            compiler.infer(expr.left)?;
+            compiler.check(expr.right, &param_type)?;
+
             compiler.emitter().emit_call_method(method_hash, 1);
 
-            // Negate for != and !is
-            if matches!(op, BinaryOp::NotEqual | BinaryOp::NotIs) {
+            if matches!(expr.op, BinaryOp::NotEqual | BinaryOp::NotIs) {
                 compiler.emitter().emit(OpCode::Not);
             }
 
@@ -88,23 +86,34 @@ fn emit_resolution(
         }
         OperatorResolution::MethodOnRight {
             method_hash,
-            arg_conversion,
             result_type,
+            ..
         } => {
-            // Swap operands for reverse operator
-            compiler.emitter().emit(OpCode::Swap);
-            if let Some(conv_opcode) = arg_conversion {
-                compiler.emitter().emit(conv_opcode);
-            }
+            // Get parameter type and re-compile with type checking
+            let param_type = compiler
+                .ctx()
+                .get_function(method_hash)
+                .and_then(|f| f.def.params.first())
+                .map(|p| p.data_type)
+                .ok_or_else(|| angelscript_core::CompilationError::Other {
+                    message: "Method signature missing parameter".to_string(),
+                    span: expr.span,
+                })?;
+
+            // Re-compile: right (receiver) and left (with conversion)
+            compiler.infer(expr.right)?;
+            compiler.check(expr.left, &param_type)?;
+
             compiler.emitter().emit_call_method(method_hash, 1);
 
-            if matches!(op, BinaryOp::NotEqual | BinaryOp::NotIs) {
+            if matches!(expr.op, BinaryOp::NotEqual | BinaryOp::NotIs) {
                 compiler.emitter().emit(OpCode::Not);
             }
 
             Ok(ExprInfo::rvalue(result_type))
         }
         OperatorResolution::HandleComparison { negate } => {
+            // Operands already on the stack
             compiler.emitter().emit(OpCode::EqHandle);
             if negate {
                 compiler.emitter().emit(OpCode::Not);

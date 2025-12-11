@@ -232,7 +232,7 @@ fn emit_conversion(emitter: &mut BytecodeEmitter<'_>, conv: &Conversion) {
 }
 
 /// Get the opcode for converting between primitive types.
-fn primitive_conversion_opcode(from: TypeHash, to: TypeHash) -> Option<OpCode> {
+pub(crate) fn primitive_conversion_opcode(from: TypeHash, to: TypeHash) -> Option<OpCode> {
     use primitives::*;
 
     match (from, to) {
