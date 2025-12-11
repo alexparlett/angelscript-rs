@@ -112,6 +112,9 @@ pub struct CompilationContext<'a> {
 
     /// Local scope for function compilation (None when not in a function)
     local_scope: Option<LocalScope>,
+
+    /// String type hash from the string factory (None if not configured)
+    string_type_hash: Option<TypeHash>,
 }
 
 impl<'a> CompilationContext<'a> {
@@ -126,10 +129,31 @@ impl<'a> CompilationContext<'a> {
             errors: Vec::new(),
             template_cache: TemplateInstanceCache::new(),
             local_scope: None,
+            string_type_hash: None,
         };
         // Build initial scope with global namespace
         ctx.rebuild_scope();
         ctx
+    }
+
+    // ========================================================================
+    // String Factory Support
+    // ========================================================================
+
+    /// Set the string type hash from the string factory.
+    ///
+    /// This should be called when setting up the compilation context with
+    /// a string factory. String literals will use this type.
+    pub fn set_string_type(&mut self, hash: TypeHash) {
+        self.string_type_hash = Some(hash);
+    }
+
+    /// Get the string type hash (if configured).
+    ///
+    /// Returns `None` if no string factory has been configured.
+    /// String literal compilation will fail if this is `None`.
+    pub fn string_type_hash(&self) -> Option<TypeHash> {
+        self.string_type_hash
     }
 
     // ========================================================================
@@ -301,6 +325,19 @@ impl<'a> CompilationContext<'a> {
     }
 
     fn add_function_to_scope(&mut self, simple: &str, hash: TypeHash) {
+        // Check for collision with globals (only report once per name)
+        if self.scope.globals.contains_key(simple) && !self.scope.functions.contains_key(simple) {
+            let func_name = self
+                .get_function(hash)
+                .map(|e| e.def.qualified_name().to_string())
+                .unwrap_or_else(|| simple.to_string());
+
+            self.errors.push(CompilationError::DuplicateDefinition {
+                name: func_name,
+                span: Span::default(),
+            });
+        }
+
         // Functions can have multiple overloads - collect all
         let entry = self.scope.functions.entry(simple.to_string()).or_default();
         if !entry.contains(&hash) {
@@ -309,6 +346,19 @@ impl<'a> CompilationContext<'a> {
     }
 
     fn add_global_to_scope(&mut self, simple: &str, hash: TypeHash, ns: &str) {
+        // Check for collision with functions
+        if self.scope.functions.contains_key(simple) {
+            let global_name = self
+                .get_global_entry(hash)
+                .map(|e| e.qualified_name.clone())
+                .unwrap_or_else(|| simple.to_string());
+
+            self.errors.push(CompilationError::DuplicateDefinition {
+                name: global_name,
+                span: Span::default(),
+            });
+        }
+
         if let Some(&existing) = self.scope.globals.get(simple)
             && existing != hash
         {
@@ -420,6 +470,10 @@ impl<'a> CompilationContext<'a> {
     }
 
     /// Find methods on a type by name. O(1) lookup via method name index.
+    ///
+    /// TODO(Task 41b): This currently only finds methods declared directly on the type.
+    /// Inherited methods from base classes are not included. A type completion pass
+    /// is needed to copy public/protected methods from base classes during registration.
     pub fn find_methods(&self, type_hash: TypeHash, name: &str) -> Vec<TypeHash> {
         let mut methods = Vec::new();
 

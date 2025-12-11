@@ -371,6 +371,26 @@ pub enum OpCode {
     InitListEnd,
 
     // =========================================================================
+    // Increment/Decrement
+    // =========================================================================
+    /// Pre-increment (++x).
+    PreInc,
+    /// Pre-decrement (--x).
+    PreDec,
+    /// Post-increment (x++).
+    PostInc,
+    /// Post-decrement (x--).
+    PostDec,
+
+    // =========================================================================
+    // Handle Operations
+    // =========================================================================
+    /// Take handle of value (@value).
+    HandleOf,
+    /// Swap top two stack values.
+    Swap,
+
+    // =========================================================================
     // Reference Counting
     // =========================================================================
     /// Increment reference count.
@@ -514,6 +534,12 @@ impl OpCode {
             OpCode::CallFuncPtr => "CALL_FUNC_PTR",
             OpCode::InitListBegin => "INIT_LIST_BEGIN",
             OpCode::InitListEnd => "INIT_LIST_END",
+            OpCode::PreInc => "PRE_INC",
+            OpCode::PreDec => "PRE_DEC",
+            OpCode::PostInc => "POST_INC",
+            OpCode::PostDec => "POST_DEC",
+            OpCode::HandleOf => "HANDLE_OF",
+            OpCode::Swap => "SWAP",
             OpCode::AddRef => "ADD_REF",
             OpCode::Release => "RELEASE",
         }
