@@ -1,61 +1,95 @@
-# Current Task: Bytecode Emitter (Task 40)
+# Current Task: Expression Compilation - String Literals & Architecture Review
 
-**Status:** Complete
-**Date:** 2025-12-10
-**Branch:** 040-bytecode-emitter
+**Status:** Complete (with task 41b identified)
+**Date:** 2025-12-11
+**Branch:** 041-expression-basics
 
 ---
 
-## Task 40: Bytecode Emitter
+## Summary
 
-Implemented the bytecode emitter in `crates/angelscript-compiler/src/emit/`.
+Completed string literal compilation by integrating string factory support into CompilationContext. During implementation, discovered and addressed a critical architectural gap: script class inheritance was not properly handled. Created Task 41b to address this systematically.
 
-### Implementation Summary
+### What Was Done
 
-| Component | Location | Purpose |
-|-----------|----------|---------|
-| `BytecodeEmitter` | `emit/mod.rs` | High-level API for bytecode generation |
-| `JumpManager` | `emit/jumps.rs` | Loop context tracking for break/continue |
-| `JumpLabel` | `emit/mod.rs` | Forward jump targets for patching |
-| `BreakError` | `emit/mod.rs` | Error type for break/continue outside loops |
+1. **String Factory Integration** ✅
+   - Added `string_type_hash: Option<TypeHash>` to `CompilationContext`
+   - Added `set_string_type()` and `string_type_hash()` methods
+   - Updated `compile_string()` in `literals.rs` to use string factory type
+   - Removed TODO comments - implementation now complete
 
-### Key Features
+2. **Architecture Review** ✅
+   - Reviewed AngelScript's C++ compilation phases vs. our Rust implementation
+   - Confirmed our hash-based approach doesn't need:
+     - Byte offset calculation for fields (hash-based property access)
+     - FieldDef for script classes (deprecated, properties use getters/setters)
+     - Vtable pointer tables (hash-based method dispatch)
+   - **Identified gap**: Script class inheritance needs member copying
 
-- **Constants**: `emit_int()`, `emit_f32()`, `emit_f64()`, `emit_string()`, `emit_bool()`, `emit_null()`
-  - Optimizes 0 and 1 to `PushZero`/`PushOne` opcodes
-  - Uses narrow (8-bit) or wide (16-bit) constant indices based on pool size
-- **Local Variables**: `emit_get_local()`, `emit_set_local()` with auto-wide selection
-- **Global Variables**: `emit_get_global()`, `emit_set_global()` by TypeHash
-- **Function Calls**: `emit_call()`, `emit_call_method()`, `emit_call_virtual()`
-- **Object Operations**: `emit_new()`, `emit_new_factory()`, `emit_get_field()`, `emit_set_field()`, `emit_get_this()`
-- **Type Operations**: `emit_conversion()`, `emit_cast()`, `emit_instanceof()`
-- **Control Flow**: `emit_jump()`, `patch_jump()`, `emit_loop()`
-- **Loop Control**: `enter_loop()`, `exit_loop()`, `emit_break()`, `emit_continue()`
-- **Stack Operations**: `emit_pop()`, `emit_pop_n()`, `emit_dup()`
-- **Reference Counting**: `emit_add_ref()`, `emit_release()`
-- **Function Pointers**: `emit_func_ptr()`, `emit_call_func_ptr()`
-- **Init Lists**: `emit_init_list_begin()`, `emit_init_list_end()`
-- **Debug Info**: `set_line()` for source line tracking
+3. **Created Task 41b: Type Completion Pass**
+   - Script classes need inherited methods/properties copied during registration
+   - Walking inheritance chain at compile time is O(depth) × O(n) lookups (expensive)
+   - Solution: Copy public/protected members from base during a completion pass
+   - Matches AngelScript's `CompileClasses()` phase architecture
 
-### Tests
+### Key Architectural Decisions
 
-39 unit tests covering:
-- Constant emission (int, float, string, bool, null)
-- Special int optimization (0, 1)
-- Constant deduplication
-- Jump and patch mechanics
-- Loop break/continue
-- Nested loops
-- Break/continue outside loop errors
-- Wide constant indices (256+ constants)
-- Local variable access (narrow and wide)
-- Field access
-- Function calls
-- Type operations
-- Stack operations
+**Hash-Based Runtime Model:**
+- Properties accessed by hash → getter/setter methods (no byte offsets needed)
+- Methods dispatched by hash (no vtables needed)
+- Type completion copies inherited members for O(1) lookups
+
+**Inheritance Model:**
+- Only script classes (unit registry) have inheritance
+- Global/FFI classes cannot be inherited from (only their interfaces)
+- Visibility rules: public/protected inherited, private not inherited
+
+### Files Modified
+
+**[context.rs](crates/angelscript-compiler/src/context.rs)**
+- Added string factory support (lines 95-113)
+- Added TODO comment on `find_methods()` about inheritance (line 474-476)
+
+**[literals.rs](crates/angelscript-compiler/src/expr/literals.rs)**
+- Implemented proper string type lookup from context (lines 56-71)
+- Removed TODO comments
+
+### Testing
+
+All 317 tests pass ✅
 
 ---
 
 ## Next Steps
 
-- Task 41: Expression Compilation - Basics (literals, identifiers, binary ops)
+**Immediate (Task 41):**
+- Continue with remaining expression basics (binary operators, identifiers, etc.)
+
+**Important (Task 41b - NEW):**
+- Implement Type Completion Pass to copy inherited members
+- This is critical for proper inheritance support
+- Should be done before Task 46 (Function Compilation)
+
+**Future (Task 42+):**
+- Expression compilation: function calls, member access
+- Statement compilation
+- Function body compilation (Task 46)
+
+---
+
+## Context for Next Session
+
+### Current State
+- String literals properly integrated with string factory
+- Inheritance gap identified and documented in Task 41b
+- Current `find_methods()` only returns directly declared methods (inheritance TODO)
+
+### What Inheritance Needs
+From Task 41b, the type completion pass should:
+1. Topologically sort classes (base before derived)
+2. Copy public/protected methods from base to derived
+3. Copy public/protected properties from base to derived
+4. Handle FFI base classes from global registry
+5. Detect circular inheritance
+
+This will enable O(1) method lookups without walking chains or visibility checks.

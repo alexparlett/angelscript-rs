@@ -22,7 +22,9 @@ pub mod bytecode;
 pub mod context;
 pub mod conversion;
 pub mod emit;
+pub mod expr;
 mod expr_info;
+pub mod operators;
 pub mod overload;
 pub mod passes;
 pub mod scope;
@@ -35,6 +37,7 @@ pub use conversion::{
     find_primitive_conversion,
 };
 pub use emit::{BreakError, BytecodeEmitter, JumpLabel};
+pub use expr::ExprCompiler;
 pub use expr_info::ExprInfo;
 pub use overload::{OverloadMatch, resolve_overload};
 pub use passes::{RegistrationOutput, RegistrationPass};

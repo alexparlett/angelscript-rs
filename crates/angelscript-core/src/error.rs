@@ -667,6 +667,36 @@ pub enum CompilationError {
         /// Where the operation occurred.
         span: Span,
     },
+
+    /// Expression is not an lvalue (cannot be assigned to).
+    #[error("at {span}: expression is not an lvalue")]
+    NotAnLvalue {
+        /// Where the error occurred.
+        span: Span,
+    },
+
+    /// Cannot modify a const value.
+    #[error("at {span}: cannot modify const value")]
+    CannotModifyConst {
+        /// Where the error occurred.
+        span: Span,
+    },
+
+    /// 'this' keyword used outside of a class method.
+    #[error("at {span}: 'this' can only be used inside a class method")]
+    ThisOutsideClass {
+        /// Where the error occurred.
+        span: Span,
+    },
+
+    /// Undefined variable.
+    #[error("at {span}: undefined variable '{name}'")]
+    UndefinedVariable {
+        /// The variable name.
+        name: String,
+        /// Where the variable was referenced.
+        span: Span,
+    },
 }
 
 impl CompilationError {
@@ -692,6 +722,10 @@ impl CompilationError {
             CompilationError::NoMatchingOverload { span, .. } => *span,
             CompilationError::AmbiguousOverload { span, .. } => *span,
             CompilationError::NoOperator { span, .. } => *span,
+            CompilationError::NotAnLvalue { span } => *span,
+            CompilationError::CannotModifyConst { span } => *span,
+            CompilationError::ThisOutsideClass { span } => *span,
+            CompilationError::UndefinedVariable { span, .. } => *span,
         }
     }
 }
