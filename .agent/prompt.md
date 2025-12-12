@@ -1,111 +1,79 @@
-# Current Task: Type Completion Pass
+# Current Task: Validate Script Inheritance Rules (Task 41c)
 
-**Status:** ✅ Complete
-**Date:** 2025-12-11
+**Status:** ✅ Complete (Phase 1)
+**Date:** 2025-12-12
 **Branch:** 041-expression-basics
 
 ---
 
 ## Summary
 
-Implemented Task 41b: Type Completion Pass. This pass runs after registration to copy inherited members from base classes to derived classes, enabling O(1) lookups during compilation without walking inheritance chains. Also identified and documented a validation gap in Task 41c.
+Implemented Task 41c Phase 1: Validation of script class inheritance rules in the registration pass. Script classes can no longer extend FFI classes or final classes.
 
 ### What Was Done
 
-1. **TypeCompletionPass Implementation** ✅
-   - Created new pass in [completion.rs](crates/angelscript-compiler/src/passes/completion.rs)
-   - Topologically sorts classes (base before derived) with cycle detection
-   - Two-phase algorithm: read from base (immutable), write to derived (mutable)
-   - Copies public/protected methods and properties (filters out private)
-   - Handles both script-to-script and FFI interface inheritance
+1. **FFI Class Inheritance Validation** ✅
+   - Added check in `resolve_inheritance()` to reject FFI classes as base classes
+   - Error message: "script class 'X' cannot extend FFI class 'Y'; script classes can only extend other script classes or implement interfaces"
 
-2. **SymbolRegistry Helper** ✅
-   - Added `get_class_mut()` convenience method ([registry.rs:121-126](crates/angelscript-registry/src/registry.rs#L121-L126))
-   - Returns `Option<&mut ClassEntry>` for safe mutable access
+2. **Final Class Inheritance Validation** ✅
+   - Added check in `resolve_inheritance()` to reject final classes as base classes
+   - Error message: "class 'X' cannot extend final class 'Y'"
 
-3. **Comprehensive Tests** ✅
-   - `complete_simple_inheritance` - Basic A -> B
-   - `complete_respects_visibility` - Public/protected/private filtering
-   - `complete_chain` - Multi-level A -> B -> C
-   - `complete_detects_cycle` - Circular inheritance error
-   - `complete_properties` - Property inheritance with visibility
+3. **Tests Added** ✅
+   - `register_class_cannot_extend_ffi_class` - Verifies FFI class extension is rejected
+   - `register_class_cannot_extend_final_class` - Verifies final class extension is rejected
+   - `register_class_can_extend_script_class` - Verifies script-to-script inheritance works
+   - `register_class_can_implement_ffi_interface` - Verifies FFI interface implementation works
 
-4. **Created Task 41c** 📝
-   - Identified validation gap: registration pass doesn't prevent script classes from extending FFI classes
-   - Script classes should only extend script classes OR implement interfaces
-   - Validation belongs in registration pass, not completion pass
-   - Documented in [41c_validate_script_inheritance.md](claude/tasks/41c_validate_script_inheritance.md)
+### Files Modified
 
-### Key Design Decisions
-
-**Topological Ordering:**
-- Process base classes before derived to avoid multiple passes
-- Each class only copies from its immediate base (which is already complete)
-- Detects circular inheritance and returns clear error
-
-**Two-Phase Algorithm:**
-- Phase 1: Read inherited members (immutable borrow of base)
-- Phase 2: Write to derived class (mutable borrow of derived)
-- Prevents borrow checker issues while maintaining safety
-
-**Visibility Filtering:**
-- Public and protected members are inherited
-- Private members are NOT inherited (filtered out)
-- Visibility checked once during completion, not repeatedly at compile time
-
-### Files Modified/Created
-
-**[completion.rs](crates/angelscript-compiler/src/passes/completion.rs)** - NEW
-- TypeCompletionPass implementation (268 lines)
-- 6 comprehensive tests
-
-**[registry.rs](crates/angelscript-registry/src/registry.rs#L121-L126)**
-- Added `get_class_mut()` helper method
-
-**[passes/mod.rs](crates/angelscript-compiler/src/passes/mod.rs)**
-- Exported TypeCompletionPass and CompletionOutput
-- Updated module documentation
+**[registration.rs](crates/angelscript-compiler/src/passes/registration.rs#L255-L324)**
+- Updated `resolve_inheritance()` to validate base class before accepting
+- Added FFI class check using `class_entry.source.is_ffi()`
+- Added final class check using `class_entry.is_final`
+- Added 4 new tests
 
 ### Testing
 
-All 322 tests pass ✅ (+5 new tests from this task)
+All 326 tests pass ✅ (+4 new tests from this task)
 No clippy warnings ✅
+
+---
+
+## Deferred Work
+
+**Mixin Validation (Needs Parser Support):**
+- Mixin class cannot inherit from regular classes
+- Mixin class can declare interfaces
+- Mixin instantiation prevention
+
+The parser doesn't currently expose `is_mixin` on `ClassDecl`. This validation is deferred until mixin support is added to the parser.
 
 ---
 
 ## Next Steps
 
-**Optional (Task 41c):**
-- Fix validation gap in registration pass
-- Prevent script classes from extending FFI classes
-- Low priority but should be done before production
-
 **Immediate (Task 41 - resume):**
 - Continue with remaining expression basics (binary operators, member access, etc.)
 
-**Future (Task 42+):**
-- Expression compilation: function calls, member access
-- Statement compilation
-- Function body compilation (Task 46)
+**Future:**
+- Task 41d: Mixin support (if needed)
+- Task 42+: Expression compilation, statement compilation
+- Task 46: Function body compilation
 
 ---
 
 ## Context for Next Session
 
 ### Completed Work
-- ✅ Task 41b: Type Completion Pass fully implemented
-- ✅ Inheritance properly handled with O(1) lookups
-- ✅ All 322 tests passing
-- 📝 Task 41c created to document validation gap (optional fix)
+- ✅ Task 41b: Type Completion Pass
+- ✅ Task 41c Phase 1: Inheritance validation (FFI + final checks)
+- ✅ All 326 tests passing
 
 ### Current State
-- Type completion pass runs after registration
-- Derived classes now have all inherited members copied
-- `find_methods()` returns inherited methods without walking chains
+- Registration pass now validates inheritance rules
+- Script classes cannot extend FFI classes
+- Script classes cannot extend final classes
+- Script classes CAN implement FFI interfaces
 - Ready to continue with Task 41 (expression compilation)
-
-### What Was Learned
-- Topological sorting essential for handling inheritance chains
-- Two-phase borrow pattern works well for read-then-write operations
-- Validation should happen early (registration) not late (completion)
-- Hash-based approach avoids needing vtables or byte offsets
