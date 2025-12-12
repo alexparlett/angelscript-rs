@@ -270,6 +270,34 @@ impl<'a, 'reg> RegistrationPass<'a, 'reg> {
                     } else if entry.is_class() {
                         // First non-interface is the base class
                         if i == 0 && base_class.is_none() {
+                            // Validate inheritance rules before accepting as base class
+                            if let Some(class_entry) = entry.as_class() {
+                                // Rule 1: Script classes cannot extend FFI classes
+                                if class_entry.source.is_ffi() {
+                                    self.ctx.add_error(CompilationError::InvalidOperation {
+                                        message: format!(
+                                            "script class '{}' cannot extend FFI class '{}'; \
+                                            script classes can only extend other script classes or implement interfaces",
+                                            class.name.name,
+                                            type_name
+                                        ),
+                                        span: class.span,
+                                    });
+                                    continue;
+                                }
+
+                                // Rule 2: Final classes cannot be inherited from
+                                if class_entry.is_final {
+                                    self.ctx.add_error(CompilationError::InvalidOperation {
+                                        message: format!(
+                                            "class '{}' cannot extend final class '{}'",
+                                            class.name.name, type_name
+                                        ),
+                                        span: class.span,
+                                    });
+                                    continue;
+                                }
+                            }
                             base_class = Some(hash);
                         } else {
                             // Additional classes are not allowed in single inheritance
@@ -1539,5 +1567,146 @@ mod tests {
         // All deleted - no functions registered
         assert_eq!(output.functions_registered, 0);
         assert!(output.errors.is_empty());
+    }
+
+    // ==========================================================================
+    // Inheritance validation tests (Task 41c)
+    // ==========================================================================
+
+    #[test]
+    fn register_class_cannot_extend_ffi_class() {
+        let (mut registry, arena) = setup_context();
+
+        // Register an FFI class
+        let ffi_class = ClassEntry::ffi("GameObject", TypeKind::reference());
+        registry.register_type(ffi_class.into()).unwrap();
+
+        // Try to extend it from script
+        let source = r#"
+            class Player : GameObject {
+                void update() {}
+            }
+        "#;
+        let script = Parser::parse(source, &arena).unwrap();
+
+        let mut ctx = CompilationContext::new(&registry);
+        let pass = RegistrationPass::new(&mut ctx, UnitId::new(0));
+        let output = pass.run(&script);
+
+        // Should have an error
+        assert_eq!(output.errors.len(), 1);
+        match &output.errors[0] {
+            CompilationError::InvalidOperation { message, .. } => {
+                assert!(
+                    message.contains("cannot extend FFI class"),
+                    "Expected 'cannot extend FFI class' in message, got: {}",
+                    message
+                );
+            }
+            other => panic!("Expected InvalidOperation error, got: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn register_class_cannot_extend_final_class() {
+        let (registry, arena) = setup_context();
+        let source = r#"
+            final class Entity {
+                void update() {}
+            }
+
+            class Player : Entity {
+                void render() {}
+            }
+        "#;
+        let script = Parser::parse(source, &arena).unwrap();
+
+        let mut ctx = CompilationContext::new(&registry);
+        let pass = RegistrationPass::new(&mut ctx, UnitId::new(0));
+        let output = pass.run(&script);
+
+        // Should have an error
+        assert_eq!(output.errors.len(), 1);
+        match &output.errors[0] {
+            CompilationError::InvalidOperation { message, .. } => {
+                assert!(
+                    message.contains("cannot extend final class"),
+                    "Expected 'cannot extend final class' in message, got: {}",
+                    message
+                );
+            }
+            other => panic!("Expected InvalidOperation error, got: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn register_class_can_extend_script_class() {
+        let (registry, arena) = setup_context();
+        let source = r#"
+            class Entity {
+                void update() {}
+            }
+
+            class Player : Entity {
+                void render() {}
+            }
+        "#;
+        let script = Parser::parse(source, &arena).unwrap();
+
+        let mut ctx = CompilationContext::new(&registry);
+        let pass = RegistrationPass::new(&mut ctx, UnitId::new(0));
+        let output = pass.run(&script);
+
+        // Should succeed with no errors
+        assert!(
+            output.errors.is_empty(),
+            "Expected no errors, got: {:?}",
+            output.errors
+        );
+        assert_eq!(output.types_registered, 2);
+
+        // Verify Player has Entity as base
+        let player_hash = ctx.resolve_type("Player").unwrap();
+        let player_entry = ctx.get_type(player_hash).unwrap();
+        let player_class = player_entry.as_class().unwrap();
+        assert!(player_class.base_class.is_some());
+    }
+
+    #[test]
+    fn register_class_can_implement_ffi_interface() {
+        use angelscript_core::MethodSignature;
+
+        let (mut registry, arena) = setup_context();
+
+        // Register an FFI interface
+        let iface_hash = TypeHash::from_name("IDrawable");
+        let draw_method = MethodSignature::new("draw", vec![], DataType::void());
+        let interface = InterfaceEntry::ffi("IDrawable").with_method(draw_method);
+        registry.register_type(interface.into()).unwrap();
+
+        let source = r#"
+            class Sprite : IDrawable {
+                void draw() {}
+            }
+        "#;
+        let script = Parser::parse(source, &arena).unwrap();
+
+        let mut ctx = CompilationContext::new(&registry);
+        let pass = RegistrationPass::new(&mut ctx, UnitId::new(0));
+        let output = pass.run(&script);
+
+        // Should succeed - interfaces are OK
+        assert!(
+            output.errors.is_empty(),
+            "Expected no errors, got: {:?}",
+            output.errors
+        );
+        assert_eq!(output.types_registered, 1);
+
+        // Verify Sprite implements IDrawable
+        let sprite_hash = ctx.resolve_type("Sprite").unwrap();
+        let sprite_entry = ctx.get_type(sprite_hash).unwrap();
+        let sprite_class = sprite_entry.as_class().unwrap();
+        assert!(sprite_class.interfaces.contains(&iface_hash));
     }
 }
