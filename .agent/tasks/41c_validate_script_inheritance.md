@@ -2,9 +2,11 @@
 
 ## Overview
 
-Add validation to the registration pass to enforce AngelScript's inheritance rules:
+Add validation to the registration pass to enforce AngelScript's inheritance and mixin rules:
 1. Script classes can only extend other script classes OR implement interfaces (not FFI classes)
 2. Final classes cannot be inherited from
+3. Mixin classes are not real types and cannot be instantiated
+4. Mixin classes cannot inherit from other classes
 
 ## Context
 
@@ -35,8 +37,11 @@ class Player : Entity {  // Should be rejected!
 **Valid patterns:**
 - Script class extends script class: ✅ `class Player : Entity { }`
 - Script class implements interface: ✅ `class Player : IDrawable { }`
+- Script class includes mixin: ✅ `class Player : PlayerMixin { }`
 - FFI class as base: ❌ Not allowed for script classes
 - Final class as base: ❌ Not allowed (script or FFI)
+- Mixin inherits from class: ❌ Not allowed
+- Mixin instantiation: ❌ `PlayerMixin m;` is not allowed
 
 ## Current Code
 
@@ -115,6 +120,76 @@ Add validation when a base class is found to check:
     }
 }
 ```
+
+### Mixin Class Validation
+
+Mixin classes have special rules that need validation:
+
+**Rule 3: Mixin classes cannot inherit from other classes**
+
+When registering a mixin class, check that it has no base class:
+
+```rust
+fn register_class(&mut self, class: &ClassDecl<'_>) {
+    // ... existing code ...
+
+    let (base_class, interfaces) = self.resolve_inheritance(class);
+
+    // NEW: Validate mixin class rules
+    if class.is_mixin {
+        // Rule 3: Mixins cannot inherit from classes
+        if base_class.is_some() {
+            self.ctx.add_error(CompilationError::InvalidOperation {
+                message: format!(
+                    "mixin class '{}' cannot inherit from other classes; mixins can only declare interfaces",
+                    class.name.name
+                ),
+                span: class.span,
+            });
+            // Don't set base_class for the mixin
+            base_class = None;
+        }
+    }
+
+    // ... rest of registration ...
+}
+```
+
+**Rule 4: Mixin classes cannot be instantiated**
+
+This validation happens during compilation (not registration), when encountering variable declarations or object construction:
+
+```rust
+// In compilation pass, when checking type for instantiation
+fn check_instantiable(&self, type_hash: TypeHash, span: Span) -> Result<()> {
+    if let Some(entry) = self.ctx.get_type(type_hash) {
+        if let Some(class_entry) = entry.as_class() {
+            if class_entry.is_mixin {
+                return Err(CompilationError::InvalidOperation {
+                    message: format!(
+                        "cannot instantiate mixin class '{}'; mixins are not real types",
+                        class_entry.name
+                    ),
+                    span,
+                });
+            }
+        }
+    }
+    Ok(())
+}
+```
+
+**Mixin Inclusion Logic (Type Completion Pass)**
+
+When a class includes a mixin, the type completion pass needs special handling:
+
+1. Copy all methods from mixin to including class
+2. Copy all properties from mixin to including class (unless already declared)
+3. Mixin methods **override** inherited methods from base classes
+4. Mixin properties are **not** included if already inherited from base class
+5. Add mixin's required interfaces to the including class
+
+This is different from regular inheritance and needs to be handled in the type completion pass.
 
 ## Files to Modify
 
@@ -266,18 +341,117 @@ fn register_class_can_implement_interface() {
     // Should succeed - interfaces are OK
     assert_eq!(output.errors.len(), 0);
 }
+
+#[test]
+fn register_mixin_cannot_inherit_from_class() {
+    let source = r#"
+        class Entity {
+            void update() {}
+        }
+
+        mixin class PlayerMixin : Entity {
+            void render() {}
+        }
+    "#;
+    let arena = bumpalo::Bump::new();
+    let script = Parser::parse(source, &arena).unwrap();
+
+    let registry = SymbolRegistry::with_primitives();
+    let mut ctx = CompilationContext::new(&registry);
+    let pass = RegistrationPass::new(&mut ctx, UnitId::new(0));
+    let output = pass.run(&script);
+
+    // Should have an error
+    assert_eq!(output.errors.len(), 1);
+    match &output.errors[0] {
+        CompilationError::InvalidOperation { message, .. } => {
+            assert!(message.contains("mixin") && message.contains("cannot inherit"));
+        }
+        other => panic!("Expected InvalidOperation error, got: {:?}", other),
+    }
+}
+
+#[test]
+fn register_mixin_can_declare_interfaces() {
+    let mut registry = SymbolRegistry::with_primitives();
+
+    // Register an FFI interface
+    let interface = InterfaceEntry::ffi("IDrawable")
+        .with_method("draw", TypeHash::from_function("IDrawable::draw", &[]));
+    registry.register_type(interface.into()).unwrap();
+
+    let source = r#"
+        mixin class RenderMixin : IDrawable {
+            void draw() { /* default implementation */ }
+        }
+
+        class Player : RenderMixin {
+            // Gets draw() from mixin
+        }
+    "#;
+    let arena = bumpalo::Bump::new();
+    let script = Parser::parse(source, &arena).unwrap();
+
+    let mut ctx = CompilationContext::new(&registry);
+    let pass = RegistrationPass::new(&mut ctx, UnitId::new(0));
+    let output = pass.run(&script);
+
+    // Should succeed - mixins can declare interfaces
+    assert_eq!(output.errors.len(), 0);
+}
+
+#[test]
+fn compile_cannot_instantiate_mixin() {
+    // NOTE: This test belongs in compilation pass tests, not registration
+    let source = r#"
+        mixin class PlayerMixin {
+            void render() {}
+        }
+
+        void test() {
+            PlayerMixin m;  // ERROR: cannot instantiate mixin
+        }
+    "#;
+    let arena = bumpalo::Bump::new();
+    let script = Parser::parse(source, &arena).unwrap();
+
+    let registry = SymbolRegistry::with_primitives();
+    let mut ctx = CompilationContext::new(&registry);
+
+    // Registration should succeed
+    let reg_pass = RegistrationPass::new(&mut ctx, UnitId::new(0));
+    let reg_output = reg_pass.run(&script);
+    assert_eq!(reg_output.errors.len(), 0);
+
+    // Compilation should fail when trying to instantiate
+    let comp_pass = CompilationPass::new(&mut ctx, UnitId::new(0));
+    let comp_output = comp_pass.run(&script);
+
+    assert!(comp_output.errors.len() > 0);
+    assert!(comp_output.errors.iter().any(|e| {
+        matches!(e, CompilationError::InvalidOperation { message, .. }
+            if message.contains("cannot instantiate mixin"))
+    }));
+}
 ```
 
 ## Acceptance Criteria
 
-### Validation Rules
+### Validation Rules (Phase 1 - Registration)
 - [ ] Script class extending FFI class produces clear error message
 - [ ] Script class extending final class produces clear error message
 - [ ] Script class extending script class still works
 - [ ] Script class implementing FFI interface still works
+- [ ] Mixin class inheriting from regular class produces clear error message
+- [ ] Mixin class can declare interfaces (allowed)
+- [ ] Class can include mixin class (allowed)
+
+### Validation Rules (Phase 2 - Compilation)
+- [ ] Instantiating a mixin class produces clear error message
 
 ### Additional Validations (Future Enhancement)
 - [ ] Final methods cannot be overridden
+- [ ] `override` keyword is only used when actually overriding an inherited method
 - [ ] Abstract classes without all interface methods implemented must be marked abstract
 - [ ] Non-abstract classes must implement all inherited abstract/interface methods
 
@@ -292,6 +466,18 @@ fn register_class_can_implement_interface() {
 - Task 41b (Type Completion Pass) correctly assumes valid inheritance
 - This fix belongs in the registration pass where inheritance is first established
 - Error messages should be clear about what's allowed vs. not allowed
+
+### Mixin Inclusion (Type Completion Pass Enhancement)
+
+Mixin classes require special handling in the type completion pass, different from regular inheritance:
+
+**Key Differences:**
+1. **Methods**: Mixin methods **override** inherited base class methods (opposite of normal inheritance priority)
+2. **Properties**: Mixin properties are only copied if NOT already inherited from a base class
+3. **Interfaces**: Mixin's declared interfaces should be added to the including class
+4. **No duplication**: Properties/methods already explicitly declared in the including class are not duplicated
+
+This is a significant enhancement to Task 41b and may warrant a separate task (e.g., Task 41d: Mixin Inclusion Support).
 
 ### Method Override Validation (Additional Scope)
 
@@ -310,12 +496,20 @@ These are more complex validations that may warrant separate tasks.
 
 ## Priority
 
-**Phase 1 (This Task):** High Priority
+**Phase 1 (This Task - Registration Validation):** High Priority
 - Script-to-FFI class validation
 - Final class inheritance validation
+- Mixin cannot inherit from classes validation
 
-**Phase 2 (Future Task):** Medium Priority
+**Phase 2 (Compilation Validation):** Medium Priority
+- Mixin instantiation prevention
 - Final method override validation
 - Abstract/interface implementation validation
 
-The basic inheritance rules should be fixed first, then method-level validations can be added later.
+**Phase 3 (Type Completion Enhancement):** Medium Priority
+- Mixin inclusion logic (may be Task 41d)
+  - Method override behavior
+  - Property merging rules
+  - Interface propagation
+
+The basic inheritance validation rules should be fixed first (Phase 1), then compilation-time checks (Phase 2), then mixin inclusion logic (Phase 3).
