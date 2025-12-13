@@ -3,7 +3,7 @@
   "description": "A complete Rust implementation of an AngelScript scripting engine",
   "features": [
     {
-      "id": "task-01",
+      "id": "type-registry",
       "name": "Unified Type Registry",
       "status": "complete",
       "description": "Central registry for all type entries with TypeHash identity",
@@ -67,135 +67,142 @@
       "verification": "cargo nextest run -p angelscript-modules -E 'test(dictionary)'"
     },
     {
-      "id": "task-31",
-      "name": "Compiler Foundation",
-      "status": "complete",
-      "description": "Error types, ExprInfo, OpCode, BytecodeChunk, Constants",
-      "task": ".agent/tasks/31_compiler_foundation.md",
-      "verification": "cargo nextest run -p angelscript-compiler -E 'test(bytecode)'"
+      "id": "compiler",
+      "name": "Compiler",
+      "status": "in-progress",
+      "description": "Two-pass compiler: registration then bytecode generation",
+      "verification": "cargo nextest run -p angelscript-compiler",
+      "subtasks": [
+        {
+          "id": "task-31",
+          "name": "Compiler Foundation",
+          "status": "complete",
+          "task": ".agent/tasks/31_compiler_foundation.md"
+        },
+        {
+          "id": "task-32",
+          "name": "String Factory",
+          "status": "complete",
+          "task": ".agent/tasks/32_string_factory.md"
+        },
+        {
+          "id": "task-33",
+          "name": "Compilation Context",
+          "status": "complete",
+          "task": ".agent/tasks/33_compilation_context.md"
+        },
+        {
+          "id": "task-34",
+          "name": "Type Resolution",
+          "status": "complete",
+          "task": ".agent/tasks/34_type_resolution.md"
+        },
+        {
+          "id": "task-35",
+          "name": "Template Instantiation",
+          "status": "complete",
+          "task": ".agent/tasks/35_template_instantiation.md"
+        },
+        {
+          "id": "task-36",
+          "name": "Conversion System",
+          "status": "complete",
+          "task": ".agent/tasks/36_conversion_system.md"
+        },
+        {
+          "id": "task-37",
+          "name": "Overload Resolution",
+          "status": "complete",
+          "task": ".agent/tasks/37_overload_resolution.md"
+        },
+        {
+          "id": "task-38",
+          "name": "Registration Pass",
+          "status": "complete",
+          "task": ".agent/tasks/38_registration_pass.md"
+        },
+        {
+          "id": "task-39",
+          "name": "Local Scope",
+          "status": "complete",
+          "task": ".agent/tasks/39_local_scope.md"
+        },
+        {
+          "id": "task-40",
+          "name": "Bytecode Emitter",
+          "status": "complete",
+          "task": ".agent/tasks/40_bytecode_emitter.md"
+        },
+        {
+          "id": "task-41",
+          "name": "Expression Compilation - Basics",
+          "status": "complete",
+          "task": ".agent/tasks/41_expression_basics.md"
+        },
+        {
+          "id": "task-41b",
+          "name": "Type Completion Pass",
+          "status": "complete",
+          "task": ".agent/tasks/41b_type_completion.md"
+        },
+        {
+          "id": "task-41c",
+          "name": "Script Inheritance Validation",
+          "status": "pending",
+          "task": ".agent/tasks/41c_validate_script_inheritance.md"
+        },
+        {
+          "id": "task-41d",
+          "name": "Const-Correctness",
+          "status": "complete",
+          "task": ".agent/tasks/41d_const_correctness.md"
+        },
+        {
+          "id": "task-41e",
+          "name": "Mixin Support",
+          "status": "pending",
+          "task": ".agent/tasks/41e_mixin_support.md"
+        },
+        {
+          "id": "task-42",
+          "name": "Expression Compilation - Calls",
+          "status": "pending",
+          "task": ".agent/tasks/42_expression_calls.md"
+        },
+        {
+          "id": "task-43",
+          "name": "Expression Compilation - Advanced",
+          "status": "pending",
+          "task": ".agent/tasks/43_expression_advanced.md"
+        },
+        {
+          "id": "task-44",
+          "name": "Statement Compilation - Basics",
+          "status": "pending",
+          "task": ".agent/tasks/44_statement_basics.md"
+        },
+        {
+          "id": "task-45",
+          "name": "Statement Compilation - Loops",
+          "status": "pending",
+          "task": ".agent/tasks/45_statement_loops.md"
+        },
+        {
+          "id": "task-46",
+          "name": "Function Compilation",
+          "status": "pending",
+          "task": ".agent/tasks/46_function_compilation.md"
+        },
+        {
+          "id": "task-49",
+          "name": "Multi-Section Compilation",
+          "status": "pending",
+          "task": ".agent/tasks/49_multi_section_compilation.md"
+        }
+      ]
     },
     {
-      "id": "task-32",
-      "name": "String Factory",
-      "status": "complete",
-      "description": "Configurable string factory for custom string types",
-      "task": ".agent/tasks/32_string_factory.md",
-      "verification": "cargo nextest run -p angelscript-core -E 'test(string_factory)'"
-    },
-    {
-      "id": "task-33",
-      "name": "Compilation Context",
-      "status": "complete",
-      "description": "Compilation context with scope management",
-      "task": ".agent/tasks/33_compilation_context.md",
-      "verification": "cargo nextest run -p angelscript-compiler -E 'test(context)'"
-    },
-    {
-      "id": "task-34",
-      "name": "Type Resolution",
-      "status": "complete",
-      "description": "Resolve AST types to registry TypeEntry",
-      "task": ".agent/tasks/34_type_resolution.md",
-      "verification": "cargo nextest run -p angelscript-compiler -E 'test(type_resolver)'"
-    },
-    {
-      "id": "task-35",
-      "name": "Template Instantiation",
-      "status": "complete",
-      "description": "Generic template instantiation with type substitution and caching",
-      "task": ".agent/tasks/35_template_instantiation.md",
-      "verification": "cargo nextest run -p angelscript-compiler -E 'test(template)'"
-    },
-    {
-      "id": "task-36",
-      "name": "Conversion System",
-      "status": "complete",
-      "description": "Implicit/explicit type conversions (primitives, handles, user-defined)",
-      "task": ".agent/tasks/36_conversion_system.md",
-      "verification": "cargo nextest run -p angelscript-compiler -E 'test(conversion)'"
-    },
-    {
-      "id": "task-37",
-      "name": "Overload Resolution",
-      "status": "complete",
-      "description": "Function overload resolution with ranking",
-      "task": ".agent/tasks/37_overload_resolution.md",
-      "verification": "cargo nextest run -p angelscript-compiler -E 'test(overload)'"
-    },
-    {
-      "id": "task-38",
-      "name": "Registration Pass",
-      "status": "complete",
-      "description": "First compiler pass: register script types and functions",
-      "task": ".agent/tasks/38_registration_pass.md",
-      "verification": "cargo nextest run -p angelscript-compiler -E 'test(registration)'"
-    },
-    {
-      "id": "task-39",
-      "name": "Local Scope",
-      "status": "complete",
-      "description": "Local variable scope management",
-      "task": ".agent/tasks/39_local_scope.md",
-      "verification": "cargo nextest run -p angelscript-compiler -E 'test(scope)'"
-    },
-    {
-      "id": "task-40",
-      "name": "Bytecode Emitter",
-      "status": "complete",
-      "description": "High-level bytecode emission API with jump management",
-      "task": ".agent/tasks/40_bytecode_emitter.md",
-      "verification": "cargo nextest run -p angelscript-compiler -E 'test(emit)'"
-    },
-    {
-      "id": "task-41",
-      "name": "Expression Compilation - Basics",
-      "status": "pending",
-      "description": "Compile literals, identifiers, unary/binary operators",
-      "task": ".agent/tasks/41_expression_basics.md",
-      "verification": "cargo nextest run -p angelscript-compiler -E 'test(expr)'"
-    },
-    {
-      "id": "task-42",
-      "name": "Expression Compilation - Calls",
-      "status": "pending",
-      "description": "Function calls, method calls, constructor calls",
-      "task": ".agent/tasks/42_expression_calls.md",
-      "verification": "cargo nextest run -p angelscript-compiler -E 'test(calls)'"
-    },
-    {
-      "id": "task-43",
-      "name": "Expression Compilation - Advanced",
-      "status": "pending",
-      "description": "Cast, lambda, init lists, ternary operator",
-      "task": ".agent/tasks/43_expression_advanced.md",
-      "verification": "cargo nextest run -p angelscript-compiler -E 'test(expr)'"
-    },
-    {
-      "id": "task-44",
-      "name": "Statement Compilation - Basics",
-      "status": "pending",
-      "description": "Blocks, variable declarations, return, if/while",
-      "task": ".agent/tasks/44_statement_basics.md",
-      "verification": "cargo nextest run -p angelscript-compiler -E 'test(stmt)'"
-    },
-    {
-      "id": "task-45",
-      "name": "Statement Compilation - Loops",
-      "status": "pending",
-      "description": "For loops, switch, break/continue",
-      "task": ".agent/tasks/45_statement_loops.md",
-      "verification": "cargo nextest run -p angelscript-compiler -E 'test(stmt)'"
-    },
-    {
-      "id": "task-46",
-      "name": "Function Compilation",
-      "status": "pending",
-      "description": "Compile function bodies, handle parameters and returns",
-      "task": ".agent/tasks/46_function_compilation.md",
-      "verification": "cargo nextest run -p angelscript-compiler -E 'test(function)'"
-    },
-    {
-      "id": "task-47",
+      "id": "integration-testing",
       "name": "Integration Testing",
       "status": "pending",
       "description": "End-to-end integration tests",
@@ -203,21 +210,13 @@
       "verification": "cargo nextest run --workspace"
     },
     {
-      "id": "task-48",
+      "id": "ffi-gaps",
       "name": "FFI Registration Gaps",
       "status": "pending",
       "description": "Fill gaps in FFI type registration",
       "task": ".agent/tasks/48_ffi_registration_gaps.md",
       "verification": "cargo nextest run -p angelscript-registry"
-    },
-    {
-      "id": "task-49",
-      "name": "Multi-Section Compilation",
-      "status": "pending",
-      "description": "Compile multiple script sections together",
-      "task": ".agent/tasks/49_multi_section_compilation.md",
-      "verification": "cargo nextest run -p angelscript-compiler"
     }
   ],
-  "next_task": "task-41"
+  "next_task": "task-41c"
 }

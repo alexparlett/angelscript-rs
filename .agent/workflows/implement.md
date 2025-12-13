@@ -10,6 +10,7 @@ description: Implement features using context engineering principles
 2. Retrieve what's needed, don't pin everything
 3. Offload large outputs to artifacts
 4. Capture feedback for evolution
+5. Use subagents for independent verification
 
 ## Session Startup
 
@@ -30,13 +31,25 @@ This is what you're working with. If something's missing, retrieve it explicitly
 ./init.sh
 ```
 
-### 4. If Broken, Revert
+### 4. Verify Baseline
+```bash
+cargo nextest run --workspace
+```
+
+### 5. If Broken, Revert
 ```bash
 GOOD=$(git log --oneline --grep="session:" -1 --format="%H")
 git stash && git reset --hard $GOOD
 ```
 
 ## During Implementation
+
+### Implement in Small Steps
+1. Read the task document from `.agent/tasks/`
+2. Implement one sub-task at a time
+3. Run tests after each change: `cargo nextest run --workspace`
+4. Run linter: `cargo clippy --workspace --all-targets`
+5. Commit frequently
 
 ### Log Significant Events
 ```bash
@@ -64,16 +77,39 @@ Then reference by path: `.agent/artifacts/tool-outputs/output-name.txt`
 git add -A && git commit -m "feat(category): description"
 ```
 
+## Before Completing a Feature
+
+### 1. Run Test Suite
+Use `@test-runner` subagent for independent test verification:
+```
+@test-runner Run tests and analyze any failures
+```
+Wait for results. Fix any failures before proceeding.
+
+### 2. Code Review
+Use `@code-reviewer` subagent for independent code review:
+```
+@code-reviewer Review the changes for this feature
+```
+Address any critical or warning issues before proceeding.
+
+### 3. Feature Verification
+Use `@feature-verifier` subagent to verify end-to-end functionality:
+```
+@feature-verifier Verify feature [task-id]: [description]
+```
+Confirm the feature works as intended.
+
 ## Session End
 
 ### 1. Capture What Worked
 ```bash
-.agent/hooks/capture-feedback.sh success "feature-id" "Description of approach that worked"
+.agent/commands.sh success "feature-id" "Description of approach that worked"
 ```
 
 ### 2. Capture What Failed (if applicable)
 ```bash
-.agent/hooks/capture-feedback.sh failure "feature-id" "Description of what didn't work and why"
+.agent/commands.sh failure "feature-id" "Description of what didn't work and why"
 ```
 
 ### 3. Record New Constraints
@@ -82,14 +118,13 @@ git add -A && git commit -m "feat(category): description"
 ```
 
 ### 4. Update Feature List
-Only if verified working.
+Update `feature_list.json` only if verified working via subagents.
 
 ### 5. Update Progress Log
-Include schema-preserving summary:
-- Causal steps taken
-- Active constraints
-- What failed
-- What's committed to next
+Update `.agent/prompt.md` with:
+- What was completed
+- Current state
+- Next steps
 
 ### 6. Final Commit
 ```bash
@@ -101,7 +136,18 @@ git add -A && git commit -m "session: completed [feature-id]"
 .agent/hooks/compile-context.sh
 ```
 
+## Subagent Summary
+
+| Subagent | When to Use | Purpose |
+|----------|-------------|---------|
+| `@test-runner` | After implementation | Run tests, analyze failures |
+| `@code-reviewer` | Before marking complete | Check code quality, find issues |
+| `@feature-verifier` | Before marking complete | Verify feature works end-to-end |
+
 ## Key Reminders
+
+❌ Don't: Skip subagent verification
+✅ Do: Always use @test-runner, @code-reviewer, @feature-verifier
 
 ❌ Don't: Accumulate everything in context
 ✅ Do: Compute minimal working context per step
@@ -109,11 +155,8 @@ git add -A && git commit -m "session: completed [feature-id]"
 ❌ Don't: Paste large outputs into conversation
 ✅ Do: Store as artifacts, reference by path
 
-❌ Don't: Summarize blindly to save space
-✅ Do: Use schema-driven summarization
-
 ❌ Don't: Forget what failed
 ✅ Do: Capture failures to prevent repetition
 
-❌ Don't: Start fresh every session
-✅ Do: Let context evolve through feedback
+❌ Don't: Mark features complete without verification
+✅ Do: Use subagents for independent verification

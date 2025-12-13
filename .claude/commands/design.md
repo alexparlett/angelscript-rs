@@ -1,5 +1,5 @@
 ---
-allowed-tools: Bash(git:*), Bash(.agent/*:*), Glob, Grep, Read, Write
+allowed-tools: Bash(git:*), Bash(.agent/*:*), Glob, Grep, Read, Write, Edit
 argument-hint: <feature-description>
 description: Design a feature - analyze codebase and create implementation plan
 ---
@@ -24,7 +24,10 @@ You are designing a new feature for the AngelScript-Rust project.
 1. Check existing tasks to determine the next task number:
    `ls .agent/tasks/*.md | sort -V | tail -5`
 
-2. Check git status for any in-progress changes:
+2. Check feature_list.json for parent feature (if adding a subtask):
+   `feature_list.json`
+
+3. Check git status for any in-progress changes:
    `git status --short`
 
 ## Your Task
@@ -35,9 +38,10 @@ Design the following feature: **$ARGUMENTS**
 
 1. **Analyze the codebase** - Search for relevant code, understand existing patterns
 2. **Identify affected components** - Which crates, modules, files need changes
-3. **Break into session-sized tasks** - Each task completable in one session without context overflow
-4. **Consider edge cases** - Error handling, backwards compatibility, performance
-5. **Plan testing strategy** - Unit tests, integration tests, test scripts
+3. **Determine if subtask or new feature** - Is this part of an existing feature (e.g., compiler) or standalone?
+4. **Break into session-sized tasks** - Each task completable in one session without context overflow
+5. **Consider edge cases** - Error handling, backwards compatibility, performance
+6. **Plan testing strategy** - Unit tests, integration tests, test scripts
 
 ## Output
 
@@ -76,13 +80,17 @@ Create a task file at `.agent/tasks/[NUMBER]_[snake_case_name].md` with this str
 
 ## After Creating the Design
 
-1. Store design decisions in memory:
+1. **Update feature_list.json**:
+   - If new feature: Add to top-level `features` array
+   - If subtask of existing feature: Add to parent's `subtasks` array
+   - Set status to "pending"
+   - Include task file path
+
+2. Store design decisions in memory:
    `.agent/hooks/memory-manager.sh store strategies "[key decisions made]"`
 
-2. Log the design event:
+3. Log the design event:
    `.agent/hooks/log-event.sh design "[task-number]: [feature-name]"`
-
-3. Update feature_list.json if this is a new major feature
 
 4. Present the design summary to the user for approval before implementation
 
