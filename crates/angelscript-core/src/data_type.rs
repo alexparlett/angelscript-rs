@@ -104,6 +104,14 @@ pub struct DataType {
 
     /// Reference modifier for parameters
     pub ref_modifier: RefModifier,
+
+    /// Whether this type is a mixin class (cannot be instantiated).
+    /// Set during type resolution when the underlying type is a mixin.
+    pub is_mixin: bool,
+
+    /// Whether this type is an interface (can only be used as handle).
+    /// Set during type resolution when the underlying type is an interface.
+    pub is_interface: bool,
 }
 
 impl DataType {
@@ -126,6 +134,8 @@ impl DataType {
             is_handle: false,
             is_handle_to_const: false,
             ref_modifier: RefModifier::None,
+            is_mixin: false,
+            is_interface: false,
         }
     }
 
@@ -148,6 +158,8 @@ impl DataType {
             is_handle: false,
             is_handle_to_const: false,
             ref_modifier: RefModifier::None,
+            is_mixin: false,
+            is_interface: false,
         }
     }
 
@@ -188,6 +200,8 @@ impl DataType {
             is_handle: true,
             is_handle_to_const,
             ref_modifier: RefModifier::None,
+            is_mixin: false,
+            is_interface: false,
         }
     }
 
@@ -226,6 +240,8 @@ impl DataType {
             is_handle: true,
             is_handle_to_const,
             ref_modifier: RefModifier::None,
+            is_mixin: false,
+            is_interface: false,
         }
     }
 
@@ -249,6 +265,8 @@ impl DataType {
             is_handle: false,
             is_handle_to_const: false,
             ref_modifier: RefModifier::In,
+            is_mixin: false,
+            is_interface: false,
         }
     }
 
@@ -273,6 +291,8 @@ impl DataType {
             is_handle: false,
             is_handle_to_const: false,
             ref_modifier: RefModifier::Out,
+            is_mixin: false,
+            is_interface: false,
         }
     }
 
@@ -297,6 +317,8 @@ impl DataType {
             is_handle: false,
             is_handle_to_const: false,
             ref_modifier: RefModifier::InOut,
+            is_mixin: false,
+            is_interface: false,
         }
     }
 

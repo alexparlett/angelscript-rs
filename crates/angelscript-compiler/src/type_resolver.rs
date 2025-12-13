@@ -60,6 +60,14 @@ impl<'a, 'reg> TypeResolver<'a, 'reg> {
         // Start with a simple type
         let mut data_type = DataType::simple(base_hash);
 
+        // Check if the type is a mixin or interface (affects instantiation rules)
+        if let Some(entry) = self.ctx.get_type(base_hash) {
+            if let Some(class) = entry.as_class() {
+                data_type.is_mixin = class.is_mixin;
+            }
+            data_type.is_interface = entry.is_interface();
+        }
+
         // Apply leading const (makes the object const)
         if type_expr.is_const {
             data_type.is_const = true;

@@ -31,6 +31,8 @@ pub struct ClassEntry {
     // === Inheritance ===
     /// Base class type hash (single inheritance).
     pub base_class: Option<TypeHash>,
+    /// Included mixin type hashes (can include multiple mixins).
+    pub mixins: Vec<TypeHash>,
     /// Implemented interface type hashes.
     pub interfaces: Vec<TypeHash>,
 
@@ -57,6 +59,8 @@ pub struct ClassEntry {
     pub is_final: bool,
     /// Class is marked `abstract`.
     pub is_abstract: bool,
+    /// Class is a mixin (not a real type, code gets copied into including classes).
+    pub is_mixin: bool,
 }
 
 impl ClassEntry {
@@ -78,6 +82,7 @@ impl ClassEntry {
             type_kind,
             source,
             base_class: None,
+            mixins: Vec::new(),
             interfaces: Vec::new(),
             behaviors: TypeBehaviors::default(),
             methods: FxHashMap::default(),
@@ -87,6 +92,7 @@ impl ClassEntry {
             type_args: Vec::new(),
             is_final: false,
             is_abstract: false,
+            is_mixin: false,
         }
     }
 
@@ -129,6 +135,12 @@ impl ClassEntry {
     /// Set the base class.
     pub fn with_base(mut self, base: TypeHash) -> Self {
         self.base_class = Some(base);
+        self
+    }
+
+    /// Add an included mixin.
+    pub fn with_mixin(mut self, mixin: TypeHash) -> Self {
+        self.mixins.push(mixin);
         self
     }
 
@@ -188,6 +200,22 @@ impl ClassEntry {
         self
     }
 
+    /// Mark as mixin.
+    pub fn as_mixin(mut self) -> Self {
+        self.is_mixin = true;
+        self
+    }
+
+    /// Create a script mixin class entry.
+    pub fn script_mixin(
+        name: impl Into<String>,
+        namespace: Vec<String>,
+        qualified_name: impl Into<String>,
+        source: TypeSource,
+    ) -> Self {
+        Self::script(name, namespace, qualified_name, source).as_mixin()
+    }
+
     // === Query Methods ===
 
     /// Check if this is a template definition.
@@ -220,6 +248,11 @@ impl ClassEntry {
         self.methods
             .values()
             .any(|overloads| overloads.contains(&method_hash))
+    }
+
+    /// Check if this class has any method with the given name.
+    pub fn has_method_by_name(&self, name: &str) -> bool {
+        self.methods.contains_key(name)
     }
 
     /// Find all method overloads by name. Returns empty slice if not found.

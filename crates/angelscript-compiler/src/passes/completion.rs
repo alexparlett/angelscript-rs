@@ -53,6 +53,17 @@ struct InheritedMembers {
     properties: Vec<angelscript_core::PropertyEntry>,
 }
 
+/// Members to copy from a mixin to an including class.
+#[derive(Debug, Default)]
+struct MixinMembers {
+    /// Methods: (name, method_hash) - these OVERRIDE base class methods
+    methods: Vec<(String, TypeHash)>,
+    /// Properties to copy (only if not already inherited from base)
+    properties: Vec<angelscript_core::PropertyEntry>,
+    /// Interfaces the mixin declares (added to including class)
+    interfaces: Vec<TypeHash>,
+}
+
 /// Type Completion Pass - finalizes class structures with inherited members.
 pub struct TypeCompletionPass<'reg> {
     registry: &'reg mut SymbolRegistry,
@@ -83,8 +94,10 @@ impl<'reg> TypeCompletionPass<'reg> {
         // Process each class in order
         for class_hash in ordered {
             match self.complete_class(class_hash, &mut output) {
-                Ok(()) => {
-                    output.classes_completed += 1;
+                Ok(completed) => {
+                    if completed {
+                        output.classes_completed += 1;
+                    }
                 }
                 Err(e) => {
                     output.errors.push(e);
@@ -95,14 +108,16 @@ impl<'reg> TypeCompletionPass<'reg> {
         output
     }
 
-    /// Complete a single class by copying inherited members.
+    /// Complete a single class by copying inherited members and applying mixins.
+    ///
+    /// Returns `Ok(true)` if the class was completed, `Ok(false)` if skipped (e.g., mixins).
     fn complete_class(
         &mut self,
         class_hash: TypeHash,
         output: &mut CompletionOutput,
-    ) -> Result<(), CompilationError> {
-        // Phase 1: Read what to inherit (immutable borrow)
-        let inherited = {
+    ) -> Result<bool, CompilationError> {
+        // Phase 1: Read what to inherit from base class (immutable borrow)
+        let (inherited, mixin_hashes) = {
             let class = self
                 .registry
                 .get(class_hash)
@@ -112,27 +127,101 @@ impl<'reg> TypeCompletionPass<'reg> {
                     span: Span::default(),
                 })?;
 
-            // If no base class, nothing to inherit
-            let base_hash = match class.base_class {
-                Some(h) => h,
-                None => return Ok(()), // No inheritance, done
+            // Skip mixin classes themselves - they don't get completed
+            // (their members are copied to including classes instead)
+            if class.is_mixin {
+                return Ok(false);
+            }
+
+            let mixin_hashes = class.mixins.clone();
+
+            let inherited = if let Some(base_hash) = class.base_class {
+                // Get base class (may be in global registry for FFI types)
+                let base = self
+                    .registry
+                    .get(base_hash)
+                    .and_then(|e| e.as_class())
+                    .ok_or_else(|| CompilationError::UnknownType {
+                        name: format!("base class {:?}", base_hash),
+                        span: Span::default(),
+                    })?;
+
+                // Collect inheritable members
+                self.collect_inheritable_members(base)
+            } else {
+                InheritedMembers::default()
             };
 
-            // Get base class (may be in global registry for FFI types)
-            let base = self
+            (inherited, mixin_hashes)
+        }; // immutable borrow ends here
+
+        // Phase 2: Apply base class inheritance to derived class (mutable borrow)
+        {
+            let class =
+                self.registry
+                    .get_class_mut(class_hash)
+                    .ok_or_else(|| CompilationError::Other {
+                        message: format!("class not found for mutation: {:?}", class_hash),
+                        span: Span::default(),
+                    })?;
+
+            // Copy methods from base class
+            for (name, method_hash) in inherited.methods {
+                class.add_method(name, method_hash);
+                output.methods_inherited += 1;
+            }
+
+            // Copy properties from base class
+            for property in inherited.properties {
+                class.properties.push(property);
+                output.properties_inherited += 1;
+            }
+        }
+
+        // Phase 3: Apply mixin members (after base class so mixins can override)
+        for mixin_hash in mixin_hashes {
+            self.apply_mixin(class_hash, mixin_hash, output)?;
+        }
+
+        Ok(true)
+    }
+
+    /// Apply mixin members to an including class.
+    ///
+    /// Mixin semantics:
+    /// - Methods: Copied to including class; OVERRIDE methods from base class
+    /// - Properties: Copied only if NOT already inherited from base class
+    /// - Interfaces: Added to including class
+    fn apply_mixin(
+        &mut self,
+        class_hash: TypeHash,
+        mixin_hash: TypeHash,
+        output: &mut CompletionOutput,
+    ) -> Result<(), CompilationError> {
+        // Phase 1: Collect mixin members (immutable borrows)
+        let mixin_members = {
+            let mixin = self
                 .registry
-                .get(base_hash)
+                .get(mixin_hash)
                 .and_then(|e| e.as_class())
                 .ok_or_else(|| CompilationError::UnknownType {
-                    name: format!("base class {:?}", base_hash),
+                    name: format!("mixin {:?}", mixin_hash),
                     span: Span::default(),
                 })?;
 
-            // Collect inheritable members
-            self.collect_inheritable_members(base)
-        }; // immutable borrow ends here
+            let class = self
+                .registry
+                .get(class_hash)
+                .and_then(|e| e.as_class())
+                .ok_or_else(|| CompilationError::Other {
+                    message: format!("class not found: {:?}", class_hash),
+                    span: Span::default(),
+                })?;
 
-        // Phase 2: Apply to derived class (mutable borrow)
+            self.collect_mixin_members(mixin, class)
+        }; // immutable borrows end here
+
+        // Phase 2: Apply mixin members to including class (mutable borrow)
         let class =
             self.registry
                 .get_class_mut(class_hash)
@@ -141,19 +230,64 @@ impl<'reg> TypeCompletionPass<'reg> {
                     span: Span::default(),
                 })?;
 
-        // Copy methods
-        for (name, method_hash) in inherited.methods {
+        // Copy methods from mixin (these override base class methods)
+        for (name, method_hash) in mixin_members.methods {
+            // Mixin methods override base class methods with the same name
+            // We add them even if a method with this name exists from base class
+            // (the mixin version takes precedence)
             class.add_method(name, method_hash);
             output.methods_inherited += 1;
         }
 
-        // Copy properties
-        for property in inherited.properties {
+        // Copy properties from mixin (only if not already present)
+        for property in mixin_members.properties {
             class.properties.push(property);
             output.properties_inherited += 1;
         }
 
+        // Add mixin's interfaces to including class
+        for interface_hash in mixin_members.interfaces {
+            if !class.interfaces.contains(&interface_hash) {
+                class.interfaces.push(interface_hash);
+            }
+        }
+
         Ok(())
+    }
+
+    /// Collect members from a mixin that should be copied to the including class.
+    fn collect_mixin_members(
+        &self,
+        mixin: &angelscript_core::ClassEntry,
+        including_class: &angelscript_core::ClassEntry,
+    ) -> MixinMembers {
+        let mut members = MixinMembers::default();
+
+        // Copy ALL methods from mixin (public/protected/private)
+        // Mixin methods override inherited methods from base classes
+        for (name, method_hashes) in &mixin.methods {
+            for &method_hash in method_hashes {
+                // Skip if method is explicitly declared in including class itself
+                // (not inherited, but declared)
+                // For now, we copy all methods since we don't track origin
+                // The including class's own methods would have been registered after
+                // so they would override these
+                members.methods.push((name.clone(), method_hash));
+            }
+        }
+
+        // Copy properties from mixin UNLESS already present in including class
+        // (either declared or inherited from base class)
+        for property in &mixin.properties {
+            if including_class.find_property(&property.name).is_none() {
+                members.properties.push(property.clone());
+            }
+        }
+
+        // Collect mixin's interfaces
+        members.interfaces = mixin.interfaces.clone();
+
+        members
     }
 
     /// Collect public/protected members from a base class.
@@ -642,5 +776,430 @@ mod tests {
         assert!(derived.find_property("pub_prop").is_some());
         assert!(derived.find_property("prot_prop").is_some());
         assert!(derived.find_property("priv_prop").is_none());
+    }
+
+    // ==========================================================================
+    // Mixin inclusion tests (Task 41e)
+    // ==========================================================================
+
+    #[test]
+    fn complete_mixin_inclusion() {
+        let mut registry = create_test_registry();
+
+        // mixin class RenderMixin { void render(); }
+        let mixin = ClassEntry::script_mixin(
+            "RenderMixin",
+            vec![],
+            "RenderMixin",
+            TypeSource::script(UnitId::new(0), Span::new(0, 0, 10)),
+        );
+        let mixin_hash = mixin.type_hash;
+
+        let render_def = FunctionDef::new(
+            TypeHash::from_function("RenderMixin::render", &[]),
+            "render".to_string(),
+            vec![],
+            vec![],
+            DataType::void(),
+            Some(mixin_hash),
+            FunctionTraits::default(),
+            false,
+            Visibility::Public,
+        );
+        let render_hash = render_def.func_hash;
+
+        let mixin = mixin.with_method("render", render_hash);
+        registry.register_type(mixin.into()).unwrap();
+        register_script_function(&mut registry, render_def).unwrap();
+
+        // class Sprite : RenderMixin { void update(); }
+        let sprite = ClassEntry::script(
+            "Sprite",
+            vec![],
+            "Sprite",
+            TypeSource::script(UnitId::new(0), Span::new(0, 11, 20)),
+        )
+        .with_mixin(mixin_hash);
+        let sprite_hash = sprite.type_hash;
+
+        let update_def = FunctionDef::new(
+            TypeHash::from_function("Sprite::update", &[]),
+            "update".to_string(),
+            vec![],
+            vec![],
+            DataType::void(),
+            Some(sprite_hash),
+            FunctionTraits::default(),
+            false,
+            Visibility::Public,
+        );
+        let update_hash = update_def.func_hash;
+
+        let sprite = sprite.with_method("update", update_hash);
+        registry.register_type(sprite.into()).unwrap();
+        register_script_function(&mut registry, update_def).unwrap();
+
+        // Run completion pass
+        let pass = TypeCompletionPass::new(&mut registry);
+        let output = pass.run();
+
+        assert_eq!(output.errors.len(), 0, "Expected no errors");
+        // Mixin is skipped, Sprite is completed with 1 method from mixin
+        assert_eq!(output.classes_completed, 1);
+        assert_eq!(output.methods_inherited, 1);
+
+        // Verify Sprite has render() method from mixin
+        let sprite = registry.get(sprite_hash).unwrap().as_class().unwrap();
+        assert!(sprite.find_methods("render").contains(&render_hash));
+        assert!(sprite.find_methods("update").contains(&update_hash));
+    }
+
+    #[test]
+    fn complete_mixin_does_not_copy_existing_property() {
+        let mut registry = create_test_registry();
+
+        // mixin class PropMixin { int value; }
+        let mixin = ClassEntry::script_mixin(
+            "PropMixin",
+            vec![],
+            "PropMixin",
+            TypeSource::script(UnitId::new(0), Span::new(0, 0, 10)),
+        );
+        let mixin_hash = mixin.type_hash;
+
+        let mixin_prop = PropertyEntry::new(
+            "value",
+            DataType::simple(primitives::INT32),
+            Visibility::Public,
+            Some(TypeHash::from_name("get_value_mixin")),
+            None,
+        );
+        let mixin = mixin.with_property(mixin_prop);
+        registry.register_type(mixin.into()).unwrap();
+
+        // class MyClass : PropMixin { int value; } (already has the property)
+        let my_class = ClassEntry::script(
+            "MyClass",
+            vec![],
+            "MyClass",
+            TypeSource::script(UnitId::new(0), Span::new(0, 11, 20)),
+        )
+        .with_mixin(mixin_hash);
+        let my_class_hash = my_class.type_hash;
+
+        let class_prop = PropertyEntry::new(
+            "value",
+            DataType::simple(primitives::INT32),
+            Visibility::Public,
+            Some(TypeHash::from_name("get_value_class")),
+            None,
+        );
+        let my_class = my_class.with_property(class_prop);
+        registry.register_type(my_class.into()).unwrap();
+
+        // Run completion pass
+        let pass = TypeCompletionPass::new(&mut registry);
+        let output = pass.run();
+
+        assert_eq!(output.errors.len(), 0, "Expected no errors");
+        // Property not copied because it already exists
+        assert_eq!(output.properties_inherited, 0);
+
+        // Verify MyClass still has just one "value" property (its own)
+        let my_class = registry.get(my_class_hash).unwrap().as_class().unwrap();
+        let props: Vec<_> = my_class
+            .properties
+            .iter()
+            .filter(|p| p.name == "value")
+            .collect();
+        assert_eq!(props.len(), 1);
+        // Should be the class's property, not the mixin's
+        assert_eq!(
+            props[0].getter,
+            Some(TypeHash::from_name("get_value_class"))
+        );
+    }
+
+    #[test]
+    fn complete_mixin_adds_interfaces() {
+        let mut registry = create_test_registry();
+
+        let iface_hash = TypeHash::from_name("IDrawable");
+        let iface = angelscript_core::InterfaceEntry::new(
+            "IDrawable",
+            vec![],
+            "IDrawable",
+            iface_hash,
+            TypeSource::script(UnitId::new(0), Span::new(0, 0, 10)),
+        );
+        registry.register_type(iface.into()).unwrap();
+
+        // mixin class RenderMixin : IDrawable { }
+        let mixin = ClassEntry::script_mixin(
+            "RenderMixin",
+            vec![],
+            "RenderMixin",
+            TypeSource::script(UnitId::new(0), Span::new(0, 11, 20)),
+        )
+        .with_interface(iface_hash);
+        let mixin_hash = mixin.type_hash;
+        registry.register_type(mixin.into()).unwrap();
+
+        // class Sprite : RenderMixin { }
+        let sprite = ClassEntry::script(
+            "Sprite",
+            vec![],
+            "Sprite",
+            TypeSource::script(UnitId::new(0), Span::new(0, 21, 30)),
+        )
+        .with_mixin(mixin_hash);
+        let sprite_hash = sprite.type_hash;
+        registry.register_type(sprite.into()).unwrap();
+
+        // Run completion pass
+        let pass = TypeCompletionPass::new(&mut registry);
+        let output = pass.run();
+
+        assert_eq!(output.errors.len(), 0, "Expected no errors");
+
+        // Verify Sprite now implements IDrawable (from mixin)
+        let sprite = registry.get(sprite_hash).unwrap().as_class().unwrap();
+        assert!(sprite.interfaces.contains(&iface_hash));
+    }
+
+    #[test]
+    fn complete_mixin_skips_mixin_classes() {
+        let mut registry = create_test_registry();
+
+        // mixin class Helper { void help(); }
+        let mixin = ClassEntry::script_mixin(
+            "Helper",
+            vec![],
+            "Helper",
+            TypeSource::script(UnitId::new(0), Span::new(0, 0, 10)),
+        );
+        let mixin_hash = mixin.type_hash;
+        registry.register_type(mixin.into()).unwrap();
+
+        // Run completion pass
+        let pass = TypeCompletionPass::new(&mut registry);
+        let output = pass.run();
+
+        assert_eq!(output.errors.len(), 0, "Expected no errors");
+        // Mixin itself should be skipped (classes_completed = 0 for just a mixin)
+        assert_eq!(output.classes_completed, 0);
+
+        // Verify the mixin is still in the registry and unchanged
+        let mixin = registry.get(mixin_hash).unwrap().as_class().unwrap();
+        assert!(mixin.is_mixin);
+    }
+
+    #[test]
+    fn complete_mixin_with_base_class() {
+        let mut registry = create_test_registry();
+
+        // class Base { void base_method(); }
+        let base = ClassEntry::script(
+            "Base",
+            vec![],
+            "Base",
+            TypeSource::script(UnitId::new(0), Span::new(0, 0, 10)),
+        );
+        let base_hash = base.type_hash;
+
+        let base_method_def = FunctionDef::new(
+            TypeHash::from_function("Base::base_method", &[]),
+            "base_method".to_string(),
+            vec![],
+            vec![],
+            DataType::void(),
+            Some(base_hash),
+            FunctionTraits::default(),
+            false,
+            Visibility::Public,
+        );
+        let base_method_hash = base_method_def.func_hash;
+
+        let base = base.with_method("base_method", base_method_hash);
+        registry.register_type(base.into()).unwrap();
+        register_script_function(&mut registry, base_method_def).unwrap();
+
+        // mixin class Helper { void mixin_method(); }
+        let mixin = ClassEntry::script_mixin(
+            "Helper",
+            vec![],
+            "Helper",
+            TypeSource::script(UnitId::new(0), Span::new(0, 11, 20)),
+        );
+        let mixin_hash = mixin.type_hash;
+
+        let mixin_method_def = FunctionDef::new(
+            TypeHash::from_function("Helper::mixin_method", &[]),
+            "mixin_method".to_string(),
+            vec![],
+            vec![],
+            DataType::void(),
+            Some(mixin_hash),
+            FunctionTraits::default(),
+            false,
+            Visibility::Public,
+        );
+        let mixin_method_hash = mixin_method_def.func_hash;
+
+        let mixin = mixin.with_method("mixin_method", mixin_method_hash);
+        registry.register_type(mixin.into()).unwrap();
+        register_script_function(&mut registry, mixin_method_def).unwrap();
+
+        // class Derived : Base, Helper { void own_method(); }
+        let derived = ClassEntry::script(
+            "Derived",
+            vec![],
+            "Derived",
+            TypeSource::script(UnitId::new(0), Span::new(0, 21, 30)),
+        )
+        .with_base(base_hash)
+        .with_mixin(mixin_hash);
+        let derived_hash = derived.type_hash;
+
+        let own_method_def = FunctionDef::new(
+            TypeHash::from_function("Derived::own_method", &[]),
+            "own_method".to_string(),
+            vec![],
+            vec![],
+            DataType::void(),
+            Some(derived_hash),
+            FunctionTraits::default(),
+            false,
+            Visibility::Public,
+        );
+        let own_method_hash = own_method_def.func_hash;
+
+        let derived = derived.with_method("own_method", own_method_hash);
+        registry.register_type(derived.into()).unwrap();
+        register_script_function(&mut registry, own_method_def).unwrap();
+
+        // Run completion pass
+        let pass = TypeCompletionPass::new(&mut registry);
+        let output = pass.run();
+
+        assert_eq!(output.errors.len(), 0, "Expected no errors");
+        // Base completed (0 inherited), Derived completed (1 from base + 1 from mixin)
+        assert_eq!(output.methods_inherited, 2);
+
+        // Verify Derived has all three methods
+        let derived = registry.get(derived_hash).unwrap().as_class().unwrap();
+        assert!(
+            derived
+                .find_methods("base_method")
+                .contains(&base_method_hash)
+        );
+        assert!(
+            derived
+                .find_methods("mixin_method")
+                .contains(&mixin_method_hash)
+        );
+        assert!(
+            derived
+                .find_methods("own_method")
+                .contains(&own_method_hash)
+        );
+    }
+
+    #[test]
+    fn complete_mixin_method_overrides_base_method() {
+        let mut registry = create_test_registry();
+
+        // class Base { void shared_method(); }
+        let base = ClassEntry::script(
+            "Base",
+            vec![],
+            "Base",
+            TypeSource::script(UnitId::new(0), Span::new(0, 0, 10)),
+        );
+        let base_hash = base.type_hash;
+
+        let base_method_def = FunctionDef::new(
+            TypeHash::from_function("Base::shared_method", &[]),
+            "shared_method".to_string(),
+            vec![],
+            vec![],
+            DataType::void(),
+            Some(base_hash),
+            FunctionTraits::default(),
+            false,
+            Visibility::Public,
+        );
+        let base_method_hash = base_method_def.func_hash;
+
+        let base = base.with_method("shared_method", base_method_hash);
+        registry.register_type(base.into()).unwrap();
+        register_script_function(&mut registry, base_method_def).unwrap();
+
+        // mixin class Helper { void shared_method(); }  <-- same name as base!
+        let mixin = ClassEntry::script_mixin(
+            "Helper",
+            vec![],
+            "Helper",
+            TypeSource::script(UnitId::new(0), Span::new(0, 11, 20)),
+        );
+        let mixin_hash = mixin.type_hash;
+
+        let mixin_method_def = FunctionDef::new(
+            TypeHash::from_function("Helper::shared_method", &[]),
+            "shared_method".to_string(),
+            vec![],
+            vec![],
+            DataType::void(),
+            Some(mixin_hash),
+            FunctionTraits::default(),
+            false,
+            Visibility::Public,
+        );
+        let mixin_method_hash = mixin_method_def.func_hash;
+
+        let mixin = mixin.with_method("shared_method", mixin_method_hash);
+        registry.register_type(mixin.into()).unwrap();
+        register_script_function(&mut registry, mixin_method_def).unwrap();
+
+        // class Derived : Base, Helper { }
+        let derived = ClassEntry::script(
+            "Derived",
+            vec![],
+            "Derived",
+            TypeSource::script(UnitId::new(0), Span::new(0, 21, 30)),
+        )
+        .with_base(base_hash)
+        .with_mixin(mixin_hash);
+        let derived_hash = derived.type_hash;
+        registry.register_type(derived.into()).unwrap();
+
+        // Run completion pass
+        let pass = TypeCompletionPass::new(&mut registry);
+        let output = pass.run();
+
+        assert_eq!(output.errors.len(), 0, "Expected no errors");
+
+        // Verify Derived has both method hashes under "shared_method"
+        // (mixin method added after base, so both exist as potential overloads)
+        let derived = registry.get(derived_hash).unwrap().as_class().unwrap();
+        let shared_methods = derived.find_methods("shared_method");
+
+        // Both base and mixin versions are stored (mixin added last takes precedence in dispatch)
+        assert!(
+            shared_methods.contains(&base_method_hash),
+            "Should have base method"
+        );
+        assert!(
+            shared_methods.contains(&mixin_method_hash),
+            "Should have mixin method"
+        );
+
+        // Mixin method should be added last (this is the override semantic -
+        // during method resolution, the mixin version takes precedence)
+        assert_eq!(shared_methods.len(), 2);
+        assert_eq!(
+            shared_methods[1], mixin_method_hash,
+            "Mixin method should be last (higher precedence)"
+        );
     }
 }

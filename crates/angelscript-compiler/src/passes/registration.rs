@@ -36,7 +36,7 @@ use angelscript_core::{
 };
 use angelscript_parser::ast::{
     ClassDecl, ClassMember, EnumDecl, Enumerator, FieldDecl, FuncdefDecl, FunctionDecl,
-    FunctionParam, GlobalVarDecl, InterfaceDecl, InterfaceMember, InterfaceMethod, Item,
+    FunctionParam, GlobalVarDecl, InterfaceDecl, InterfaceMember, InterfaceMethod, Item, MixinDecl,
     NamespaceDecl, Script, TypedefDecl, UsingNamespaceDecl, VirtualPropertyDecl,
 };
 
@@ -137,7 +137,7 @@ impl<'a, 'reg> RegistrationPass<'a, 'reg> {
             Item::Funcdef(fd) => self.visit_funcdef(fd),
             Item::UsingNamespace(u) => self.visit_using(u),
             Item::Import(_) => { /* Import handling - deferred */ }
-            Item::Mixin(_) => { /* Mixin handling - deferred */ }
+            Item::Mixin(mixin) => self.visit_mixin(mixin),
         }
     }
 
@@ -176,8 +176,8 @@ impl<'a, 'reg> RegistrationPass<'a, 'reg> {
         let type_hash = TypeHash::from_name(&qualified_name);
         let namespace = self.current_namespace_vec();
 
-        // Resolve base class and interfaces from inheritance list
-        let (base_class, interfaces) = self.resolve_inheritance(class);
+        // Resolve base class, mixins, and interfaces from inheritance list
+        let (base_class, mixins, interfaces) = self.resolve_inheritance(class);
 
         // Create the class entry
         let source = TypeSource::script(self.unit_id, class.span);
@@ -192,6 +192,10 @@ impl<'a, 'reg> RegistrationPass<'a, 'reg> {
 
         if let Some(base) = base_class {
             class_entry = class_entry.with_base(base);
+        }
+
+        for mixin in mixins {
+            class_entry = class_entry.with_mixin(mixin);
         }
 
         for iface in interfaces {
@@ -252,9 +256,125 @@ impl<'a, 'reg> RegistrationPass<'a, 'reg> {
         }
     }
 
-    /// Resolve base class and interfaces from inheritance list.
-    fn resolve_inheritance(&mut self, class: &ClassDecl<'_>) -> (Option<TypeHash>, Vec<TypeHash>) {
+    // ==========================================================================
+    // Mixin
+    // ==========================================================================
+
+    fn visit_mixin(&mut self, mixin: &MixinDecl<'_>) {
+        let class = &mixin.class;
+        let name = class.name.name.to_string();
+        let qualified_name = self.qualified_name(&name);
+        let type_hash = TypeHash::from_name(&qualified_name);
+        let namespace = self.current_namespace_vec();
+
+        // Resolve inheritance list - mixins can only implement interfaces, not extend classes
+        let (base_class, interfaces) = self.resolve_mixin_inheritance(class);
+
+        // Validation: mixins cannot have base classes
+        if base_class.is_some() {
+            self.ctx.add_error(CompilationError::InvalidOperation {
+                message: format!(
+                    "mixin class '{}' cannot inherit from other classes; mixins can only implement interfaces",
+                    class.name.name
+                ),
+                span: class.span,
+            });
+            // Continue registering the mixin without the base class
+        }
+
+        // Create the mixin class entry
+        let source = TypeSource::script(self.unit_id, class.span);
+        let mut class_entry =
+            ClassEntry::script_mixin(name.clone(), namespace, qualified_name.clone(), source);
+
+        // Add interfaces (mixins can implement interfaces)
+        for iface in interfaces {
+            class_entry = class_entry.with_interface(iface);
+        }
+
+        // Register the mixin
+        if let Err(e) = self.ctx.register_type(class_entry.into()) {
+            self.ctx.add_error(CompilationError::Other {
+                message: format!("failed to register mixin class {}: {}", qualified_name, e),
+                span: class.span,
+            });
+            return;
+        }
+        self.types_registered += 1;
+
+        // Note: We don't track mixins in registered_classes since they don't need
+        // auto-generated constructors (mixins cannot be instantiated)
+
+        // Register mixin members (methods, properties)
+        for member in class.members {
+            match member {
+                ClassMember::Method(method) => {
+                    // Mixins don't have constructors/destructors that make sense
+                    if method.is_constructor() || method.is_destructor {
+                        self.ctx.add_error(CompilationError::InvalidOperation {
+                            message: format!(
+                                "mixin class '{}' cannot have constructors or destructors",
+                                name
+                            ),
+                            span: method.span,
+                        });
+                        continue;
+                    }
+                    self.visit_function(method, Some(type_hash));
+                }
+                ClassMember::Field(field) => {
+                    self.visit_field(field, type_hash);
+                }
+                ClassMember::VirtualProperty(prop) => {
+                    self.visit_virtual_property(prop, type_hash);
+                }
+                ClassMember::Funcdef(fd) => {
+                    self.visit_funcdef(fd);
+                }
+            }
+        }
+    }
+
+    /// Resolve inheritance for mixin classes (interfaces only).
+    fn resolve_mixin_inheritance(
+        &mut self,
+        class: &ClassDecl<'_>,
+    ) -> (Option<TypeHash>, Vec<TypeHash>) {
         let mut base_class = None;
+        let mut interfaces = Vec::new();
+
+        for inherit_expr in class.inheritance.iter() {
+            let type_name = self.ident_expr_to_string(inherit_expr);
+
+            if let Some(hash) = self.ctx.resolve_type(&type_name) {
+                if let Some(entry) = self.ctx.get_type(hash) {
+                    if entry.is_interface() {
+                        interfaces.push(hash);
+                    } else if entry.is_class() {
+                        // Mixins cannot extend classes - track for error reporting
+                        base_class = Some(hash);
+                    }
+                }
+            } else {
+                self.ctx.add_error(CompilationError::UnknownType {
+                    name: type_name,
+                    span: class.span,
+                });
+            }
+        }
+
+        (base_class, interfaces)
+    }
+
+    /// Resolve base class, mixins, and interfaces from inheritance list.
+    ///
+    /// Returns (base_class, mixins, interfaces).
+    fn resolve_inheritance(
+        &mut self,
+        class: &ClassDecl<'_>,
+    ) -> (Option<TypeHash>, Vec<TypeHash>, Vec<TypeHash>) {
+        let mut base_class = None;
+        let mut mixins = Vec::new();
         let mut interfaces = Vec::new();
 
         for (i, inherit_expr) in class.inheritance.iter().enumerate() {
@@ -263,40 +383,71 @@ impl<'a, 'reg> RegistrationPass<'a, 'reg> {
 
             // Try to resolve the type
             if let Some(hash) = self.ctx.resolve_type(&type_name) {
-                // Check if it's a class or interface
+                // Check if it's a class, mixin, or interface
                 if let Some(entry) = self.ctx.get_type(hash) {
                     if entry.is_interface() {
                         interfaces.push(hash);
-                    } else if entry.is_class() {
-                        // First non-interface is the base class
+                    } else if entry.is_class()
+                        && let Some(class_entry) = entry.as_class()
+                    {
+                        // Handle mixins - they can appear anywhere in the inheritance list
+                        if class_entry.is_mixin {
+                            mixins.push(hash);
+                            continue;
+                        }
+
+                        // Regular class - first non-interface/non-mixin is the base class
                         if i == 0 && base_class.is_none() {
                             // Validate inheritance rules before accepting as base class
-                            if let Some(class_entry) = entry.as_class() {
-                                // Rule 1: Script classes cannot extend FFI classes
-                                if class_entry.source.is_ffi() {
-                                    self.ctx.add_error(CompilationError::InvalidOperation {
-                                        message: format!(
-                                            "script class '{}' cannot extend FFI class '{}'; \
-                                            script classes can only extend other script classes or implement interfaces",
-                                            class.name.name,
-                                            type_name
-                                        ),
-                                        span: class.span,
-                                    });
-                                    continue;
-                                }
+                            // Rule 1: Script classes cannot extend FFI classes
+                            if class_entry.source.is_ffi() {
+                                self.ctx.add_error(CompilationError::InvalidOperation {
+                                    message: format!(
+                                        "script class '{}' cannot extend FFI class '{}'; \
+                                        script classes can only extend other script classes or implement interfaces",
+                                        class.name.name,
+                                        type_name
+                                    ),
+                                    span: class.span,
+                                });
+                                continue;
+                            }
 
-                                // Rule 2: Final classes cannot be inherited from
-                                if class_entry.is_final {
-                                    self.ctx.add_error(CompilationError::InvalidOperation {
-                                        message: format!(
-                                            "class '{}' cannot extend final class '{}'",
-                                            class.name.name, type_name
-                                        ),
-                                        span: class.span,
-                                    });
-                                    continue;
-                                }
+                            // Rule 2: Final classes cannot be inherited from
+                            if class_entry.is_final {
+                                self.ctx.add_error(CompilationError::InvalidOperation {
+                                    message: format!(
+                                        "class '{}' cannot extend final class '{}'",
+                                        class.name.name, type_name
+                                    ),
+                                    span: class.span,
+                                });
+                                continue;
+                            }
+
+                            base_class = Some(hash);
+                        } else if base_class.is_none() {
+                            // Base class not in first position but no other base set yet
+                            // This is still allowed if it comes after mixins/interfaces
+                            if class_entry.source.is_ffi() {
+                                self.ctx.add_error(CompilationError::InvalidOperation {
+                                    message: format!(
+                                        "script class '{}' cannot extend FFI class '{}'",
+                                        class.name.name, type_name
+                                    ),
+                                    span: class.span,
+                                });
+                                continue;
+                            }
+                            if class_entry.is_final {
+                                self.ctx.add_error(CompilationError::InvalidOperation {
+                                    message: format!(
+                                        "class '{}' cannot extend final class '{}'",
+                                        class.name.name, type_name
+                                    ),
+                                    span: class.span,
+                                });
+                                continue;
                             }
                             base_class = Some(hash);
                         } else {
@@ -319,7 +470,7 @@ impl<'a, 'reg> RegistrationPass<'a, 'reg> {
             }
         }
 
-        (base_class, interfaces)
+        (base_class, mixins, interfaces)
     }
 
     fn ident_expr_to_string(&self, expr: &angelscript_parser::ast::IdentExpr<'_>) -> String {
@@ -335,9 +486,21 @@ impl<'a, 'reg> RegistrationPass<'a, 'reg> {
 
     fn visit_field(&mut self, field: &FieldDecl<'_>, _class_hash: TypeHash) {
         // Fields are stored in the class entry, not as separate registry entries
-        // For now, we just validate the field type can be resolved
+        // Validate the field type can be resolved and is instantiable
         let mut resolver = TypeResolver::new(self.ctx);
-        if let Err(e) = resolver.resolve(&field.ty) {
+        let data_type = match resolver.resolve(&field.ty) {
+            Ok(dt) => dt,
+            Err(e) => {
+                self.ctx.add_error(e);
+                return;
+            }
+        };
+
+        // Validate type is instantiable (not a mixin, interfaces must be handles)
+        if let Err(e) =
+            self.ctx
+                .validate_instantiable_type(&data_type, field.ty.span, "as class field type")
+        {
             self.ctx.add_error(e);
         }
     }
@@ -364,6 +527,16 @@ impl<'a, 'reg> RegistrationPass<'a, 'reg> {
                     continue;
                 }
             };
+
+            // Validate property type is instantiable (not a mixin, interfaces must be handles)
+            if let Err(e) = self.ctx.validate_instantiable_type(
+                &prop_type,
+                prop.ty.span,
+                "as virtual property type",
+            ) {
+                self.ctx.add_error(e);
+                continue;
+            }
 
             // Create getter or setter signature
             let (params, return_type) = match accessor.kind {
@@ -410,7 +583,7 @@ impl<'a, 'reg> RegistrationPass<'a, 'reg> {
 
     fn visit_constructor(&mut self, ctor: &FunctionDecl<'_>, class_hash: TypeHash) {
         // Resolve parameters
-        let params = self.resolve_params(ctor.params, ctor.span);
+        let params = self.resolve_params(ctor.params);
         let param_hashes: Vec<TypeHash> = params.iter().map(|p| p.data_type.type_hash).collect();
 
         // Check if this is deleted
@@ -581,13 +754,23 @@ impl<'a, 'reg> RegistrationPass<'a, 'reg> {
         let name = method.name.name.to_string();
 
         // Resolve parameters
-        let params = self.resolve_params(method.params, method.span);
+        let params = self.resolve_params(method.params);
         let param_hashes: Vec<TypeHash> = params.iter().map(|p| p.data_type.type_hash).collect();
 
         // Resolve return type
         let mut resolver = TypeResolver::new(self.ctx);
         let return_type = match resolver.resolve(&method.return_type.ty) {
-            Ok(dt) => dt,
+            Ok(dt) => {
+                // Validate return type is instantiable (not a mixin, interfaces must be handles)
+                if let Err(e) = self.ctx.validate_instantiable_type(
+                    &dt,
+                    method.return_type.span,
+                    "as interface method return type",
+                ) {
+                    self.ctx.add_error(e);
+                }
+                dt
+            }
             Err(e) => {
                 self.ctx.add_error(e);
                 DataType::void()
@@ -685,14 +868,24 @@ impl<'a, 'reg> RegistrationPass<'a, 'reg> {
         let namespace = self.current_namespace_vec();
 
         // Resolve parameters
-        let params = self.resolve_params(func.params, func.span);
+        let params = self.resolve_params(func.params);
         let param_hashes: Vec<TypeHash> = params.iter().map(|p| p.data_type.type_hash).collect();
 
         // Resolve return type
         let return_type = if let Some(ref ret) = func.return_type {
             let mut resolver = TypeResolver::new(self.ctx);
             match resolver.resolve(&ret.ty) {
-                Ok(dt) => dt,
+                Ok(dt) => {
+                    // Validate return type is instantiable (not a mixin, interfaces must be handles)
+                    if let Err(e) = self.ctx.validate_instantiable_type(
+                        &dt,
+                        ret.span,
+                        "as function return type",
+                    ) {
+                        self.ctx.add_error(e);
+                    }
+                    dt
+                }
                 Err(e) => {
                     self.ctx.add_error(e);
                     DataType::void()
@@ -742,7 +935,7 @@ impl<'a, 'reg> RegistrationPass<'a, 'reg> {
         }
     }
 
-    fn resolve_params(&mut self, params: &[FunctionParam<'_>], _span: Span) -> Vec<Param> {
+    fn resolve_params(&mut self, params: &[FunctionParam<'_>]) -> Vec<Param> {
         let mut result = Vec::with_capacity(params.len());
 
         for param in params {
@@ -754,6 +947,16 @@ impl<'a, 'reg> RegistrationPass<'a, 'reg> {
                     DataType::void()
                 }
             };
+
+            // Validate parameter type is instantiable (not a mixin, interfaces must be handles)
+            // Use parameter type span for precise error location
+            if let Err(e) = self.ctx.validate_instantiable_type(
+                &data_type,
+                param.ty.span,
+                "as function parameter type",
+            ) {
+                self.ctx.add_error(e);
+            }
 
             let name = param
                 .name
@@ -794,6 +997,15 @@ impl<'a, 'reg> RegistrationPass<'a, 'reg> {
             }
         };
 
+        // Validate type is instantiable (not a mixin)
+        if let Err(e) =
+            self.ctx
+                .validate_instantiable_type(&data_type, var.ty.span, "as global variable type")
+        {
+            self.ctx.add_error(e);
+            return;
+        }
+
         // Allocate slot in unit's global variable table
         let slot = self.next_global_slot;
         self.next_global_slot += 1;
@@ -832,20 +1044,47 @@ impl<'a, 'reg> RegistrationPass<'a, 'reg> {
         let type_hash = TypeHash::from_name(&qualified_name);
         let namespace = self.current_namespace_vec();
 
-        // Resolve parameter types
+        // Resolve parameter types with validation
         let params: Vec<DataType> = fd
             .params
             .iter()
             .filter_map(|p| {
                 let mut resolver = TypeResolver::new(self.ctx);
-                resolver.resolve_param(&p.ty).ok()
+                match resolver.resolve_param(&p.ty) {
+                    Ok(dt) => {
+                        // Validate parameter type is instantiable
+                        if let Err(e) = self.ctx.validate_instantiable_type(
+                            &dt,
+                            p.ty.span,
+                            "as funcdef parameter type",
+                        ) {
+                            self.ctx.add_error(e);
+                            return None;
+                        }
+                        Some(dt)
+                    }
+                    Err(e) => {
+                        self.ctx.add_error(e);
+                        None
+                    }
+                }
             })
             .collect();
 
-        // Resolve return type
+        // Resolve return type with validation
         let mut resolver = TypeResolver::new(self.ctx);
         let return_type = match resolver.resolve(&fd.return_type.ty) {
-            Ok(dt) => dt,
+            Ok(dt) => {
+                // Validate return type is instantiable
+                if let Err(e) = self.ctx.validate_instantiable_type(
+                    &dt,
+                    fd.return_type.span,
+                    "as funcdef return type",
+                ) {
+                    self.ctx.add_error(e);
+                }
+                dt
+            }
             Err(e) => {
                 self.ctx.add_error(e);
                 DataType::void()
@@ -1001,6 +1240,8 @@ impl<'a, 'reg> RegistrationPass<'a, 'reg> {
             is_handle: false,
             is_handle_to_const: false,
             ref_modifier: RefModifier::In,
+            is_mixin: false,
+            is_interface: false,
         };
 
         let params = vec![Param::new("other", param_type)];
@@ -1044,6 +1285,8 @@ impl<'a, 'reg> RegistrationPass<'a, 'reg> {
             is_handle: false,
             is_handle_to_const: false,
             ref_modifier: RefModifier::In,
+            is_mixin: false,
+            is_interface: false,
         };
 
         let params = vec![Param::new("other", param_type)];
@@ -1056,6 +1299,8 @@ impl<'a, 'reg> RegistrationPass<'a, 'reg> {
             is_handle: false,
             is_handle_to_const: false,
             ref_modifier: RefModifier::InOut,
+            is_mixin: false,
+            is_interface: false,
         };
 
         let func_hash = TypeHash::from_method(class_hash, "opAssign", &param_hashes);
@@ -1708,5 +1953,354 @@ mod tests {
         let sprite_entry = ctx.get_type(sprite_hash).unwrap();
         let sprite_class = sprite_entry.as_class().unwrap();
         assert!(sprite_class.interfaces.contains(&iface_hash));
+    }
+
+    // ==========================================================================
+    // Mixin tests (Task 41e)
+    // ==========================================================================
+
+    #[test]
+    fn register_mixin_class() {
+        let (registry, arena) = setup_context();
+        let source = r#"
+            mixin class Helper {
+                void helpMethod() {}
+            }
+        "#;
+        let script = Parser::parse(source, &arena).unwrap();
+
+        let mut ctx = CompilationContext::new(&registry);
+        let pass = RegistrationPass::new(&mut ctx, UnitId::new(0));
+        let output = pass.run(&script);
+
+        assert!(
+            output.errors.is_empty(),
+            "Expected no errors, got: {:?}",
+            output.errors
+        );
+        assert_eq!(output.types_registered, 1);
+        // 1 method registered (no auto-generated members for mixins)
+        assert_eq!(output.functions_registered, 1);
+
+        // Verify it's registered as a mixin
+        let helper_hash = ctx.resolve_type("Helper").unwrap();
+        let helper = ctx.get_type(helper_hash).unwrap().as_class().unwrap();
+        assert!(helper.is_mixin);
+    }
+
+    #[test]
+    fn register_mixin_cannot_inherit_from_class() {
+        let (registry, arena) = setup_context();
+        let source = r#"
+            class Base {}
+            mixin class Helper : Base {}
+        "#;
+        let script = Parser::parse(source, &arena).unwrap();
+
+        let mut ctx = CompilationContext::new(&registry);
+        let pass = RegistrationPass::new(&mut ctx, UnitId::new(0));
+        let output = pass.run(&script);
+
+        // Should have error about mixin inheriting from class
+        assert!(!output.errors.is_empty());
+        assert!(output.errors.iter().any(|e| {
+            matches!(e, CompilationError::InvalidOperation { message, .. }
+                if message.contains("mixin") && message.contains("cannot inherit"))
+        }));
+    }
+
+    #[test]
+    fn register_mixin_with_interface() {
+        use angelscript_core::MethodSignature;
+
+        let (mut registry, arena) = setup_context();
+
+        // Register an interface
+        let iface = InterfaceEntry::ffi("IDrawable").with_method(MethodSignature::new(
+            "draw",
+            vec![],
+            DataType::void(),
+        ));
+        registry.register_type(iface.into()).unwrap();
+
+        let source = r#"
+            mixin class RenderMixin : IDrawable {
+                void draw() {}
+            }
+        "#;
+        let script = Parser::parse(source, &arena).unwrap();
+
+        let mut ctx = CompilationContext::new(&registry);
+        let pass = RegistrationPass::new(&mut ctx, UnitId::new(0));
+        let output = pass.run(&script);
+
+        // Should succeed - mixins can implement interfaces
+        assert!(
+            output.errors.is_empty(),
+            "Expected no errors, got: {:?}",
+            output.errors
+        );
+        assert_eq!(output.types_registered, 1);
+
+        // Verify mixin has the interface
+        let mixin_hash = ctx.resolve_type("RenderMixin").unwrap();
+        let mixin_entry = ctx.get_type(mixin_hash).unwrap().as_class().unwrap();
+        assert!(mixin_entry.is_mixin);
+        assert_eq!(mixin_entry.interfaces.len(), 1);
+    }
+
+    #[test]
+    fn register_class_with_mixin() {
+        let (registry, arena) = setup_context();
+        let source = r#"
+            mixin class Helper {
+                void help() {}
+            }
+
+            class Player : Helper {
+                void update() {}
+            }
+        "#;
+        let script = Parser::parse(source, &arena).unwrap();
+
+        let mut ctx = CompilationContext::new(&registry);
+        let pass = RegistrationPass::new(&mut ctx, UnitId::new(0));
+        let output = pass.run(&script);
+
+        assert!(
+            output.errors.is_empty(),
+            "Expected no errors, got: {:?}",
+            output.errors
+        );
+        assert_eq!(output.types_registered, 2); // Helper (mixin) + Player
+
+        // Verify Player has the mixin in its mixins list
+        let player_hash = ctx.resolve_type("Player").unwrap();
+        let player_entry = ctx.get_type(player_hash).unwrap().as_class().unwrap();
+        assert_eq!(player_entry.mixins.len(), 1);
+
+        let helper_hash = ctx.resolve_type("Helper").unwrap();
+        assert!(player_entry.mixins.contains(&helper_hash));
+    }
+
+    #[test]
+    fn register_class_with_base_and_mixin() {
+        let (registry, arena) = setup_context();
+        let source = r#"
+            class Entity {
+                void update() {}
+            }
+
+            mixin class Helper {
+                void help() {}
+            }
+
+            class Player : Entity, Helper {
+                void render() {}
+            }
+        "#;
+        let script = Parser::parse(source, &arena).unwrap();
+
+        let mut ctx = CompilationContext::new(&registry);
+        let pass = RegistrationPass::new(&mut ctx, UnitId::new(0));
+        let output = pass.run(&script);
+
+        assert!(
+            output.errors.is_empty(),
+            "Expected no errors, got: {:?}",
+            output.errors
+        );
+        assert_eq!(output.types_registered, 3); // Entity + Helper + Player
+
+        // Verify Player has base class and mixin
+        let player_hash = ctx.resolve_type("Player").unwrap();
+        let player_entry = ctx.get_type(player_hash).unwrap().as_class().unwrap();
+
+        let entity_hash = ctx.resolve_type("Entity").unwrap();
+        assert_eq!(player_entry.base_class, Some(entity_hash));
+
+        let helper_hash = ctx.resolve_type("Helper").unwrap();
+        assert!(player_entry.mixins.contains(&helper_hash));
+    }
+
+    #[test]
+    fn register_mixin_cannot_have_constructor() {
+        let (registry, arena) = setup_context();
+        let source = r#"
+            mixin class Helper {
+                Helper() {}
+            }
+        "#;
+        let script = Parser::parse(source, &arena).unwrap();
+
+        let mut ctx = CompilationContext::new(&registry);
+        let pass = RegistrationPass::new(&mut ctx, UnitId::new(0));
+        let output = pass.run(&script);
+
+        // Should have error about mixin constructor
+        assert!(!output.errors.is_empty());
+        assert!(output.errors.iter().any(|e| {
+            matches!(e, CompilationError::InvalidOperation { message, .. }
+                if message.contains("mixin") && message.contains("constructor"))
+        }));
+    }
+
+    #[test]
+    fn register_mixin_cannot_have_destructor() {
+        let (registry, arena) = setup_context();
+        let source = r#"
+            mixin class Helper {
+                ~Helper() {}
+            }
+        "#;
+        let script = Parser::parse(source, &arena).unwrap();
+
+        let mut ctx = CompilationContext::new(&registry);
+        let pass = RegistrationPass::new(&mut ctx, UnitId::new(0));
+        let output = pass.run(&script);
+
+        // Should have error about mixin destructor
+        assert!(!output.errors.is_empty());
+        assert!(output.errors.iter().any(|e| {
+            matches!(e, CompilationError::InvalidOperation { message, .. }
+                if message.contains("mixin") && message.contains("destructor"))
+        }));
+    }
+
+    #[test]
+    fn register_class_with_multiple_mixins() {
+        let (registry, arena) = setup_context();
+        let source = r#"
+            mixin class Movable {
+                void move() {}
+            }
+
+            mixin class Renderable {
+                void render() {}
+            }
+
+            class Player : Movable, Renderable {
+                void update() {}
+            }
+        "#;
+        let script = Parser::parse(source, &arena).unwrap();
+
+        let mut ctx = CompilationContext::new(&registry);
+        let pass = RegistrationPass::new(&mut ctx, UnitId::new(0));
+        let output = pass.run(&script);
+
+        assert!(
+            output.errors.is_empty(),
+            "Expected no errors, got: {:?}",
+            output.errors
+        );
+        assert_eq!(output.types_registered, 3); // Movable + Renderable + Player
+
+        // Verify Player has both mixins
+        let player_hash = ctx.resolve_type("Player").unwrap();
+        let player_entry = ctx.get_type(player_hash).unwrap().as_class().unwrap();
+        assert_eq!(player_entry.mixins.len(), 2);
+
+        let movable_hash = ctx.resolve_type("Movable").unwrap();
+        let renderable_hash = ctx.resolve_type("Renderable").unwrap();
+        assert!(player_entry.mixins.contains(&movable_hash));
+        assert!(player_entry.mixins.contains(&renderable_hash));
+    }
+
+    #[test]
+    fn mixin_global_variable_rejected() {
+        let (registry, arena) = setup_context();
+        let source = r#"
+            mixin class Helper {
+                void help() {}
+            }
+
+            Helper h;
+        "#;
+        let script = Parser::parse(source, &arena).unwrap();
+
+        let mut ctx = CompilationContext::new(&registry);
+        let pass = RegistrationPass::new(&mut ctx, UnitId::new(0));
+        let output = pass.run(&script);
+
+        // Should have error about mixin instantiation
+        assert!(!output.errors.is_empty());
+        assert!(output.errors.iter().any(|e| {
+            matches!(e, CompilationError::InvalidOperation { message, .. }
+                if message.contains("mixin") && message.contains("Helper") && message.contains("instantiable"))
+        }));
+    }
+
+    #[test]
+    fn mixin_global_handle_rejected() {
+        let (registry, arena) = setup_context();
+        let source = r#"
+            mixin class Helper {
+                void help() {}
+            }
+
+            Helper@ h;
+        "#;
+        let script = Parser::parse(source, &arena).unwrap();
+
+        let mut ctx = CompilationContext::new(&registry);
+        let pass = RegistrationPass::new(&mut ctx, UnitId::new(0));
+        let output = pass.run(&script);
+
+        // Handle to mixin should also be rejected
+        assert!(!output.errors.is_empty());
+        assert!(output.errors.iter().any(|e| {
+            matches!(e, CompilationError::InvalidOperation { message, .. }
+                if message.contains("mixin") && message.contains("Helper") && message.contains("instantiable"))
+        }));
+    }
+
+    #[test]
+    fn interface_global_value_rejected() {
+        let (registry, arena) = setup_context();
+        let source = r#"
+            interface IDrawable {
+                void draw();
+            }
+
+            IDrawable d;
+        "#;
+        let script = Parser::parse(source, &arena).unwrap();
+
+        let mut ctx = CompilationContext::new(&registry);
+        let pass = RegistrationPass::new(&mut ctx, UnitId::new(0));
+        let output = pass.run(&script);
+
+        // Interface value type should be rejected
+        assert!(!output.errors.is_empty());
+        assert!(output.errors.iter().any(|e| {
+            matches!(e, CompilationError::InvalidOperation { message, .. }
+                if message.contains("interface") && message.contains("IDrawable") && message.contains("handle"))
+        }));
+    }
+
+    #[test]
+    fn interface_global_handle_allowed() {
+        let (registry, arena) = setup_context();
+        let source = r#"
+            interface IDrawable {
+                void draw();
+            }
+
+            IDrawable@ d;
+        "#;
+        let script = Parser::parse(source, &arena).unwrap();
+
+        let mut ctx = CompilationContext::new(&registry);
+        let pass = RegistrationPass::new(&mut ctx, UnitId::new(0));
+        let output = pass.run(&script);
+
+        // Interface handle type should be allowed
+        assert!(
+            output.errors.is_empty(),
+            "Expected no errors, got: {:?}",
+            output.errors
+        );
+        assert_eq!(output.globals_registered, 1);
     }
 }

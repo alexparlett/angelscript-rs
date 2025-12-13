@@ -455,6 +455,54 @@ impl<'a> CompilationContext<'a> {
             .or_else(|| self.global_registry.get(hash))
     }
 
+    /// Validate that a type can be used for variable declarations.
+    ///
+    /// - Mixin classes cannot be used at all (they're not real types)
+    /// - Interfaces can only be used as handles (e.g., `IDrawable@`, not `IDrawable x;`)
+    ///
+    /// Returns an error if the type cannot be used. This is O(1) since `is_mixin` and
+    /// `is_interface` are cached in the DataType during type resolution.
+    pub fn validate_instantiable_type(
+        &self,
+        data_type: &DataType,
+        span: Span,
+        context: &str,
+    ) -> Result<(), CompilationError> {
+        // Mixins cannot be used at all - they're not real types
+        if data_type.is_mixin {
+            let type_name = self
+                .get_type(data_type.type_hash)
+                .and_then(|e| e.as_class())
+                .map(|c| c.name.as_str())
+                .unwrap_or("<unknown>");
+            return Err(CompilationError::InvalidOperation {
+                message: format!(
+                    "cannot use mixin class '{}' {}; mixins are not instantiable types",
+                    type_name, context
+                ),
+                span,
+            });
+        }
+
+        // Interfaces can only be used as handles
+        if data_type.is_interface && !data_type.is_handle {
+            let type_name = self
+                .get_type(data_type.type_hash)
+                .and_then(|e| e.as_interface())
+                .map(|i| i.name.as_str())
+                .unwrap_or("<unknown>");
+            return Err(CompilationError::InvalidOperation {
+                message: format!(
+                    "cannot use interface '{}' {}; interfaces can only be used as handles ({}@)",
+                    type_name, context, type_name
+                ),
+                span,
+            });
+        }
+
+        Ok(())
+    }
+
     /// Get a function entry by hash (layered lookup).
     pub fn get_function(&self, hash: TypeHash) -> Option<&FunctionEntry> {
         self.unit_registry
@@ -590,7 +638,7 @@ impl<'a> CompilationContext<'a> {
 
     /// Declare a local variable in the current scope.
     ///
-    /// Returns the stack slot, or error if redeclared.
+    /// Returns the stack slot, or error if redeclared or type is not instantiable.
     /// Panics if not in a function.
     pub fn declare_local(
         &mut self,
@@ -599,6 +647,9 @@ impl<'a> CompilationContext<'a> {
         is_const: bool,
         span: Span,
     ) -> Result<u32, CompilationError> {
+        // Validate type is instantiable (not a mixin)
+        self.validate_instantiable_type(&data_type, span, "as local variable type")?;
+
         self.local_scope
             .as_mut()
             .expect("declare_local called outside function")
@@ -616,6 +667,9 @@ impl<'a> CompilationContext<'a> {
         is_const: bool,
         span: Span,
     ) -> Result<u32, CompilationError> {
+        // Validate type is instantiable (not a mixin)
+        self.validate_instantiable_type(&data_type, span, "as function parameter type")?;
+
         self.local_scope
             .as_mut()
             .expect("declare_param called outside function")
@@ -722,7 +776,7 @@ impl<'a> CompilationContext<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use angelscript_core::{ClassEntry, TypeKind};
+    use angelscript_core::{ClassEntry, RefModifier, TypeKind, primitives};
 
     #[test]
     fn scope_new_is_empty() {
@@ -1516,6 +1570,82 @@ mod tests {
 
         // Back in outer function
         assert!(ctx.get_local("captured").is_some());
+
+        ctx.end_function();
+    }
+
+    #[test]
+    fn declare_local_rejects_mixin_type() {
+        let registry = SymbolRegistry::new();
+        let mut ctx = CompilationContext::new(&registry);
+        ctx.begin_function();
+
+        // Create a DataType with is_mixin = true
+        let mixin_type = DataType {
+            type_hash: TypeHash::from_name("TestMixin"),
+            is_const: false,
+            is_handle: false,
+            is_handle_to_const: false,
+            ref_modifier: RefModifier::None,
+            is_mixin: true,
+            is_interface: false,
+        };
+
+        let result = ctx.declare_local("x".into(), mixin_type, false, Span::default());
+
+        assert!(result.is_err());
+        if let Err(CompilationError::InvalidOperation { message, .. }) = result {
+            assert!(message.contains("mixin"));
+            assert!(message.contains("instantiable"));
+        } else {
+            panic!("Expected InvalidOperation error");
+        }
+
+        ctx.end_function();
+    }
+
+    #[test]
+    fn declare_param_rejects_mixin_type() {
+        let registry = SymbolRegistry::new();
+        let mut ctx = CompilationContext::new(&registry);
+        ctx.begin_function();
+
+        // Create a DataType with is_mixin = true
+        let mixin_type = DataType {
+            type_hash: TypeHash::from_name("TestMixin"),
+            is_const: false,
+            is_handle: false,
+            is_handle_to_const: false,
+            ref_modifier: RefModifier::None,
+            is_mixin: true,
+            is_interface: false,
+        };
+
+        let result = ctx.declare_param("param".into(), mixin_type, false, Span::default());
+
+        assert!(result.is_err());
+        if let Err(CompilationError::InvalidOperation { message, .. }) = result {
+            assert!(message.contains("mixin"));
+            assert!(message.contains("parameter"));
+        } else {
+            panic!("Expected InvalidOperation error");
+        }
+
+        ctx.end_function();
+    }
+
+    #[test]
+    fn declare_local_accepts_non_mixin_type() {
+        let mut registry = SymbolRegistry::new();
+        registry.register_all_primitives();
+        let mut ctx = CompilationContext::new(&registry);
+        ctx.begin_function();
+
+        // Regular int type should be accepted
+        let int_type = DataType::simple(primitives::INT32);
+        let result = ctx.declare_local("x".into(), int_type, false, Span::default());
+
+        assert!(result.is_ok());
 
         ctx.end_function();
     }
