@@ -5,16 +5,19 @@
 //! - `opCast` - Explicit cast method
 //! - Converting constructors - Single-argument constructors
 
-use angelscript_core::TypeHash;
+use angelscript_core::{DataType, TypeHash};
 
 use crate::context::CompilationContext;
 
 use super::{Conversion, ConversionKind};
 
 /// Find user-defined conversions (constructor, opImplConv, opCast).
+///
+/// Takes full `DataType` references to enable const-correctness checks.
+/// Non-const conversion methods cannot be called on const source objects.
 pub fn find_user_conversion(
-    source: TypeHash,
-    target: TypeHash,
+    source: &DataType,
+    target: &DataType,
     ctx: &CompilationContext<'_>,
 ) -> Option<Conversion> {
     // Try implicit conversion method on source (opImplConv)
@@ -48,18 +51,25 @@ pub fn find_user_conversion(
 }
 
 /// Find an implicit conversion method (opImplConv) on the source type.
+///
+/// Takes `&DataType` for both source and target for API consistency.
+/// Non-const opImplConv methods cannot be called on const objects.
 fn find_implicit_conv_method(
-    source: TypeHash,
-    target: TypeHash,
+    source: &DataType,
+    target: &DataType,
     ctx: &CompilationContext<'_>,
 ) -> Option<TypeHash> {
-    let class = ctx.get_type(source)?.as_class()?;
+    let class = ctx.get_type(source.type_hash)?.as_class()?;
 
     // Use O(1) lookup by method name
     for &method_hash in class.find_methods("opImplConv") {
         if let Some(func) = ctx.get_function(method_hash) {
             // opImplConv with return type matching target
-            if func.def.return_type.type_hash == target {
+            if func.def.return_type.type_hash == target.type_hash {
+                // Const-correctness check: non-const methods cannot be called on const objects
+                if source.is_effectively_const() && !func.def.is_const() {
+                    continue;
+                }
                 return Some(method_hash);
             }
         }
@@ -71,19 +81,28 @@ fn find_implicit_conv_method(
 /// Find a converting constructor on the target type.
 ///
 /// A converting constructor is a single-argument constructor that takes
-/// the source type.
+/// the source type. Const-correctness is checked: cannot pass a const source
+/// to a parameter that doesn't accept const.
 fn find_converting_constructor(
-    source: TypeHash,
-    target: TypeHash,
+    source: &DataType,
+    target: &DataType,
     ctx: &CompilationContext<'_>,
 ) -> Option<TypeHash> {
-    let target_class = ctx.get_type(target)?.as_class()?;
+    let target_class = ctx.get_type(target.type_hash)?.as_class()?;
 
     // Look for single-argument constructor taking source type
     for &ctor_hash in &target_class.behaviors.constructors {
         if let Some(func) = ctx.get_function(ctor_hash) {
             let def = &func.def;
-            if def.params.len() == 1 && def.params[0].data_type.type_hash == source {
+            if def.params.len() == 1 && def.params[0].data_type.type_hash == source.type_hash {
+                let param_type = &def.params[0].data_type;
+
+                // Const-correctness: if source is const, parameter must accept const
+                // Just check the const keyword on the parameter type
+                if source.is_effectively_const() && !param_type.is_effectively_const() {
+                    continue; // Skip - can't pass const to non-const param
+                }
+
                 return Some(ctor_hash);
             }
         }
@@ -93,18 +112,25 @@ fn find_converting_constructor(
 }
 
 /// Find an explicit cast method (opCast) on the source type.
+///
+/// Takes `&DataType` for both source and target for API consistency.
+/// Non-const opCast methods cannot be called on const objects.
 fn find_cast_method(
-    source: TypeHash,
-    target: TypeHash,
+    source: &DataType,
+    target: &DataType,
     ctx: &CompilationContext<'_>,
 ) -> Option<TypeHash> {
-    let class = ctx.get_type(source)?.as_class()?;
+    let class = ctx.get_type(source.type_hash)?.as_class()?;
 
     // Use O(1) lookup by method name
     for &method_hash in class.find_methods("opCast") {
         if let Some(func) = ctx.get_function(method_hash) {
             // opCast with return type matching target
-            if func.def.return_type.type_hash == target {
+            if func.def.return_type.type_hash == target.type_hash {
+                // Const-correctness check: non-const methods cannot be called on const objects
+                if source.is_effectively_const() && !func.def.is_const() {
+                    continue;
+                }
                 return Some(method_hash);
             }
         }
@@ -247,7 +273,9 @@ mod tests {
             setup_context_with_conversion_class();
         let ctx = CompilationContext::new(&registry);
 
-        let conv = find_user_conversion(source_hash, target_hash, &ctx);
+        let source = DataType::simple(source_hash);
+        let target = DataType::simple(target_hash);
+        let conv = find_user_conversion(&source, &target, &ctx);
 
         assert!(conv.is_some());
         let conv = conv.unwrap();
@@ -265,7 +293,9 @@ mod tests {
             setup_context_with_constructor_conversion();
         let ctx = CompilationContext::new(&registry);
 
-        let conv = find_user_conversion(source_hash, target_hash, &ctx);
+        let source = DataType::simple(source_hash);
+        let target = DataType::simple(target_hash);
+        let conv = find_user_conversion(&source, &target, &ctx);
 
         assert!(conv.is_some());
         let conv = conv.unwrap();
@@ -282,7 +312,9 @@ mod tests {
         let (registry, source_hash, target_hash, cast_hash) = setup_context_with_cast_method();
         let ctx = CompilationContext::new(&registry);
 
-        let conv = find_user_conversion(source_hash, target_hash, &ctx);
+        let source = DataType::simple(source_hash);
+        let target = DataType::simple(target_hash);
+        let conv = find_user_conversion(&source, &target, &ctx);
 
         assert!(conv.is_some());
         let conv = conv.unwrap();
@@ -310,7 +342,9 @@ mod tests {
 
         let ctx = CompilationContext::new(&registry);
 
-        let conv = find_user_conversion(source_hash, target_hash, &ctx);
+        let source = DataType::simple(source_hash);
+        let target = DataType::simple(target_hash);
+        let conv = find_user_conversion(&source, &target, &ctx);
         assert!(conv.is_none());
     }
 
@@ -320,7 +354,9 @@ mod tests {
         let ctx = CompilationContext::new(&registry);
 
         // Primitives don't have user-defined conversions
-        let conv = find_user_conversion(primitives::INT32, primitives::FLOAT, &ctx);
+        let source = DataType::simple(primitives::INT32);
+        let target = DataType::simple(primitives::FLOAT);
+        let conv = find_user_conversion(&source, &target, &ctx);
         assert!(conv.is_none());
     }
 }

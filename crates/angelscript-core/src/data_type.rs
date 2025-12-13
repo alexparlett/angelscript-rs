@@ -396,6 +396,37 @@ impl DataType {
             ..self
         }
     }
+
+    /// Returns true if this type is effectively const.
+    ///
+    /// A type is effectively const if either:
+    /// - The value itself is const (`is_const`)
+    /// - It's a handle to a const value (`is_handle_to_const`)
+    ///
+    /// This is used for const-correctness checks - non-const methods cannot
+    /// be called on effectively const objects.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use angelscript_core::{DataType, primitives};
+    ///
+    /// // const int - effectively const
+    /// assert!(DataType::with_const(primitives::INT32).is_effectively_const());
+    ///
+    /// // int@ const - handle to const, effectively const
+    /// assert!(DataType::with_handle(primitives::INT32, true).is_effectively_const());
+    ///
+    /// // int - not const
+    /// assert!(!DataType::simple(primitives::INT32).is_effectively_const());
+    ///
+    /// // int@ - mutable handle to mutable object, not effectively const
+    /// assert!(!DataType::with_handle(primitives::INT32, false).is_effectively_const());
+    /// ```
+    #[inline]
+    pub const fn is_effectively_const(&self) -> bool {
+        self.is_const || self.is_handle_to_const
+    }
 }
 
 impl Display for DataType {
@@ -656,5 +687,26 @@ mod tests {
         let dt = DataType::with_ref_in(primitives::INT32);
         let s = format!("{}", dt);
         assert!(s.contains("&in"));
+    }
+
+    #[test]
+    fn is_effectively_const() {
+        // Simple type - not const
+        assert!(!DataType::simple(primitives::INT32).is_effectively_const());
+
+        // const int - effectively const
+        assert!(DataType::with_const(primitives::INT32).is_effectively_const());
+
+        // int@ - mutable handle to mutable object, not effectively const
+        assert!(!DataType::with_handle(primitives::INT32, false).is_effectively_const());
+
+        // int@ const - handle to const, effectively const
+        assert!(DataType::with_handle(primitives::INT32, true).is_effectively_const());
+
+        // const int@ - const handle to mutable object, effectively const
+        assert!(DataType::const_handle(primitives::INT32, false).is_effectively_const());
+
+        // const int@ const - both const, effectively const
+        assert!(DataType::const_handle(primitives::INT32, true).is_effectively_const());
     }
 }

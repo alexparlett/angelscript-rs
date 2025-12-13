@@ -196,8 +196,10 @@ fn try_operator_on_type(
         // by the bidirectional type checking in Step 3
         let conversion = None;
 
-        // Const-correctness check
-        // TODO: Implement const-correctness checks for methods and parameters
+        // Const-correctness check: non-const methods cannot be called on const objects
+        if obj_type.is_effectively_const() && !func_entry.def.is_const() {
+            continue;
+        }
 
         let result_type = func_entry.def.return_type;
 
