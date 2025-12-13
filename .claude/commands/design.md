@@ -1,5 +1,5 @@
 ---
-allowed-tools: Bash(git:*), Bash(find:*), Glob, Grep, Read
+allowed-tools: Bash(git:*), Bash(.agent/*:*), Glob, Grep, Read, Write
 argument-hint: <feature-description>
 description: Design a feature - analyze codebase and create implementation plan
 ---
@@ -8,17 +8,23 @@ description: Design a feature - analyze codebase and create implementation plan
 
 You are designing a new feature for the AngelScript-Rust project.
 
+## Before Starting
+
+1. Compile working context:
+   `.agent/hooks/compile-context.sh`
+
+2. Read current context:
+   `.agent/working-context/current.md`
+
+3. Check for known failures to avoid:
+   `.agent/commands.sh recall failures`
+
 ## Context
 
-First, understand the current state:
-
 1. Check existing tasks to determine the next task number:
-   `find claude/tasks -name "*.md" | sort -V | tail -5`
+   `ls .agent/tasks/*.md | sort -V | tail -5`
 
-2. Read the current prompt for active work:
-   `claude/prompt.md`
-
-3. Check git status for any in-progress changes:
+2. Check git status for any in-progress changes:
    `git status --short`
 
 ## Your Task
@@ -35,7 +41,7 @@ Design the following feature: **$ARGUMENTS**
 
 ## Output
 
-Create a task file at `claude/tasks/[NUMBER]_[snake_case_name].md` with this structure:
+Create a task file at `.agent/tasks/[NUMBER]_[snake_case_name].md` with this structure:
 
 ```markdown
 # Task [NUMBER]: [Feature Name]
@@ -70,8 +76,14 @@ Create a task file at `claude/tasks/[NUMBER]_[snake_case_name].md` with this str
 
 ## After Creating the Design
 
-1. Update `claude/prompt.md` to reference the new task
-2. Log any significant design decisions in `claude/decisions.md`
-3. Present the design summary to the user for approval before implementation
+1. Store design decisions in memory:
+   `.agent/hooks/memory-manager.sh store strategies "[key decisions made]"`
+
+2. Log the design event:
+   `.agent/hooks/log-event.sh design "[task-number]: [feature-name]"`
+
+3. Update feature_list.json if this is a new major feature
+
+4. Present the design summary to the user for approval before implementation
 
 Remember: Do NOT implement yet - this is the design phase only.

@@ -1,5 +1,5 @@
 ---
-allowed-tools: Bash(cargo:*), Bash(git:*), Glob, Grep, Read, Edit, Write
+allowed-tools: Bash(cargo:*), Bash(git:*), Bash(.agent/*:*), Glob, Grep, Read, Edit, Write
 argument-hint: <task-file-or-number>
 description: Implement a feature from its design document
 ---
@@ -8,14 +8,25 @@ description: Implement a feature from its design document
 
 You are implementing a feature from its design document.
 
+## Before Starting
+
+1. Compile working context:
+   `.agent/hooks/compile-context.sh`
+
+2. Read current context:
+   `.agent/working-context/current.md`
+
+3. Check for known failures to avoid:
+   `.agent/commands.sh recall failures`
+
 ## Context
 
 1. Load the design document:
-   - If a number is provided (e.g., `26`), read `claude/tasks/26_*.md`
+   - If a number is provided (e.g., `26`), read `.agent/tasks/26_*.md`
    - If a path is provided, read that file directly
 
 2. Check current prompt for context:
-   `claude/prompt.md`
+   `.agent/prompt.md`
 
 3. Check git status:
    `git status --short`
@@ -49,9 +60,9 @@ For each sub-task:
 
 Before marking a task complete:
 
-- [ ] Tests pass: `cargo test --lib`
-- [ ] Build succeeds: `cargo build --lib`
-- [ ] No clippy warnings: `cargo clippy --all-targets`
+- [ ] Tests pass: `cargo nextest run --workspace`
+- [ ] Build succeeds: `cargo build --workspace`
+- [ ] No clippy warnings: `cargo clippy --workspace --all-targets`
 - [ ] Code follows project patterns (see CLAUDE.md)
 - [ ] No `Rc<RefCell<>>` in public APIs
 - [ ] Error types use `thiserror`
@@ -59,8 +70,11 @@ Before marking a task complete:
 ## After Implementation
 
 1. Update the task status in the design document
-2. Update `claude/prompt.md` with progress
-3. Create a descriptive commit (DO NOT push unless asked)
+2. Update `.agent/prompt.md` with progress
+3. Log success or failure:
+   - Success: `.agent/commands.sh success "[task-id]" "what worked"`
+   - Failure: `.agent/commands.sh failure "[task-id]" "what failed and why"`
+4. Create a descriptive commit (DO NOT push unless asked)
 
 ## Important Rules
 

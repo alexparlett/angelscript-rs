@@ -1,5 +1,5 @@
 ---
-allowed-tools: Bash(git:*), Bash(cargo:*), Glob, Grep, Read
+allowed-tools: Bash(git:*), Bash(cargo:*), Bash(.agent/*:*), Glob, Grep, Read
 argument-hint: [task-number-or-branch]
 description: Review implementation against design and check code quality
 ---
@@ -8,17 +8,25 @@ description: Review implementation against design and check code quality
 
 You are reviewing an implementation for quality and adherence to design.
 
+## Before Starting
+
+1. Compile working context:
+   `.agent/hooks/compile-context.sh`
+
+2. Check for known failures:
+   `.agent/commands.sh recall failures`
+
 ## Context
 
 1. If a task number is provided, load the design document:
-   `claude/tasks/$ARGUMENTS_*.md` or `claude/tasks/$ARGUMENTS`
+   `.agent/tasks/$ARGUMENTS_*.md` or `.agent/tasks/$ARGUMENTS`
 
 2. Check what has changed:
    `git diff --stat`
    `git log --oneline -10`
 
 3. Read current prompt:
-   `claude/prompt.md`
+   `.agent/prompt.md`
 
 ## Review Process
 
@@ -59,9 +67,7 @@ Check against project standards (from CLAUDE.md):
 
 Run the test suite:
 ```
-cargo test --lib
-cargo test --test test_harness
-cargo test --test module_tests
+cargo nextest run --workspace
 ```
 
 Check coverage of new code:
@@ -85,7 +91,6 @@ Check for:
 
 - [ ] Public APIs documented?
 - [ ] Complex logic has comments?
-- [ ] Design decisions logged in `claude/decisions.md`?
 
 ## Review Output
 
@@ -117,8 +122,9 @@ Provide a summary:
 
 If approved:
 1. Ensure all commits are in place
-2. Update `claude/prompt.md` with completion status
+2. Update `.agent/prompt.md` with completion status
 3. Mark task as complete in design document
+4. Log success: `.agent/commands.sh success "[task-id]" "review passed"`
 
 If changes requested:
 1. List specific issues to address

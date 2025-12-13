@@ -11,14 +11,14 @@ You run the test suite and analyze results.
 
 ## Process
 1. Detect test framework:
-   - Rust: `cargo test`
+   - Rust: `cargo nextest run`
    - Python: `pytest`
    - Node: `npm test`
    - Go: `go test ./...`
 
 2. Run the tests:
 ```bash
-cargo test 2>&1 || pytest 2>&1 || npm test 2>&1 || go test ./... 2>&1
+cargo nextest run 2>&1 || pytest 2>&1 || npm test 2>&1 || go test ./... 2>&1
 ```
 
 3. Parse the output:
@@ -34,12 +34,12 @@ cargo test 2>&1 || pytest 2>&1 || npm test 2>&1 || go test ./... 2>&1
 ## Output Format
 **Test Results:**
 - Total: X
-- Passed: X ✅
-- Failed: X ❌
+- Passed: X
+- Failed: X
 
 **Failures:**
 1. `test_name` - Error message
    - Cause: [analysis]
    - Fix: [suggestion]
 
-**Verdict:** PASS ✅ / FAIL ❌
+**Verdict:** PASS / FAIL
