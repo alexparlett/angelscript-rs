@@ -248,8 +248,7 @@ pub fn find_conversion(
     }
 
     // 7. User-defined conversions (constructor, opConv, opCast)
-    if let Some(conv) = user_defined::find_user_conversion(source.type_hash, target.type_hash, ctx)
-    {
+    if let Some(conv) = user_defined::find_user_conversion(source, target, ctx) {
         return Some(conv);
     }
 

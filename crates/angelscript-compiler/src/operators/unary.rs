@@ -85,8 +85,10 @@ fn try_user_defined_unary(
             continue;
         }
 
-        // Const-correctness check
-        // TODO: Implement const-correctness checks for methods
+        // Const-correctness check: non-const methods cannot be called on const objects
+        if operand.is_effectively_const() && !func_entry.def.is_const() {
+            continue;
+        }
 
         let result_type = func_entry.def.return_type;
 

@@ -16,6 +16,35 @@ Implement function calls, method calls, and constructor calls with overload reso
 
 - Task 36: Overload Resolution
 - Task 40: Expression Basics
+- Task 41d: Const-Correctness (provides `DataType::is_effectively_const()`)
+
+## Const-Correctness Requirements
+
+Task 41d established the infrastructure for const-correctness. This task must enforce it at:
+
+1. **Method calls on const objects**: Non-const methods cannot be called on effectively const objects
+   ```rust
+   if obj_info.data_type.is_effectively_const() && !func.def().is_const() {
+       return Err(CompileError::CannotModifyConst { span });
+   }
+   ```
+
+2. **Property writes on const objects**: Cannot call setter on const object
+   ```rust
+   if obj_info.data_type.is_effectively_const() {
+       return Err(CompileError::CannotModifyConst { span });
+   }
+   ```
+
+3. **Assignment to const lvalues**: Use `ExprInfo::is_mutable` (already tracked)
+   ```rust
+   if !target_info.is_mutable {
+       return Err(CompileError::CannotModifyConst { span });
+   }
+   ```
+
+4. **Reference parameter passing**: Cannot pass const to non-const `&inout`/`&out` parameter
+   - Handled by conversion system (const objects won't match non-const ref params)
 
 ## Files to Create/Modify
 
@@ -131,10 +160,10 @@ fn compile_method_call(
     let resolution = resolve_overload(&candidates, &arg_types, compiler.ctx())
         .map_err(|e| e.with_span(span))?;
 
-    // Check const correctness
+    // Check const correctness: non-const methods cannot be called on const objects
     let func = compiler.ctx().get_function(resolution.func_hash).unwrap();
-    if obj_info.data_type.is_const && !func.def().traits.is_const {
-        return Err(CompileError::ConstViolation { span });
+    if obj_info.data_type.is_effectively_const() && !func.def().is_const() {
+        return Err(CompileError::CannotModifyConst { span });
     }
 
     // Apply argument conversions
@@ -295,9 +324,9 @@ fn try_property_getter(
     if let Some(method_hash) = methods.first() {
         let func = compiler.ctx().get_function(*method_hash).unwrap();
 
-        // Check const correctness
-        if obj_info.data_type.is_const && !func.def().traits.is_const {
-            return Err(CompileError::ConstViolation { span });
+        // Check const correctness: non-const methods cannot be called on const objects
+        if obj_info.data_type.is_effectively_const() && !func.def().is_const() {
+            return Err(CompileError::CannotModifyConst { span });
         }
 
         compiler.emitter().emit_call_method(*method_hash, 0);
@@ -353,8 +382,9 @@ pub fn compile_field_access(
             // Virtual property - call getter
             let func = compiler.ctx().get_function(getter).unwrap();
 
-            if obj_info.data_type.is_const && !func.def().traits.is_const {
-                return Err(CompileError::ConstViolation { span });
+            // Check const correctness: non-const methods cannot be called on const objects
+            if obj_info.data_type.is_effectively_const() && !func.def().is_const() {
+                return Err(CompileError::CannotModifyConst { span });
             }
 
             compiler.emitter().emit_call_method(getter, 0);
@@ -367,7 +397,7 @@ pub fn compile_field_access(
 
             compiler.emitter().emit_get_field(field_index);
 
-            let is_mutable = !obj_info.data_type.is_const && !prop.data_type.is_const;
+            let is_mutable = !obj_info.data_type.is_effectively_const() && !prop.data_type.is_const;
             return Ok(if is_mutable {
                 ExprInfo::lvalue(prop.data_type)
             } else {
@@ -416,9 +446,9 @@ pub fn compile_index(
 
     let func = compiler.ctx().get_function(resolution.func_hash).unwrap();
 
-    // Check const correctness
-    if obj_info.data_type.is_const && !func.def().traits.is_const {
-        return Err(CompileError::ConstViolation { span });
+    // Check const correctness: non-const methods cannot be called on const objects
+    if obj_info.data_type.is_effectively_const() && !func.def().is_const() {
+        return Err(CompileError::CannotModifyConst { span });
     }
 
     compiler.emitter().emit_call_method(resolution.func_hash, 1);
