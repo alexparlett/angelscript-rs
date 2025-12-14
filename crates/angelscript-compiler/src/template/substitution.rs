@@ -51,6 +51,8 @@ pub fn substitute_type(data_type: DataType, subst_map: &SubstitutionMap) -> Data
             is_handle: data_type.is_handle || replacement.is_handle,
             is_handle_to_const: data_type.is_handle_to_const || replacement.is_handle_to_const,
             ref_modifier: data_type.ref_modifier, // Keep original ref modifier
+            is_mixin: replacement.is_mixin,       // Inherit mixin status from replacement
+            is_interface: replacement.is_interface, // Inherit interface status from replacement
         }
     } else {
         // Not a template param, return unchanged
@@ -100,6 +102,8 @@ pub fn substitute_type_with_handle_const(
             is_handle: data_type.is_handle || replacement.is_handle,
             is_handle_to_const,
             ref_modifier: data_type.ref_modifier,
+            is_mixin: replacement.is_mixin,
+            is_interface: replacement.is_interface,
         }
     } else {
         data_type
@@ -207,6 +211,8 @@ mod tests {
             is_handle: false,
             is_handle_to_const: false,
             ref_modifier: RefModifier::None,
+            is_mixin: false,
+            is_interface: false,
         };
         let result = substitute_type(input, &map);
 
@@ -229,6 +235,8 @@ mod tests {
             is_handle: false,
             is_handle_to_const: false,
             ref_modifier: RefModifier::In,
+            is_mixin: false,
+            is_interface: false,
         };
         let result = substitute_type(input, &map);
 
@@ -246,6 +254,8 @@ mod tests {
             is_handle: true,
             is_handle_to_const: false,
             ref_modifier: RefModifier::None,
+            is_mixin: false,
+            is_interface: false,
         };
 
         let mut map = SubstitutionMap::default();
@@ -303,6 +313,8 @@ mod tests {
             is_handle: true,
             is_handle_to_const: false,
             ref_modifier: RefModifier::None,
+            is_mixin: false,
+            is_interface: false,
         };
 
         let mut map = SubstitutionMap::default();
@@ -315,6 +327,8 @@ mod tests {
             is_handle: false,
             is_handle_to_const: false,
             ref_modifier: RefModifier::None,
+            is_mixin: false,
+            is_interface: false,
         };
         let result = substitute_type_with_handle_const(input, &map, true);
 
@@ -331,6 +345,8 @@ mod tests {
             is_handle: true,
             is_handle_to_const: false,
             ref_modifier: RefModifier::None,
+            is_mixin: false,
+            is_interface: false,
         };
 
         let mut map = SubstitutionMap::default();
@@ -343,6 +359,8 @@ mod tests {
             is_handle: false,
             is_handle_to_const: false,
             ref_modifier: RefModifier::None,
+            is_mixin: false,
+            is_interface: false,
         };
         let result = substitute_type_with_handle_const(input, &map, false);
 

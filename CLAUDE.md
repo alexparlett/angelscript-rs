@@ -104,3 +104,19 @@ If something fails:
 
 ## Search Guidelines
 Do NOT include years in documentation searches.
+## Native Hooks Mode (Context Engine)
+
+This project uses Claude Code native hooks for context management.
+
+**Automatic behaviors:**
+- SessionStart: Fresh context injected on /clear, resume, or new session
+- PreCompact: State saved before compaction
+- Stop: Progress tracked when you finish responding
+
+**Commands:**
+- `.agent/commands.sh recall failures` - See what NOT to do
+- `.agent/commands.sh success <id> <msg>` - Mark feature complete
+- `.agent/commands.sh failure <id> <msg>` - Record failure
+- `.agent/commands.sh status` - Check progress
+
+**After /clear or /compact:** Context is automatically restored. Just continue working.

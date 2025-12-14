@@ -4,7 +4,7 @@ argument-hint: [--release]
 description: Build the library
 ---
 
-Build the angelscript library.
+Build the entire angelscript workspace.
 
-$ARGUMENTS contains "release": `cargo build --lib --release`
-Otherwise: `cargo build --lib`
+$ARGUMENTS contains "release": `cargo build --workspace --release`
+Otherwise: `cargo build --workspace`

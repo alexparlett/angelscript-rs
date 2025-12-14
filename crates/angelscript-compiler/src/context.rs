@@ -112,6 +112,9 @@ pub struct CompilationContext<'a> {
 
     /// Local scope for function compilation (None when not in a function)
     local_scope: Option<LocalScope>,
+
+    /// String type hash from the string factory (None if not configured)
+    string_type_hash: Option<TypeHash>,
 }
 
 impl<'a> CompilationContext<'a> {
@@ -126,10 +129,31 @@ impl<'a> CompilationContext<'a> {
             errors: Vec::new(),
             template_cache: TemplateInstanceCache::new(),
             local_scope: None,
+            string_type_hash: None,
         };
         // Build initial scope with global namespace
         ctx.rebuild_scope();
         ctx
+    }
+
+    // ========================================================================
+    // String Factory Support
+    // ========================================================================
+
+    /// Set the string type hash from the string factory.
+    ///
+    /// This should be called when setting up the compilation context with
+    /// a string factory. String literals will use this type.
+    pub fn set_string_type(&mut self, hash: TypeHash) {
+        self.string_type_hash = Some(hash);
+    }
+
+    /// Get the string type hash (if configured).
+    ///
+    /// Returns `None` if no string factory has been configured.
+    /// String literal compilation will fail if this is `None`.
+    pub fn string_type_hash(&self) -> Option<TypeHash> {
+        self.string_type_hash
     }
 
     // ========================================================================
@@ -301,6 +325,19 @@ impl<'a> CompilationContext<'a> {
     }
 
     fn add_function_to_scope(&mut self, simple: &str, hash: TypeHash) {
+        // Check for collision with globals (only report once per name)
+        if self.scope.globals.contains_key(simple) && !self.scope.functions.contains_key(simple) {
+            let func_name = self
+                .get_function(hash)
+                .map(|e| e.def.qualified_name().to_string())
+                .unwrap_or_else(|| simple.to_string());
+
+            self.errors.push(CompilationError::DuplicateDefinition {
+                name: func_name,
+                span: Span::default(),
+            });
+        }
+
         // Functions can have multiple overloads - collect all
         let entry = self.scope.functions.entry(simple.to_string()).or_default();
         if !entry.contains(&hash) {
@@ -309,6 +346,19 @@ impl<'a> CompilationContext<'a> {
     }
 
     fn add_global_to_scope(&mut self, simple: &str, hash: TypeHash, ns: &str) {
+        // Check for collision with functions
+        if self.scope.functions.contains_key(simple) {
+            let global_name = self
+                .get_global_entry(hash)
+                .map(|e| e.qualified_name.clone())
+                .unwrap_or_else(|| simple.to_string());
+
+            self.errors.push(CompilationError::DuplicateDefinition {
+                name: global_name,
+                span: Span::default(),
+            });
+        }
+
         if let Some(&existing) = self.scope.globals.get(simple)
             && existing != hash
         {
@@ -405,6 +455,54 @@ impl<'a> CompilationContext<'a> {
             .or_else(|| self.global_registry.get(hash))
     }
 
+    /// Validate that a type can be used for variable declarations.
+    ///
+    /// - Mixin classes cannot be used at all (they're not real types)
+    /// - Interfaces can only be used as handles (e.g., `IDrawable@`, not `IDrawable x;`)
+    ///
+    /// Returns an error if the type cannot be used. This is O(1) since `is_mixin` and
+    /// `is_interface` are cached in the DataType during type resolution.
+    pub fn validate_instantiable_type(
+        &self,
+        data_type: &DataType,
+        span: Span,
+        context: &str,
+    ) -> Result<(), CompilationError> {
+        // Mixins cannot be used at all - they're not real types
+        if data_type.is_mixin {
+            let type_name = self
+                .get_type(data_type.type_hash)
+                .and_then(|e| e.as_class())
+                .map(|c| c.name.as_str())
+                .unwrap_or("<unknown>");
+            return Err(CompilationError::InvalidOperation {
+                message: format!(
+                    "cannot use mixin class '{}' {}; mixins are not instantiable types",
+                    type_name, context
+                ),
+                span,
+            });
+        }
+
+        // Interfaces can only be used as handles
+        if data_type.is_interface && !data_type.is_handle {
+            let type_name = self
+                .get_type(data_type.type_hash)
+                .and_then(|e| e.as_interface())
+                .map(|i| i.name.as_str())
+                .unwrap_or("<unknown>");
+            return Err(CompilationError::InvalidOperation {
+                message: format!(
+                    "cannot use interface '{}' {}; interfaces can only be used as handles ({}@)",
+                    type_name, context, type_name
+                ),
+                span,
+            });
+        }
+
+        Ok(())
+    }
+
     /// Get a function entry by hash (layered lookup).
     pub fn get_function(&self, hash: TypeHash) -> Option<&FunctionEntry> {
         self.unit_registry
@@ -420,6 +518,10 @@ impl<'a> CompilationContext<'a> {
     }
 
     /// Find methods on a type by name. O(1) lookup via method name index.
+    ///
+    /// TODO(Task 41b): This currently only finds methods declared directly on the type.
+    /// Inherited methods from base classes are not included. A type completion pass
+    /// is needed to copy public/protected methods from base classes during registration.
     pub fn find_methods(&self, type_hash: TypeHash, name: &str) -> Vec<TypeHash> {
         let mut methods = Vec::new();
 
@@ -536,7 +638,7 @@ impl<'a> CompilationContext<'a> {
 
     /// Declare a local variable in the current scope.
     ///
-    /// Returns the stack slot, or error if redeclared.
+    /// Returns the stack slot, or error if redeclared or type is not instantiable.
     /// Panics if not in a function.
     pub fn declare_local(
         &mut self,
@@ -545,6 +647,9 @@ impl<'a> CompilationContext<'a> {
         is_const: bool,
         span: Span,
     ) -> Result<u32, CompilationError> {
+        // Validate type is instantiable (not a mixin)
+        self.validate_instantiable_type(&data_type, span, "as local variable type")?;
+
         self.local_scope
             .as_mut()
             .expect("declare_local called outside function")
@@ -562,6 +667,9 @@ impl<'a> CompilationContext<'a> {
         is_const: bool,
         span: Span,
     ) -> Result<u32, CompilationError> {
+        // Validate type is instantiable (not a mixin)
+        self.validate_instantiable_type(&data_type, span, "as function parameter type")?;
+
         self.local_scope
             .as_mut()
             .expect("declare_param called outside function")
@@ -668,7 +776,7 @@ impl<'a> CompilationContext<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use angelscript_core::{ClassEntry, TypeKind};
+    use angelscript_core::{ClassEntry, RefModifier, TypeKind, primitives};
 
     #[test]
     fn scope_new_is_empty() {
@@ -1462,6 +1570,82 @@ mod tests {
 
         // Back in outer function
         assert!(ctx.get_local("captured").is_some());
+
+        ctx.end_function();
+    }
+
+    #[test]
+    fn declare_local_rejects_mixin_type() {
+        let registry = SymbolRegistry::new();
+        let mut ctx = CompilationContext::new(&registry);
+        ctx.begin_function();
+
+        // Create a DataType with is_mixin = true
+        let mixin_type = DataType {
+            type_hash: TypeHash::from_name("TestMixin"),
+            is_const: false,
+            is_handle: false,
+            is_handle_to_const: false,
+            ref_modifier: RefModifier::None,
+            is_mixin: true,
+            is_interface: false,
+        };
+
+        let result = ctx.declare_local("x".into(), mixin_type, false, Span::default());
+
+        assert!(result.is_err());
+        if let Err(CompilationError::InvalidOperation { message, .. }) = result {
+            assert!(message.contains("mixin"));
+            assert!(message.contains("instantiable"));
+        } else {
+            panic!("Expected InvalidOperation error");
+        }
+
+        ctx.end_function();
+    }
+
+    #[test]
+    fn declare_param_rejects_mixin_type() {
+        let registry = SymbolRegistry::new();
+        let mut ctx = CompilationContext::new(&registry);
+        ctx.begin_function();
+
+        // Create a DataType with is_mixin = true
+        let mixin_type = DataType {
+            type_hash: TypeHash::from_name("TestMixin"),
+            is_const: false,
+            is_handle: false,
+            is_handle_to_const: false,
+            ref_modifier: RefModifier::None,
+            is_mixin: true,
+            is_interface: false,
+        };
+
+        let result = ctx.declare_param("param".into(), mixin_type, false, Span::default());
+
+        assert!(result.is_err());
+        if let Err(CompilationError::InvalidOperation { message, .. }) = result {
+            assert!(message.contains("mixin"));
+            assert!(message.contains("parameter"));
+        } else {
+            panic!("Expected InvalidOperation error");
+        }
+
+        ctx.end_function();
+    }
+
+    #[test]
+    fn declare_local_accepts_non_mixin_type() {
+        let mut registry = SymbolRegistry::new();
+        registry.register_all_primitives();
+        let mut ctx = CompilationContext::new(&registry);
+        ctx.begin_function();
+
+        // Regular int type should be accepted
+        let int_type = DataType::simple(primitives::INT32);
+        let result = ctx.declare_local("x".into(), int_type, false, Span::default());
+
+        assert!(result.is_ok());
 
         ctx.end_function();
     }

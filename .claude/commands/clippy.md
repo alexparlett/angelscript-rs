@@ -4,7 +4,7 @@ argument-hint: [fix]
 description: Run clippy linter (with optional auto-fix)
 ---
 
-Run cargo clippy for lint warnings and suggestions.
+Run cargo clippy for lint warnings and suggestions across the entire workspace.
 
-$ARGUMENTS contains "fix": `cargo clippy --all-targets --fix --allow-dirty`
-Otherwise: `cargo clippy --all-targets`
+$ARGUMENTS contains "fix": `cargo clippy --workspace --all-targets --fix --allow-dirty`
+Otherwise: `cargo clippy --workspace --all-targets`

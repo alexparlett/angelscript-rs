@@ -104,6 +104,14 @@ pub struct DataType {
 
     /// Reference modifier for parameters
     pub ref_modifier: RefModifier,
+
+    /// Whether this type is a mixin class (cannot be instantiated).
+    /// Set during type resolution when the underlying type is a mixin.
+    pub is_mixin: bool,
+
+    /// Whether this type is an interface (can only be used as handle).
+    /// Set during type resolution when the underlying type is an interface.
+    pub is_interface: bool,
 }
 
 impl DataType {
@@ -126,6 +134,8 @@ impl DataType {
             is_handle: false,
             is_handle_to_const: false,
             ref_modifier: RefModifier::None,
+            is_mixin: false,
+            is_interface: false,
         }
     }
 
@@ -148,6 +158,8 @@ impl DataType {
             is_handle: false,
             is_handle_to_const: false,
             ref_modifier: RefModifier::None,
+            is_mixin: false,
+            is_interface: false,
         }
     }
 
@@ -188,6 +200,8 @@ impl DataType {
             is_handle: true,
             is_handle_to_const,
             ref_modifier: RefModifier::None,
+            is_mixin: false,
+            is_interface: false,
         }
     }
 
@@ -226,6 +240,8 @@ impl DataType {
             is_handle: true,
             is_handle_to_const,
             ref_modifier: RefModifier::None,
+            is_mixin: false,
+            is_interface: false,
         }
     }
 
@@ -249,6 +265,8 @@ impl DataType {
             is_handle: false,
             is_handle_to_const: false,
             ref_modifier: RefModifier::In,
+            is_mixin: false,
+            is_interface: false,
         }
     }
 
@@ -273,6 +291,8 @@ impl DataType {
             is_handle: false,
             is_handle_to_const: false,
             ref_modifier: RefModifier::Out,
+            is_mixin: false,
+            is_interface: false,
         }
     }
 
@@ -297,6 +317,8 @@ impl DataType {
             is_handle: false,
             is_handle_to_const: false,
             ref_modifier: RefModifier::InOut,
+            is_mixin: false,
+            is_interface: false,
         }
     }
 
@@ -395,6 +417,37 @@ impl DataType {
             is_handle_to_const: true,
             ..self
         }
+    }
+
+    /// Returns true if this type is effectively const.
+    ///
+    /// A type is effectively const if either:
+    /// - The value itself is const (`is_const`)
+    /// - It's a handle to a const value (`is_handle_to_const`)
+    ///
+    /// This is used for const-correctness checks - non-const methods cannot
+    /// be called on effectively const objects.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use angelscript_core::{DataType, primitives};
+    ///
+    /// // const int - effectively const
+    /// assert!(DataType::with_const(primitives::INT32).is_effectively_const());
+    ///
+    /// // int@ const - handle to const, effectively const
+    /// assert!(DataType::with_handle(primitives::INT32, true).is_effectively_const());
+    ///
+    /// // int - not const
+    /// assert!(!DataType::simple(primitives::INT32).is_effectively_const());
+    ///
+    /// // int@ - mutable handle to mutable object, not effectively const
+    /// assert!(!DataType::with_handle(primitives::INT32, false).is_effectively_const());
+    /// ```
+    #[inline]
+    pub const fn is_effectively_const(&self) -> bool {
+        self.is_const || self.is_handle_to_const
     }
 }
 
@@ -656,5 +709,26 @@ mod tests {
         let dt = DataType::with_ref_in(primitives::INT32);
         let s = format!("{}", dt);
         assert!(s.contains("&in"));
+    }
+
+    #[test]
+    fn is_effectively_const() {
+        // Simple type - not const
+        assert!(!DataType::simple(primitives::INT32).is_effectively_const());
+
+        // const int - effectively const
+        assert!(DataType::with_const(primitives::INT32).is_effectively_const());
+
+        // int@ - mutable handle to mutable object, not effectively const
+        assert!(!DataType::with_handle(primitives::INT32, false).is_effectively_const());
+
+        // int@ const - handle to const, effectively const
+        assert!(DataType::with_handle(primitives::INT32, true).is_effectively_const());
+
+        // const int@ - const handle to mutable object, effectively const
+        assert!(DataType::const_handle(primitives::INT32, false).is_effectively_const());
+
+        // const int@ const - both const, effectively const
+        assert!(DataType::const_handle(primitives::INT32, true).is_effectively_const());
     }
 }

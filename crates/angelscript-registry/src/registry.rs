@@ -118,6 +118,13 @@ impl SymbolRegistry {
         self.type_by_name.contains_key(name)
     }
 
+    /// Get a mutable reference to a class entry by hash.
+    ///
+    /// Returns `None` if the type doesn't exist or is not a class.
+    pub fn get_class_mut(&mut self, hash: TypeHash) -> Option<&mut ClassEntry> {
+        self.get_mut(hash)?.as_class_mut()
+    }
+
     // ==========================================================================
     // Function Lookup
     // ==========================================================================

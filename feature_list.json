@@ -1,0 +1,222 @@
+{
+  "project": "angelscript-rust",
+  "description": "A complete Rust implementation of an AngelScript scripting engine",
+  "features": [
+    {
+      "id": "type-registry",
+      "name": "Unified Type Registry",
+      "status": "complete",
+      "description": "Central registry for all type entries with TypeHash identity",
+      "task": ".agent/tasks/01_unified-type-registry.md",
+      "verification": "cargo nextest run -p angelscript-registry"
+    },
+    {
+      "id": "lexer",
+      "name": "Lexer",
+      "status": "complete",
+      "description": "Full tokenization with span tracking for all AngelScript tokens",
+      "verification": "cargo nextest run -p angelscript-parser -E 'test(lexer)'"
+    },
+    {
+      "id": "ast-parser",
+      "name": "AST Parser",
+      "status": "complete",
+      "description": "Recursive descent parser for types, expressions, statements, declarations",
+      "verification": "cargo nextest run -p angelscript-parser"
+    },
+    {
+      "id": "visitor-pattern",
+      "name": "Visitor Pattern",
+      "status": "complete",
+      "description": "Zero-cost AST traversal abstraction with 50+ visit methods",
+      "verification": "cargo nextest run -p angelscript-parser -E 'test(visitor)'"
+    },
+    {
+      "id": "proc-macros",
+      "name": "Procedural Macros",
+      "status": "complete",
+      "description": "Derive macros for Any, function registration, interface definition",
+      "verification": "cargo nextest run -p angelscript-macros"
+    },
+    {
+      "id": "stdlib-math",
+      "name": "Standard Library: Math",
+      "status": "complete",
+      "description": "Math module with trigonometry, power, rounding functions",
+      "verification": "cargo nextest run -p angelscript-modules -E 'test(math)'"
+    },
+    {
+      "id": "stdlib-string",
+      "name": "Standard Library: String",
+      "status": "complete",
+      "description": "String type with manipulation functions",
+      "verification": "cargo nextest run -p angelscript-modules -E 'test(string)'"
+    },
+    {
+      "id": "stdlib-array",
+      "name": "Standard Library: Array",
+      "status": "in-progress",
+      "description": "Array template type with iteration and manipulation",
+      "verification": "cargo nextest run -p angelscript-modules -E 'test(array)'"
+    },
+    {
+      "id": "stdlib-dictionary",
+      "name": "Standard Library: Dictionary",
+      "status": "in-progress",
+      "description": "Dictionary type for key-value storage",
+      "verification": "cargo nextest run -p angelscript-modules -E 'test(dictionary)'"
+    },
+    {
+      "id": "compiler",
+      "name": "Compiler",
+      "status": "in-progress",
+      "description": "Two-pass compiler: registration then bytecode generation",
+      "verification": "cargo nextest run -p angelscript-compiler",
+      "subtasks": [
+        {
+          "id": "task-31",
+          "name": "Compiler Foundation",
+          "status": "complete",
+          "task": ".agent/tasks/31_compiler_foundation.md"
+        },
+        {
+          "id": "task-32",
+          "name": "String Factory",
+          "status": "complete",
+          "task": ".agent/tasks/32_string_factory.md"
+        },
+        {
+          "id": "task-33",
+          "name": "Compilation Context",
+          "status": "complete",
+          "task": ".agent/tasks/33_compilation_context.md"
+        },
+        {
+          "id": "task-34",
+          "name": "Type Resolution",
+          "status": "complete",
+          "task": ".agent/tasks/34_type_resolution.md"
+        },
+        {
+          "id": "task-35",
+          "name": "Template Instantiation",
+          "status": "complete",
+          "task": ".agent/tasks/35_template_instantiation.md"
+        },
+        {
+          "id": "task-36",
+          "name": "Conversion System",
+          "status": "complete",
+          "task": ".agent/tasks/36_conversion_system.md"
+        },
+        {
+          "id": "task-37",
+          "name": "Overload Resolution",
+          "status": "complete",
+          "task": ".agent/tasks/37_overload_resolution.md"
+        },
+        {
+          "id": "task-38",
+          "name": "Registration Pass",
+          "status": "complete",
+          "task": ".agent/tasks/38_registration_pass.md"
+        },
+        {
+          "id": "task-39",
+          "name": "Local Scope",
+          "status": "complete",
+          "task": ".agent/tasks/39_local_scope.md"
+        },
+        {
+          "id": "task-40",
+          "name": "Bytecode Emitter",
+          "status": "complete",
+          "task": ".agent/tasks/40_bytecode_emitter.md"
+        },
+        {
+          "id": "task-41",
+          "name": "Expression Compilation - Basics",
+          "status": "complete",
+          "task": ".agent/tasks/41_expression_basics.md"
+        },
+        {
+          "id": "task-41b",
+          "name": "Type Completion Pass",
+          "status": "complete",
+          "task": ".agent/tasks/41b_type_completion.md"
+        },
+        {
+          "id": "task-41c",
+          "name": "Script Inheritance Validation",
+          "status": "pending",
+          "task": ".agent/tasks/41c_validate_script_inheritance.md"
+        },
+        {
+          "id": "task-41d",
+          "name": "Const-Correctness",
+          "status": "complete",
+          "task": ".agent/tasks/41d_const_correctness.md"
+        },
+        {
+          "id": "task-41e",
+          "name": "Mixin Support",
+          "status": "pending",
+          "task": ".agent/tasks/41e_mixin_support.md"
+        },
+        {
+          "id": "task-42",
+          "name": "Expression Compilation - Calls",
+          "status": "pending",
+          "task": ".agent/tasks/42_expression_calls.md"
+        },
+        {
+          "id": "task-43",
+          "name": "Expression Compilation - Advanced",
+          "status": "pending",
+          "task": ".agent/tasks/43_expression_advanced.md"
+        },
+        {
+          "id": "task-44",
+          "name": "Statement Compilation - Basics",
+          "status": "pending",
+          "task": ".agent/tasks/44_statement_basics.md"
+        },
+        {
+          "id": "task-45",
+          "name": "Statement Compilation - Loops",
+          "status": "pending",
+          "task": ".agent/tasks/45_statement_loops.md"
+        },
+        {
+          "id": "task-46",
+          "name": "Function Compilation",
+          "status": "pending",
+          "task": ".agent/tasks/46_function_compilation.md"
+        },
+        {
+          "id": "task-49",
+          "name": "Multi-Section Compilation",
+          "status": "pending",
+          "task": ".agent/tasks/49_multi_section_compilation.md"
+        }
+      ]
+    },
+    {
+      "id": "integration-testing",
+      "name": "Integration Testing",
+      "status": "pending",
+      "description": "End-to-end integration tests",
+      "task": ".agent/tasks/47_integration_testing.md",
+      "verification": "cargo nextest run --workspace"
+    },
+    {
+      "id": "ffi-gaps",
+      "name": "FFI Registration Gaps",
+      "status": "pending",
+      "description": "Fill gaps in FFI type registration",
+      "task": ".agent/tasks/48_ffi_registration_gaps.md",
+      "verification": "cargo nextest run -p angelscript-registry"
+    }
+  ],
+  "next_task": "task-41c"
+}
