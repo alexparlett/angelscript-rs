@@ -7,3 +7,4 @@ target/
 *profile.json
 *profile.json.gz
 .claude/tdd-guard/data
+.agent/
