@@ -676,9 +676,46 @@ pub enum CompilationError {
     },
 
     /// Cannot modify a const value.
-    #[error("at {span}: cannot modify const value")]
+    #[error("at {span}: {message}")]
     CannotModifyConst {
+        /// Description of what cannot be modified.
+        message: String,
         /// Where the error occurred.
+        span: Span,
+    },
+
+    /// A referenced field could not be found.
+    #[error("at {span}: unknown field '{field}' on type '{type_name}'")]
+    UnknownField {
+        /// The field name that wasn't found.
+        field: String,
+        /// The type on which the field was accessed.
+        type_name: String,
+        /// Where the field was referenced.
+        span: Span,
+    },
+
+    /// A referenced method could not be found.
+    #[error("at {span}: unknown method '{method}' on type '{type_name}'")]
+    UnknownMethod {
+        /// The method name that wasn't found.
+        method: String,
+        /// The type on which the method was called.
+        type_name: String,
+        /// Where the method was called.
+        span: Span,
+    },
+
+    /// Wrong number of arguments in function/method call.
+    #[error("at {span}: {name} expects {expected} argument(s), got {got}")]
+    ArgumentCountMismatch {
+        /// The function or method name.
+        name: String,
+        /// Expected number of arguments.
+        expected: usize,
+        /// Actual number of arguments provided.
+        got: usize,
+        /// Where the call occurred.
         span: Span,
     },
 
@@ -723,9 +760,12 @@ impl CompilationError {
             CompilationError::AmbiguousOverload { span, .. } => *span,
             CompilationError::NoOperator { span, .. } => *span,
             CompilationError::NotAnLvalue { span } => *span,
-            CompilationError::CannotModifyConst { span } => *span,
+            CompilationError::CannotModifyConst { span, .. } => *span,
             CompilationError::ThisOutsideClass { span } => *span,
             CompilationError::UndefinedVariable { span, .. } => *span,
+            CompilationError::UnknownField { span, .. } => *span,
+            CompilationError::UnknownMethod { span, .. } => *span,
+            CompilationError::ArgumentCountMismatch { span, .. } => *span,
         }
     }
 }

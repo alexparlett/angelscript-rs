@@ -41,6 +41,20 @@ impl PropertyEntry {
         }
     }
 
+    /// Create a direct field (no getter/setter).
+    ///
+    /// Direct fields are accessed via `GetField`/`SetField` bytecode opcodes
+    /// rather than through accessor methods.
+    pub fn field(name: impl Into<String>, data_type: DataType, visibility: Visibility) -> Self {
+        Self {
+            name: name.into(),
+            data_type,
+            visibility,
+            getter: None,
+            setter: None,
+        }
+    }
+
     /// Create a read-only property.
     pub fn read_only(name: impl Into<String>, data_type: DataType, getter: TypeHash) -> Self {
         Self {
@@ -81,6 +95,14 @@ impl PropertyEntry {
     /// Check if this property is read-write.
     pub fn is_read_write(&self) -> bool {
         self.getter.is_some() && self.setter.is_some()
+    }
+
+    /// Check if this is a direct field (not a virtual property).
+    ///
+    /// Direct fields have no getter or setter methods and are accessed
+    /// directly via `GetField`/`SetField` bytecode opcodes.
+    pub fn is_direct_field(&self) -> bool {
+        self.getter.is_none() && self.setter.is_none()
     }
 }
 
@@ -135,5 +157,18 @@ mod tests {
         let value = EnumValue::new("Red", 0);
         assert_eq!(value.name, "Red");
         assert_eq!(value.value, 0);
+    }
+
+    #[test]
+    fn property_entry_direct_field() {
+        let prop =
+            PropertyEntry::field("x", DataType::simple(primitives::INT32), Visibility::Public);
+        assert!(prop.is_direct_field());
+        assert!(!prop.is_read_only());
+        assert!(!prop.is_write_only());
+        assert!(!prop.is_read_write());
+        assert_eq!(prop.getter, None);
+        assert_eq!(prop.setter, None);
+        assert_eq!(prop.name, "x");
     }
 }
