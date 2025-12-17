@@ -18,8 +18,10 @@
 //! ```
 
 mod binary;
+mod calls;
 mod identifiers;
 mod literals;
+pub(crate) mod member;
 mod unary;
 
 use angelscript_core::{CompilationError, DataType, TypeHash, primitives};
@@ -82,29 +84,22 @@ impl<'a, 'ctx, 'pool> ExprCompiler<'a, 'ctx, 'pool> {
             Expr::Postfix(post) => unary::compile_postfix(self, post),
             Expr::Paren(p) => self.infer(p.expr),
 
-            // Handled in later tasks
-            Expr::Call(_) => Err(CompilationError::Other {
-                message: "Call expressions not yet implemented (Task 42)".to_string(),
-                span,
-            }),
-            Expr::Member(_) => Err(CompilationError::Other {
-                message: "Member access not yet implemented (Task 42)".to_string(),
-                span,
-            }),
-            Expr::Index(_) => Err(CompilationError::Other {
-                message: "Index expressions not yet implemented (Task 42)".to_string(),
-                span,
-            }),
+            // Call expressions (Task 42)
+            Expr::Call(call) => calls::compile_call(self, call),
+            Expr::Member(member) => member::compile_member(self, member),
+            Expr::Index(index) => member::compile_index(self, index),
+
+            // Deferred to Task 43
             Expr::Assign(_) => Err(CompilationError::Other {
-                message: "Assignment not yet implemented (Task 42)".to_string(),
+                message: "Assignment not yet implemented (Task 43)".to_string(),
                 span,
             }),
             Expr::Ternary(_) => Err(CompilationError::Other {
-                message: "Ternary expressions not yet implemented (Task 42)".to_string(),
+                message: "Ternary expressions not yet implemented (Task 43)".to_string(),
                 span,
             }),
             Expr::Cast(_) => Err(CompilationError::Other {
-                message: "Cast expressions not yet implemented (Task 42)".to_string(),
+                message: "Cast expressions not yet implemented (Task 43)".to_string(),
                 span,
             }),
             Expr::Lambda(_) => Err(CompilationError::Other {
@@ -182,7 +177,7 @@ impl<'a, 'ctx, 'pool> ExprCompiler<'a, 'ctx, 'pool> {
 }
 
 /// Emit the bytecode for a type conversion.
-fn emit_conversion(emitter: &mut BytecodeEmitter<'_>, conv: &Conversion) {
+pub(crate) fn emit_conversion(emitter: &mut BytecodeEmitter<'_>, conv: &Conversion) {
     match &conv.kind {
         ConversionKind::Identity => {
             // No bytecode needed

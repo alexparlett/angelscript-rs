@@ -32,7 +32,7 @@
 use angelscript_core::{
     ClassEntry, CompilationError, DataType, EnumEntry, FuncdefEntry, FunctionDef, FunctionEntry,
     FunctionSource, FunctionTraits, GlobalPropertyEntry, GlobalPropertyImpl, InterfaceEntry, Param,
-    RefModifier, Span, TypeHash, TypeKind, TypeSource, UnitId, Visibility,
+    PropertyEntry, RefModifier, Span, TypeHash, TypeKind, TypeSource, UnitId, Visibility,
 };
 use angelscript_parser::ast::{
     ClassDecl, ClassMember, EnumDecl, Enumerator, FieldDecl, FuncdefDecl, FunctionDecl,
@@ -484,9 +484,8 @@ impl<'a, 'reg> RegistrationPass<'a, 'reg> {
         }
     }
 
-    fn visit_field(&mut self, field: &FieldDecl<'_>, _class_hash: TypeHash) {
-        // Fields are stored in the class entry, not as separate registry entries
-        // Validate the field type can be resolved and is instantiable
+    fn visit_field(&mut self, field: &FieldDecl<'_>, class_hash: TypeHash) {
+        // Resolve the field type
         let mut resolver = TypeResolver::new(self.ctx);
         let data_type = match resolver.resolve(&field.ty) {
             Ok(dt) => dt,
@@ -502,10 +501,49 @@ impl<'a, 'reg> RegistrationPass<'a, 'reg> {
                 .validate_instantiable_type(&data_type, field.ty.span, "as class field type")
         {
             self.ctx.add_error(e);
+            return;
+        }
+
+        // Create PropertyEntry for this field (direct field, no getter/setter)
+        let property = PropertyEntry::new(
+            field.name.name.to_string(),
+            data_type,
+            convert_visibility(field.visibility),
+            None, // No getter - direct field access
+            None, // No setter - direct field access
+        );
+
+        // Add field to class properties
+        if let Some(class) = self.ctx.unit_registry_mut().get_class_mut(class_hash) {
+            class.properties.push(property);
         }
     }
 
     fn visit_virtual_property(&mut self, prop: &VirtualPropertyDecl<'_>, class_hash: TypeHash) {
+        // Resolve property type first (shared across accessors)
+        let mut resolver = TypeResolver::new(self.ctx);
+        let prop_type = match resolver.resolve(&prop.ty.ty) {
+            Ok(dt) => dt,
+            Err(e) => {
+                self.ctx.add_error(e);
+                return;
+            }
+        };
+
+        // Validate property type is instantiable (not a mixin, interfaces must be handles)
+        if let Err(e) = self.ctx.validate_instantiable_type(
+            &prop_type,
+            prop.ty.span,
+            "as virtual property type",
+        ) {
+            self.ctx.add_error(e);
+            return;
+        }
+
+        // Track getter/setter hashes for the PropertyEntry
+        let mut getter_hash: Option<TypeHash> = None;
+        let mut setter_hash: Option<TypeHash> = None;
+
         // Virtual properties are backed by getter/setter methods
         // Register accessor methods
         for accessor in prop.accessors {
@@ -518,26 +556,6 @@ impl<'a, 'reg> RegistrationPass<'a, 'reg> {
                 }
             };
 
-            // Resolve property type
-            let mut resolver = TypeResolver::new(self.ctx);
-            let prop_type = match resolver.resolve(&prop.ty.ty) {
-                Ok(dt) => dt,
-                Err(e) => {
-                    self.ctx.add_error(e);
-                    continue;
-                }
-            };
-
-            // Validate property type is instantiable (not a mixin, interfaces must be handles)
-            if let Err(e) = self.ctx.validate_instantiable_type(
-                &prop_type,
-                prop.ty.span,
-                "as virtual property type",
-            ) {
-                self.ctx.add_error(e);
-                continue;
-            }
-
             // Create getter or setter signature
             let (params, return_type) = match accessor.kind {
                 angelscript_parser::ast::PropertyAccessorKind::Get => (vec![], prop_type),
@@ -549,6 +567,12 @@ impl<'a, 'reg> RegistrationPass<'a, 'reg> {
             let param_hashes: Vec<TypeHash> =
                 params.iter().map(|p| p.data_type.type_hash).collect();
             let func_hash = TypeHash::from_method(class_hash, &method_name, &param_hashes);
+
+            // Track the hash for the PropertyEntry
+            match accessor.kind {
+                angelscript_parser::ast::PropertyAccessorKind::Get => getter_hash = Some(func_hash),
+                angelscript_parser::ast::PropertyAccessorKind::Set => setter_hash = Some(func_hash),
+            }
 
             let mut traits = FunctionTraits::default();
             if accessor.is_const {
@@ -578,6 +602,20 @@ impl<'a, 'reg> RegistrationPass<'a, 'reg> {
             } else {
                 self.functions_registered += 1;
             }
+        }
+
+        // Create PropertyEntry with getter/setter hashes
+        let property = PropertyEntry::new(
+            prop.name.name.to_string(),
+            prop_type,
+            convert_visibility(prop.visibility),
+            getter_hash,
+            setter_hash,
+        );
+
+        // Add property to class
+        if let Some(class) = self.ctx.unit_registry_mut().get_class_mut(class_hash) {
+            class.properties.push(property);
         }
     }
 
@@ -2302,5 +2340,455 @@ mod tests {
             output.errors
         );
         assert_eq!(output.globals_registered, 1);
+    }
+
+    // ==========================================================================
+    // Field registration tests (Task 42 - visit_field behavior)
+    // ==========================================================================
+
+    #[test]
+    fn field_added_to_class_properties() {
+        let (registry, arena) = setup_context();
+        let source = r#"
+            class Player {
+                int health;
+                float speed;
+            }
+        "#;
+        let script = Parser::parse(source, &arena).unwrap();
+
+        let mut ctx = CompilationContext::new(&registry);
+        let pass = RegistrationPass::new(&mut ctx, UnitId::new(0));
+        let output = pass.run(&script);
+
+        assert!(
+            output.errors.is_empty(),
+            "Expected no errors, got: {:?}",
+            output.errors
+        );
+
+        // Verify fields are added to class.properties
+        let player_hash = ctx.resolve_type("Player").unwrap();
+        let player_entry = ctx.get_type(player_hash).unwrap().as_class().unwrap();
+
+        assert_eq!(player_entry.properties.len(), 2);
+        assert_eq!(player_entry.properties[0].name, "health");
+        assert_eq!(player_entry.properties[1].name, "speed");
+    }
+
+    #[test]
+    fn field_is_direct_field_not_virtual_property() {
+        let (registry, arena) = setup_context();
+        let source = r#"
+            class Player {
+                int health;
+            }
+        "#;
+        let script = Parser::parse(source, &arena).unwrap();
+
+        let mut ctx = CompilationContext::new(&registry);
+        let pass = RegistrationPass::new(&mut ctx, UnitId::new(0));
+        let output = pass.run(&script);
+
+        assert!(output.errors.is_empty());
+
+        // Verify field has no getter/setter (is_direct_field)
+        let player_hash = ctx.resolve_type("Player").unwrap();
+        let player_entry = ctx.get_type(player_hash).unwrap().as_class().unwrap();
+
+        assert_eq!(player_entry.properties.len(), 1);
+        let health_prop = &player_entry.properties[0];
+        assert!(
+            health_prop.getter.is_none(),
+            "Direct field should have no getter"
+        );
+        assert!(
+            health_prop.setter.is_none(),
+            "Direct field should have no setter"
+        );
+    }
+
+    #[test]
+    fn field_type_mixin_rejected() {
+        let (registry, arena) = setup_context();
+        let source = r#"
+            mixin class Helper {
+                void help() {}
+            }
+
+            class Player {
+                Helper helper;
+            }
+        "#;
+        let script = Parser::parse(source, &arena).unwrap();
+
+        let mut ctx = CompilationContext::new(&registry);
+        let pass = RegistrationPass::new(&mut ctx, UnitId::new(0));
+        let output = pass.run(&script);
+
+        // Should have error about mixin as field type
+        assert!(!output.errors.is_empty());
+        assert!(output.errors.iter().any(|e| {
+            matches!(e, CompilationError::InvalidOperation { message, .. }
+                if message.contains("mixin") && message.contains("Helper"))
+        }));
+    }
+
+    #[test]
+    fn field_type_interface_value_rejected() {
+        let (registry, arena) = setup_context();
+        let source = r#"
+            interface IDrawable {
+                void draw();
+            }
+
+            class Player {
+                IDrawable drawable;
+            }
+        "#;
+        let script = Parser::parse(source, &arena).unwrap();
+
+        let mut ctx = CompilationContext::new(&registry);
+        let pass = RegistrationPass::new(&mut ctx, UnitId::new(0));
+        let output = pass.run(&script);
+
+        // Interface value type as field should be rejected
+        assert!(!output.errors.is_empty());
+        assert!(output.errors.iter().any(|e| {
+            matches!(e, CompilationError::InvalidOperation { message, .. }
+                if message.contains("interface") && message.contains("IDrawable") && message.contains("handle"))
+        }));
+    }
+
+    #[test]
+    fn field_type_interface_handle_allowed() {
+        let (registry, arena) = setup_context();
+        let source = r#"
+            interface IDrawable {
+                void draw();
+            }
+
+            class Player {
+                IDrawable@ drawable;
+            }
+        "#;
+        let script = Parser::parse(source, &arena).unwrap();
+
+        let mut ctx = CompilationContext::new(&registry);
+        let pass = RegistrationPass::new(&mut ctx, UnitId::new(0));
+        let output = pass.run(&script);
+
+        // Interface handle type as field should be allowed
+        assert!(
+            output.errors.is_empty(),
+            "Expected no errors, got: {:?}",
+            output.errors
+        );
+
+        // Verify field is registered
+        let player_hash = ctx.resolve_type("Player").unwrap();
+        let player_entry = ctx.get_type(player_hash).unwrap().as_class().unwrap();
+        assert_eq!(player_entry.properties.len(), 1);
+        assert_eq!(player_entry.properties[0].name, "drawable");
+    }
+
+    #[test]
+    fn field_preserves_correct_data_type() {
+        use angelscript_core::primitives;
+
+        let (registry, arena) = setup_context();
+        let source = r#"
+            class Player {
+                const int health;
+            }
+        "#;
+        let script = Parser::parse(source, &arena).unwrap();
+
+        let mut ctx = CompilationContext::new(&registry);
+        let pass = RegistrationPass::new(&mut ctx, UnitId::new(0));
+        let output = pass.run(&script);
+
+        assert!(output.errors.is_empty());
+
+        let player_hash = ctx.resolve_type("Player").unwrap();
+        let player_entry = ctx.get_type(player_hash).unwrap().as_class().unwrap();
+
+        assert_eq!(player_entry.properties.len(), 1);
+        let health_prop = &player_entry.properties[0];
+        assert_eq!(health_prop.data_type.type_hash, primitives::INT32);
+        assert!(
+            health_prop.data_type.is_const,
+            "Field should preserve const modifier"
+        );
+    }
+
+    #[test]
+    fn field_preserves_visibility() {
+        let (registry, arena) = setup_context();
+        let source = r#"
+            class Player {
+                private int secret;
+                protected int shared;
+                int public_field;
+            }
+        "#;
+        let script = Parser::parse(source, &arena).unwrap();
+
+        let mut ctx = CompilationContext::new(&registry);
+        let pass = RegistrationPass::new(&mut ctx, UnitId::new(0));
+        let output = pass.run(&script);
+
+        assert!(output.errors.is_empty());
+
+        let player_hash = ctx.resolve_type("Player").unwrap();
+        let player_entry = ctx.get_type(player_hash).unwrap().as_class().unwrap();
+
+        assert_eq!(player_entry.properties.len(), 3);
+        assert_eq!(player_entry.properties[0].visibility, Visibility::Private);
+        assert_eq!(player_entry.properties[1].visibility, Visibility::Protected);
+        assert_eq!(player_entry.properties[2].visibility, Visibility::Public);
+    }
+
+    // ==========================================================================
+    // Virtual property registration tests (Task 42 - visit_virtual_property behavior)
+    // ==========================================================================
+
+    #[test]
+    fn virtual_property_has_getter_hash() {
+        let (registry, arena) = setup_context();
+        let source = r#"
+            class Player {
+                int health { get { return 0; } }
+            }
+        "#;
+        let script = Parser::parse(source, &arena).unwrap();
+
+        let mut ctx = CompilationContext::new(&registry);
+        let pass = RegistrationPass::new(&mut ctx, UnitId::new(0));
+        let output = pass.run(&script);
+
+        assert!(
+            output.errors.is_empty(),
+            "Expected no errors, got: {:?}",
+            output.errors
+        );
+
+        let player_hash = ctx.resolve_type("Player").unwrap();
+        let player_entry = ctx.get_type(player_hash).unwrap().as_class().unwrap();
+
+        assert_eq!(player_entry.properties.len(), 1);
+        let health_prop = &player_entry.properties[0];
+        assert_eq!(health_prop.name, "health");
+        assert!(
+            health_prop.getter.is_some(),
+            "Virtual property should have getter hash"
+        );
+        assert!(
+            health_prop.setter.is_none(),
+            "Read-only property should have no setter"
+        );
+    }
+
+    #[test]
+    fn virtual_property_has_setter_hash() {
+        let (registry, arena) = setup_context();
+        let source = r#"
+            class Player {
+                int health { set { } }
+            }
+        "#;
+        let script = Parser::parse(source, &arena).unwrap();
+
+        let mut ctx = CompilationContext::new(&registry);
+        let pass = RegistrationPass::new(&mut ctx, UnitId::new(0));
+        let output = pass.run(&script);
+
+        assert!(
+            output.errors.is_empty(),
+            "Expected no errors, got: {:?}",
+            output.errors
+        );
+
+        let player_hash = ctx.resolve_type("Player").unwrap();
+        let player_entry = ctx.get_type(player_hash).unwrap().as_class().unwrap();
+
+        assert_eq!(player_entry.properties.len(), 1);
+        let health_prop = &player_entry.properties[0];
+        assert!(
+            health_prop.getter.is_none(),
+            "Write-only property should have no getter"
+        );
+        assert!(
+            health_prop.setter.is_some(),
+            "Virtual property should have setter hash"
+        );
+    }
+
+    #[test]
+    fn virtual_property_has_both_getter_and_setter() {
+        let (registry, arena) = setup_context();
+        let source = r#"
+            class Player {
+                int health { get { return 0; } set { } }
+            }
+        "#;
+        let script = Parser::parse(source, &arena).unwrap();
+
+        let mut ctx = CompilationContext::new(&registry);
+        let pass = RegistrationPass::new(&mut ctx, UnitId::new(0));
+        let output = pass.run(&script);
+
+        assert!(output.errors.is_empty());
+
+        let player_hash = ctx.resolve_type("Player").unwrap();
+        let player_entry = ctx.get_type(player_hash).unwrap().as_class().unwrap();
+
+        assert_eq!(player_entry.properties.len(), 1);
+        let health_prop = &player_entry.properties[0];
+        assert!(health_prop.getter.is_some(), "Property should have getter");
+        assert!(health_prop.setter.is_some(), "Property should have setter");
+    }
+
+    #[test]
+    fn virtual_property_type_mixin_rejected() {
+        let (registry, arena) = setup_context();
+        let source = r#"
+            mixin class Helper {
+                void help() {}
+            }
+
+            class Player {
+                Helper helper { get { return Helper(); } }
+            }
+        "#;
+        let script = Parser::parse(source, &arena).unwrap();
+
+        let mut ctx = CompilationContext::new(&registry);
+        let pass = RegistrationPass::new(&mut ctx, UnitId::new(0));
+        let output = pass.run(&script);
+
+        // Mixin as property type should be rejected
+        assert!(!output.errors.is_empty());
+        assert!(output.errors.iter().any(|e| {
+            matches!(e, CompilationError::InvalidOperation { message, .. }
+                if message.contains("mixin") && message.contains("Helper"))
+        }));
+    }
+
+    #[test]
+    fn virtual_property_type_interface_value_rejected() {
+        let (registry, arena) = setup_context();
+        let source = r#"
+            interface IDrawable {
+                void draw();
+            }
+
+            class Player {
+                IDrawable drawable { get { return null; } }
+            }
+        "#;
+        let script = Parser::parse(source, &arena).unwrap();
+
+        let mut ctx = CompilationContext::new(&registry);
+        let pass = RegistrationPass::new(&mut ctx, UnitId::new(0));
+        let output = pass.run(&script);
+
+        // Interface value type as property should be rejected
+        assert!(!output.errors.is_empty());
+        assert!(output.errors.iter().any(|e| {
+            matches!(e, CompilationError::InvalidOperation { message, .. }
+                if message.contains("interface") && message.contains("IDrawable"))
+        }));
+    }
+
+    #[test]
+    fn virtual_property_type_interface_handle_allowed() {
+        let (registry, arena) = setup_context();
+        let source = r#"
+            interface IDrawable {
+                void draw();
+            }
+
+            class Player {
+                IDrawable@ drawable { get { return null; } }
+            }
+        "#;
+        let script = Parser::parse(source, &arena).unwrap();
+
+        let mut ctx = CompilationContext::new(&registry);
+        let pass = RegistrationPass::new(&mut ctx, UnitId::new(0));
+        let output = pass.run(&script);
+
+        // Interface handle type as property should be allowed
+        assert!(
+            output.errors.is_empty(),
+            "Expected no errors, got: {:?}",
+            output.errors
+        );
+
+        let player_hash = ctx.resolve_type("Player").unwrap();
+        let player_entry = ctx.get_type(player_hash).unwrap().as_class().unwrap();
+        assert_eq!(player_entry.properties.len(), 1);
+    }
+
+    #[test]
+    fn virtual_property_accessor_methods_registered() {
+        let (registry, arena) = setup_context();
+        let source = r#"
+            class Player {
+                int health { get { return 0; } set { } }
+            }
+        "#;
+        let script = Parser::parse(source, &arena).unwrap();
+
+        let mut ctx = CompilationContext::new(&registry);
+        let pass = RegistrationPass::new(&mut ctx, UnitId::new(0));
+        let output = pass.run(&script);
+
+        assert!(output.errors.is_empty());
+
+        // Verify accessor methods are registered (get_health, set_health)
+        // Plus auto-generated: default ctor, copy ctor, opAssign = 5 total
+        assert_eq!(output.functions_registered, 5);
+    }
+
+    #[test]
+    fn mixed_fields_and_virtual_properties() {
+        let (registry, arena) = setup_context();
+        let source = r#"
+            class Player {
+                int directField;
+                int virtualProp { get { return 0; } set { } }
+                float anotherField;
+            }
+        "#;
+        let script = Parser::parse(source, &arena).unwrap();
+
+        let mut ctx = CompilationContext::new(&registry);
+        let pass = RegistrationPass::new(&mut ctx, UnitId::new(0));
+        let output = pass.run(&script);
+
+        assert!(output.errors.is_empty());
+
+        let player_hash = ctx.resolve_type("Player").unwrap();
+        let player_entry = ctx.get_type(player_hash).unwrap().as_class().unwrap();
+
+        // All three should be in properties
+        assert_eq!(player_entry.properties.len(), 3);
+
+        // directField - no getter/setter
+        assert_eq!(player_entry.properties[0].name, "directField");
+        assert!(player_entry.properties[0].getter.is_none());
+        assert!(player_entry.properties[0].setter.is_none());
+
+        // virtualProp - has getter and setter
+        assert_eq!(player_entry.properties[1].name, "virtualProp");
+        assert!(player_entry.properties[1].getter.is_some());
+        assert!(player_entry.properties[1].setter.is_some());
+
+        // anotherField - no getter/setter
+        assert_eq!(player_entry.properties[2].name, "anotherField");
+        assert!(player_entry.properties[2].getter.is_none());
+        assert!(player_entry.properties[2].setter.is_none());
     }
 }

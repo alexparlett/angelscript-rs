@@ -130,6 +130,9 @@ fn find_implicit_conv_method(
 /// A converting constructor is a single-argument constructor that takes
 /// the source type. Const-correctness is checked: cannot pass a const source
 /// to a parameter that doesn't accept const.
+///
+/// Explicit constructors (marked with `explicit` keyword) are NOT considered
+/// for implicit conversions - they can only be called via direct `TypeName(args)` syntax.
 fn find_converting_constructor(
     source: &DataType,
     target: &DataType,
@@ -141,12 +144,13 @@ fn find_converting_constructor(
     for &ctor_hash in &target_class.behaviors.constructors {
         if let Some(func) = ctx.get_function(ctor_hash) {
             let def = &func.def;
-            if def.params.len() == 1 && def.params[0].data_type.type_hash == source.type_hash {
-                // Explicit constructors cannot be used for implicit conversion
-                if def.traits.is_explicit {
-                    continue;
-                }
 
+            // Skip explicit constructors - they can't be used for implicit conversions
+            if def.traits.is_explicit {
+                continue;
+            }
+
+            if def.params.len() == 1 && def.params[0].data_type.type_hash == source.type_hash {
                 let param_type = &def.params[0].data_type;
 
                 // Const-correctness: if source is const, parameter must accept const

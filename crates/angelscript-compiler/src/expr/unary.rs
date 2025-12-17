@@ -77,7 +77,10 @@ fn compile_prefix_inc_dec<'ast>(
 
     // Must be mutable
     if !operand_info.is_mutable {
-        return Err(CompilationError::CannotModifyConst { span: expr.span });
+        return Err(CompilationError::CannotModifyConst {
+            message: "cannot modify const value with increment/decrement operator".to_string(),
+            span: expr.span,
+        });
     }
 
     // Emit the appropriate opcode
@@ -107,7 +110,10 @@ fn compile_postfix_inc_dec<'ast>(
 
     // Must be mutable
     if !operand_info.is_mutable {
-        return Err(CompilationError::CannotModifyConst { span: expr.span });
+        return Err(CompilationError::CannotModifyConst {
+            message: "cannot modify const value with increment/decrement operator".to_string(),
+            span: expr.span,
+        });
     }
 
     // Emit the appropriate opcode
