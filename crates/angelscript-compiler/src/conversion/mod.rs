@@ -82,14 +82,26 @@ pub enum ConversionKind {
         constructor: TypeHash,
     },
 
-    /// Implicit conversion via opImplConv method.
+    /// Implicit conversion via opImplConv method (value conversion).
     ImplicitConvMethod {
         /// The conversion method hash.
         method: TypeHash,
     },
 
-    /// Explicit cast via opCast method.
-    ExplicitCastMethod {
+    /// Explicit conversion via opConv method (value conversion).
+    ExplicitConvMethod {
+        /// The conversion method hash.
+        method: TypeHash,
+    },
+
+    /// Implicit reference cast via opImplCast method.
+    ImplicitCastMethod {
+        /// The cast method hash.
+        method: TypeHash,
+    },
+
+    /// Explicit reference cast via opCast method.
+    ExplicitRefCastMethod {
         /// The cast method hash.
         method: TypeHash,
     },

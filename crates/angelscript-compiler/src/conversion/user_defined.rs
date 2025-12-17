@@ -1,9 +1,19 @@
 //! User-defined conversions.
 //!
 //! This module handles conversions via user-defined methods:
-//! - `opImplConv` - Implicit conversion method
-//! - `opCast` - Explicit cast method
+//! - `opImplConv` - Implicit value conversion method
+//! - `opConv` - Explicit value conversion method
+//! - `opImplCast` - Implicit reference cast method
+//! - `opCast` - Explicit reference cast method
 //! - Converting constructors - Single-argument constructors
+//!
+//! ## AngelScript Conversion Semantics
+//!
+//! | Syntax | Methods Used | Purpose |
+//! |--------|--------------|---------|
+//! | `type(expr)` | constructor, `opConv`, `opImplConv` | Value conversion |
+//! | `cast<type>(expr)` | `opCast`, `opImplCast` | Reference cast (same object, different handle) |
+//! | Implicit | non-explicit constructor, `opImplConv`, `opImplCast` | Automatic conversions |
 
 use angelscript_core::{DataType, TypeHash, primitives};
 
@@ -43,13 +53,20 @@ pub fn find_user_conversion_for_condition(
 }
 
 /// Internal implementation for user conversion lookup.
+///
+/// Priority order (per AngelScript semantics):
+/// 1. opImplConv (implicit value conversion)
+/// 2. opImplCast (implicit reference cast)
+/// 3. Converting constructor (implicit)
+/// 4. opConv (explicit value conversion)
+/// 5. opCast (explicit reference cast)
 fn find_user_conversion_impl(
     source: &DataType,
     target: &DataType,
     ctx: &CompilationContext<'_>,
     is_boolean_condition: bool,
 ) -> Option<Conversion> {
-    // Try implicit conversion method on source (opImplConv)
+    // 1. Try implicit conversion method on source (opImplConv) - value conversion
     if let Some(method) = find_implicit_conv_method(source, target, ctx, is_boolean_condition) {
         return Some(Conversion {
             kind: ConversionKind::ImplicitConvMethod { method },
@@ -58,7 +75,16 @@ fn find_user_conversion_impl(
         });
     }
 
-    // Try constructor conversion on target
+    // 2. Try implicit cast method on source (opImplCast) - reference cast
+    if let Some(method) = find_implicit_cast_method(source, target, ctx) {
+        return Some(Conversion {
+            kind: ConversionKind::ImplicitCastMethod { method },
+            cost: Conversion::COST_USER_IMPLICIT,
+            is_implicit: true,
+        });
+    }
+
+    // 3. Try constructor conversion on target
     if let Some(ctor) = find_converting_constructor(source, target, ctx) {
         return Some(Conversion {
             kind: ConversionKind::ConstructorConversion { constructor: ctor },
@@ -67,10 +93,19 @@ fn find_user_conversion_impl(
         });
     }
 
-    // Try explicit cast method (opCast)
-    if let Some(method) = find_cast_method(source, target, ctx) {
+    // 4. Try explicit conversion method (opConv) - value conversion
+    if let Some(method) = find_explicit_conv_method(source, target, ctx) {
         return Some(Conversion {
-            kind: ConversionKind::ExplicitCastMethod { method },
+            kind: ConversionKind::ExplicitConvMethod { method },
+            cost: Conversion::COST_EXPLICIT_ONLY,
+            is_implicit: false,
+        });
+    }
+
+    // 5. Try explicit cast method (opCast) - reference cast
+    if let Some(method) = find_explicit_cast_method(source, target, ctx) {
+        return Some(Conversion {
+            kind: ConversionKind::ExplicitRefCastMethod { method },
             cost: Conversion::COST_EXPLICIT_ONLY,
             is_implicit: false,
         });
@@ -167,11 +202,69 @@ fn find_converting_constructor(
     None
 }
 
-/// Find an explicit cast method (opCast) on the source type.
+/// Find an explicit conversion method (opConv) on the source type.
 ///
-/// Takes `&DataType` for both source and target for API consistency.
+/// This is for explicit value conversions, used by `type(expr)` syntax
+/// when no constructor is found.
+/// Non-const opConv methods cannot be called on const objects.
+fn find_explicit_conv_method(
+    source: &DataType,
+    target: &DataType,
+    ctx: &CompilationContext<'_>,
+) -> Option<TypeHash> {
+    let class = ctx.get_type(source.type_hash)?.as_class()?;
+
+    // Use O(1) lookup by method name
+    for &method_hash in class.find_methods("opConv") {
+        if let Some(func) = ctx.get_function(method_hash) {
+            // opConv with return type matching target
+            if func.def.return_type.type_hash == target.type_hash {
+                // Const-correctness check: non-const methods cannot be called on const objects
+                if source.is_effectively_const() && !func.def.is_const() {
+                    continue;
+                }
+                return Some(method_hash);
+            }
+        }
+    }
+
+    None
+}
+
+/// Find an implicit reference cast method (opImplCast) on the source type.
+///
+/// This is for implicit reference casts - returning a different handle type
+/// pointing to the same or related object.
+/// Non-const opImplCast methods cannot be called on const objects.
+fn find_implicit_cast_method(
+    source: &DataType,
+    target: &DataType,
+    ctx: &CompilationContext<'_>,
+) -> Option<TypeHash> {
+    let class = ctx.get_type(source.type_hash)?.as_class()?;
+
+    // Use O(1) lookup by method name
+    for &method_hash in class.find_methods("opImplCast") {
+        if let Some(func) = ctx.get_function(method_hash) {
+            // opImplCast with return type matching target
+            if func.def.return_type.type_hash == target.type_hash {
+                // Const-correctness check: non-const methods cannot be called on const objects
+                if source.is_effectively_const() && !func.def.is_const() {
+                    continue;
+                }
+                return Some(method_hash);
+            }
+        }
+    }
+
+    None
+}
+
+/// Find an explicit reference cast method (opCast) on the source type.
+///
+/// This is for explicit reference casts via `cast<type>(expr)` syntax.
 /// Non-const opCast methods cannot be called on const objects.
-fn find_cast_method(
+fn find_explicit_cast_method(
     source: &DataType,
     target: &DataType,
     ctx: &CompilationContext<'_>,
@@ -378,7 +471,7 @@ mod tests {
         assert_eq!(conv.cost, Conversion::COST_EXPLICIT_ONLY);
         assert!(matches!(
             conv.kind,
-            ConversionKind::ExplicitCastMethod { method } if method == cast_hash
+            ConversionKind::ExplicitRefCastMethod { method } if method == cast_hash
         ));
     }
 

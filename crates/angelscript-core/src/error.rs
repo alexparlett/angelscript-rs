@@ -734,6 +734,17 @@ pub enum CompilationError {
         /// Where the variable was referenced.
         span: Span,
     },
+
+    /// Invalid cast between types.
+    #[error("at {span}: cannot cast '{from}' to '{to}'")]
+    InvalidCast {
+        /// The source type.
+        from: String,
+        /// The target type.
+        to: String,
+        /// Where the cast occurred.
+        span: Span,
+    },
 }
 
 impl CompilationError {
@@ -766,6 +777,7 @@ impl CompilationError {
             CompilationError::UnknownField { span, .. } => *span,
             CompilationError::UnknownMethod { span, .. } => *span,
             CompilationError::ArgumentCountMismatch { span, .. } => *span,
+            CompilationError::InvalidCast { span, .. } => *span,
         }
     }
 }
