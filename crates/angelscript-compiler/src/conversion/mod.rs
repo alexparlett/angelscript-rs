@@ -27,7 +27,7 @@ mod user_defined;
 
 pub use handle::find_handle_conversion;
 pub use primitive::{find_primitive_conversion, is_primitive_numeric};
-pub use user_defined::find_user_conversion;
+pub use user_defined::{find_user_conversion, find_user_conversion_for_condition};
 
 /// A type conversion with its cost for overload resolution.
 ///
@@ -274,6 +274,78 @@ pub fn can_implicitly_convert(
     find_conversion(source, target, ctx)
         .map(|c| c.is_implicit)
         .unwrap_or(false)
+}
+
+/// Find conversion for boolean condition context.
+///
+/// This is similar to `find_conversion` but follows AngelScript's special rule:
+/// When compiling boolean expressions in conditions, the compiler will NOT use
+/// `bool opImplConv` on reference types, even if the class method is implemented.
+/// This is because it is ambiguous whether it is the handle that is verified or
+/// the actual object.
+///
+/// Use this function when compiling conditions for `if`, `while`, `for`, ternary `?:`, etc.
+pub fn find_conversion_for_condition(
+    source: &DataType,
+    target: &DataType,
+    ctx: &CompilationContext<'_>,
+) -> Option<Conversion> {
+    use angelscript_core::primitives;
+
+    // 1. Identity check (exact match including modifiers)
+    if source == target {
+        return Some(Conversion::identity());
+    }
+
+    // 2. Same base type - check modifier conversions
+    if source.type_hash == target.type_hash {
+        // Const relaxation: non-const to const is free
+        if !source.is_const && target.is_const && !source.is_handle && !target.is_handle {
+            return Some(Conversion {
+                kind: ConversionKind::Identity,
+                cost: Conversion::COST_CONST_ADDITION,
+                is_implicit: true,
+            });
+        }
+    }
+
+    // 3. Enum conversions
+    if let Some(conv) = find_enum_conversion(source, target, ctx) {
+        return Some(conv);
+    }
+
+    // 4. Primitive conversions
+    if let Some(conv) = primitive::find_primitive_conversion(source, target) {
+        return Some(conv);
+    }
+
+    // 5. Handle conversions
+    if let Some(conv) = handle::find_handle_conversion(source, target) {
+        return Some(conv);
+    }
+
+    // 6. Class hierarchy conversions
+    if let Some(conv) = find_hierarchy_conversion(source, target, ctx) {
+        return Some(conv);
+    }
+
+    // 7. User-defined conversions (with boolean condition restriction)
+    // This uses find_user_conversion_for_condition which skips bool opImplConv on reference types
+    if let Some(conv) = user_defined::find_user_conversion_for_condition(source, target, ctx) {
+        return Some(conv);
+    }
+
+    // 8. Variable argument type (?) - accepts any type
+    // This is the lowest priority implicit conversion
+    if target.type_hash == primitives::VARIABLE_PARAM {
+        return Some(Conversion {
+            kind: ConversionKind::VarArg,
+            cost: Conversion::COST_VAR_ARG,
+            is_implicit: true,
+        });
+    }
+
+    None
 }
 
 /// Find class hierarchy conversion (derived to base, class to interface).
