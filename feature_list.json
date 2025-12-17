@@ -1,77 +1,75 @@
 {
-  "project": "angelscript-rust",
   "description": "A complete Rust implementation of an AngelScript scripting engine",
   "features": [
     {
+      "description": "Central registry for all type entries with TypeHash identity",
       "id": "type-registry",
       "name": "Unified Type Registry",
       "status": "complete",
-      "description": "Central registry for all type entries with TypeHash identity",
       "task": ".agent/tasks/01_unified-type-registry.md",
       "verification": "cargo nextest run -p angelscript-registry"
     },
     {
+      "description": "Full tokenization with span tracking for all AngelScript tokens",
       "id": "lexer",
       "name": "Lexer",
       "status": "complete",
-      "description": "Full tokenization with span tracking for all AngelScript tokens",
       "verification": "cargo nextest run -p angelscript-parser -E 'test(lexer)'"
     },
     {
+      "description": "Recursive descent parser for types, expressions, statements, declarations",
       "id": "ast-parser",
       "name": "AST Parser",
       "status": "complete",
-      "description": "Recursive descent parser for types, expressions, statements, declarations",
       "verification": "cargo nextest run -p angelscript-parser"
     },
     {
+      "description": "Zero-cost AST traversal abstraction with 50+ visit methods",
       "id": "visitor-pattern",
       "name": "Visitor Pattern",
       "status": "complete",
-      "description": "Zero-cost AST traversal abstraction with 50+ visit methods",
       "verification": "cargo nextest run -p angelscript-parser -E 'test(visitor)'"
     },
     {
+      "description": "Derive macros for Any, function registration, interface definition",
       "id": "proc-macros",
       "name": "Procedural Macros",
       "status": "complete",
-      "description": "Derive macros for Any, function registration, interface definition",
       "verification": "cargo nextest run -p angelscript-macros"
     },
     {
+      "description": "Math module with trigonometry, power, rounding functions",
       "id": "stdlib-math",
       "name": "Standard Library: Math",
       "status": "complete",
-      "description": "Math module with trigonometry, power, rounding functions",
       "verification": "cargo nextest run -p angelscript-modules -E 'test(math)'"
     },
     {
+      "description": "String type with manipulation functions",
       "id": "stdlib-string",
       "name": "Standard Library: String",
       "status": "complete",
-      "description": "String type with manipulation functions",
       "verification": "cargo nextest run -p angelscript-modules -E 'test(string)'"
     },
     {
+      "description": "Array template type with iteration and manipulation",
       "id": "stdlib-array",
       "name": "Standard Library: Array",
       "status": "in-progress",
-      "description": "Array template type with iteration and manipulation",
       "verification": "cargo nextest run -p angelscript-modules -E 'test(array)'"
     },
     {
+      "description": "Dictionary type for key-value storage",
       "id": "stdlib-dictionary",
       "name": "Standard Library: Dictionary",
       "status": "in-progress",
-      "description": "Dictionary type for key-value storage",
       "verification": "cargo nextest run -p angelscript-modules -E 'test(dictionary)'"
     },
     {
+      "description": "Two-pass compiler: registration then bytecode generation",
       "id": "compiler",
       "name": "Compiler",
       "status": "in-progress",
-      "description": "Two-pass compiler: registration then bytecode generation",
-      "verification": "cargo nextest run -p angelscript-compiler",
       "subtasks": [
         {
           "id": "task-31",
@@ -160,19 +158,19 @@
         {
           "id": "task-41e",
           "name": "Mixin Support",
-          "status": "pending",
+          "status": "complete",
           "task": ".agent/tasks/41e_mixin_support.md"
         },
         {
           "id": "task-42",
           "name": "Expression Compilation - Calls",
-          "status": "pending",
+          "status": "complete",
           "task": ".agent/tasks/42_expression_calls.md"
         },
         {
           "id": "task-43",
           "name": "Expression Compilation - Advanced",
-          "status": "pending",
+          "status": "complete",
           "task": ".agent/tasks/43_expression_advanced.md"
         },
         {
@@ -199,24 +197,26 @@
           "status": "pending",
           "task": ".agent/tasks/49_multi_section_compilation.md"
         }
-      ]
+      ],
+      "verification": "cargo nextest run -p angelscript-compiler"
     },
     {
+      "description": "End-to-end integration tests",
       "id": "integration-testing",
       "name": "Integration Testing",
       "status": "pending",
-      "description": "End-to-end integration tests",
       "task": ".agent/tasks/47_integration_testing.md",
       "verification": "cargo nextest run --workspace"
     },
     {
+      "description": "Fill gaps in FFI type registration",
       "id": "ffi-gaps",
       "name": "FFI Registration Gaps",
       "status": "pending",
-      "description": "Fill gaps in FFI type registration",
       "task": ".agent/tasks/48_ffi_registration_gaps.md",
       "verification": "cargo nextest run -p angelscript-registry"
     }
   ],
-  "next_task": "task-41c"
+  "next_task": "task-44",
+  "project": "angelscript-rust"
 }
