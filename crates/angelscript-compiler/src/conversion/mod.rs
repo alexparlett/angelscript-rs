@@ -26,7 +26,9 @@ mod operators;
 mod primitive;
 
 pub use handle::find_handle_conversion;
-pub use operators::{find_operator_conversion, find_operator_conversion_for_condition};
+pub use operators::{
+    find_cast_operator, find_operator_conversion, find_operator_conversion_for_condition,
+};
 pub use primitive::{find_primitive_conversion, is_primitive_numeric};
 
 /// A type conversion with its cost for overload resolution.

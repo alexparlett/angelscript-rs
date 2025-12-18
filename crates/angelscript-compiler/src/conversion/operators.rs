@@ -75,10 +75,12 @@ pub fn find_operator_conversion_for_condition(
 ///
 /// Priority order (per AngelScript semantics):
 /// 1. opImplConv (implicit value conversion)
-/// 2. opImplCast (implicit reference cast)
+/// 2. opImplCast (implicit reference cast) - returns handle, valid for implicit handle assignments
 /// 3. Converting constructor (implicit)
-/// 4. opConv (explicit value conversion)
-/// 5. opCast (explicit reference cast)
+/// 4. opConv (explicit value conversion) - for Type(expr) syntax
+///
+/// NOTE: opCast is NOT included here. It's explicit-only and can only be used via
+/// `cast<Type>(expr)` syntax. Use `find_cast_operator` for cast<> compilation.
 fn find_operator_conversion_impl(
     source: &DataType,
     target: &DataType,
@@ -95,6 +97,8 @@ fn find_operator_conversion_impl(
     }
 
     // 2. Try implicit cast method on source (opImplCast) - reference cast
+    // This returns a handle and is valid for implicit handle assignments like:
+    //   OtherType@ ref = myObj;  // Calls myObj.opImplCast()
     if let Some(method) = find_implicit_cast_method(source, target, ctx) {
         return Some(Conversion {
             kind: ConversionKind::ImplicitCastMethod { method },
@@ -113,6 +117,7 @@ fn find_operator_conversion_impl(
     }
 
     // 4. Try explicit conversion method (opConv) - value conversion
+    // This is for Type(expr) syntax, not cast<Type>(expr)
     if let Some(method) = find_explicit_conv_method(source, target, ctx) {
         return Some(Conversion {
             kind: ConversionKind::ExplicitConvMethod { method },
@@ -121,13 +126,32 @@ fn find_operator_conversion_impl(
         });
     }
 
-    // 5. Try explicit cast method (opCast) - reference cast
+    // NOTE: opCast is intentionally NOT checked here.
+    // opCast is explicit-only and can ONLY be invoked via cast<Type>(expr) syntax.
+    // Use find_cast_operator() for cast<> expression compilation.
+
+    None
+}
+
+/// Find a cast operator for `cast<Type>(expr)` syntax.
+///
+/// This looks for opCast (explicit) and opImplCast (implicit) methods.
+/// Both are valid for the cast<> syntax since it's an explicit operation.
+///
+/// Returns the method hash if found, along with whether it's implicit.
+pub fn find_cast_operator(
+    source: &DataType,
+    target: &DataType,
+    ctx: &CompilationContext<'_>,
+) -> Option<(TypeHash, bool)> {
+    // 1. Try opImplCast first (implicit cast method)
+    if let Some(method) = find_implicit_cast_method(source, target, ctx) {
+        return Some((method, true));
+    }
+
+    // 2. Try opCast (explicit cast method)
     if let Some(method) = find_explicit_cast_method(source, target, ctx) {
-        return Some(Conversion {
-            kind: ConversionKind::ExplicitRefCastMethod { method },
-            cost: Conversion::COST_EXPLICIT_ONLY,
-            is_implicit: false,
-        });
+        return Some((method, false));
     }
 
     None
@@ -439,22 +463,40 @@ mod tests {
     }
 
     #[test]
-    fn find_cast_method_is_explicit() {
-        let (registry, source_hash, target_hash, cast_hash) = setup_context_with_cast_method();
+    fn opcast_not_found_by_find_operator_conversion() {
+        // opCast is explicit-only and should ONLY be usable via cast<>() syntax.
+        // It should NOT be found by find_operator_conversion.
+        let (registry, source_hash, target_hash, _cast_hash) = setup_context_with_cast_method();
         let ctx = CompilationContext::new(&registry);
 
         let source = DataType::simple(source_hash);
         let target = DataType::simple(target_hash);
         let conv = find_operator_conversion(&source, &target, &ctx);
 
-        assert!(conv.is_some());
-        let conv = conv.unwrap();
-        assert!(!conv.is_implicit); // opCast is explicit only
-        assert_eq!(conv.cost, Conversion::COST_EXPLICIT_ONLY);
-        assert!(matches!(
-            conv.kind,
-            ConversionKind::ExplicitRefCastMethod { method } if method == cast_hash
-        ));
+        // opCast should NOT be found - it's only for cast<>() syntax
+        assert!(
+            conv.is_none(),
+            "opCast should not be found by find_operator_conversion"
+        );
+    }
+
+    #[test]
+    fn opcast_found_by_find_cast_operator() {
+        // opCast should be found by find_cast_operator (used for cast<>() syntax)
+        let (registry, source_hash, target_hash, cast_hash) = setup_context_with_cast_method();
+        let ctx = CompilationContext::new(&registry);
+
+        let source = DataType::simple(source_hash);
+        let target = DataType::simple(target_hash);
+        let result = find_cast_operator(&source, &target, &ctx);
+
+        assert!(
+            result.is_some(),
+            "opCast should be found by find_cast_operator"
+        );
+        let (method, is_implicit) = result.unwrap();
+        assert_eq!(method, cast_hash);
+        assert!(!is_implicit); // opCast is explicit-only
     }
 
     #[test]

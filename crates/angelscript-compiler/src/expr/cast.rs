@@ -6,15 +6,20 @@
 //!
 //! `cast<>` is specifically for reference casts (same object, different handle type):
 //! - `cast<Derived@>(base@)` - Downcast in class hierarchy
-//! - `cast<Interface@>(obj@)` - Cast via `opCast`/`opImplCast` methods
+//! - `cast<Base@>(derived@)` - Upcast in class hierarchy
+//! - `cast<Interface@>(obj@)` - Cast to implemented interface
+//! - `cast<OtherType@>(obj@)` - Cast via `opCast`/`opImplCast` methods
+//!
+//! The `opCast` and `opImplCast` operators enable casting between unrelated types
+//! by returning a handle to a different type (often a member variable).
 //!
 //! For value conversions, use constructor syntax: `Type(expr)`
 
 use angelscript_core::{CompilationError, TypeHash};
 use angelscript_parser::ast::CastExpr;
 
-use super::{ExprCompiler, Result, emit_conversion};
-use crate::conversion::{Conversion, ConversionKind, find_conversion};
+use super::{ExprCompiler, Result};
+use crate::conversion::find_cast_operator;
 use crate::expr_info::ExprInfo;
 use crate::type_resolver::TypeResolver;
 
@@ -23,7 +28,8 @@ use crate::type_resolver::TypeResolver;
 /// Reference casts allow changing the handle type while referring to the same object.
 /// This includes:
 /// - Class hierarchy casts (base to derived, derived to base)
-/// - Interface casts via `opCast`/`opImplCast` methods
+/// - Interface casts (class to implemented interface)
+/// - User-defined casts via `opCast`/`opImplCast` methods
 pub fn compile_cast<'ast>(
     compiler: &mut ExprCompiler<'_, '_, '_>,
     expr: &CastExpr<'ast>,
@@ -40,33 +46,31 @@ pub fn compile_cast<'ast>(
     let source_info = compiler.infer(expr.expr)?;
     let source_type = &source_info.data_type;
 
-    // 3. Identity cast - no conversion needed
+    // 3. Identity cast - no cast needed
     if source_type.type_hash == target_type.type_hash {
         // Just need to handle const/handle modifier changes
         return Ok(ExprInfo::rvalue(target_type));
     }
 
-    // 4. Try to find a conversion (including explicit-only conversions)
-    if let Some(conv) = find_conversion(source_type, &target_type, compiler.ctx()) {
-        // For cast<>, we allow explicit conversions
-        // Check if this is a valid cast conversion
-        if is_valid_cast_conversion(&conv) {
-            emit_conversion(compiler.emitter(), &conv);
+    // 4. Handle casts only work between handle types
+    if source_type.is_handle && target_type.is_handle {
+        // 4a. Try hierarchy casts (derived to base, base to derived, interface)
+        if let Some(()) = try_hierarchy_cast(source_type.type_hash, target_type.type_hash, compiler)
+        {
+            return Ok(ExprInfo::rvalue(target_type));
+        }
+
+        // 4b. Try user-defined cast operators (opCast, opImplCast)
+        if let Some((method_hash, _is_implicit)) =
+            find_cast_operator(source_type, &target_type, compiler.ctx())
+        {
+            // Emit method call for the cast operator (0 args since it's a getter-style method)
+            compiler.emitter().emit_call_method(method_hash, 0);
             return Ok(ExprInfo::rvalue(target_type));
         }
     }
 
-    // 5. Handle hierarchy casts (derived to base, base to derived)
-    if source_type.is_handle
-        && target_type.is_handle
-        && let Some(conv) =
-            find_hierarchy_cast(source_type.type_hash, target_type.type_hash, compiler.ctx())
-    {
-        emit_conversion(compiler.emitter(), &conv);
-        return Ok(ExprInfo::rvalue(target_type));
-    }
-
-    // 6. No valid cast found
+    // 5. No valid cast found
     Err(CompilationError::InvalidCast {
         from: compiler
             .ctx()
@@ -82,67 +86,42 @@ pub fn compile_cast<'ast>(
     })
 }
 
-/// Check if a conversion is valid for cast<> syntax.
+/// Try to emit a hierarchy cast between handle types.
 ///
-/// Cast allows:
-/// - Reference casts (opCast, opImplCast, hierarchy casts)
-/// - NOT value conversions (those use Type(expr) syntax)
-fn is_valid_cast_conversion(conv: &Conversion) -> bool {
-    matches!(
-        conv.kind,
-        ConversionKind::Identity
-            | ConversionKind::HandleToConst
-            | ConversionKind::DerivedToBase { .. }
-            | ConversionKind::ClassToInterface { .. }
-            | ConversionKind::ReferenceCast { .. }
-            | ConversionKind::ImplicitCastMethod { .. }
-            | ConversionKind::ExplicitRefCastMethod { .. }
-    )
-}
-
-/// Find a hierarchy cast between handle types.
+/// This handles:
+/// - Upcasts (derived to base) - always valid
+/// - Downcasts (base to derived) - requires runtime type check
+/// - Interface casts (class to implemented interface)
 ///
-/// This handles downcasting (base to derived) which requires runtime type checking.
-fn find_hierarchy_cast(
+/// Returns `Some(())` if a valid cast was found and bytecode emitted.
+fn try_hierarchy_cast(
     source_hash: TypeHash,
     target_hash: TypeHash,
-    ctx: &crate::context::CompilationContext<'_>,
-) -> Option<Conversion> {
-    // Check if target is derived from source (downcast)
-    if is_derived_from(target_hash, source_hash, ctx) {
-        // Downcast requires runtime type check via Cast opcode
-        return Some(Conversion {
-            kind: ConversionKind::ReferenceCast {
-                target: target_hash,
-            },
-            cost: Conversion::COST_REFERENCE_CAST,
-            is_implicit: false, // Downcasts are explicit only
-        });
+    compiler: &mut ExprCompiler<'_, '_, '_>,
+) -> Option<()> {
+    let ctx = compiler.ctx();
+
+    // Check if source is derived from target (upcast) - always valid
+    if is_derived_from(source_hash, target_hash, ctx) {
+        // Upcast: just reinterpret the handle, no runtime check needed
+        compiler.emitter().emit_cast(target_hash);
+        return Some(());
     }
 
-    // Check if source is derived from target (upcast) - should be found by find_conversion
-    // but handle it here for completeness
-    if is_derived_from(source_hash, target_hash, ctx) {
-        return Some(Conversion {
-            kind: ConversionKind::ReferenceCast {
-                target: target_hash,
-            },
-            cost: Conversion::COST_REFERENCE_CAST,
-            is_implicit: true,
-        });
+    // Check if target is derived from source (downcast) - requires runtime check
+    if is_derived_from(target_hash, source_hash, ctx) {
+        // Downcast: emit Cast opcode which does runtime type check
+        compiler.emitter().emit_cast(target_hash);
+        return Some(());
     }
 
     // Check interface implementation
     if let Some(source_class) = ctx.get_type(source_hash).and_then(|t| t.as_class())
         && source_class.interfaces.contains(&target_hash)
     {
-        return Some(Conversion {
-            kind: ConversionKind::ReferenceCast {
-                target: target_hash,
-            },
-            cost: Conversion::COST_REFERENCE_CAST,
-            is_implicit: true,
-        });
+        // Interface cast: reinterpret as interface handle
+        compiler.emitter().emit_cast(target_hash);
+        return Some(());
     }
 
     None
@@ -318,10 +297,10 @@ mod tests {
     }
 
     #[test]
-    fn cast_unrelated_types_fails() {
+    fn cast_unrelated_types_without_opcast_fails() {
         let mut registry = SymbolRegistry::with_primitives();
 
-        // Create two unrelated classes
+        // Create two unrelated classes without opCast
         let player_hash = TypeHash::from_name("Player");
         let _enemy_hash = TypeHash::from_name("Enemy");
 
@@ -347,7 +326,7 @@ mod tests {
 
         let arena = Bump::new();
 
-        // Create cast<Enemy@>(player) expression - should fail
+        // Create cast<Enemy@>(player) expression - should fail (no opCast defined)
         let suffixes = arena.alloc_slice_copy(&[TypeSuffix::Handle { is_const: false }]);
         let target_type = TypeExpr::new(
             false,
@@ -369,10 +348,197 @@ mod tests {
         let mut compiler = create_test_compiler(&mut ctx, &mut emitter);
         let result = compile_cast(&mut compiler, &cast_expr);
 
-        assert!(result.is_err(), "Cast between unrelated types should fail");
+        assert!(
+            result.is_err(),
+            "Cast between unrelated types without opCast should fail"
+        );
         assert!(matches!(
             result.unwrap_err(),
             CompilationError::InvalidCast { .. }
         ));
+    }
+
+    #[test]
+    fn cast_via_opcast_method() {
+        use angelscript_core::{
+            FunctionDef, FunctionEntry, FunctionTraits, OperatorBehavior, Visibility,
+        };
+
+        let mut registry = SymbolRegistry::with_primitives();
+
+        // Create two unrelated classes: MyObjA and MyObjB
+        let obj_a_hash = TypeHash::from_name("MyObjA");
+        let obj_b_hash = TypeHash::from_name("MyObjB");
+
+        // Register MyObjB first (target of cast)
+        let obj_b_class = ClassEntry::ffi("MyObjB", TypeKind::reference());
+        registry.register_type(obj_b_class.into()).unwrap();
+
+        // Register MyObjA with opCast returning MyObjB@
+        let opcast_hash = TypeHash::from_method(obj_a_hash, "opCast", &[]);
+        let mut obj_a_class = ClassEntry::ffi("MyObjA", TypeKind::reference());
+        // The target of opCast is a handle to MyObjB
+        let target_handle_hash = obj_b_hash; // For simplicity, behaviors key on base type
+        obj_a_class
+            .behaviors
+            .add_operator(OperatorBehavior::OpCast(target_handle_hash), opcast_hash);
+        registry.register_type(obj_a_class.into()).unwrap();
+
+        // Register the opCast method itself
+        let opcast_def = FunctionDef::new(
+            opcast_hash,
+            "opCast".to_string(),
+            vec![],
+            vec![],
+            DataType::simple(obj_b_hash).as_handle(), // Returns MyObjB@
+            Some(obj_a_hash),
+            FunctionTraits::default(),
+            true, // const method
+            Visibility::Public,
+        );
+        registry
+            .register_function(FunctionEntry::ffi(opcast_def))
+            .unwrap();
+
+        let mut ctx = CompilationContext::new(&registry);
+        ctx.begin_function();
+
+        // Declare a variable of type MyObjA@
+        ctx.declare_local(
+            "objA".to_string(),
+            DataType::simple(obj_a_hash).as_handle(),
+            false,
+            Span::default(),
+        )
+        .unwrap();
+
+        let mut constants = ConstantPool::new();
+        let mut emitter = BytecodeEmitter::new(&mut constants);
+
+        let arena = Bump::new();
+
+        // Create cast<MyObjB@>(objA) expression - should succeed via opCast
+        let suffixes = arena.alloc_slice_copy(&[TypeSuffix::Handle { is_const: false }]);
+        let target_type = TypeExpr::new(
+            false,
+            None,
+            TypeBase::Named(Ident::new("MyObjB", Span::new(1, 6, 6))),
+            &[],
+            suffixes,
+            Span::new(1, 6, 7),
+        );
+
+        let obj_a_ident = make_ident_expr(&arena, "objA", Span::new(1, 15, 4));
+
+        let cast_expr = CastExpr {
+            target_type,
+            expr: obj_a_ident,
+            span: Span::new(1, 1, 20),
+        };
+
+        let mut compiler = create_test_compiler(&mut ctx, &mut emitter);
+        let result = compile_cast(&mut compiler, &cast_expr);
+
+        assert!(
+            result.is_ok(),
+            "Cast via opCast should succeed: {:?}",
+            result
+        );
+        let info = result.unwrap();
+
+        // Result should be MyObjB@
+        assert_eq!(info.data_type.type_hash, obj_b_hash);
+        assert!(info.data_type.is_handle);
+    }
+
+    #[test]
+    fn cast_via_opimplcast_method() {
+        use angelscript_core::{
+            FunctionDef, FunctionEntry, FunctionTraits, OperatorBehavior, Visibility,
+        };
+
+        let mut registry = SymbolRegistry::with_primitives();
+
+        // Create two unrelated classes: MyObjA and MyObjC
+        let obj_a_hash = TypeHash::from_name("MyObjA");
+        let obj_c_hash = TypeHash::from_name("MyObjC");
+
+        // Register MyObjC first (target of implicit cast)
+        let obj_c_class = ClassEntry::ffi("MyObjC", TypeKind::reference());
+        registry.register_type(obj_c_class.into()).unwrap();
+
+        // Register MyObjA with opImplCast returning MyObjC@
+        let opimplcast_hash = TypeHash::from_method(obj_a_hash, "opImplCast", &[]);
+        let mut obj_a_class = ClassEntry::ffi("MyObjA", TypeKind::reference());
+        obj_a_class
+            .behaviors
+            .add_operator(OperatorBehavior::OpImplCast(obj_c_hash), opimplcast_hash);
+        registry.register_type(obj_a_class.into()).unwrap();
+
+        // Register the opImplCast method itself
+        let opimplcast_def = FunctionDef::new(
+            opimplcast_hash,
+            "opImplCast".to_string(),
+            vec![],
+            vec![],
+            DataType::simple(obj_c_hash).as_handle(), // Returns MyObjC@
+            Some(obj_a_hash),
+            FunctionTraits::default(),
+            true, // const method
+            Visibility::Public,
+        );
+        registry
+            .register_function(FunctionEntry::ffi(opimplcast_def))
+            .unwrap();
+
+        let mut ctx = CompilationContext::new(&registry);
+        ctx.begin_function();
+
+        // Declare a variable of type MyObjA@
+        ctx.declare_local(
+            "objA".to_string(),
+            DataType::simple(obj_a_hash).as_handle(),
+            false,
+            Span::default(),
+        )
+        .unwrap();
+
+        let mut constants = ConstantPool::new();
+        let mut emitter = BytecodeEmitter::new(&mut constants);
+
+        let arena = Bump::new();
+
+        // Create cast<MyObjC@>(objA) expression - should succeed via opImplCast
+        let suffixes = arena.alloc_slice_copy(&[TypeSuffix::Handle { is_const: false }]);
+        let target_type = TypeExpr::new(
+            false,
+            None,
+            TypeBase::Named(Ident::new("MyObjC", Span::new(1, 6, 6))),
+            &[],
+            suffixes,
+            Span::new(1, 6, 7),
+        );
+
+        let obj_a_ident = make_ident_expr(&arena, "objA", Span::new(1, 15, 4));
+
+        let cast_expr = CastExpr {
+            target_type,
+            expr: obj_a_ident,
+            span: Span::new(1, 1, 20),
+        };
+
+        let mut compiler = create_test_compiler(&mut ctx, &mut emitter);
+        let result = compile_cast(&mut compiler, &cast_expr);
+
+        assert!(
+            result.is_ok(),
+            "Cast via opImplCast should succeed: {:?}",
+            result
+        );
+        let info = result.unwrap();
+
+        // Result should be MyObjC@
+        assert_eq!(info.data_type.type_hash, obj_c_hash);
+        assert!(info.data_type.is_handle);
     }
 }
