@@ -5,7 +5,11 @@ This project uses Claude Code native hooks for automatic context management.
 - **SessionStart**: Injects project context on new session, resume, or /clear
 - **PreCompact**: Saves conversation summary before compaction
 
-Memory is stored in `.agent/memory/` (constraints, failures, strategies).
+## Project Structure
+- `tasks/` - Task definitions (committed)
+- `feature_list.json` - Task progress and next_task pointer
+- `.agent/memory/` - Local state (constraints, failures, strategies)
+- `.agent-template/` - Bootstrap template for new worktrees (committed)
 
 ## ⚠️ MANDATORY: Run Tests Before Completing Any Feature
 You MUST run tests before marking any feature as complete:
