@@ -710,4 +710,196 @@ mod tests {
             ConversionKind::IntToEnum { enum_type } if enum_type == status_hash
         ));
     }
+
+    #[test]
+    fn find_cast_returns_opimplcast() {
+        use angelscript_core::{
+            FunctionDef, FunctionEntry, FunctionTraits, OperatorBehavior, Visibility,
+        };
+
+        let mut registry = SymbolRegistry::with_primitives();
+
+        let source_hash = TypeHash::from_name("Source");
+        let target_hash = TypeHash::from_name("Target");
+        let cast_hash = TypeHash::from_method(source_hash, "opImplCast", &[]);
+
+        // Create Source class with opImplCast
+        let mut source_class = ClassEntry::ffi("Source", TypeKind::reference());
+        source_class
+            .behaviors
+            .add_operator(OperatorBehavior::OpImplCast(target_hash), cast_hash);
+        registry.register_type(source_class.into()).unwrap();
+
+        // Register opImplCast method
+        let cast_def = FunctionDef::new(
+            cast_hash,
+            "opImplCast".to_string(),
+            vec![],
+            vec![],
+            DataType::simple(target_hash).as_handle(),
+            Some(source_hash),
+            FunctionTraits::default(),
+            true,
+            Visibility::Public,
+        );
+        registry
+            .register_function(FunctionEntry::ffi(cast_def))
+            .unwrap();
+
+        let target_class = ClassEntry::ffi("Target", TypeKind::reference());
+        registry.register_type(target_class.into()).unwrap();
+
+        let ctx = CompilationContext::new(&registry);
+
+        let source = DataType::simple(source_hash);
+        let target = DataType::simple(target_hash);
+        let result = find_cast(&source, &target, &ctx);
+
+        assert!(result.is_some());
+        let (method, is_implicit) = result.unwrap();
+        assert_eq!(method, cast_hash);
+        assert!(is_implicit, "opImplCast should be marked as implicit");
+    }
+
+    #[test]
+    fn find_cast_returns_opcast() {
+        use angelscript_core::{
+            FunctionDef, FunctionEntry, FunctionTraits, OperatorBehavior, Visibility,
+        };
+
+        let mut registry = SymbolRegistry::with_primitives();
+
+        let source_hash = TypeHash::from_name("Source");
+        let target_hash = TypeHash::from_name("Target");
+        let cast_hash = TypeHash::from_method(source_hash, "opCast", &[]);
+
+        // Create Source class with opCast (explicit only)
+        let mut source_class = ClassEntry::ffi("Source", TypeKind::reference());
+        source_class
+            .behaviors
+            .add_operator(OperatorBehavior::OpCast(target_hash), cast_hash);
+        registry.register_type(source_class.into()).unwrap();
+
+        // Register opCast method
+        let cast_def = FunctionDef::new(
+            cast_hash,
+            "opCast".to_string(),
+            vec![],
+            vec![],
+            DataType::simple(target_hash).as_handle(),
+            Some(source_hash),
+            FunctionTraits::default(),
+            true,
+            Visibility::Public,
+        );
+        registry
+            .register_function(FunctionEntry::ffi(cast_def))
+            .unwrap();
+
+        let target_class = ClassEntry::ffi("Target", TypeKind::reference());
+        registry.register_type(target_class.into()).unwrap();
+
+        let ctx = CompilationContext::new(&registry);
+
+        let source = DataType::simple(source_hash);
+        let target = DataType::simple(target_hash);
+        let result = find_cast(&source, &target, &ctx);
+
+        assert!(result.is_some());
+        let (method, is_implicit) = result.unwrap();
+        assert_eq!(method, cast_hash);
+        assert!(!is_implicit, "opCast should be marked as explicit");
+    }
+
+    #[test]
+    fn find_cast_prefers_opimplcast_over_opcast() {
+        use angelscript_core::{
+            FunctionDef, FunctionEntry, FunctionTraits, OperatorBehavior, Visibility,
+        };
+
+        let mut registry = SymbolRegistry::with_primitives();
+
+        let source_hash = TypeHash::from_name("Source");
+        let target_hash = TypeHash::from_name("Target");
+        let impl_cast_hash = TypeHash::from_method(source_hash, "opImplCast", &[]);
+        let cast_hash = TypeHash::from_method(source_hash, "opCast", &[]);
+
+        // Create Source class with both opImplCast and opCast
+        let mut source_class = ClassEntry::ffi("Source", TypeKind::reference());
+        source_class
+            .behaviors
+            .add_operator(OperatorBehavior::OpImplCast(target_hash), impl_cast_hash);
+        source_class
+            .behaviors
+            .add_operator(OperatorBehavior::OpCast(target_hash), cast_hash);
+        registry.register_type(source_class.into()).unwrap();
+
+        // Register both methods
+        let impl_cast_def = FunctionDef::new(
+            impl_cast_hash,
+            "opImplCast".to_string(),
+            vec![],
+            vec![],
+            DataType::simple(target_hash).as_handle(),
+            Some(source_hash),
+            FunctionTraits::default(),
+            true,
+            Visibility::Public,
+        );
+        registry
+            .register_function(FunctionEntry::ffi(impl_cast_def))
+            .unwrap();
+
+        let cast_def = FunctionDef::new(
+            cast_hash,
+            "opCast".to_string(),
+            vec![],
+            vec![],
+            DataType::simple(target_hash).as_handle(),
+            Some(source_hash),
+            FunctionTraits::default(),
+            true,
+            Visibility::Public,
+        );
+        registry
+            .register_function(FunctionEntry::ffi(cast_def))
+            .unwrap();
+
+        let target_class = ClassEntry::ffi("Target", TypeKind::reference());
+        registry.register_type(target_class.into()).unwrap();
+
+        let ctx = CompilationContext::new(&registry);
+
+        let source = DataType::simple(source_hash);
+        let target = DataType::simple(target_hash);
+        let result = find_cast(&source, &target, &ctx);
+
+        assert!(result.is_some());
+        let (method, is_implicit) = result.unwrap();
+        // Should prefer opImplCast over opCast
+        assert_eq!(method, impl_cast_hash);
+        assert!(is_implicit);
+    }
+
+    #[test]
+    fn find_cast_returns_none_for_no_cast() {
+        let mut registry = SymbolRegistry::with_primitives();
+
+        let source_hash = TypeHash::from_name("Source");
+        let target_hash = TypeHash::from_name("Target");
+
+        // Create classes without any cast operators
+        let source_class = ClassEntry::ffi("Source", TypeKind::reference());
+        let target_class = ClassEntry::ffi("Target", TypeKind::reference());
+        registry.register_type(source_class.into()).unwrap();
+        registry.register_type(target_class.into()).unwrap();
+
+        let ctx = CompilationContext::new(&registry);
+
+        let source = DataType::simple(source_hash);
+        let target = DataType::simple(target_hash);
+        let result = find_cast(&source, &target, &ctx);
+
+        assert!(result.is_none());
+    }
 }

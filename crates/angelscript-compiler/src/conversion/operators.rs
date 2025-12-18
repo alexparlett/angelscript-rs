@@ -561,4 +561,81 @@ mod tests {
             ConversionKind::ImplicitConvMethod { method } if method == method_hash
         ));
     }
+
+    fn setup_context_with_explicit_conv() -> (SymbolRegistry, TypeHash, TypeHash, TypeHash) {
+        let mut registry = SymbolRegistry::new();
+        registry.register_all_primitives();
+
+        let source_hash = TypeHash::from_name("Source");
+        let target_hash = TypeHash::from_name("Target");
+        let conv_hash = TypeHash::from_method(source_hash, "opConv", &[]);
+
+        // Create Source class with opConv (explicit conversion)
+        let mut source_class = ClassEntry::ffi("Source", TypeKind::reference());
+        source_class
+            .behaviors
+            .add_operator(OperatorBehavior::OpConv(target_hash), conv_hash);
+        registry.register_type(source_class.into()).unwrap();
+
+        // Register opConv method
+        let conv_def = FunctionDef::new(
+            conv_hash,
+            "opConv".to_string(),
+            vec![],
+            vec![],
+            DataType::simple(target_hash),
+            Some(source_hash),
+            FunctionTraits::default(),
+            true,
+            Visibility::Public,
+        );
+        registry
+            .register_function(FunctionEntry::ffi(conv_def))
+            .unwrap();
+
+        // Create Target class
+        let target_class = ClassEntry::ffi("Target", TypeKind::reference());
+        registry.register_type(target_class.into()).unwrap();
+
+        (registry, source_hash, target_hash, conv_hash)
+    }
+
+    #[test]
+    fn opconv_found_when_implicit_only_false() {
+        // opConv is explicit-only and should be found when implicit_only = false
+        let (registry, source_hash, target_hash, conv_hash) = setup_context_with_explicit_conv();
+        let ctx = CompilationContext::new(&registry);
+
+        let source = DataType::simple(source_hash);
+        let target = DataType::simple(target_hash);
+        let conv = find_operator_conversion(&source, &target, &ctx, false);
+
+        assert!(
+            conv.is_some(),
+            "opConv should be found when implicit_only = false"
+        );
+        let conv = conv.unwrap();
+        assert!(!conv.is_implicit);
+        assert_eq!(conv.cost, Conversion::COST_EXPLICIT_ONLY);
+        assert!(matches!(
+            conv.kind,
+            ConversionKind::ExplicitConvMethod { method } if method == conv_hash
+        ));
+    }
+
+    #[test]
+    fn opconv_not_found_when_implicit_only_true() {
+        // opConv is explicit-only and should NOT be found when implicit_only = true
+        let (registry, source_hash, target_hash, _conv_hash) = setup_context_with_explicit_conv();
+        let ctx = CompilationContext::new(&registry);
+
+        let source = DataType::simple(source_hash);
+        let target = DataType::simple(target_hash);
+        let conv = find_operator_conversion(&source, &target, &ctx, true);
+
+        assert!(
+            conv.is_none(),
+            "opConv should NOT be found when implicit_only = true"
+        );
+    }
 }
