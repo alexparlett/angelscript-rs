@@ -177,6 +177,13 @@ impl TypeBehaviors {
     /// Get all list behaviors, preferring factories over constructs.
     ///
     /// Returns factories if any exist, otherwise returns constructs.
+    /// This preference exists because:
+    /// - List factories are for reference types (handles), which are more common
+    ///   in init list scenarios (e.g., `array<T>`, `dictionary<K,V>`)
+    /// - List constructs are for value types constructed in place
+    /// - A type should typically have one or the other, not both
+    ///
+    /// If you need access to both, use `list_factories` and `list_constructs` directly.
     pub fn list_behaviors(&self) -> &[ListBehavior] {
         if !self.list_factories.is_empty() {
             &self.list_factories

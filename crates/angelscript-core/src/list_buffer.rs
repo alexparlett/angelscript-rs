@@ -142,14 +142,15 @@ impl<'a> TupleListBuffer<'a> {
     /// # Parameters
     ///
     /// - `data`: Flattened tuple data `[k1, v1, k2, v2, ...]`
-    /// - `tuple_size`: Number of elements per tuple
+    /// - `tuple_size`: Number of elements per tuple (must be > 0)
     /// - `element_types`: Type IDs for each element position
     ///
     /// # Panics
     ///
-    /// Panics if `element_types.len() != tuple_size` or if `data.len()` is
-    /// not divisible by `tuple_size`.
+    /// Panics if `tuple_size == 0`, if `element_types.len() != tuple_size`,
+    /// or if `data.len()` is not divisible by `tuple_size`.
     pub fn new(data: &'a [Dynamic], tuple_size: usize, element_types: Vec<TypeHash>) -> Self {
+        assert!(tuple_size > 0, "tuple_size must be greater than 0");
         assert_eq!(
             element_types.len(),
             tuple_size,
@@ -170,11 +171,8 @@ impl<'a> TupleListBuffer<'a> {
     /// Number of tuples in the buffer.
     #[inline]
     pub fn len(&self) -> usize {
-        if self.tuple_size == 0 {
-            0
-        } else {
-            self.data.len() / self.tuple_size
-        }
+        // tuple_size is guaranteed > 0 by constructor
+        self.data.len() / self.tuple_size
     }
 
     /// Check if the buffer is empty.
@@ -306,6 +304,7 @@ impl ListPattern {
     /// let substituted = pattern.substitute_types(&[(t_hash, int_hash)]);
     /// assert_eq!(substituted, ListPattern::Repeat(int_hash));
     /// ```
+    #[must_use]
     pub fn substitute_types(&self, param_map: &[(TypeHash, TypeHash)]) -> Self {
         let substitute = |hash: &TypeHash| -> TypeHash {
             param_map
