@@ -198,6 +198,19 @@ impl ScriptArray {
         let _ = other;
         todo!()
     }
+
+    // =========================================================================
+    // LIST INITIALIZATION
+    // =========================================================================
+
+    /// List factory for array initialization.
+    ///
+    /// Called when: `array<int> a = {1, 2, 3};`
+    #[angelscript_macros::function(list_factory, generic)]
+    #[list_pattern(repeat_template = "T")]
+    pub fn list_factory() {
+        todo!()
+    }
 }
 
 // =========================================================================
@@ -238,6 +251,8 @@ pub fn module() -> Module {
         .function(ScriptArray::op_index_const__meta)
         .function(ScriptArray::op_equals__meta)
         .function(ScriptArray::op_assign__meta)
+        // List initialization
+        .function(ScriptArray::list_factory__meta)
 }
 
 #[cfg(test)]

@@ -47,11 +47,16 @@ fn function_inner(attrs: &FunctionAttrs, input: &ItemFn) -> syn::Result<TokenStr
         .iter()
         .any(|arg| matches!(arg, FnArg::Receiver(_)));
 
+    // Determine if we're in an impl block:
+    // - Methods (with self) are always in impl blocks
+    // - Explicit `keep` attribute indicates impl block
+    // - Non-Global function kinds (instance, behaviors) imply impl block
+    let in_impl_block = is_method || attrs.keep || attrs.kind.implies_impl_block();
+
     // Naming strategy:
-    // - Methods always keep original name (can't replace with struct in impl block)
-    // - Free functions with `keep`: keep original name, use __meta suffix
-    // - Free functions without `keep` (default): unit struct gets original name, impl is mangled
-    let use_unit_struct = !is_method && !attrs.keep;
+    // - Functions in impl blocks: keep original name, use __meta suffix
+    // - Free functions (default): unit struct gets original name, impl is mangled
+    let use_unit_struct = !in_impl_block;
 
     // Extract parameter info for metadata (non-generic calling convention)
     // For generic functions, params come from #[param] attributes, not function signature
@@ -148,8 +153,8 @@ fn function_inner(attrs: &FunctionAttrs, input: &ItemFn) -> syn::Result<TokenStr
     // Filter #[default] from parameter attributes in output
     let filtered_inputs = filter_param_attrs(fn_inputs);
 
-    // Generate associated_type - for methods with self, use Self::type_hash()
-    let associated_type_token = if is_method {
+    // Generate associated_type - for functions in impl blocks, use Self::type_hash()
+    let associated_type_token = if in_impl_block {
         quote! { Some(<Self as ::angelscript_core::Any>::type_hash()) }
     } else {
         quote! { None }
@@ -499,6 +504,7 @@ fn generate_return_meta(
 fn generate_list_pattern(list_pattern_attrs: &Option<ListPatternAttrs>) -> TokenStream2 {
     match list_pattern_attrs {
         Some(attrs) => match &attrs.pattern {
+            // ===== Concrete type variants =====
             ListPatternKind::Repeat(ty) => {
                 quote! {
                     Some(::angelscript_core::ListPatternMeta::Repeat(
@@ -525,6 +531,35 @@ fn generate_list_pattern(list_pattern_attrs: &Option<ListPatternAttrs>) -> Token
                 quote! {
                     Some(::angelscript_core::ListPatternMeta::RepeatTuple(
                         vec![#(#type_tokens),*]
+                    ))
+                }
+            }
+            // ===== Template parameter variants =====
+            ListPatternKind::RepeatTemplate(param_name) => {
+                // Generate hash using "owner::T" format where owner is Self's type_name
+                quote! {
+                    Some(::angelscript_core::ListPatternMeta::Repeat(
+                        ::angelscript_core::TypeHash::from_name(
+                            &format!("{}::{}", <Self as ::angelscript_core::Any>::type_name(), #param_name)
+                        )
+                    ))
+                }
+            }
+            ListPatternKind::RepeatTupleTemplate(param_names) => {
+                // Generate hashes using "owner::K", "owner::V" format
+                let hash_tokens: Vec<_> = param_names
+                    .iter()
+                    .map(|name| {
+                        quote! {
+                            ::angelscript_core::TypeHash::from_name(
+                                &format!("{}::{}", <Self as ::angelscript_core::Any>::type_name(), #name)
+                            )
+                        }
+                    })
+                    .collect();
+                quote! {
+                    Some(::angelscript_core::ListPatternMeta::RepeatTuple(
+                        vec![#(#hash_tokens),*]
                     ))
                 }
             }

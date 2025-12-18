@@ -98,6 +98,16 @@ pub enum FunctionKind {
     GetWeakRefFlag,
 }
 
+impl FunctionKind {
+    /// Returns true if this function kind implies being inside an impl block.
+    ///
+    /// All kinds except `Global` require an associated type and thus must be
+    /// inside an impl block where `Self` is available.
+    pub fn implies_impl_block(self) -> bool {
+        !matches!(self, FunctionKind::Global)
+    }
+}
+
 impl TypeAttrs {
     /// Parse attributes from a list of `#[angelscript(...)]` attributes.
     pub fn from_attrs(attrs: &[Attribute]) -> syn::Result<Self> {
@@ -539,20 +549,31 @@ impl ReturnAttrs {
 /// List pattern kind for initialization lists.
 #[derive(Debug, Clone)]
 pub enum ListPatternKind {
-    /// Repeat a single type: `{T, T, T, ...}`
+    // ===== Concrete type variants =====
+    /// Repeat a single type: `{T, T, T, ...}` with `repeat = i32`
     Repeat(syn::Type),
-    /// Fixed sequence of types: `{A, B, C}`
+    /// Fixed sequence of types: `{A, B, C}` with `fixed(i32, String)`
     Fixed(Vec<syn::Type>),
-    /// Repeat a tuple of types: `{(K, V), (K, V), ...}`
+    /// Repeat a tuple of types: `{(K, V), (K, V), ...}` with `repeat_tuple(String, i32)`
     RepeatTuple(Vec<syn::Type>),
+
+    // ===== Template parameter variants =====
+    /// Repeat a template param: `repeat_template = "T"`
+    RepeatTemplate(String),
+    /// Repeat tuple with template params: `repeat_tuple_template("K", "V")`
+    RepeatTupleTemplate(Vec<String>),
 }
 
 /// Parsed `#[list_pattern(...)]` attribute for list constructors/factories.
 ///
-/// Supports:
+/// Supports concrete types:
 /// - `repeat = T` - Repeating single type
 /// - `fixed(T1, T2, T3)` - Fixed sequence
 /// - `repeat_tuple(K, V)` - Repeating tuple pattern
+///
+/// Supports template parameters (for template types like `array<T>`):
+/// - `repeat_template = "T"` - Repeating template parameter
+/// - `repeat_tuple_template("K", "V")` - Repeating tuple of template params
 #[derive(Debug)]
 pub struct ListPatternAttrs {
     /// The list pattern kind
@@ -583,6 +604,22 @@ impl ListPatternAttrs {
                 let types: Punctuated<syn::Type, Token![,]> =
                     content.parse_terminated(syn::Type::parse, Token![,])?;
                 pattern = Some(ListPatternKind::RepeatTuple(types.into_iter().collect()));
+            } else if meta.path.is_ident("repeat_template") {
+                // Parse template param name as string literal
+                let value = meta.value()?;
+                let lit: syn::LitStr = value.parse()?;
+                pattern = Some(ListPatternKind::RepeatTemplate(lit.value()));
+            } else if meta.path.is_ident("repeat_tuple_template") {
+                // Parse parenthesized list of template param names as string literals
+                let content;
+                syn::parenthesized!(content in meta.input);
+                let lits: Punctuated<syn::LitStr, Token![,]> = content.parse_terminated(
+                    |input: syn::parse::ParseStream| input.parse::<syn::LitStr>(),
+                    Token![,],
+                )?;
+                pattern = Some(ListPatternKind::RepeatTupleTemplate(
+                    lits.iter().map(|l| l.value()).collect(),
+                ));
             } else {
                 return Err(meta.error(format!(
                     "unknown list_pattern attribute: {}",

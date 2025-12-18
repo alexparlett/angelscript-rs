@@ -138,6 +138,19 @@ impl ScriptDict {
         let _ = other;
         todo!()
     }
+
+    // =========================================================================
+    // LIST INITIALIZATION
+    // =========================================================================
+
+    /// List factory for dictionary initialization.
+    ///
+    /// Called when: `dictionary<string, int> d = {{"a", 1}, {"b", 2}};`
+    #[angelscript_macros::function(list_factory, generic)]
+    #[list_pattern(repeat_tuple_template("K", "V"))]
+    pub fn list_factory() {
+        todo!()
+    }
 }
 
 // =========================================================================
@@ -168,6 +181,8 @@ pub fn module() -> Module {
         .function(ScriptDict::op_index_const__meta)
         .function(ScriptDict::op_equals__meta)
         .function(ScriptDict::op_assign__meta)
+        // List initialization
+        .function(ScriptDict::list_factory__meta)
 }
 
 #[cfg(test)]
