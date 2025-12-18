@@ -13,9 +13,11 @@
 //! - [`context`]: Compilation context with namespace-aware resolution
 //! - [`conversion`]: Type conversion system for type checking and overload resolution
 //! - [`emit`]: High-level bytecode emitter
+//! - [`expr`]: Expression compiler with bidirectional type checking
 //! - [`expr_info`]: Expression type information
 //! - [`overload`]: Overload resolution for function calls
 //! - [`scope`]: Local scope management for function compilation
+//! - [`stmt`]: Statement compiler for control flow and declarations
 //! - [`type_resolver`]: Type resolution from AST to semantic types
 
 pub mod bytecode;
@@ -28,6 +30,7 @@ pub mod operators;
 pub mod overload;
 pub mod passes;
 pub mod scope;
+pub mod stmt;
 pub mod template;
 pub mod type_resolver;
 
@@ -42,6 +45,7 @@ pub use expr_info::ExprInfo;
 pub use overload::{OverloadMatch, resolve_overload};
 pub use passes::{RegistrationOutput, RegistrationPass};
 pub use scope::{CapturedVar, LocalScope, LocalVar, VarLookup};
+pub use stmt::StmtCompiler;
 pub use type_resolver::TypeResolver;
 
 // Re-export CompilationError from core for convenience

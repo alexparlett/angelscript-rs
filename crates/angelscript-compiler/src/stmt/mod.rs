@@ -1,0 +1,346 @@
+//! Statement compiler for AngelScript.
+//!
+//! The [`StmtCompiler`] compiles AST statements to bytecode, handling:
+//! - Block statements with proper scoping
+//! - Variable declarations with type inference and initialization
+//! - Return statements with type checking
+//! - If/else control flow
+//! - While loops with break/continue support
+//!
+//! # Example
+//!
+//! ```ignore
+//! let mut compiler = StmtCompiler::new(ctx, emitter, return_type, None);
+//!
+//! // Compile a statement
+//! compiler.compile(&stmt)?;
+//! ```
+
+mod block;
+mod if_stmt;
+mod return_stmt;
+mod var_decl;
+mod while_stmt;
+
+use angelscript_core::{CompilationError, DataType, TypeHash};
+use angelscript_parser::ast::Stmt;
+
+use crate::context::CompilationContext;
+use crate::emit::BytecodeEmitter;
+use crate::expr::ExprCompiler;
+
+type Result<T> = std::result::Result<T, CompilationError>;
+
+/// Compiles statements to bytecode.
+///
+/// The compiler maintains references to the compilation context and
+/// bytecode emitter. It tracks the expected return type for the current
+/// function to validate return statements.
+pub struct StmtCompiler<'a, 'ctx, 'pool> {
+    /// Compilation context with type registry, namespace info, and local scope
+    ctx: &'a mut CompilationContext<'ctx>,
+    /// Bytecode emitter
+    emitter: &'a mut BytecodeEmitter<'pool>,
+    /// Expected return type for the current function
+    return_type: DataType,
+    /// Current class type (for 'this' access in methods)
+    current_class: Option<TypeHash>,
+}
+
+impl<'a, 'ctx, 'pool> StmtCompiler<'a, 'ctx, 'pool> {
+    /// Create a new statement compiler.
+    ///
+    /// # Arguments
+    ///
+    /// * `ctx` - Compilation context with type information and local scope
+    /// * `emitter` - Bytecode emitter for output
+    /// * `return_type` - Expected return type for the function being compiled
+    /// * `current_class` - The class being compiled (for methods)
+    pub fn new(
+        ctx: &'a mut CompilationContext<'ctx>,
+        emitter: &'a mut BytecodeEmitter<'pool>,
+        return_type: DataType,
+        current_class: Option<TypeHash>,
+    ) -> Self {
+        Self {
+            ctx,
+            emitter,
+            return_type,
+            current_class,
+        }
+    }
+
+    /// Compile a statement.
+    pub fn compile<'ast>(&mut self, stmt: &Stmt<'ast>) -> Result<()> {
+        // Set line number for debug info
+        let span = stmt.span();
+        self.emitter.set_line(span.line);
+
+        match stmt {
+            Stmt::Expr(expr_stmt) => self.compile_expr_stmt(expr_stmt),
+            Stmt::VarDecl(var_decl) => self.compile_var_decl(var_decl),
+            Stmt::Return(ret) => self.compile_return(ret),
+            Stmt::Break(brk) => self.compile_break(brk),
+            Stmt::Continue(cont) => self.compile_continue(cont),
+            Stmt::Block(block) => self.compile_block(block),
+            Stmt::If(if_stmt) => self.compile_if(if_stmt),
+            Stmt::While(while_stmt) => self.compile_while(while_stmt),
+
+            // Deferred to Task 45
+            Stmt::DoWhile(_) => Err(CompilationError::Other {
+                message: "do-while not yet implemented (Task 45)".to_string(),
+                span,
+            }),
+            Stmt::For(_) => Err(CompilationError::Other {
+                message: "for loops not yet implemented (Task 45)".to_string(),
+                span,
+            }),
+            Stmt::Foreach(_) => Err(CompilationError::Other {
+                message: "foreach loops not yet implemented (Task 45)".to_string(),
+                span,
+            }),
+            Stmt::Switch(_) => Err(CompilationError::Other {
+                message: "switch statements not yet implemented (Task 45)".to_string(),
+                span,
+            }),
+            Stmt::TryCatch(_) => Err(CompilationError::Other {
+                message: "try-catch not yet implemented (Task 45)".to_string(),
+                span,
+            }),
+        }
+    }
+
+    /// Compile an expression statement.
+    ///
+    /// Evaluates the expression for its side effects. If the expression
+    /// produces a value, it is popped from the stack.
+    fn compile_expr_stmt<'ast>(
+        &mut self,
+        expr_stmt: &angelscript_parser::ast::ExprStmt<'ast>,
+    ) -> Result<()> {
+        // Empty statement (just a semicolon)
+        let Some(expr) = expr_stmt.expr else {
+            return Ok(());
+        };
+
+        // Compile the expression
+        let mut expr_compiler = self.expr_compiler();
+        let info = expr_compiler.infer(expr)?;
+
+        // Pop the result if non-void (expression evaluated for side effects only)
+        if !info.data_type.is_void() {
+            self.emitter.emit_pop();
+        }
+
+        Ok(())
+    }
+
+    /// Compile a break statement.
+    fn compile_break(&mut self, brk: &angelscript_parser::ast::BreakStmt) -> Result<()> {
+        self.emitter.emit_break().map_err(|e| match e {
+            crate::emit::BreakError::NotInBreakable => CompilationError::Other {
+                message: "break statement not inside a loop or switch".to_string(),
+                span: brk.span,
+            },
+            crate::emit::BreakError::NotInLoop => CompilationError::Other {
+                message: "break statement not inside a loop".to_string(),
+                span: brk.span,
+            },
+        })
+    }
+
+    /// Compile a continue statement.
+    fn compile_continue(&mut self, cont: &angelscript_parser::ast::ContinueStmt) -> Result<()> {
+        self.emitter.emit_continue().map_err(|e| match e {
+            crate::emit::BreakError::NotInLoop => CompilationError::Other {
+                message: "continue statement not inside a loop".to_string(),
+                span: cont.span,
+            },
+            crate::emit::BreakError::NotInBreakable => CompilationError::Other {
+                message: "continue statement not inside a loop".to_string(),
+                span: cont.span,
+            },
+        })
+    }
+
+    /// Create an expression compiler using the current context.
+    fn expr_compiler(&mut self) -> ExprCompiler<'_, 'ctx, 'pool> {
+        ExprCompiler::new(self.ctx, self.emitter, self.current_class)
+    }
+
+    // =========================================================================
+    // Accessors
+    // =========================================================================
+
+    /// Get the compilation context (immutable).
+    pub fn ctx(&self) -> &CompilationContext<'ctx> {
+        self.ctx
+    }
+
+    /// Get the compilation context (mutable).
+    pub fn ctx_mut(&mut self) -> &mut CompilationContext<'ctx> {
+        self.ctx
+    }
+
+    /// Get the bytecode emitter.
+    pub fn emitter(&mut self) -> &mut BytecodeEmitter<'pool> {
+        self.emitter
+    }
+
+    /// Get the expected return type.
+    pub fn return_type(&self) -> &DataType {
+        &self.return_type
+    }
+
+    /// Get the current class type.
+    pub fn current_class(&self) -> Option<TypeHash> {
+        self.current_class
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::bytecode::ConstantPool;
+    use angelscript_core::{Span, primitives};
+    use angelscript_registry::SymbolRegistry;
+
+    fn create_test_context() -> (SymbolRegistry, ConstantPool) {
+        (SymbolRegistry::with_primitives(), ConstantPool::new())
+    }
+
+    #[test]
+    fn stmt_compiler_creation() {
+        let (registry, mut constants) = create_test_context();
+        let mut ctx = CompilationContext::new(&registry);
+        ctx.begin_function();
+        let mut emitter = BytecodeEmitter::new(&mut constants);
+
+        let _compiler = StmtCompiler::new(&mut ctx, &mut emitter, DataType::void(), None);
+    }
+
+    #[test]
+    fn stmt_compiler_with_class() {
+        let (registry, mut constants) = create_test_context();
+        let mut ctx = CompilationContext::new(&registry);
+        ctx.begin_function();
+        let mut emitter = BytecodeEmitter::new(&mut constants);
+
+        let class_hash = TypeHash::from_name("MyClass");
+        let compiler =
+            StmtCompiler::new(&mut ctx, &mut emitter, DataType::void(), Some(class_hash));
+
+        assert_eq!(compiler.current_class(), Some(class_hash));
+    }
+
+    #[test]
+    fn return_type_accessor() {
+        let (registry, mut constants) = create_test_context();
+        let mut ctx = CompilationContext::new(&registry);
+        ctx.begin_function();
+        let mut emitter = BytecodeEmitter::new(&mut constants);
+
+        let return_type = DataType::simple(primitives::INT32);
+        let compiler = StmtCompiler::new(&mut ctx, &mut emitter, return_type, None);
+
+        assert_eq!(compiler.return_type().type_hash, primitives::INT32);
+    }
+
+    #[test]
+    fn empty_expr_stmt() {
+        use angelscript_parser::ast::ExprStmt;
+
+        let (registry, mut constants) = create_test_context();
+        let mut ctx = CompilationContext::new(&registry);
+        ctx.begin_function();
+        let mut emitter = BytecodeEmitter::new(&mut constants);
+
+        let mut compiler = StmtCompiler::new(&mut ctx, &mut emitter, DataType::void(), None);
+
+        let stmt = ExprStmt {
+            expr: None,
+            span: Span::default(),
+        };
+        assert!(compiler.compile_expr_stmt(&stmt).is_ok());
+    }
+
+    #[test]
+    fn break_outside_loop_error() {
+        use angelscript_parser::ast::BreakStmt;
+
+        let (registry, mut constants) = create_test_context();
+        let mut ctx = CompilationContext::new(&registry);
+        ctx.begin_function();
+        let mut emitter = BytecodeEmitter::new(&mut constants);
+
+        let mut compiler = StmtCompiler::new(&mut ctx, &mut emitter, DataType::void(), None);
+
+        let brk = BreakStmt {
+            span: Span::default(),
+        };
+        let result = compiler.compile_break(&brk);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn continue_outside_loop_error() {
+        use angelscript_parser::ast::ContinueStmt;
+
+        let (registry, mut constants) = create_test_context();
+        let mut ctx = CompilationContext::new(&registry);
+        ctx.begin_function();
+        let mut emitter = BytecodeEmitter::new(&mut constants);
+
+        let mut compiler = StmtCompiler::new(&mut ctx, &mut emitter, DataType::void(), None);
+
+        let cont = ContinueStmt {
+            span: Span::default(),
+        };
+        let result = compiler.compile_continue(&cont);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn break_in_loop_succeeds() {
+        use angelscript_parser::ast::BreakStmt;
+
+        let (registry, mut constants) = create_test_context();
+        let mut ctx = CompilationContext::new(&registry);
+        ctx.begin_function();
+        let mut emitter = BytecodeEmitter::new(&mut constants);
+
+        // Enter a loop context
+        let loop_start = emitter.current_offset();
+        emitter.enter_loop(loop_start);
+
+        let mut compiler = StmtCompiler::new(&mut ctx, &mut emitter, DataType::void(), None);
+
+        let brk = BreakStmt {
+            span: Span::default(),
+        };
+        let result = compiler.compile_break(&brk);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn continue_in_loop_succeeds() {
+        use angelscript_parser::ast::ContinueStmt;
+
+        let (registry, mut constants) = create_test_context();
+        let mut ctx = CompilationContext::new(&registry);
+        ctx.begin_function();
+        let mut emitter = BytecodeEmitter::new(&mut constants);
+
+        // Enter a loop context
+        let loop_start = emitter.current_offset();
+        emitter.enter_loop(loop_start);
+
+        let mut compiler = StmtCompiler::new(&mut ctx, &mut emitter, DataType::void(), None);
+
+        let cont = ContinueStmt {
+            span: Span::default(),
+        };
+        let result = compiler.compile_continue(&cont);
+        assert!(result.is_ok());
+    }
+}

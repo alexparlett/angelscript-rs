@@ -400,6 +400,37 @@ impl DataType {
         self.type_hash.0 == crate::primitives::NULL.0
     }
 
+    /// Returns true if this is a primitive type (numeric, bool, void).
+    ///
+    /// Primitive types are: void, bool, int8/16/32/64, uint8/16/32/64, float, double.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use angelscript_core::{DataType, primitives};
+    ///
+    /// assert!(DataType::simple(primitives::INT32).is_primitive());
+    /// assert!(DataType::simple(primitives::BOOL).is_primitive());
+    /// assert!(DataType::simple(primitives::FLOAT).is_primitive());
+    /// ```
+    #[inline]
+    pub const fn is_primitive(&self) -> bool {
+        use crate::primitives;
+        let h = self.type_hash.0;
+        h == primitives::VOID.0
+            || h == primitives::BOOL.0
+            || h == primitives::INT8.0
+            || h == primitives::INT16.0
+            || h == primitives::INT32.0
+            || h == primitives::INT64.0
+            || h == primitives::UINT8.0
+            || h == primitives::UINT16.0
+            || h == primitives::UINT32.0
+            || h == primitives::UINT64.0
+            || h == primitives::FLOAT.0
+            || h == primitives::DOUBLE.0
+    }
+
     /// Returns a copy of this type as a handle.
     #[inline]
     pub const fn as_handle(self) -> Self {
