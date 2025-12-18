@@ -51,6 +51,30 @@ FAILURE_CHAR_LIMIT = 400
 STRATEGY_CHAR_LIMIT = 300
 CONSTRAINT_CHAR_LIMIT = 200
 
+def bootstrap_agent_directory():
+    """
+    Initialize .agent/ from .agent-template/ if it doesn't exist.
+
+    This ensures new worktrees have the base context (constraints,
+    strategies, permanent failures) without manual setup.
+    """
+    agent_dir = Path(".agent")
+    template_dir = Path(".agent-template")
+
+    # Only bootstrap if .agent doesn't exist but template does
+    if agent_dir.exists() or not template_dir.exists():
+        return False
+
+    try:
+        import shutil
+        shutil.copytree(template_dir, agent_dir)
+        return True
+    except Exception as e:
+        # Log but don't fail - hooks should be resilient
+        print(f"⚠️ Could not bootstrap .agent/: {e}", file=sys.stderr)
+        return False
+
+
 def estimate_tokens(text):
     """Rough token estimate (1.3 tokens per word)."""
     return int(len(text.split()) * 1.3)
@@ -320,6 +344,11 @@ def main():
         input_data = json.load(sys.stdin)
 
         source = input_data.get("source", "unknown")  # startup, resume, or clear
+
+        # Bootstrap .agent/ from template if needed (new worktree)
+        bootstrapped = bootstrap_agent_directory()
+        if bootstrapped:
+            print("🔧 Initialized .agent/ from template", file=sys.stderr)
 
         # Compile context (no source-specific prefixes for cache stability)
         context = compile_context()
