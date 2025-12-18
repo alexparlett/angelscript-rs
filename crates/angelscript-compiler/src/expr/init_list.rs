@@ -108,11 +108,23 @@ pub fn compile_init_list<'ast>(
         }
     }
 
-    // 4. Emit the list factory/construct call
-    let element_count = expr.elements.len() as u8;
-    compiler
-        .emitter()
-        .emit_call(list_behavior.func_hash, element_count);
+    // 4. Emit the list buffer construction
+    // Init lists use InitListBegin/InitListEnd to construct a ListBuffer,
+    // then the list factory/construct is called with that buffer.
+    let element_count =
+        u16::try_from(expr.elements.len()).map_err(|_| CompilationError::TypeMismatch {
+            message: format!(
+                "init list has {} elements, maximum is {}",
+                expr.elements.len(),
+                u16::MAX
+            ),
+            span,
+        })?;
+
+    compiler.emitter().emit_init_list_begin(element_count);
+    compiler.emitter().emit_init_list_end();
+    // Call the list factory/construct with 1 argument (the ListBuffer)
+    compiler.emitter().emit_call(list_behavior.func_hash, 1);
 
     Ok(ExprInfo::rvalue(target_type))
 }
