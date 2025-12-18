@@ -118,9 +118,7 @@ impl<'a, 'ctx, 'pool> ExprCompiler<'a, 'ctx, 'pool> {
         }
 
         // Try implicit conversion
-        if let Some(conv) = find_conversion(&info.data_type, expected, self.ctx)
-            && conv.is_implicit()
-        {
+        if let Some(conv) = find_conversion(&info.data_type, expected, self.ctx, true) {
             emit_conversion(self.emitter, &conv);
             return Ok(ExprInfo::rvalue(*expected));
         }

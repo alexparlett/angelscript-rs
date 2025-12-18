@@ -71,17 +71,13 @@ fn unify_types(
     }
 
     // Check if else can convert to then
-    if let Some(conv) = find_conversion(else_type, then_type, compiler.ctx())
-        && conv.is_implicit()
-    {
+    if find_conversion(else_type, then_type, compiler.ctx(), true).is_some() {
         // else converts to then type
         return Ok(*then_type);
     }
 
     // Check if then can convert to else
-    if let Some(conv) = find_conversion(then_type, else_type, compiler.ctx())
-        && conv.is_implicit()
-    {
+    if find_conversion(then_type, else_type, compiler.ctx(), true).is_some() {
         // then converts to else type
         return Ok(*else_type);
     }

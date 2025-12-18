@@ -15,7 +15,7 @@
 //! | `cast<type>(expr)` | `opCast`, `opImplCast` | Reference cast (same object, different handle) |
 //! | Implicit | non-explicit constructor, `opImplConv`, `opImplCast` | Automatic conversions |
 
-use angelscript_core::{DataType, OperatorBehavior, TypeHash, primitives};
+use angelscript_core::{DataType, OperatorBehavior, TypeHash};
 
 use crate::context::CompilationContext;
 
@@ -40,55 +40,25 @@ fn find_const_correct_method(
     None
 }
 
-/// Find operator-based conversions (constructor, opImplConv, opCast).
+/// Find operator-based conversions (constructor, opImplConv, opConv).
 ///
 /// Takes full `DataType` references to enable const-correctness checks.
 /// Non-const conversion operators cannot be called on const source objects.
+///
+/// # Parameters
+/// - `implicit_only`: If true, only return implicit conversions (opImplConv, constructors).
+///   If false, also include explicit-only conversions (opConv for `Type(expr)` syntax).
+///
+/// NOTE: opCast is NOT included here. It's for reference casts via `cast<Type>(expr)`.
+/// Use `find_cast_operator` for cast<> compilation.
 pub fn find_operator_conversion(
     source: &DataType,
     target: &DataType,
     ctx: &CompilationContext<'_>,
-) -> Option<Conversion> {
-    find_operator_conversion_impl(source, target, ctx, false)
-}
-
-/// Find operator-based conversion for boolean condition context.
-///
-/// When compiling boolean expressions in conditions, the compiler will NOT use
-/// `bool opImplConv` on reference types, even if the class method is implemented.
-/// This is because it is ambiguous whether it is the handle that is verified or
-/// the actual object.
-///
-/// Per AngelScript documentation:
-/// > When compiling the boolean expressions in conditions the compiler will not use
-/// > the `bool opImplConv` on reference types even if the class method is implemented.
-/// > This is because it is ambiguous if it is the handle that is verified or the actual object.
-pub fn find_operator_conversion_for_condition(
-    source: &DataType,
-    target: &DataType,
-    ctx: &CompilationContext<'_>,
-) -> Option<Conversion> {
-    find_operator_conversion_impl(source, target, ctx, true)
-}
-
-/// Internal implementation for operator conversion lookup.
-///
-/// Priority order (per AngelScript semantics):
-/// 1. opImplConv (implicit value conversion)
-/// 2. opImplCast (implicit reference cast) - returns handle, valid for implicit handle assignments
-/// 3. Converting constructor (implicit)
-/// 4. opConv (explicit value conversion) - for Type(expr) syntax
-///
-/// NOTE: opCast is NOT included here. It's explicit-only and can only be used via
-/// `cast<Type>(expr)` syntax. Use `find_cast_operator` for cast<> compilation.
-fn find_operator_conversion_impl(
-    source: &DataType,
-    target: &DataType,
-    ctx: &CompilationContext<'_>,
-    is_boolean_condition: bool,
+    implicit_only: bool,
 ) -> Option<Conversion> {
     // 1. Try implicit conversion method on source (opImplConv) - value conversion
-    if let Some(method) = find_implicit_conv_method(source, target, ctx, is_boolean_condition) {
+    if let Some(method) = find_implicit_conv_method(source, target, ctx) {
         return Some(Conversion {
             kind: ConversionKind::ImplicitConvMethod { method },
             cost: Conversion::COST_USER_IMPLICIT,
@@ -118,7 +88,8 @@ fn find_operator_conversion_impl(
 
     // 4. Try explicit conversion method (opConv) - value conversion
     // This is for Type(expr) syntax, not cast<Type>(expr)
-    if let Some(method) = find_explicit_conv_method(source, target, ctx) {
+    // Only include if caller allows explicit conversions
+    if !implicit_only && let Some(method) = find_explicit_conv_method(source, target, ctx) {
         return Some(Conversion {
             kind: ConversionKind::ExplicitConvMethod { method },
             cost: Conversion::COST_EXPLICIT_ONLY,
@@ -133,57 +104,16 @@ fn find_operator_conversion_impl(
     None
 }
 
-/// Find a cast operator for `cast<Type>(expr)` syntax.
-///
-/// This looks for opCast (explicit) and opImplCast (implicit) methods.
-/// Both are valid for the cast<> syntax since it's an explicit operation.
-///
-/// Returns the method hash if found, along with whether it's implicit.
-pub fn find_cast_operator(
-    source: &DataType,
-    target: &DataType,
-    ctx: &CompilationContext<'_>,
-) -> Option<(TypeHash, bool)> {
-    // 1. Try opImplCast first (implicit cast method)
-    if let Some(method) = find_implicit_cast_method(source, target, ctx) {
-        return Some((method, true));
-    }
-
-    // 2. Try opCast (explicit cast method)
-    if let Some(method) = find_explicit_cast_method(source, target, ctx) {
-        return Some((method, false));
-    }
-
-    None
-}
-
 /// Find an implicit conversion method (opImplConv) on the source type.
 ///
 /// Takes `&DataType` for both source and target for API consistency.
 /// Non-const opImplConv methods cannot be called on const objects.
-///
-/// When `is_boolean_condition` is true, `bool opImplConv` on reference types
-/// will be skipped. This is because AngelScript does not use `bool opImplConv`
-/// on reference types in boolean conditions to avoid ambiguity between checking
-/// the handle vs the object.
 fn find_implicit_conv_method(
     source: &DataType,
     target: &DataType,
     ctx: &CompilationContext<'_>,
-    is_boolean_condition: bool,
 ) -> Option<TypeHash> {
     let class = ctx.get_type(source.type_hash)?.as_class()?;
-
-    // Check if this is a reference type (for the bool opImplConv restriction)
-    let is_reference_type = class.type_kind.is_reference();
-
-    // Per AngelScript docs: When compiling boolean expressions in conditions,
-    // the compiler will NOT use `bool opImplConv` on reference types.
-    // This is because it is ambiguous if it is the handle that is verified
-    // or the actual object.
-    if is_boolean_condition && target.type_hash == primitives::BOOL && is_reference_type {
-        return None;
-    }
 
     // O(1) lookup using OperatorBehavior as key
     let op = OperatorBehavior::OpImplConv(target.type_hash);
@@ -258,7 +188,7 @@ fn find_explicit_conv_method(
 /// This is for implicit reference casts - returning a different handle type
 /// pointing to the same or related object.
 /// Non-const opImplCast methods cannot be called on const objects.
-fn find_implicit_cast_method(
+pub(super) fn find_implicit_cast_method(
     source: &DataType,
     target: &DataType,
     ctx: &CompilationContext<'_>,
@@ -276,7 +206,7 @@ fn find_implicit_cast_method(
 ///
 /// This is for explicit reference casts via `cast<type>(expr)` syntax.
 /// Non-const opCast methods cannot be called on const objects.
-fn find_explicit_cast_method(
+pub(super) fn find_explicit_cast_method(
     source: &DataType,
     target: &DataType,
     ctx: &CompilationContext<'_>,
@@ -430,7 +360,7 @@ mod tests {
 
         let source = DataType::simple(source_hash);
         let target = DataType::simple(target_hash);
-        let conv = find_operator_conversion(&source, &target, &ctx);
+        let conv = find_operator_conversion(&source, &target, &ctx, true);
 
         assert!(conv.is_some());
         let conv = conv.unwrap();
@@ -450,7 +380,7 @@ mod tests {
 
         let source = DataType::simple(source_hash);
         let target = DataType::simple(target_hash);
-        let conv = find_operator_conversion(&source, &target, &ctx);
+        let conv = find_operator_conversion(&source, &target, &ctx, true);
 
         assert!(conv.is_some());
         let conv = conv.unwrap();
@@ -471,7 +401,7 @@ mod tests {
 
         let source = DataType::simple(source_hash);
         let target = DataType::simple(target_hash);
-        let conv = find_operator_conversion(&source, &target, &ctx);
+        let conv = find_operator_conversion(&source, &target, &ctx, false);
 
         // opCast should NOT be found - it's only for cast<>() syntax
         assert!(
@@ -481,22 +411,20 @@ mod tests {
     }
 
     #[test]
-    fn opcast_found_by_find_cast_operator() {
-        // opCast should be found by find_cast_operator (used for cast<>() syntax)
+    fn opcast_found_by_find_explicit_cast_method() {
+        // opCast should be found by find_explicit_cast_method
         let (registry, source_hash, target_hash, cast_hash) = setup_context_with_cast_method();
         let ctx = CompilationContext::new(&registry);
 
         let source = DataType::simple(source_hash);
         let target = DataType::simple(target_hash);
-        let result = find_cast_operator(&source, &target, &ctx);
+        let result = find_explicit_cast_method(&source, &target, &ctx);
 
         assert!(
             result.is_some(),
-            "opCast should be found by find_cast_operator"
+            "opCast should be found by find_explicit_cast_method"
         );
-        let (method, is_implicit) = result.unwrap();
-        assert_eq!(method, cast_hash);
-        assert!(!is_implicit); // opCast is explicit-only
+        assert_eq!(result.unwrap(), cast_hash);
     }
 
     #[test]
@@ -517,7 +445,7 @@ mod tests {
 
         let source = DataType::simple(source_hash);
         let target = DataType::simple(target_hash);
-        let conv = find_operator_conversion(&source, &target, &ctx);
+        let conv = find_operator_conversion(&source, &target, &ctx, true);
         assert!(conv.is_none());
     }
 
@@ -529,7 +457,7 @@ mod tests {
         // Primitives don't have user-defined conversions
         let source = DataType::simple(primitives::INT32);
         let target = DataType::simple(primitives::FLOAT);
-        let conv = find_operator_conversion(&source, &target, &ctx);
+        let conv = find_operator_conversion(&source, &target, &ctx, true);
         assert!(conv.is_none());
     }
 
@@ -581,31 +509,22 @@ mod tests {
 
         let source = DataType::simple(source_hash);
         let target = DataType::simple(target_hash);
-        let conv = find_operator_conversion(&source, &target, &ctx);
+        let conv = find_operator_conversion(&source, &target, &ctx, true);
 
         // Explicit constructor should NOT be found for implicit conversion
         assert!(conv.is_none());
     }
 
-    // =========================================================================
-    // Tests for bool opImplConv restriction on reference types
-    // =========================================================================
+    #[test]
+    fn bool_opimplconv_found() {
+        let mut registry = SymbolRegistry::new();
+        registry.register_all_primitives();
 
-    fn setup_class_with_bool_opimplconv(
-        registry: &mut SymbolRegistry,
-        class_name: &str,
-        is_reference_type: bool,
-    ) -> (TypeHash, TypeHash) {
-        let class_hash = TypeHash::from_name(class_name);
+        let class_hash = TypeHash::from_name("ValueClass");
         let method_hash = TypeHash::from_method(class_hash, "opImplConv", &[]);
 
         // Create class with opImplConv returning bool
-        let type_kind = if is_reference_type {
-            TypeKind::reference()
-        } else {
-            TypeKind::value::<i32>()
-        };
-        let mut class = ClassEntry::ffi(class_name, type_kind);
+        let mut class = ClassEntry::ffi("ValueClass", TypeKind::value::<i32>());
         class
             .behaviors
             .add_operator(OperatorBehavior::OpImplConv(primitives::BOOL), method_hash);
@@ -629,138 +548,13 @@ mod tests {
             .register_function(FunctionEntry::ffi(method_def))
             .unwrap();
 
-        (class_hash, method_hash)
-    }
-
-    #[test]
-    fn bool_opimplconv_on_value_type_found_normally() {
-        let mut registry = SymbolRegistry::new();
-        registry.register_all_primitives();
-
-        let (class_hash, method_hash) =
-            setup_class_with_bool_opimplconv(&mut registry, "ValueClass", false);
-
         let ctx = CompilationContext::new(&registry);
 
         let source = DataType::simple(class_hash);
         let target = DataType::simple(primitives::BOOL);
 
-        // Normal conversion should find the method
-        let conv = find_operator_conversion(&source, &target, &ctx);
-        assert!(conv.is_some());
-        assert!(matches!(
-            conv.unwrap().kind,
-            ConversionKind::ImplicitConvMethod { method } if method == method_hash
-        ));
-    }
-
-    #[test]
-    fn bool_opimplconv_on_value_type_found_in_condition() {
-        let mut registry = SymbolRegistry::new();
-        registry.register_all_primitives();
-
-        let (class_hash, method_hash) =
-            setup_class_with_bool_opimplconv(&mut registry, "ValueClass", false);
-
-        let ctx = CompilationContext::new(&registry);
-
-        let source = DataType::simple(class_hash);
-        let target = DataType::simple(primitives::BOOL);
-
-        // Condition conversion should ALSO find the method for VALUE types
-        let conv = find_operator_conversion_for_condition(&source, &target, &ctx);
-        assert!(conv.is_some());
-        assert!(matches!(
-            conv.unwrap().kind,
-            ConversionKind::ImplicitConvMethod { method } if method == method_hash
-        ));
-    }
-
-    #[test]
-    fn bool_opimplconv_on_reference_type_found_normally() {
-        let mut registry = SymbolRegistry::new();
-        registry.register_all_primitives();
-
-        let (class_hash, method_hash) =
-            setup_class_with_bool_opimplconv(&mut registry, "RefClass", true);
-
-        let ctx = CompilationContext::new(&registry);
-
-        let source = DataType::simple(class_hash);
-        let target = DataType::simple(primitives::BOOL);
-
-        // Normal conversion should find the method
-        let conv = find_operator_conversion(&source, &target, &ctx);
-        assert!(conv.is_some());
-        assert!(matches!(
-            conv.unwrap().kind,
-            ConversionKind::ImplicitConvMethod { method } if method == method_hash
-        ));
-    }
-
-    #[test]
-    fn bool_opimplconv_on_reference_type_not_found_in_condition() {
-        let mut registry = SymbolRegistry::new();
-        registry.register_all_primitives();
-
-        let (class_hash, _) = setup_class_with_bool_opimplconv(&mut registry, "RefClass", true);
-
-        let ctx = CompilationContext::new(&registry);
-
-        let source = DataType::simple(class_hash);
-        let target = DataType::simple(primitives::BOOL);
-
-        // Condition conversion should NOT find the method for REFERENCE types
-        // Per AngelScript docs: bool opImplConv on reference types is ambiguous
-        // (is it the handle or the object being checked?)
-        let conv = find_operator_conversion_for_condition(&source, &target, &ctx);
-        assert!(
-            conv.is_none(),
-            "bool opImplConv on reference type should NOT be used in boolean conditions"
-        );
-    }
-
-    #[test]
-    fn non_bool_opimplconv_on_reference_type_found_in_condition() {
-        let mut registry = SymbolRegistry::new();
-        registry.register_all_primitives();
-
-        let class_hash = TypeHash::from_name("RefClass");
-        let method_hash = TypeHash::from_method(class_hash, "opImplConv", &[]);
-
-        // Create reference type class with opImplConv returning int (not bool)
-        let mut class = ClassEntry::ffi("RefClass", TypeKind::reference());
-        class
-            .behaviors
-            .add_operator(OperatorBehavior::OpImplConv(primitives::INT32), method_hash);
-        registry.register_type(class.into()).unwrap();
-
-        // Register opImplConv method returning int (NOT bool)
-        let mut traits = FunctionTraits::default();
-        traits.is_const = true;
-        let method_def = FunctionDef::new(
-            method_hash,
-            "opImplConv".to_string(),
-            vec![],
-            vec![],
-            DataType::simple(primitives::INT32), // Returns int, not bool
-            Some(class_hash),
-            traits,
-            true,
-            Visibility::Public,
-        );
-        registry
-            .register_function(FunctionEntry::ffi(method_def))
-            .unwrap();
-
-        let ctx = CompilationContext::new(&registry);
-
-        let source = DataType::simple(class_hash);
-        let target = DataType::simple(primitives::INT32);
-
-        // Non-bool opImplConv on reference type SHOULD be found even in condition context
-        // (the restriction only applies to bool opImplConv)
-        let conv = find_operator_conversion_for_condition(&source, &target, &ctx);
+        // Conversion should find the method
+        let conv = find_operator_conversion(&source, &target, &ctx, true);
         assert!(conv.is_some());
         assert!(matches!(
             conv.unwrap().kind,

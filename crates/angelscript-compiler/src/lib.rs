@@ -33,7 +33,7 @@ pub mod type_resolver;
 
 pub use context::{CompilationContext, Scope};
 pub use conversion::{
-    Conversion, ConversionKind, can_implicitly_convert, find_conversion, find_handle_conversion,
+    Conversion, ConversionKind, find_cast, find_conversion, find_handle_conversion,
     find_primitive_conversion,
 };
 pub use emit::{BreakError, BytecodeEmitter, JumpLabel};

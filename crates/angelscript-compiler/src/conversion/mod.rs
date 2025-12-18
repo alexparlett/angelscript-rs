@@ -26,9 +26,6 @@ mod operators;
 mod primitive;
 
 pub use handle::find_handle_conversion;
-pub use operators::{
-    find_cast_operator, find_operator_conversion, find_operator_conversion_for_condition,
-};
 pub use primitive::{find_primitive_conversion, is_primitive_numeric};
 
 /// A type conversion with its cost for overload resolution.
@@ -217,10 +214,15 @@ impl Conversion {
 ///
 /// Returns `Some(Conversion)` if a conversion exists, with cost and implicit flag.
 /// Returns `None` if no conversion is possible.
+///
+/// # Parameters
+/// - `implicit_only`: If true, only return implicit conversions. If false, also
+///   include explicit-only conversions (e.g., `opConv` for `Type(expr)` syntax).
 pub fn find_conversion(
     source: &DataType,
     target: &DataType,
     ctx: &CompilationContext<'_>,
+    implicit_only: bool,
 ) -> Option<Conversion> {
     use angelscript_core::primitives;
 
@@ -261,8 +263,8 @@ pub fn find_conversion(
         return Some(conv);
     }
 
-    // 7. Operator-based conversions (constructor, opConv, opCast)
-    if let Some(conv) = operators::find_operator_conversion(source, target, ctx) {
+    // 7. Operator-based conversions (constructor, opConv, opImplConv)
+    if let Some(conv) = operators::find_operator_conversion(source, target, ctx, implicit_only) {
         return Some(conv);
     }
 
@@ -279,84 +281,25 @@ pub fn find_conversion(
     None
 }
 
-/// Check if implicit conversion is possible.
-pub fn can_implicitly_convert(
+/// Find a cast operator for `cast<Type>(expr)` syntax.
+///
+/// This looks for opCast (explicit) and opImplCast (implicit) methods.
+/// Both are valid for the cast<> syntax since it's an explicit operation.
+///
+/// Returns the method hash if found, along with whether it's implicit.
+pub fn find_cast(
     source: &DataType,
     target: &DataType,
     ctx: &CompilationContext<'_>,
-) -> bool {
-    find_conversion(source, target, ctx)
-        .map(|c| c.is_implicit)
-        .unwrap_or(false)
-}
-
-/// Find conversion for boolean condition context.
-///
-/// This is similar to `find_conversion` but follows AngelScript's special rule:
-/// When compiling boolean expressions in conditions, the compiler will NOT use
-/// `bool opImplConv` on reference types, even if the class method is implemented.
-/// This is because it is ambiguous whether it is the handle that is verified or
-/// the actual object.
-///
-/// Use this function when compiling conditions for `if`, `while`, `for`, ternary `?:`, etc.
-pub fn find_conversion_for_condition(
-    source: &DataType,
-    target: &DataType,
-    ctx: &CompilationContext<'_>,
-) -> Option<Conversion> {
-    use angelscript_core::primitives;
-
-    // 1. Identity check (exact match including modifiers)
-    if source == target {
-        return Some(Conversion::identity());
+) -> Option<(TypeHash, bool)> {
+    // 1. Try opImplCast first (implicit cast method)
+    if let Some(method) = operators::find_implicit_cast_method(source, target, ctx) {
+        return Some((method, true));
     }
 
-    // 2. Same base type - check modifier conversions
-    if source.type_hash == target.type_hash {
-        // Const relaxation: non-const to const is free
-        if !source.is_const && target.is_const && !source.is_handle && !target.is_handle {
-            return Some(Conversion {
-                kind: ConversionKind::Identity,
-                cost: Conversion::COST_CONST_ADDITION,
-                is_implicit: true,
-            });
-        }
-    }
-
-    // 3. Enum conversions
-    if let Some(conv) = find_enum_conversion(source, target, ctx) {
-        return Some(conv);
-    }
-
-    // 4. Primitive conversions
-    if let Some(conv) = primitive::find_primitive_conversion(source, target) {
-        return Some(conv);
-    }
-
-    // 5. Handle conversions
-    if let Some(conv) = handle::find_handle_conversion(source, target) {
-        return Some(conv);
-    }
-
-    // 6. Class hierarchy conversions
-    if let Some(conv) = find_hierarchy_conversion(source, target, ctx) {
-        return Some(conv);
-    }
-
-    // 7. Operator-based conversions (with boolean condition restriction)
-    // This uses find_operator_conversion_for_condition which skips bool opImplConv on reference types
-    if let Some(conv) = operators::find_operator_conversion_for_condition(source, target, ctx) {
-        return Some(conv);
-    }
-
-    // 8. Variable argument type (?) - accepts any type
-    // This is the lowest priority implicit conversion
-    if target.type_hash == primitives::VARIABLE_PARAM {
-        return Some(Conversion {
-            kind: ConversionKind::VarArg,
-            cost: Conversion::COST_VAR_ARG,
-            is_implicit: true,
-        });
+    // 2. Try opCast (explicit cast method)
+    if let Some(method) = operators::find_explicit_cast_method(source, target, ctx) {
+        return Some((method, false));
     }
 
     None
@@ -505,7 +448,7 @@ mod tests {
         let ctx = CompilationContext::new(&registry);
 
         let dt = DataType::simple(primitives::INT32);
-        let conv = find_conversion(&dt, &dt, &ctx);
+        let conv = find_conversion(&dt, &dt, &ctx, true);
 
         assert!(conv.is_some());
         let conv = conv.unwrap();
@@ -521,7 +464,7 @@ mod tests {
 
         let from = DataType::simple(primitives::INT32);
         let to = DataType::simple(primitives::INT32).as_const();
-        let conv = find_conversion(&from, &to, &ctx);
+        let conv = find_conversion(&from, &to, &ctx, true);
 
         assert!(conv.is_some());
         let conv = conv.unwrap();
@@ -536,7 +479,7 @@ mod tests {
 
         let from = DataType::simple(primitives::INT32);
         let to = DataType::simple(primitives::INT64);
-        let conv = find_conversion(&from, &to, &ctx);
+        let conv = find_conversion(&from, &to, &ctx, true);
 
         assert!(conv.is_some());
         let conv = conv.unwrap();
@@ -551,7 +494,7 @@ mod tests {
 
         let from = DataType::simple(primitives::INT64);
         let to = DataType::simple(primitives::INT32);
-        let conv = find_conversion(&from, &to, &ctx);
+        let conv = find_conversion(&from, &to, &ctx, true);
 
         assert!(conv.is_some());
         let conv = conv.unwrap();
@@ -571,7 +514,7 @@ mod tests {
 
         let from = DataType::null_literal();
         let to = DataType::simple(player_hash).as_handle();
-        let conv = find_conversion(&from, &to, &ctx);
+        let conv = find_conversion(&from, &to, &ctx, true);
 
         assert!(conv.is_some());
         let conv = conv.unwrap();
@@ -591,7 +534,7 @@ mod tests {
 
         let from = DataType::simple(player_hash).as_handle();
         let to = DataType::simple(player_hash).as_handle_to_const();
-        let conv = find_conversion(&from, &to, &ctx);
+        let conv = find_conversion(&from, &to, &ctx, true);
 
         assert!(conv.is_some());
         let conv = conv.unwrap();
@@ -617,7 +560,7 @@ mod tests {
 
         let from = DataType::simple(derived_hash);
         let to = DataType::simple(base_hash);
-        let conv = find_conversion(&from, &to, &ctx);
+        let conv = find_conversion(&from, &to, &ctx, true);
 
         assert!(conv.is_some());
         let conv = conv.unwrap();
@@ -647,7 +590,7 @@ mod tests {
 
         let from = DataType::simple(class_hash);
         let to = DataType::simple(interface_hash);
-        let conv = find_conversion(&from, &to, &ctx);
+        let conv = find_conversion(&from, &to, &ctx, true);
 
         assert!(conv.is_some());
         let conv = conv.unwrap();
@@ -675,21 +618,9 @@ mod tests {
 
         let from = DataType::simple(player_hash);
         let to = DataType::simple(enemy_hash);
-        let conv = find_conversion(&from, &to, &ctx);
+        let conv = find_conversion(&from, &to, &ctx, true);
 
         assert!(conv.is_none());
-    }
-
-    #[test]
-    fn can_implicitly_convert_works() {
-        let registry = SymbolRegistry::with_primitives();
-        let ctx = CompilationContext::new(&registry);
-
-        let int32 = DataType::simple(primitives::INT32);
-        let int64 = DataType::simple(primitives::INT64);
-
-        assert!(can_implicitly_convert(&int32, &int64, &ctx));
-        assert!(can_implicitly_convert(&int32, &int32, &ctx)); // Identity
     }
 
     #[test]
@@ -714,7 +645,7 @@ mod tests {
         // Player -> Entity (two levels up)
         let from = DataType::simple(player_hash);
         let to = DataType::simple(entity_hash);
-        let conv = find_conversion(&from, &to, &ctx);
+        let conv = find_conversion(&from, &to, &ctx, true);
 
         assert!(conv.is_some());
         assert!(conv.unwrap().is_implicit());
@@ -739,7 +670,7 @@ mod tests {
 
         let from = DataType::simple(TypeHash::from_name("Status"));
         let to = DataType::simple(primitives::INT32);
-        let conv = find_conversion(&from, &to, &ctx);
+        let conv = find_conversion(&from, &to, &ctx, true);
 
         assert!(conv.is_some());
         let conv = conv.unwrap();
@@ -768,7 +699,7 @@ mod tests {
 
         let from = DataType::simple(primitives::INT32);
         let to = DataType::simple(status_hash);
-        let conv = find_conversion(&from, &to, &ctx);
+        let conv = find_conversion(&from, &to, &ctx, true);
 
         assert!(conv.is_some());
         let conv = conv.unwrap();

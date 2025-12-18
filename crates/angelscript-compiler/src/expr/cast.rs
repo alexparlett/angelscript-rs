@@ -19,7 +19,7 @@ use angelscript_core::{CompilationError, TypeHash};
 use angelscript_parser::ast::CastExpr;
 
 use super::{ExprCompiler, Result};
-use crate::conversion::find_cast_operator;
+use crate::conversion::find_cast;
 use crate::expr_info::ExprInfo;
 use crate::type_resolver::TypeResolver;
 
@@ -62,7 +62,7 @@ pub fn compile_cast<'ast>(
 
         // 4b. Try user-defined cast operators (opCast, opImplCast)
         if let Some((method_hash, _is_implicit)) =
-            find_cast_operator(source_type, &target_type, compiler.ctx())
+            find_cast(source_type, &target_type, compiler.ctx())
         {
             // Emit method call for the cast operator (0 args since it's a getter-style method)
             compiler.emitter().emit_call_method(method_hash, 0);
