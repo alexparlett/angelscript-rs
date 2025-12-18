@@ -7,7 +7,26 @@
 
 use rustc_hash::FxHashMap;
 
-use crate::{OperatorBehavior, TypeHash};
+use crate::{ListPattern, OperatorBehavior, TypeHash};
+
+/// A list initialization behavior (factory or construct).
+///
+/// Pairs a function hash with its list pattern, describing how initialization
+/// list elements map to the function's parameters.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ListBehavior {
+    /// Function hash for this list behavior.
+    pub func_hash: TypeHash,
+    /// Pattern describing expected init list structure (required).
+    pub pattern: ListPattern,
+}
+
+impl ListBehavior {
+    /// Create a new list behavior.
+    pub fn new(func_hash: TypeHash, pattern: ListPattern) -> Self {
+        Self { func_hash, pattern }
+    }
+}
 
 /// Lifecycle and initialization behaviors for a type.
 ///
@@ -61,15 +80,17 @@ pub struct TypeBehaviors {
     pub release: Option<TypeHash>,
 
     // === List Initialization ===
-    /// List construct - for value types with init list syntax.
+    /// List construct behaviors - for value types with init list syntax.
     /// Used for types like `MyStruct s = {1, 2, 3}` where the value is constructed in place.
+    /// Multiple overloads supported (e.g., different patterns).
     /// Corresponds to asBEHAVE_LIST_CONSTRUCT
-    pub list_construct: Option<TypeHash>,
+    pub list_constructs: Vec<ListBehavior>,
 
-    /// List factory - for reference types with init list syntax.
+    /// List factory behaviors - for reference types with init list syntax.
     /// Used for types like `array<int> a = {1, 2, 3}` where a handle is returned.
+    /// Multiple overloads supported (e.g., different patterns).
     /// Corresponds to asBEHAVE_LIST_FACTORY
-    pub list_factory: Option<TypeHash>,
+    pub list_factories: Vec<ListBehavior>,
 
     // === Weak References ===
     /// Get weak reference flag - returns a shared weak ref flag object.
@@ -101,8 +122,8 @@ impl TypeBehaviors {
             && self.destructor.is_none()
             && self.addref.is_none()
             && self.release.is_none()
-            && self.list_construct.is_none()
-            && self.list_factory.is_none()
+            && self.list_constructs.is_empty()
+            && self.list_factories.is_empty()
             && self.get_weakref_flag.is_none()
             && self.template_callback.is_none()
             && self.operators.is_empty()
@@ -120,7 +141,7 @@ impl TypeBehaviors {
 
     /// Check if this type has list initialization support.
     pub fn has_list_init(&self) -> bool {
-        self.list_construct.is_some() || self.list_factory.is_some()
+        !self.list_constructs.is_empty() || !self.list_factories.is_empty()
     }
 
     /// Check if this type has a destructor.
@@ -145,18 +166,37 @@ impl TypeBehaviors {
 
     /// Check if this type has list_factory behavior.
     pub fn has_list_factory(&self) -> bool {
-        self.list_factory.is_some()
+        !self.list_factories.is_empty()
     }
 
     /// Check if this type has list_construct behavior.
     pub fn has_list_construct(&self) -> bool {
-        self.list_construct.is_some()
+        !self.list_constructs.is_empty()
     }
 
-    /// Get the list initialization function, preferring list_factory over list_construct.
-    /// This is the function to call when encountering an init list for this type.
+    /// Get all list behaviors, preferring factories over constructs.
+    ///
+    /// Returns factories if any exist, otherwise returns constructs.
+    pub fn list_behaviors(&self) -> &[ListBehavior] {
+        if !self.list_factories.is_empty() {
+            &self.list_factories
+        } else {
+            &self.list_constructs
+        }
+    }
+
+    /// Get the first list pattern (for simple single-pattern cases).
+    ///
+    /// Returns the pattern from the first list behavior (factory preferred over construct).
+    pub fn list_pattern(&self) -> Option<&ListPattern> {
+        self.list_behaviors().first().map(|b| &b.pattern)
+    }
+
+    /// Get the first list initialization function hash (for compatibility).
+    ///
+    /// Prefers list_factory over list_construct.
     pub fn list_init_func(&self) -> Option<TypeHash> {
-        self.list_factory.or(self.list_construct)
+        self.list_behaviors().first().map(|b| b.func_hash)
     }
 
     /// Add a constructor to this type's behaviors.
@@ -190,14 +230,14 @@ impl TypeBehaviors {
         self.release = Some(release);
     }
 
-    /// Set the list construct behavior for this type.
-    pub fn set_list_construct(&mut self, func_hash: TypeHash) {
-        self.list_construct = Some(func_hash);
+    /// Add a list construct behavior for this type.
+    pub fn add_list_construct(&mut self, behavior: ListBehavior) {
+        self.list_constructs.push(behavior);
     }
 
-    /// Set the list factory behavior for this type.
-    pub fn set_list_factory(&mut self, func_hash: TypeHash) {
-        self.list_factory = Some(func_hash);
+    /// Add a list factory behavior for this type.
+    pub fn add_list_factory(&mut self, behavior: ListBehavior) {
+        self.list_factories.push(behavior);
     }
 
     // === Operator Methods ===
@@ -322,43 +362,87 @@ mod tests {
 
     #[test]
     fn list_factory_behavior() {
+        use crate::primitives;
         let mut behaviors = TypeBehaviors::new();
         let factory = TypeHash::from_name("array::ListFactory");
+        let pattern = ListPattern::Repeat(primitives::INT32);
 
-        behaviors.set_list_factory(factory);
+        behaviors.add_list_factory(ListBehavior::new(factory, pattern.clone()));
 
         assert!(!behaviors.is_empty());
         assert!(behaviors.has_list_init());
         assert!(behaviors.has_list_factory());
         assert!(!behaviors.has_list_construct());
         assert_eq!(behaviors.list_init_func(), Some(factory));
+        assert_eq!(behaviors.list_pattern(), Some(&pattern));
     }
 
     #[test]
     fn list_construct_behavior() {
+        use crate::primitives;
         let mut behaviors = TypeBehaviors::new();
         let construct = TypeHash::from_name("Vec3::ListConstruct");
+        let pattern = ListPattern::Fixed(vec![
+            primitives::FLOAT,
+            primitives::FLOAT,
+            primitives::FLOAT,
+        ]);
 
-        behaviors.set_list_construct(construct);
+        behaviors.add_list_construct(ListBehavior::new(construct, pattern.clone()));
 
         assert!(!behaviors.is_empty());
         assert!(behaviors.has_list_init());
         assert!(behaviors.has_list_construct());
         assert!(!behaviors.has_list_factory());
         assert_eq!(behaviors.list_init_func(), Some(construct));
+        assert_eq!(behaviors.list_pattern(), Some(&pattern));
     }
 
     #[test]
     fn list_factory_preferred_over_construct() {
+        use crate::primitives;
         let mut behaviors = TypeBehaviors::new();
         let construct = TypeHash::from_name("ListConstruct");
         let factory = TypeHash::from_name("ListFactory");
+        let construct_pattern = ListPattern::Repeat(primitives::INT32);
+        let factory_pattern = ListPattern::Repeat(primitives::FLOAT);
 
-        behaviors.set_list_construct(construct);
-        behaviors.set_list_factory(factory);
+        behaviors.add_list_construct(ListBehavior::new(construct, construct_pattern));
+        behaviors.add_list_factory(ListBehavior::new(factory, factory_pattern.clone()));
 
         // Factory should be preferred
         assert_eq!(behaviors.list_init_func(), Some(factory));
+        assert_eq!(behaviors.list_pattern(), Some(&factory_pattern));
+    }
+
+    #[test]
+    fn multiple_list_factories() {
+        use crate::primitives;
+        let mut behaviors = TypeBehaviors::new();
+        let factory1 = TypeHash::from_name("f1");
+        let factory2 = TypeHash::from_name("f2");
+        let pattern1 = ListPattern::Repeat(primitives::INT32);
+        let pattern2 = ListPattern::Fixed(vec![primitives::INT32, primitives::STRING]);
+
+        behaviors.add_list_factory(ListBehavior::new(factory1, pattern1.clone()));
+        behaviors.add_list_factory(ListBehavior::new(factory2, pattern2));
+
+        assert_eq!(behaviors.list_factories.len(), 2);
+        assert_eq!(behaviors.list_behaviors().len(), 2);
+        // First factory is preferred
+        assert_eq!(behaviors.list_init_func(), Some(factory1));
+        assert_eq!(behaviors.list_pattern(), Some(&pattern1));
+    }
+
+    #[test]
+    fn list_behavior_creation() {
+        use crate::primitives;
+        let pattern = ListPattern::Repeat(primitives::INT32);
+        let func_hash = TypeHash::from_name("factory");
+        let behavior = ListBehavior::new(func_hash, pattern.clone());
+
+        assert_eq!(behavior.func_hash, func_hash);
+        assert_eq!(behavior.pattern, pattern);
     }
 
     #[test]

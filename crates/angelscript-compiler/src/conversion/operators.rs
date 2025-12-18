@@ -1,16 +1,16 @@
-//! User-defined conversions.
+//! Operator-based conversions.
 //!
-//! This module handles conversions via user-defined methods:
-//! - `opImplConv` - Implicit value conversion method
-//! - `opConv` - Explicit value conversion method
-//! - `opImplCast` - Implicit reference cast method
-//! - `opCast` - Explicit reference cast method
+//! This module handles conversions via conversion operators:
+//! - `opImplConv` - Implicit value conversion operator
+//! - `opConv` - Explicit value conversion operator
+//! - `opImplCast` - Implicit reference cast operator
+//! - `opCast` - Explicit reference cast operator
 //! - Converting constructors - Single-argument constructors
 //!
 //! ## AngelScript Conversion Semantics
 //!
-//! | Syntax | Methods Used | Purpose |
-//! |--------|--------------|---------|
+//! | Syntax | Operators Used | Purpose |
+//! |--------|----------------|---------|
 //! | `type(expr)` | constructor, `opConv`, `opImplConv` | Value conversion |
 //! | `cast<type>(expr)` | `opCast`, `opImplCast` | Reference cast (same object, different handle) |
 //! | Implicit | non-explicit constructor, `opImplConv`, `opImplCast` | Automatic conversions |
@@ -21,19 +21,38 @@ use crate::context::CompilationContext;
 
 use super::{Conversion, ConversionKind};
 
-/// Find user-defined conversions (constructor, opImplConv, opCast).
+/// Find the first method that passes const-correctness check.
+///
+/// Non-const methods cannot be called on const objects.
+fn find_const_correct_method(
+    methods: &[TypeHash],
+    source_is_const: bool,
+    ctx: &CompilationContext<'_>,
+) -> Option<TypeHash> {
+    for &method_hash in methods {
+        if let Some(func) = ctx.get_function(method_hash) {
+            if source_is_const && !func.def.is_const() {
+                continue;
+            }
+            return Some(method_hash);
+        }
+    }
+    None
+}
+
+/// Find operator-based conversions (constructor, opImplConv, opCast).
 ///
 /// Takes full `DataType` references to enable const-correctness checks.
-/// Non-const conversion methods cannot be called on const source objects.
-pub fn find_user_conversion(
+/// Non-const conversion operators cannot be called on const source objects.
+pub fn find_operator_conversion(
     source: &DataType,
     target: &DataType,
     ctx: &CompilationContext<'_>,
 ) -> Option<Conversion> {
-    find_user_conversion_impl(source, target, ctx, false)
+    find_operator_conversion_impl(source, target, ctx, false)
 }
 
-/// Find user-defined conversion for boolean condition context.
+/// Find operator-based conversion for boolean condition context.
 ///
 /// When compiling boolean expressions in conditions, the compiler will NOT use
 /// `bool opImplConv` on reference types, even if the class method is implemented.
@@ -44,15 +63,15 @@ pub fn find_user_conversion(
 /// > When compiling the boolean expressions in conditions the compiler will not use
 /// > the `bool opImplConv` on reference types even if the class method is implemented.
 /// > This is because it is ambiguous if it is the handle that is verified or the actual object.
-pub fn find_user_conversion_for_condition(
+pub fn find_operator_conversion_for_condition(
     source: &DataType,
     target: &DataType,
     ctx: &CompilationContext<'_>,
 ) -> Option<Conversion> {
-    find_user_conversion_impl(source, target, ctx, true)
+    find_operator_conversion_impl(source, target, ctx, true)
 }
 
-/// Internal implementation for user conversion lookup.
+/// Internal implementation for operator conversion lookup.
 ///
 /// Priority order (per AngelScript semantics):
 /// 1. opImplConv (implicit value conversion)
@@ -60,7 +79,7 @@ pub fn find_user_conversion_for_condition(
 /// 3. Converting constructor (implicit)
 /// 4. opConv (explicit value conversion)
 /// 5. opCast (explicit reference cast)
-fn find_user_conversion_impl(
+fn find_operator_conversion_impl(
     source: &DataType,
     target: &DataType,
     ctx: &CompilationContext<'_>,
@@ -146,18 +165,7 @@ fn find_implicit_conv_method(
     let op = OperatorBehavior::OpImplConv(target.type_hash);
     let methods = class.behaviors.get_operator(op)?;
 
-    // Find a method that passes const-correctness check
-    for &method_hash in methods {
-        if let Some(func) = ctx.get_function(method_hash) {
-            // Const-correctness check: non-const methods cannot be called on const objects
-            if source.is_effectively_const() && !func.def.is_const() {
-                continue;
-            }
-            return Some(method_hash);
-        }
-    }
-
-    None
+    find_const_correct_method(methods, source.is_effectively_const(), ctx)
 }
 
 /// Find a converting constructor on the target type.
@@ -218,18 +226,7 @@ fn find_explicit_conv_method(
     let op = OperatorBehavior::OpConv(target.type_hash);
     let methods = class.behaviors.get_operator(op)?;
 
-    // Find a method that passes const-correctness check
-    for &method_hash in methods {
-        if let Some(func) = ctx.get_function(method_hash) {
-            // Const-correctness check: non-const methods cannot be called on const objects
-            if source.is_effectively_const() && !func.def.is_const() {
-                continue;
-            }
-            return Some(method_hash);
-        }
-    }
-
-    None
+    find_const_correct_method(methods, source.is_effectively_const(), ctx)
 }
 
 /// Find an implicit reference cast method (opImplCast) on the source type.
@@ -248,18 +245,7 @@ fn find_implicit_cast_method(
     let op = OperatorBehavior::OpImplCast(target.type_hash);
     let methods = class.behaviors.get_operator(op)?;
 
-    // Find a method that passes const-correctness check
-    for &method_hash in methods {
-        if let Some(func) = ctx.get_function(method_hash) {
-            // Const-correctness check: non-const methods cannot be called on const objects
-            if source.is_effectively_const() && !func.def.is_const() {
-                continue;
-            }
-            return Some(method_hash);
-        }
-    }
-
-    None
+    find_const_correct_method(methods, source.is_effectively_const(), ctx)
 }
 
 /// Find an explicit reference cast method (opCast) on the source type.
@@ -277,18 +263,7 @@ fn find_explicit_cast_method(
     let op = OperatorBehavior::OpCast(target.type_hash);
     let methods = class.behaviors.get_operator(op)?;
 
-    // Find a method that passes const-correctness check
-    for &method_hash in methods {
-        if let Some(func) = ctx.get_function(method_hash) {
-            // Const-correctness check: non-const methods cannot be called on const objects
-            if source.is_effectively_const() && !func.def.is_const() {
-                continue;
-            }
-            return Some(method_hash);
-        }
-    }
-
-    None
+    find_const_correct_method(methods, source.is_effectively_const(), ctx)
 }
 
 #[cfg(test)]
@@ -431,7 +406,7 @@ mod tests {
 
         let source = DataType::simple(source_hash);
         let target = DataType::simple(target_hash);
-        let conv = find_user_conversion(&source, &target, &ctx);
+        let conv = find_operator_conversion(&source, &target, &ctx);
 
         assert!(conv.is_some());
         let conv = conv.unwrap();
@@ -451,7 +426,7 @@ mod tests {
 
         let source = DataType::simple(source_hash);
         let target = DataType::simple(target_hash);
-        let conv = find_user_conversion(&source, &target, &ctx);
+        let conv = find_operator_conversion(&source, &target, &ctx);
 
         assert!(conv.is_some());
         let conv = conv.unwrap();
@@ -470,7 +445,7 @@ mod tests {
 
         let source = DataType::simple(source_hash);
         let target = DataType::simple(target_hash);
-        let conv = find_user_conversion(&source, &target, &ctx);
+        let conv = find_operator_conversion(&source, &target, &ctx);
 
         assert!(conv.is_some());
         let conv = conv.unwrap();
@@ -500,7 +475,7 @@ mod tests {
 
         let source = DataType::simple(source_hash);
         let target = DataType::simple(target_hash);
-        let conv = find_user_conversion(&source, &target, &ctx);
+        let conv = find_operator_conversion(&source, &target, &ctx);
         assert!(conv.is_none());
     }
 
@@ -512,7 +487,7 @@ mod tests {
         // Primitives don't have user-defined conversions
         let source = DataType::simple(primitives::INT32);
         let target = DataType::simple(primitives::FLOAT);
-        let conv = find_user_conversion(&source, &target, &ctx);
+        let conv = find_operator_conversion(&source, &target, &ctx);
         assert!(conv.is_none());
     }
 
@@ -564,7 +539,7 @@ mod tests {
 
         let source = DataType::simple(source_hash);
         let target = DataType::simple(target_hash);
-        let conv = find_user_conversion(&source, &target, &ctx);
+        let conv = find_operator_conversion(&source, &target, &ctx);
 
         // Explicit constructor should NOT be found for implicit conversion
         assert!(conv.is_none());
@@ -629,7 +604,7 @@ mod tests {
         let target = DataType::simple(primitives::BOOL);
 
         // Normal conversion should find the method
-        let conv = find_user_conversion(&source, &target, &ctx);
+        let conv = find_operator_conversion(&source, &target, &ctx);
         assert!(conv.is_some());
         assert!(matches!(
             conv.unwrap().kind,
@@ -651,7 +626,7 @@ mod tests {
         let target = DataType::simple(primitives::BOOL);
 
         // Condition conversion should ALSO find the method for VALUE types
-        let conv = find_user_conversion_for_condition(&source, &target, &ctx);
+        let conv = find_operator_conversion_for_condition(&source, &target, &ctx);
         assert!(conv.is_some());
         assert!(matches!(
             conv.unwrap().kind,
@@ -673,7 +648,7 @@ mod tests {
         let target = DataType::simple(primitives::BOOL);
 
         // Normal conversion should find the method
-        let conv = find_user_conversion(&source, &target, &ctx);
+        let conv = find_operator_conversion(&source, &target, &ctx);
         assert!(conv.is_some());
         assert!(matches!(
             conv.unwrap().kind,
@@ -696,7 +671,7 @@ mod tests {
         // Condition conversion should NOT find the method for REFERENCE types
         // Per AngelScript docs: bool opImplConv on reference types is ambiguous
         // (is it the handle or the object being checked?)
-        let conv = find_user_conversion_for_condition(&source, &target, &ctx);
+        let conv = find_operator_conversion_for_condition(&source, &target, &ctx);
         assert!(
             conv.is_none(),
             "bool opImplConv on reference type should NOT be used in boolean conditions"
@@ -743,7 +718,7 @@ mod tests {
 
         // Non-bool opImplConv on reference type SHOULD be found even in condition context
         // (the restriction only applies to bool opImplConv)
-        let conv = find_user_conversion_for_condition(&source, &target, &ctx);
+        let conv = find_operator_conversion_for_condition(&source, &target, &ctx);
         assert!(conv.is_some());
         assert!(matches!(
             conv.unwrap().kind,

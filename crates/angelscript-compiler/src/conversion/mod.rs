@@ -15,19 +15,19 @@
 //! 3. Primitive conversions (int widening, float, etc.)
 //! 4. Handle conversions (null to handle, handle to const)
 //! 5. Class hierarchy (derived to base, class to interface)
-//! 6. User-defined (opImplConv, opCast, constructors)
+//! 6. Operator-based (opImplConv, opCast, constructors)
 
 use angelscript_core::{DataType, TypeHash};
 
 use crate::context::CompilationContext;
 
 mod handle;
+mod operators;
 mod primitive;
-mod user_defined;
 
 pub use handle::find_handle_conversion;
+pub use operators::{find_operator_conversion, find_operator_conversion_for_condition};
 pub use primitive::{find_primitive_conversion, is_primitive_numeric};
-pub use user_defined::{find_user_conversion, find_user_conversion_for_condition};
 
 /// A type conversion with its cost for overload resolution.
 ///
@@ -259,8 +259,8 @@ pub fn find_conversion(
         return Some(conv);
     }
 
-    // 7. User-defined conversions (constructor, opConv, opCast)
-    if let Some(conv) = user_defined::find_user_conversion(source, target, ctx) {
+    // 7. Operator-based conversions (constructor, opConv, opCast)
+    if let Some(conv) = operators::find_operator_conversion(source, target, ctx) {
         return Some(conv);
     }
 
@@ -341,9 +341,9 @@ pub fn find_conversion_for_condition(
         return Some(conv);
     }
 
-    // 7. User-defined conversions (with boolean condition restriction)
-    // This uses find_user_conversion_for_condition which skips bool opImplConv on reference types
-    if let Some(conv) = user_defined::find_user_conversion_for_condition(source, target, ctx) {
+    // 7. Operator-based conversions (with boolean condition restriction)
+    // This uses find_operator_conversion_for_condition which skips bool opImplConv on reference types
+    if let Some(conv) = operators::find_operator_conversion_for_condition(source, target, ctx) {
         return Some(conv);
     }
 
