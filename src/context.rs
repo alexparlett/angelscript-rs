@@ -366,7 +366,7 @@ impl Context {
 
         // Wire behavior to the type's behaviors if this function has an associated behavior
         if let (Some(type_hash), Some(behavior)) = (object_type, &meta.behavior) {
-            self.wire_behavior(type_hash, func_hash, behavior)?;
+            self.wire_behavior(type_hash, func_hash, behavior, meta.list_pattern.as_ref())?;
         }
 
         Ok(())
@@ -378,8 +378,9 @@ impl Context {
         type_hash: TypeHash,
         func_hash: TypeHash,
         behavior: &angelscript_core::Behavior,
+        list_pattern: Option<&angelscript_core::meta::ListPatternMeta>,
     ) -> Result<(), ContextError> {
-        use angelscript_core::Behavior;
+        use angelscript_core::{Behavior, ListBehavior, ListPattern};
 
         // Get the type entry and modify its behaviors
         let type_entry = self.registry.get_mut(type_hash).ok_or_else(|| {
@@ -429,10 +430,30 @@ impl Context {
                 class_entry.behaviors.release = Some(func_hash);
             }
             Behavior::ListConstruct => {
-                class_entry.behaviors.set_list_construct(func_hash);
+                let pattern = list_pattern
+                    .map(|p| ListPattern::from(p.clone()))
+                    .ok_or_else(|| {
+                        ContextError::RegistrationFailed(format!(
+                            "list_construct behavior requires a list_pattern for function {:?}",
+                            func_hash
+                        ))
+                    })?;
+                class_entry
+                    .behaviors
+                    .add_list_construct(ListBehavior::new(func_hash, pattern));
             }
             Behavior::ListFactory => {
-                class_entry.behaviors.set_list_factory(func_hash);
+                let pattern = list_pattern
+                    .map(|p| ListPattern::from(p.clone()))
+                    .ok_or_else(|| {
+                        ContextError::RegistrationFailed(format!(
+                            "list_factory behavior requires a list_pattern for function {:?}",
+                            func_hash
+                        ))
+                    })?;
+                class_entry
+                    .behaviors
+                    .add_list_factory(ListBehavior::new(func_hash, pattern));
             }
             Behavior::TemplateCallback => {
                 class_entry.behaviors.template_callback = Some(func_hash);

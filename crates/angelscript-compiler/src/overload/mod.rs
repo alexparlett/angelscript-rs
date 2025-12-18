@@ -121,13 +121,9 @@ fn try_match_candidate(
     let mut total_cost = 0u32;
 
     for (arg, param) in arg_types.iter().zip(params.iter()) {
-        match find_conversion(arg, &param.data_type, ctx) {
-            Some(conv) if conv.is_implicit => {
-                total_cost = total_cost.saturating_add(conv.cost);
-                arg_conversions.push(Some(conv));
-            }
-            _ => return None, // No implicit conversion available
-        }
+        let conv = find_conversion(arg, &param.data_type, ctx, true)?;
+        total_cost = total_cost.saturating_add(conv.cost);
+        arg_conversions.push(Some(conv));
     }
 
     // Fill in None for default parameters not provided
@@ -212,16 +208,8 @@ mod tests {
         Param::new(name.to_string(), DataType::simple(primitives::FLOAT))
     }
 
-    fn double_param(name: &str) -> Param {
-        Param::new(name.to_string(), DataType::simple(primitives::DOUBLE))
-    }
-
     fn int16_param(name: &str) -> Param {
         Param::new(name.to_string(), DataType::simple(primitives::INT16))
-    }
-
-    fn uint16_param(name: &str) -> Param {
-        Param::new(name.to_string(), DataType::simple(primitives::UINT16))
     }
 
     #[test]

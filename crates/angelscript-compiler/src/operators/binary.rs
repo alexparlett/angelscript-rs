@@ -184,11 +184,8 @@ fn try_operator_on_type(
         // Check if argument type matches parameter (with implicit conversions only)
         if arg_type.type_hash != param_type.type_hash {
             // Check if implicit conversion is available
-            match crate::conversion::find_conversion(arg_type, param_type, ctx) {
-                Some(conv) if conv.is_implicit() => {
-                    // Conversion is available and implicit - accept this overload
-                }
-                _ => continue, // No implicit conversion available, try next overload
+            if crate::conversion::find_conversion(arg_type, param_type, ctx, true).is_none() {
+                continue; // No implicit conversion available, try next overload
             }
         }
 

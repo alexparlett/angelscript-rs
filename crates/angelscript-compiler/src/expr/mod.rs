@@ -19,9 +19,13 @@
 
 mod binary;
 mod calls;
+mod cast;
 mod identifiers;
+mod init_list;
+mod lambda;
 mod literals;
 pub(crate) mod member;
+mod ternary;
 mod unary;
 
 use angelscript_core::{CompilationError, DataType, TypeHash, primitives};
@@ -94,22 +98,10 @@ impl<'a, 'ctx, 'pool> ExprCompiler<'a, 'ctx, 'pool> {
                 message: "Assignment not yet implemented (Task 43)".to_string(),
                 span,
             }),
-            Expr::Ternary(_) => Err(CompilationError::Other {
-                message: "Ternary expressions not yet implemented (Task 43)".to_string(),
-                span,
-            }),
-            Expr::Cast(_) => Err(CompilationError::Other {
-                message: "Cast expressions not yet implemented (Task 43)".to_string(),
-                span,
-            }),
-            Expr::Lambda(_) => Err(CompilationError::Other {
-                message: "Lambda expressions not yet implemented (Task 43)".to_string(),
-                span,
-            }),
-            Expr::InitList(_) => Err(CompilationError::Other {
-                message: "Init list expressions not yet implemented (Task 43)".to_string(),
-                span,
-            }),
+            Expr::Ternary(t) => ternary::compile_ternary(self, t),
+            Expr::Cast(c) => cast::compile_cast(self, c),
+            Expr::Lambda(lam) => lambda::compile_lambda(self, lam, None),
+            Expr::InitList(init) => init_list::compile_init_list(self, init, None),
         }
     }
 
@@ -126,9 +118,7 @@ impl<'a, 'ctx, 'pool> ExprCompiler<'a, 'ctx, 'pool> {
         }
 
         // Try implicit conversion
-        if let Some(conv) = find_conversion(&info.data_type, expected, self.ctx)
-            && conv.is_implicit()
-        {
+        if let Some(conv) = find_conversion(&info.data_type, expected, self.ctx, true) {
             emit_conversion(self.emitter, &conv);
             return Ok(ExprInfo::rvalue(*expected));
         }
@@ -205,7 +195,13 @@ pub(crate) fn emit_conversion(emitter: &mut BytecodeEmitter<'_>, conv: &Conversi
         ConversionKind::ImplicitConvMethod { method } => {
             emitter.emit_call_method(*method, 0);
         }
-        ConversionKind::ExplicitCastMethod { method } => {
+        ConversionKind::ExplicitConvMethod { method } => {
+            emitter.emit_call_method(*method, 0);
+        }
+        ConversionKind::ImplicitCastMethod { method } => {
+            emitter.emit_call_method(*method, 0);
+        }
+        ConversionKind::ExplicitRefCastMethod { method } => {
             emitter.emit_call_method(*method, 0);
         }
         ConversionKind::ValueToHandle => {
