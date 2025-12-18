@@ -15,7 +15,7 @@
 //! | `cast<type>(expr)` | `opCast`, `opImplCast` | Reference cast (same object, different handle) |
 //! | Implicit | non-explicit constructor, `opImplConv`, `opImplCast` | Automatic conversions |
 
-use angelscript_core::{DataType, TypeHash, primitives};
+use angelscript_core::{DataType, OperatorBehavior, TypeHash, primitives};
 
 use crate::context::CompilationContext;
 
@@ -134,26 +134,26 @@ fn find_implicit_conv_method(
     // Check if this is a reference type (for the bool opImplConv restriction)
     let is_reference_type = class.type_kind.is_reference();
 
-    // Use O(1) lookup by method name
-    for &method_hash in class.find_methods("opImplConv") {
-        if let Some(func) = ctx.get_function(method_hash) {
-            // opImplConv with return type matching target
-            if func.def.return_type.type_hash == target.type_hash {
-                // Per AngelScript docs: When compiling boolean expressions in conditions,
-                // the compiler will NOT use `bool opImplConv` on reference types.
-                // This is because it is ambiguous if it is the handle that is verified
-                // or the actual object.
-                if is_boolean_condition && target.type_hash == primitives::BOOL && is_reference_type
-                {
-                    continue;
-                }
+    // Per AngelScript docs: When compiling boolean expressions in conditions,
+    // the compiler will NOT use `bool opImplConv` on reference types.
+    // This is because it is ambiguous if it is the handle that is verified
+    // or the actual object.
+    if is_boolean_condition && target.type_hash == primitives::BOOL && is_reference_type {
+        return None;
+    }
 
-                // Const-correctness check: non-const methods cannot be called on const objects
-                if source.is_effectively_const() && !func.def.is_const() {
-                    continue;
-                }
-                return Some(method_hash);
+    // O(1) lookup using OperatorBehavior as key
+    let op = OperatorBehavior::OpImplConv(target.type_hash);
+    let methods = class.behaviors.get_operator(op)?;
+
+    // Find a method that passes const-correctness check
+    for &method_hash in methods {
+        if let Some(func) = ctx.get_function(method_hash) {
+            // Const-correctness check: non-const methods cannot be called on const objects
+            if source.is_effectively_const() && !func.def.is_const() {
+                continue;
             }
+            return Some(method_hash);
         }
     }
 
@@ -214,17 +214,18 @@ fn find_explicit_conv_method(
 ) -> Option<TypeHash> {
     let class = ctx.get_type(source.type_hash)?.as_class()?;
 
-    // Use O(1) lookup by method name
-    for &method_hash in class.find_methods("opConv") {
+    // O(1) lookup using OperatorBehavior as key
+    let op = OperatorBehavior::OpConv(target.type_hash);
+    let methods = class.behaviors.get_operator(op)?;
+
+    // Find a method that passes const-correctness check
+    for &method_hash in methods {
         if let Some(func) = ctx.get_function(method_hash) {
-            // opConv with return type matching target
-            if func.def.return_type.type_hash == target.type_hash {
-                // Const-correctness check: non-const methods cannot be called on const objects
-                if source.is_effectively_const() && !func.def.is_const() {
-                    continue;
-                }
-                return Some(method_hash);
+            // Const-correctness check: non-const methods cannot be called on const objects
+            if source.is_effectively_const() && !func.def.is_const() {
+                continue;
             }
+            return Some(method_hash);
         }
     }
 
@@ -243,17 +244,18 @@ fn find_implicit_cast_method(
 ) -> Option<TypeHash> {
     let class = ctx.get_type(source.type_hash)?.as_class()?;
 
-    // Use O(1) lookup by method name
-    for &method_hash in class.find_methods("opImplCast") {
+    // O(1) lookup using OperatorBehavior as key
+    let op = OperatorBehavior::OpImplCast(target.type_hash);
+    let methods = class.behaviors.get_operator(op)?;
+
+    // Find a method that passes const-correctness check
+    for &method_hash in methods {
         if let Some(func) = ctx.get_function(method_hash) {
-            // opImplCast with return type matching target
-            if func.def.return_type.type_hash == target.type_hash {
-                // Const-correctness check: non-const methods cannot be called on const objects
-                if source.is_effectively_const() && !func.def.is_const() {
-                    continue;
-                }
-                return Some(method_hash);
+            // Const-correctness check: non-const methods cannot be called on const objects
+            if source.is_effectively_const() && !func.def.is_const() {
+                continue;
             }
+            return Some(method_hash);
         }
     }
 
@@ -271,17 +273,18 @@ fn find_explicit_cast_method(
 ) -> Option<TypeHash> {
     let class = ctx.get_type(source.type_hash)?.as_class()?;
 
-    // Use O(1) lookup by method name
-    for &method_hash in class.find_methods("opCast") {
+    // O(1) lookup using OperatorBehavior as key
+    let op = OperatorBehavior::OpCast(target.type_hash);
+    let methods = class.behaviors.get_operator(op)?;
+
+    // Find a method that passes const-correctness check
+    for &method_hash in methods {
         if let Some(func) = ctx.get_function(method_hash) {
-            // opCast with return type matching target
-            if func.def.return_type.type_hash == target.type_hash {
-                // Const-correctness check: non-const methods cannot be called on const objects
-                if source.is_effectively_const() && !func.def.is_const() {
-                    continue;
-                }
-                return Some(method_hash);
+            // Const-correctness check: non-const methods cannot be called on const objects
+            if source.is_effectively_const() && !func.def.is_const() {
+                continue;
             }
+            return Some(method_hash);
         }
     }
 
@@ -307,9 +310,11 @@ mod tests {
         // Create opImplConv method hash
         let impl_conv_hash = TypeHash::from_method(source_hash, "opImplConv", &[]);
 
-        // Create Source class with opImplConv method
+        // Create Source class with opImplConv operator behavior
         let mut source_class = ClassEntry::ffi("Source", TypeKind::reference());
-        source_class.add_method("opImplConv", impl_conv_hash);
+        source_class
+            .behaviors
+            .add_operator(OperatorBehavior::OpImplConv(target_hash), impl_conv_hash);
         registry.register_type(source_class.into()).unwrap();
 
         // Register opImplConv method
@@ -388,9 +393,11 @@ mod tests {
         let target_hash = TypeHash::from_name("Target");
         let cast_hash = TypeHash::from_method(source_hash, "opCast", &[]);
 
-        // Create Source class with opCast method
+        // Create Source class with opCast operator behavior
         let mut source_class = ClassEntry::ffi("Source", TypeKind::reference());
-        source_class.add_method("opCast", cast_hash);
+        source_class
+            .behaviors
+            .add_operator(OperatorBehavior::OpCast(target_hash), cast_hash);
         registry.register_type(source_class.into()).unwrap();
 
         // Register opCast method
@@ -582,7 +589,9 @@ mod tests {
             TypeKind::value::<i32>()
         };
         let mut class = ClassEntry::ffi(class_name, type_kind);
-        class.add_method("opImplConv", method_hash);
+        class
+            .behaviors
+            .add_operator(OperatorBehavior::OpImplConv(primitives::BOOL), method_hash);
         registry.register_type(class.into()).unwrap();
 
         // Register opImplConv method returning bool
@@ -704,7 +713,9 @@ mod tests {
 
         // Create reference type class with opImplConv returning int (not bool)
         let mut class = ClassEntry::ffi("RefClass", TypeKind::reference());
-        class.add_method("opImplConv", method_hash);
+        class
+            .behaviors
+            .add_operator(OperatorBehavior::OpImplConv(primitives::INT32), method_hash);
         registry.register_type(class.into()).unwrap();
 
         // Register opImplConv method returning int (NOT bool)
