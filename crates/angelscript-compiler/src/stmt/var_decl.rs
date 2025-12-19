@@ -65,6 +65,11 @@ impl<'a, 'ctx, 'pool> StmtCompiler<'a, 'ctx, 'pool> {
                     expr_compiler.check(init, &var_type)?;
                 }
 
+                // For handles, AddRef before storing (we Release on scope exit)
+                if var_type.is_handle {
+                    self.emitter.emit_add_ref();
+                }
+
                 // Store the result in the local slot
                 self.emitter.emit_set_local(slot);
             } else {
@@ -628,8 +633,8 @@ mod tests {
 
     #[test]
     fn var_decl_default_init_no_constructor_error() {
+        use angelscript_core::TypeKind;
         use angelscript_core::entries::ClassEntry;
-        use angelscript_core::{TypeHash, TypeKind};
         use angelscript_parser::ast::TypeBase;
 
         let arena = Bump::new();
@@ -669,5 +674,134 @@ mod tests {
 
         let result = compiler.compile_var_decl(&decl);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn var_decl_handle_emits_addref() {
+        use crate::bytecode::OpCode;
+        use angelscript_core::TypeKind;
+        use angelscript_core::entries::ClassEntry;
+        use angelscript_parser::ast::{TypeBase, TypeSuffix};
+
+        let arena = Bump::new();
+        let mut registry = SymbolRegistry::with_primitives();
+
+        // Register a reference type
+        let foo_class = ClassEntry::ffi("Foo", TypeKind::reference());
+        registry.register_type(foo_class.into()).unwrap();
+
+        let mut constants = ConstantPool::new();
+        let mut ctx = CompilationContext::new(&registry);
+        ctx.begin_function();
+        let mut emitter = BytecodeEmitter::new(&mut constants);
+
+        // Foo@ f = null; (handle with initializer should emit AddRef)
+        let init = arena.alloc(Expr::Literal(LiteralExpr {
+            kind: LiteralKind::Null,
+            span: Span::default(),
+        }));
+
+        let vars = arena.alloc_slice_copy(&[VarDeclarator {
+            name: Ident::new("f", Span::default()),
+            init: Some(init),
+            span: Span::default(),
+        }]);
+
+        // Create handle type: Foo@ using suffix
+        let suffixes = arena.alloc_slice_copy(&[TypeSuffix::Handle { is_const: false }]);
+        let ty = TypeExpr::new(
+            false,
+            None,
+            TypeBase::Named(Ident::new("Foo", Span::default())),
+            &[],
+            suffixes,
+            Span::default(),
+        );
+
+        let decl = VarDeclStmt {
+            ty,
+            vars,
+            span: Span::default(),
+        };
+
+        let mut compiler = StmtCompiler::new(&mut ctx, &mut emitter, DataType::void(), None);
+
+        assert!(compiler.compile_var_decl(&decl).is_ok());
+
+        // Verify AddRef was emitted by checking bytecode
+        let chunk = emitter.finish();
+        let mut found_addref = false;
+        for i in 0..chunk.len() {
+            if chunk.read_op(i) == Some(OpCode::AddRef) {
+                found_addref = true;
+                break;
+            }
+        }
+        assert!(
+            found_addref,
+            "Expected AddRef opcode for handle initialization"
+        );
+    }
+
+    #[test]
+    fn var_decl_handle_default_init_no_addref() {
+        use crate::bytecode::OpCode;
+        use angelscript_core::TypeKind;
+        use angelscript_core::entries::ClassEntry;
+        use angelscript_parser::ast::{TypeBase, TypeSuffix};
+
+        let arena = Bump::new();
+        let mut registry = SymbolRegistry::with_primitives();
+
+        // Register a reference type
+        let foo_class = ClassEntry::ffi("Foo", TypeKind::reference());
+        registry.register_type(foo_class.into()).unwrap();
+
+        let mut constants = ConstantPool::new();
+        let mut ctx = CompilationContext::new(&registry);
+        ctx.begin_function();
+        let mut emitter = BytecodeEmitter::new(&mut constants);
+
+        // Foo@ f; (default init to null - no AddRef needed for null)
+        let vars = arena.alloc_slice_copy(&[VarDeclarator {
+            name: Ident::new("f", Span::default()),
+            init: None,
+            span: Span::default(),
+        }]);
+
+        // Create handle type: Foo@ using suffix
+        let suffixes = arena.alloc_slice_copy(&[TypeSuffix::Handle { is_const: false }]);
+        let ty = TypeExpr::new(
+            false,
+            None,
+            TypeBase::Named(Ident::new("Foo", Span::default())),
+            &[],
+            suffixes,
+            Span::default(),
+        );
+
+        let decl = VarDeclStmt {
+            ty,
+            vars,
+            span: Span::default(),
+        };
+
+        let mut compiler = StmtCompiler::new(&mut ctx, &mut emitter, DataType::void(), None);
+
+        assert!(compiler.compile_var_decl(&decl).is_ok());
+
+        // Verify NO AddRef was emitted (null doesn't need AddRef)
+        let chunk = emitter.finish();
+        let mut found_addref = false;
+        for i in 0..chunk.len() {
+            if chunk.read_op(i) == Some(OpCode::AddRef) {
+                found_addref = true;
+                break;
+            }
+        }
+        assert!(
+            !found_addref,
+            "Expected no AddRef opcode for null default initialization"
+        );
     }
 }
