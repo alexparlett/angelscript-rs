@@ -51,14 +51,14 @@ pub fn try_primitive_binary(
         | BinaryOp::ShiftRight
         | BinaryOp::ShiftRightUnsigned => resolve_bitwise(left_hash, right_hash, op),
 
+        // Exponentiation
+        BinaryOp::Pow => resolve_pow(left_hash, right_hash),
+
         // Logical operators are NOT primitive operations (need short-circuit evaluation)
         BinaryOp::LogicalAnd | BinaryOp::LogicalOr | BinaryOp::LogicalXor => None,
 
         // Identity operators handled elsewhere (handle comparison)
         BinaryOp::Is | BinaryOp::NotIs => None,
-
-        // Exponentiation not a primitive op
-        BinaryOp::Pow => None,
     }
 }
 
@@ -449,4 +449,69 @@ fn resolve_plus(type_hash: TypeHash) -> Option<UnaryResolution> {
     } else {
         None
     }
+}
+
+fn resolve_pow(left: TypeHash, right: TypeHash) -> Option<OperatorResolution> {
+    // Only numeric types can do exponentiation
+    if !is_numeric_primitive(left) || !is_numeric_primitive(right) {
+        return None;
+    }
+
+    // For floats: base ** exp where both are promoted to same float type
+    if is_float_primitive(left) || is_float_primitive(right) {
+        let promoted = promote_types(left, right)?;
+        let opcode = match promoted {
+            t if t == primitives::FLOAT => OpCode::PowF32,
+            t if t == primitives::DOUBLE => OpCode::PowF64,
+            _ => return None,
+        };
+        let left_conv = conversion_opcode(left, promoted);
+        let right_conv = conversion_opcode(right, promoted);
+
+        return Some(OperatorResolution::Primitive {
+            opcode,
+            left_conv,
+            right_conv,
+            result_type: DataType::simple(promoted),
+        });
+    }
+
+    // For integers: base ** exp where exp is converted to u32
+    // Result type is the promoted integer type
+    let promoted = promote_types(left, right)?;
+    let opcode = match promoted {
+        t if t == primitives::INT32 || t == primitives::UINT32 => OpCode::PowI32,
+        t if t == primitives::INT64 || t == primitives::UINT64 => OpCode::PowI64,
+        // Smaller integer types promote to int32
+        t if t == primitives::INT8
+            || t == primitives::INT16
+            || t == primitives::UINT8
+            || t == primitives::UINT16 =>
+        {
+            OpCode::PowI32
+        }
+        _ => return None,
+    };
+
+    // For integer pow, left operand type determines result type
+    // Right operand (exponent) is converted to u32
+    let result_type = match promoted {
+        t if t == primitives::INT64 || t == primitives::UINT64 => promoted,
+        _ => primitives::INT32,
+    };
+
+    let left_conv = conversion_opcode(left, result_type);
+    // Exponent is always converted to u32 for Rust's pow
+    let right_conv = if right != primitives::UINT32 {
+        conversion_opcode(right, primitives::UINT32)
+    } else {
+        None
+    };
+
+    Some(OperatorResolution::Primitive {
+        opcode,
+        left_conv,
+        right_conv,
+        result_type: DataType::simple(result_type),
+    })
 }

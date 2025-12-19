@@ -63,7 +63,7 @@ pub fn compile_ident<'ast>(
 
 /// Build a qualified name from the identifier expression.
 /// E.g., `ns::subns::name` from scope=["ns", "subns"] and ident="name"
-fn build_qualified_name(ident: &IdentExpr<'_>) -> String {
+pub fn build_qualified_name(ident: &IdentExpr<'_>) -> String {
     match ident.scope {
         Some(scope) if !scope.segments.is_empty() => {
             let mut parts: Vec<&str> = scope.segments.iter().map(|i| i.name).collect();

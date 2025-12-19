@@ -17,6 +17,7 @@
 //! let info = compiler.check(&expr, &expected_type)?;
 //! ```
 
+mod assignment;
 mod binary;
 mod calls;
 mod cast;
@@ -93,11 +94,8 @@ impl<'a, 'ctx, 'pool> ExprCompiler<'a, 'ctx, 'pool> {
             Expr::Member(member) => member::compile_member(self, member),
             Expr::Index(index) => member::compile_index(self, index),
 
-            // Deferred to Task 43
-            Expr::Assign(_) => Err(CompilationError::Other {
-                message: "Assignment not yet implemented (Task 43)".to_string(),
-                span,
-            }),
+            // Assignment expressions
+            Expr::Assign(assign) => assignment::compile_assign(self, assign),
             Expr::Ternary(t) => ternary::compile_ternary(self, t),
             Expr::Cast(c) => cast::compile_cast(self, c),
             Expr::Lambda(lam) => lambda::compile_lambda(self, lam, None),

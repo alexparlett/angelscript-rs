@@ -515,6 +515,13 @@ impl<'pool> BytecodeEmitter<'pool> {
         self.emit(OpCode::Dup);
     }
 
+    /// Emit pick (copy value at offset from top to top of stack).
+    ///
+    /// Offset 0 = duplicate top (like Dup), offset 1 = copy second from top, etc.
+    pub fn emit_pick(&mut self, offset: u8) {
+        self.emit_byte(OpCode::Pick, offset);
+    }
+
     // ==========================================================================
     // Reference Counting
     // ==========================================================================
