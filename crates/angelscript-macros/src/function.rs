@@ -784,15 +784,16 @@ fn generate_native_fn(
             .iter()
             .map(|(i, name, base_ty)| {
                 quote! {
-                    let #name: &#base_ty = {
+                    let #name: *const #base_ty = {
                         let __slot = __ctx.arg_slot(#i)?;
                         match __slot {
                             ::angelscript_core::Dynamic::Native(boxed) => {
-                                boxed.downcast_ref::<#base_ty>().ok_or_else(|| {
+                                let __ref = boxed.downcast_ref::<#base_ty>().ok_or_else(|| {
                                     ::angelscript_core::NativeError::other(
                                         concat!("failed to downcast argument ", stringify!(#name))
                                     )
-                                })?
+                                })?;
+                                __ref as *const #base_ty
                             }
                             _ => return Err(::angelscript_core::NativeError::Conversion(
                                 ::angelscript_core::ConversionError::TypeMismatch {
@@ -802,8 +803,6 @@ fn generate_native_fn(
                             )),
                         }
                     };
-                    // Convert to raw pointer to break the borrow
-                    let #name: *const #base_ty = #name;
                 }
             })
             .collect();
@@ -816,32 +815,19 @@ fn generate_native_fn(
             })
             .collect();
 
-        // Suppress unused warnings - keeping code for when VM CallContext is designed
-        let _ = (
-            &non_ref_extractions,
-            &ref_extractions,
-            &unsafe_derefs,
-            &arg_names,
-            &return_handling,
-        );
-        let _ = mangled_fn_name;
-
         quote! {
             Some(::angelscript_core::NativeFn::new(
                 ::angelscript_core::TypeHash::from_name(#fn_name),
-                |_ctx: &mut ::angelscript_core::CallContext| {
-                    // TODO: Implementation pending VM design
-                    // Intended implementation (needs_unsafe_self_access case):
-                    // #(#non_ref_extractions)*
-                    // #(#ref_extractions)*
-                    // let __result = {
-                    //     let __this: &mut Self = _ctx.this_mut::<Self>()?;
-                    //     #(#unsafe_derefs)*
-                    //     __this.fn_name(#(#arg_names),*)
-                    // };
-                    // #return_handling
-                    let _ = _ctx;
-                    todo!("NativeFn body pending VM CallContext design")
+                |__ctx: &mut ::angelscript_core::CallContext| {
+                    #(#non_ref_extractions)*
+                    #(#ref_extractions)*
+                    let __result = {
+                        let __this: &mut Self = __ctx.this_mut::<Self>()?;
+                        #(#unsafe_derefs)*
+                        __this.#mangled_fn_name(#(#arg_names),*)
+                    };
+                    #return_handling
+                    Ok(())
                 }
             ))
         }
@@ -853,7 +839,7 @@ fn generate_native_fn(
                 // Mutable self - use this_mut()
                 quote! {
                     {
-                        let __this: &mut Self = _ctx.this_mut::<Self>()?;
+                        let __this: &mut Self = __ctx.this_mut::<Self>()?;
                         __this.#mangled_fn_name(#(#arg_names),*)
                     }
                 }
@@ -861,7 +847,7 @@ fn generate_native_fn(
                 // Immutable self - use this()
                 quote! {
                     {
-                        let __this: &Self = _ctx.this::<Self>()?;
+                        let __this: &Self = __ctx.this::<Self>()?;
                         __this.#mangled_fn_name(#(#arg_names),*)
                     }
                 }
@@ -875,20 +861,14 @@ fn generate_native_fn(
             quote! { Self::#mangled_fn_name(#(#arg_names),*) }
         };
 
-        // Suppress unused warnings - keeping code for when VM CallContext is designed
-        let _ = (&extractions, &call_expr, &return_handling);
-
         quote! {
             Some(::angelscript_core::NativeFn::new(
                 ::angelscript_core::TypeHash::from_name(#fn_name),
-                |_ctx: &mut ::angelscript_core::CallContext| {
-                    // TODO: Implementation pending VM design
-                    // Intended implementation:
-                    // #(#extractions)*
-                    // let __result = { #call_expr };
-                    // #return_handling
-                    let _ = _ctx;
-                    todo!("NativeFn body pending VM CallContext design")
+                |__ctx: &mut ::angelscript_core::CallContext| {
+                    #(#extractions)*
+                    let __result = #call_expr;
+                    #return_handling
+                    Ok(())
                 }
             ))
         }
@@ -957,6 +937,31 @@ fn generate_param_extraction(name: &syn::Ident, ty: &Type, index: usize) -> Toke
                 };
             }
         }
+        "String" => {
+            quote! {
+                let #name: String = {
+                    let __slot = __ctx.arg_slot(#index)?;
+                    match __slot {
+                        ::angelscript_core::Dynamic::String(s) => s.clone(),
+                        _ => return Err(::angelscript_core::NativeError::Conversion(
+                            ::angelscript_core::ConversionError::TypeMismatch {
+                                expected: "string",
+                                actual: __slot.type_name(),
+                            }
+                        )),
+                    }
+                };
+            }
+        }
+        "Dynamic" => {
+            // Dynamic is already the runtime type - clone it directly from the slot
+            quote! {
+                let #name: ::angelscript_core::Dynamic = __ctx.arg_slot(#index)?.clone_if_possible()
+                    .ok_or_else(|| ::angelscript_core::NativeError::other(
+                        concat!("cannot clone Dynamic argument ", stringify!(#name))
+                    ))?;
+            }
+        }
         _ => {
             // Non-primitive type - try to extract from Native or Object
             if is_ref && is_mut {
@@ -1004,12 +1009,27 @@ fn generate_param_extraction(name: &syn::Ident, ty: &Type, index: usize) -> Toke
                     };
                 }
             } else {
-                // Owned value type - not yet supported
-                // Future: will need VM memory model decisions for clone vs move semantics
+                // Owned value type - try to downcast and clone from Native
+                // This requires the type to implement Clone
                 quote! {
-                    let #name: #ty = return Err(::angelscript_core::NativeError::other(
-                        concat!("owned value type extraction not yet supported for ", stringify!(#name))
-                    ));
+                    let #name: #ty = {
+                        let __slot = __ctx.arg_slot(#index)?;
+                        match __slot {
+                            ::angelscript_core::Dynamic::Native(boxed) => {
+                                boxed.downcast_ref::<#base_ty>().ok_or_else(|| {
+                                    ::angelscript_core::NativeError::other(
+                                        concat!("failed to downcast argument ", stringify!(#name))
+                                    )
+                                })?.clone()
+                            }
+                            _ => return Err(::angelscript_core::NativeError::Conversion(
+                                ::angelscript_core::ConversionError::TypeMismatch {
+                                    expected: "native",
+                                    actual: __slot.type_name(),
+                                }
+                            )),
+                        }
+                    };
                 }
             }
         }
@@ -1045,6 +1065,9 @@ fn generate_return_handling_code(fn_output: &ReturnType) -> Option<TokenStream2>
                 "()" => Some(quote! {
                     let _ = __result;
                     __ctx.set_return_slot(::angelscript_core::Dynamic::Void);
+                }),
+                "String" => Some(quote! {
+                    __ctx.set_return_slot(::angelscript_core::Dynamic::String(__result));
                 }),
                 _ => {
                     // Non-primitive type - wrap in Dynamic::Native
