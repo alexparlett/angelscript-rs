@@ -137,18 +137,23 @@ Use with `operator = Operator::X`:
 - **Index Access**: `Index` (returns reference), `IndexGet` (returns value), `IndexSet` (sets value)
 - **Function Call**: `Call`
 - **Conversion**: `Conv`, `ImplConv`, `Cast`, `ImplCast`
-- **Foreach**: `ForBegin`, `ForEnd`, `ForNext`, `ForValue`, `ForValue0`, `ForValue1`, `ForValue2`, `ForValue3`
+- **Foreach**: `ForBegin`, `ForEnd`, `ForNext`, `ForValue`, `ForValueN(0)`, `ForValueN(1)`, ...
 
 **Reverse operators** are called on the right operand when the left operand doesn't support the operation. For example, if `a + b` is evaluated but `a` doesn't have `opAdd`, the engine tries `b.opAdd_r(a)` instead.
 
 ### Parameter Attributes (Non-Generic)
 
-Apply directly on function parameters:
+Apply directly on function parameters. These can use either the shorthand syntax or the `#[param(...)]` syntax:
 
-| Attribute | Description |
-|-----------|-------------|
-| `#[default("value")]` | Default value as string expression |
-| `#[template("T")]` | Parameter uses template type parameter |
+| Shorthand | #[param(...)] | Description |
+|-----------|---------------|-------------|
+| `#[default("value")]` | `#[param(default = "value")]` | Default value as string expression |
+| `#[template("T")]` | `#[param(template = "T")]` | Parameter uses template type parameter |
+| - | `#[param(in)]` | Input reference mode (`const T&in`) |
+| - | `#[param(out)]` | Output reference mode (`T&out`) |
+| - | `#[param(inout)]` | Input/output reference mode (`T&inout`) |
+
+Multiple attributes can be combined: `#[param(in, default = "0")]`
 
 ### Examples
 
@@ -251,6 +256,57 @@ impl Vector2 {
     #[angelscript_macros::function(instance, const, operator = Operator::Neg)]
     pub fn op_neg(&self) -> Vector2 {
         Vector2 { x: -self.x, y: -self.y }
+    }
+}
+```
+
+#### Foreach Operators
+
+Enable `foreach` loop support for container types. For single-value iteration use `ForValue`, for multi-value (key-value) use `ForValueN(index)`:
+
+```rust
+impl ScriptArray {
+    /// Begin foreach iteration - returns iterator handle
+    #[angelscript_macros::function(instance, const, operator = Operator::ForBegin)]
+    pub fn op_for_begin(&self) -> i32 {
+        todo!()
+    }
+
+    /// Check if iteration is complete
+    #[angelscript_macros::function(instance, const, operator = Operator::ForEnd)]
+    pub fn op_for_end(&self, iter: i32) -> bool {
+        todo!()
+    }
+
+    /// Advance to next element
+    #[angelscript_macros::function(instance, const, operator = Operator::ForNext)]
+    pub fn op_for_next(&self, iter: i32) -> i32 {
+        todo!()
+    }
+
+    /// Get current element value
+    #[angelscript_macros::function(instance, const, operator = Operator::ForValue)]
+    #[returns(template = "T")]
+    pub fn op_for_value(&self, iter: i32) -> Dynamic {
+        todo!()
+    }
+}
+
+impl ScriptDict {
+    // ... ForBegin, ForEnd, ForNext same as above ...
+
+    /// Get current key (for `foreach (k, v : dict)`)
+    #[angelscript_macros::function(instance, const, operator = Operator::ForValueN(0))]
+    #[returns(template = "K")]
+    pub fn op_for_value_0(&self, iter: i32) -> Dynamic {
+        todo!()
+    }
+
+    /// Get current value (for `foreach (k, v : dict)`)
+    #[angelscript_macros::function(instance, const, operator = Operator::ForValueN(1))]
+    #[returns(template = "V")]
+    pub fn op_for_value_1(&self, iter: i32) -> Dynamic {
+        todo!()
     }
 }
 ```
@@ -535,7 +591,7 @@ Generated metadata function: `__as_Drawable_interface_meta()` / `__as_Updateable
 
 ## #[angelscript_macros::funcdef]
 
-Creates an AngelScript function pointer type (funcdef) from a Rust type alias.
+Creates an AngelScript function pointer type (funcdef). Generates a struct type that implements `Any` and wraps `FuncdefHandle`.
 
 ### Attributes
 
@@ -543,8 +599,20 @@ Creates an AngelScript function pointer type (funcdef) from a Rust type alias.
 |-----------|-------------|
 | `name = "Name"` | Override the AngelScript funcdef name |
 | `parent = Type` | Parent type for child funcdefs (see Advanced Template Features) |
+| `params(...)` | Parameter type specs for template parameters (see below) |
+
+### Parameter Specs (`params`)
+
+For funcdefs with template type parameters, use `params(...)` to specify which parameters are template types:
+
+| Spec | Description |
+|------|-------------|
+| `_` | Infer type from the fn signature (concrete type) |
+| `T`, `U`, `V`, ... | Template parameter (single uppercase letter) |
 
 ### Examples
+
+#### Basic Funcdef
 
 ```rust
 #[angelscript_macros::funcdef(name = "Callback")]
@@ -557,7 +625,65 @@ pub type CompareFunction = fn(&i32, &i32) -> i32;
 pub type EventHandler = fn(String, i32);
 ```
 
-Generated metadata function: `__as_MyCallback_funcdef_meta()` etc.
+#### Child Funcdef with Template Parameters
+
+For funcdefs belonging to template types where parameters use template type parameters:
+
+```rust
+use angelscript_core::Dynamic;
+
+/// Child funcdef for array<T>.sort()
+/// AngelScript: `funcdef bool less(const T&in a, const T&in b);`
+#[angelscript_macros::funcdef(parent = ScriptArray, params(T, T))]
+pub type Less = fn(Dynamic, Dynamic) -> bool;
+
+/// Mixed concrete and template params
+/// AngelScript: `funcdef bool filter(int index, const T&in value);`
+#[angelscript_macros::funcdef(parent = ScriptArray, params(_, T))]
+pub type Filter = fn(i32, Dynamic) -> bool;
+```
+
+The `params(T, T)` specifies both parameters are template type `T`. Use `_` for concrete types inferred from the fn signature.
+
+### Generated Code
+
+The macro generates:
+1. A struct type wrapping `FuncdefHandle`
+2. `Any` trait implementation with `type_hash()` and `type_name()`
+3. Metadata function `__as_TypeName_funcdef_meta()`
+
+```rust
+// Generated from: #[funcdef] pub type MyCallback = fn(i32) -> bool;
+
+/// Funcdef handle type for AngelScript function pointers.
+#[repr(transparent)]
+pub struct MyCallback(FuncdefHandle);
+
+impl Any for MyCallback {
+    fn type_hash() -> TypeHash { TypeHash::from_name("MyCallback") }
+    fn type_name() -> &'static str { "MyCallback" }
+}
+
+pub fn __as_MyCallback_funcdef_meta() -> FuncdefMeta { ... }
+```
+
+### Using Funcdef Types in Methods
+
+Since funcdef types implement `Any`, they can be used directly as parameter types:
+
+```rust
+impl ScriptArray {
+    #[angelscript_macros::function(instance)]
+    pub fn sort(
+        &mut self,
+        #[param(in)] comparator: &Less,
+        #[param(default = "0")] start_at: u32,
+        #[param(default = "0xFFFFFFFF")] count: u32,
+    ) {
+        todo!()
+    }
+}
+```
 
 ---
 
@@ -711,21 +837,29 @@ pub fn identity<T>(_ctx: &CallContext) {
 
 ### Child Funcdefs
 
-Funcdefs can belong to template types (child funcdefs). Use `parent = Type` to associate a funcdef with its parent type:
+Funcdefs can belong to template types (child funcdefs). Use `parent = Type` to associate a funcdef with its parent type, and `params(...)` to specify template parameter types:
 
 ```rust
+use angelscript_core::Dynamic;
+
 /// Global funcdef
 #[angelscript_macros::funcdef(name = "Callback")]
 pub type Callback = fn(i32) -> bool;
 
-/// Child funcdef of myTemplate<T>
-/// In AngelScript: "bool myTemplate<T>::callback(const T &in)"
-#[angelscript_macros::funcdef(
-    name = "callback",
-    parent = ScriptArray  // parent template type
-)]
-pub type ArrayCallback = fn(&i32) -> bool;
+/// Child funcdef of array<T> for custom sorting
+/// In AngelScript: "funcdef bool less(const T&in a, const T&in b);"
+#[angelscript_macros::funcdef(parent = ScriptArray, params(T, T))]
+pub type Less = fn(Dynamic, Dynamic) -> bool;
+
+/// Child funcdef with mixed concrete and template params
+/// In AngelScript: "funcdef bool filter(int index, const T&in value);"
+#[angelscript_macros::funcdef(parent = ScriptArray, params(_, T))]
+pub type Filter = fn(i32, Dynamic) -> bool;
 ```
+
+The `params(...)` syntax specifies parameter types:
+- `T`, `U`, `V`, etc. - Template parameter (single uppercase letter)
+- `_` - Infer concrete type from fn signature
 
 ### Template Specializations
 
@@ -832,7 +966,7 @@ pub trait MyInterface {
 ### Funcdef
 
 ```rust
-#[angelscript_macros::funcdef(name = "...")]
+#[angelscript_macros::funcdef(name = "...", parent = ParentType, params(T, T | _, T))]
 pub type MyCallback = fn(i32) -> bool;
 ```
 
