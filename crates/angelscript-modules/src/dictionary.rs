@@ -3,7 +3,7 @@
 //! This is a placeholder implementation for FFI registration.
 //! The actual storage and runtime implementation will be handled by the VM.
 
-use angelscript_core::Dynamic;
+use angelscript_core::{CallContext, Dynamic, native_error::NativeError};
 use angelscript_macros::Any;
 use angelscript_registry::Module;
 
@@ -73,6 +73,12 @@ impl ScriptDict {
         todo!()
     }
 
+    /// Remove all entries (alias for clear).
+    #[angelscript_macros::function(instance, name = "deleteAll")]
+    pub fn delete_all(&mut self) {
+        todo!()
+    }
+
     // =========================================================================
     // TEMPLATE PARAMETER METHODS
     // =========================================================================
@@ -102,6 +108,20 @@ impl ScriptDict {
     #[angelscript_macros::function(instance)]
     pub fn delete(&mut self, #[template("K")] key: Dynamic) -> bool {
         let _ = key;
+        todo!()
+    }
+
+    /// Get all keys as an array.
+    #[angelscript_macros::function(instance, const, name = "getKeys")]
+    #[returns(template = "array<K>")]
+    pub fn get_keys(&self) -> Dynamic {
+        todo!()
+    }
+
+    /// Get all values as an array.
+    #[angelscript_macros::function(instance, const, name = "getValues")]
+    #[returns(template = "array<V>")]
+    pub fn get_values(&self) -> Dynamic {
         todo!()
     }
 
@@ -148,7 +168,7 @@ impl ScriptDict {
     /// Called when: `dictionary<string, int> d = {{"a", 1}, {"b", 2}};`
     #[angelscript_macros::function(list_factory, generic)]
     #[list_pattern(repeat_tuple_template("K", "V"))]
-    pub fn list_factory() {
+    pub fn list_factory(_ctx: &mut CallContext) -> Result<(), NativeError> {
         todo!()
     }
 }
@@ -171,11 +191,14 @@ pub fn module() -> Module {
         .function(ScriptDict::reserve__meta)
         .function(ScriptDict::shrink_to_fit__meta)
         .function(ScriptDict::clear__meta)
+        .function(ScriptDict::delete_all__meta)
         // Template parameter methods
         .function(ScriptDict::set__meta)
         .function(ScriptDict::exists__meta)
         .function(ScriptDict::get__meta)
         .function(ScriptDict::delete__meta)
+        .function(ScriptDict::get_keys__meta)
+        .function(ScriptDict::get_values__meta)
         // Operators
         .function(ScriptDict::op_index__meta)
         .function(ScriptDict::op_index_const__meta)

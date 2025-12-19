@@ -3,7 +3,7 @@
 //! Provides basic I/O and exception functions.
 
 use crate::ScriptString;
-use angelscript_core::CallContext;
+use angelscript_core::{CallContext, native_error::NativeError};
 use angelscript_registry::Module;
 
 // =============================================================================
@@ -21,7 +21,7 @@ use angelscript_registry::Module;
 /// This function signature is for registration purposes.
 #[angelscript_macros::function(generic, name = "throw")]
 #[param(type = ScriptString, in)]
-pub fn as_throw(_ctx: &CallContext) {
+pub fn as_throw(_ctx: &mut CallContext) -> Result<(), NativeError> {
     // VM implementation will:
     // 1. Get the message from the stack via ctx
     // 2. Store the exception message in VM state
@@ -40,7 +40,7 @@ pub fn as_throw(_ctx: &CallContext) {
 /// Note: The actual exception info retrieval is handled by the VM through CallContext.
 #[angelscript_macros::function(generic, name = "getExceptionInfo")]
 #[returns(type = ScriptString)]
-pub fn as_get_exception_info(_ctx: &CallContext) {
+pub fn as_get_exception_info(_ctx: &mut CallContext) -> Result<(), NativeError> {
     // VM implementation will:
     // 1. Get the current exception message from VM state
     // 2. Push a ScriptString onto the stack via ctx
@@ -56,7 +56,7 @@ pub fn as_get_exception_info(_ctx: &CallContext) {
 #[angelscript_macros::function(generic, name = "print")]
 #[param(type = ScriptString, in)]
 #[param(variable, in, variadic)]
-pub fn as_print(_ctx: &CallContext) {
+pub fn as_print(_ctx: &mut CallContext) -> Result<(), NativeError> {
     todo!()
 }
 
@@ -65,7 +65,7 @@ pub fn as_print(_ctx: &CallContext) {
 #[angelscript_macros::function(generic, name = "println")]
 #[param(type = ScriptString, in)]
 #[param(variable, in, variadic)]
-pub fn as_println(_ctx: &CallContext) {
+pub fn as_println(_ctx: &mut CallContext) -> Result<(), NativeError> {
     todo!()
 }
 
@@ -74,7 +74,7 @@ pub fn as_println(_ctx: &CallContext) {
 #[angelscript_macros::function(generic, name = "eprint")]
 #[param(type = ScriptString, in)]
 #[param(variable, in, variadic)]
-pub fn as_eprint(_ctx: &CallContext) {
+pub fn as_eprint(_ctx: &mut CallContext) -> Result<(), NativeError> {
     todo!()
 }
 
@@ -83,7 +83,7 @@ pub fn as_eprint(_ctx: &CallContext) {
 #[angelscript_macros::function(generic, name = "eprintln")]
 #[param(type = ScriptString, in)]
 #[param(variable, in, variadic)]
-pub fn as_eprintln(_ctx: &CallContext) {
+pub fn as_eprintln(_ctx: &mut CallContext) -> Result<(), NativeError> {
     todo!()
 }
 

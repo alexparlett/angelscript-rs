@@ -1,4 +1,4 @@
-error: unknown param attribute 'unknown_param_attr'. Valid attributes are: variable, variadic, in, out, inout, type, default, if_handle_then_const
+error: unknown param attribute 'unknown_param_attr'. Valid attributes are: variable, variadic, in, out, inout, type, template, default, if_handle_then_const
  --> tests/compile_fail/unknown_param_attr.rs:6:9
   |
 6 | #[param(unknown_param_attr)]
