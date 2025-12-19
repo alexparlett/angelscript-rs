@@ -46,7 +46,7 @@ pub use conversion::{
 };
 pub use emit::{BreakError, BytecodeEmitter, JumpLabel};
 pub use expr::ExprCompiler;
-pub use expr_info::ExprInfo;
+pub use expr_info::{ExprInfo, ValueSource};
 pub use function_compiler::FunctionCompiler;
 pub use overload::{OverloadMatch, resolve_overload};
 pub use passes::{

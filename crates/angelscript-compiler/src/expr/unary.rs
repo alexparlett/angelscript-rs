@@ -92,8 +92,9 @@ fn compile_prefix_inc_dec<'ast>(
 
     compiler.emitter().emit(opcode);
 
-    // Result is an lvalue with same type
-    Ok(ExprInfo::lvalue(operand_info.data_type))
+    // Result is an lvalue with same type, preserving the source for ref return validation
+    // (e.g., ++x still refers to the same storage location as x)
+    Ok(ExprInfo::lvalue(operand_info.data_type).with_source(operand_info.source))
 }
 
 fn compile_postfix_inc_dec<'ast>(
