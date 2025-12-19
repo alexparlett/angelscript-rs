@@ -140,7 +140,9 @@ pub use error::{
 };
 
 // Native function types
-pub use native_fn::{CallContext, Dynamic, NativeCallable, NativeFn, ObjectHandle, ObjectHeap};
+pub use native_fn::{
+    CallContext, Dynamic, FuncdefHandle, NativeCallable, NativeFn, ObjectHandle, ObjectHeap,
+};
 
 // Conversion traits
 pub use convert::{FromDynamic, IntoDynamic};

@@ -10,8 +10,8 @@ use angelscript_registry::Module;
 /// Child funcdef for custom sorting comparison.
 ///
 /// AngelScript: `funcdef bool less(const T&in a, const T&in b);`
-#[funcdef(parent = ScriptArray, params(T, T), returns = bool)]
-type Less = fn() -> bool;
+#[funcdef(parent = ScriptArray, params(T, T))]
+pub type Less = fn(Dynamic, Dynamic) -> bool;
 
 /// Placeholder for AngelScript `array<T>` template.
 ///
@@ -149,19 +149,14 @@ impl ScriptArray {
     /// Sort elements with custom comparison function.
     ///
     /// AngelScript: `void sort(const less &in, uint startAt = 0, uint count = uint(-1))`
-    ///
-    /// Uses generic calling convention because the `less` funcdef callback
-    /// has template parameter `T` from the parent array type.
-    /// For generic methods, `self` is retrieved via `ctx.get_object()`.
-    #[angelscript_macros::function(instance, generic)]
-    #[param(template = "T", in)]
-    #[param(type = u32, default = "0")]
-    #[param(type = u32, default = "0xFFFFFFFF")]
-    pub fn sort(_ctx: &mut CallContext) -> Result<(), NativeError> {
-        // ctx.get_object() gives us &mut ScriptArray (self)
-        // ctx.arg(0) gives us the funcdef callback
-        // ctx.arg(1) gives us start
-        // ctx.arg(2) gives us count
+    #[angelscript_macros::function(instance)]
+    pub fn sort(
+        &mut self,
+        #[param(in)] comparator: &Less,
+        #[param(default = "0")] start_at: u32,
+        #[param(default = "0xFFFFFFFF")] count: u32,
+    ) {
+        let _ = (comparator, start_at, count);
         todo!()
     }
 
