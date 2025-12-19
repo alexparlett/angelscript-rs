@@ -38,8 +38,9 @@
 
 use crate::context::Context;
 use angelscript_compiler::{CompiledModule, Compiler};
-use angelscript_core::{AngelScriptError, CompilationError};
+use angelscript_core::{AngelScriptError, CompilationError, UnitId};
 use angelscript_parser::ast::{ParseError, Parser};
+use angelscript_registry::SymbolRegistry;
 use bumpalo::Bump;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -292,10 +293,19 @@ impl Unit {
         }
 
         // Compile the script(s)
-        // TODO: Pass SymbolRegistry when Phase 2 is complete
         let compilation_result = {
+            // Get the global registry - use context's registry if available, otherwise empty
+            let default_registry = SymbolRegistry::with_primitives();
+            let global_registry = self
+                .context
+                .as_ref()
+                .map(|c| c.registry())
+                .unwrap_or(&default_registry);
+
             if scripts.len() == 1 {
-                Compiler::compile(&scripts[0].1)
+                // TODO: use a unique unit ID per compilation
+                let compiler = Compiler::new(global_registry, UnitId::new(0));
+                compiler.compile(&scripts[0].1)
             } else {
                 todo!("Multi-file compilation not yet implemented")
             }

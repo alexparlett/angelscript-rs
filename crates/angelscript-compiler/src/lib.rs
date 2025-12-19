@@ -5,6 +5,7 @@
 //! ## Architecture
 //!
 //! - **Pass 1 (Registration)**: Register all types and functions with complete signatures
+//! - **Pass 1b (Type Completion)**: Resolve inheritance and copy inherited members
 //! - **Pass 2 (Compilation)**: Type check function bodies and generate bytecode
 //!
 //! ## Modules
@@ -15,7 +16,9 @@
 //! - [`emit`]: High-level bytecode emitter
 //! - [`expr`]: Expression compiler with bidirectional type checking
 //! - [`expr_info`]: Expression type information
+//! - [`function_compiler`]: Single function compilation
 //! - [`overload`]: Overload resolution for function calls
+//! - [`return_checker`]: Return path verification
 //! - [`scope`]: Local scope management for function compilation
 //! - [`stmt`]: Statement compiler for control flow and declarations
 //! - [`type_resolver`]: Type resolution from AST to semantic types
@@ -26,9 +29,11 @@ pub mod conversion;
 pub mod emit;
 pub mod expr;
 mod expr_info;
+pub mod function_compiler;
 pub mod operators;
 pub mod overload;
 pub mod passes;
+pub mod return_checker;
 pub mod scope;
 pub mod stmt;
 pub mod template;
@@ -42,8 +47,13 @@ pub use conversion::{
 pub use emit::{BreakError, BytecodeEmitter, JumpLabel};
 pub use expr::ExprCompiler;
 pub use expr_info::ExprInfo;
+pub use function_compiler::FunctionCompiler;
 pub use overload::{OverloadMatch, resolve_overload};
-pub use passes::{RegistrationOutput, RegistrationPass};
+pub use passes::{
+    CompilationOutput, CompilationPass, CompiledFunctionEntry, GlobalInitEntry, RegistrationOutput,
+    RegistrationPass,
+};
+pub use return_checker::ReturnChecker;
 pub use scope::{CapturedVar, LocalScope, LocalVar, VarLookup};
 pub use stmt::StmtCompiler;
 pub use type_resolver::TypeResolver;
@@ -51,13 +61,17 @@ pub use type_resolver::TypeResolver;
 // Re-export CompilationError from core for convenience
 pub use angelscript_core::CompilationError;
 
+use angelscript_core::UnitId;
 use angelscript_parser::ast::Script;
+use angelscript_registry::SymbolRegistry;
 
 /// A compiled module containing bytecode and metadata.
 #[derive(Debug, Default)]
 pub struct CompiledModule {
     /// Compiled functions.
     pub functions: Vec<CompiledFunction>,
+    /// Global variable initializers (in declaration order).
+    pub global_inits: Vec<CompiledFunction>,
     /// Module-level constant pool.
     pub constants: bytecode::ConstantPool,
 }
@@ -88,39 +102,83 @@ impl CompilationResult {
 
 /// The main compiler entry point.
 ///
-/// TODO: This will take a SymbolRegistry once Phase 2 is complete.
-pub struct Compiler;
+/// Orchestrates the multi-pass compilation:
+/// 1. Registration pass - collect type and function signatures
+/// 2. Type completion pass - resolve inheritance, copy members
+/// 3. Compilation pass - generate bytecode for function bodies
+pub struct Compiler<'a> {
+    /// Global registry with FFI types and shared types.
+    global_registry: &'a SymbolRegistry,
+    /// Unit ID for this compilation.
+    unit_id: UnitId,
+}
 
-impl Compiler {
+impl<'a> Compiler<'a> {
+    /// Create a new compiler with a global registry.
+    ///
+    /// # Arguments
+    ///
+    /// * `global_registry` - Registry containing FFI types and shared types
+    /// * `unit_id` - Unique identifier for this compilation unit
+    pub fn new(global_registry: &'a SymbolRegistry, unit_id: UnitId) -> Self {
+        Self {
+            global_registry,
+            unit_id,
+        }
+    }
+
     /// Compile a script.
     ///
-    /// TODO: Will take `&SymbolRegistry` parameter once Phase 2 is complete.
-    pub fn compile(script: &Script<'_>) -> CompilationResult {
-        use angelscript_parser::ast::Item;
+    /// Runs all compilation passes and returns the compiled module.
+    pub fn compile(&self, script: &Script<'_>) -> CompilationResult {
+        let mut ctx = CompilationContext::new(self.global_registry);
+        let mut all_errors = Vec::new();
 
-        // TODO: Implement actual compilation
-        // For now, return a stub module with function names from the AST
-        let functions = script
-            .items()
-            .iter()
-            .filter_map(|item| {
-                if let Item::Function(f) = item {
-                    Some(CompiledFunction {
-                        name: f.name.to_string(),
-                        bytecode: bytecode::BytecodeChunk::new(),
-                    })
-                } else {
-                    None
-                }
+        // Pass 1: Registration
+        let reg_pass = RegistrationPass::new(&mut ctx, self.unit_id);
+        let reg_output = reg_pass.run(script);
+        all_errors.extend(reg_output.errors);
+
+        // Pass 1b: Type Completion
+        let completion_pass = passes::TypeCompletionPass::new(
+            ctx.unit_registry_mut(),
+            self.global_registry,
+            reg_output.pending_resolutions,
+        );
+        let completion_output = completion_pass.run();
+        all_errors.extend(completion_output.errors);
+
+        // Pass 2: Compilation
+        let compile_pass = CompilationPass::new(&mut ctx, self.unit_id);
+        let (compile_output, constants) = compile_pass.run(script);
+        all_errors.extend(compile_output.errors);
+
+        // Build result
+        let functions = compile_output
+            .functions
+            .into_iter()
+            .map(|f| CompiledFunction {
+                name: f.name,
+                bytecode: f.bytecode,
+            })
+            .collect();
+
+        let global_inits = compile_output
+            .global_inits
+            .into_iter()
+            .map(|g| CompiledFunction {
+                name: g.name,
+                bytecode: g.bytecode,
             })
             .collect();
 
         CompilationResult {
             module: CompiledModule {
                 functions,
-                constants: bytecode::ConstantPool::new(),
+                global_inits,
+                constants,
             },
-            errors: vec![],
+            errors: all_errors,
         }
     }
 }
