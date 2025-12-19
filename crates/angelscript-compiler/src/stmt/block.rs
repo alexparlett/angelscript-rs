@@ -4,6 +4,8 @@
 
 use angelscript_parser::ast::Block;
 
+use crate::bytecode::OpCode;
+
 use super::{Result, StmtCompiler};
 
 impl<'a, 'ctx, 'pool> StmtCompiler<'a, 'ctx, 'pool> {
@@ -11,7 +13,7 @@ impl<'a, 'ctx, 'pool> StmtCompiler<'a, 'ctx, 'pool> {
     ///
     /// Creates a new scope for the block, compiles all statements within it,
     /// then pops the scope when done. Variables declared in the block are
-    /// only visible within it.
+    /// only visible within it. Handle variables get Release calls emitted.
     pub fn compile_block<'ast>(&mut self, block: &Block<'ast>) -> Result<()> {
         // Push a new scope for this block
         self.ctx.push_local_scope();
@@ -21,8 +23,16 @@ impl<'a, 'ctx, 'pool> StmtCompiler<'a, 'ctx, 'pool> {
             self.compile(stmt)?;
         }
 
-        // Pop the scope - variables declared in this block go out of scope
-        self.ctx.pop_local_scope();
+        // Pop the scope and get variables that went out of scope
+        let exiting_vars = self.ctx.pop_local_scope();
+
+        // Emit Release for handle variables
+        for var in exiting_vars {
+            if var.data_type.is_handle {
+                self.emitter.emit_get_local(var.slot);
+                self.emitter.emit(OpCode::Release);
+            }
+        }
 
         Ok(())
     }

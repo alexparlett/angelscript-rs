@@ -10,7 +10,6 @@
 use angelscript_core::{CompilationError, DataType, Span};
 use angelscript_parser::ast::{TypeBase, VarDeclStmt};
 
-use crate::bytecode::OpCode;
 use crate::type_resolver::TypeResolver;
 
 use super::{Result, StmtCompiler};
@@ -46,19 +45,16 @@ impl<'a, 'ctx, 'pool> StmtCompiler<'a, 'ctx, 'pool> {
                 let info = expr_compiler.infer(init)?;
                 info.data_type
             } else {
-                base_type.clone().unwrap()
+                base_type.unwrap()
             };
 
             // Check if the type is const from the declaration
             let is_const = decl.ty.is_const;
 
             // Declare the variable in the current scope
-            let slot = self.ctx.declare_local(
-                var.name.name.to_string(),
-                var_type.clone(),
-                is_const,
-                var.span,
-            )?;
+            let slot =
+                self.ctx
+                    .declare_local(var.name.name.to_string(), var_type, is_const, var.span)?;
 
             // Compile initializer or default initialization
             if let Some(init) = &var.init {
@@ -85,14 +81,15 @@ impl<'a, 'ctx, 'pool> StmtCompiler<'a, 'ctx, 'pool> {
 
     /// Emit default initialization for a variable.
     ///
-    /// - Primitives are zero-initialized
-    /// - Handles are null-initialized
-    /// - Value types require a default constructor (not yet implemented)
+    /// Initialization semantics:
+    /// - Primitives: zero-initialized
+    /// - Enums: first enum value
+    /// - Handles: null
+    /// - Value types: call default constructor (error if none exists)
     fn emit_default_init(&mut self, var_type: &DataType, slot: u32, span: Span) -> Result<()> {
-        // Check if it's a primitive type
         if var_type.is_primitive() {
             // Zero-initialize primitives
-            self.emitter.emit(OpCode::PushZero);
+            self.emitter.emit_int(0);
             self.emitter.emit_set_local(slot);
             Ok(())
         } else if var_type.is_handle {
@@ -101,12 +98,54 @@ impl<'a, 'ctx, 'pool> StmtCompiler<'a, 'ctx, 'pool> {
             self.emitter.emit_set_local(slot);
             Ok(())
         } else {
-            // Value types need default constructor - not yet implemented
-            // TODO: Task 45 or later - call default constructor
-            Err(CompilationError::Other {
-                message: "default construction of value types not yet implemented; provide an initializer".to_string(),
-                span,
-            })
+            // Look up the type to determine how to initialize
+            let type_hash = var_type.type_hash;
+            let type_entry =
+                self.ctx
+                    .get_type(type_hash)
+                    .ok_or_else(|| CompilationError::Other {
+                        message: "unknown type for default initialization".to_string(),
+                        span,
+                    })?;
+
+            if let Some(enum_entry) = type_entry.as_enum() {
+                // Enums initialize to first value (or 0 if empty)
+                let value = enum_entry.values.first().map(|v| v.value).unwrap_or(0);
+                self.emitter.emit_int(value);
+                self.emitter.emit_set_local(slot);
+                Ok(())
+            } else if let Some(class) = type_entry.as_class() {
+                // Value type - call default constructor
+                if class.behaviors.constructors.is_empty() {
+                    return Err(CompilationError::Other {
+                        message: format!(
+                            "type '{}' has no default constructor",
+                            type_entry.qualified_name()
+                        ),
+                        span,
+                    });
+                }
+
+                // Resolve default constructor (0 args) via overload resolution
+                let overload = crate::overload::resolve_overload(
+                    &class.behaviors.constructors,
+                    &[],
+                    self.ctx,
+                    span,
+                )?;
+
+                self.emitter.emit_new(type_hash, overload.func_hash, 0);
+                self.emitter.emit_set_local(slot);
+                Ok(())
+            } else {
+                Err(CompilationError::Other {
+                    message: format!(
+                        "type '{}' cannot be default-initialized",
+                        type_entry.qualified_name()
+                    ),
+                    span,
+                })
+            }
         }
     }
 }
@@ -468,5 +507,167 @@ mod tests {
         let var = ctx.get_local("x");
         assert!(var.is_some());
         assert_eq!(var.unwrap().data_type.type_hash, primitives::BOOL);
+    }
+
+    #[test]
+    fn var_decl_default_init_enum() {
+        use angelscript_core::TypeHash;
+        use angelscript_core::entries::EnumEntry;
+        use angelscript_parser::ast::TypeBase;
+
+        let arena = Bump::new();
+        let mut registry = SymbolRegistry::with_primitives();
+
+        // Register an enum with custom first value
+        let color_hash = TypeHash::from_name("Color");
+        let color_enum = EnumEntry::ffi("Color")
+            .with_value("Red", 5)
+            .with_value("Green", 10)
+            .with_value("Blue", 15);
+        registry.register_type(color_enum.into()).unwrap();
+
+        let mut constants = ConstantPool::new();
+        let mut ctx = CompilationContext::new(&registry);
+        ctx.begin_function();
+        let mut emitter = BytecodeEmitter::new(&mut constants);
+
+        // Color c; (should initialize to Red = 5)
+        let vars = arena.alloc_slice_copy(&[VarDeclarator {
+            name: Ident::new("c", Span::default()),
+            init: None,
+            span: Span::default(),
+        }]);
+
+        let decl = VarDeclStmt {
+            ty: TypeExpr::new(
+                false,
+                None,
+                TypeBase::Named(Ident::new("Color", Span::default())),
+                &[],
+                &[],
+                Span::default(),
+            ),
+            vars,
+            span: Span::default(),
+        };
+
+        let mut compiler = StmtCompiler::new(&mut ctx, &mut emitter, DataType::void(), None);
+
+        assert!(compiler.compile_var_decl(&decl).is_ok());
+
+        let var = ctx.get_local("c");
+        assert!(var.is_some());
+        assert_eq!(var.unwrap().data_type.type_hash, color_hash);
+    }
+
+    #[test]
+    fn var_decl_default_init_value_type() {
+        use angelscript_core::entries::{ClassEntry, FunctionEntry};
+        use angelscript_core::{FunctionDef, FunctionTraits, TypeHash, TypeKind, Visibility};
+        use angelscript_parser::ast::TypeBase;
+
+        let arena = Bump::new();
+        let mut registry = SymbolRegistry::with_primitives();
+
+        // Register a value type with default constructor
+        let vec2_hash = TypeHash::from_name("Vec2");
+        let ctor_hash = TypeHash::from_constructor(vec2_hash, &[]);
+
+        let mut vec2_class = ClassEntry::ffi("Vec2", TypeKind::value::<[f32; 2]>());
+        vec2_class.behaviors.constructors.push(ctor_hash);
+        registry.register_type(vec2_class.into()).unwrap();
+
+        // Register the default constructor function
+        let ctor_def = FunctionDef::new(
+            ctor_hash,
+            "Vec2".to_string(),
+            vec![],
+            vec![],
+            DataType::simple(vec2_hash),
+            None,
+            FunctionTraits::default(),
+            false,
+            Visibility::Public,
+        );
+        let ctor_entry = FunctionEntry::ffi(ctor_def);
+        registry.register_function(ctor_entry).unwrap();
+
+        let mut constants = ConstantPool::new();
+        let mut ctx = CompilationContext::new(&registry);
+        ctx.begin_function();
+        let mut emitter = BytecodeEmitter::new(&mut constants);
+
+        // Vec2 v; (should call default constructor)
+        let vars = arena.alloc_slice_copy(&[VarDeclarator {
+            name: Ident::new("v", Span::default()),
+            init: None,
+            span: Span::default(),
+        }]);
+
+        let decl = VarDeclStmt {
+            ty: TypeExpr::new(
+                false,
+                None,
+                TypeBase::Named(Ident::new("Vec2", Span::default())),
+                &[],
+                &[],
+                Span::default(),
+            ),
+            vars,
+            span: Span::default(),
+        };
+
+        let mut compiler = StmtCompiler::new(&mut ctx, &mut emitter, DataType::void(), None);
+
+        assert!(compiler.compile_var_decl(&decl).is_ok());
+
+        let var = ctx.get_local("v");
+        assert!(var.is_some());
+        assert_eq!(var.unwrap().data_type.type_hash, vec2_hash);
+    }
+
+    #[test]
+    fn var_decl_default_init_no_constructor_error() {
+        use angelscript_core::entries::ClassEntry;
+        use angelscript_core::{TypeHash, TypeKind};
+        use angelscript_parser::ast::TypeBase;
+
+        let arena = Bump::new();
+        let mut registry = SymbolRegistry::with_primitives();
+
+        // Register a value type WITHOUT default constructor
+        let vec2_class = ClassEntry::ffi("Vec2", TypeKind::value::<[f32; 2]>());
+        // Note: NOT adding any constructors
+        registry.register_type(vec2_class.into()).unwrap();
+
+        let mut constants = ConstantPool::new();
+        let mut ctx = CompilationContext::new(&registry);
+        ctx.begin_function();
+        let mut emitter = BytecodeEmitter::new(&mut constants);
+
+        // Vec2 v; (should error - no default constructor)
+        let vars = arena.alloc_slice_copy(&[VarDeclarator {
+            name: Ident::new("v", Span::default()),
+            init: None,
+            span: Span::default(),
+        }]);
+
+        let decl = VarDeclStmt {
+            ty: TypeExpr::new(
+                false,
+                None,
+                TypeBase::Named(Ident::new("Vec2", Span::default())),
+                &[],
+                &[],
+                Span::default(),
+            ),
+            vars,
+            span: Span::default(),
+        };
+
+        let mut compiler = StmtCompiler::new(&mut ctx, &mut emitter, DataType::void(), None);
+
+        let result = compiler.compile_var_decl(&decl);
+        assert!(result.is_err());
     }
 }
