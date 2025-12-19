@@ -21,6 +21,8 @@ Full documentation: `docs/angelscript-lang/00-overview.md`
 - Identity: `a is b`, `a !is null`
 - Ref params: `&in`, `&out`, `&inout`
 - Scope: `Namespace::item`, `::global`
+- Shared: `shared class Foo {}`
+- External shared: `external shared class Foo;` (reference existing from another module)
 
 ## Operator Methods
 - Assignment: `opAssign`

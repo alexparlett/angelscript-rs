@@ -53,6 +53,8 @@ These files can be referenced by Claude Code during development to understand An
 - Identity check: `a is b`, `a !is null`
 - Reference params: `&in`, `&out`, `&inout` (or just `&`)
 - Scope resolution: `Namespace::item`, `::global`
+- Shared entities: `shared class Foo {}`, `shared void Func() {}`
+- External shared: `external shared class Foo;` (reference existing from another module)
 
 ### Operator Methods
 - Assignment: `opAssign`
