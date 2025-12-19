@@ -62,7 +62,10 @@ impl syn::parse::Parse for FuncdefAttrItem {
         } else {
             Err(syn::Error::new(
                 ident.span(),
-                format!("unknown funcdef attribute: {}", ident),
+                format!(
+                    "unknown funcdef attribute '{}'. Valid attributes are: name, parent",
+                    ident
+                ),
             ))
         }
     }

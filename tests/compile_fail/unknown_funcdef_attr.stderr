@@ -1,4 +1,4 @@
-error: unknown funcdef attribute: unknown_attr
+error: unknown funcdef attribute 'unknown_attr'. Valid attributes are: name, parent
  --> tests/compile_fail/unknown_funcdef_attr.rs:5:11
   |
 5 | #[funcdef(unknown_attr = "value")]

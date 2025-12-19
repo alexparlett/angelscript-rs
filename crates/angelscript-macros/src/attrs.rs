@@ -149,7 +149,9 @@ impl TypeAttrs {
                     result.specialization_args = types.into_iter().collect();
                 } else {
                     return Err(meta.error(format!(
-                        "unknown angelscript attribute: {}",
+                        "unknown angelscript attribute '{}'. Valid attributes are: \
+                         name, value, pod, reference, scoped, nocount, as_handle, \
+                         template, specialization_of, specialization_args",
                         meta.path
                             .get_ident()
                             .map(|i| i.to_string())
@@ -184,7 +186,8 @@ impl FieldAttrs {
                     result.name = Some(value.value());
                 } else {
                     return Err(meta.error(format!(
-                        "unknown angelscript field attribute: {}",
+                        "unknown angelscript field attribute '{}'. Valid attributes are: \
+                         get, set, name",
                         meta.path
                             .get_ident()
                             .map(|i| i.to_string())
@@ -242,7 +245,14 @@ impl FunctionAttrs {
                         _ => {
                             return Err(syn::Error::new(
                                 ident.span(),
-                                format!("unknown function attribute: {}", name),
+                                format!(
+                                    "unknown function attribute '{}'. Valid flag attributes are: \
+                                     instance, constructor, factory, destructor, addref, release, \
+                                     list_construct, list_factory, template_callback, gc_getrefcount, \
+                                     gc_setflag, gc_getflag, gc_enumrefs, gc_releaserefs, get_weakref_flag, \
+                                     const, property, generic, template, copy, keep",
+                                    name
+                                ),
                             ));
                         }
                     }
@@ -353,7 +363,11 @@ impl FunctionAttrs {
                         _ => {
                             return Err(syn::Error::new(
                                 name.span(),
-                                format!("unknown function attribute: {}", name_str),
+                                format!(
+                                    "unknown function attribute '{}'. Valid name=value attributes are: \
+                                     name, property_name, operator, returns, template",
+                                    name_str
+                                ),
                             ));
                         }
                     }
@@ -447,7 +461,8 @@ impl ParamAttrs {
                 result.if_handle_then_const = true;
             } else {
                 return Err(meta.error(format!(
-                    "unknown param attribute: {}",
+                    "unknown param attribute '{}'. Valid attributes are: \
+                     variable, variadic, in, out, inout, type, default, if_handle_then_const",
                     meta.path
                         .get_ident()
                         .map(|i| i.to_string())
@@ -537,7 +552,8 @@ impl ReturnAttrs {
                 result.template_param = Some(lit.value());
             } else {
                 return Err(meta.error(format!(
-                    "unknown return attribute: {}",
+                    "unknown return attribute '{}'. Valid attributes are: \
+                     const, ref, handle, variable, type, template",
                     meta.path
                         .get_ident()
                         .map(|i| i.to_string())
@@ -646,7 +662,8 @@ impl ListPatternAttrs {
                 ));
             } else {
                 return Err(meta.error(format!(
-                    "unknown list_pattern attribute: {}",
+                    "unknown list_pattern attribute '{}'. Valid attributes are: \
+                     repeat, fixed, repeat_tuple, repeat_template, repeat_tuple_template",
                     meta.path
                         .get_ident()
                         .map(|i| i.to_string())
