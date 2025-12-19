@@ -7,18 +7,19 @@
 //!   Inheritance references are collected but not resolved (enabling forward references).
 //! - **Pass 1b (Type Completion)**: Resolve pending inheritance references, then copy
 //!   inherited members from base classes to enable O(1) lookups.
-//! - **Pass 2 (Compilation)**: Type check function bodies and generate bytecode (future).
+//! - **Pass 2 (Compilation)**: Type check function bodies and generate bytecode.
 //!
 //! ## Module Structure
 //!
 //! - [`registration`]: Pass 1 implementation
 //! - [`completion`]: Pass 1b implementation
+//! - [`compilation`]: Pass 2 implementation
 //!
 //! ## Usage (Orchestration)
 //!
 //! ```ignore
 //! use angelscript_compiler::{
-//!     CompilationContext, RegistrationPass, TypeCompletionPass
+//!     CompilationContext, RegistrationPass, TypeCompletionPass, CompilationPass
 //! };
 //!
 //! // Phase 1: Create context
@@ -34,15 +35,19 @@
 //! let comp_pass = TypeCompletionPass::new(&mut unit_registry, reg_output.pending_resolutions);
 //! let comp_output = comp_pass.run();
 //!
-//! // Phase 4: Type checking and code generation (future)
+//! // Phase 4: Compile function bodies to bytecode
+//! let compile_pass = CompilationPass::new(&mut ctx, unit_id);
+//! let compile_output = compile_pass.run(&script);
 //! ```
 
+pub mod compilation;
 pub mod completion;
 pub mod registration;
 
 use angelscript_core::{Span, TypeHash};
 use rustc_hash::FxHashMap;
 
+pub use compilation::{CompilationOutput, CompilationPass, CompiledFunctionEntry, GlobalInitEntry};
 pub use completion::{CompletionOutput, TypeCompletionPass};
 pub use registration::{RegistrationOutput, RegistrationPass};
 

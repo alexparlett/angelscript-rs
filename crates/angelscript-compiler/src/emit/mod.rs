@@ -581,6 +581,13 @@ impl<'pool> BytecodeEmitter<'pool> {
     pub fn code_size(&self) -> usize {
         self.chunk.len()
     }
+
+    /// Get a reference to the current bytecode chunk.
+    ///
+    /// Useful for inspection during compilation, e.g., return path checking.
+    pub fn chunk(&self) -> &BytecodeChunk {
+        &self.chunk
+    }
 }
 
 /// A label for a forward jump that needs patching.
