@@ -76,20 +76,61 @@ If implementations differ, the compiler will error on modules compiled after the
 
 ## External Shared Entities
 
-For entities already compiled in another module, use `external`:
+For entities already compiled in another module, use `external` modifier to reference them without re-declaring the implementation:
 
 ```angelscript
+// Reference a shared class (no body needed)
 external shared class Foo;
+
+// Reference a shared function (no body needed)
 external shared void GlobalFunc();
+
+// Reference a shared interface
 external shared interface IShared;
+
+// Reference a shared enum
+external shared enum SharedEnum;
+
+// Reference a shared funcdef
+external shared funcdef bool SharedCallback(int);
 ```
 
-Benefits:
-- Shorter source code
-- Faster compilation
-- No need to duplicate implementation
+### Syntax Rules
 
-**Requirement:** The entity must already be compiled in another module, or a compiler error occurs.
+The `external` keyword:
+- Must come **before** `shared`
+- Declaration ends with semicolon (no body)
+- Entity must already exist in a compiled module
+
+### Benefits
+
+- **Shorter source code** - no need to duplicate implementation
+- **Faster compilation** - compiler just looks up existing entity
+- **No consistency errors** - can't accidentally have mismatched implementations
+
+### Requirement
+
+The entity **must already be compiled** in another module. If not found, a compiler error occurs:
+```
+Error: External shared entity 'Foo' not found
+```
+
+### Typical Pattern
+
+```angelscript
+// shared_types.as - Core module compiled first
+shared class Message {
+    string content;
+    int priority;
+}
+
+// plugin.as - Plugin module compiled after core
+external shared class Message;  // Reference the existing type
+
+void HandleMessage(Message@ msg) {
+    // Can use Message because it's externally referenced
+}
+```
 
 ## Use Cases
 
