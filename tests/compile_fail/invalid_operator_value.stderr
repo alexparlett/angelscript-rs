@@ -1,4 +1,4 @@
-error: operator value must be a path like Operator::Add
+error: operator value must be a path like Operator::Add or Operator::ForValueN(0)
  --> tests/compile_fail/invalid_operator_value.rs:9:16
   |
 9 |     #[function(operator = "Add")]

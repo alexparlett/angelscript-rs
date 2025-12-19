@@ -1335,6 +1335,109 @@ fn function_operator_postinc() {
 }
 
 // ============================================================================
+// Foreach Operator Tests (parameterized variants)
+// ============================================================================
+
+/// Type with foreach operators for iteration support.
+#[derive(Any)]
+#[angelscript(name = "ForeachContainer")]
+struct ForeachContainer {
+    items: Vec<i32>,
+}
+
+impl ForeachContainer {
+    #[function(operator = Operator::ForBegin)]
+    fn op_for_begin(&self) -> i32 {
+        0 // iterator state starts at 0
+    }
+
+    #[function(operator = Operator::ForEnd)]
+    fn op_for_end(&self, state: i32) -> bool {
+        state >= self.items.len() as i32
+    }
+
+    #[function(operator = Operator::ForNext)]
+    fn op_for_next(&self, state: i32) -> i32 {
+        state + 1
+    }
+
+    #[function(operator = Operator::ForValue)]
+    fn op_for_value(&self, state: i32) -> i32 {
+        self.items[state as usize]
+    }
+
+    #[function(operator = Operator::ForValueN(0))]
+    fn op_for_value0(&self, state: i32) -> i32 {
+        self.items[state as usize]
+    }
+
+    #[function(operator = Operator::ForValueN(1))]
+    fn op_for_value1(&self, state: i32) -> i32 {
+        state // index as second value
+    }
+}
+
+#[test]
+fn function_operator_for_begin() {
+    let meta = ForeachContainer::op_for_begin__meta();
+    assert!(meta.behavior.is_some());
+    assert_eq!(
+        meta.behavior.unwrap(),
+        angelscript_core::Behavior::Operator(angelscript_core::Operator::ForBegin)
+    );
+}
+
+#[test]
+fn function_operator_for_end() {
+    let meta = ForeachContainer::op_for_end__meta();
+    assert!(meta.behavior.is_some());
+    assert_eq!(
+        meta.behavior.unwrap(),
+        angelscript_core::Behavior::Operator(angelscript_core::Operator::ForEnd)
+    );
+}
+
+#[test]
+fn function_operator_for_next() {
+    let meta = ForeachContainer::op_for_next__meta();
+    assert!(meta.behavior.is_some());
+    assert_eq!(
+        meta.behavior.unwrap(),
+        angelscript_core::Behavior::Operator(angelscript_core::Operator::ForNext)
+    );
+}
+
+#[test]
+fn function_operator_for_value() {
+    let meta = ForeachContainer::op_for_value__meta();
+    assert!(meta.behavior.is_some());
+    assert_eq!(
+        meta.behavior.unwrap(),
+        angelscript_core::Behavior::Operator(angelscript_core::Operator::ForValue)
+    );
+}
+
+#[test]
+fn function_operator_for_value_n_0() {
+    let meta = ForeachContainer::op_for_value0__meta();
+    assert!(meta.behavior.is_some());
+    assert_eq!(
+        meta.behavior.unwrap(),
+        angelscript_core::Behavior::Operator(angelscript_core::Operator::ForValueN(0))
+    );
+}
+
+#[test]
+fn function_operator_for_value_n_1() {
+    let meta = ForeachContainer::op_for_value1__meta();
+    assert!(meta.behavior.is_some());
+    assert_eq!(
+        meta.behavior.unwrap(),
+        angelscript_core::Behavior::Operator(angelscript_core::Operator::ForValueN(1))
+    );
+}
+
+// ============================================================================
 // Copy Constructor Test
 // ============================================================================
 
