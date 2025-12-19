@@ -517,6 +517,28 @@ impl<'a> CompilationContext<'a> {
         methods
     }
 
+    /// Check if `derived` is derived from `base` in the class hierarchy.
+    ///
+    /// This walks the inheritance chain from `derived` upward, checking if
+    /// `base` is found anywhere in the chain. Returns `false` if:
+    /// - `derived == base` (same type is not "derived from" itself)
+    /// - `derived` is not a class type
+    /// - `base` is not in `derived`'s inheritance chain
+    pub fn is_type_derived_from(&self, derived: TypeHash, base: TypeHash) -> bool {
+        let mut current = derived;
+        while let Some(class) = self.get_type(current).and_then(|t| t.as_class()) {
+            if let Some(base_class) = class.base_class {
+                if base_class == base {
+                    return true;
+                }
+                current = base_class;
+            } else {
+                break;
+            }
+        }
+        false
+    }
+
     // ========================================================================
     // Registration (for unit registry)
     // ========================================================================

@@ -318,7 +318,7 @@ fn find_hierarchy_conversion(
     let is_handle_conversion = source.is_handle && target.is_handle;
 
     // Derived to base class
-    if is_derived_from(source.type_hash, target.type_hash, ctx) {
+    if ctx.is_type_derived_from(source.type_hash, target.type_hash) {
         let kind = if is_handle_conversion {
             ConversionKind::ReferenceCast {
                 target: target.type_hash,
@@ -361,22 +361,6 @@ fn find_hierarchy_conversion(
     }
 
     None
-}
-
-/// Check if source is derived from target (walks inheritance chain).
-fn is_derived_from(source: TypeHash, target: TypeHash, ctx: &CompilationContext<'_>) -> bool {
-    let mut current = source;
-    while let Some(class) = ctx.get_type(current).and_then(|t| t.as_class()) {
-        if let Some(base) = class.base_class {
-            if base == target {
-                return true;
-            }
-            current = base;
-        } else {
-            break;
-        }
-    }
-    false
 }
 
 /// Find enum conversion (enum to int, int to enum).

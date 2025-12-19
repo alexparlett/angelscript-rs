@@ -781,46 +781,6 @@ impl<'ast> Parser<'ast> {
         result
     }
 
-    /// Simple template arg skipping for lookahead (doesn't report errors)
-    fn try_skip_template_args_simple(&mut self) -> bool {
-        if !self.check(TokenKind::Less) {
-            return false;
-        }
-        self.advance();
-
-        let mut depth = 1;
-        let mut iterations = 0;
-        const MAX_ITERATIONS: usize = 1000; // Prevent infinite loops
-
-        while depth > 0 && !self.is_eof() && iterations < MAX_ITERATIONS {
-            iterations += 1;
-
-            match self.peek().kind {
-                TokenKind::Less => {
-                    depth += 1;
-                    self.advance();
-                }
-                TokenKind::Greater => {
-                    depth -= 1;
-                    self.advance();
-                }
-                TokenKind::GreaterGreater => {
-                    depth -= 2;
-                    self.advance();
-                }
-                TokenKind::LeftParen | TokenKind::LeftBrace | TokenKind::Semicolon => {
-                    // These tokens indicate we're not in template args
-                    return false;
-                }
-                _ => {
-                    self.advance();
-                }
-            }
-        }
-
-        depth == 0
-    }
-
     /// Parse function arguments: (arg1, arg2, ...)
     fn parse_arguments(&mut self) -> Result<&'ast [Argument<'ast>], ParseError> {
         self.expect(TokenKind::LeftParen)?;

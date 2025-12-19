@@ -141,9 +141,9 @@ fn prefer_more_derived<'a>(
         }
 
         // Check if A's type is derived from B's type
-        if is_derived_from(type_a, type_b, ctx) {
+        if ctx.is_type_derived_from(type_a, type_b) {
             a_more_derived += 1;
-        } else if is_derived_from(type_b, type_a, ctx) {
+        } else if ctx.is_type_derived_from(type_b, type_a) {
             b_more_derived += 1;
         }
     }
@@ -157,30 +157,6 @@ fn prefer_more_derived<'a>(
     }
 
     None
-}
-
-/// Check if `derived` is derived from `base` in the class hierarchy.
-fn is_derived_from(derived: TypeHash, base: TypeHash, ctx: &CompilationContext<'_>) -> bool {
-    let Some(entry) = ctx.get_type(derived) else {
-        return false;
-    };
-
-    let Some(class) = entry.as_class() else {
-        return false;
-    };
-
-    // Check direct base class
-    if let Some(base_class) = class.base_class {
-        if base_class == base {
-            return true;
-        }
-        // Recursively check the base class's ancestors
-        if is_derived_from(base_class, base, ctx) {
-            return true;
-        }
-    }
-
-    false
 }
 
 /// Count the number of exact (identity) matches in the conversions.
@@ -531,9 +507,9 @@ mod tests {
 
         let ctx = CompilationContext::new(&registry);
 
-        assert!(is_derived_from(derived_hash, base_hash, &ctx));
-        assert!(!is_derived_from(base_hash, derived_hash, &ctx));
-        assert!(!is_derived_from(base_hash, base_hash, &ctx));
+        assert!(ctx.is_type_derived_from(derived_hash, base_hash));
+        assert!(!ctx.is_type_derived_from(base_hash, derived_hash));
+        assert!(!ctx.is_type_derived_from(base_hash, base_hash));
     }
 
     #[test]
@@ -585,12 +561,12 @@ mod tests {
         let ctx = CompilationContext::new(&registry);
 
         // Child derives from Parent
-        assert!(is_derived_from(child_hash, parent_hash, &ctx));
+        assert!(ctx.is_type_derived_from(child_hash, parent_hash));
         // Child derives from Grandparent (transitively)
-        assert!(is_derived_from(child_hash, grandparent_hash, &ctx));
+        assert!(ctx.is_type_derived_from(child_hash, grandparent_hash));
         // Parent derives from Grandparent
-        assert!(is_derived_from(parent_hash, grandparent_hash, &ctx));
+        assert!(ctx.is_type_derived_from(parent_hash, grandparent_hash));
         // Not the other way around
-        assert!(!is_derived_from(grandparent_hash, child_hash, &ctx));
+        assert!(!ctx.is_type_derived_from(grandparent_hash, child_hash));
     }
 }
