@@ -22,7 +22,7 @@ mod return_stmt;
 mod var_decl;
 mod while_stmt;
 
-use angelscript_core::{CompilationError, DataType, TypeHash};
+use angelscript_core::{CompilationError, DataType, Span, TypeHash, primitives};
 use angelscript_parser::ast::Stmt;
 
 use crate::context::CompilationContext;
@@ -166,6 +166,86 @@ impl<'a, 'ctx, 'pool> StmtCompiler<'a, 'ctx, 'pool> {
     /// Create an expression compiler using the current context.
     fn expr_compiler(&mut self) -> ExprCompiler<'_, 'ctx, 'pool> {
         ExprCompiler::new(self.ctx, self.emitter, self.current_class)
+    }
+
+    // =========================================================================
+    // Reference counting helpers
+    // =========================================================================
+
+    /// Get the addref behavior function hash for a type.
+    ///
+    /// For FFI types, returns the registered `behaviors.addref` function.
+    /// For script types, returns `TypeHash::SCRIPT_ADDREF` placeholder.
+    pub(crate) fn get_addref_behavior(&self, type_hash: TypeHash, span: Span) -> Result<TypeHash> {
+        let type_entry = self
+            .ctx
+            .get_type(type_hash)
+            .ok_or_else(|| CompilationError::Other {
+                message: format!("unknown type for addref behavior: {:?}", type_hash),
+                span,
+            })?;
+
+        let Some(class) = type_entry.as_class() else {
+            return Err(CompilationError::Other {
+                message: "addref behavior only valid for class types".to_string(),
+                span,
+            });
+        };
+
+        // Script types use placeholder hash
+        if class.is_script_object() {
+            return Ok(primitives::SCRIPT_ADDREF);
+        }
+
+        // FFI types must have addref registered
+        class
+            .behaviors
+            .addref
+            .ok_or_else(|| CompilationError::Other {
+                message: format!(
+                    "type '{}' has no addref behavior",
+                    type_entry.qualified_name()
+                ),
+                span,
+            })
+    }
+
+    /// Get the release behavior function hash for a type.
+    ///
+    /// For FFI types, returns the registered `behaviors.release` function.
+    /// For script types, returns `TypeHash::SCRIPT_RELEASE` placeholder.
+    pub(crate) fn get_release_behavior(&self, type_hash: TypeHash, span: Span) -> Result<TypeHash> {
+        let type_entry = self
+            .ctx
+            .get_type(type_hash)
+            .ok_or_else(|| CompilationError::Other {
+                message: format!("unknown type for release behavior: {:?}", type_hash),
+                span,
+            })?;
+
+        let Some(class) = type_entry.as_class() else {
+            return Err(CompilationError::Other {
+                message: "release behavior only valid for class types".to_string(),
+                span,
+            });
+        };
+
+        // Script types use placeholder hash
+        if class.is_script_object() {
+            return Ok(primitives::SCRIPT_RELEASE);
+        }
+
+        // FFI types must have release registered
+        class
+            .behaviors
+            .release
+            .ok_or_else(|| CompilationError::Other {
+                message: format!(
+                    "type '{}' has no release behavior",
+                    type_entry.qualified_name()
+                ),
+                span,
+            })
     }
 
     // =========================================================================

@@ -495,13 +495,23 @@ impl<'pool> BytecodeEmitter<'pool> {
     // ==========================================================================
 
     /// Emit add reference count.
-    pub fn emit_add_ref(&mut self) {
-        self.emit(OpCode::AddRef);
+    ///
+    /// The `func_hash` is the hash of the addref behavior function to call.
+    /// For FFI types, this is `behaviors.addref`. For script types, use
+    /// `TypeHash::SCRIPT_ADDREF` as a placeholder.
+    pub fn emit_add_ref(&mut self, func_hash: TypeHash) {
+        let index = self.constants.add(Constant::TypeHash(func_hash));
+        self.emit_u16(OpCode::AddRef, index as u16);
     }
 
     /// Emit release reference count.
-    pub fn emit_release(&mut self) {
-        self.emit(OpCode::Release);
+    ///
+    /// The `func_hash` is the hash of the release behavior function to call.
+    /// For FFI types, this is `behaviors.release`. For script types, use
+    /// `TypeHash::SCRIPT_RELEASE` as a placeholder.
+    pub fn emit_release(&mut self, func_hash: TypeHash) {
+        let index = self.constants.add(Constant::TypeHash(func_hash));
+        self.emit_u16(OpCode::Release, index as u16);
     }
 
     // ==========================================================================
@@ -897,12 +907,16 @@ mod tests {
         let mut constants = ConstantPool::new();
         let mut emitter = BytecodeEmitter::new(&mut constants);
 
-        emitter.emit_add_ref();
-        emitter.emit_release();
+        let addref_hash = TypeHash::from_name("TestClass::AddRef");
+        let release_hash = TypeHash::from_name("TestClass::Release");
+
+        emitter.emit_add_ref(addref_hash);
+        emitter.emit_release(release_hash);
 
         let chunk = emitter.finish();
         assert_eq!(chunk.read_op(0), Some(OpCode::AddRef));
-        assert_eq!(chunk.read_op(1), Some(OpCode::Release));
+        // After AddRef opcode and u16 index (3 bytes total), Release is at offset 3
+        assert_eq!(chunk.read_op(3), Some(OpCode::Release));
     }
 
     #[test]

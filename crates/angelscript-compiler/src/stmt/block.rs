@@ -4,8 +4,6 @@
 
 use angelscript_parser::ast::Block;
 
-use crate::bytecode::OpCode;
-
 use super::{Result, StmtCompiler};
 
 impl<'a, 'ctx, 'pool> StmtCompiler<'a, 'ctx, 'pool> {
@@ -29,8 +27,12 @@ impl<'a, 'ctx, 'pool> StmtCompiler<'a, 'ctx, 'pool> {
         // Emit Release for handle variables
         for var in exiting_vars {
             if var.data_type.is_handle {
+                // Look up the release behavior for this type
+                // Use block span as fallback since LocalVariable doesn't have span
+                let release_hash =
+                    self.get_release_behavior(var.data_type.type_hash, block.span)?;
                 self.emitter.emit_get_local(var.slot);
-                self.emitter.emit(OpCode::Release);
+                self.emitter.emit_release(release_hash);
             }
         }
 

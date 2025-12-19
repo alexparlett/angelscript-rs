@@ -378,6 +378,16 @@ pub mod primitives {
     /// Hash for `?` type - accepts any value (for generic FFI functions)
     /// This is a special sentinel value, not computed from a name.
     pub const VARIABLE_PARAM: TypeHash = TypeHash(0x3f3f3f3f3f3f3f3f);
+
+    /// Placeholder for script object AddRef behavior.
+    /// Used by compiler when emitting AddRef for script-defined types.
+    /// VM will recognize this and use built-in script object ref counting.
+    pub const SCRIPT_ADDREF: TypeHash = TypeHash(0xadd4ef_5c41070b1);
+
+    /// Placeholder for script object Release behavior.
+    /// Used by compiler when emitting Release for script-defined types.
+    /// VM will recognize this and use built-in script object ref counting.
+    pub const SCRIPT_RELEASE: TypeHash = TypeHash(0x4e1ea5e_5c41070b);
 }
 
 #[cfg(test)]

@@ -67,7 +67,8 @@ impl<'a, 'ctx, 'pool> StmtCompiler<'a, 'ctx, 'pool> {
 
                 // For handles, AddRef before storing (we Release on scope exit)
                 if var_type.is_handle {
-                    self.emitter.emit_add_ref();
+                    let addref_hash = self.get_addref_behavior(var_type.type_hash, var.span)?;
+                    self.emitter.emit_add_ref(addref_hash);
                 }
 
                 // Store the result in the local slot
@@ -679,15 +680,17 @@ mod tests {
     #[test]
     fn var_decl_handle_emits_addref() {
         use crate::bytecode::OpCode;
-        use angelscript_core::TypeKind;
         use angelscript_core::entries::ClassEntry;
+        use angelscript_core::{TypeHash, TypeKind};
         use angelscript_parser::ast::{TypeBase, TypeSuffix};
 
         let arena = Bump::new();
         let mut registry = SymbolRegistry::with_primitives();
 
-        // Register a reference type
-        let foo_class = ClassEntry::ffi("Foo", TypeKind::reference());
+        // Register a reference type with addref behavior
+        let addref_hash = TypeHash::from_name("Foo::AddRef");
+        let mut foo_class = ClassEntry::ffi("Foo", TypeKind::reference());
+        foo_class.behaviors.addref = Some(addref_hash);
         registry.register_type(foo_class.into()).unwrap();
 
         let mut constants = ConstantPool::new();
