@@ -78,9 +78,9 @@ impl<'a, 'ctx, 'pool> StmtCompiler<'a, 'ctx, 'pool> {
                     // Dup switch value for comparison
                     self.emitter.emit_dup();
 
-                    // Compile case value
+                    // Compile case value (emits bytecode and verifies type compatibility)
                     let mut expr_compiler = self.expr_compiler();
-                    let _value_info = expr_compiler.check(value, &switch_info.data_type)?;
+                    expr_compiler.check(value, &switch_info.data_type)?;
 
                     // Emit equality check
                     self.emit_equality(&switch_info.data_type, equals_method)?;
