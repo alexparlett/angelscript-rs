@@ -119,10 +119,10 @@ impl<'a, 'ctx, 'pool> StmtCompiler<'a, 'ctx, 'pool> {
             }
 
             // Patch default jump if this is the default case
-            if Some(i) == default_index {
-                if let Some(jump) = default_jump {
-                    self.emitter.patch_jump(jump);
-                }
+            if Some(i) == default_index
+                && let Some(jump) = default_jump
+            {
+                self.emitter.patch_jump(jump);
             }
 
             // Compile case statements
@@ -216,19 +216,19 @@ impl<'a, 'ctx, 'pool> StmtCompiler<'a, 'ctx, 'pool> {
                 }
 
                 // Check if it's a global const variable
-                if let Some(hash) = self.ctx.resolve_global(name) {
-                    if let Some(global) = self.ctx.get_global_entry(hash) {
-                        if global.is_const {
-                            return Ok(());
-                        }
-                        return Err(CompilationError::Other {
-                            message: format!(
-                                "case value '{}' must be const; non-const globals are not allowed",
-                                name
-                            ),
-                            span,
-                        });
+                if let Some(hash) = self.ctx.resolve_global(name)
+                    && let Some(global) = self.ctx.get_global_entry(hash)
+                {
+                    if global.is_const {
+                        return Ok(());
                     }
+                    return Err(CompilationError::Other {
+                        message: format!(
+                            "case value '{}' must be const; non-const globals are not allowed",
+                            name
+                        ),
+                        span,
+                    });
                 }
 
                 // Could be an enum value or other constant - allow it

@@ -78,7 +78,7 @@ impl<'a, 'ctx, 'pool> StmtCompiler<'a, 'ctx, 'pool> {
         // Store collection in hidden local (needed for opFor calls)
         let collection_slot = self.ctx.declare_local(
             "__foreach_collection".to_string(),
-            collection_info.data_type.clone(),
+            collection_info.data_type,
             true, // const
             span,
         )?;
@@ -93,7 +93,7 @@ impl<'a, 'ctx, 'pool> StmtCompiler<'a, 'ctx, 'pool> {
         // Store state in hidden local
         let state_slot = self.ctx.declare_local(
             "__foreach_state".to_string(),
-            foreach_behaviors.state_type.clone(),
+            foreach_behaviors.state_type,
             false, // mutable
             span,
         )?;
@@ -249,7 +249,7 @@ impl<'a, 'ctx, 'pool> StmtCompiler<'a, 'ctx, 'pool> {
                     message: "opForBegin function not found".to_string(),
                     span,
                 })?;
-        let state_type = for_begin_func.def.return_type.clone();
+        let state_type = for_begin_func.def.return_type;
 
         // Look up opForEnd
         let for_end = class
@@ -303,7 +303,7 @@ impl<'a, 'ctx, 'pool> StmtCompiler<'a, 'ctx, 'pool> {
                     message: "opForValue function not found".to_string(),
                     span,
                 })?;
-            value_types.push(func.def.return_type.clone());
+            value_types.push(func.def.return_type);
         } else {
             // Multiple values: use opForValue0, opForValue1, etc. (dynamic limit)
             if var_count > 256 {
@@ -335,7 +335,7 @@ impl<'a, 'ctx, 'pool> StmtCompiler<'a, 'ctx, 'pool> {
                             message: format!("opForValue{} function not found", i),
                             span,
                         })?;
-                value_types.push(func.def.return_type.clone());
+                value_types.push(func.def.return_type);
             }
         }
 
