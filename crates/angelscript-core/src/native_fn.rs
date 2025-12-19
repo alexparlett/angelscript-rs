@@ -14,7 +14,7 @@ use std::any::{Any, TypeId};
 use std::fmt;
 
 use crate::TypeHash;
-use crate::convert::{FromSlot, IntoSlot};
+use crate::convert::{FromDynamic, IntoDynamic};
 use crate::native_error::NativeError;
 
 /// Type-erased native function.
@@ -441,7 +441,7 @@ impl<'vm> CallContext<'vm> {
 
     /// Get a typed argument value.
     ///
-    /// This uses the `FromSlot` trait to convert the slot value to the
+    /// This uses the `FromDynamic` trait to convert the slot value to the
     /// requested type. For primitives (integers, floats, bool), this
     /// performs the appropriate conversion with bounds checking.
     ///
@@ -452,9 +452,9 @@ impl<'vm> CallContext<'vm> {
     /// let y: f64 = ctx.arg(1)?;
     /// let flag: bool = ctx.arg(2)?;
     /// ```
-    pub fn arg<T: FromSlot>(&self, index: usize) -> Result<T, NativeError> {
+    pub fn arg<T: FromDynamic>(&self, index: usize) -> Result<T, NativeError> {
         let slot = self.arg_slot(index)?;
-        T::from_slot(slot).map_err(NativeError::Conversion)
+        T::from_dynamic(slot).map_err(NativeError::Conversion)
     }
 
     /// Set the return value from a raw slot.
@@ -464,7 +464,7 @@ impl<'vm> CallContext<'vm> {
 
     /// Set a typed return value.
     ///
-    /// This uses the `IntoSlot` trait to convert the value into a
+    /// This uses the `IntoDynamic` trait to convert the value into a
     /// Dynamic slot value.
     ///
     /// # Example
@@ -474,8 +474,8 @@ impl<'vm> CallContext<'vm> {
     /// ctx.set_return(3.14f64);
     /// ctx.set_return(true);
     /// ```
-    pub fn set_return<T: IntoSlot>(&mut self, value: T) {
-        *self.return_slot = value.into_slot();
+    pub fn set_return<T: IntoDynamic>(&mut self, value: T) {
+        *self.return_slot = value.into_dynamic();
     }
 
     /// Get an immutable reference to `this` for method calls.

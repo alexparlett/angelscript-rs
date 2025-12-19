@@ -106,7 +106,7 @@ pub use error::{
 pub use native_fn::{CallContext, Dynamic, NativeCallable, NativeFn, ObjectHandle, ObjectHeap};
 
 // Conversion traits
-pub use convert::{FromSlot, IntoSlot};
+pub use convert::{FromDynamic, IntoDynamic};
 
 // Native error types
 pub use native_error::{ConversionError, NativeError};
