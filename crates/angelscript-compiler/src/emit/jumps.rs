@@ -31,9 +31,12 @@ struct BreakableContext {
     /// What kind of breakable this is
     kind: BreakableKind,
     /// Target offset for continue statements (only valid for loops)
+    /// None means continue target is deferred (will be set later)
     continue_target: Option<usize>,
     /// Pending break jumps to patch when the context exits
     break_labels: Vec<JumpLabel>,
+    /// Pending continue jumps to patch when continue target is set (for do-while)
+    continue_labels: Vec<JumpLabel>,
 }
 
 impl JumpManager {
@@ -51,6 +54,21 @@ impl JumpManager {
             kind: BreakableKind::Loop,
             continue_target: Some(continue_target),
             break_labels: Vec::new(),
+            continue_labels: Vec::new(),
+        });
+    }
+
+    /// Enter a new loop context with deferred continue target.
+    ///
+    /// Use this for do-while loops where the continue target (condition)
+    /// isn't known until after the body is compiled. Call `set_continue_target`
+    /// later to set the target and get any pending continue labels to patch.
+    pub fn enter_loop_deferred(&mut self) {
+        self.contexts.push(BreakableContext {
+            kind: BreakableKind::Loop,
+            continue_target: None,
+            break_labels: Vec::new(),
+            continue_labels: Vec::new(),
         });
     }
 
@@ -62,6 +80,7 @@ impl JumpManager {
             kind: BreakableKind::Switch,
             continue_target: None,
             break_labels: Vec::new(),
+            continue_labels: Vec::new(),
         });
     }
 
@@ -119,29 +138,48 @@ impl JumpManager {
 
     /// Get the continue target for the innermost loop.
     ///
-    /// Returns an error if not inside a loop (switches don't have continue).
-    pub fn continue_target(&self) -> Result<usize, super::BreakError> {
+    /// Returns `Ok(Some(target))` if continue target is known,
+    /// `Ok(None)` if continue target is deferred (for do-while),
+    /// `Err` if not inside a loop.
+    pub fn continue_target(&self) -> Result<Option<usize>, super::BreakError> {
         // Find the innermost loop (skip any switches)
         for ctx in self.contexts.iter().rev() {
             if ctx.kind == BreakableKind::Loop {
-                return ctx.continue_target.ok_or(super::BreakError::NotInLoop);
+                return Ok(ctx.continue_target);
             }
         }
         Err(super::BreakError::NotInLoop)
+    }
+
+    /// Add a continue label to be patched when the continue target is set.
+    ///
+    /// Use this for do-while loops where continues are forward jumps.
+    pub fn add_continue(&mut self, label: JumpLabel) {
+        // Find the innermost loop
+        for ctx in self.contexts.iter_mut().rev() {
+            if ctx.kind == BreakableKind::Loop {
+                ctx.continue_labels.push(label);
+                return;
+            }
+        }
     }
 
     /// Update the continue target for the innermost loop.
     ///
     /// This is useful for `for` loops where the continue target is
     /// the update expression, not the condition.
-    pub fn set_continue_target(&mut self, target: usize) {
+    ///
+    /// Returns any pending continue labels that need to be patched
+    /// (for do-while loops where continues were emitted before the target was known).
+    pub fn set_continue_target(&mut self, target: usize) -> Vec<JumpLabel> {
         // Find the innermost loop
         for ctx in self.contexts.iter_mut().rev() {
             if ctx.kind == BreakableKind::Loop {
                 ctx.continue_target = Some(target);
-                return;
+                return std::mem::take(&mut ctx.continue_labels);
             }
         }
+        Vec::new()
     }
 
     /// Get the current loop nesting depth (loops only, not switches).
@@ -182,7 +220,7 @@ mod tests {
         assert!(manager.in_breakable());
         assert_eq!(manager.loop_depth(), 1);
         assert_eq!(manager.breakable_depth(), 1);
-        assert_eq!(manager.continue_target(), Ok(10));
+        assert_eq!(manager.continue_target(), Ok(Some(10)));
     }
 
     #[test]
@@ -206,11 +244,11 @@ mod tests {
         manager.enter_loop(20);
 
         assert_eq!(manager.loop_depth(), 2);
-        assert_eq!(manager.continue_target(), Ok(20)); // Inner loop
+        assert_eq!(manager.continue_target(), Ok(Some(20))); // Inner loop
 
         manager.exit_loop();
         assert_eq!(manager.loop_depth(), 1);
-        assert_eq!(manager.continue_target(), Ok(10)); // Outer loop
+        assert_eq!(manager.continue_target(), Ok(Some(10))); // Outer loop
     }
 
     #[test]
@@ -224,7 +262,7 @@ mod tests {
         assert_eq!(manager.loop_depth(), 1);
         assert_eq!(manager.breakable_depth(), 2);
         // Continue should find the outer loop
-        assert_eq!(manager.continue_target(), Ok(10));
+        assert_eq!(manager.continue_target(), Ok(Some(10)));
 
         manager.exit_switch();
         assert!(manager.in_loop());
@@ -241,7 +279,7 @@ mod tests {
         assert!(manager.in_switch());
         assert_eq!(manager.loop_depth(), 1);
         assert_eq!(manager.breakable_depth(), 2);
-        assert_eq!(manager.continue_target(), Ok(20));
+        assert_eq!(manager.continue_target(), Ok(Some(20)));
 
         manager.exit_loop();
         assert!(!manager.in_loop());
@@ -321,8 +359,9 @@ mod tests {
         manager.enter_loop(10);
 
         // Update continue target (for 'for' loop update expression)
-        manager.set_continue_target(50);
-        assert_eq!(manager.continue_target(), Ok(50));
+        let pending = manager.set_continue_target(50);
+        assert!(pending.is_empty());
+        assert_eq!(manager.continue_target(), Ok(Some(50)));
     }
 
     #[test]
@@ -332,8 +371,31 @@ mod tests {
         manager.enter_switch();
 
         // Should update the loop's continue target, not the switch
-        manager.set_continue_target(50);
+        let pending = manager.set_continue_target(50);
+        assert!(pending.is_empty());
         manager.exit_switch();
-        assert_eq!(manager.continue_target(), Ok(50));
+        assert_eq!(manager.continue_target(), Ok(Some(50)));
+    }
+
+    #[test]
+    fn deferred_continue_target() {
+        let mut manager = JumpManager::new();
+        manager.enter_loop_deferred();
+
+        // Continue target is None (deferred)
+        assert_eq!(manager.continue_target(), Ok(None));
+
+        // Add some continue labels
+        manager.add_continue(JumpLabel(100));
+        manager.add_continue(JumpLabel(110));
+
+        // Set the target - should return pending labels
+        let pending = manager.set_continue_target(50);
+        assert_eq!(pending.len(), 2);
+        assert_eq!(pending[0].0, 100);
+        assert_eq!(pending[1].0, 110);
+
+        // Now continue target is set
+        assert_eq!(manager.continue_target(), Ok(Some(50)));
     }
 }

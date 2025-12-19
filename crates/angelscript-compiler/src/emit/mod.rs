@@ -312,6 +312,15 @@ impl<'pool> BytecodeEmitter<'pool> {
         self.jumps.enter_loop(continue_target);
     }
 
+    /// Enter a loop context with deferred continue target.
+    ///
+    /// Use this for do-while loops where the continue target (condition)
+    /// isn't known until after the body is compiled. Call `set_continue_target`
+    /// later to set the target.
+    pub fn enter_loop_deferred(&mut self) {
+        self.jumps.enter_loop_deferred();
+    }
+
     /// Exit a loop context.
     ///
     /// Patches all break jumps to the current position.
@@ -338,9 +347,20 @@ impl<'pool> BytecodeEmitter<'pool> {
     /// Emit a continue statement.
     ///
     /// Returns an error if not inside a loop.
+    /// For do-while loops with deferred continue target, emits a forward jump
+    /// that will be patched later.
     pub fn emit_continue(&mut self) -> Result<(), BreakError> {
-        let target = self.jumps.continue_target()?;
-        self.emit_loop(target);
+        match self.jumps.continue_target()? {
+            Some(target) => {
+                // Continue target is known - emit backward jump
+                self.emit_loop(target);
+            }
+            None => {
+                // Continue target is deferred (do-while) - emit forward jump
+                let label = self.emit_jump(OpCode::Jump);
+                self.jumps.add_continue(label);
+            }
+        }
         Ok(())
     }
 
@@ -391,8 +411,13 @@ impl<'pool> BytecodeEmitter<'pool> {
     ///
     /// This is useful for `for` loops where the continue target is
     /// the update expression, not the condition.
+    ///
+    /// For do-while loops, this also patches any deferred continue jumps.
     pub fn set_continue_target(&mut self, target: usize) {
-        self.jumps.set_continue_target(target);
+        let pending_labels = self.jumps.set_continue_target(target);
+        for label in pending_labels {
+            self.patch_jump(label);
+        }
     }
 
     /// Get current breakable nesting depth (loops and switches).
