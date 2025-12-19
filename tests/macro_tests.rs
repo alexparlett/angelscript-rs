@@ -189,6 +189,18 @@ fn add_numbers(a: i32, b: i32) -> i32 {
     a + b
 }
 
+/// Free function that divides two floats.
+#[function]
+fn divide_numbers(a: f64, b: f64) -> f64 {
+    a / b
+}
+
+/// Free function that checks if a number is positive.
+#[function]
+fn is_positive(n: i32) -> bool {
+    n > 0
+}
+
 #[test]
 fn function_free_basic() {
     // Unit struct pattern: function name becomes a unit struct
@@ -220,7 +232,7 @@ fn function_free_custom_name() {
 // ============================================================================
 
 /// Test struct with methods.
-#[derive(Any)]
+#[derive(Any, Clone)]
 #[angelscript(name = "Counter", value)]
 struct Counter {
     #[angelscript(get)]
@@ -247,6 +259,18 @@ impl Counter {
     #[function]
     fn add(&mut self, amount: i32) {
         self.value += amount;
+    }
+
+    /// Method that takes a reference to another instance of Self
+    #[function]
+    fn add_from(&mut self, other: &Self) {
+        self.value += other.value;
+    }
+
+    /// Method that compares with another instance (owned Self)
+    #[function]
+    fn equals(&self, other: Self) -> bool {
+        self.value == other.value
     }
 }
 
@@ -1914,7 +1938,6 @@ fn operator_meta_captures_native_fn() {
 /// Verify that NativeFn is actually callable and produces correct results.
 /// This tests the full invoke path: extract args from CallContext, call function, set return.
 #[test]
-#[ignore = "NativeFn body pending VM CallContext design"]
 fn native_fn_is_callable() {
     use angelscript_core::{CallContext, Dynamic, ObjectHeap};
 
@@ -1944,4 +1967,210 @@ fn native_fn_has_correct_type_hash() {
         TypeHash::from_name("add_numbers"),
         "NativeFn should have TypeHash matching function name"
     );
+}
+
+/// Verify that method NativeFn is callable with &self receiver.
+#[test]
+fn native_fn_method_self_ref() {
+    use angelscript_core::{CallContext, Dynamic, ObjectHeap};
+
+    // Create a Counter instance
+    let counter = Counter { value: 42 };
+
+    let meta = Counter::get_value__meta();
+    let native = meta.native_fn.expect("native_fn should be Some");
+
+    // Set up CallContext with `this` in slot 0
+    let mut args = vec![Dynamic::Native(Box::new(counter))];
+    let mut ret = Dynamic::Void;
+    let mut heap = ObjectHeap::new();
+    let mut ctx = CallContext::new(&mut args, 1, &mut ret, &mut heap);
+
+    native.call(&mut ctx).expect("call should succeed");
+    assert_eq!(ret, Dynamic::Int(42), "get_value should return 42");
+}
+
+/// Verify that method NativeFn is callable with &mut self receiver.
+#[test]
+fn native_fn_method_self_mut() {
+    use angelscript_core::{CallContext, Dynamic, ObjectHeap};
+
+    // Create a Counter instance
+    let counter = Counter { value: 10 };
+
+    let meta = Counter::increment__meta();
+    let native = meta.native_fn.expect("native_fn should be Some");
+
+    // Set up CallContext with `this` in slot 0
+    let mut args = vec![Dynamic::Native(Box::new(counter))];
+    let mut ret = Dynamic::Void;
+    let mut heap = ObjectHeap::new();
+    let mut ctx = CallContext::new(&mut args, 1, &mut ret, &mut heap);
+
+    native.call(&mut ctx).expect("call should succeed");
+
+    // Verify the counter was incremented
+    match &args[0] {
+        Dynamic::Native(boxed) => {
+            let counter = boxed.downcast_ref::<Counter>().unwrap();
+            assert_eq!(
+                counter.value, 11,
+                "increment should change value from 10 to 11"
+            );
+        }
+        _ => panic!("expected Native"),
+    }
+}
+
+/// Verify that method NativeFn is callable with &mut self and additional params.
+#[test]
+fn native_fn_method_with_params() {
+    use angelscript_core::{CallContext, Dynamic, ObjectHeap};
+
+    // Create a Counter instance
+    let counter = Counter { value: 5 };
+
+    let meta = Counter::add__meta();
+    let native = meta.native_fn.expect("native_fn should be Some");
+
+    // Set up CallContext with `this` in slot 0, arg in slot 1
+    let mut args = vec![Dynamic::Native(Box::new(counter)), Dynamic::Int(15)];
+    let mut ret = Dynamic::Void;
+    let mut heap = ObjectHeap::new();
+    let mut ctx = CallContext::new(&mut args, 1, &mut ret, &mut heap);
+
+    native.call(&mut ctx).expect("call should succeed");
+
+    // Verify the counter was updated
+    match &args[0] {
+        Dynamic::Native(boxed) => {
+            let counter = boxed.downcast_ref::<Counter>().unwrap();
+            assert_eq!(
+                counter.value, 20,
+                "add(15) should change value from 5 to 20"
+            );
+        }
+        _ => panic!("expected Native"),
+    }
+}
+
+/// Verify that float return types work correctly.
+#[test]
+fn native_fn_float_return() {
+    use angelscript_core::{CallContext, Dynamic, ObjectHeap};
+
+    let meta = <divide_numbers as HasFunctionMeta>::__as_fn_meta();
+    let native = meta.native_fn.expect("native_fn should be Some");
+
+    // Set up CallContext with args: divide_numbers(10.0, 4.0)
+    let mut args = vec![Dynamic::Float(10.0), Dynamic::Float(4.0)];
+    let mut ret = Dynamic::Void;
+    let mut heap = ObjectHeap::new();
+    let mut ctx = CallContext::new(&mut args, 0, &mut ret, &mut heap);
+
+    native.call(&mut ctx).expect("call should succeed");
+    match ret {
+        Dynamic::Float(v) => assert!((v - 2.5).abs() < 0.001, "10.0 / 4.0 should equal 2.5"),
+        _ => panic!("expected Float"),
+    }
+}
+
+/// Verify that bool return types work correctly.
+#[test]
+fn native_fn_bool_return() {
+    use angelscript_core::{CallContext, Dynamic, ObjectHeap};
+
+    let meta = <is_positive as HasFunctionMeta>::__as_fn_meta();
+    let native = meta.native_fn.expect("native_fn should be Some");
+
+    // Test positive number
+    let mut args = vec![Dynamic::Int(42)];
+    let mut ret = Dynamic::Void;
+    let mut heap = ObjectHeap::new();
+    let mut ctx = CallContext::new(&mut args, 0, &mut ret, &mut heap);
+
+    native.call(&mut ctx).expect("call should succeed");
+    assert_eq!(ret, Dynamic::Bool(true), "42 should be positive");
+
+    // Test negative number
+    let mut args = vec![Dynamic::Int(-5)];
+    let mut ret = Dynamic::Void;
+    let mut ctx = CallContext::new(&mut args, 0, &mut ret, &mut heap);
+
+    native.call(&mut ctx).expect("call should succeed");
+    assert_eq!(ret, Dynamic::Bool(false), "-5 should not be positive");
+}
+
+/// Verify that method taking &Self as parameter works correctly.
+#[test]
+fn native_fn_method_ref_self_param() {
+    use angelscript_core::{CallContext, Dynamic, ObjectHeap};
+
+    // Create two Counter instances
+    let counter1 = Counter { value: 10 };
+    let counter2 = Counter { value: 25 };
+
+    let meta = Counter::add_from__meta();
+    let native = meta.native_fn.expect("native_fn should be Some");
+
+    // Set up CallContext: slot 0 = this (&mut self), slot 1 = other (&Self)
+    let mut args = vec![
+        Dynamic::Native(Box::new(counter1)),
+        Dynamic::Native(Box::new(counter2)),
+    ];
+    let mut ret = Dynamic::Void;
+    let mut heap = ObjectHeap::new();
+    let mut ctx = CallContext::new(&mut args, 1, &mut ret, &mut heap);
+
+    native.call(&mut ctx).expect("call should succeed");
+
+    // Verify the first counter was updated (10 + 25 = 35)
+    match &args[0] {
+        Dynamic::Native(boxed) => {
+            let counter = boxed.downcast_ref::<Counter>().unwrap();
+            assert_eq!(
+                counter.value, 35,
+                "add_from should add other.value to self.value"
+            );
+        }
+        _ => panic!("expected Native"),
+    }
+}
+
+/// Verify that method taking owned Self as parameter works correctly.
+#[test]
+fn native_fn_method_owned_self_param() {
+    use angelscript_core::{CallContext, Dynamic, ObjectHeap};
+
+    // Create two Counter instances
+    let counter1 = Counter { value: 42 };
+    let counter2 = Counter { value: 42 };
+
+    let meta = Counter::equals__meta();
+    let native = meta.native_fn.expect("native_fn should be Some");
+
+    // Set up CallContext: slot 0 = this (&self), slot 1 = other (owned Self)
+    let mut args = vec![
+        Dynamic::Native(Box::new(counter1)),
+        Dynamic::Native(Box::new(counter2)),
+    ];
+    let mut ret = Dynamic::Void;
+    let mut heap = ObjectHeap::new();
+    let mut ctx = CallContext::new(&mut args, 1, &mut ret, &mut heap);
+
+    native.call(&mut ctx).expect("call should succeed");
+    assert_eq!(ret, Dynamic::Bool(true), "both counters have value 42");
+
+    // Test with different values
+    let counter1 = Counter { value: 10 };
+    let counter2 = Counter { value: 20 };
+    let mut args = vec![
+        Dynamic::Native(Box::new(counter1)),
+        Dynamic::Native(Box::new(counter2)),
+    ];
+    let mut ret = Dynamic::Void;
+    let mut ctx = CallContext::new(&mut args, 1, &mut ret, &mut heap);
+
+    native.call(&mut ctx).expect("call should succeed");
+    assert_eq!(ret, Dynamic::Bool(false), "counters have different values");
 }
