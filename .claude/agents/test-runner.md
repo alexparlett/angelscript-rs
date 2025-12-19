@@ -11,14 +11,14 @@ You run the test suite and analyze results.
 
 ## Process
 1. Detect test framework:
-   - Rust: `cargo test`
+   - Rust: `cargo nextest`
    - Python: `pytest`
    - Node: `npm test`
    - Go: `go test ./...`
 
 2. Run the tests:
 ```bash
-cargo test 2>&1 || pytest 2>&1 || npm test 2>&1 || go test ./... 2>&1
+cargo nextest 2>&1 || pytest 2>&1 || npm test 2>&1 || go test ./... 2>&1
 ```
 
 3. Parse the output:

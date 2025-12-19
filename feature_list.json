@@ -55,14 +55,14 @@
       "description": "Array template type with iteration and manipulation",
       "id": "stdlib-array",
       "name": "Standard Library: Array",
-      "status": "in-progress",
+      "status": "complete",
       "verification": "cargo nextest run -p angelscript-modules -E 'test(array)'"
     },
     {
       "description": "Dictionary type for key-value storage",
       "id": "stdlib-dictionary",
       "name": "Standard Library: Dictionary",
-      "status": "in-progress",
+      "status": "complete",
       "verification": "cargo nextest run -p angelscript-modules -E 'test(dictionary)'"
     },
     {
@@ -146,7 +146,7 @@
         {
           "id": "task-41c",
           "name": "Script Inheritance Validation",
-          "status": "pending",
+          "status": "complete",
           "task": "tasks/41c_validate_script_inheritance.md"
         },
         {
@@ -176,7 +176,7 @@
         {
           "id": "task-44",
           "name": "Statement Compilation - Basics",
-          "status": "pending",
+          "status": "in-progress",
           "task": "tasks/44_statement_basics.md"
         },
         {
@@ -217,6 +217,6 @@
       "verification": "cargo nextest run -p angelscript-registry"
     }
   ],
-  "next_task": "task-44",
+  "next_task": "task-45",
   "project": "angelscript-rust"
 }
