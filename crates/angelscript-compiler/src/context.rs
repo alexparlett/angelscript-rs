@@ -261,19 +261,19 @@ impl<'a> CompilationContext<'a> {
                 let mut results = Vec::new();
 
                 // Check unit registry
-                if let Some(funcs) = self.unit_registry.get_namespace_functions(ns) {
-                    if let Some(hashes) = funcs.get(simple) {
-                        results.extend(hashes.iter().copied());
-                    }
+                if let Some(funcs) = self.unit_registry.get_namespace_functions(ns)
+                    && let Some(hashes) = funcs.get(simple)
+                {
+                    results.extend(hashes.iter().copied());
                 }
 
                 // Check global registry
-                if let Some(funcs) = self.global_registry.get_namespace_functions(ns) {
-                    if let Some(hashes) = funcs.get(simple) {
-                        for &hash in hashes {
-                            if !results.contains(&hash) {
-                                results.push(hash);
-                            }
+                if let Some(funcs) = self.global_registry.get_namespace_functions(ns)
+                    && let Some(hashes) = funcs.get(simple)
+                {
+                    for &hash in hashes {
+                        if !results.contains(&hash) {
+                            results.push(hash);
                         }
                     }
                 }
@@ -292,24 +292,24 @@ impl<'a> CompilationContext<'a> {
         let add_from_namespace = |ns: &str, results: &mut Vec<TypeHash>| -> bool {
             let mut found = false;
             // Check unit registry
-            if let Some(funcs) = self.unit_registry.get_namespace_functions(ns) {
-                if let Some(hashes) = funcs.get(name) {
-                    for &hash in hashes {
-                        if !results.contains(&hash) {
-                            results.push(hash);
-                            found = true;
-                        }
+            if let Some(funcs) = self.unit_registry.get_namespace_functions(ns)
+                && let Some(hashes) = funcs.get(name)
+            {
+                for &hash in hashes {
+                    if !results.contains(&hash) {
+                        results.push(hash);
+                        found = true;
                     }
                 }
             }
             // Check global registry
-            if let Some(funcs) = self.global_registry.get_namespace_functions(ns) {
-                if let Some(hashes) = funcs.get(name) {
-                    for &hash in hashes {
-                        if !results.contains(&hash) {
-                            results.push(hash);
-                            found = true;
-                        }
+            if let Some(funcs) = self.global_registry.get_namespace_functions(ns)
+                && let Some(hashes) = funcs.get(name)
+            {
+                for &hash in hashes {
+                    if !results.contains(&hash) {
+                        results.push(hash);
+                        found = true;
                     }
                 }
             }

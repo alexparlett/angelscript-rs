@@ -199,10 +199,10 @@ impl<'reg, 'global> TypeCompletionPass<'reg, 'global> {
 
                             if base_class.is_mixin {
                                 // It's a mixin - add to mixins list
-                                if let Some(class) = self.registry.get_class_mut(class_hash) {
-                                    if !class.mixins.contains(&base_hash) {
-                                        class.mixins.push(base_hash);
-                                    }
+                                if let Some(class) = self.registry.get_class_mut(class_hash)
+                                    && !class.mixins.contains(&base_hash)
+                                {
+                                    class.mixins.push(base_hash);
                                 }
                             } else {
                                 // It's a regular class - validate and set as base
@@ -247,10 +247,10 @@ impl<'reg, 'global> TypeCompletionPass<'reg, 'global> {
                             }
                         } else if entry.as_interface().is_some() {
                             // It's an interface - add to interfaces list
-                            if let Some(class) = self.registry.get_class_mut(class_hash) {
-                                if !class.interfaces.contains(&base_hash) {
-                                    class.interfaces.push(base_hash);
-                                }
+                            if let Some(class) = self.registry.get_class_mut(class_hash)
+                                && !class.interfaces.contains(&base_hash)
+                            {
+                                class.interfaces.push(base_hash);
                             }
                         } else {
                             output.errors.push(CompilationError::Other {
@@ -292,10 +292,10 @@ impl<'reg, 'global> TypeCompletionPass<'reg, 'global> {
                     // Verify it's an interface (check both registries)
                     if let Some(entry) = self.get_type(base_hash) {
                         if entry.as_interface().is_some() {
-                            if let Some(iface) = self.registry.get_interface_mut(interface_hash) {
-                                if !iface.base_interfaces.contains(&base_hash) {
-                                    iface.base_interfaces.push(base_hash);
-                                }
+                            if let Some(iface) = self.registry.get_interface_mut(interface_hash)
+                                && !iface.base_interfaces.contains(&base_hash)
+                            {
+                                iface.base_interfaces.push(base_hash);
                             }
                         } else {
                             output.errors.push(CompilationError::Other {

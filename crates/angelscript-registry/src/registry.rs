@@ -13,6 +13,21 @@
 //!   (`Fn(&TemplateInstanceInfo) -> TemplateValidation`) different from normal native
 //!   functions that use `CallContext`.
 //!
+//! # Thread Safety
+//!
+//! `SymbolRegistry` is **not thread-safe** by design. In the typical usage pattern:
+//!
+//! - **Registration phase**: The registry is populated single-threaded during
+//!   context setup and script compilation. FFI types are registered first,
+//!   then script types are added during compilation passes.
+//!
+//! - **Execution phase**: After compilation, the registry becomes effectively
+//!   read-only. If multi-threaded execution is needed, the caller must wrap
+//!   the registry in appropriate synchronization (e.g., `Arc<RwLock<_>>`).
+//!
+//! This design follows the pattern of most scripting engines where type
+//! registration and script execution are distinct phases.
+//!
 //! # Example
 //!
 //! ```
