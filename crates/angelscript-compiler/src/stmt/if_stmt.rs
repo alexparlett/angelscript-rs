@@ -383,18 +383,48 @@ mod tests {
 
         let chunk = emitter.finish();
         // Bytecode layout:
-        // Outer if: PushTrue(1) + JumpIfFalse(3) + Pop(1) + Jump(3) = 8 bytes
-        // Else if: Pop(1) + PushFalse(1) + JumpIfFalse(3) + Pop(1) + Jump(3) = 9 bytes
-        // Else: Pop(1) = 1 byte
+        // 0: PushTrue
+        // 1-3: JumpIfFalse -> 8 (else-if condition)
+        // 4: Pop (true path)
+        // 5-7: Jump -> 18 (end, skips ALL else branches)
+        // 8: Pop (false path from first condition)
+        // 9: PushFalse
+        // 10-12: JumpIfFalse -> 17 (else block)
+        // 13: Pop (true path)
+        // 14-16: Jump -> 18 (end)
+        // 17: Pop (false path, else block is empty)
         // Total: 18 bytes
         assert_eq!(chunk.len(), 18);
+
+        // First if condition
         assert_eq!(chunk.read_op(0), Some(OpCode::PushTrue));
         assert_eq!(chunk.read_op(1), Some(OpCode::JumpIfFalse));
+        // If first condition false, jump to else-if at offset 8
+        // Jump distance: 8 - 2 - 2 = 4
+        assert_eq!(chunk.read_u16(2), Some(4));
         assert_eq!(chunk.read_op(4), Some(OpCode::Pop));
+
+        // After first then-block, jump to END (offset 18), skipping else-if AND else
         assert_eq!(chunk.read_op(5), Some(OpCode::Jump));
-        // Else if starts at offset 8
+        // Jump distance: 18 - 6 - 2 = 10
+        assert_eq!(chunk.read_u16(6), Some(10));
+
+        // Else-if condition starts at offset 8
         assert_eq!(chunk.read_op(8), Some(OpCode::Pop));
         assert_eq!(chunk.read_op(9), Some(OpCode::PushFalse));
+        assert_eq!(chunk.read_op(10), Some(OpCode::JumpIfFalse));
+        // If else-if condition false, jump to else at offset 17
+        // Jump distance: 17 - 11 - 2 = 4
+        assert_eq!(chunk.read_u16(11), Some(4));
+        assert_eq!(chunk.read_op(13), Some(OpCode::Pop));
+
+        // After else-if then-block, jump to END (offset 18)
+        assert_eq!(chunk.read_op(14), Some(OpCode::Jump));
+        // Jump distance: 18 - 15 - 2 = 1
+        assert_eq!(chunk.read_u16(15), Some(1));
+
+        // Final else block (just pops the condition)
+        assert_eq!(chunk.read_op(17), Some(OpCode::Pop));
     }
 
     #[test]
