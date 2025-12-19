@@ -220,6 +220,12 @@
           "name": "Multi-Section Compilation",
           "status": "pending",
           "task": "tasks/49_multi_section_compilation.md"
+        },
+        {
+          "id": "task-50",
+          "name": "Constant Folding Optimization",
+          "status": "pending",
+          "task": "tasks/50_constant_folding.md"
         }
       ],
       "verification": "cargo nextest run -p angelscript-compiler"
