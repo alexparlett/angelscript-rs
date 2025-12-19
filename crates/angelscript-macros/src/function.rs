@@ -425,6 +425,10 @@ fn extract_params(
                 let default =
                     default.or_else(|| param_attr.as_ref().and_then(|p| p.default.clone()));
 
+                // Use template from #[param(template = "...")] if not set by #[template(...)]
+                let template_param = template_param
+                    .or_else(|| param_attr.as_ref().and_then(|p| p.template_param.clone()));
+
                 params.push(ParamInfo {
                     name,
                     ty: pat_type.ty.clone(),
