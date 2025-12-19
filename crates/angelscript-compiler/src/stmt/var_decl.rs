@@ -104,9 +104,7 @@ impl<'a, 'ctx, 'pool> StmtCompiler<'a, 'ctx, 'pool> {
             // Value types need default constructor - not yet implemented
             // TODO: Task 45 or later - call default constructor
             Err(CompilationError::Other {
-                message: format!(
-                    "default construction of value types not yet implemented; provide an initializer"
-                ),
+                message: "default construction of value types not yet implemented; provide an initializer".to_string(),
                 span,
             })
         }

@@ -35,8 +35,16 @@ impl<'a, 'ctx, 'pool> StmtCompiler<'a, 'ctx, 'pool> {
 
         // Compile condition - must be bool
         let bool_type = DataType::simple(primitives::BOOL);
-        let mut expr_compiler = self.expr_compiler();
-        expr_compiler.check(while_stmt.condition, &bool_type)?;
+        let condition_result = {
+            let mut expr_compiler = self.expr_compiler();
+            expr_compiler.check(while_stmt.condition, &bool_type)
+        };
+
+        // If condition compilation fails, clean up loop context before returning error
+        if let Err(e) = condition_result {
+            self.emitter.exit_loop();
+            return Err(e);
+        }
 
         // Exit loop if false
         let exit_jump = self.emitter.emit_jump(OpCode::JumpIfFalse);
