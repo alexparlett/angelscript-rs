@@ -19,7 +19,7 @@ impl<'a, 'ctx, 'pool> StmtCompiler<'a, 'ctx, 'pool> {
     /// - `opForNext(state)` - Advance to next element
     /// - `opForValue(state)` - Get current value (or opForValue0, opForValue1, etc.)
     ///
-    /// Bytecode layout:
+    /// Bytecode layout (matches AngelScript semantics):
     /// ```text
     /// [collection expression]
     /// Dup
@@ -27,16 +27,11 @@ impl<'a, 'ctx, 'pool> StmtCompiler<'a, 'ctx, 'pool> {
     /// SetLocal __iter_state
     ///
     /// loop_start:
-    /// GetLocal __collection (kept for opFor calls)
+    /// GetLocal __collection
     /// GetLocal __iter_state
     /// CallMethod opForEnd
     /// JumpIfTrue -> exit
     /// Pop (result of opForEnd)
-    ///
-    /// GetLocal __collection
-    /// GetLocal __iter_state
-    /// CallMethod opForNext
-    /// SetLocal __iter_state
     ///
     /// GetLocal __collection
     /// GetLocal __iter_state
@@ -45,10 +40,24 @@ impl<'a, 'ctx, 'pool> StmtCompiler<'a, 'ctx, 'pool> {
     ///
     /// [body]
     ///
+    /// GetLocal __collection
+    /// GetLocal __iter_state
+    /// CallMethod opForNext      <- update happens after body
+    /// SetLocal __iter_state
+    ///
     /// Loop -> loop_start
     /// exit:
     /// Pop (result of opForEnd)
     /// [cleanup]
+    /// ```
+    ///
+    /// This matches the AngelScript equivalent:
+    /// ```text
+    /// for(auto @it = container.opForBegin(); !container.opForEnd(it); @it = container.opForNext(it))
+    /// {
+    ///     auto val = container.opForValue(it);
+    ///     ...
+    /// }
     /// ```
     pub fn compile_foreach<'ast>(&mut self, foreach: &ForeachStmt<'ast>) -> Result<()> {
         let span = foreach.span;
@@ -122,9 +131,10 @@ impl<'a, 'ctx, 'pool> StmtCompiler<'a, 'ctx, 'pool> {
             var_slots.push(slot);
         }
 
-        // Loop start
+        // Loop start - use deferred continue target since continue should
+        // jump to opForNext (update), not back to condition
         let loop_start = self.emitter.current_offset();
-        self.emitter.enter_loop(loop_start);
+        self.emitter.enter_loop_deferred();
 
         // Check if iteration is complete: opForEnd(state) -> bool
         self.emitter.emit_get_local(collection_slot);
@@ -137,13 +147,8 @@ impl<'a, 'ctx, 'pool> StmtCompiler<'a, 'ctx, 'pool> {
         // Pop the opForEnd result
         self.emitter.emit_pop();
 
-        // Advance to next: opForNext(state) -> new_state
-        self.emitter.emit_get_local(collection_slot);
-        self.emitter.emit_get_local(state_slot);
-        self.emitter.emit_call_method(foreach_behaviors.for_next, 1);
-        self.emitter.emit_set_local(state_slot);
-
-        // Get values and store in iteration variables
+        // Get values and store in iteration variables BEFORE advancing
+        // (opForNext is the loop "update", called after body)
         if foreach.vars.len() == 1 {
             // Single value: opForValue(state) -> value
             self.emitter.emit_get_local(collection_slot);
@@ -166,6 +171,18 @@ impl<'a, 'ctx, 'pool> StmtCompiler<'a, 'ctx, 'pool> {
 
         // Compile body
         self.compile(foreach.body)?;
+
+        // Set continue target to the update (opForNext)
+        // This patches any continue statements in the body
+        let update_start = self.emitter.current_offset();
+        self.emitter.set_continue_target(update_start);
+
+        // Advance to next: opForNext(state) -> new_state
+        // This is the loop "update" expression, called after body
+        self.emitter.emit_get_local(collection_slot);
+        self.emitter.emit_get_local(state_slot);
+        self.emitter.emit_call_method(foreach_behaviors.for_next, 1);
+        self.emitter.emit_set_local(state_slot);
 
         // Loop back
         self.emitter.emit_loop(loop_start);
