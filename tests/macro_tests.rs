@@ -232,7 +232,7 @@ fn function_free_custom_name() {
 // ============================================================================
 
 /// Test struct with methods.
-#[derive(Any)]
+#[derive(Any, Clone)]
 #[angelscript(name = "Counter", value)]
 struct Counter {
     #[angelscript(get)]
@@ -259,6 +259,18 @@ impl Counter {
     #[function]
     fn add(&mut self, amount: i32) {
         self.value += amount;
+    }
+
+    /// Method that takes a reference to another instance of Self
+    #[function]
+    fn add_from(&mut self, other: &Self) {
+        self.value += other.value;
+    }
+
+    /// Method that compares with another instance (owned Self)
+    #[function]
+    fn equals(&self, other: Self) -> bool {
+        self.value == other.value
     }
 }
 
@@ -1984,4 +1996,78 @@ fn native_fn_bool_return() {
 
     native.call(&mut ctx).expect("call should succeed");
     assert_eq!(ret, Dynamic::Bool(false), "-5 should not be positive");
+}
+
+/// Verify that method taking &Self as parameter works correctly.
+#[test]
+fn native_fn_method_ref_self_param() {
+    use angelscript_core::{CallContext, Dynamic, ObjectHeap};
+
+    // Create two Counter instances
+    let counter1 = Counter { value: 10 };
+    let counter2 = Counter { value: 25 };
+
+    let meta = Counter::add_from__meta();
+    let native = meta.native_fn.expect("native_fn should be Some");
+
+    // Set up CallContext: slot 0 = this (&mut self), slot 1 = other (&Self)
+    let mut args = vec![
+        Dynamic::Native(Box::new(counter1)),
+        Dynamic::Native(Box::new(counter2)),
+    ];
+    let mut ret = Dynamic::Void;
+    let mut heap = ObjectHeap::new();
+    let mut ctx = CallContext::new(&mut args, 1, &mut ret, &mut heap);
+
+    native.call(&mut ctx).expect("call should succeed");
+
+    // Verify the first counter was updated (10 + 25 = 35)
+    match &args[0] {
+        Dynamic::Native(boxed) => {
+            let counter = boxed.downcast_ref::<Counter>().unwrap();
+            assert_eq!(
+                counter.value, 35,
+                "add_from should add other.value to self.value"
+            );
+        }
+        _ => panic!("expected Native"),
+    }
+}
+
+/// Verify that method taking owned Self as parameter works correctly.
+#[test]
+fn native_fn_method_owned_self_param() {
+    use angelscript_core::{CallContext, Dynamic, ObjectHeap};
+
+    // Create two Counter instances
+    let counter1 = Counter { value: 42 };
+    let counter2 = Counter { value: 42 };
+
+    let meta = Counter::equals__meta();
+    let native = meta.native_fn.expect("native_fn should be Some");
+
+    // Set up CallContext: slot 0 = this (&self), slot 1 = other (owned Self)
+    let mut args = vec![
+        Dynamic::Native(Box::new(counter1)),
+        Dynamic::Native(Box::new(counter2)),
+    ];
+    let mut ret = Dynamic::Void;
+    let mut heap = ObjectHeap::new();
+    let mut ctx = CallContext::new(&mut args, 1, &mut ret, &mut heap);
+
+    native.call(&mut ctx).expect("call should succeed");
+    assert_eq!(ret, Dynamic::Bool(true), "both counters have value 42");
+
+    // Test with different values
+    let counter1 = Counter { value: 10 };
+    let counter2 = Counter { value: 20 };
+    let mut args = vec![
+        Dynamic::Native(Box::new(counter1)),
+        Dynamic::Native(Box::new(counter2)),
+    ];
+    let mut ret = Dynamic::Void;
+    let mut ctx = CallContext::new(&mut args, 1, &mut ret, &mut heap);
+
+    native.call(&mut ctx).expect("call should succeed");
+    assert_eq!(ret, Dynamic::Bool(false), "counters have different values");
 }

@@ -678,6 +678,19 @@ fn generate_native_fn(
         }
     });
 
+    // Check for owned self (fn(self) or fn(mut self)) - not supported in FFI
+    for arg in fn_inputs.iter() {
+        if let FnArg::Receiver(r) = arg
+            && r.reference.is_none()
+        {
+            let err_msg =
+                "owned `self` not supported in FFI methods; use `&self` or `&mut self` instead";
+            return quote! {
+                compile_error!(#err_msg)
+            };
+        }
+    }
+
     // Check if any parameter is a non-primitive &T - this creates a borrow conflict with &mut self
     // because both borrow from the same CallContext slots
     let has_ref_param = params.iter().any(|(_, ty)| {
