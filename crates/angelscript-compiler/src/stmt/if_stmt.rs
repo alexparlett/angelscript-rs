@@ -155,11 +155,27 @@ mod tests {
 
         let mut compiler = StmtCompiler::new(&mut ctx, &mut emitter, DataType::void(), None);
 
-        assert!(compiler.compile_if(&if_stmt).is_ok());
+        compiler.compile_if(&if_stmt).unwrap();
 
         let chunk = emitter.finish();
-        // Should have: PushTrue, JumpIfFalse, Pop, Jump, Pop
-        assert!(chunk.len() > 0);
+        // Bytecode layout:
+        // PushTrue: 1 byte (offset 0)
+        // JumpIfFalse + offset: 3 bytes (offset 1-3)
+        // Pop: 1 byte (offset 4)
+        // (empty then block)
+        // Jump + offset: 3 bytes (offset 5-7)
+        // Pop: 1 byte (offset 8)
+        // Total: 9 bytes
+        assert_eq!(chunk.len(), 9);
+        assert_eq!(chunk.read_op(0), Some(OpCode::PushTrue));
+        assert_eq!(chunk.read_op(1), Some(OpCode::JumpIfFalse));
+        // Jump distance: len(8) - offset(2) - 2 = 4
+        assert_eq!(chunk.read_u16(2), Some(4));
+        assert_eq!(chunk.read_op(4), Some(OpCode::Pop));
+        assert_eq!(chunk.read_op(5), Some(OpCode::Jump));
+        // Skip jump distance: len(9) - offset(6) - 2 = 1
+        assert_eq!(chunk.read_u16(6), Some(1));
+        assert_eq!(chunk.read_op(8), Some(OpCode::Pop));
     }
 
     #[test]
@@ -194,11 +210,28 @@ mod tests {
 
         let mut compiler = StmtCompiler::new(&mut ctx, &mut emitter, DataType::void(), None);
 
-        assert!(compiler.compile_if(&if_stmt).is_ok());
+        compiler.compile_if(&if_stmt).unwrap();
 
         let chunk = emitter.finish();
-        // Should have bytecode for condition, jumps, and branches
-        assert!(chunk.len() > 0);
+        // Bytecode layout:
+        // PushTrue: 1 byte (offset 0)
+        // JumpIfFalse + offset: 3 bytes (offset 1-3)
+        // Pop: 1 byte (offset 4)
+        // (empty then block)
+        // Jump + offset: 3 bytes (offset 5-7)
+        // Pop: 1 byte (offset 8)
+        // (empty else block)
+        // Total: 9 bytes
+        assert_eq!(chunk.len(), 9);
+        assert_eq!(chunk.read_op(0), Some(OpCode::PushTrue));
+        assert_eq!(chunk.read_op(1), Some(OpCode::JumpIfFalse));
+        // Jump distance to else: len(8) - offset(2) - 2 = 4
+        assert_eq!(chunk.read_u16(2), Some(4));
+        assert_eq!(chunk.read_op(4), Some(OpCode::Pop));
+        assert_eq!(chunk.read_op(5), Some(OpCode::Jump));
+        // Jump distance to end: len(9) - offset(6) - 2 = 1
+        assert_eq!(chunk.read_u16(6), Some(1));
+        assert_eq!(chunk.read_op(8), Some(OpCode::Pop));
     }
 
     #[test]
@@ -276,7 +309,21 @@ mod tests {
 
         let mut compiler = StmtCompiler::new(&mut ctx, &mut emitter, DataType::void(), None);
 
-        assert!(compiler.compile_if(&outer_if).is_ok());
+        compiler.compile_if(&outer_if).unwrap();
+
+        let chunk = emitter.finish();
+        // Bytecode layout:
+        // Outer: PushTrue(1) + JumpIfFalse(3) + Pop(1) = 5 bytes before inner
+        // Inner: PushFalse(1) + JumpIfFalse(3) + Pop(1) + Jump(3) + Pop(1) = 9 bytes
+        // Outer: Jump(3) + Pop(1) = 4 bytes
+        // Total: 18 bytes
+        assert_eq!(chunk.len(), 18);
+        assert_eq!(chunk.read_op(0), Some(OpCode::PushTrue));
+        assert_eq!(chunk.read_op(1), Some(OpCode::JumpIfFalse));
+        assert_eq!(chunk.read_op(4), Some(OpCode::Pop));
+        // Inner if starts at offset 5
+        assert_eq!(chunk.read_op(5), Some(OpCode::PushFalse));
+        assert_eq!(chunk.read_op(6), Some(OpCode::JumpIfFalse));
     }
 
     #[test]
@@ -332,7 +379,22 @@ mod tests {
 
         let mut compiler = StmtCompiler::new(&mut ctx, &mut emitter, DataType::void(), None);
 
-        assert!(compiler.compile_if(&if_stmt).is_ok());
+        compiler.compile_if(&if_stmt).unwrap();
+
+        let chunk = emitter.finish();
+        // Bytecode layout:
+        // Outer if: PushTrue(1) + JumpIfFalse(3) + Pop(1) + Jump(3) = 8 bytes
+        // Else if: Pop(1) + PushFalse(1) + JumpIfFalse(3) + Pop(1) + Jump(3) = 9 bytes
+        // Else: Pop(1) = 1 byte
+        // Total: 18 bytes
+        assert_eq!(chunk.len(), 18);
+        assert_eq!(chunk.read_op(0), Some(OpCode::PushTrue));
+        assert_eq!(chunk.read_op(1), Some(OpCode::JumpIfFalse));
+        assert_eq!(chunk.read_op(4), Some(OpCode::Pop));
+        assert_eq!(chunk.read_op(5), Some(OpCode::Jump));
+        // Else if starts at offset 8
+        assert_eq!(chunk.read_op(8), Some(OpCode::Pop));
+        assert_eq!(chunk.read_op(9), Some(OpCode::PushFalse));
     }
 
     #[test]
@@ -384,9 +446,23 @@ mod tests {
 
         let mut compiler = StmtCompiler::new(&mut ctx, &mut emitter, DataType::void(), None);
 
-        assert!(compiler.compile_if(&if_stmt).is_ok());
+        compiler.compile_if(&if_stmt).unwrap();
 
         // Variable x should be out of scope after the if block
         assert!(ctx.get_local("x").is_none());
+
+        let chunk = emitter.finish();
+        // Bytecode layout:
+        // PushTrue(1) + JumpIfFalse(3) + Pop(1) = 5 bytes
+        // var decl: Constant(2) + SetLocal(2) = 4 bytes
+        // Jump(3) + Pop(1) = 4 bytes
+        // Total: 13 bytes
+        assert_eq!(chunk.len(), 13);
+        assert_eq!(chunk.read_op(0), Some(OpCode::PushTrue));
+        assert_eq!(chunk.read_op(1), Some(OpCode::JumpIfFalse));
+        assert_eq!(chunk.read_op(4), Some(OpCode::Pop));
+        // Var decl starts at offset 5
+        assert_eq!(chunk.read_op(5), Some(OpCode::Constant));
+        assert_eq!(chunk.read_op(7), Some(OpCode::SetLocal));
     }
 }

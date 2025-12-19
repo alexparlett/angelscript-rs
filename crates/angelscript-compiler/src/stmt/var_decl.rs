@@ -175,6 +175,8 @@ mod tests {
 
     #[test]
     fn var_decl_with_int_initializer() {
+        use crate::bytecode::OpCode;
+
         let arena = Bump::new();
         let (registry, mut constants) = create_test_context();
         let mut ctx = CompilationContext::new(&registry);
@@ -201,17 +203,27 @@ mod tests {
 
         let mut compiler = StmtCompiler::new(&mut ctx, &mut emitter, DataType::void(), None);
 
-        assert!(compiler.compile_var_decl(&decl).is_ok());
+        compiler.compile_var_decl(&decl).unwrap();
 
         // Variable should be declared
         let var = ctx.get_local("x");
         assert!(var.is_some());
         assert_eq!(var.unwrap().data_type.type_hash, primitives::INT32);
         assert!(var.unwrap().is_initialized);
+
+        // Bytecode: Constant(2) + SetLocal(2) = 4 bytes
+        let chunk = emitter.finish();
+        assert_eq!(chunk.len(), 4);
+        assert_eq!(chunk.read_op(0), Some(OpCode::Constant));
+        assert_eq!(chunk.read_byte(1), Some(0)); // Constant pool index
+        assert_eq!(chunk.read_op(2), Some(OpCode::SetLocal));
+        assert_eq!(chunk.read_byte(3), Some(0)); // Slot 0
     }
 
     #[test]
     fn var_decl_default_init_primitive() {
+        use crate::bytecode::OpCode;
+
         let arena = Bump::new();
         let (registry, mut constants) = create_test_context();
         let mut ctx = CompilationContext::new(&registry);
@@ -233,15 +245,24 @@ mod tests {
 
         let mut compiler = StmtCompiler::new(&mut ctx, &mut emitter, DataType::void(), None);
 
-        assert!(compiler.compile_var_decl(&decl).is_ok());
+        compiler.compile_var_decl(&decl).unwrap();
 
         let var = ctx.get_local("x");
         assert!(var.is_some());
         assert!(var.unwrap().is_initialized);
+
+        // Bytecode: PushZero(1) + SetLocal(2) = 3 bytes (default init to 0)
+        let chunk = emitter.finish();
+        assert_eq!(chunk.len(), 3);
+        assert_eq!(chunk.read_op(0), Some(OpCode::PushZero));
+        assert_eq!(chunk.read_op(1), Some(OpCode::SetLocal));
+        assert_eq!(chunk.read_byte(2), Some(0)); // Slot 0
     }
 
     #[test]
     fn var_decl_multiple_declarators() {
+        use crate::bytecode::OpCode;
+
         let arena = Bump::new();
         let (registry, mut constants) = create_test_context();
         let mut ctx = CompilationContext::new(&registry);
@@ -279,7 +300,7 @@ mod tests {
 
         let mut compiler = StmtCompiler::new(&mut ctx, &mut emitter, DataType::void(), None);
 
-        assert!(compiler.compile_var_decl(&decl).is_ok());
+        compiler.compile_var_decl(&decl).unwrap();
 
         // Both variables should be declared
         assert!(ctx.get_local("x").is_some());
@@ -288,10 +309,25 @@ mod tests {
         // Check slots are different
         assert_eq!(ctx.get_local("x").unwrap().slot, 0);
         assert_eq!(ctx.get_local("y").unwrap().slot, 1);
+
+        // Bytecode: x=1 uses PushOne(1) + SetLocal(2) = 3 bytes
+        //           y=2 uses Constant(2) + SetLocal(2) = 4 bytes
+        // Total: 7 bytes
+        let chunk = emitter.finish();
+        assert_eq!(chunk.len(), 7);
+        assert_eq!(chunk.read_op(0), Some(OpCode::PushOne));
+        assert_eq!(chunk.read_op(1), Some(OpCode::SetLocal));
+        assert_eq!(chunk.read_byte(2), Some(0)); // Slot 0 for x
+        assert_eq!(chunk.read_op(3), Some(OpCode::Constant));
+        assert_eq!(chunk.read_byte(4), Some(0)); // Constant pool index for 2
+        assert_eq!(chunk.read_op(5), Some(OpCode::SetLocal));
+        assert_eq!(chunk.read_byte(6), Some(1)); // Slot 1 for y
     }
 
     #[test]
     fn var_decl_auto_type_inference() {
+        use crate::bytecode::OpCode;
+
         let arena = Bump::new();
         let (registry, mut constants) = create_test_context();
         let mut ctx = CompilationContext::new(&registry);
@@ -318,12 +354,18 @@ mod tests {
 
         let mut compiler = StmtCompiler::new(&mut ctx, &mut emitter, DataType::void(), None);
 
-        assert!(compiler.compile_var_decl(&decl).is_ok());
+        compiler.compile_var_decl(&decl).unwrap();
 
         // Variable should be inferred as int (small ints are INT32)
         let var = ctx.get_local("x");
         assert!(var.is_some());
         assert_eq!(var.unwrap().data_type.type_hash, primitives::INT32);
+
+        // Bytecode: Constant(2) + SetLocal(2) = 4 bytes
+        let chunk = emitter.finish();
+        assert_eq!(chunk.len(), 4);
+        assert_eq!(chunk.read_op(0), Some(OpCode::Constant));
+        assert_eq!(chunk.read_op(2), Some(OpCode::SetLocal));
     }
 
     #[test]
@@ -355,6 +397,8 @@ mod tests {
 
     #[test]
     fn var_decl_const() {
+        use crate::bytecode::OpCode;
+
         let arena = Bump::new();
         let (registry, mut constants) = create_test_context();
         let mut ctx = CompilationContext::new(&registry);
@@ -384,11 +428,17 @@ mod tests {
 
         let mut compiler = StmtCompiler::new(&mut ctx, &mut emitter, DataType::void(), None);
 
-        assert!(compiler.compile_var_decl(&decl).is_ok());
+        compiler.compile_var_decl(&decl).unwrap();
 
         let var = ctx.get_local("x");
         assert!(var.is_some());
         assert!(var.unwrap().is_const);
+
+        // Bytecode: Constant(2) + SetLocal(2) = 4 bytes
+        let chunk = emitter.finish();
+        assert_eq!(chunk.len(), 4);
+        assert_eq!(chunk.read_op(0), Some(OpCode::Constant));
+        assert_eq!(chunk.read_op(2), Some(OpCode::SetLocal));
     }
 
     #[test]
@@ -418,7 +468,7 @@ mod tests {
         };
 
         let mut compiler = StmtCompiler::new(&mut ctx, &mut emitter, DataType::void(), None);
-        assert!(compiler.compile_var_decl(&decl1).is_ok());
+        compiler.compile_var_decl(&decl1).unwrap();
 
         // Second declaration at same scope: int x = 2; - should error
         let init2 = arena.alloc(Expr::Literal(LiteralExpr {
@@ -447,6 +497,8 @@ mod tests {
 
     #[test]
     fn var_decl_float() {
+        use crate::bytecode::OpCode;
+
         let arena = Bump::new();
         let (registry, mut constants) = create_test_context();
         let mut ctx = CompilationContext::new(&registry);
@@ -473,15 +525,23 @@ mod tests {
 
         let mut compiler = StmtCompiler::new(&mut ctx, &mut emitter, DataType::void(), None);
 
-        assert!(compiler.compile_var_decl(&decl).is_ok());
+        compiler.compile_var_decl(&decl).unwrap();
 
         let var = ctx.get_local("x");
         assert!(var.is_some());
         assert_eq!(var.unwrap().data_type.type_hash, primitives::FLOAT);
+
+        // Bytecode: Constant(2) + SetLocal(2) = 4 bytes
+        let chunk = emitter.finish();
+        assert_eq!(chunk.len(), 4);
+        assert_eq!(chunk.read_op(0), Some(OpCode::Constant));
+        assert_eq!(chunk.read_op(2), Some(OpCode::SetLocal));
     }
 
     #[test]
     fn var_decl_bool() {
+        use crate::bytecode::OpCode;
+
         let arena = Bump::new();
         let (registry, mut constants) = create_test_context();
         let mut ctx = CompilationContext::new(&registry);
@@ -508,15 +568,23 @@ mod tests {
 
         let mut compiler = StmtCompiler::new(&mut ctx, &mut emitter, DataType::void(), None);
 
-        assert!(compiler.compile_var_decl(&decl).is_ok());
+        compiler.compile_var_decl(&decl).unwrap();
 
         let var = ctx.get_local("x");
         assert!(var.is_some());
         assert_eq!(var.unwrap().data_type.type_hash, primitives::BOOL);
+
+        // Bytecode: PushTrue(1) + SetLocal(2) = 3 bytes
+        let chunk = emitter.finish();
+        assert_eq!(chunk.len(), 3);
+        assert_eq!(chunk.read_op(0), Some(OpCode::PushTrue));
+        assert_eq!(chunk.read_op(1), Some(OpCode::SetLocal));
+        assert_eq!(chunk.read_byte(2), Some(0)); // Slot 0
     }
 
     #[test]
     fn var_decl_default_init_enum() {
+        use crate::bytecode::OpCode;
         use angelscript_core::TypeHash;
         use angelscript_core::entries::EnumEntry;
         use angelscript_parser::ast::TypeBase;
@@ -559,15 +627,22 @@ mod tests {
 
         let mut compiler = StmtCompiler::new(&mut ctx, &mut emitter, DataType::void(), None);
 
-        assert!(compiler.compile_var_decl(&decl).is_ok());
+        compiler.compile_var_decl(&decl).unwrap();
 
         let var = ctx.get_local("c");
         assert!(var.is_some());
         assert_eq!(var.unwrap().data_type.type_hash, color_hash);
+
+        // Bytecode: Constant(2, value=5) + SetLocal(2) = 4 bytes (5 is not 0 or 1)
+        let chunk = emitter.finish();
+        assert_eq!(chunk.len(), 4);
+        assert_eq!(chunk.read_op(0), Some(OpCode::Constant));
+        assert_eq!(chunk.read_op(2), Some(OpCode::SetLocal));
     }
 
     #[test]
     fn var_decl_default_init_value_type() {
+        use crate::bytecode::OpCode;
         use angelscript_core::entries::{ClassEntry, FunctionEntry};
         use angelscript_core::{FunctionDef, FunctionTraits, TypeHash, TypeKind, Visibility};
         use angelscript_parser::ast::TypeBase;
@@ -625,11 +700,24 @@ mod tests {
 
         let mut compiler = StmtCompiler::new(&mut ctx, &mut emitter, DataType::void(), None);
 
-        assert!(compiler.compile_var_decl(&decl).is_ok());
+        compiler.compile_var_decl(&decl).unwrap();
 
         let var = ctx.get_local("v");
         assert!(var.is_some());
         assert_eq!(var.unwrap().data_type.type_hash, vec2_hash);
+
+        // Should emit New for the constructor
+        let chunk = emitter.finish();
+        assert!(chunk.len() > 0);
+        // Look for New opcode
+        let mut found_new = false;
+        for i in 0..chunk.len() {
+            if chunk.read_op(i) == Some(OpCode::New) {
+                found_new = true;
+                break;
+            }
+        }
+        assert!(found_new, "Expected New opcode for constructor");
     }
 
     #[test]

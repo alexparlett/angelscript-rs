@@ -115,11 +115,21 @@ mod tests {
 
         let mut compiler = StmtCompiler::new(&mut ctx, &mut emitter, DataType::void(), None);
 
-        assert!(compiler.compile_while(&while_stmt).is_ok());
+        compiler.compile_while(&while_stmt).unwrap();
 
         let chunk = emitter.finish();
-        // Should have bytecode for condition, jumps, and loop
-        assert!(chunk.len() > 0);
+        // Bytecode layout:
+        // PushTrue(1) + JumpIfFalse(3) + Pop(1) + Loop(3) + Pop(1) = 9 bytes
+        assert_eq!(chunk.len(), 9);
+        assert_eq!(chunk.read_op(0), Some(OpCode::PushTrue));
+        assert_eq!(chunk.read_op(1), Some(OpCode::JumpIfFalse));
+        // JumpIfFalse distance: len(8) - offset(2) - 2 = 4
+        assert_eq!(chunk.read_u16(2), Some(4));
+        assert_eq!(chunk.read_op(4), Some(OpCode::Pop));
+        // Empty body
+        assert_eq!(chunk.read_op(5), Some(OpCode::Loop));
+        // Loop back offset calculation in emit_loop
+        assert_eq!(chunk.read_op(8), Some(OpCode::Pop));
     }
 
     #[test]
@@ -186,7 +196,20 @@ mod tests {
 
         let mut compiler = StmtCompiler::new(&mut ctx, &mut emitter, DataType::void(), None);
 
-        assert!(compiler.compile_while(&while_stmt).is_ok());
+        compiler.compile_while(&while_stmt).unwrap();
+
+        let chunk = emitter.finish();
+        // Bytecode layout:
+        // PushTrue(1) + JumpIfFalse(3) + Pop(1) + Jump(3, break) + Loop(3) + Pop(1) = 12 bytes
+        assert_eq!(chunk.len(), 12);
+        assert_eq!(chunk.read_op(0), Some(OpCode::PushTrue));
+        assert_eq!(chunk.read_op(1), Some(OpCode::JumpIfFalse));
+        assert_eq!(chunk.read_op(4), Some(OpCode::Pop));
+        // Break is a Jump
+        assert_eq!(chunk.read_op(5), Some(OpCode::Jump));
+        // Break jump distance: patched at exit_loop
+        assert_eq!(chunk.read_op(8), Some(OpCode::Loop));
+        assert_eq!(chunk.read_op(11), Some(OpCode::Pop));
     }
 
     #[test]
@@ -222,7 +245,22 @@ mod tests {
 
         let mut compiler = StmtCompiler::new(&mut ctx, &mut emitter, DataType::void(), None);
 
-        assert!(compiler.compile_while(&while_stmt).is_ok());
+        compiler.compile_while(&while_stmt).unwrap();
+
+        let chunk = emitter.finish();
+        // Bytecode layout:
+        // PushTrue(1) + JumpIfFalse(3) + Pop(1) + Loop(3, continue) + Loop(3) + Pop(1) = 12 bytes
+        assert_eq!(chunk.len(), 12);
+        assert_eq!(chunk.read_op(0), Some(OpCode::PushTrue));
+        assert_eq!(chunk.read_op(1), Some(OpCode::JumpIfFalse));
+        assert_eq!(chunk.read_op(4), Some(OpCode::Pop));
+        // Continue is a Loop back to start
+        assert_eq!(chunk.read_op(5), Some(OpCode::Loop));
+        // Continue loop offset back to 0
+        assert_eq!(chunk.read_u16(6), Some(8)); // 8 bytes back
+        // Regular loop at end
+        assert_eq!(chunk.read_op(8), Some(OpCode::Loop));
+        assert_eq!(chunk.read_op(11), Some(OpCode::Pop));
     }
 
     #[test]
@@ -270,7 +308,23 @@ mod tests {
 
         let mut compiler = StmtCompiler::new(&mut ctx, &mut emitter, DataType::void(), None);
 
-        assert!(compiler.compile_while(&outer_while).is_ok());
+        compiler.compile_while(&outer_while).unwrap();
+
+        let chunk = emitter.finish();
+        // Bytecode layout:
+        // Outer: PushTrue(1) + JumpIfFalse(3) + Pop(1) = 5 bytes before inner
+        // Inner: PushFalse(1) + JumpIfFalse(3) + Pop(1) + Loop(3) + Pop(1) = 9 bytes
+        // Outer: Loop(3) + Pop(1) = 4 bytes
+        // Total: 18 bytes
+        assert_eq!(chunk.len(), 18);
+        assert_eq!(chunk.read_op(0), Some(OpCode::PushTrue));
+        assert_eq!(chunk.read_op(1), Some(OpCode::JumpIfFalse));
+        assert_eq!(chunk.read_op(4), Some(OpCode::Pop));
+        // Inner loop starts at offset 5
+        assert_eq!(chunk.read_op(5), Some(OpCode::PushFalse));
+        assert_eq!(chunk.read_op(6), Some(OpCode::JumpIfFalse));
+        // Outer loop at end
+        assert_eq!(chunk.read_op(14), Some(OpCode::Loop));
     }
 
     #[test]
@@ -319,10 +373,26 @@ mod tests {
 
         let mut compiler = StmtCompiler::new(&mut ctx, &mut emitter, DataType::void(), None);
 
-        assert!(compiler.compile_while(&while_stmt).is_ok());
+        compiler.compile_while(&while_stmt).unwrap();
 
         // Variable x should be out of scope after the loop
         assert!(ctx.get_local("x").is_none());
+
+        let chunk = emitter.finish();
+        // Bytecode layout:
+        // PushFalse(1) + JumpIfFalse(3) + Pop(1) = 5 bytes
+        // var decl: PushZero(1) + SetLocal(2) = 3 bytes
+        // Loop(3) + Pop(1) = 4 bytes
+        // Total: 12 bytes
+        assert_eq!(chunk.len(), 12);
+        assert_eq!(chunk.read_op(0), Some(OpCode::PushFalse));
+        assert_eq!(chunk.read_op(1), Some(OpCode::JumpIfFalse));
+        assert_eq!(chunk.read_op(4), Some(OpCode::Pop));
+        // Var decl: int x = 0 uses PushZero optimization
+        assert_eq!(chunk.read_op(5), Some(OpCode::PushZero));
+        assert_eq!(chunk.read_op(6), Some(OpCode::SetLocal));
+        assert_eq!(chunk.read_byte(7), Some(0)); // Slot 0
+        assert_eq!(chunk.read_op(8), Some(OpCode::Loop));
     }
 
     #[test]
@@ -375,7 +445,21 @@ mod tests {
 
         let mut compiler = StmtCompiler::new(&mut ctx, &mut emitter, DataType::void(), None);
 
-        // This should compile successfully - break targets inner loop
-        assert!(compiler.compile_while(&outer_while).is_ok());
+        compiler.compile_while(&outer_while).unwrap();
+
+        let chunk = emitter.finish();
+        // Bytecode layout:
+        // Outer: PushTrue(1) + JumpIfFalse(3) + Pop(1) = 5 bytes
+        // Inner: PushTrue(1) + JumpIfFalse(3) + Pop(1) + Jump(3, break) + Loop(3) + Pop(1) = 12 bytes
+        // Outer: Loop(3) + Pop(1) = 4 bytes
+        // Total: 21 bytes
+        assert_eq!(chunk.len(), 21);
+        assert_eq!(chunk.read_op(0), Some(OpCode::PushTrue));
+        // Inner loop starts at offset 5
+        assert_eq!(chunk.read_op(5), Some(OpCode::PushTrue));
+        // Inner break at offset 10
+        assert_eq!(chunk.read_op(10), Some(OpCode::Jump));
+        // Outer loop at offset 17
+        assert_eq!(chunk.read_op(17), Some(OpCode::Loop));
     }
 }

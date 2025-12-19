@@ -341,7 +341,11 @@ mod tests {
             expr: None,
             span: Span::default(),
         };
-        assert!(compiler.compile_expr_stmt(&stmt).is_ok());
+        compiler.compile_expr_stmt(&stmt).unwrap();
+
+        // Empty expression statement emits no bytecode
+        let chunk = emitter.finish();
+        assert_eq!(chunk.len(), 0);
     }
 
     #[test]
@@ -382,6 +386,7 @@ mod tests {
 
     #[test]
     fn break_in_loop_succeeds() {
+        use crate::bytecode::OpCode;
         use angelscript_parser::ast::BreakStmt;
 
         let (registry, mut constants) = create_test_context();
@@ -398,12 +403,17 @@ mod tests {
         let brk = BreakStmt {
             span: Span::default(),
         };
-        let result = compiler.compile_break(&brk);
-        assert!(result.is_ok());
+        compiler.compile_break(&brk).unwrap();
+
+        // Break emits a Jump instruction
+        let chunk = emitter.finish();
+        assert_eq!(chunk.len(), 3); // Jump(1) + offset(2)
+        assert_eq!(chunk.read_op(0), Some(OpCode::Jump));
     }
 
     #[test]
     fn continue_in_loop_succeeds() {
+        use crate::bytecode::OpCode;
         use angelscript_parser::ast::ContinueStmt;
 
         let (registry, mut constants) = create_test_context();
@@ -420,7 +430,11 @@ mod tests {
         let cont = ContinueStmt {
             span: Span::default(),
         };
-        let result = compiler.compile_continue(&cont);
-        assert!(result.is_ok());
+        compiler.compile_continue(&cont).unwrap();
+
+        // Continue emits a Loop instruction back to loop start
+        let chunk = emitter.finish();
+        assert_eq!(chunk.len(), 3); // Loop(1) + offset(2)
+        assert_eq!(chunk.read_op(0), Some(OpCode::Loop));
     }
 }

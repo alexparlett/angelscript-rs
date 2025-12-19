@@ -72,11 +72,17 @@ mod tests {
             span: Span::default(),
         };
 
-        assert!(compiler.compile_block(&block).is_ok());
+        compiler.compile_block(&block).unwrap();
+
+        // Empty block emits no bytecode
+        let chunk = emitter.finish();
+        assert_eq!(chunk.len(), 0);
     }
 
     #[test]
     fn block_creates_scope() {
+        use crate::bytecode::OpCode;
+
         let arena = Bump::new();
         let (registry, mut constants) = create_test_context();
         let mut ctx = CompilationContext::new(&registry);
@@ -110,15 +116,24 @@ mod tests {
 
         let mut compiler = StmtCompiler::new(&mut ctx, &mut emitter, DataType::void(), None);
 
-        // Variable x should be visible inside block compilation
-        assert!(compiler.compile_block(&block).is_ok());
+        compiler.compile_block(&block).unwrap();
 
         // After block, x should no longer be in scope
         assert!(ctx.get_local("x").is_none());
+
+        // Bytecode: Constant(0) [2 bytes] + SetLocal(0) [2 bytes] = 4 bytes
+        let chunk = emitter.finish();
+        assert_eq!(chunk.len(), 4);
+        assert_eq!(chunk.read_op(0), Some(OpCode::Constant));
+        assert_eq!(chunk.read_byte(1), Some(0)); // Constant pool index
+        assert_eq!(chunk.read_op(2), Some(OpCode::SetLocal));
+        assert_eq!(chunk.read_byte(3), Some(0)); // Slot 0
     }
 
     #[test]
     fn nested_blocks() {
+        use crate::bytecode::OpCode;
+
         let arena = Bump::new();
         let (registry, mut constants) = create_test_context();
         let mut ctx = CompilationContext::new(&registry);
@@ -178,15 +193,31 @@ mod tests {
 
         let mut compiler = StmtCompiler::new(&mut ctx, &mut emitter, DataType::void(), None);
 
-        assert!(compiler.compile_block(&outer_block).is_ok());
+        compiler.compile_block(&outer_block).unwrap();
 
         // Both variables should be out of scope after the outer block
         assert!(ctx.get_local("x").is_none());
         assert!(ctx.get_local("y").is_none());
+
+        // Bytecode layout:
+        // int x = 1: PushOne(1 byte) + SetLocal(1 byte) + slot(1 byte) = 3 bytes
+        // int y = 2: Constant(1 byte) + index(1 byte) + SetLocal(1 byte) + slot(1 byte) = 4 bytes
+        // Total: 7 bytes
+        let chunk = emitter.finish();
+        assert_eq!(chunk.len(), 7);
+        assert_eq!(chunk.read_op(0), Some(OpCode::PushOne));
+        assert_eq!(chunk.read_op(1), Some(OpCode::SetLocal));
+        assert_eq!(chunk.read_byte(2), Some(0)); // Slot 0 for x
+        assert_eq!(chunk.read_op(3), Some(OpCode::Constant));
+        assert_eq!(chunk.read_byte(4), Some(0)); // Constant pool index for 2
+        assert_eq!(chunk.read_op(5), Some(OpCode::SetLocal));
+        assert_eq!(chunk.read_byte(6), Some(1)); // Slot 1 for y
     }
 
     #[test]
     fn variable_shadowing_in_nested_block() {
+        use crate::bytecode::OpCode;
+
         let arena = Bump::new();
         let (registry, mut constants) = create_test_context();
         let mut ctx = CompilationContext::new(&registry);
@@ -245,7 +276,20 @@ mod tests {
 
         let mut compiler = StmtCompiler::new(&mut ctx, &mut emitter, DataType::void(), None);
 
-        // This should compile successfully - shadowing is allowed
-        assert!(compiler.compile_block(&outer_block).is_ok());
+        compiler.compile_block(&outer_block).unwrap();
+
+        // Bytecode layout:
+        // int x = 1: PushOne(1) + SetLocal(1) + slot(1) = 3 bytes
+        // float x = 2.0: Constant(1) + index(1) + SetLocal(1) + slot(1) = 4 bytes
+        // Total: 7 bytes
+        let chunk = emitter.finish();
+        assert_eq!(chunk.len(), 7);
+        assert_eq!(chunk.read_op(0), Some(OpCode::PushOne));
+        assert_eq!(chunk.read_op(1), Some(OpCode::SetLocal));
+        assert_eq!(chunk.read_byte(2), Some(0)); // Slot 0 for outer x
+        assert_eq!(chunk.read_op(3), Some(OpCode::Constant));
+        assert_eq!(chunk.read_byte(4), Some(0)); // Constant pool index for 2.0
+        assert_eq!(chunk.read_op(5), Some(OpCode::SetLocal));
+        assert_eq!(chunk.read_byte(6), Some(1)); // Slot 1 for inner x (shadow)
     }
 }

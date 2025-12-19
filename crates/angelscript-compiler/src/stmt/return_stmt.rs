@@ -93,9 +93,11 @@ mod tests {
             span: Span::default(),
         };
 
-        assert!(compiler.compile_return(&ret).is_ok());
+        compiler.compile_return(&ret).unwrap();
 
         let chunk = emitter.finish();
+        // Should emit: ReturnVoid (1 byte)
+        assert_eq!(chunk.len(), 1);
         assert_eq!(chunk.read_op(0), Some(OpCode::ReturnVoid));
     }
 
@@ -120,11 +122,16 @@ mod tests {
             span: Span::default(),
         };
 
-        assert!(compiler.compile_return(&ret).is_ok());
+        compiler.compile_return(&ret).unwrap();
 
         let chunk = emitter.finish();
-        // Should have constant load and return
-        assert!(chunk.len() > 0);
+        // Literal 42 produces INT32, return type is INT64, so conversion needed
+        // Constant(1) + index(1) + I32toI64(1) + Return(1) = 4 bytes
+        assert_eq!(chunk.len(), 4);
+        assert_eq!(chunk.read_op(0), Some(OpCode::Constant));
+        assert_eq!(chunk.read_byte(1), Some(0)); // Index 0 in constant pool
+        assert_eq!(chunk.read_op(2), Some(OpCode::I32toI64));
+        assert_eq!(chunk.read_op(3), Some(OpCode::Return));
     }
 
     #[test]
@@ -219,7 +226,13 @@ mod tests {
             span: Span::default(),
         };
 
-        assert!(compiler.compile_return(&ret).is_ok());
+        compiler.compile_return(&ret).unwrap();
+
+        let chunk = emitter.finish();
+        // Should emit: PushTrue, Return (2 bytes total)
+        assert_eq!(chunk.len(), 2);
+        assert_eq!(chunk.read_op(0), Some(OpCode::PushTrue));
+        assert_eq!(chunk.read_op(1), Some(OpCode::Return));
     }
 
     #[test]
@@ -230,7 +243,7 @@ mod tests {
         ctx.begin_function();
         let mut emitter = BytecodeEmitter::new(&mut constants);
 
-        let return_type = DataType::simple(primitives::DOUBLE);
+        let return_type = DataType::simple(primitives::FLOAT);
         let mut compiler = StmtCompiler::new(&mut ctx, &mut emitter, return_type, None);
 
         let expr = arena.alloc(Expr::Literal(LiteralExpr {
@@ -243,6 +256,17 @@ mod tests {
             span: Span::default(),
         };
 
-        assert!(compiler.compile_return(&ret).is_ok());
+        compiler.compile_return(&ret).unwrap();
+
+        let chunk = emitter.finish();
+        // Should emit: Constant(index=0), Return
+        // Constant opcode (1) + index (1) + Return (1) = 3 bytes
+        assert_eq!(chunk.len(), 3);
+        assert_eq!(chunk.read_op(0), Some(OpCode::Constant));
+        assert_eq!(chunk.read_byte(1), Some(0)); // Index 0 in constant pool
+        assert_eq!(chunk.read_op(2), Some(OpCode::Return));
+
+        // Verify the constant pool has 3.14 as Float32
+        assert_eq!(constants.len(), 1);
     }
 }
