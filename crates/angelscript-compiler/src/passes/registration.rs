@@ -41,6 +41,7 @@ use angelscript_parser::ast::{
 };
 
 use crate::context::CompilationContext;
+use crate::passes::{PendingInheritance, PendingResolutions};
 use crate::type_resolver::TypeResolver;
 
 /// Output of the registration pass.
@@ -54,12 +55,15 @@ pub struct RegistrationOutput {
     pub globals_registered: usize,
     /// Collected errors (compilation can continue with some errors).
     pub errors: Vec<CompilationError>,
+    /// Pending inheritance resolutions for Pass 1b.
+    pub pending_resolutions: PendingResolutions,
 }
 
 /// Pass 1: Register all types and function signatures.
 ///
 /// This pass walks the AST and registers type declarations and function signatures
 /// into the compilation context's unit registry. It does not compile function bodies.
+/// Inheritance references are collected but not resolved (enabling forward references).
 pub struct RegistrationPass<'a, 'reg> {
     ctx: &'a mut CompilationContext<'reg>,
     unit_id: UnitId,
@@ -82,6 +86,8 @@ pub struct RegistrationPass<'a, 'reg> {
     classes_with_deleted_copy_ctor: Vec<TypeHash>,
     /// Track which classes have deleted opAssign.
     classes_with_deleted_op_assign: Vec<TypeHash>,
+    /// Pending inheritance resolutions (resolved in Pass 1b).
+    pending_resolutions: PendingResolutions,
 }
 
 impl<'a, 'reg> RegistrationPass<'a, 'reg> {
@@ -101,6 +107,7 @@ impl<'a, 'reg> RegistrationPass<'a, 'reg> {
             classes_with_deleted_default_ctor: Vec::new(),
             classes_with_deleted_copy_ctor: Vec::new(),
             classes_with_deleted_op_assign: Vec::new(),
+            pending_resolutions: PendingResolutions::default(),
         }
     }
 
@@ -119,6 +126,7 @@ impl<'a, 'reg> RegistrationPass<'a, 'reg> {
             functions_registered: self.functions_registered,
             globals_registered: self.globals_registered,
             errors: self.ctx.take_errors(),
+            pending_resolutions: self.pending_resolutions,
         }
     }
 
@@ -176,10 +184,24 @@ impl<'a, 'reg> RegistrationPass<'a, 'reg> {
         let type_hash = TypeHash::from_name(&qualified_name);
         let namespace = self.current_namespace_vec();
 
-        // Resolve base class, mixins, and interfaces from inheritance list
-        let (base_class, mixins, interfaces) = self.resolve_inheritance(class);
+        // Collect pending inheritance (don't resolve yet - enables forward references)
+        if !class.inheritance.is_empty() {
+            let pending: Vec<PendingInheritance> = class
+                .inheritance
+                .iter()
+                .map(|expr| PendingInheritance {
+                    name: self.ident_expr_to_string(expr),
+                    span: expr.span,
+                    namespace_context: self.current_namespace_vec(),
+                    imports: self.ctx.imports().to_vec(),
+                })
+                .collect();
+            self.pending_resolutions
+                .class_inheritance
+                .insert(type_hash, pending);
+        }
 
-        // Create the class entry
+        // Create the class entry WITHOUT inheritance (will be set in Pass 1b)
         let source = TypeSource::script(self.unit_id, class.span);
         let mut class_entry = ClassEntry::new(
             name.clone(),
@@ -189,18 +211,6 @@ impl<'a, 'reg> RegistrationPass<'a, 'reg> {
             TypeKind::ScriptObject,
             source,
         );
-
-        if let Some(base) = base_class {
-            class_entry = class_entry.with_base(base);
-        }
-
-        for mixin in mixins {
-            class_entry = class_entry.with_mixin(mixin);
-        }
-
-        for iface in interfaces {
-            class_entry = class_entry.with_interface(iface);
-        }
 
         if class.modifiers.final_ {
             class_entry = class_entry.as_final();
@@ -267,30 +277,28 @@ impl<'a, 'reg> RegistrationPass<'a, 'reg> {
         let type_hash = TypeHash::from_name(&qualified_name);
         let namespace = self.current_namespace_vec();
 
-        // Resolve inheritance list - mixins can only implement interfaces, not extend classes
-        let (base_class, interfaces) = self.resolve_mixin_inheritance(class);
-
-        // Validation: mixins cannot have base classes
-        if base_class.is_some() {
-            self.ctx.add_error(CompilationError::InvalidOperation {
-                message: format!(
-                    "mixin class '{}' cannot inherit from other classes; mixins can only implement interfaces",
-                    class.name.name
-                ),
-                span: class.span,
-            });
-            // Continue registering the mixin without the base class
+        // Collect pending inheritance (don't resolve yet - enables forward references)
+        // Note: Mixin inheritance validation (no base classes) happens in Pass 1b
+        if !class.inheritance.is_empty() {
+            let pending: Vec<PendingInheritance> = class
+                .inheritance
+                .iter()
+                .map(|expr| PendingInheritance {
+                    name: self.ident_expr_to_string(expr),
+                    span: expr.span,
+                    namespace_context: self.current_namespace_vec(),
+                    imports: self.ctx.imports().to_vec(),
+                })
+                .collect();
+            self.pending_resolutions
+                .class_inheritance
+                .insert(type_hash, pending);
         }
 
-        // Create the mixin class entry
+        // Create the mixin class entry WITHOUT inheritance (will be set in Pass 1b)
         let source = TypeSource::script(self.unit_id, class.span);
-        let mut class_entry =
+        let class_entry =
             ClassEntry::script_mixin(name.clone(), namespace, qualified_name.clone(), source);
-
-        // Add interfaces (mixins can implement interfaces)
-        for iface in interfaces {
-            class_entry = class_entry.with_interface(iface);
-        }
 
         // Register the mixin
         if let Err(e) = self.ctx.register_type(class_entry.into()) {
@@ -333,144 +341,6 @@ impl<'a, 'reg> RegistrationPass<'a, 'reg> {
                 }
             }
         }
-    }
-
-    /// Resolve inheritance for mixin classes (interfaces only).
-    fn resolve_mixin_inheritance(
-        &mut self,
-        class: &ClassDecl<'_>,
-    ) -> (Option<TypeHash>, Vec<TypeHash>) {
-        let mut base_class = None;
-        let mut interfaces = Vec::new();
-
-        for inherit_expr in class.inheritance.iter() {
-            let type_name = self.ident_expr_to_string(inherit_expr);
-
-            if let Some(hash) = self.ctx.resolve_type(&type_name) {
-                if let Some(entry) = self.ctx.get_type(hash) {
-                    if entry.is_interface() {
-                        interfaces.push(hash);
-                    } else if entry.is_class() {
-                        // Mixins cannot extend classes - track for error reporting
-                        base_class = Some(hash);
-                    }
-                }
-            } else {
-                self.ctx.add_error(CompilationError::UnknownType {
-                    name: type_name,
-                    span: class.span,
-                });
-            }
-        }
-
-        (base_class, interfaces)
-    }
-
-    /// Resolve base class, mixins, and interfaces from inheritance list.
-    ///
-    /// Returns (base_class, mixins, interfaces).
-    fn resolve_inheritance(
-        &mut self,
-        class: &ClassDecl<'_>,
-    ) -> (Option<TypeHash>, Vec<TypeHash>, Vec<TypeHash>) {
-        let mut base_class = None;
-        let mut mixins = Vec::new();
-        let mut interfaces = Vec::new();
-
-        for (i, inherit_expr) in class.inheritance.iter().enumerate() {
-            // Build the type name from the IdentExpr
-            let type_name = self.ident_expr_to_string(inherit_expr);
-
-            // Try to resolve the type
-            if let Some(hash) = self.ctx.resolve_type(&type_name) {
-                // Check if it's a class, mixin, or interface
-                if let Some(entry) = self.ctx.get_type(hash) {
-                    if entry.is_interface() {
-                        interfaces.push(hash);
-                    } else if entry.is_class()
-                        && let Some(class_entry) = entry.as_class()
-                    {
-                        // Handle mixins - they can appear anywhere in the inheritance list
-                        if class_entry.is_mixin {
-                            mixins.push(hash);
-                            continue;
-                        }
-
-                        // Regular class - first non-interface/non-mixin is the base class
-                        if i == 0 && base_class.is_none() {
-                            // Validate inheritance rules before accepting as base class
-                            // Rule 1: Script classes cannot extend FFI classes
-                            if class_entry.source.is_ffi() {
-                                self.ctx.add_error(CompilationError::InvalidOperation {
-                                    message: format!(
-                                        "script class '{}' cannot extend FFI class '{}'; \
-                                        script classes can only extend other script classes or implement interfaces",
-                                        class.name.name,
-                                        type_name
-                                    ),
-                                    span: class.span,
-                                });
-                                continue;
-                            }
-
-                            // Rule 2: Final classes cannot be inherited from
-                            if class_entry.is_final {
-                                self.ctx.add_error(CompilationError::InvalidOperation {
-                                    message: format!(
-                                        "class '{}' cannot extend final class '{}'",
-                                        class.name.name, type_name
-                                    ),
-                                    span: class.span,
-                                });
-                                continue;
-                            }
-
-                            base_class = Some(hash);
-                        } else if base_class.is_none() {
-                            // Base class not in first position but no other base set yet
-                            // This is still allowed if it comes after mixins/interfaces
-                            if class_entry.source.is_ffi() {
-                                self.ctx.add_error(CompilationError::InvalidOperation {
-                                    message: format!(
-                                        "script class '{}' cannot extend FFI class '{}'",
-                                        class.name.name, type_name
-                                    ),
-                                    span: class.span,
-                                });
-                                continue;
-                            }
-                            if class_entry.is_final {
-                                self.ctx.add_error(CompilationError::InvalidOperation {
-                                    message: format!(
-                                        "class '{}' cannot extend final class '{}'",
-                                        class.name.name, type_name
-                                    ),
-                                    span: class.span,
-                                });
-                                continue;
-                            }
-                            base_class = Some(hash);
-                        } else {
-                            // Additional classes are not allowed in single inheritance
-                            self.ctx.add_error(CompilationError::Other {
-                                message: format!(
-                                    "multiple inheritance not supported: {} already has a base class",
-                                    class.name.name
-                                ),
-                                span: class.span,
-                            });
-                        }
-                    }
-                }
-            } else {
-                self.ctx.add_error(CompilationError::UnknownType {
-                    name: type_name,
-                    span: class.span,
-                });
-            }
-        }
-
-        (base_class, mixins, interfaces)
     }
 
     fn ident_expr_to_string(&self, expr: &angelscript_parser::ast::IdentExpr<'_>) -> String {
@@ -739,31 +609,32 @@ impl<'a, 'reg> RegistrationPass<'a, 'reg> {
         let type_hash = TypeHash::from_name(&qualified_name);
         let namespace = self.current_namespace_vec();
 
-        // Resolve base interfaces
-        let mut base_interfaces = Vec::new();
-        for base in iface.bases {
-            if let Some(hash) = self.ctx.resolve_type(base.name) {
-                base_interfaces.push(hash);
-            } else {
-                self.ctx.add_error(CompilationError::UnknownType {
+        // Collect pending base interfaces (don't resolve yet - enables forward references)
+        if !iface.bases.is_empty() {
+            let pending: Vec<PendingInheritance> = iface
+                .bases
+                .iter()
+                .map(|base| PendingInheritance {
                     name: base.name.to_string(),
                     span: iface.span,
-                });
-            }
+                    namespace_context: self.current_namespace_vec(),
+                    imports: self.ctx.imports().to_vec(),
+                })
+                .collect();
+            self.pending_resolutions
+                .interface_bases
+                .insert(type_hash, pending);
         }
 
         let source = TypeSource::script(self.unit_id, iface.span);
-        let mut interface_entry = InterfaceEntry::new(
+        // Create interface entry WITHOUT base interfaces (will be set in Pass 1b)
+        let interface_entry = InterfaceEntry::new(
             name.clone(),
             namespace,
             qualified_name.clone(),
             type_hash,
             source,
         );
-
-        for base in base_interfaces {
-            interface_entry.base_interfaces.push(base);
-        }
 
         // Register the interface
         if let Err(e) = self.ctx.register_type(interface_entry.into()) {
@@ -1388,6 +1259,7 @@ fn convert_visibility(v: angelscript_parser::ast::Visibility) -> Visibility {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::passes::TypeCompletionPass;
     use angelscript_parser::Parser;
     use angelscript_registry::SymbolRegistry;
     use bumpalo::Bump;
@@ -1874,11 +1746,26 @@ mod tests {
 
         let mut ctx = CompilationContext::new(&registry);
         let pass = RegistrationPass::new(&mut ctx, UnitId::new(0));
-        let output = pass.run(&script);
+        let reg_output = pass.run(&script);
 
-        // Should have an error
-        assert_eq!(output.errors.len(), 1);
-        match &output.errors[0] {
+        // Registration should succeed (inheritance is deferred)
+        assert!(
+            reg_output.errors.is_empty(),
+            "Expected no registration errors, got: {:?}",
+            reg_output.errors
+        );
+
+        // Run completion pass - this is where inheritance validation happens
+        let comp_pass = TypeCompletionPass::new(
+            ctx.unit_registry_mut(),
+            &registry,
+            reg_output.pending_resolutions,
+        );
+        let comp_output = comp_pass.run();
+
+        // Should have an error from completion
+        assert_eq!(comp_output.errors.len(), 1);
+        match &comp_output.errors[0] {
             CompilationError::InvalidOperation { message, .. } => {
                 assert!(
                     message.contains("cannot extend FFI class"),
@@ -1906,11 +1793,26 @@ mod tests {
 
         let mut ctx = CompilationContext::new(&registry);
         let pass = RegistrationPass::new(&mut ctx, UnitId::new(0));
-        let output = pass.run(&script);
+        let reg_output = pass.run(&script);
 
-        // Should have an error
-        assert_eq!(output.errors.len(), 1);
-        match &output.errors[0] {
+        // Registration should succeed (inheritance is deferred)
+        assert!(
+            reg_output.errors.is_empty(),
+            "Expected no registration errors, got: {:?}",
+            reg_output.errors
+        );
+
+        // Run completion pass - this is where inheritance validation happens
+        let comp_pass = TypeCompletionPass::new(
+            ctx.unit_registry_mut(),
+            &registry,
+            reg_output.pending_resolutions,
+        );
+        let comp_output = comp_pass.run();
+
+        // Should have an error from completion
+        assert_eq!(comp_output.errors.len(), 1);
+        match &comp_output.errors[0] {
             CompilationError::InvalidOperation { message, .. } => {
                 assert!(
                     message.contains("cannot extend final class"),
@@ -1938,15 +1840,29 @@ mod tests {
 
         let mut ctx = CompilationContext::new(&registry);
         let pass = RegistrationPass::new(&mut ctx, UnitId::new(0));
-        let output = pass.run(&script);
+        let reg_output = pass.run(&script);
 
-        // Should succeed with no errors
+        // Registration should succeed
         assert!(
-            output.errors.is_empty(),
-            "Expected no errors, got: {:?}",
-            output.errors
+            reg_output.errors.is_empty(),
+            "Expected no registration errors, got: {:?}",
+            reg_output.errors
         );
-        assert_eq!(output.types_registered, 2);
+        assert_eq!(reg_output.types_registered, 2);
+
+        // Run completion pass to resolve inheritance
+        let comp_pass = TypeCompletionPass::new(
+            ctx.unit_registry_mut(),
+            &registry,
+            reg_output.pending_resolutions,
+        );
+        let comp_output = comp_pass.run();
+
+        assert!(
+            comp_output.errors.is_empty(),
+            "Expected no completion errors, got: {:?}",
+            comp_output.errors
+        );
 
         // Verify Player has Entity as base
         let player_hash = ctx.resolve_type("Player").unwrap();
@@ -1976,15 +1892,29 @@ mod tests {
 
         let mut ctx = CompilationContext::new(&registry);
         let pass = RegistrationPass::new(&mut ctx, UnitId::new(0));
-        let output = pass.run(&script);
+        let reg_output = pass.run(&script);
 
-        // Should succeed - interfaces are OK
+        // Registration should succeed
         assert!(
-            output.errors.is_empty(),
-            "Expected no errors, got: {:?}",
-            output.errors
+            reg_output.errors.is_empty(),
+            "Expected no registration errors, got: {:?}",
+            reg_output.errors
         );
-        assert_eq!(output.types_registered, 1);
+        assert_eq!(reg_output.types_registered, 1);
+
+        // Run completion pass to resolve interface implementation
+        let comp_pass = TypeCompletionPass::new(
+            ctx.unit_registry_mut(),
+            &registry,
+            reg_output.pending_resolutions,
+        );
+        let comp_output = comp_pass.run();
+
+        assert!(
+            comp_output.errors.is_empty(),
+            "Expected no completion errors, got: {:?}",
+            comp_output.errors
+        );
 
         // Verify Sprite implements IDrawable
         let sprite_hash = ctx.resolve_type("Sprite").unwrap();
@@ -2037,11 +1967,26 @@ mod tests {
 
         let mut ctx = CompilationContext::new(&registry);
         let pass = RegistrationPass::new(&mut ctx, UnitId::new(0));
-        let output = pass.run(&script);
+        let reg_output = pass.run(&script);
+
+        // Registration should succeed (inheritance is deferred)
+        assert!(
+            reg_output.errors.is_empty(),
+            "Expected no registration errors, got: {:?}",
+            reg_output.errors
+        );
+
+        // Run completion pass - this is where mixin inheritance validation happens
+        let comp_pass = TypeCompletionPass::new(
+            ctx.unit_registry_mut(),
+            &registry,
+            reg_output.pending_resolutions,
+        );
+        let comp_output = comp_pass.run();
 
         // Should have error about mixin inheriting from class
-        assert!(!output.errors.is_empty());
-        assert!(output.errors.iter().any(|e| {
+        assert!(!comp_output.errors.is_empty());
+        assert!(comp_output.errors.iter().any(|e| {
             matches!(e, CompilationError::InvalidOperation { message, .. }
                 if message.contains("mixin") && message.contains("cannot inherit"))
         }));
@@ -2070,15 +2015,29 @@ mod tests {
 
         let mut ctx = CompilationContext::new(&registry);
         let pass = RegistrationPass::new(&mut ctx, UnitId::new(0));
-        let output = pass.run(&script);
+        let reg_output = pass.run(&script);
 
-        // Should succeed - mixins can implement interfaces
+        // Registration should succeed
         assert!(
-            output.errors.is_empty(),
-            "Expected no errors, got: {:?}",
-            output.errors
+            reg_output.errors.is_empty(),
+            "Expected no registration errors, got: {:?}",
+            reg_output.errors
         );
-        assert_eq!(output.types_registered, 1);
+        assert_eq!(reg_output.types_registered, 1);
+
+        // Run completion pass to resolve interface implementation
+        let comp_pass = TypeCompletionPass::new(
+            ctx.unit_registry_mut(),
+            &registry,
+            reg_output.pending_resolutions,
+        );
+        let comp_output = comp_pass.run();
+
+        assert!(
+            comp_output.errors.is_empty(),
+            "Expected no completion errors, got: {:?}",
+            comp_output.errors
+        );
 
         // Verify mixin has the interface
         let mixin_hash = ctx.resolve_type("RenderMixin").unwrap();
@@ -2103,14 +2062,28 @@ mod tests {
 
         let mut ctx = CompilationContext::new(&registry);
         let pass = RegistrationPass::new(&mut ctx, UnitId::new(0));
-        let output = pass.run(&script);
+        let reg_output = pass.run(&script);
 
         assert!(
-            output.errors.is_empty(),
-            "Expected no errors, got: {:?}",
-            output.errors
+            reg_output.errors.is_empty(),
+            "Expected no registration errors, got: {:?}",
+            reg_output.errors
         );
-        assert_eq!(output.types_registered, 2); // Helper (mixin) + Player
+        assert_eq!(reg_output.types_registered, 2); // Helper (mixin) + Player
+
+        // Run completion pass to resolve mixin
+        let comp_pass = TypeCompletionPass::new(
+            ctx.unit_registry_mut(),
+            &registry,
+            reg_output.pending_resolutions,
+        );
+        let comp_output = comp_pass.run();
+
+        assert!(
+            comp_output.errors.is_empty(),
+            "Expected no completion errors, got: {:?}",
+            comp_output.errors
+        );
 
         // Verify Player has the mixin in its mixins list
         let player_hash = ctx.resolve_type("Player").unwrap();
@@ -2141,14 +2114,28 @@ mod tests {
 
         let mut ctx = CompilationContext::new(&registry);
         let pass = RegistrationPass::new(&mut ctx, UnitId::new(0));
-        let output = pass.run(&script);
+        let reg_output = pass.run(&script);
 
         assert!(
-            output.errors.is_empty(),
-            "Expected no errors, got: {:?}",
-            output.errors
+            reg_output.errors.is_empty(),
+            "Expected no registration errors, got: {:?}",
+            reg_output.errors
         );
-        assert_eq!(output.types_registered, 3); // Entity + Helper + Player
+        assert_eq!(reg_output.types_registered, 3); // Entity + Helper + Player
+
+        // Run completion pass to resolve base class and mixin
+        let comp_pass = TypeCompletionPass::new(
+            ctx.unit_registry_mut(),
+            &registry,
+            reg_output.pending_resolutions,
+        );
+        let comp_output = comp_pass.run();
+
+        assert!(
+            comp_output.errors.is_empty(),
+            "Expected no completion errors, got: {:?}",
+            comp_output.errors
+        );
 
         // Verify Player has base class and mixin
         let player_hash = ctx.resolve_type("Player").unwrap();
@@ -2225,14 +2212,28 @@ mod tests {
 
         let mut ctx = CompilationContext::new(&registry);
         let pass = RegistrationPass::new(&mut ctx, UnitId::new(0));
-        let output = pass.run(&script);
+        let reg_output = pass.run(&script);
 
         assert!(
-            output.errors.is_empty(),
-            "Expected no errors, got: {:?}",
-            output.errors
+            reg_output.errors.is_empty(),
+            "Expected no registration errors, got: {:?}",
+            reg_output.errors
         );
-        assert_eq!(output.types_registered, 3); // Movable + Renderable + Player
+        assert_eq!(reg_output.types_registered, 3); // Movable + Renderable + Player
+
+        // Run completion pass to resolve mixins
+        let comp_pass = TypeCompletionPass::new(
+            ctx.unit_registry_mut(),
+            &registry,
+            reg_output.pending_resolutions,
+        );
+        let comp_output = comp_pass.run();
+
+        assert!(
+            comp_output.errors.is_empty(),
+            "Expected no completion errors, got: {:?}",
+            comp_output.errors
+        );
 
         // Verify Player has both mixins
         let player_hash = ctx.resolve_type("Player").unwrap();

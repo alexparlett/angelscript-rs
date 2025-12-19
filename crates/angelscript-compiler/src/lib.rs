@@ -34,7 +34,7 @@ pub mod stmt;
 pub mod template;
 pub mod type_resolver;
 
-pub use context::{CompilationContext, Scope};
+pub use context::CompilationContext;
 pub use conversion::{
     Conversion, ConversionKind, find_cast, find_conversion, find_handle_conversion,
     find_primitive_conversion,

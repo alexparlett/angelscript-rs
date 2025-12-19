@@ -125,6 +125,13 @@ impl SymbolRegistry {
         self.get_mut(hash)?.as_class_mut()
     }
 
+    /// Get a mutable reference to an interface entry by hash.
+    ///
+    /// Returns `None` if the type doesn't exist or is not an interface.
+    pub fn get_interface_mut(&mut self, hash: TypeHash) -> Option<&mut InterfaceEntry> {
+        self.get_mut(hash)?.as_interface_mut()
+    }
+
     // ==========================================================================
     // Function Lookup
     // ==========================================================================

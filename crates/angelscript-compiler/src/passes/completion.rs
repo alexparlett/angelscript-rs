@@ -1,17 +1,20 @@
-//! Type Completion Pass - Copy inherited members from base classes.
+//! Type Completion Pass - Resolve inheritance and copy inherited members.
 //!
-//! This pass runs after registration to finalize class structures by copying
-//! public/protected methods and properties from base classes. This enables
-//! O(1) lookups during compilation without needing to walk the inheritance
-//! chain or check visibility repeatedly.
+//! This pass runs after registration to:
+//! 1. Resolve pending inheritance references (enabling forward references)
+//! 2. Finalize class structures by copying public/protected members from base classes
+//!
+//! This enables O(1) lookups during compilation without needing to walk the
+//! inheritance chain or check visibility repeatedly.
 //!
 //! ## Algorithm
 //!
-//! 1. Topologically sort classes by inheritance (base before derived)
-//! 2. For each class in order:
+//! 1. Resolve all pending inheritance (class bases, mixins, interfaces)
+//! 2. Topologically sort classes by inheritance (base before derived)
+//! 3. For each class in order:
 //!    - Read public/protected members from immediate base class
 //!    - Copy them to the derived class
-//! 3. Because we process in topological order, each base is already complete
+//! 4. Because we process in topological order, each base is already complete
 //!    when we process its derived classes
 //!
 //! ## Example
@@ -30,6 +33,8 @@ use rustc_hash::FxHashSet;
 
 use angelscript_core::{CompilationError, Span, TypeHash, Visibility};
 use angelscript_registry::SymbolRegistry;
+
+use crate::passes::{PendingInheritance, PendingResolutions};
 
 /// Output of the type completion pass.
 #[derive(Debug, Default)]
@@ -65,19 +70,39 @@ struct MixinMembers {
 }
 
 /// Type Completion Pass - finalizes class structures with inherited members.
-pub struct TypeCompletionPass<'reg> {
+pub struct TypeCompletionPass<'reg, 'global> {
+    /// Unit registry (script types being compiled) - mutable for updates
     registry: &'reg mut SymbolRegistry,
+    /// Global registry (FFI types) - read-only for lookups
+    global_registry: &'global SymbolRegistry,
+    pending: PendingResolutions,
 }
 
-impl<'reg> TypeCompletionPass<'reg> {
+impl<'reg, 'global> TypeCompletionPass<'reg, 'global> {
     /// Create a new type completion pass.
-    pub fn new(registry: &'reg mut SymbolRegistry) -> Self {
-        Self { registry }
+    ///
+    /// # Arguments
+    /// - `registry`: The unit registry containing script types (mutable for updates)
+    /// - `global_registry`: The global registry containing FFI types (read-only)
+    /// - `pending`: Pending inheritance resolutions from Pass 1
+    pub fn new(
+        registry: &'reg mut SymbolRegistry,
+        global_registry: &'global SymbolRegistry,
+        pending: PendingResolutions,
+    ) -> Self {
+        Self {
+            registry,
+            global_registry,
+            pending,
+        }
     }
 
     /// Run the type completion pass.
     pub fn run(mut self) -> CompletionOutput {
         let mut output = CompletionOutput::default();
+
+        // Phase 1: Resolve all pending inheritance references
+        self.resolve_all_inheritance(&mut output);
 
         // Get all script class hashes
         let class_hashes: Vec<TypeHash> = self.registry.classes().map(|c| c.type_hash).collect();
@@ -107,6 +132,260 @@ impl<'reg> TypeCompletionPass<'reg> {
 
         output
     }
+
+    // ========================================================================
+    // Phase 1: Inheritance Resolution
+    // ========================================================================
+
+    /// Resolve all pending inheritance references collected during Pass 1.
+    ///
+    /// This enables forward references - a class can inherit from a type declared
+    /// later in the source, as long as it exists somewhere in the compilation unit.
+    fn resolve_all_inheritance(&mut self, output: &mut CompletionOutput) {
+        // Take ownership of pending resolutions to avoid borrow issues
+        let pending = std::mem::take(&mut self.pending);
+
+        // Resolve class inheritance (base classes and mixins)
+        for (class_hash, pending_bases) in pending.class_inheritance {
+            self.resolve_class_inheritance(class_hash, pending_bases, output);
+        }
+
+        // Resolve interface inheritance
+        for (interface_hash, pending_bases) in pending.interface_bases {
+            self.resolve_interface_inheritance(interface_hash, pending_bases, output);
+        }
+    }
+
+    /// Resolve inheritance for a single class (or mixin).
+    fn resolve_class_inheritance(
+        &mut self,
+        class_hash: TypeHash,
+        pending: Vec<PendingInheritance>,
+        output: &mut CompletionOutput,
+    ) {
+        // Check if the inheriting class is a mixin (mixins can only inherit interfaces)
+        let is_mixin = self
+            .registry
+            .get(class_hash)
+            .and_then(|e| e.as_class())
+            .map(|c| c.is_mixin)
+            .unwrap_or(false);
+
+        for pending_base in pending {
+            // Try to resolve the type name (checks both unit and global registries)
+            let resolved = self.resolve_type_name(
+                &pending_base.name,
+                &pending_base.namespace_context,
+                &pending_base.imports,
+            );
+
+            match resolved {
+                Some(base_hash) => {
+                    // Determine if it's a class, mixin, or interface
+                    // Use get_type to check both registries
+                    if let Some(entry) = self.get_type(base_hash) {
+                        if let Some(base_class) = entry.as_class() {
+                            // Mixins can only inherit from interfaces
+                            if is_mixin {
+                                output.errors.push(CompilationError::InvalidOperation {
+                                    message: format!(
+                                        "mixin cannot inherit from class '{}' - mixins can only implement interfaces",
+                                        pending_base.name
+                                    ),
+                                    span: pending_base.span,
+                                });
+                                continue;
+                            }
+
+                            if base_class.is_mixin {
+                                // It's a mixin - add to mixins list
+                                if let Some(class) = self.registry.get_class_mut(class_hash) {
+                                    if !class.mixins.contains(&base_hash) {
+                                        class.mixins.push(base_hash);
+                                    }
+                                }
+                            } else {
+                                // It's a regular class - validate and set as base
+                                // Validation 1: Cannot extend FFI classes
+                                if base_class.source.is_ffi() {
+                                    output.errors.push(CompilationError::InvalidOperation {
+                                        message: format!(
+                                            "cannot extend FFI class '{}' - script classes can only extend other script classes",
+                                            pending_base.name
+                                        ),
+                                        span: pending_base.span,
+                                    });
+                                    continue;
+                                }
+
+                                // Validation 2: Cannot extend final classes
+                                if base_class.is_final {
+                                    output.errors.push(CompilationError::InvalidOperation {
+                                        message: format!(
+                                            "cannot extend final class '{}'",
+                                            pending_base.name
+                                        ),
+                                        span: pending_base.span,
+                                    });
+                                    continue;
+                                }
+
+                                // Set as base class
+                                if let Some(class) = self.registry.get_class_mut(class_hash) {
+                                    if class.base_class.is_some() {
+                                        output.errors.push(CompilationError::Other {
+                                            message: format!(
+                                                "class already has a base class, cannot inherit from '{}'",
+                                                pending_base.name
+                                            ),
+                                            span: pending_base.span,
+                                        });
+                                    } else {
+                                        class.base_class = Some(base_hash);
+                                    }
+                                }
+                            }
+                        } else if entry.as_interface().is_some() {
+                            // It's an interface - add to interfaces list
+                            if let Some(class) = self.registry.get_class_mut(class_hash) {
+                                if !class.interfaces.contains(&base_hash) {
+                                    class.interfaces.push(base_hash);
+                                }
+                            }
+                        } else {
+                            output.errors.push(CompilationError::Other {
+                                message: format!(
+                                    "'{}' cannot be inherited (not a class, mixin, or interface)",
+                                    pending_base.name
+                                ),
+                                span: pending_base.span,
+                            });
+                        }
+                    }
+                }
+                None => {
+                    output.errors.push(CompilationError::UnknownType {
+                        name: pending_base.name.clone(),
+                        span: pending_base.span,
+                    });
+                }
+            }
+        }
+    }
+
+    /// Resolve inheritance for a single interface.
+    fn resolve_interface_inheritance(
+        &mut self,
+        interface_hash: TypeHash,
+        pending: Vec<PendingInheritance>,
+        output: &mut CompletionOutput,
+    ) {
+        for pending_base in pending {
+            let resolved = self.resolve_type_name(
+                &pending_base.name,
+                &pending_base.namespace_context,
+                &pending_base.imports,
+            );
+
+            match resolved {
+                Some(base_hash) => {
+                    // Verify it's an interface (check both registries)
+                    if let Some(entry) = self.get_type(base_hash) {
+                        if entry.as_interface().is_some() {
+                            if let Some(iface) = self.registry.get_interface_mut(interface_hash) {
+                                if !iface.base_interfaces.contains(&base_hash) {
+                                    iface.base_interfaces.push(base_hash);
+                                }
+                            }
+                        } else {
+                            output.errors.push(CompilationError::Other {
+                                message: format!(
+                                    "'{}' is not an interface (interfaces can only extend interfaces)",
+                                    pending_base.name
+                                ),
+                                span: pending_base.span,
+                            });
+                        }
+                    }
+                }
+                None => {
+                    output.errors.push(CompilationError::UnknownType {
+                        name: pending_base.name.clone(),
+                        span: pending_base.span,
+                    });
+                }
+            }
+        }
+    }
+
+    /// Check if a type exists in either registry.
+    fn type_exists(&self, hash: TypeHash) -> bool {
+        self.registry.get(hash).is_some() || self.global_registry.get(hash).is_some()
+    }
+
+    /// Get a type entry from either registry.
+    fn get_type(&self, hash: TypeHash) -> Option<&angelscript_core::TypeEntry> {
+        self.registry
+            .get(hash)
+            .or_else(|| self.global_registry.get(hash))
+    }
+
+    /// Resolve a type name using namespace context and imports.
+    ///
+    /// Resolution order:
+    /// 1. Qualified name (if contains "::") - direct lookup
+    /// 2. Current namespace hierarchy (innermost to outermost, NOT global)
+    /// 3. Each import as namespace prefix
+    /// 4. Global namespace (unqualified)
+    fn resolve_type_name(
+        &self,
+        name: &str,
+        namespace_context: &[String],
+        imports: &[String],
+    ) -> Option<TypeHash> {
+        // 1. If already qualified, try direct lookup
+        if name.contains("::") {
+            let hash = TypeHash::from_name(name);
+            if self.type_exists(hash) {
+                return Some(hash);
+            }
+            return None;
+        }
+
+        // 2. Try current namespace hierarchy (innermost to outermost, NOT global)
+        // For namespace ["Game", "Entities"], try:
+        // - Game::Entities::Foo
+        // - Game::Foo
+        for i in (1..=namespace_context.len()).rev() {
+            let prefix = namespace_context[..i].join("::");
+            let qualified = format!("{}::{}", prefix, name);
+            let hash = TypeHash::from_name(&qualified);
+            if self.type_exists(hash) {
+                return Some(hash);
+            }
+        }
+
+        // 3. Try each import as namespace prefix
+        for import in imports {
+            let qualified = format!("{}::{}", import, name);
+            let hash = TypeHash::from_name(&qualified);
+            if self.type_exists(hash) {
+                return Some(hash);
+            }
+        }
+
+        // 4. Fall back to global namespace
+        let hash = TypeHash::from_name(name);
+        if self.type_exists(hash) {
+            return Some(hash);
+        }
+
+        None
+    }
+
+    // ========================================================================
+    // Phase 2: Member Completion
+    // ========================================================================
 
     /// Complete a single class by copying inherited members and applying mixins.
     ///
@@ -462,8 +741,13 @@ mod tests {
         let derived_hash = derived.type_hash;
         registry.register_type(derived.into()).unwrap();
 
-        // Run completion pass
-        let pass = TypeCompletionPass::new(&mut registry);
+        // Run completion pass (using empty global registry for test)
+        let global_registry = SymbolRegistry::new();
+        let pass = TypeCompletionPass::new(
+            &mut registry,
+            &global_registry,
+            PendingResolutions::default(),
+        );
         let output = pass.run();
 
         assert_eq!(output.errors.len(), 0, "Expected no errors");
@@ -551,8 +835,13 @@ mod tests {
         let derived_hash = derived.type_hash;
         registry.register_type(derived.into()).unwrap();
 
-        // Run completion pass
-        let pass = TypeCompletionPass::new(&mut registry);
+        // Run completion pass (using empty global registry for test)
+        let global_registry = SymbolRegistry::new();
+        let pass = TypeCompletionPass::new(
+            &mut registry,
+            &global_registry,
+            PendingResolutions::default(),
+        );
         let output = pass.run();
 
         assert_eq!(output.errors.len(), 0);
@@ -649,8 +938,13 @@ mod tests {
         registry.register_type(c.into()).unwrap();
         register_script_function(&mut registry, c_def).unwrap();
 
-        // Run completion pass
-        let pass = TypeCompletionPass::new(&mut registry);
+        // Run completion pass (using empty global registry for test)
+        let global_registry = SymbolRegistry::new();
+        let pass = TypeCompletionPass::new(
+            &mut registry,
+            &global_registry,
+            PendingResolutions::default(),
+        );
         let output = pass.run();
 
         assert_eq!(output.errors.len(), 0);
@@ -693,8 +987,13 @@ mod tests {
         registry.register_type(a.into()).unwrap();
         registry.register_type(b.into()).unwrap();
 
-        // Run completion pass
-        let pass = TypeCompletionPass::new(&mut registry);
+        // Run completion pass (using empty global registry for test)
+        let global_registry = SymbolRegistry::new();
+        let pass = TypeCompletionPass::new(
+            &mut registry,
+            &global_registry,
+            PendingResolutions::default(),
+        );
         let output = pass.run();
 
         // Should detect circular inheritance
@@ -764,8 +1063,13 @@ mod tests {
         let derived_hash = derived.type_hash;
         registry.register_type(derived.into()).unwrap();
 
-        // Run completion pass
-        let pass = TypeCompletionPass::new(&mut registry);
+        // Run completion pass (using empty global registry for test)
+        let global_registry = SymbolRegistry::new();
+        let pass = TypeCompletionPass::new(
+            &mut registry,
+            &global_registry,
+            PendingResolutions::default(),
+        );
         let output = pass.run();
 
         assert_eq!(output.errors.len(), 0);
@@ -839,8 +1143,13 @@ mod tests {
         registry.register_type(sprite.into()).unwrap();
         register_script_function(&mut registry, update_def).unwrap();
 
-        // Run completion pass
-        let pass = TypeCompletionPass::new(&mut registry);
+        // Run completion pass (using empty global registry for test)
+        let global_registry = SymbolRegistry::new();
+        let pass = TypeCompletionPass::new(
+            &mut registry,
+            &global_registry,
+            PendingResolutions::default(),
+        );
         let output = pass.run();
 
         assert_eq!(output.errors.len(), 0, "Expected no errors");
@@ -897,8 +1206,13 @@ mod tests {
         let my_class = my_class.with_property(class_prop);
         registry.register_type(my_class.into()).unwrap();
 
-        // Run completion pass
-        let pass = TypeCompletionPass::new(&mut registry);
+        // Run completion pass (using empty global registry for test)
+        let global_registry = SymbolRegistry::new();
+        let pass = TypeCompletionPass::new(
+            &mut registry,
+            &global_registry,
+            PendingResolutions::default(),
+        );
         let output = pass.run();
 
         assert_eq!(output.errors.len(), 0, "Expected no errors");
@@ -956,8 +1270,13 @@ mod tests {
         let sprite_hash = sprite.type_hash;
         registry.register_type(sprite.into()).unwrap();
 
-        // Run completion pass
-        let pass = TypeCompletionPass::new(&mut registry);
+        // Run completion pass (using empty global registry for test)
+        let global_registry = SymbolRegistry::new();
+        let pass = TypeCompletionPass::new(
+            &mut registry,
+            &global_registry,
+            PendingResolutions::default(),
+        );
         let output = pass.run();
 
         assert_eq!(output.errors.len(), 0, "Expected no errors");
@@ -981,8 +1300,13 @@ mod tests {
         let mixin_hash = mixin.type_hash;
         registry.register_type(mixin.into()).unwrap();
 
-        // Run completion pass
-        let pass = TypeCompletionPass::new(&mut registry);
+        // Run completion pass (using empty global registry for test)
+        let global_registry = SymbolRegistry::new();
+        let pass = TypeCompletionPass::new(
+            &mut registry,
+            &global_registry,
+            PendingResolutions::default(),
+        );
         let output = pass.run();
 
         assert_eq!(output.errors.len(), 0, "Expected no errors");
@@ -1078,8 +1402,13 @@ mod tests {
         registry.register_type(derived.into()).unwrap();
         register_script_function(&mut registry, own_method_def).unwrap();
 
-        // Run completion pass
-        let pass = TypeCompletionPass::new(&mut registry);
+        // Run completion pass (using empty global registry for test)
+        let global_registry = SymbolRegistry::new();
+        let pass = TypeCompletionPass::new(
+            &mut registry,
+            &global_registry,
+            PendingResolutions::default(),
+        );
         let output = pass.run();
 
         assert_eq!(output.errors.len(), 0, "Expected no errors");
@@ -1173,8 +1502,13 @@ mod tests {
         let derived_hash = derived.type_hash;
         registry.register_type(derived.into()).unwrap();
 
-        // Run completion pass
-        let pass = TypeCompletionPass::new(&mut registry);
+        // Run completion pass (using empty global registry for test)
+        let global_registry = SymbolRegistry::new();
+        let pass = TypeCompletionPass::new(
+            &mut registry,
+            &global_registry,
+            PendingResolutions::default(),
+        );
         let output = pass.run();
 
         assert_eq!(output.errors.len(), 0, "Expected no errors");
