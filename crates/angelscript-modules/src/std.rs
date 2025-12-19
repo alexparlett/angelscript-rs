@@ -1,10 +1,51 @@
 //! Standard utility functions for AngelScript.
 //!
-//! Provides basic I/O functions with format string support.
+//! Provides basic I/O and exception functions.
 
 use crate::ScriptString;
 use angelscript_core::CallContext;
 use angelscript_registry::Module;
+
+// =============================================================================
+// EXCEPTION FUNCTIONS
+// =============================================================================
+
+/// Throw an exception with the given message.
+///
+/// This raises an exception that will be caught by the nearest try-catch block,
+/// or will terminate script execution if uncaught.
+///
+/// Usage: `throw("Something went wrong")`
+///
+/// Note: The actual exception raising is handled by the VM through CallContext.
+/// This function signature is for registration purposes.
+#[angelscript_macros::function(generic, name = "throw")]
+#[param(type = ScriptString, in)]
+pub fn as_throw(_ctx: &CallContext) {
+    // VM implementation will:
+    // 1. Get the message from the stack via ctx
+    // 2. Store the exception message in VM state
+    // 3. Set exception state flag
+    // 4. Return control to VM which will unwind to nearest TryBegin handler
+    todo!()
+}
+
+/// Get information about the current exception.
+///
+/// This is typically called inside a catch block to retrieve the exception message.
+/// Returns an empty string if no exception is active.
+///
+/// Usage: `string msg = getExceptionInfo();`
+///
+/// Note: The actual exception info retrieval is handled by the VM through CallContext.
+#[angelscript_macros::function(generic, name = "getExceptionInfo")]
+#[returns(type = ScriptString)]
+pub fn as_get_exception_info(_ctx: &CallContext) {
+    // VM implementation will:
+    // 1. Get the current exception message from VM state
+    // 2. Push a ScriptString onto the stack via ctx
+    todo!()
+}
 
 // =============================================================================
 // OUTPUT FUNCTIONS
@@ -53,6 +94,8 @@ pub fn as_eprintln(_ctx: &CallContext) {
 /// Creates the std module with utility functions.
 pub fn module() -> Module {
     Module::new()
+        .function(as_throw)
+        .function(as_get_exception_info)
         .function(as_print)
         .function(as_println)
         .function(as_eprint)
@@ -67,6 +110,6 @@ mod tests {
     fn test_module_creates() {
         let m = module();
         assert!(m.namespace.is_empty());
-        assert_eq!(m.functions.len(), 4);
+        assert_eq!(m.functions.len(), 6); // throw, getExceptionInfo, print, println, eprint, eprintln
     }
 }

@@ -397,13 +397,22 @@ pub enum OpCode {
     AddRef,
     /// Decrement reference count.
     Release,
+
+    // =========================================================================
+    // Exception Handling
+    // =========================================================================
+    /// Begin try block - pushes exception handler.
+    /// Operand: i16 offset to catch block (relative to after the offset)
+    TryBegin,
+    /// End try block - pops exception handler (try completed without exception).
+    TryEnd,
 }
 
 impl OpCode {
     /// Convert from u8, returning None for invalid values.
     pub fn from_u8(value: u8) -> Option<Self> {
         // Safety: We check bounds before transmuting
-        if value <= OpCode::Release as u8 {
+        if value <= OpCode::TryEnd as u8 {
             // SAFETY: OpCode is repr(u8) and we've verified the value is in range
             Some(unsafe { std::mem::transmute::<u8, OpCode>(value) })
         } else {
@@ -542,6 +551,8 @@ impl OpCode {
             OpCode::Swap => "SWAP",
             OpCode::AddRef => "ADD_REF",
             OpCode::Release => "RELEASE",
+            OpCode::TryBegin => "TRY_BEGIN",
+            OpCode::TryEnd => "TRY_END",
         }
     }
 }
@@ -568,5 +579,21 @@ mod tests {
         assert_eq!(OpCode::Constant.name(), "CONSTANT");
         assert_eq!(OpCode::AddI32.name(), "ADD_I32");
         assert_eq!(OpCode::JumpIfFalse.name(), "JUMP_IF_FALSE");
+    }
+
+    #[test]
+    fn exception_opcodes() {
+        // Verify TryBegin and TryEnd are valid opcodes
+        assert_eq!(OpCode::TryBegin.name(), "TRY_BEGIN");
+        assert_eq!(OpCode::TryEnd.name(), "TRY_END");
+
+        // Verify they can be converted from u8
+        let try_begin_val = OpCode::TryBegin as u8;
+        let try_end_val = OpCode::TryEnd as u8;
+        assert_eq!(OpCode::from_u8(try_begin_val), Some(OpCode::TryBegin));
+        assert_eq!(OpCode::from_u8(try_end_val), Some(OpCode::TryEnd));
+
+        // TryEnd should be the last opcode
+        assert_eq!(OpCode::from_u8(try_end_val + 1), None);
     }
 }

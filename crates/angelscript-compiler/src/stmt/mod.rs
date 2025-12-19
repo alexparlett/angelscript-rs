@@ -23,6 +23,7 @@ mod foreach_stmt;
 mod if_stmt;
 mod return_stmt;
 mod switch_stmt;
+mod try_catch;
 mod var_decl;
 mod while_stmt;
 
@@ -95,11 +96,7 @@ impl<'a, 'ctx, 'pool> StmtCompiler<'a, 'ctx, 'pool> {
             Stmt::Foreach(foreach) => self.compile_foreach(foreach),
             Stmt::Switch(switch) => self.compile_switch(switch),
 
-            // Deferred to later task
-            Stmt::TryCatch(_) => Err(CompilationError::Other {
-                message: "try-catch not yet implemented".to_string(),
-                span,
-            }),
+            Stmt::TryCatch(try_catch) => self.compile_try_catch(try_catch),
         }
     }
 
