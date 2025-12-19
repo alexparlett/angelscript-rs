@@ -849,6 +849,13 @@ impl<'a, 'reg> RegistrationPass<'a, 'reg> {
             });
         } else {
             self.functions_registered += 1;
+
+            // Add method to class's method map (for interface compliance checking etc.)
+            if let Some(obj_hash) = object_type
+                && let Some(class) = self.ctx.unit_registry_mut().get_class_mut(obj_hash)
+            {
+                class.add_method(func.name.name, func_hash);
+            }
         }
     }
 
@@ -1929,7 +1936,29 @@ mod tests {
         let sprite_hash = ctx.resolve_type("Sprite").unwrap();
         let sprite_entry = ctx.get_type(sprite_hash).unwrap();
         let sprite_class = sprite_entry.as_class().unwrap();
-        assert!(sprite_class.interfaces.contains(&iface_hash));
+        assert!(
+            sprite_class.interfaces.contains(&iface_hash),
+            "Sprite should have IDrawable in interfaces"
+        );
+
+        // Verify the draw method was added to the class's method map
+        let draw_methods = sprite_class.find_methods("draw");
+        assert_eq!(
+            draw_methods.len(),
+            1,
+            "Expected exactly 1 draw method in class.methods"
+        );
+
+        // Verify the function is registered correctly
+        let draw_hash = draw_methods[0];
+        let draw_func = ctx.unit_registry().get_function(draw_hash);
+        assert!(draw_func.is_some(), "draw function should be in registry");
+
+        let draw_func = draw_func.unwrap();
+        assert_eq!(draw_func.def.name, "draw");
+        assert_eq!(draw_func.def.object_type, Some(sprite_hash));
+        assert_eq!(draw_func.def.params.len(), 0);
+        assert_eq!(draw_func.def.return_type, DataType::void());
     }
 
     // ==========================================================================

@@ -31,7 +31,7 @@
 
 use rustc_hash::FxHashSet;
 
-use angelscript_core::{CompilationError, Span, TypeHash, Visibility};
+use angelscript_core::{CompilationError, MethodSignature, Span, TypeHash, Visibility};
 use angelscript_registry::SymbolRegistry;
 
 use crate::passes::{PendingInheritance, PendingResolutions};
@@ -462,7 +462,137 @@ impl<'reg, 'global> TypeCompletionPass<'reg, 'global> {
             self.apply_mixin(class_hash, mixin_hash, output)?;
         }
 
+        // Phase 4: Validate interface compliance (after all members are in place)
+        self.validate_interface_compliance(class_hash, output);
+
         Ok(true)
+    }
+
+    /// Validate that a class implements all methods required by its interfaces.
+    ///
+    /// This must be called after all inheritance and mixin members have been applied,
+    /// as a mixin may provide the implementation of an interface method.
+    fn validate_interface_compliance(&self, class_hash: TypeHash, output: &mut CompletionOutput) {
+        // Get the class and its interfaces
+        let (class_name, class_span, interface_hashes) = {
+            let Some(class) = self.registry.get(class_hash).and_then(|e| e.as_class()) else {
+                return;
+            };
+
+            // Skip abstract classes - they don't need to implement all interface methods
+            if class.is_abstract {
+                return;
+            }
+
+            (
+                class.name.clone(),
+                class.source.span().unwrap_or_default(),
+                class.interfaces.clone(),
+            )
+        };
+
+        // Collect all required method signatures from all interfaces
+        let required_methods = self.collect_interface_methods(&interface_hashes);
+
+        // Check each required method
+        for (interface_name, signature) in required_methods {
+            if !self.class_implements_method(class_hash, &signature) {
+                output.errors.push(CompilationError::Other {
+                    message: format!(
+                        "class '{}' does not implement method '{}' required by interface '{}'",
+                        class_name, signature.name, interface_name
+                    ),
+                    span: class_span,
+                });
+            }
+        }
+    }
+
+    /// Collect all method signatures required by a set of interfaces,
+    /// including methods inherited from base interfaces.
+    fn collect_interface_methods(
+        &self,
+        interface_hashes: &[TypeHash],
+    ) -> Vec<(String, MethodSignature)> {
+        let mut result = Vec::new();
+        let mut visited = FxHashSet::default();
+
+        for &iface_hash in interface_hashes {
+            self.collect_interface_methods_recursive(iface_hash, &mut result, &mut visited);
+        }
+
+        result
+    }
+
+    /// Recursively collect methods from an interface and its base interfaces.
+    fn collect_interface_methods_recursive(
+        &self,
+        interface_hash: TypeHash,
+        result: &mut Vec<(String, MethodSignature)>,
+        visited: &mut FxHashSet<TypeHash>,
+    ) {
+        if !visited.insert(interface_hash) {
+            return; // Already visited
+        }
+
+        // Try unit registry first, then global
+        let iface = self
+            .registry
+            .get(interface_hash)
+            .and_then(|e| e.as_interface())
+            .or_else(|| {
+                self.global_registry
+                    .get(interface_hash)
+                    .and_then(|e| e.as_interface())
+            });
+
+        let Some(iface) = iface else {
+            return;
+        };
+
+        let iface_name = iface.name.clone();
+        let methods = iface.methods.clone();
+        let base_interfaces = iface.base_interfaces.clone();
+
+        // Add this interface's methods
+        for method in methods {
+            result.push((iface_name.clone(), method));
+        }
+
+        // Recurse into base interfaces
+        for base_hash in base_interfaces {
+            self.collect_interface_methods_recursive(base_hash, result, visited);
+        }
+    }
+
+    /// Check if a class has a method that matches the given signature.
+    fn class_implements_method(&self, class_hash: TypeHash, signature: &MethodSignature) -> bool {
+        let Some(class) = self.registry.get(class_hash).and_then(|e| e.as_class()) else {
+            return false;
+        };
+
+        // Get all method hashes with the given name
+        let method_hashes = class.find_methods(&signature.name);
+        if method_hashes.is_empty() {
+            return false;
+        }
+
+        // Check if any overload matches the signature
+        for &method_hash in method_hashes {
+            // Try unit registry first, then global
+            let func = self
+                .registry
+                .get_function(method_hash)
+                .or_else(|| self.global_registry.get_function(method_hash));
+
+            if let Some(func) = func
+                && func.def.matches_signature(signature)
+            {
+                return true;
+            }
+        }
+
+        false
     }
 
     /// Apply mixin members to an including class.
@@ -1534,6 +1664,323 @@ mod tests {
         assert_eq!(
             shared_methods[1], mixin_method_hash,
             "Mixin method should be last (higher precedence)"
+        );
+    }
+
+    // ==========================================================================
+    // Interface compliance validation tests
+    // ==========================================================================
+
+    #[test]
+    fn complete_validates_interface_compliance() {
+        let mut registry = create_test_registry();
+
+        // interface IDrawable { void draw(); }
+        let iface_hash = TypeHash::from_name("IDrawable");
+        let draw_sig = MethodSignature::new("draw", vec![], DataType::void());
+        let iface = angelscript_core::InterfaceEntry::new(
+            "IDrawable",
+            vec![],
+            "IDrawable",
+            iface_hash,
+            TypeSource::script(UnitId::new(0), Span::new(0, 0, 10)),
+        )
+        .with_method(draw_sig);
+        registry.register_type(iface.into()).unwrap();
+
+        // class Sprite : IDrawable { } -- missing draw()!
+        let sprite = ClassEntry::script(
+            "Sprite",
+            vec![],
+            "Sprite",
+            TypeSource::script(UnitId::new(0), Span::new(0, 11, 20)),
+        )
+        .with_interface(iface_hash);
+        registry.register_type(sprite.into()).unwrap();
+
+        // Run completion pass
+        let global_registry = SymbolRegistry::new();
+        let pass = TypeCompletionPass::new(
+            &mut registry,
+            &global_registry,
+            PendingResolutions::default(),
+        );
+        let output = pass.run();
+
+        // Should have an error - missing draw() method
+        assert_eq!(output.errors.len(), 1, "Expected 1 error");
+        match &output.errors[0] {
+            CompilationError::Other { message, .. } => {
+                assert!(message.contains("does not implement method 'draw'"));
+                assert!(message.contains("IDrawable"));
+            }
+            other => panic!("Expected Other error, got: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn complete_validates_interface_compliance_with_implementation() {
+        let mut registry = create_test_registry();
+
+        // interface IDrawable { void draw(); }
+        let iface_hash = TypeHash::from_name("IDrawable");
+        let draw_sig = MethodSignature::new("draw", vec![], DataType::void());
+        let iface = angelscript_core::InterfaceEntry::new(
+            "IDrawable",
+            vec![],
+            "IDrawable",
+            iface_hash,
+            TypeSource::script(UnitId::new(0), Span::new(0, 0, 10)),
+        )
+        .with_method(draw_sig);
+        registry.register_type(iface.into()).unwrap();
+
+        // class Sprite : IDrawable { void draw(); }
+        let sprite = ClassEntry::script(
+            "Sprite",
+            vec![],
+            "Sprite",
+            TypeSource::script(UnitId::new(0), Span::new(0, 11, 20)),
+        )
+        .with_interface(iface_hash);
+        let sprite_hash = sprite.type_hash;
+
+        // Create draw() method
+        let draw_def = FunctionDef::new(
+            TypeHash::from_function("Sprite::draw", &[]),
+            "draw".to_string(),
+            vec![],
+            vec![],
+            DataType::void(),
+            Some(sprite_hash),
+            FunctionTraits::default(),
+            false,
+            Visibility::Public,
+        );
+        let draw_hash = draw_def.func_hash;
+
+        let sprite = sprite.with_method("draw", draw_hash);
+        registry.register_type(sprite.into()).unwrap();
+        register_script_function(&mut registry, draw_def).unwrap();
+
+        // Run completion pass
+        let global_registry = SymbolRegistry::new();
+        let pass = TypeCompletionPass::new(
+            &mut registry,
+            &global_registry,
+            PendingResolutions::default(),
+        );
+        let output = pass.run();
+
+        // Should succeed - draw() is implemented
+        assert_eq!(
+            output.errors.len(),
+            0,
+            "Expected no errors, got: {:?}",
+            output.errors
+        );
+    }
+
+    #[test]
+    fn complete_validates_inherited_interface_methods() {
+        let mut registry = create_test_registry();
+
+        // interface IBase { void base_method(); }
+        let base_iface_hash = TypeHash::from_name("IBase");
+        let base_sig = MethodSignature::new("base_method", vec![], DataType::void());
+        let base_iface = angelscript_core::InterfaceEntry::new(
+            "IBase",
+            vec![],
+            "IBase",
+            base_iface_hash,
+            TypeSource::script(UnitId::new(0), Span::new(0, 0, 10)),
+        )
+        .with_method(base_sig);
+        registry.register_type(base_iface.into()).unwrap();
+
+        // interface IDerived : IBase { void derived_method(); }
+        let derived_iface_hash = TypeHash::from_name("IDerived");
+        let derived_sig = MethodSignature::new("derived_method", vec![], DataType::void());
+        let derived_iface = angelscript_core::InterfaceEntry::new(
+            "IDerived",
+            vec![],
+            "IDerived",
+            derived_iface_hash,
+            TypeSource::script(UnitId::new(0), Span::new(0, 11, 20)),
+        )
+        .with_method(derived_sig)
+        .with_base(base_iface_hash);
+        registry.register_type(derived_iface.into()).unwrap();
+
+        // class MyClass : IDerived { void derived_method(); } -- missing base_method()!
+        let my_class = ClassEntry::script(
+            "MyClass",
+            vec![],
+            "MyClass",
+            TypeSource::script(UnitId::new(0), Span::new(0, 21, 30)),
+        )
+        .with_interface(derived_iface_hash);
+        let my_class_hash = my_class.type_hash;
+
+        // Add derived_method() but NOT base_method()
+        let derived_method_def = FunctionDef::new(
+            TypeHash::from_function("MyClass::derived_method", &[]),
+            "derived_method".to_string(),
+            vec![],
+            vec![],
+            DataType::void(),
+            Some(my_class_hash),
+            FunctionTraits::default(),
+            false,
+            Visibility::Public,
+        );
+        let derived_method_hash = derived_method_def.func_hash;
+
+        let my_class = my_class.with_method("derived_method", derived_method_hash);
+        registry.register_type(my_class.into()).unwrap();
+        register_script_function(&mut registry, derived_method_def).unwrap();
+
+        // Run completion pass
+        let global_registry = SymbolRegistry::new();
+        let pass = TypeCompletionPass::new(
+            &mut registry,
+            &global_registry,
+            PendingResolutions::default(),
+        );
+        let output = pass.run();
+
+        // Should have an error - missing base_method() from IBase
+        assert_eq!(
+            output.errors.len(),
+            1,
+            "Expected 1 error, got: {:?}",
+            output.errors
+        );
+        match &output.errors[0] {
+            CompilationError::Other { message, .. } => {
+                assert!(message.contains("does not implement method 'base_method'"));
+                assert!(message.contains("IBase"));
+            }
+            other => panic!("Expected Other error, got: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn complete_validates_mixin_provides_interface_method() {
+        let mut registry = create_test_registry();
+
+        // interface IDrawable { void draw(); }
+        let iface_hash = TypeHash::from_name("IDrawable");
+        let draw_sig = MethodSignature::new("draw", vec![], DataType::void());
+        let iface = angelscript_core::InterfaceEntry::new(
+            "IDrawable",
+            vec![],
+            "IDrawable",
+            iface_hash,
+            TypeSource::script(UnitId::new(0), Span::new(0, 0, 10)),
+        )
+        .with_method(draw_sig);
+        registry.register_type(iface.into()).unwrap();
+
+        // mixin class RenderMixin : IDrawable { void draw(); }
+        let mixin = ClassEntry::script_mixin(
+            "RenderMixin",
+            vec![],
+            "RenderMixin",
+            TypeSource::script(UnitId::new(0), Span::new(0, 11, 20)),
+        )
+        .with_interface(iface_hash);
+        let mixin_hash = mixin.type_hash;
+
+        // Create draw() method on mixin
+        let draw_def = FunctionDef::new(
+            TypeHash::from_function("RenderMixin::draw", &[]),
+            "draw".to_string(),
+            vec![],
+            vec![],
+            DataType::void(),
+            Some(mixin_hash),
+            FunctionTraits::default(),
+            false,
+            Visibility::Public,
+        );
+        let draw_hash = draw_def.func_hash;
+
+        let mixin = mixin.with_method("draw", draw_hash);
+        registry.register_type(mixin.into()).unwrap();
+        register_script_function(&mut registry, draw_def).unwrap();
+
+        // class Sprite : RenderMixin { } -- draw() comes from mixin
+        let sprite = ClassEntry::script(
+            "Sprite",
+            vec![],
+            "Sprite",
+            TypeSource::script(UnitId::new(0), Span::new(0, 21, 30)),
+        )
+        .with_mixin(mixin_hash);
+        registry.register_type(sprite.into()).unwrap();
+
+        // Run completion pass
+        let global_registry = SymbolRegistry::new();
+        let pass = TypeCompletionPass::new(
+            &mut registry,
+            &global_registry,
+            PendingResolutions::default(),
+        );
+        let output = pass.run();
+
+        // Should succeed - draw() is provided by mixin
+        assert_eq!(
+            output.errors.len(),
+            0,
+            "Expected no errors, got: {:?}",
+            output.errors
+        );
+    }
+
+    #[test]
+    fn complete_skips_abstract_class_interface_validation() {
+        let mut registry = create_test_registry();
+
+        // interface IDrawable { void draw(); }
+        let iface_hash = TypeHash::from_name("IDrawable");
+        let draw_sig = MethodSignature::new("draw", vec![], DataType::void());
+        let iface = angelscript_core::InterfaceEntry::new(
+            "IDrawable",
+            vec![],
+            "IDrawable",
+            iface_hash,
+            TypeSource::script(UnitId::new(0), Span::new(0, 0, 10)),
+        )
+        .with_method(draw_sig);
+        registry.register_type(iface.into()).unwrap();
+
+        // abstract class AbstractSprite : IDrawable { } -- missing draw() but that's OK for abstract
+        let abstract_sprite = ClassEntry::script(
+            "AbstractSprite",
+            vec![],
+            "AbstractSprite",
+            TypeSource::script(UnitId::new(0), Span::new(0, 11, 20)),
+        )
+        .with_interface(iface_hash)
+        .as_abstract();
+        registry.register_type(abstract_sprite.into()).unwrap();
+
+        // Run completion pass
+        let global_registry = SymbolRegistry::new();
+        let pass = TypeCompletionPass::new(
+            &mut registry,
+            &global_registry,
+            PendingResolutions::default(),
+        );
+        let output = pass.run();
+
+        // Should succeed - abstract classes don't need to implement all interface methods
+        assert_eq!(
+            output.errors.len(),
+            0,
+            "Expected no errors, got: {:?}",
+            output.errors
         );
     }
 }
