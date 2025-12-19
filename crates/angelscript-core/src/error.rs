@@ -164,6 +164,10 @@ pub enum ParseErrorKind {
     /// Conflicting modifiers were specified.
     ConflictingModifiers,
 
+    // Literal errors
+    /// A literal value could not be parsed.
+    InvalidLiteral,
+
     // Other
     /// Internal parser error.
     InternalError,
@@ -205,6 +209,7 @@ impl ParseErrorKind {
             ParseErrorKind::InvalidEscapeSequence => "invalid escape sequence",
             ParseErrorKind::InvalidModifier => "invalid modifier",
             ParseErrorKind::ConflictingModifiers => "conflicting modifiers",
+            ParseErrorKind::InvalidLiteral => "invalid literal",
             ParseErrorKind::InternalError => "internal error",
             ParseErrorKind::NotImplemented => "not implemented",
         }

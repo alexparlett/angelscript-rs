@@ -1,20 +1,22 @@
 //! Compilation context with namespace-aware symbol resolution.
 //!
 //! This module provides [`CompilationContext`], which wraps registries and provides
-//! O(1) symbol resolution through a materialized [`Scope`] view.
+//! symbol resolution using a try-combinations approach.
 //!
-//! ## Design: Materialized Scope View
+//! ## Design: Try-Combinations Resolution
 //!
-//! Instead of O(m) iteration through namespaces on each lookup, we maintain a
-//! `Scope` that is a materialized view of all accessible symbols. This is rebuilt
-//! when namespace changes occur (enter/exit namespace, add import).
+//! Instead of maintaining a pre-computed scope that must be rebuilt on namespace
+//! changes, we resolve names by trying qualified name combinations at lookup time:
+//!
+//! 1. If already qualified (contains `::`), try direct lookup
+//! 2. Try current namespace prefix (innermost to outermost)
+//! 3. Try each import as namespace prefix
+//! 4. Try global namespace (unqualified)
 //!
 //! **Complexity:**
-//! - `resolve_type()`: O(1) - single HashMap lookup
-//! - `enter_namespace()`: O(t) - rebuilds scope where t = total accessible types
-//! - Namespace changes are infrequent, resolutions are frequent, so this is optimal.
-
-use rustc_hash::FxHashMap;
+//! - `resolve_type()`: O(d + i) where d = namespace depth, i = import count
+//! - `enter_namespace()`: O(1) - just pushes to stack
+//! - No scope rebuilding overhead, simpler code, forward references work naturally.
 
 use angelscript_core::{
     CompilationError, DataType, FunctionEntry, GlobalPropertyEntry, RegistrationError, Span,
@@ -24,40 +26,6 @@ use angelscript_registry::SymbolRegistry;
 
 use crate::scope::{LocalScope, LocalVar, VarLookup};
 use crate::template::{TemplateCallback, TemplateInstanceCache, instantiate_template_type};
-
-// ============================================================================
-// Scope
-// ============================================================================
-
-/// Materialized view of symbols accessible without qualification.
-///
-/// Rebuilt when namespace changes or imports are added.
-/// Provides O(1) lookup for unqualified names.
-#[derive(Debug, Default)]
-pub struct Scope {
-    /// Simple name -> TypeHash (e.g., "Player" -> hash of "Game::Entities::Player")
-    pub types: FxHashMap<String, TypeHash>,
-
-    /// Simple name -> function hashes (multiple for overloads)
-    pub functions: FxHashMap<String, Vec<TypeHash>>,
-
-    /// Simple name -> global property hash
-    pub globals: FxHashMap<String, TypeHash>,
-}
-
-impl Scope {
-    /// Create a new empty scope.
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Clear all entries from the scope.
-    pub fn clear(&mut self) {
-        self.types.clear();
-        self.functions.clear();
-        self.globals.clear();
-    }
-}
 
 // ============================================================================
 // NoOpCallbacks (default template validation)
@@ -86,17 +54,14 @@ impl TemplateCallback for NoOpCallbacks {
 
 /// Compilation context with layered registries and namespace-aware resolution.
 ///
-/// Provides O(1) symbol resolution through a materialized scope view that is
-/// rebuilt when namespace changes occur.
+/// Uses try-combinations approach for symbol resolution: tries qualified name
+/// combinations based on current namespace and imports at lookup time.
 pub struct CompilationContext<'a> {
     /// Global registry (FFI types, shared types)
     global_registry: &'a SymbolRegistry,
 
     /// Unit-local registry (script types being compiled)
     unit_registry: SymbolRegistry,
-
-    /// Materialized scope for O(1) resolution
-    scope: Scope,
 
     /// Namespace stack for current position (e.g., ["Game", "Entities"])
     namespace_stack: Vec<String>,
@@ -120,20 +85,16 @@ pub struct CompilationContext<'a> {
 impl<'a> CompilationContext<'a> {
     /// Create a new compilation context with a reference to the global registry.
     pub fn new(global_registry: &'a SymbolRegistry) -> Self {
-        let mut ctx = Self {
+        Self {
             global_registry,
             unit_registry: SymbolRegistry::new(),
-            scope: Scope::new(),
             namespace_stack: Vec::new(),
             imports: Vec::new(),
             errors: Vec::new(),
             template_cache: TemplateInstanceCache::new(),
             local_scope: None,
             string_type_hash: None,
-        };
-        // Build initial scope with global namespace
-        ctx.rebuild_scope();
-        ctx
+        }
     }
 
     // ========================================================================
@@ -163,20 +124,17 @@ impl<'a> CompilationContext<'a> {
     /// Enter a namespace block: `namespace Game::Entities { ... }`
     pub fn enter_namespace(&mut self, ns: &str) {
         self.namespace_stack.push(ns.to_string());
-        self.rebuild_scope();
     }
 
     /// Exit a namespace block.
     pub fn exit_namespace(&mut self) {
         self.namespace_stack.pop();
-        self.rebuild_scope();
     }
 
     /// Process: `using namespace Game::Utils;`
     pub fn add_import(&mut self, ns: &str) {
         if !self.imports.contains(&ns.to_string()) {
             self.imports.push(ns.to_string());
-            self.rebuild_scope();
         }
     }
 
@@ -185,263 +143,280 @@ impl<'a> CompilationContext<'a> {
         self.namespace_stack.join("::")
     }
 
-    // ========================================================================
-    // Scope Building (O(t) where t = total accessible types)
-    // ========================================================================
-
-    /// Rebuild the materialized scope from scratch.
-    /// Called when namespace changes or imports are added.
-    fn rebuild_scope(&mut self) {
-        self.scope.clear();
-
-        // Build order matters for shadowing:
-        // 1. Global namespace (lowest priority)
-        // 2. Imported namespaces
-        // 3. Current namespace (highest priority - shadows imports)
-
-        // 1. Add global namespace (always accessible)
-        self.add_namespace_to_scope("");
-
-        // 2. Add imported namespaces
-        for import in self.imports.clone() {
-            self.add_namespace_to_scope(&import);
-        }
-
-        // 3. Add current namespace (highest priority - shadows imports)
-        let current = self.current_namespace();
-        if !current.is_empty() {
-            self.add_namespace_to_scope(&current);
-        }
+    /// Get active imports.
+    pub fn imports(&self) -> &[String] {
+        &self.imports
     }
 
-    /// Add all symbols from a namespace to the current scope.
-    fn add_namespace_to_scope(&mut self, ns: &str) {
-        // Collect entries first to avoid borrow checker issues
-        let mut type_entries: Vec<(String, TypeHash)> = Vec::new();
-        let mut func_entries: Vec<(String, TypeHash)> = Vec::new();
-        let mut global_entries: Vec<(String, TypeHash)> = Vec::new();
-
-        // Collect types from unit registry
-        if let Some(types) = self.unit_registry.get_namespace_types(ns) {
-            for (simple, &hash) in types {
-                type_entries.push((simple.clone(), hash));
-            }
-        }
-
-        // Collect types from global registry
-        if let Some(types) = self.global_registry.get_namespace_types(ns) {
-            for (simple, &hash) in types {
-                type_entries.push((simple.clone(), hash));
-            }
-        }
-
-        // Collect functions from unit registry
-        if let Some(funcs) = self.unit_registry.get_namespace_functions(ns) {
-            for (simple, hashes) in funcs {
-                for &hash in hashes {
-                    func_entries.push((simple.clone(), hash));
-                }
-            }
-        }
-
-        // Collect functions from global registry
-        if let Some(funcs) = self.global_registry.get_namespace_functions(ns) {
-            for (simple, hashes) in funcs {
-                for &hash in hashes {
-                    func_entries.push((simple.clone(), hash));
-                }
-            }
-        }
-
-        // Collect globals from unit registry
-        if let Some(globals) = self.unit_registry.get_namespace_globals(ns) {
-            for (simple, &hash) in globals {
-                global_entries.push((simple.clone(), hash));
-            }
-        }
-
-        // Collect globals from global registry
-        if let Some(globals) = self.global_registry.get_namespace_globals(ns) {
-            for (simple, &hash) in globals {
-                global_entries.push((simple.clone(), hash));
-            }
-        }
-
-        // Now add to scope (no longer borrowing registries)
-        for (simple, hash) in type_entries {
-            self.add_type_to_scope(&simple, hash, ns);
-        }
-
-        for (simple, hash) in func_entries {
-            self.add_function_to_scope(&simple, hash);
-        }
-
-        for (simple, hash) in global_entries {
-            self.add_global_to_scope(&simple, hash, ns);
-        }
-    }
-
-    fn add_type_to_scope(&mut self, simple: &str, hash: TypeHash, ns: &str) {
-        if let Some(&existing) = self.scope.types.get(simple)
-            && existing != hash
-        {
-            let current = self.current_namespace();
-
-            // Determine if we should report an ambiguity error.
-            // Shadowing rules (in order of priority):
-            // 1. Current namespace shadows everything - NO error
-            // 2. Import shadows global namespace - NO error
-            // 3. Import conflicts with another import - ERROR (ambiguity)
-
-            let is_from_current_ns = ns == current && !current.is_empty();
-            let existing_is_from_global = self
-                .get_type(existing)
-                .map(|e| e.namespace().is_empty())
-                .unwrap_or(false);
-
-            // Only report ambiguity if:
-            // - New type is NOT from current namespace, AND
-            // - Existing type is NOT from global namespace (i.e., both are from imports)
-            if !is_from_current_ns && !existing_is_from_global {
-                let existing_name = self
-                    .get_type(existing)
-                    .map(|e| e.qualified_name().to_string())
-                    .unwrap_or_else(|| format!("{:?}", existing));
-                let new_name = self
-                    .get_type(hash)
-                    .map(|e| e.qualified_name().to_string())
-                    .unwrap_or_else(|| format!("{:?}", hash));
-
-                self.errors.push(CompilationError::AmbiguousSymbol {
-                    kind: "type".to_string(),
-                    name: simple.to_string(),
-                    candidates: format!("{}, {}", existing_name, new_name),
-                    span: Span::default(),
-                });
-            }
-        }
-        // Later additions (current namespace) shadow earlier ones (imports/global)
-        self.scope.types.insert(simple.to_string(), hash);
-    }
-
-    fn add_function_to_scope(&mut self, simple: &str, hash: TypeHash) {
-        // Check for collision with globals (only report once per name)
-        if self.scope.globals.contains_key(simple) && !self.scope.functions.contains_key(simple) {
-            let func_name = self
-                .get_function(hash)
-                .map(|e| e.def.qualified_name().to_string())
-                .unwrap_or_else(|| simple.to_string());
-
-            self.errors.push(CompilationError::DuplicateDefinition {
-                name: func_name,
-                span: Span::default(),
-            });
-        }
-
-        // Functions can have multiple overloads - collect all
-        let entry = self.scope.functions.entry(simple.to_string()).or_default();
-        if !entry.contains(&hash) {
-            entry.push(hash);
-        }
-    }
-
-    fn add_global_to_scope(&mut self, simple: &str, hash: TypeHash, ns: &str) {
-        // Check for collision with functions
-        if self.scope.functions.contains_key(simple) {
-            let global_name = self
-                .get_global_entry(hash)
-                .map(|e| e.qualified_name.clone())
-                .unwrap_or_else(|| simple.to_string());
-
-            self.errors.push(CompilationError::DuplicateDefinition {
-                name: global_name,
-                span: Span::default(),
-            });
-        }
-
-        if let Some(&existing) = self.scope.globals.get(simple)
-            && existing != hash
-        {
-            let current = self.current_namespace();
-
-            // Determine if we should report an ambiguity error.
-            // Shadowing rules (in order of priority):
-            // 1. Current namespace shadows everything - NO error
-            // 2. Import shadows global namespace - NO error
-            // 3. Import conflicts with another import - ERROR (ambiguity)
-
-            let is_from_current_ns = ns == current && !current.is_empty();
-            let existing_is_from_global = self
-                .get_global_entry(existing)
-                .map(|e| e.namespace.is_empty())
-                .unwrap_or(false);
-
-            // Only report ambiguity if:
-            // - New global is NOT from current namespace, AND
-            // - Existing global is NOT from global namespace (i.e., both are from imports)
-            if !is_from_current_ns && !existing_is_from_global {
-                let existing_name = self
-                    .get_global_entry(existing)
-                    .map(|e| e.qualified_name.clone())
-                    .unwrap_or_else(|| format!("{:?}", existing));
-                let new_name = self
-                    .get_global_entry(hash)
-                    .map(|e| e.qualified_name.clone())
-                    .unwrap_or_else(|| format!("{:?}", hash));
-
-                self.errors.push(CompilationError::AmbiguousSymbol {
-                    kind: "global variable".to_string(),
-                    name: simple.to_string(),
-                    candidates: format!("{}, {}", existing_name, new_name),
-                    span: Span::default(),
-                });
-            }
-        }
-        self.scope.globals.insert(simple.to_string(), hash);
+    /// Get current namespace as a vector of segments.
+    pub fn namespace_stack(&self) -> &[String] {
+        &self.namespace_stack
     }
 
     // ========================================================================
-    // Resolution Methods (O(1))
+    // Resolution Methods (try-combinations approach)
     // ========================================================================
 
-    /// Resolve a type name to its hash. O(1) for unqualified, O(1) for qualified.
+    /// Check if a type exists in either registry.
+    fn type_exists(&self, hash: TypeHash) -> bool {
+        self.unit_registry.get(hash).is_some() || self.global_registry.get(hash).is_some()
+    }
+
+    /// Check if a global exists in either registry.
+    fn global_exists(&self, hash: TypeHash) -> bool {
+        self.unit_registry.get_global(hash).is_some()
+            || self.global_registry.get_global(hash).is_some()
+    }
+
+    /// Resolve a type name to its hash using try-combinations.
+    ///
+    /// Resolution order:
+    /// 1. If already qualified (contains `::`), try direct lookup
+    /// 2. Try current namespace prefix (innermost to outermost) - if found, return (shadows imports)
+    /// 3. Try each import - collect all matches, error if ambiguous
+    ///
+    /// Complexity: O(d + i) where d = namespace depth, i = import count
     pub fn resolve_type(&self, name: &str) -> Option<TypeHash> {
+        self.resolve_type_checked(name).ok().flatten()
+    }
+
+    /// Resolve a type name with ambiguity checking.
+    ///
+    /// Resolution order:
+    /// 1. If already qualified (contains `::`), try direct lookup
+    /// 2. Try current namespace hierarchy (innermost to outermost, NOT global)
+    /// 3. Try imports - collect all matches, error if ambiguous
+    /// 4. Fall back to global namespace
+    ///
+    /// Returns `Err` with an ambiguity error if the name matches in multiple imports.
+    /// Returns `Ok(None)` if not found, `Ok(Some(hash))` if found unambiguously.
+    pub fn resolve_type_checked(&self, name: &str) -> Result<Option<TypeHash>, CompilationError> {
+        // 1. If already qualified, try direct lookup
         if name.contains("::") {
-            // Qualified name: bypass scope, direct registry lookup
             let hash = TypeHash::from_name(name);
-            if self.unit_registry.get(hash).is_some() || self.global_registry.get(hash).is_some() {
-                return Some(hash);
+            if self.type_exists(hash) {
+                return Ok(Some(hash));
+            }
+            return Ok(None);
+        }
+
+        // 2. Try current namespace hierarchy (innermost to outermost, NOT global)
+        // If found, shadows imports and global
+        for i in (1..=self.namespace_stack.len()).rev() {
+            let prefix = self.namespace_stack[..i].join("::");
+            let qualified = format!("{}::{}", prefix, name);
+            let hash = TypeHash::from_name(&qualified);
+            if self.type_exists(hash) {
+                return Ok(Some(hash));
+            }
+        }
+
+        // 3. Try imports - collect all matches to detect ambiguity
+        let mut found: Option<(TypeHash, String)> = None;
+        for import in &self.imports {
+            let qualified = format!("{}::{}", import, name);
+            let hash = TypeHash::from_name(&qualified);
+            if self.type_exists(hash) {
+                if let Some((existing_hash, ref existing_qualified)) = found {
+                    if existing_hash != hash {
+                        // Ambiguity: same simple name in different imports
+                        return Err(CompilationError::AmbiguousSymbol {
+                            kind: "type".to_string(),
+                            name: name.to_string(),
+                            candidates: format!("{}, {}", existing_qualified, qualified),
+                            span: Span::default(),
+                        });
+                    }
+                } else {
+                    found = Some((hash, qualified));
+                }
+            }
+        }
+
+        if let Some((hash, _)) = found {
+            return Ok(Some(hash));
+        }
+
+        // 4. Fall back to global namespace
+        let hash = TypeHash::from_name(name);
+        if self.type_exists(hash) {
+            return Ok(Some(hash));
+        }
+
+        Ok(None)
+    }
+
+    /// Resolve a function name to all matching overloads using try-combinations.
+    ///
+    /// Unlike types, functions can have overloads, so we collect all matches.
+    /// If found in current namespace, imports are not searched (shadowing).
+    ///
+    /// Complexity: O(d + i) where d = namespace depth, i = import count
+    pub fn resolve_function(&self, name: &str) -> Option<Vec<TypeHash>> {
+        // If already qualified, try direct lookup
+        if name.contains("::") {
+            if let Some(idx) = name.rfind("::") {
+                let ns = &name[..idx];
+                let simple = &name[idx + 2..];
+                let mut results = Vec::new();
+
+                // Check unit registry
+                if let Some(funcs) = self.unit_registry.get_namespace_functions(ns)
+                    && let Some(hashes) = funcs.get(simple)
+                {
+                    results.extend(hashes.iter().copied());
+                }
+
+                // Check global registry
+                if let Some(funcs) = self.global_registry.get_namespace_functions(ns)
+                    && let Some(hashes) = funcs.get(simple)
+                {
+                    for &hash in hashes {
+                        if !results.contains(&hash) {
+                            results.push(hash);
+                        }
+                    }
+                }
+
+                if results.is_empty() {
+                    return None;
+                }
+                return Some(results);
             }
             return None;
         }
 
-        // Unqualified: single scope lookup - O(1)
-        self.scope.types.get(name).copied()
-    }
+        let mut results = Vec::new();
 
-    /// Resolve a function name to all matching overloads. O(1).
-    pub fn resolve_function(&self, name: &str) -> Option<&[TypeHash]> {
-        if name.contains("::") {
-            // Qualified function lookup would need additional handling
-            return None;
-        }
-
-        self.scope.functions.get(name).map(|v| v.as_slice())
-    }
-
-    /// Resolve a global variable name to its hash. O(1).
-    pub fn resolve_global(&self, name: &str) -> Option<TypeHash> {
-        if name.contains("::") {
-            let hash = TypeHash::from_name(name);
-            if self.unit_registry.get_global(hash).is_some()
-                || self.global_registry.get_global(hash).is_some()
+        // Helper to add functions from a namespace
+        let add_from_namespace = |ns: &str, results: &mut Vec<TypeHash>| -> bool {
+            let mut found = false;
+            // Check unit registry
+            if let Some(funcs) = self.unit_registry.get_namespace_functions(ns)
+                && let Some(hashes) = funcs.get(name)
             {
-                return Some(hash);
+                for &hash in hashes {
+                    if !results.contains(&hash) {
+                        results.push(hash);
+                        found = true;
+                    }
+                }
             }
-            return None;
+            // Check global registry
+            if let Some(funcs) = self.global_registry.get_namespace_functions(ns)
+                && let Some(hashes) = funcs.get(name)
+            {
+                for &hash in hashes {
+                    if !results.contains(&hash) {
+                        results.push(hash);
+                        found = true;
+                    }
+                }
+            }
+            found
+        };
+
+        // Try current namespace hierarchy (innermost to outermost, NOT global)
+        let mut found_in_current_ns = false;
+        for i in (1..=self.namespace_stack.len()).rev() {
+            let prefix = self.namespace_stack[..i].join("::");
+            if add_from_namespace(&prefix, &mut results) {
+                found_in_current_ns = true;
+            }
         }
 
-        self.scope.globals.get(name).copied()
+        // If found in current namespace, don't check imports or global (shadowing)
+        if !found_in_current_ns {
+            // Try imports
+            let mut found_in_imports = false;
+            for import in &self.imports {
+                if add_from_namespace(import, &mut results) {
+                    found_in_imports = true;
+                }
+            }
+
+            // Fall back to global namespace
+            if !found_in_imports {
+                add_from_namespace("", &mut results);
+            }
+        }
+
+        if results.is_empty() {
+            None
+        } else {
+            Some(results)
+        }
+    }
+
+    /// Resolve a global variable name to its hash using try-combinations.
+    ///
+    /// Complexity: O(d + i) where d = namespace depth, i = import count
+    pub fn resolve_global(&self, name: &str) -> Option<TypeHash> {
+        self.resolve_global_checked(name).ok().flatten()
+    }
+
+    /// Resolve a global variable name with ambiguity checking.
+    ///
+    /// Resolution order:
+    /// 1. If already qualified (contains `::`), try direct lookup
+    /// 2. Try current namespace hierarchy (innermost to outermost, NOT global)
+    /// 3. Try imports - collect all matches, error if ambiguous
+    /// 4. Fall back to global namespace
+    ///
+    /// Returns `Err` with an ambiguity error if the name matches in multiple imports.
+    pub fn resolve_global_checked(&self, name: &str) -> Result<Option<TypeHash>, CompilationError> {
+        // 1. If already qualified, try direct lookup
+        if name.contains("::") {
+            let hash = TypeHash::from_name(name);
+            if self.global_exists(hash) {
+                return Ok(Some(hash));
+            }
+            return Ok(None);
+        }
+
+        // 2. Try current namespace hierarchy (innermost to outermost, NOT global)
+        // If found, shadows imports and global
+        for i in (1..=self.namespace_stack.len()).rev() {
+            let prefix = self.namespace_stack[..i].join("::");
+            let qualified = format!("{}::{}", prefix, name);
+            let hash = TypeHash::from_name(&qualified);
+            if self.global_exists(hash) {
+                return Ok(Some(hash));
+            }
+        }
+
+        // 3. Try imports - detect ambiguity
+        let mut found: Option<(TypeHash, String)> = None;
+        for import in &self.imports {
+            let qualified = format!("{}::{}", import, name);
+            let hash = TypeHash::from_name(&qualified);
+            if self.global_exists(hash) {
+                if let Some((existing_hash, ref existing_qualified)) = found {
+                    if existing_hash != hash {
+                        return Err(CompilationError::AmbiguousSymbol {
+                            kind: "global variable".to_string(),
+                            name: name.to_string(),
+                            candidates: format!("{}, {}", existing_qualified, qualified),
+                            span: Span::default(),
+                        });
+                    }
+                } else {
+                    found = Some((hash, qualified));
+                }
+            }
+        }
+
+        if let Some((hash, _)) = found {
+            return Ok(Some(hash));
+        }
+
+        // 4. Fall back to global namespace
+        let hash = TypeHash::from_name(name);
+        if self.global_exists(hash) {
+            return Ok(Some(hash));
+        }
+
+        Ok(None)
     }
 
     // ========================================================================
@@ -542,30 +517,45 @@ impl<'a> CompilationContext<'a> {
         methods
     }
 
+    /// Check if `derived` is derived from `base` in the class hierarchy.
+    ///
+    /// This walks the inheritance chain from `derived` upward, checking if
+    /// `base` is found anywhere in the chain. Returns `false` if:
+    /// - `derived == base` (same type is not "derived from" itself)
+    /// - `derived` is not a class type
+    /// - `base` is not in `derived`'s inheritance chain
+    pub fn is_type_derived_from(&self, derived: TypeHash, base: TypeHash) -> bool {
+        let mut current = derived;
+        while let Some(class) = self.get_type(current).and_then(|t| t.as_class()) {
+            if let Some(base_class) = class.base_class {
+                if base_class == base {
+                    return true;
+                }
+                current = base_class;
+            } else {
+                break;
+            }
+        }
+        false
+    }
+
     // ========================================================================
     // Registration (for unit registry)
     // ========================================================================
 
     /// Register a script type in the unit registry.
     pub fn register_type(&mut self, entry: TypeEntry) -> Result<(), RegistrationError> {
-        self.unit_registry.register_type(entry)?;
-        // Rebuild scope to include new type
-        self.rebuild_scope();
-        Ok(())
+        self.unit_registry.register_type(entry)
     }
 
     /// Register a script function in the unit registry.
     pub fn register_function(&mut self, entry: FunctionEntry) -> Result<(), RegistrationError> {
-        self.unit_registry.register_function(entry)?;
-        self.rebuild_scope();
-        Ok(())
+        self.unit_registry.register_function(entry)
     }
 
     /// Register a script global in the unit registry.
     pub fn register_global(&mut self, entry: GlobalPropertyEntry) -> Result<(), RegistrationError> {
-        self.unit_registry.register_global(entry)?;
-        self.rebuild_scope();
-        Ok(())
+        self.unit_registry.register_global(entry)
     }
 
     // ========================================================================
@@ -778,14 +768,6 @@ impl<'a> CompilationContext<'a> {
 mod tests {
     use super::*;
     use angelscript_core::{ClassEntry, RefModifier, TypeKind, primitives};
-
-    #[test]
-    fn scope_new_is_empty() {
-        let scope = Scope::new();
-        assert!(scope.types.is_empty());
-        assert!(scope.functions.is_empty());
-        assert!(scope.globals.is_empty());
-    }
 
     #[test]
     fn context_resolves_primitives() {
@@ -1052,7 +1034,7 @@ mod tests {
         );
         ctx.register_type(class.into()).unwrap();
 
-        // Should be resolvable
+        // With try-combinations approach, types are resolvable immediately after registration
         assert!(ctx.resolve_type("LocalClass").is_some());
 
         // Should be in unit registry, not global
@@ -1135,20 +1117,19 @@ mod tests {
 
         let mut ctx = CompilationContext::new(&registry);
 
-        // Import both namespaces - should cause ambiguity
+        // Import both namespaces
         ctx.add_import("NamespaceA");
-        assert!(!ctx.has_errors(), "First import should not cause error");
-
         ctx.add_import("NamespaceB");
+
+        // Ambiguity is detected at resolution time (try-combinations approach)
+        let result = ctx.resolve_type_checked("Player");
         assert!(
-            ctx.has_errors(),
-            "Second import with conflicting name should cause ambiguity error"
+            result.is_err(),
+            "Resolution should return ambiguity error when same name in multiple imports"
         );
 
         // Verify it's the right error type
-        let errors = ctx.errors();
-        assert_eq!(errors.len(), 1);
-        match &errors[0] {
+        match result.unwrap_err() {
             CompilationError::AmbiguousSymbol {
                 kind,
                 name,
@@ -1163,9 +1144,8 @@ mod tests {
             other => panic!("Expected AmbiguousSymbol error, got: {:?}", other),
         }
 
-        // Resolution should still work (returns the last one added due to shadowing)
-        // but the error is recorded
-        assert!(ctx.resolve_type("Player").is_some());
+        // resolve_type (non-checked) returns None on ambiguity
+        assert!(ctx.resolve_type("Player").is_none());
     }
 
     #[test]
@@ -1266,20 +1246,19 @@ mod tests {
 
         let mut ctx = CompilationContext::new(&registry);
 
-        // Import both namespaces - should cause ambiguity
+        // Import both namespaces
         ctx.add_import("ConfigA");
-        assert!(!ctx.has_errors(), "First import should not cause error");
-
         ctx.add_import("ConfigB");
+
+        // Ambiguity is detected at resolution time (try-combinations approach)
+        let result = ctx.resolve_global_checked("MAX_VALUE");
         assert!(
-            ctx.has_errors(),
-            "Second import with conflicting global should cause ambiguity error"
+            result.is_err(),
+            "Resolution should return ambiguity error when same name in multiple imports"
         );
 
         // Verify it's the right error type
-        let errors = ctx.errors();
-        assert_eq!(errors.len(), 1);
-        match &errors[0] {
+        match result.unwrap_err() {
             CompilationError::AmbiguousSymbol {
                 kind,
                 name,
@@ -1293,6 +1272,9 @@ mod tests {
             }
             other => panic!("Expected AmbiguousSymbol error, got: {:?}", other),
         }
+
+        // resolve_global (non-checked) returns None on ambiguity
+        assert!(ctx.resolve_global("MAX_VALUE").is_none());
     }
 
     #[test]
@@ -1382,10 +1364,13 @@ mod tests {
         ctx.add_import("A");
         ctx.add_import("B");
 
+        // Ambiguity is detected at resolution time
+        let result = ctx.resolve_type_checked("Conflict");
+        assert!(result.is_err());
+
         // Error should have a span (even if default for now)
-        let errors = ctx.errors();
-        assert_eq!(errors.len(), 1);
-        let span = errors[0].span();
+        let err = result.unwrap_err();
+        let span = err.span();
         // Currently uses Span::default() - but we verify it's accessible
         assert_eq!(span, Span::default());
     }
@@ -1422,30 +1407,16 @@ mod tests {
 
     #[test]
     fn context_take_errors_clears_errors() {
-        let mut registry = SymbolRegistry::new();
-
-        let ns_a = ClassEntry::new(
-            "Dup",
-            vec!["X".to_string()],
-            "X::Dup",
-            TypeHash::from_name("X::Dup"),
-            TypeKind::reference(),
-            angelscript_core::entries::TypeSource::ffi_untyped(),
-        );
-        let ns_b = ClassEntry::new(
-            "Dup",
-            vec!["Y".to_string()],
-            "Y::Dup",
-            TypeHash::from_name("Y::Dup"),
-            TypeKind::reference(),
-            angelscript_core::entries::TypeSource::ffi_untyped(),
-        );
-        registry.register_type(ns_a.into()).unwrap();
-        registry.register_type(ns_b.into()).unwrap();
-
+        let registry = SymbolRegistry::new();
         let mut ctx = CompilationContext::new(&registry);
-        ctx.add_import("X");
-        ctx.add_import("Y");
+
+        // Add an error directly
+        ctx.add_error(CompilationError::AmbiguousSymbol {
+            kind: "type".to_string(),
+            name: "Dup".to_string(),
+            candidates: "X::Dup, Y::Dup".to_string(),
+            span: Span::default(),
+        });
 
         assert!(ctx.has_errors());
 

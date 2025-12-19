@@ -102,14 +102,14 @@ fn try_hierarchy_cast(
     let ctx = compiler.ctx();
 
     // Check if source is derived from target (upcast) - always valid
-    if is_derived_from(source_hash, target_hash, ctx) {
+    if ctx.is_type_derived_from(source_hash, target_hash) {
         // Upcast: just reinterpret the handle, no runtime check needed
         compiler.emitter().emit_cast(target_hash);
         return Some(());
     }
 
     // Check if target is derived from source (downcast) - requires runtime check
-    if is_derived_from(target_hash, source_hash, ctx) {
+    if ctx.is_type_derived_from(target_hash, source_hash) {
         // Downcast: emit Cast opcode which does runtime type check
         compiler.emitter().emit_cast(target_hash);
         return Some(());
@@ -125,26 +125,6 @@ fn try_hierarchy_cast(
     }
 
     None
-}
-
-/// Check if source is derived from target (walks inheritance chain).
-fn is_derived_from(
-    source: TypeHash,
-    target: TypeHash,
-    ctx: &crate::context::CompilationContext<'_>,
-) -> bool {
-    let mut current = source;
-    while let Some(class) = ctx.get_type(current).and_then(|t| t.as_class()) {
-        if let Some(base) = class.base_class {
-            if base == target {
-                return true;
-            }
-            current = base;
-        } else {
-            break;
-        }
-    }
-    false
 }
 
 #[cfg(test)]

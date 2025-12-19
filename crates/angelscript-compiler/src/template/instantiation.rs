@@ -5,13 +5,51 @@
 
 use angelscript_core::{
     ClassEntry, CompilationError, DataType, FuncdefEntry, FunctionDef, FunctionEntry, FunctionImpl,
-    RegistrationError, Span, TemplateInstanceInfo, TypeHash,
+    PropertyEntry, RegistrationError, Span, TemplateInstanceInfo, TypeBehaviors, TypeHash,
+    TypeKind, entries::TypeSource,
 };
 use angelscript_registry::SymbolRegistry;
 
 use super::cache::TemplateInstanceCache;
 use super::substitution::{build_substitution_map, substitute_params, substitute_type};
 use super::validation::TemplateCallback;
+
+/// Snapshot of template data needed for instantiation.
+///
+/// This struct consolidates all template data into a single clone operation,
+/// avoiding the need for multiple individual clones to work around borrow checker
+/// limitations when needing both immutable access to the template and mutable
+/// access to the registry.
+struct TemplateSnapshot {
+    name: String,
+    params: Vec<TypeHash>,
+    source: TypeSource,
+    type_kind: TypeKind,
+    base_class: Option<TypeHash>,
+    methods: Vec<(String, TypeHash)>,
+    properties: Vec<PropertyEntry>,
+    behaviors: TypeBehaviors,
+}
+
+impl TemplateSnapshot {
+    /// Create a snapshot from a class entry.
+    fn from_class(class: &ClassEntry) -> Self {
+        Self {
+            name: class.name.clone(),
+            params: class.template_params.clone(),
+            source: class.source.clone(),
+            type_kind: class.type_kind.clone(),
+            base_class: class.base_class,
+            methods: class
+                .methods
+                .iter()
+                .flat_map(|(name, hashes)| hashes.iter().map(move |&h| (name.clone(), h)))
+                .collect(),
+            properties: class.properties.clone(),
+            behaviors: class.behaviors.clone(),
+        }
+    }
+}
 
 /// Instantiate a template type with concrete type arguments.
 ///
@@ -49,45 +87,34 @@ pub fn instantiate_template_type<T: TemplateCallback>(
         return Ok(instance_hash);
     }
 
-    // 4. Get template definition
-    let template = registry
-        .get(template_hash)
-        .or_else(|| global_registry.get(template_hash))
-        .and_then(|t| t.as_class())
-        .ok_or_else(|| CompilationError::UnknownType {
-            name: format!("{:?}", template_hash),
-            span,
-        })?;
+    // 4. Get template definition and create snapshot
+    let snapshot = {
+        let template = registry
+            .get(template_hash)
+            .or_else(|| global_registry.get(template_hash))
+            .and_then(|t| t.as_class())
+            .ok_or_else(|| CompilationError::UnknownType {
+                name: format!("{:?}", template_hash),
+                span,
+            })?;
 
-    if !template.is_template() {
-        return Err(CompilationError::NotATemplate {
-            name: template.name.clone(),
-            span,
-        });
-    }
+        if !template.is_template() {
+            return Err(CompilationError::NotATemplate {
+                name: template.name.clone(),
+                span,
+            });
+        }
 
-    // Clone data we need before mutable borrow
-    let template_name = template.name.clone();
-    let template_params = template.template_params.clone();
-    let template_source = template.source.clone();
-    let template_type_kind = template.type_kind.clone();
-    let template_base = template.base_class;
-    // Collect method hashes with their names for later registration
-    let template_methods: Vec<(String, TypeHash)> = template
-        .methods
-        .iter()
-        .flat_map(|(name, hashes)| hashes.iter().map(move |&h| (name.clone(), h)))
-        .collect();
-    let template_properties = template.properties.clone();
-    let template_behaviors = template.behaviors.clone();
+        TemplateSnapshot::from_class(template)
+    };
 
     // 5. Validate via callback (if registered)
     if callbacks.has_template_callback(template_hash) {
-        let info = TemplateInstanceInfo::new(template_name.clone(), type_args.to_vec());
+        let info = TemplateInstanceInfo::new(snapshot.name.clone(), type_args.to_vec());
         let validation = callbacks.validate_template_instance(template_hash, &info);
         if !validation.is_valid {
             return Err(CompilationError::TemplateValidationFailed {
-                template: template_name.clone(),
+                template: snapshot.name.clone(),
                 message: validation
                     .error
                     .unwrap_or_else(|| "validation failed".to_string()),
@@ -97,34 +124,34 @@ pub fn instantiate_template_type<T: TemplateCallback>(
     }
 
     // 6. Build substitution map
-    let subst_map = build_substitution_map(&template_params, type_args, span)?;
+    let subst_map = build_substitution_map(&snapshot.params, type_args, span)?;
 
     // 7. Create instance entry
     let instance_name =
-        format_template_instance_name(&template_name, type_args, registry, global_registry);
+        format_template_instance_name(&snapshot.name, type_args, registry, global_registry);
 
     let mut instance = ClassEntry::new(
         &instance_name,
         vec![], // namespace inherited from template
         &instance_name,
         instance_hash,
-        template_type_kind,
-        template_source,
+        snapshot.type_kind,
+        snapshot.source,
     )
     .with_template_instance(template_hash, type_args.to_vec());
 
     // 8. Substitute base class
-    if let Some(base) = template_base {
+    if let Some(base) = snapshot.base_class {
         let base_type = DataType::simple(base);
         let substituted_base = substitute_type(base_type, &subst_map);
         instance.base_class = Some(substituted_base.type_hash);
     }
 
     // 9. Copy behaviors (method hashes will be updated when methods are instantiated)
-    instance.behaviors = template_behaviors;
+    instance.behaviors = snapshot.behaviors;
 
     // 10. Copy properties with substituted types
-    for prop in &template_properties {
+    for prop in &snapshot.properties {
         let mut inst_prop = prop.clone();
         inst_prop.data_type = substitute_type(prop.data_type, &subst_map);
         instance.properties.push(inst_prop);
@@ -147,7 +174,7 @@ pub fn instantiate_template_type<T: TemplateCallback>(
     cache.cache_type_instance(template_hash, arg_hashes.clone(), instance_hash);
 
     // 13. Instantiate methods
-    for (method_name, method_hash) in &template_methods {
+    for (method_name, method_hash) in &snapshot.methods {
         let method = registry
             .get_function(*method_hash)
             .or_else(|| global_registry.get_function(*method_hash));

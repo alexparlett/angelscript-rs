@@ -10,6 +10,39 @@ use crate::attrs::{
     ReturnModeAttr,
 };
 
+/// Check if a type string represents a primitive type that is passed by value.
+/// Primitive types are copied rather than borrowed, so they don't cause borrow conflicts.
+fn is_primitive_type(type_str: &str) -> bool {
+    matches!(
+        type_str,
+        "i8" | "i16"
+            | "i32"
+            | "i64"
+            | "u8"
+            | "u16"
+            | "u32"
+            | "u64"
+            | "isize"
+            | "usize"
+            | "f32"
+            | "f64"
+            | "bool"
+    )
+}
+
+/// Check if a type string is a primitive integer type.
+fn is_primitive_integer(type_str: &str) -> bool {
+    matches!(
+        type_str,
+        "i8" | "i16" | "i32" | "i64" | "u8" | "u16" | "u32" | "u64" | "isize" | "usize"
+    )
+}
+
+/// Check if a type string is a primitive float type.
+fn is_primitive_float(type_str: &str) -> bool {
+    matches!(type_str, "f32" | "f64")
+}
+
 pub fn function_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
     let attrs = match syn::parse::<FunctionAttrsParser>(attr) {
         Ok(parser) => parser.0,
@@ -709,21 +742,7 @@ fn generate_native_fn(
             // Check if inner type is a primitive (primitives are copied, not borrowed)
             let inner = &type_ref.elem;
             let inner_str = quote!(#inner).to_string();
-            !matches!(
-                inner_str.as_str(),
-                "i8" | "i16"
-                    | "i32"
-                    | "i64"
-                    | "u8"
-                    | "u16"
-                    | "u32"
-                    | "u64"
-                    | "isize"
-                    | "usize"
-                    | "f32"
-                    | "f64"
-                    | "bool"
-            )
+            !is_primitive_type(&inner_str)
         } else {
             false
         }
@@ -757,21 +776,7 @@ fn generate_native_fn(
         if let Type::Reference(type_ref) = ty {
             let inner = &type_ref.elem;
             let inner_str = quote!(#inner).to_string();
-            !matches!(
-                inner_str.as_str(),
-                "i8" | "i16"
-                    | "i32"
-                    | "i64"
-                    | "u8"
-                    | "u16"
-                    | "u32"
-                    | "u64"
-                    | "isize"
-                    | "usize"
-                    | "f32"
-                    | "f64"
-                    | "bool"
-            )
+            !is_primitive_type(&inner_str)
         } else {
             false
         }
@@ -912,149 +917,142 @@ fn generate_param_extraction(name: &syn::Ident, ty: &Type, index: usize) -> Toke
 
     // Check if it's a primitive type
     let type_str = quote!(#base_ty).to_string();
-    match type_str.as_str() {
-        "i8" | "i16" | "i32" | "i64" | "u8" | "u16" | "u32" | "u64" | "isize" | "usize" => {
+    if is_primitive_integer(&type_str) {
+        quote! {
+            let #name: #ty = {
+                let __slot = __ctx.arg_slot(#index)?;
+                match __slot {
+                    ::angelscript_core::Dynamic::Int(v) => *v as #base_ty,
+                    _ => return Err(::angelscript_core::NativeError::Conversion(
+                        ::angelscript_core::ConversionError::TypeMismatch {
+                            expected: "int",
+                            actual: __slot.type_name(),
+                        }
+                    )),
+                }
+            };
+        }
+    } else if is_primitive_float(&type_str) {
+        quote! {
+            let #name: #ty = {
+                let __slot = __ctx.arg_slot(#index)?;
+                match __slot {
+                    ::angelscript_core::Dynamic::Float(v) => *v as #base_ty,
+                    _ => return Err(::angelscript_core::NativeError::Conversion(
+                        ::angelscript_core::ConversionError::TypeMismatch {
+                            expected: "float",
+                            actual: __slot.type_name(),
+                        }
+                    )),
+                }
+            };
+        }
+    } else if type_str == "bool" {
+        quote! {
+            let #name: #ty = {
+                let __slot = __ctx.arg_slot(#index)?;
+                match __slot {
+                    ::angelscript_core::Dynamic::Bool(v) => *v,
+                    _ => return Err(::angelscript_core::NativeError::Conversion(
+                        ::angelscript_core::ConversionError::TypeMismatch {
+                            expected: "bool",
+                            actual: __slot.type_name(),
+                        }
+                    )),
+                }
+            };
+        }
+    } else if type_str == "String" {
+        quote! {
+            let #name: String = {
+                let __slot = __ctx.arg_slot(#index)?;
+                match __slot {
+                    ::angelscript_core::Dynamic::String(s) => s.clone(),
+                    _ => return Err(::angelscript_core::NativeError::Conversion(
+                        ::angelscript_core::ConversionError::TypeMismatch {
+                            expected: "string",
+                            actual: __slot.type_name(),
+                        }
+                    )),
+                }
+            };
+        }
+    } else if type_str == "Dynamic" {
+        // Dynamic is already the runtime type - clone it directly from the slot
+        quote! {
+            let #name: ::angelscript_core::Dynamic = __ctx.arg_slot(#index)?.clone_if_possible()
+                .ok_or_else(|| ::angelscript_core::NativeError::other(
+                    concat!("cannot clone Dynamic argument ", stringify!(#name))
+                ))?;
+        }
+    } else {
+        // Non-primitive type - try to extract from Native or Object
+        if is_ref && is_mut {
+            // &mut T - mutable borrow from slot
+            quote! {
+                let #name: &mut #base_ty = {
+                    let __slot = __ctx.arg_slot_mut(#index)?;
+                    match __slot {
+                        ::angelscript_core::Dynamic::Native(boxed) => {
+                            boxed.downcast_mut::<#base_ty>().ok_or_else(|| {
+                                ::angelscript_core::NativeError::other(
+                                    concat!("failed to downcast argument ", stringify!(#name))
+                                )
+                            })?
+                        }
+                        _ => return Err(::angelscript_core::NativeError::Conversion(
+                            ::angelscript_core::ConversionError::TypeMismatch {
+                                expected: "native",
+                                actual: __slot.type_name(),
+                            }
+                        )),
+                    }
+                };
+            }
+        } else if is_ref {
+            // &T - immutable borrow from slot
+            quote! {
+                let #name: &#base_ty = {
+                    let __slot = __ctx.arg_slot(#index)?;
+                    match __slot {
+                        ::angelscript_core::Dynamic::Native(boxed) => {
+                            boxed.downcast_ref::<#base_ty>().ok_or_else(|| {
+                                ::angelscript_core::NativeError::other(
+                                    concat!("failed to downcast argument ", stringify!(#name))
+                                )
+                            })?
+                        }
+                        _ => return Err(::angelscript_core::NativeError::Conversion(
+                            ::angelscript_core::ConversionError::TypeMismatch {
+                                expected: "native",
+                                actual: __slot.type_name(),
+                            }
+                        )),
+                    }
+                };
+            }
+        } else {
+            // Owned value type - try to downcast and clone from Native
+            // This requires the type to implement Clone
             quote! {
                 let #name: #ty = {
                     let __slot = __ctx.arg_slot(#index)?;
                     match __slot {
-                        ::angelscript_core::Dynamic::Int(v) => *v as #base_ty,
-                        _ => return Err(::angelscript_core::NativeError::Conversion(
-                            ::angelscript_core::ConversionError::TypeMismatch {
-                                expected: "int",
-                                actual: __slot.type_name(),
-                            }
-                        )),
-                    }
-                };
-            }
-        }
-        "f32" | "f64" => {
-            quote! {
-                let #name: #ty = {
-                    let __slot = __ctx.arg_slot(#index)?;
-                    match __slot {
-                        ::angelscript_core::Dynamic::Float(v) => *v as #base_ty,
-                        _ => return Err(::angelscript_core::NativeError::Conversion(
-                            ::angelscript_core::ConversionError::TypeMismatch {
-                                expected: "float",
-                                actual: __slot.type_name(),
-                            }
-                        )),
-                    }
-                };
-            }
-        }
-        "bool" => {
-            quote! {
-                let #name: #ty = {
-                    let __slot = __ctx.arg_slot(#index)?;
-                    match __slot {
-                        ::angelscript_core::Dynamic::Bool(v) => *v,
-                        _ => return Err(::angelscript_core::NativeError::Conversion(
-                            ::angelscript_core::ConversionError::TypeMismatch {
-                                expected: "bool",
-                                actual: __slot.type_name(),
-                            }
-                        )),
-                    }
-                };
-            }
-        }
-        "String" => {
-            quote! {
-                let #name: String = {
-                    let __slot = __ctx.arg_slot(#index)?;
-                    match __slot {
-                        ::angelscript_core::Dynamic::String(s) => s.clone(),
-                        _ => return Err(::angelscript_core::NativeError::Conversion(
-                            ::angelscript_core::ConversionError::TypeMismatch {
-                                expected: "string",
-                                actual: __slot.type_name(),
-                            }
-                        )),
-                    }
-                };
-            }
-        }
-        "Dynamic" => {
-            // Dynamic is already the runtime type - clone it directly from the slot
-            quote! {
-                let #name: ::angelscript_core::Dynamic = __ctx.arg_slot(#index)?.clone_if_possible()
-                    .ok_or_else(|| ::angelscript_core::NativeError::other(
-                        concat!("cannot clone Dynamic argument ", stringify!(#name))
-                    ))?;
-            }
-        }
-        _ => {
-            // Non-primitive type - try to extract from Native or Object
-            if is_ref && is_mut {
-                // &mut T - mutable borrow from slot
-                quote! {
-                    let #name: &mut #base_ty = {
-                        let __slot = __ctx.arg_slot_mut(#index)?;
-                        match __slot {
-                            ::angelscript_core::Dynamic::Native(boxed) => {
-                                boxed.downcast_mut::<#base_ty>().ok_or_else(|| {
-                                    ::angelscript_core::NativeError::other(
-                                        concat!("failed to downcast argument ", stringify!(#name))
-                                    )
-                                })?
-                            }
-                            _ => return Err(::angelscript_core::NativeError::Conversion(
-                                ::angelscript_core::ConversionError::TypeMismatch {
-                                    expected: "native",
-                                    actual: __slot.type_name(),
-                                }
-                            )),
+                        ::angelscript_core::Dynamic::Native(boxed) => {
+                            boxed.downcast_ref::<#base_ty>().ok_or_else(|| {
+                                ::angelscript_core::NativeError::other(
+                                    concat!("failed to downcast argument ", stringify!(#name))
+                                )
+                            })?.clone()
                         }
-                    };
-                }
-            } else if is_ref {
-                // &T - immutable borrow from slot
-                quote! {
-                    let #name: &#base_ty = {
-                        let __slot = __ctx.arg_slot(#index)?;
-                        match __slot {
-                            ::angelscript_core::Dynamic::Native(boxed) => {
-                                boxed.downcast_ref::<#base_ty>().ok_or_else(|| {
-                                    ::angelscript_core::NativeError::other(
-                                        concat!("failed to downcast argument ", stringify!(#name))
-                                    )
-                                })?
+                        _ => return Err(::angelscript_core::NativeError::Conversion(
+                            ::angelscript_core::ConversionError::TypeMismatch {
+                                expected: "native",
+                                actual: __slot.type_name(),
                             }
-                            _ => return Err(::angelscript_core::NativeError::Conversion(
-                                ::angelscript_core::ConversionError::TypeMismatch {
-                                    expected: "native",
-                                    actual: __slot.type_name(),
-                                }
-                            )),
-                        }
-                    };
-                }
-            } else {
-                // Owned value type - try to downcast and clone from Native
-                // This requires the type to implement Clone
-                quote! {
-                    let #name: #ty = {
-                        let __slot = __ctx.arg_slot(#index)?;
-                        match __slot {
-                            ::angelscript_core::Dynamic::Native(boxed) => {
-                                boxed.downcast_ref::<#base_ty>().ok_or_else(|| {
-                                    ::angelscript_core::NativeError::other(
-                                        concat!("failed to downcast argument ", stringify!(#name))
-                                    )
-                                })?.clone()
-                            }
-                            _ => return Err(::angelscript_core::NativeError::Conversion(
-                                ::angelscript_core::ConversionError::TypeMismatch {
-                                    expected: "native",
-                                    actual: __slot.type_name(),
-                                }
-                            )),
-                        }
-                    };
-                }
+                        )),
+                    }
+                };
             }
         }
     }
@@ -1074,33 +1072,34 @@ fn generate_return_handling_code(fn_output: &ReturnType) -> Option<TokenStream2>
         ReturnType::Type(_, ty) => {
             // Check the return type
             let type_str = quote!(#ty).to_string();
-            match type_str.as_str() {
-                "i8" | "i16" | "i32" | "i64" | "u8" | "u16" | "u32" | "u64" | "isize" | "usize" => {
-                    Some(quote! {
-                        __ctx.set_return_slot(::angelscript_core::Dynamic::Int(__result as i64));
-                    })
-                }
-                "f32" | "f64" => Some(quote! {
+            if is_primitive_integer(&type_str) {
+                Some(quote! {
+                    __ctx.set_return_slot(::angelscript_core::Dynamic::Int(__result as i64));
+                })
+            } else if is_primitive_float(&type_str) {
+                Some(quote! {
                     __ctx.set_return_slot(::angelscript_core::Dynamic::Float(__result as f64));
-                }),
-                "bool" => Some(quote! {
+                })
+            } else if type_str == "bool" {
+                Some(quote! {
                     __ctx.set_return_slot(::angelscript_core::Dynamic::Bool(__result));
-                }),
-                "()" => Some(quote! {
+                })
+            } else if type_str == "()" {
+                Some(quote! {
                     let _ = __result;
                     __ctx.set_return_slot(::angelscript_core::Dynamic::Void);
-                }),
-                "String" => Some(quote! {
+                })
+            } else if type_str == "String" {
+                Some(quote! {
                     __ctx.set_return_slot(::angelscript_core::Dynamic::String(__result));
-                }),
-                _ => {
-                    // Non-primitive type - wrap in Dynamic::Native
-                    Some(quote! {
-                        __ctx.set_return_slot(::angelscript_core::Dynamic::Native(
-                            Box::new(__result)
-                        ));
-                    })
-                }
+                })
+            } else {
+                // Non-primitive type - wrap in Dynamic::Native
+                Some(quote! {
+                    __ctx.set_return_slot(::angelscript_core::Dynamic::Native(
+                        Box::new(__result)
+                    ));
+                })
             }
         }
     }

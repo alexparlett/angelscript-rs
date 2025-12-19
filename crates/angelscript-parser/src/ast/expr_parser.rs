@@ -133,7 +133,13 @@ impl<'ast> Parser<'ast> {
             // Literals
             TokenKind::IntLiteral => {
                 self.advance();
-                let value = token.lexeme.parse::<i64>().unwrap_or(0);
+                let value = token.lexeme.parse::<i64>().map_err(|_| {
+                    ParseError::new(
+                        ParseErrorKind::InvalidLiteral,
+                        token.span,
+                        format!("invalid integer literal: {}", token.lexeme),
+                    )
+                })?;
                 Ok(self.arena.alloc(Expr::Literal(LiteralExpr {
                     kind: LiteralKind::Int(value),
                     span: token.span,
@@ -145,20 +151,27 @@ impl<'ast> Parser<'ast> {
                 // Parse different bases: 0xFF (hex), 0b1010 (binary), 0o77 (octal), 0d99 (decimal)
                 let value = if token.lexeme.starts_with("0x") || token.lexeme.starts_with("0X") {
                     // Hexadecimal
-                    i64::from_str_radix(&token.lexeme[2..], 16).unwrap_or(0)
+                    i64::from_str_radix(&token.lexeme[2..], 16)
                 } else if token.lexeme.starts_with("0b") || token.lexeme.starts_with("0B") {
                     // Binary
-                    i64::from_str_radix(&token.lexeme[2..], 2).unwrap_or(0)
+                    i64::from_str_radix(&token.lexeme[2..], 2)
                 } else if token.lexeme.starts_with("0o") || token.lexeme.starts_with("0O") {
                     // Octal
-                    i64::from_str_radix(&token.lexeme[2..], 8).unwrap_or(0)
+                    i64::from_str_radix(&token.lexeme[2..], 8)
                 } else if token.lexeme.starts_with("0d") || token.lexeme.starts_with("0D") {
                     // Decimal (explicit)
-                    token.lexeme[2..].parse::<i64>().unwrap_or(0)
+                    token.lexeme[2..].parse::<i64>()
                 } else {
                     // Fallback: try to parse as regular integer
-                    token.lexeme.parse::<i64>().unwrap_or(0)
-                };
+                    token.lexeme.parse::<i64>()
+                }
+                .map_err(|_| {
+                    ParseError::new(
+                        ParseErrorKind::InvalidLiteral,
+                        token.span,
+                        format!("invalid bits literal: {}", token.lexeme),
+                    )
+                })?;
                 Ok(self.arena.alloc(Expr::Literal(LiteralExpr {
                     kind: LiteralKind::Int(value),
                     span: token.span,
@@ -172,7 +185,13 @@ impl<'ast> Parser<'ast> {
                     .trim_end_matches('f')
                     .trim_end_matches('F')
                     .parse::<f32>()
-                    .unwrap_or(0.0);
+                    .map_err(|_| {
+                        ParseError::new(
+                            ParseErrorKind::InvalidLiteral,
+                            token.span,
+                            format!("invalid float literal: {}", token.lexeme),
+                        )
+                    })?;
                 Ok(self.arena.alloc(Expr::Literal(LiteralExpr {
                     kind: LiteralKind::Float(value),
                     span: token.span,
@@ -181,7 +200,13 @@ impl<'ast> Parser<'ast> {
 
             TokenKind::DoubleLiteral => {
                 self.advance();
-                let value = token.lexeme.parse::<f64>().unwrap_or(0.0);
+                let value = token.lexeme.parse::<f64>().map_err(|_| {
+                    ParseError::new(
+                        ParseErrorKind::InvalidLiteral,
+                        token.span,
+                        format!("invalid double literal: {}", token.lexeme),
+                    )
+                })?;
                 Ok(self.arena.alloc(Expr::Literal(LiteralExpr {
                     kind: LiteralKind::Double(value),
                     span: token.span,
@@ -779,46 +804,6 @@ impl<'ast> Parser<'ast> {
 
         self.position = saved_pos;
         result
-    }
-
-    /// Simple template arg skipping for lookahead (doesn't report errors)
-    fn try_skip_template_args_simple(&mut self) -> bool {
-        if !self.check(TokenKind::Less) {
-            return false;
-        }
-        self.advance();
-
-        let mut depth = 1;
-        let mut iterations = 0;
-        const MAX_ITERATIONS: usize = 1000; // Prevent infinite loops
-
-        while depth > 0 && !self.is_eof() && iterations < MAX_ITERATIONS {
-            iterations += 1;
-
-            match self.peek().kind {
-                TokenKind::Less => {
-                    depth += 1;
-                    self.advance();
-                }
-                TokenKind::Greater => {
-                    depth -= 1;
-                    self.advance();
-                }
-                TokenKind::GreaterGreater => {
-                    depth -= 2;
-                    self.advance();
-                }
-                TokenKind::LeftParen | TokenKind::LeftBrace | TokenKind::Semicolon => {
-                    // These tokens indicate we're not in template args
-                    return false;
-                }
-                _ => {
-                    self.advance();
-                }
-            }
-        }
-
-        depth == 0
     }
 
     /// Parse function arguments: (arg1, arg2, ...)

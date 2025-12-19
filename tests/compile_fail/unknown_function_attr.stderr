@@ -1,4 +1,4 @@
-error: unknown function attribute: unknown_function_attr
+error: unknown function attribute 'unknown_function_attr'. Valid flag attributes are: instance, constructor, factory, destructor, addref, release, list_construct, list_factory, template_callback, gc_getrefcount, gc_setflag, gc_getflag, gc_enumrefs, gc_releaserefs, get_weakref_flag, const, property, generic, template, copy, keep
  --> tests/compile_fail/unknown_function_attr.rs:5:12
   |
 5 | #[function(unknown_function_attr)]

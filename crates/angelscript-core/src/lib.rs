@@ -40,6 +40,43 @@
 //! - [`RegistrationError`]: Type/function registration errors
 //! - [`CompilationError`]: Semantic analysis and compilation errors
 //! - [`RuntimeError`]: Execution/runtime errors
+//!
+//! # FFI Contract for VM Implementers
+//!
+//! When implementing a VM that executes AngelScript bytecode, these types define
+//! the contract between the compiler and runtime:
+//!
+//! ## Type Identity
+//!
+//! - [`TypeHash`] is the unique identifier for all types. It is computed deterministically
+//!   from the fully-qualified type name, enabling cross-compilation consistency.
+//! - FFI types must be registered with the same hash the compiler expects. Use the
+//!   `#[angelscript::any]` macro to ensure consistent hash computation.
+//!
+//! ## Function Dispatch
+//!
+//! - [`FunctionEntry`] contains both the signature (`FunctionDef`) and implementation.
+//! - For FFI functions, `implementation` is `FunctionImpl::Native(NativeFn)`.
+//! - For script functions, `implementation` is `FunctionImpl::Script { bytecode }`.
+//! - Methods are stored in `ClassEntry::methods` as a map from name to `Vec<TypeHash>`
+//!   (supporting overloads).
+//!
+//! ## Behaviors
+//!
+//! Classes may have special behaviors registered in [`TypeBehaviors`]:
+//! - **Constructors/Destructors**: Lifecycle management
+//! - **Operators**: `opAdd`, `opSub`, `opIndex`, etc.
+//! - **Conversions**: `opConv`, `opImplConv`, `opCast`, `opImplCast`
+//!
+//! The VM should call these behaviors at appropriate points (object construction,
+//! operator expressions, implicit/explicit casts).
+//!
+//! ## Reference Counting
+//!
+//! For reference types (`TypeKind::Reference`), the VM must:
+//! 1. Call `AddRef` when creating a new reference to an object
+//! 2. Call `Release` when a reference goes out of scope
+//! 3. Handle when `Release` returns refcount 0 (trigger destructor)
 
 mod behaviors;
 mod data_type;

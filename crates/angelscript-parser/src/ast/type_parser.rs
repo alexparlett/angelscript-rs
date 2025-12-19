@@ -45,22 +45,11 @@ impl<'ast> Parser<'ast> {
         // Type suffixes (arrays and handles)
         let suffixes = self.parse_type_suffixes()?;
 
-        let end_span = if !suffixes.is_empty() {
-            self.buffer
-                .get(self.position.saturating_sub(1))
-                .map(|t| t.span)
-                .unwrap_or(start_span)
-        } else if !template_args.is_empty() {
-            self.buffer
-                .get(self.position.saturating_sub(1))
-                .map(|t| t.span)
-                .unwrap_or(start_span)
-        } else {
-            self.buffer
-                .get(self.position.saturating_sub(1))
-                .map(|t| t.span)
-                .unwrap_or(start_span)
-        };
+        let end_span = self
+            .buffer
+            .get(self.position.saturating_sub(1))
+            .map(|t| t.span)
+            .unwrap_or(start_span);
 
         let span = start_span.merge(end_span);
 

@@ -13,6 +13,21 @@
 //!   (`Fn(&TemplateInstanceInfo) -> TemplateValidation`) different from normal native
 //!   functions that use `CallContext`.
 //!
+//! # Thread Safety
+//!
+//! `SymbolRegistry` is **not thread-safe** by design. In the typical usage pattern:
+//!
+//! - **Registration phase**: The registry is populated single-threaded during
+//!   context setup and script compilation. FFI types are registered first,
+//!   then script types are added during compilation passes.
+//!
+//! - **Execution phase**: After compilation, the registry becomes effectively
+//!   read-only. If multi-threaded execution is needed, the caller must wrap
+//!   the registry in appropriate synchronization (e.g., `Arc<RwLock<_>>`).
+//!
+//! This design follows the pattern of most scripting engines where type
+//! registration and script execution are distinct phases.
+//!
 //! # Example
 //!
 //! ```
@@ -125,6 +140,13 @@ impl SymbolRegistry {
         self.get_mut(hash)?.as_class_mut()
     }
 
+    /// Get a mutable reference to an interface entry by hash.
+    ///
+    /// Returns `None` if the type doesn't exist or is not an interface.
+    pub fn get_interface_mut(&mut self, hash: TypeHash) -> Option<&mut InterfaceEntry> {
+        self.get_mut(hash)?.as_interface_mut()
+    }
+
     // ==========================================================================
     // Function Lookup
     // ==========================================================================
@@ -158,13 +180,18 @@ impl SymbolRegistry {
     /// Returns an error if a type with the same hash already exists.
     pub fn register_type(&mut self, entry: TypeEntry) -> Result<(), RegistrationError> {
         let hash = entry.type_hash();
+
+        // Check for duplicates BEFORE allocating strings
+        if self.types.contains_key(&hash) {
+            return Err(RegistrationError::DuplicateType(
+                entry.qualified_name().to_string(),
+            ));
+        }
+
+        // Now allocate strings for successful registration
         let qualified_name = entry.qualified_name().to_string();
         let simple_name = entry.name().to_string();
         let namespace = entry.namespace().join("::");
-
-        if self.types.contains_key(&hash) {
-            return Err(RegistrationError::DuplicateType(qualified_name));
-        }
 
         // Add to namespace index (skip template params - they belong to their owner)
         if !entry.is_template_param() {
@@ -184,16 +211,19 @@ impl SymbolRegistry {
     /// Returns an error if a function with the same hash already exists.
     pub fn register_function(&mut self, entry: FunctionEntry) -> Result<(), RegistrationError> {
         let hash = entry.def.func_hash;
-        let qualified_name = entry.def.qualified_name();
-        let simple_name = entry.def.name.clone();
-        let namespace = entry.def.namespace.join("::");
 
+        // Check for duplicates BEFORE allocating strings
         if self.functions.contains_key(&hash) {
             return Err(RegistrationError::DuplicateRegistration {
-                name: qualified_name.to_string(),
+                name: entry.def.qualified_name().to_string(),
                 kind: "function".to_string(),
             });
         }
+
+        // Now allocate strings for successful registration
+        let qualified_name = entry.def.qualified_name();
+        let simple_name = entry.def.name.clone();
+        let namespace = entry.def.namespace.join("::");
 
         // Add to namespace index (only for global functions, not methods)
         if entry.def.object_type.is_none() {
@@ -380,22 +410,15 @@ impl SymbolRegistry {
     // ==========================================================================
 
     /// Iterate over types in a specific namespace.
+    ///
+    /// Uses the namespace index for O(n) iteration where n is the number of types
+    /// in the namespace, rather than O(N) iteration over all types.
     pub fn types_in_namespace<'a>(&'a self, ns: &'a str) -> impl Iterator<Item = &'a TypeEntry> {
-        let prefix = if ns.is_empty() {
-            String::new()
-        } else {
-            format!("{}::", ns)
-        };
-
-        self.types.values().filter(move |t| {
-            let qname = t.qualified_name();
-            if ns.is_empty() {
-                // Root namespace: no :: in name
-                !qname.contains("::")
-            } else {
-                qname.starts_with(&prefix)
-            }
-        })
+        self.types_by_namespace
+            .get(ns)
+            .into_iter()
+            .flat_map(|name_map| name_map.values())
+            .filter_map(|hash| self.types.get(hash))
     }
 
     /// Iterate over all registered namespaces.
@@ -417,15 +440,18 @@ impl SymbolRegistry {
     /// Returns an error if a global with the same qualified name already exists.
     pub fn register_global(&mut self, entry: GlobalPropertyEntry) -> Result<(), RegistrationError> {
         let hash = entry.type_hash;
-        let simple_name = entry.name.clone();
-        let namespace = entry.namespace.join("::");
 
+        // Check for duplicates BEFORE allocating strings
         if self.globals.contains_key(&hash) {
             return Err(RegistrationError::DuplicateRegistration {
                 name: entry.qualified_name.clone(),
                 kind: "global property".to_string(),
             });
         }
+
+        // Now allocate strings for successful registration
+        let simple_name = entry.name.clone();
+        let namespace = entry.namespace.join("::");
 
         // Add to namespace index
         self.globals_by_namespace

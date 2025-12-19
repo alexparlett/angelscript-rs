@@ -417,14 +417,38 @@ impl<'ast> Parser<'ast> {
     }
 
     /// Try to skip past template arguments in angle brackets.
-    fn try_skip_template_args(&mut self) -> bool {
+    ///
+    /// # Arguments
+    /// - `max_iterations`: Optional iteration limit to prevent infinite loops in malformed input
+    /// - `early_exit_tokens`: Token kinds that indicate we're not in template args
+    fn try_skip_template_args_with_options(
+        &mut self,
+        max_iterations: Option<usize>,
+        early_exit_tokens: &[TokenKind],
+    ) -> bool {
         if self.eat(TokenKind::Less).is_none() {
             return false;
         }
 
         let mut depth = 1;
+        let mut iterations = 0;
+
         while depth > 0 && !self.is_eof() {
-            match self.peek().kind {
+            if let Some(max) = max_iterations {
+                if iterations >= max {
+                    return false;
+                }
+                iterations += 1;
+            }
+
+            let kind = self.peek().kind;
+
+            // Check for early exit tokens
+            if early_exit_tokens.contains(&kind) {
+                return false;
+            }
+
+            match kind {
                 TokenKind::Less => {
                     depth += 1;
                     self.advance();
@@ -443,9 +467,6 @@ impl<'ast> Parser<'ast> {
                     depth -= 3;
                     self.advance();
                 }
-                TokenKind::Comma => {
-                    self.advance();
-                }
                 _ => {
                     // Skip anything else inside template args
                     self.advance();
@@ -454,6 +475,24 @@ impl<'ast> Parser<'ast> {
         }
 
         depth == 0
+    }
+
+    /// Try to skip past template arguments in angle brackets.
+    fn try_skip_template_args(&mut self) -> bool {
+        self.try_skip_template_args_with_options(None, &[])
+    }
+
+    /// Simple template arg skipping for lookahead in expression parsing.
+    /// Has iteration limit and early exit on certain tokens.
+    pub(super) fn try_skip_template_args_simple(&mut self) -> bool {
+        self.try_skip_template_args_with_options(
+            Some(1000),
+            &[
+                TokenKind::LeftParen,
+                TokenKind::LeftBrace,
+                TokenKind::Semicolon,
+            ],
+        )
     }
 
     // ========================================================================

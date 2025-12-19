@@ -398,6 +398,37 @@ impl FunctionDef {
     pub fn is_variadic_fn(&self) -> bool {
         self.is_variadic
     }
+
+    /// Check if this function matches an interface method signature.
+    ///
+    /// Returns true if the function has matching parameter types, return type,
+    /// and const-ness. The function name is assumed to already match (caller
+    /// should filter by name first).
+    pub fn matches_signature(&self, signature: &crate::MethodSignature) -> bool {
+        // Parameter count must match
+        if self.params.len() != signature.params.len() {
+            return false;
+        }
+
+        // Parameter types must match
+        for (param, expected) in self.params.iter().zip(signature.params.iter()) {
+            if param.data_type != *expected {
+                return false;
+            }
+        }
+
+        // Return type must match
+        if self.return_type != signature.return_type {
+            return false;
+        }
+
+        // Const-ness must match (const interface method requires const implementation)
+        if signature.is_const && !self.traits.is_const {
+            return false;
+        }
+
+        true
+    }
 }
 
 impl fmt::Display for FunctionDef {

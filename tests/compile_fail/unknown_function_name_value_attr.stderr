@@ -1,4 +1,4 @@
-error: unknown function attribute: unknown_key
+error: unknown function attribute 'unknown_key'. Valid name=value attributes are: name, property_name, operator, returns, template
  --> tests/compile_fail/unknown_function_name_value_attr.rs:5:12
   |
 5 | #[function(unknown_key = "value")]

@@ -657,16 +657,15 @@ impl OperatorBehavior {
 
     /// Get the target type for conversion operators.
     ///
-    /// # Panics
-    ///
-    /// Panics if called on non-conversion operators.
-    pub fn target_type(&self) -> TypeHash {
+    /// Returns `Some(TypeHash)` for conversion operators (OpConv, OpImplConv, OpCast, OpImplCast),
+    /// or `None` for non-conversion operators.
+    pub fn target_type(&self) -> Option<TypeHash> {
         match self {
             OperatorBehavior::OpConv(t)
             | OperatorBehavior::OpImplConv(t)
             | OperatorBehavior::OpCast(t)
-            | OperatorBehavior::OpImplCast(t) => *t,
-            _ => panic!("target_type() called on non-conversion operator"),
+            | OperatorBehavior::OpImplCast(t) => Some(*t),
+            _ => None,
         }
     }
 
