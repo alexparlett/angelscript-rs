@@ -646,10 +646,7 @@ fn operator_to_behavior(op: &Operator) -> Option<OperatorBehavior> {
         | Operator::ForEnd
         | Operator::ForNext
         | Operator::ForValue
-        | Operator::ForValue0
-        | Operator::ForValue1
-        | Operator::ForValue2
-        | Operator::ForValue3 => None,
+        | Operator::ForValueN(_) => None,
 
         // Conversion operators - need target type info, not yet supported
         Operator::Conv | Operator::ImplConv | Operator::Cast | Operator::ImplCast => None,
