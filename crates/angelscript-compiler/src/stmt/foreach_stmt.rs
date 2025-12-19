@@ -309,25 +309,19 @@ impl<'a, 'ctx, 'pool> StmtCompiler<'a, 'ctx, 'pool> {
                 })?;
             value_types.push(func.def.return_type.clone());
         } else {
-            // Multiple values: use opForValue0, opForValue1, etc.
-            let value_ops = [
-                OperatorBehavior::OpForValue0,
-                OperatorBehavior::OpForValue1,
-                OperatorBehavior::OpForValue2,
-                OperatorBehavior::OpForValue3,
-            ];
-
-            if var_count > 4 {
+            // Multiple values: use opForValue0, opForValue1, etc. (dynamic limit)
+            if var_count > 256 {
                 return Err(CompilationError::Other {
-                    message: "foreach supports at most 4 iteration variables".to_string(),
+                    message: "foreach supports at most 256 iteration variables".to_string(),
                     span,
                 });
             }
 
-            for (i, op) in value_ops.iter().take(var_count).enumerate() {
+            for i in 0..var_count {
+                let op = OperatorBehavior::OpForValueN(i as u8);
                 let func_hash = class
                     .behaviors
-                    .get_operator(*op)
+                    .get_operator(op)
                     .and_then(|ops| ops.first().copied())
                     .ok_or_else(|| CompilationError::Other {
                         message: format!(
