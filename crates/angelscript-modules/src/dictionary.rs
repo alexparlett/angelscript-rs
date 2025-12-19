@@ -3,7 +3,7 @@
 //! This is a placeholder implementation for FFI registration.
 //! The actual storage and runtime implementation will be handled by the VM.
 
-use angelscript_core::Dynamic;
+use angelscript_core::{CallContext, Dynamic, native_error::NativeError};
 use angelscript_macros::Any;
 use angelscript_registry::Module;
 
@@ -73,6 +73,12 @@ impl ScriptDict {
         todo!()
     }
 
+    /// Remove all entries (alias for clear).
+    #[angelscript_macros::function(instance, name = "deleteAll")]
+    pub fn delete_all(&mut self) {
+        todo!()
+    }
+
     // =========================================================================
     // TEMPLATE PARAMETER METHODS
     // =========================================================================
@@ -105,12 +111,26 @@ impl ScriptDict {
         todo!()
     }
 
+    /// Get all keys as an array.
+    #[angelscript_macros::function(instance, const, name = "getKeys")]
+    #[returns(template = "array<K>")]
+    pub fn get_keys(&self) -> Dynamic {
+        todo!()
+    }
+
+    /// Get all values as an array.
+    #[angelscript_macros::function(instance, const, name = "getValues")]
+    #[returns(template = "array<V>")]
+    pub fn get_values(&self) -> Dynamic {
+        todo!()
+    }
+
     // =========================================================================
     // OPERATORS
     // =========================================================================
 
     /// Index operator (mutable).
-    #[angelscript_macros::function(instance, operator = angelscript_core::Operator::Index)]
+    #[angelscript_macros::function(instance, operator = Operator::Index)]
     #[returns(template = "V")]
     pub fn op_index(&mut self, #[template("K")] key: Dynamic) -> Dynamic {
         let _ = key;
@@ -118,7 +138,7 @@ impl ScriptDict {
     }
 
     /// Index operator (const).
-    #[angelscript_macros::function(instance, const, operator = angelscript_core::Operator::Index)]
+    #[angelscript_macros::function(instance, const, operator = Operator::Index)]
     #[returns(template = "V")]
     pub fn op_index_const(&self, #[template("K")] key: Dynamic) -> Dynamic {
         let _ = key;
@@ -126,16 +146,66 @@ impl ScriptDict {
     }
 
     /// Equality comparison.
-    #[angelscript_macros::function(instance, const, operator = angelscript_core::Operator::Equals)]
+    #[angelscript_macros::function(instance, const, operator = Operator::Equals)]
     pub fn op_equals(&self, other: &Self) -> bool {
         let _ = other;
         todo!()
     }
 
     /// Assignment operator.
-    #[angelscript_macros::function(instance, operator = angelscript_core::Operator::Assign)]
+    #[angelscript_macros::function(instance, operator = Operator::Assign)]
     pub fn op_assign(&mut self, other: &Self) {
         let _ = other;
+        todo!()
+    }
+
+    // =========================================================================
+    // FOREACH OPERATORS
+    // =========================================================================
+
+    /// Begin foreach iteration.
+    ///
+    /// Returns an iterator handle for use with opForEnd/opForNext/opForValue.
+    #[angelscript_macros::function(instance, const, operator = Operator::ForBegin)]
+    pub fn op_for_begin(&self) -> i32 {
+        todo!()
+    }
+
+    /// Check if foreach iteration is complete.
+    ///
+    /// Returns true if there are no more entries.
+    #[angelscript_macros::function(instance, const, operator = Operator::ForEnd)]
+    pub fn op_for_end(&self, iter: i32) -> bool {
+        let _ = iter;
+        todo!()
+    }
+
+    /// Advance to next foreach entry.
+    ///
+    /// Returns the next iterator value.
+    #[angelscript_macros::function(instance, const, operator = Operator::ForNext)]
+    pub fn op_for_next(&self, iter: i32) -> i32 {
+        let _ = iter;
+        todo!()
+    }
+
+    /// Get current foreach key (index 0).
+    ///
+    /// For `foreach (k, v : dict)`, this returns the key.
+    #[angelscript_macros::function(instance, const, operator = Operator::ForValueN(0))]
+    #[returns(template = "K")]
+    pub fn op_for_value_0(&self, iter: i32) -> Dynamic {
+        let _ = iter;
+        todo!()
+    }
+
+    /// Get current foreach value (index 1).
+    ///
+    /// For `foreach (k, v : dict)`, this returns the value.
+    #[angelscript_macros::function(instance, const, operator = Operator::ForValueN(1))]
+    #[returns(template = "V")]
+    pub fn op_for_value_1(&self, iter: i32) -> Dynamic {
+        let _ = iter;
         todo!()
     }
 
@@ -148,7 +218,7 @@ impl ScriptDict {
     /// Called when: `dictionary<string, int> d = {{"a", 1}, {"b", 2}};`
     #[angelscript_macros::function(list_factory, generic)]
     #[list_pattern(repeat_tuple_template("K", "V"))]
-    pub fn list_factory() {
+    pub fn list_factory(_ctx: &mut CallContext) -> Result<(), NativeError> {
         todo!()
     }
 }
@@ -171,16 +241,25 @@ pub fn module() -> Module {
         .function(ScriptDict::reserve__meta)
         .function(ScriptDict::shrink_to_fit__meta)
         .function(ScriptDict::clear__meta)
+        .function(ScriptDict::delete_all__meta)
         // Template parameter methods
         .function(ScriptDict::set__meta)
         .function(ScriptDict::exists__meta)
         .function(ScriptDict::get__meta)
         .function(ScriptDict::delete__meta)
+        .function(ScriptDict::get_keys__meta)
+        .function(ScriptDict::get_values__meta)
         // Operators
         .function(ScriptDict::op_index__meta)
         .function(ScriptDict::op_index_const__meta)
         .function(ScriptDict::op_equals__meta)
         .function(ScriptDict::op_assign__meta)
+        // Foreach operators
+        .function(ScriptDict::op_for_begin__meta)
+        .function(ScriptDict::op_for_end__meta)
+        .function(ScriptDict::op_for_next__meta)
+        .function(ScriptDict::op_for_value_0__meta)
+        .function(ScriptDict::op_for_value_1__meta)
         // List initialization
         .function(ScriptDict::list_factory__meta)
 }

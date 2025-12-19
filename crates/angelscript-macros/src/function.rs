@@ -100,41 +100,114 @@ fn function_inner(attrs: &FunctionAttrs, input: &ItemFn) -> syn::Result<TokenStr
         let params = extract_params(fn_inputs)?;
 
         // Generate param tokens with defaults from #[default(...)] and template from #[template(...)] on each param
-        params
-            .iter()
-            .map(|p| {
-                let name = &p.name;
-                let ty = strip_reference(&p.ty);
-                let default_value = match &p.default {
-                    Some(val) => quote! { Some(#val) },
-                    None => quote! { None },
-                };
-                let template_param = match &p.template_param {
-                    Some(param_name) => quote! { Some(#param_name) },
-                    None => quote! { None },
-                };
-                // if_handle_then_const only applies to generic calling convention
-                // For non-generic params, it's always false
+        let mut tokens = Vec::with_capacity(params.len());
+        for p in &params {
+            let name = &p.name;
+            let ty = strip_reference(&p.ty);
+            let default_value = match &p.default {
+                Some(val) => quote! { Some(#val) },
+                None => quote! { None },
+            };
+            let template_param = match &p.template_param {
+                Some(param_name) => quote! { Some(#param_name) },
+                None => quote! { None },
+            };
+            // if_handle_then_const only applies to generic calling convention
+            // For non-generic params, it's always false
 
-                // For template params, use SELF as placeholder - resolved at instantiation
-                let type_hash = if p.template_param.is_some() {
-                    quote! { ::angelscript_core::primitives::SELF }
-                } else {
-                    quote! { <#ty as ::angelscript_core::Any>::type_hash() }
-                };
+            // For template params, use SELF as placeholder - resolved at instantiation
+            let type_hash = if p.template_param.is_some() {
+                quote! { ::angelscript_core::primitives::SELF }
+            } else {
+                quote! { <#ty as ::angelscript_core::Any>::type_hash() }
+            };
 
-                quote! {
-                    ::angelscript_core::ParamMeta {
-                        name: #name,
-                        type_hash: #type_hash,
-                        default_value: #default_value,
-                        template_param: #template_param,
-                        if_handle_then_const: false,
+            // Determine ref_mode with validation
+            let ref_mode_token = match p.ref_mode {
+                RefModeAttr::Out => {
+                    if !p.is_mut_ref {
+                        return Err(syn::Error::new(
+                            proc_macro2::Span::call_site(),
+                            format!(
+                                "`#[param(out)]` on parameter `{}` requires `&mut` type",
+                                name
+                            ),
+                        ));
+                    }
+                    quote! { ::angelscript_core::RefModifier::Out }
+                }
+                RefModeAttr::InOut => {
+                    if !p.is_mut_ref {
+                        return Err(syn::Error::new(
+                            proc_macro2::Span::call_site(),
+                            format!(
+                                "`#[param(inout)]` on parameter `{}` requires `&mut` type",
+                                name
+                            ),
+                        ));
+                    }
+                    quote! { ::angelscript_core::RefModifier::InOut }
+                }
+                RefModeAttr::In => {
+                    if p.is_mut_ref {
+                        return Err(syn::Error::new(
+                            proc_macro2::Span::call_site(),
+                            format!(
+                                "`#[param(in)]` on parameter `{}` cannot be used with `&mut` - use `out` or `inout` instead",
+                                name
+                            ),
+                        ));
+                    }
+                    quote! { ::angelscript_core::RefModifier::In }
+                }
+                RefModeAttr::None => {
+                    if p.is_mut_ref {
+                        return Err(syn::Error::new(
+                            proc_macro2::Span::call_site(),
+                            format!(
+                                "`&mut` parameter `{}` must have `#[param(out)]` or `#[param(inout)]` to specify AngelScript reference mode",
+                                name
+                            ),
+                        ));
+                    } else if p.is_ref {
+                        quote! { ::angelscript_core::RefModifier::In }
+                    } else {
+                        quote! { ::angelscript_core::RefModifier::None }
                     }
                 }
-            })
-            .collect()
+            };
+
+            tokens.push(quote! {
+                ::angelscript_core::ParamMeta {
+                    name: #name,
+                    type_hash: #type_hash,
+                    default_value: #default_value,
+                    template_param: #template_param,
+                    if_handle_then_const: false,
+                    ref_mode: #ref_mode_token,
+                }
+            });
+        }
+        tokens
     };
+
+    // Generate function traits (early, needed for return meta)
+    let is_const = attrs.is_const;
+    let is_property = attrs.is_property;
+    let is_generic = attrs.is_generic;
+
+    // Check if this is a "true" generic calling convention function (takes &mut CallContext)
+    // vs a "metadata-only" generic function (regular signature but uses generic_params for metadata)
+    let is_generic_calling_convention = is_generic
+        && fn_inputs.len() == 1
+        && fn_inputs.iter().any(|arg| {
+            if let FnArg::Typed(pat_type) = arg {
+                let ty_str = quote!(#pat_type.ty).to_string();
+                ty_str.contains("CallContext")
+            } else {
+                false
+            }
+        });
 
     // Parse #[param(...)] attributes for generic calling convention
     let param_attrs = ParamAttrs::from_attrs(fn_attrs)?;
@@ -144,7 +217,9 @@ fn function_inner(attrs: &FunctionAttrs, input: &ItemFn) -> syn::Result<TokenStr
     let return_attrs = ReturnAttrs::from_attrs(fn_attrs)?;
 
     // Generate return meta from #[returns] attribute or defaults
-    let return_meta_token = generate_return_meta(fn_output, &return_attrs);
+    // For generic calling convention functions, ignore the Rust return type (Result<(), NativeError>)
+    let return_meta_token =
+        generate_return_meta(fn_output, &return_attrs, is_generic_calling_convention);
 
     // Parse #[list_pattern(...)] attribute
     let list_pattern_attrs = ListPatternAttrs::from_attrs(fn_attrs)?;
@@ -152,11 +227,6 @@ fn function_inner(attrs: &FunctionAttrs, input: &ItemFn) -> syn::Result<TokenStr
 
     // Generate behavior kind
     let behavior = generate_behavior(attrs);
-
-    // Generate function traits
-    let is_const = attrs.is_const;
-    let is_property = attrs.is_property;
-    let is_generic = attrs.is_generic;
 
     // Generate as_name from explicit name attribute
     let as_name_token = match &attrs.name {
@@ -311,6 +381,12 @@ struct ParamInfo {
     ty: Box<Type>,
     default: Option<String>,
     template_param: Option<String>,
+    /// Reference mode for the parameter (from `#[param(in/out/inout)]`)
+    ref_mode: RefModeAttr,
+    /// Whether the Rust type is `&mut T`
+    is_mut_ref: bool,
+    /// Whether the Rust type is `&T`
+    is_ref: bool,
 }
 
 /// Extract parameter names, types, and defaults from function inputs.
@@ -330,23 +406,93 @@ fn extract_params(
                     _ => "_".to_string(),
                 };
 
+                // Check if type is &mut T or &T
+                let (is_mut_ref, is_ref) = check_reference_type(&pat_type.ty);
+
                 // Look for #[default(...)] attribute on this parameter
                 let default = extract_param_default(&pat_type.attrs)?;
 
                 // Look for #[template("T")] attribute
                 let template_param = extract_param_template(&pat_type.attrs)?;
 
+                // Look for #[param(...)] attribute on this parameter
+                let param_attr = extract_param_attr(&pat_type.attrs)?;
+
+                // Get ref_mode from #[param(...)] or use default
+                let ref_mode = param_attr.as_ref().map(|p| p.ref_mode).unwrap_or_default();
+
+                // Use default from #[param(default = "...")] if not set by #[default(...)]
+                let default =
+                    default.or_else(|| param_attr.as_ref().and_then(|p| p.default.clone()));
+
+                // Use template from #[param(template = "...")] if not set by #[template(...)]
+                let template_param = template_param
+                    .or_else(|| param_attr.as_ref().and_then(|p| p.template_param.clone()));
+
                 params.push(ParamInfo {
                     name,
                     ty: pat_type.ty.clone(),
                     default,
                     template_param,
+                    ref_mode,
+                    is_mut_ref,
+                    is_ref,
                 });
             }
         }
     }
 
     Ok(params)
+}
+
+/// Check if a type is a reference type and whether it's mutable.
+fn check_reference_type(ty: &Type) -> (bool, bool) {
+    match ty {
+        Type::Reference(ref_type) => {
+            let is_mut = ref_type.mutability.is_some();
+            (is_mut, true)
+        }
+        _ => (false, false),
+    }
+}
+
+/// Extract #[param(...)] attribute from a parameter's attributes.
+/// Returns the parsed ParamAttrs if present.
+fn extract_param_attr(attrs: &[Attribute]) -> syn::Result<Option<ParamAttrs>> {
+    for attr in attrs {
+        if attr.path().is_ident("param") {
+            let param_attrs = ParamAttrs::from_attr(attr)?;
+
+            // Validate that only parameter-level options are used
+            if param_attrs.is_variable {
+                return Err(syn::Error::new_spanned(
+                    attr,
+                    "`#[param(variable)]` is only valid on function-level for generic calling convention, not on individual parameters",
+                ));
+            }
+            if param_attrs.is_variadic {
+                return Err(syn::Error::new_spanned(
+                    attr,
+                    "`#[param(variadic)]` is only valid on function-level for generic calling convention, not on individual parameters",
+                ));
+            }
+            if param_attrs.param_type.is_some() {
+                return Err(syn::Error::new_spanned(
+                    attr,
+                    "`#[param(type = ...)]` is only valid on function-level for generic calling convention, not on individual parameters",
+                ));
+            }
+            if param_attrs.if_handle_then_const {
+                return Err(syn::Error::new_spanned(
+                    attr,
+                    "`#[param(if_handle_then_const)]` is only valid on function-level for generic calling convention, not on individual parameters",
+                ));
+            }
+
+            return Ok(Some(param_attrs));
+        }
+    }
+    Ok(None)
 }
 
 /// Extract default value from #[default(...)] attribute on a parameter.
@@ -442,7 +588,11 @@ fn generate_generic_params(param_attrs: &[ParamAttrs]) -> Vec<TokenStream2> {
     param_attrs
         .iter()
         .map(|p| {
-            let type_hash = if p.is_variable {
+            // Priority: template param > param_type (Rust type) > variable > default to VARIABLE_PARAM
+            let type_hash = if p.template_param.is_some() {
+                // Template parameters use VARIABLE_PARAM - type is resolved at runtime
+                quote! { ::angelscript_core::primitives::VARIABLE_PARAM }
+            } else if p.is_variable {
                 quote! { ::angelscript_core::primitives::VARIABLE_PARAM }
             } else if let Some(ty) = &p.param_type {
                 quote! { <#ty as ::angelscript_core::Any>::type_hash() }
@@ -481,9 +631,14 @@ fn generate_generic_params(param_attrs: &[ParamAttrs]) -> Vec<TokenStream2> {
 }
 
 /// Generate ReturnMeta token from function output and #[returns] attribute.
+///
+/// For generic functions (`is_generic=true`), the Rust return type is ignored since
+/// it's always `Result<(), NativeError>` - the actual return type must be specified
+/// via `#[returns]` attribute or defaults to void.
 fn generate_return_meta(
     fn_output: &ReturnType,
     return_attrs: &Option<ReturnAttrs>,
+    is_generic: bool,
 ) -> TokenStream2 {
     match return_attrs {
         Some(attrs) => {
@@ -493,6 +648,9 @@ fn generate_return_meta(
                 quote! { Some(::angelscript_core::primitives::SELF) }
             } else if let Some(ty) = &attrs.return_type {
                 quote! { Some(<#ty as ::angelscript_core::Any>::type_hash()) }
+            } else if is_generic {
+                // Generic functions without explicit return type default to void
+                quote! { None }
             } else {
                 match fn_output {
                     ReturnType::Default => quote! { None },
@@ -521,24 +679,36 @@ fn generate_return_meta(
             }
         }
         None => {
-            // Default: infer from function signature
-            match fn_output {
-                ReturnType::Default => quote! {
+            // Default: infer from function signature (or void for generic functions)
+            if is_generic {
+                // Generic functions without #[returns] default to void
+                quote! {
                     ::angelscript_core::ReturnMeta {
                         type_hash: None,
                         mode: ::angelscript_core::ReturnMode::Value,
                         is_const: false,
                         is_variable: false,
                     }
-                },
-                ReturnType::Type(_, ty) => quote! {
-                    ::angelscript_core::ReturnMeta {
-                        type_hash: Some(<#ty as ::angelscript_core::Any>::type_hash()),
-                        mode: ::angelscript_core::ReturnMode::Value,
-                        is_const: false,
-                        is_variable: false,
-                    }
-                },
+                }
+            } else {
+                match fn_output {
+                    ReturnType::Default => quote! {
+                        ::angelscript_core::ReturnMeta {
+                            type_hash: None,
+                            mode: ::angelscript_core::ReturnMode::Value,
+                            is_const: false,
+                            is_variable: false,
+                        }
+                    },
+                    ReturnType::Type(_, ty) => quote! {
+                        ::angelscript_core::ReturnMeta {
+                            type_hash: Some(<#ty as ::angelscript_core::Any>::type_hash()),
+                            mode: ::angelscript_core::ReturnMode::Value,
+                            is_const: false,
+                            is_variable: false,
+                        }
+                    },
+                }
             }
         }
     }
@@ -636,12 +806,14 @@ fn filter_param_attrs(
             match arg {
                 FnArg::Receiver(recv) => quote! { #recv },
                 FnArg::Typed(pat_type) => {
-                    // Filter out #[default] and #[template] attributes
+                    // Filter out #[default], #[template], and #[param] attributes
                     let filtered_attrs: Vec<_> = pat_type
                         .attrs
                         .iter()
                         .filter(|attr| {
-                            !attr.path().is_ident("default") && !attr.path().is_ident("template")
+                            !attr.path().is_ident("default")
+                                && !attr.path().is_ident("template")
+                                && !attr.path().is_ident("param")
                         })
                         .collect();
                     let pat = &pat_type.pat;
@@ -688,10 +860,36 @@ fn generate_native_fn(
     is_generic: bool,
     is_unit_struct: bool,
 ) -> TokenStream2 {
-    // For generic calling convention functions, skip NativeFn generation for now
-    // (they use different calling semantics - raw CallContext access)
+    // For generic calling convention functions with &mut CallContext signature, box directly
     if is_generic {
-        return quote! { None };
+        // Check if function takes exactly one &mut CallContext parameter
+        let has_call_context_param = fn_inputs.len() == 1
+            && fn_inputs.iter().any(|arg| {
+                if let FnArg::Typed(pat_type) = arg {
+                    let ty_str = quote!(#pat_type.ty).to_string();
+                    ty_str.contains("CallContext")
+                } else {
+                    false
+                }
+            });
+
+        if has_call_context_param {
+            // Box the function directly - it already has the right signature
+            // For methods in impl blocks, use Self:: prefix; for unit structs, use bare name
+            let fn_ref = if is_unit_struct {
+                quote! { #mangled_fn_name }
+            } else {
+                quote! { Self::#mangled_fn_name }
+            };
+
+            return quote! {
+                Some(::angelscript_core::NativeFn::new(
+                    ::angelscript_core::TypeHash::from_name(#fn_name),
+                    #fn_ref
+                ))
+            };
+        }
+        // Otherwise, fall through to generate wrapper (for tests/metadata-only generic functions)
     }
 
     // Extract non-self parameters
@@ -759,8 +957,64 @@ fn generate_native_fn(
         .map(|(i, (name, ty))| generate_param_extraction(name, ty, i))
         .collect();
 
-    // Generate function call arguments
-    let arg_names: Vec<_> = params.iter().map(|(name, _)| name.clone()).collect();
+    // Track which params are &mut primitives (need &mut prefix and write-back)
+    let mut_primitive_params: Vec<(usize, syn::Ident, Type)> = params
+        .iter()
+        .enumerate()
+        .filter_map(|(i, (name, ty))| {
+            if let Type::Reference(type_ref) = ty
+                && type_ref.mutability.is_some()
+            {
+                let base_ty = type_ref.elem.as_ref();
+                let base_str = quote!(#base_ty).to_string();
+                if is_primitive_type(&base_str) {
+                    return Some((i, name.clone(), base_ty.clone()));
+                }
+            }
+            None
+        })
+        .collect();
+
+    // Generate function call arguments - use &mut for mutable primitive params
+    let arg_names: Vec<_> = params
+        .iter()
+        .map(|(name, ty)| {
+            if let Type::Reference(type_ref) = ty
+                && type_ref.mutability.is_some()
+            {
+                let base_ty = type_ref.elem.as_ref();
+                let base_str = quote!(#base_ty).to_string();
+                if is_primitive_type(&base_str) {
+                    // For &mut primitives, we extracted as `let mut name`, so pass &mut name
+                    return quote! { &mut #name };
+                }
+            }
+            quote! { #name }
+        })
+        .collect();
+
+    // Generate write-back code for &mut primitive params
+    let writebacks: Vec<_> = mut_primitive_params
+        .iter()
+        .map(|(i, name, base_ty)| {
+            let base_str = quote!(#base_ty).to_string();
+            if is_primitive_integer(&base_str) {
+                quote! {
+                    *__ctx.arg_slot_mut(#i)? = ::angelscript_core::Dynamic::Int(#name as i64);
+                }
+            } else if is_primitive_float(&base_str) {
+                quote! {
+                    *__ctx.arg_slot_mut(#i)? = ::angelscript_core::Dynamic::Float(#name as f64);
+                }
+            } else if base_str == "bool" {
+                quote! {
+                    *__ctx.arg_slot_mut(#i)? = ::angelscript_core::Dynamic::Bool(#name);
+                }
+            } else {
+                quote! {}
+            }
+        })
+        .collect();
 
     // Generate return handling - returns None if return type not supported
     let return_handling = match generate_return_handling_code(fn_output) {
@@ -896,6 +1150,7 @@ fn generate_native_fn(
                 |__ctx: &mut ::angelscript_core::CallContext| {
                     #(#extractions)*
                     let __result = #call_expr;
+                    #(#writebacks)*
                     #return_handling
                     Ok(())
                 }
@@ -918,49 +1173,103 @@ fn generate_param_extraction(name: &syn::Ident, ty: &Type, index: usize) -> Toke
     // Check if it's a primitive type
     let type_str = quote!(#base_ty).to_string();
     if is_primitive_integer(&type_str) {
-        quote! {
-            let #name: #ty = {
-                let __slot = __ctx.arg_slot(#index)?;
-                match __slot {
-                    ::angelscript_core::Dynamic::Int(v) => *v as #base_ty,
-                    _ => return Err(::angelscript_core::NativeError::Conversion(
-                        ::angelscript_core::ConversionError::TypeMismatch {
-                            expected: "int",
-                            actual: __slot.type_name(),
-                        }
-                    )),
-                }
-            };
+        if is_mut {
+            // &mut primitive - create local, will write back later
+            quote! {
+                let mut #name: #base_ty = {
+                    let __slot = __ctx.arg_slot(#index)?;
+                    match __slot {
+                        ::angelscript_core::Dynamic::Int(v) => *v as #base_ty,
+                        _ => return Err(::angelscript_core::NativeError::Conversion(
+                            ::angelscript_core::ConversionError::TypeMismatch {
+                                expected: "int",
+                                actual: __slot.type_name(),
+                            }
+                        )),
+                    }
+                };
+            }
+        } else {
+            quote! {
+                let #name: #ty = {
+                    let __slot = __ctx.arg_slot(#index)?;
+                    match __slot {
+                        ::angelscript_core::Dynamic::Int(v) => *v as #base_ty,
+                        _ => return Err(::angelscript_core::NativeError::Conversion(
+                            ::angelscript_core::ConversionError::TypeMismatch {
+                                expected: "int",
+                                actual: __slot.type_name(),
+                            }
+                        )),
+                    }
+                };
+            }
         }
     } else if is_primitive_float(&type_str) {
-        quote! {
-            let #name: #ty = {
-                let __slot = __ctx.arg_slot(#index)?;
-                match __slot {
-                    ::angelscript_core::Dynamic::Float(v) => *v as #base_ty,
-                    _ => return Err(::angelscript_core::NativeError::Conversion(
-                        ::angelscript_core::ConversionError::TypeMismatch {
-                            expected: "float",
-                            actual: __slot.type_name(),
-                        }
-                    )),
-                }
-            };
+        if is_mut {
+            // &mut primitive - create local, will write back later
+            quote! {
+                let mut #name: #base_ty = {
+                    let __slot = __ctx.arg_slot(#index)?;
+                    match __slot {
+                        ::angelscript_core::Dynamic::Float(v) => *v as #base_ty,
+                        _ => return Err(::angelscript_core::NativeError::Conversion(
+                            ::angelscript_core::ConversionError::TypeMismatch {
+                                expected: "float",
+                                actual: __slot.type_name(),
+                            }
+                        )),
+                    }
+                };
+            }
+        } else {
+            quote! {
+                let #name: #ty = {
+                    let __slot = __ctx.arg_slot(#index)?;
+                    match __slot {
+                        ::angelscript_core::Dynamic::Float(v) => *v as #base_ty,
+                        _ => return Err(::angelscript_core::NativeError::Conversion(
+                            ::angelscript_core::ConversionError::TypeMismatch {
+                                expected: "float",
+                                actual: __slot.type_name(),
+                            }
+                        )),
+                    }
+                };
+            }
         }
     } else if type_str == "bool" {
-        quote! {
-            let #name: #ty = {
-                let __slot = __ctx.arg_slot(#index)?;
-                match __slot {
-                    ::angelscript_core::Dynamic::Bool(v) => *v,
-                    _ => return Err(::angelscript_core::NativeError::Conversion(
-                        ::angelscript_core::ConversionError::TypeMismatch {
-                            expected: "bool",
-                            actual: __slot.type_name(),
-                        }
-                    )),
-                }
-            };
+        if is_mut {
+            // &mut bool - create local, will write back later
+            quote! {
+                let mut #name: bool = {
+                    let __slot = __ctx.arg_slot(#index)?;
+                    match __slot {
+                        ::angelscript_core::Dynamic::Bool(v) => *v,
+                        _ => return Err(::angelscript_core::NativeError::Conversion(
+                            ::angelscript_core::ConversionError::TypeMismatch {
+                                expected: "bool",
+                                actual: __slot.type_name(),
+                            }
+                        )),
+                    }
+                };
+            }
+        } else {
+            quote! {
+                let #name: #ty = {
+                    let __slot = __ctx.arg_slot(#index)?;
+                    match __slot {
+                        ::angelscript_core::Dynamic::Bool(v) => *v,
+                        _ => return Err(::angelscript_core::NativeError::Conversion(
+                            ::angelscript_core::ConversionError::TypeMismatch {
+                                expected: "bool",
+                                actual: __slot.type_name(),
+                            }
+                        )),
+                    }
+                };
+            }
         }
     } else if type_str == "String" {
         quote! {

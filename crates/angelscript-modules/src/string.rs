@@ -6,8 +6,316 @@
 use std::fmt;
 use std::ops::{Deref, DerefMut};
 
+use angelscript_core::Dynamic;
 use angelscript_macros::Any;
 use angelscript_registry::Module;
+
+// =============================================================================
+// PARSING FUNCTIONS
+// =============================================================================
+
+/// Parse string to i64 (base 10).
+#[angelscript_macros::function(name = "parseInt")]
+pub fn parse_int(s: &ScriptString) -> i64 {
+    s.0.trim().parse::<i64>().unwrap_or(0)
+}
+
+/// Parse string to i64 with radix.
+#[angelscript_macros::function(name = "parseInt")]
+pub fn parse_int_radix(s: &ScriptString, base: u32) -> i64 {
+    let base = base.clamp(2, 36);
+    i64::from_str_radix(s.0.trim(), base).unwrap_or(0)
+}
+
+/// Parse string to u64 (base 10).
+#[angelscript_macros::function(name = "parseUInt")]
+pub fn parse_uint(s: &ScriptString) -> u64 {
+    s.0.trim().parse::<u64>().unwrap_or(0)
+}
+
+/// Parse string to u64 with radix.
+#[angelscript_macros::function(name = "parseUInt")]
+pub fn parse_uint_radix(s: &ScriptString, base: u32) -> u64 {
+    let base = base.clamp(2, 36);
+    u64::from_str_radix(s.0.trim(), base).unwrap_or(0)
+}
+
+/// Parse string to f64.
+#[angelscript_macros::function(name = "parseFloat")]
+pub fn parse_float(s: &ScriptString) -> f64 {
+    s.0.trim().parse::<f64>().unwrap_or(0.0)
+}
+
+/// Parse string to i64 with radix and byte count output.
+/// Returns the parsed value and sets `byte_count` to the number of bytes consumed.
+#[angelscript_macros::function(name = "parseInt")]
+pub fn parse_int_with_count(
+    s: &ScriptString,
+    #[param(default = "10")] base: u32,
+    #[param(out)] byte_count: &mut u32,
+) -> i64 {
+    let trimmed = s.0.trim_start();
+    let skip = s.0.len() - trimmed.len();
+    let base = base.clamp(2, 36);
+
+    // Find how many characters are valid for this base
+    let mut count = 0usize;
+    let mut chars = trimmed.chars().peekable();
+
+    // Handle optional sign
+    if matches!(chars.peek(), Some('+') | Some('-')) {
+        count += 1;
+        chars.next();
+    }
+
+    // Count valid digits for the base
+    for c in chars {
+        let valid = match base {
+            2 => c == '0' || c == '1',
+            8 => matches!(c, '0'..='7'),
+            10 => c.is_ascii_digit(),
+            16 => c.is_ascii_hexdigit(),
+            _ => {
+                c.is_ascii_digit()
+                    || (c.is_ascii_alphabetic()
+                        && (c.to_ascii_lowercase() as u32 - 'a' as u32) < base - 10)
+            }
+        };
+        if valid {
+            count += c.len_utf8();
+        } else {
+            break;
+        }
+    }
+
+    *byte_count = (skip + count) as u32;
+
+    if count == 0 {
+        return 0;
+    }
+
+    i64::from_str_radix(&trimmed[..count], base).unwrap_or(0)
+}
+
+/// Parse string to u64 with radix and byte count output.
+/// Returns the parsed value and sets `byte_count` to the number of bytes consumed.
+#[angelscript_macros::function(name = "parseUInt")]
+pub fn parse_uint_with_count(
+    s: &ScriptString,
+    #[param(default = "10")] base: u32,
+    #[param(out)] byte_count: &mut u32,
+) -> u64 {
+    let trimmed = s.0.trim_start();
+    let skip = s.0.len() - trimmed.len();
+    let base = base.clamp(2, 36);
+
+    // Find how many characters are valid for this base (no sign for unsigned)
+    let mut count = 0usize;
+    for c in trimmed.chars() {
+        let valid = match base {
+            2 => c == '0' || c == '1',
+            8 => matches!(c, '0'..='7'),
+            10 => c.is_ascii_digit(),
+            16 => c.is_ascii_hexdigit(),
+            _ => {
+                c.is_ascii_digit()
+                    || (c.is_ascii_alphabetic()
+                        && (c.to_ascii_lowercase() as u32 - 'a' as u32) < base - 10)
+            }
+        };
+        if valid {
+            count += c.len_utf8();
+        } else {
+            break;
+        }
+    }
+
+    *byte_count = (skip + count) as u32;
+
+    if count == 0 {
+        return 0;
+    }
+
+    u64::from_str_radix(&trimmed[..count], base).unwrap_or(0)
+}
+
+/// Parse string to f64 with byte count output.
+/// Returns the parsed value and sets `byte_count` to the number of bytes consumed.
+#[angelscript_macros::function(name = "parseFloat")]
+pub fn parse_float_with_count(s: &ScriptString, #[param(out)] byte_count: &mut u32) -> f64 {
+    let trimmed = s.0.trim_start();
+    let skip = s.0.len() - trimmed.len();
+
+    // Find how many characters form a valid float
+    let mut count = 0usize;
+    let mut chars = trimmed.chars().peekable();
+    let mut has_dot = false;
+    let mut has_exp = false;
+
+    // Handle optional sign
+    if matches!(chars.peek(), Some('+') | Some('-')) {
+        count += 1;
+        chars.next();
+    }
+
+    // Parse mantissa
+    while let Some(&c) = chars.peek() {
+        if c.is_ascii_digit() {
+            count += 1;
+            chars.next();
+        } else if c == '.' && !has_dot && !has_exp {
+            has_dot = true;
+            count += 1;
+            chars.next();
+        } else if (c == 'e' || c == 'E') && !has_exp && count > 0 {
+            has_exp = true;
+            count += 1;
+            chars.next();
+            // Handle optional sign after exponent
+            if matches!(chars.peek(), Some('+') | Some('-')) {
+                count += 1;
+                chars.next();
+            }
+        } else {
+            break;
+        }
+    }
+
+    *byte_count = (skip + count) as u32;
+
+    if count == 0 {
+        return 0.0;
+    }
+
+    trimmed[..count].parse::<f64>().unwrap_or(0.0)
+}
+
+// =============================================================================
+// FORMATTING FUNCTIONS
+// =============================================================================
+
+/// Format i64 to string (basic).
+#[angelscript_macros::function(name = "formatInt")]
+pub fn format_int(val: i64) -> ScriptString {
+    ScriptString(format!("{}", val))
+}
+
+/// Format i64 to string with options.
+#[angelscript_macros::function(name = "formatInt")]
+pub fn format_int_opts(val: i64, options: ScriptString) -> ScriptString {
+    ScriptString(format_int_impl(val, &options.0, 0))
+}
+
+/// Format i64 to string with options and width.
+#[angelscript_macros::function(name = "formatInt")]
+pub fn format_int_opts_width(val: i64, options: ScriptString, width: u32) -> ScriptString {
+    ScriptString(format_int_impl(val, &options.0, width))
+}
+
+/// Format u64 to string (basic).
+#[angelscript_macros::function(name = "formatUInt")]
+pub fn format_uint(val: u64) -> ScriptString {
+    ScriptString(format!("{}", val))
+}
+
+/// Format u64 to string with options.
+#[angelscript_macros::function(name = "formatUInt")]
+pub fn format_uint_opts(val: u64, options: ScriptString) -> ScriptString {
+    ScriptString(format_uint_impl(val, &options.0, 0))
+}
+
+/// Format u64 to string with options and width.
+#[angelscript_macros::function(name = "formatUInt")]
+pub fn format_uint_opts_width(val: u64, options: ScriptString, width: u32) -> ScriptString {
+    ScriptString(format_uint_impl(val, &options.0, width))
+}
+
+/// Format f64 to string (basic).
+#[angelscript_macros::function(name = "formatFloat")]
+pub fn format_float(val: f64) -> ScriptString {
+    ScriptString(format!("{}", val))
+}
+
+/// Format f64 to string with options.
+#[angelscript_macros::function(name = "formatFloat")]
+pub fn format_float_opts(val: f64, options: ScriptString) -> ScriptString {
+    ScriptString(format_float_impl(val, &options.0, 0, 6))
+}
+
+/// Format f64 to string with options and width.
+#[angelscript_macros::function(name = "formatFloat")]
+pub fn format_float_opts_width(val: f64, options: ScriptString, width: u32) -> ScriptString {
+    ScriptString(format_float_impl(val, &options.0, width, 6))
+}
+
+/// Format f64 to string with options, width, and precision.
+#[angelscript_macros::function(name = "formatFloat")]
+pub fn format_float_opts_width_prec(
+    val: f64,
+    options: ScriptString,
+    width: u32,
+    precision: u32,
+) -> ScriptString {
+    ScriptString(format_float_impl(val, &options.0, width, precision))
+}
+
+// =============================================================================
+// JOIN FUNCTION
+// =============================================================================
+
+use crate::array::ScriptArray;
+
+/// Join array elements into a string with delimiter.
+#[angelscript_macros::function]
+pub fn join(arr: &ScriptArray, delimiter: ScriptString) -> ScriptString {
+    let _ = (arr, delimiter);
+    todo!()
+}
+
+fn format_int_impl(val: i64, options: &str, width: u32) -> String {
+    let s = match options {
+        "x" | "X" => format!("{:x}", val),
+        "o" => format!("{:o}", val),
+        "b" => format!("{:b}", val),
+        "+" => format!("{:+}", val),
+        _ => format!("{}", val),
+    };
+
+    if width > 0 && s.len() < width as usize {
+        format!("{:>width$}", s, width = width as usize)
+    } else {
+        s
+    }
+}
+
+fn format_uint_impl(val: u64, options: &str, width: u32) -> String {
+    let s = match options {
+        "x" | "X" => format!("{:x}", val),
+        "o" => format!("{:o}", val),
+        "b" => format!("{:b}", val),
+        _ => format!("{}", val),
+    };
+
+    if width > 0 && s.len() < width as usize {
+        format!("{:>width$}", s, width = width as usize)
+    } else {
+        s
+    }
+}
+
+fn format_float_impl(val: f64, options: &str, width: u32, precision: u32) -> String {
+    let s = match options {
+        "e" | "E" => format!("{:.precision$e}", val, precision = precision as usize),
+        "+" => format!("{:+.precision$}", val, precision = precision as usize),
+        _ => format!("{:.precision$}", val, precision = precision as usize),
+    };
+
+    if width > 0 && s.len() < width as usize {
+        format!("{:>width$}", s, width = width as usize)
+    } else {
+        s
+    }
+}
 
 /// AngelScript string type backed by Rust String.
 ///
@@ -475,6 +783,14 @@ impl ScriptString {
         self.0.matches(&needle.0).count() as u32
     }
 
+    /// Split string by delimiter, returning an array of strings.
+    #[angelscript_macros::function(instance, const)]
+    #[returns(template = "array<string>")]
+    pub fn split(&self, delimiter: Self) -> Dynamic {
+        let _ = delimiter;
+        todo!()
+    }
+
     // =========================================================================
     // OPERATORS (for FFI registration)
     // =========================================================================
@@ -680,12 +996,35 @@ pub fn module() -> Module {
         .function(ScriptString::replace_first__meta)
         .function(ScriptString::reversed__meta)
         .function(ScriptString::count_occurrences__meta)
+        .function(ScriptString::split__meta)
         // Operators
         .function(ScriptString::concat__meta)
         .function(ScriptString::append__meta)
         .function(ScriptString::eq_op__meta)
         .function(ScriptString::cmp_op__meta)
         .function(ScriptString::byte_at__meta)
+        // Parsing functions
+        .function(parse_int)
+        .function(parse_int_radix)
+        .function(parse_int_with_count)
+        .function(parse_uint)
+        .function(parse_uint_radix)
+        .function(parse_uint_with_count)
+        .function(parse_float)
+        .function(parse_float_with_count)
+        // Formatting functions
+        .function(format_int)
+        .function(format_int_opts)
+        .function(format_int_opts_width)
+        .function(format_uint)
+        .function(format_uint_opts)
+        .function(format_uint_opts_width)
+        .function(format_float)
+        .function(format_float_opts)
+        .function(format_float_opts_width)
+        .function(format_float_opts_width_prec)
+        // Join function
+        .function(join)
 }
 
 // =========================================================================

@@ -73,6 +73,36 @@ impl Clone for NativeFn {
     }
 }
 
+/// Opaque handle for funcdef (function pointer) values.
+///
+/// This represents a reference to an AngelScript function that can be called.
+/// The actual function pointer is managed by the VM - this is just a handle.
+///
+/// Used by the `#[funcdef]` macro to generate types that implement `Any`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[repr(transparent)]
+pub struct FuncdefHandle {
+    /// Internal handle value (interpretation depends on VM implementation)
+    pub handle: u64,
+}
+
+impl FuncdefHandle {
+    /// Create a new funcdef handle.
+    pub fn new(handle: u64) -> Self {
+        Self { handle }
+    }
+
+    /// Create a null funcdef handle.
+    pub fn null() -> Self {
+        Self { handle: 0 }
+    }
+
+    /// Check if this is a null handle.
+    pub fn is_null(&self) -> bool {
+        self.handle == 0
+    }
+}
+
 /// Trait for callable native functions.
 ///
 /// This is the core trait that all native functions must implement.

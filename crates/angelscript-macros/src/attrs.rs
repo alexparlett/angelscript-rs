@@ -412,7 +412,8 @@ pub enum RefModeAttr {
 /// Supports:
 /// - `variable` - Any type parameter (`?`)
 /// - `variadic` - Multiple parameters of same type (`...`)
-/// - `type = T` - Specific type
+/// - `type = T` - Specific type (Rust type that impls Any)
+/// - `template = "T"` - Template parameter placeholder
 /// - `in` / `out` / `inout` - Reference mode
 /// - `default = "expr"` - Default value expression
 /// - `if_handle_then_const` - When T is handle type, pointed-to object is also const
@@ -424,6 +425,8 @@ pub struct ParamAttrs {
     pub is_variadic: bool,
     /// Explicit type (None means infer or variable)
     pub param_type: Option<syn::Type>,
+    /// Template parameter name (e.g., "T") - uses VARIABLE_PARAM as type hash placeholder.
+    pub template_param: Option<String>,
     /// Reference mode
     pub ref_mode: RefModeAttr,
     /// Default value expression (e.g., "-1", "\"\"")
@@ -453,6 +456,10 @@ impl ParamAttrs {
                 let value = meta.value()?;
                 let ty: syn::Type = value.parse()?;
                 result.param_type = Some(ty);
+            } else if meta.path.is_ident("template") {
+                let value = meta.value()?;
+                let lit: LitStr = value.parse()?;
+                result.template_param = Some(lit.value());
             } else if meta.path.is_ident("default") {
                 let value = meta.value()?;
                 let lit: LitStr = value.parse()?;
@@ -462,7 +469,7 @@ impl ParamAttrs {
             } else {
                 return Err(meta.error(format!(
                     "unknown param attribute '{}'. Valid attributes are: \
-                     variable, variadic, in, out, inout, type, default, if_handle_then_const",
+                     variable, variadic, in, out, inout, type, template, default, if_handle_then_const",
                     meta.path
                         .get_ident()
                         .map(|i| i.to_string())
@@ -471,6 +478,14 @@ impl ParamAttrs {
             }
             Ok(())
         })?;
+
+        // Validate: default doesn't make sense with out (out params are write-only)
+        if result.default.is_some() && result.ref_mode == RefModeAttr::Out {
+            return Err(syn::Error::new_spanned(
+                attr,
+                "`default` is not valid with `out` - out parameters are write-only and don't receive input values",
+            ));
+        }
 
         Ok(result)
     }

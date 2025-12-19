@@ -3,9 +3,15 @@
 //! This is a placeholder implementation for FFI registration.
 //! The actual storage and runtime implementation will be handled by the VM.
 
-use angelscript_core::Dynamic;
-use angelscript_macros::Any;
+use angelscript_core::{CallContext, Dynamic, native_error::NativeError};
+use angelscript_macros::{Any, funcdef};
 use angelscript_registry::Module;
+
+/// Child funcdef for custom sorting comparison.
+///
+/// AngelScript: `funcdef bool less(const T&in a, const T&in b);`
+#[funcdef(parent = ScriptArray, params(T, T))]
+pub type Less = fn(Dynamic, Dynamic) -> bool;
 
 /// Placeholder for AngelScript `array<T>` template.
 ///
@@ -120,9 +126,37 @@ impl ScriptArray {
         todo!()
     }
 
+    /// Sort elements in ascending order within range.
+    #[angelscript_macros::function(instance, name = "sortAsc")]
+    pub fn sort_asc_range(&mut self, start: u32, count: u32) {
+        let _ = (start, count);
+        todo!()
+    }
+
     /// Sort elements in descending order.
     #[angelscript_macros::function(instance, name = "sortDesc")]
     pub fn sort_desc(&mut self) {
+        todo!()
+    }
+
+    /// Sort elements in descending order within range.
+    #[angelscript_macros::function(instance, name = "sortDesc")]
+    pub fn sort_desc_range(&mut self, start: u32, count: u32) {
+        let _ = (start, count);
+        todo!()
+    }
+
+    /// Sort elements with custom comparison function.
+    ///
+    /// AngelScript: `void sort(const less &in, uint startAt = 0, uint count = uint(-1))`
+    #[angelscript_macros::function(instance)]
+    pub fn sort(
+        &mut self,
+        #[param(in)] comparator: &Less,
+        #[param(default = "0")] start_at: u32,
+        #[param(default = "0xFFFFFFFF")] count: u32,
+    ) {
+        let _ = (comparator, start_at, count);
         todo!()
     }
 
@@ -134,6 +168,13 @@ impl ScriptArray {
     #[angelscript_macros::function(instance, name = "insertAt")]
     pub fn insert_at(&mut self, index: u32, #[template("T")] value: Dynamic) {
         let _ = (index, value);
+        todo!()
+    }
+
+    /// Insert another array at position.
+    #[angelscript_macros::function(instance, name = "insertAt")]
+    pub fn insert_at_array(&mut self, index: u32, arr: &ScriptArray) {
+        let _ = (index, arr);
         todo!()
     }
 
@@ -152,7 +193,7 @@ impl ScriptArray {
     }
 
     /// Find first occurrence of value starting from `start`.
-    #[angelscript_macros::function(instance, const, name = "findFrom")]
+    #[angelscript_macros::function(instance, const, name = "find")]
     pub fn find_from(&self, start: u32, #[template("T")] value: Dynamic) -> i32 {
         let _ = (start, value);
         todo!()
@@ -162,6 +203,20 @@ impl ScriptArray {
     #[angelscript_macros::function(instance, const)]
     pub fn contains(&self, #[template("T")] value: Dynamic) -> bool {
         let _ = value;
+        todo!()
+    }
+
+    /// Find first occurrence of value by reference.
+    #[angelscript_macros::function(instance, const, name = "findByRef")]
+    pub fn find_by_ref(&self, #[template("T")] value: Dynamic) -> i32 {
+        let _ = value;
+        todo!()
+    }
+
+    /// Find first occurrence of value by reference starting from `start`.
+    #[angelscript_macros::function(instance, const, name = "findByRef")]
+    pub fn find_by_ref_from(&self, start: u32, #[template("T")] value: Dynamic) -> i32 {
+        let _ = (start, value);
         todo!()
     }
 
@@ -200,6 +255,46 @@ impl ScriptArray {
     }
 
     // =========================================================================
+    // FOREACH OPERATORS
+    // =========================================================================
+
+    /// Begin foreach iteration.
+    ///
+    /// Returns an iterator handle (or index) for use with opForEnd/opForNext/opForValue.
+    #[angelscript_macros::function(instance, const, operator = Operator::ForBegin)]
+    pub fn op_for_begin(&self) -> i32 {
+        todo!()
+    }
+
+    /// Check if foreach iteration is complete.
+    ///
+    /// Returns true if there are no more elements.
+    #[angelscript_macros::function(instance, const, operator = Operator::ForEnd)]
+    pub fn op_for_end(&self, iter: i32) -> bool {
+        let _ = iter;
+        todo!()
+    }
+
+    /// Advance to next foreach element.
+    ///
+    /// Returns the next iterator value.
+    #[angelscript_macros::function(instance, const, operator = Operator::ForNext)]
+    pub fn op_for_next(&self, iter: i32) -> i32 {
+        let _ = iter;
+        todo!()
+    }
+
+    /// Get current foreach value.
+    ///
+    /// Returns the element at the current iterator position.
+    #[angelscript_macros::function(instance, const, operator = Operator::ForValue)]
+    #[returns(template = "T")]
+    pub fn op_for_value(&self, iter: i32) -> Dynamic {
+        let _ = iter;
+        todo!()
+    }
+
+    // =========================================================================
     // LIST INITIALIZATION
     // =========================================================================
 
@@ -208,7 +303,7 @@ impl ScriptArray {
     /// Called when: `array<int> a = {1, 2, 3};`
     #[angelscript_macros::function(list_factory, generic)]
     #[list_pattern(repeat_template = "T")]
-    pub fn list_factory() {
+    pub fn list_factory(_ctx: &mut CallContext) -> Result<(), NativeError> {
         todo!()
     }
 }
@@ -239,18 +334,31 @@ pub fn module() -> Module {
         // Ordering
         .function(ScriptArray::reverse__meta)
         .function(ScriptArray::sort_asc__meta)
+        .function(ScriptArray::sort_asc_range__meta)
         .function(ScriptArray::sort_desc__meta)
+        .function(ScriptArray::sort_desc_range__meta)
+        .function(ScriptArray::sort__meta)
+        // Child funcdef for custom sort
+        .funcdef(__as_Less_funcdef_meta())
         // Template parameter methods
         .function(ScriptArray::insert_at__meta)
+        .function(ScriptArray::insert_at_array__meta)
         .function(ScriptArray::insert_last__meta)
         .function(ScriptArray::find__meta)
         .function(ScriptArray::find_from__meta)
         .function(ScriptArray::contains__meta)
+        .function(ScriptArray::find_by_ref__meta)
+        .function(ScriptArray::find_by_ref_from__meta)
         // Operators
         .function(ScriptArray::op_index__meta)
         .function(ScriptArray::op_index_const__meta)
         .function(ScriptArray::op_equals__meta)
         .function(ScriptArray::op_assign__meta)
+        // Foreach operators
+        .function(ScriptArray::op_for_begin__meta)
+        .function(ScriptArray::op_for_end__meta)
+        .function(ScriptArray::op_for_next__meta)
+        .function(ScriptArray::op_for_value__meta)
         // List initialization
         .function(ScriptArray::list_factory__meta)
 }
