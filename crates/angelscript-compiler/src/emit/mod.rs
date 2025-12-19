@@ -914,9 +914,14 @@ mod tests {
         emitter.emit_release(release_hash);
 
         let chunk = emitter.finish();
+
+        // AddRef at offset 0, followed by 8-byte hash
         assert_eq!(chunk.read_op(0), Some(OpCode::AddRef));
-        // After AddRef opcode (1 byte) and u64 hash (8 bytes), Release is at offset 9
+        assert_eq!(chunk.read_u64(1), Some(addref_hash.as_u64()));
+
+        // Release at offset 9 (1 + 8), followed by 8-byte hash
         assert_eq!(chunk.read_op(9), Some(OpCode::Release));
+        assert_eq!(chunk.read_u64(10), Some(release_hash.as_u64()));
     }
 
     #[test]

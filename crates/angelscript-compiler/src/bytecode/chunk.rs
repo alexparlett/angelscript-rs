@@ -168,6 +168,24 @@ impl BytecodeChunk {
         }
     }
 
+    /// Read a u64 at the given offset (big-endian).
+    pub fn read_u64(&self, offset: usize) -> Option<u64> {
+        if offset + 7 < self.code.len() {
+            Some(
+                ((self.code[offset] as u64) << 56)
+                    | ((self.code[offset + 1] as u64) << 48)
+                    | ((self.code[offset + 2] as u64) << 40)
+                    | ((self.code[offset + 3] as u64) << 32)
+                    | ((self.code[offset + 4] as u64) << 24)
+                    | ((self.code[offset + 5] as u64) << 16)
+                    | ((self.code[offset + 6] as u64) << 8)
+                    | (self.code[offset + 7] as u64),
+            )
+        } else {
+            None
+        }
+    }
+
     /// Read an opcode at the given offset.
     pub fn read_op(&self, offset: usize) -> Option<OpCode> {
         self.code.get(offset).and_then(|&b| OpCode::from_u8(b))
