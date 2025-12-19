@@ -15,6 +15,7 @@ impl<'a, 'ctx, 'pool> StmtCompiler<'a, 'ctx, 'pool> {
     /// - Non-void functions have a return value
     /// - Void functions do not have a return value
     /// - The return value type matches the declared return type
+    /// - Reference returns don't reference local variables
     pub fn compile_return<'ast>(&mut self, ret: &ReturnStmt<'ast>) -> Result<()> {
         let is_void = self.return_type.is_void();
 
@@ -23,10 +24,20 @@ impl<'a, 'ctx, 'pool> StmtCompiler<'a, 'ctx, 'pool> {
             (Some(expr), false) => {
                 // Clone return type to avoid borrow conflict
                 let return_type = self.return_type;
+                let returns_reference = return_type.is_reference();
 
-                // Compile expression and check against return type
+                // Compile expression with type checking (check calls infer internally)
                 let mut expr_compiler = self.expr_compiler();
-                expr_compiler.check(expr, &return_type)?;
+                let expr_info = expr_compiler.check(expr, &return_type)?;
+
+                // For reference returns, validate the source
+                if returns_reference && !expr_info.is_safe_for_ref_return() {
+                    return Err(CompilationError::Other {
+                        message: "cannot return reference to local variable or parameter"
+                            .to_string(),
+                        span: ret.span,
+                    });
+                }
 
                 self.emitter.emit_return();
                 Ok(())
@@ -268,5 +279,151 @@ mod tests {
 
         // Verify the constant pool has 3.14 as Float32
         assert_eq!(constants.len(), 1);
+    }
+
+    #[test]
+    fn return_reference_to_local_error() {
+        use angelscript_core::RefModifier;
+        use angelscript_parser::ast::{Ident, IdentExpr};
+
+        let (registry, mut constants) = create_test_context();
+        let mut ctx = CompilationContext::new(&registry);
+        ctx.begin_function();
+
+        // Declare a local variable
+        let _ = ctx.declare_local(
+            "x".to_string(),
+            DataType::simple(primitives::INT32),
+            false,
+            Span::default(),
+        );
+
+        let mut emitter = BytecodeEmitter::new(&mut constants);
+
+        // Return type is int& (reference to int)
+        let mut return_type = DataType::simple(primitives::INT32);
+        return_type.ref_modifier = RefModifier::InOut;
+
+        let mut compiler = StmtCompiler::new(&mut ctx, &mut emitter, return_type, None);
+
+        let arena = Bump::new();
+
+        // Try to return local variable by reference
+        let expr = arena.alloc(Expr::Ident(IdentExpr {
+            scope: None,
+            ident: Ident::new("x", Span::default()),
+            type_args: &[],
+            span: Span::default(),
+        }));
+
+        let ret = ReturnStmt {
+            value: Some(expr),
+            span: Span::default(),
+        };
+
+        let result = compiler.compile_return(&ret);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(
+            matches!(err, CompilationError::Other { message, .. } if message.contains("cannot return reference to local"))
+        );
+    }
+
+    #[test]
+    fn return_reference_to_global_ok() {
+        use angelscript_core::{
+            GlobalPropertyEntry, GlobalPropertyImpl, RefModifier, TypeHash, TypeSource,
+        };
+        use angelscript_parser::ast::{Ident, IdentExpr};
+
+        let mut registry = SymbolRegistry::with_primitives();
+
+        // Register a global variable (non-const)
+        let data_type = DataType::simple(primitives::INT32);
+        let entry = GlobalPropertyEntry {
+            name: "globalVar".to_string(),
+            namespace: Vec::new(),
+            qualified_name: "globalVar".to_string(),
+            type_hash: TypeHash::from_name("globalVar"),
+            data_type,
+            is_const: false,
+            source: TypeSource::ffi_untyped(),
+            implementation: GlobalPropertyImpl::Script { slot: 0, data_type },
+        };
+        registry.register_global(entry).unwrap();
+
+        let mut constants = ConstantPool::new();
+        let mut ctx = CompilationContext::new(&registry);
+        ctx.begin_function();
+
+        let mut emitter = BytecodeEmitter::new(&mut constants);
+
+        // Return type is int& (reference to int)
+        let mut return_type = DataType::simple(primitives::INT32);
+        return_type.ref_modifier = RefModifier::InOut;
+
+        let mut compiler = StmtCompiler::new(&mut ctx, &mut emitter, return_type, None);
+
+        let arena = Bump::new();
+
+        // Return global variable by reference - should be OK
+        let expr = arena.alloc(Expr::Ident(IdentExpr {
+            scope: None,
+            ident: Ident::new("globalVar", Span::default()),
+            type_args: &[],
+            span: Span::default(),
+        }));
+
+        let ret = ReturnStmt {
+            value: Some(expr),
+            span: Span::default(),
+        };
+
+        // This should succeed
+        let result = compiler.compile_return(&ret);
+        assert!(result.is_ok(), "Expected OK, got: {:?}", result);
+    }
+
+    #[test]
+    fn return_value_from_local_ok() {
+        use angelscript_parser::ast::{Ident, IdentExpr};
+
+        let (registry, mut constants) = create_test_context();
+        let mut ctx = CompilationContext::new(&registry);
+        ctx.begin_function();
+
+        // Declare a local variable
+        let _ = ctx.declare_local(
+            "x".to_string(),
+            DataType::simple(primitives::INT32),
+            false,
+            Span::default(),
+        );
+
+        let mut emitter = BytecodeEmitter::new(&mut constants);
+
+        // Return type is int (by value, not reference)
+        let return_type = DataType::simple(primitives::INT32);
+
+        let mut compiler = StmtCompiler::new(&mut ctx, &mut emitter, return_type, None);
+
+        let arena = Bump::new();
+
+        // Return local variable by value - should be OK
+        let expr = arena.alloc(Expr::Ident(IdentExpr {
+            scope: None,
+            ident: Ident::new("x", Span::default()),
+            type_args: &[],
+            span: Span::default(),
+        }));
+
+        let ret = ReturnStmt {
+            value: Some(expr),
+            span: Span::default(),
+        };
+
+        // This should succeed (returning by value is fine)
+        let result = compiler.compile_return(&ret);
+        assert!(result.is_ok(), "Expected OK, got: {:?}", result);
     }
 }

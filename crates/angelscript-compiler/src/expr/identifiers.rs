@@ -41,12 +41,8 @@ pub fn compile_ident<'ast>(
             .map(|e| (e.data_type, e.is_const));
         if let Some((data_type, is_const)) = global_info {
             compiler.emitter().emit_get_global(global_hash);
-            let info = if is_const {
-                ExprInfo::const_lvalue(data_type)
-            } else {
-                ExprInfo::lvalue(data_type)
-            };
-            return Ok(info);
+            // Use ExprInfo::global to track that this is a global variable
+            return Ok(ExprInfo::global(data_type, is_const));
         }
     }
 
@@ -85,7 +81,7 @@ fn compile_this(compiler: &mut ExprCompiler<'_, '_, '_>, span: Span) -> Result<E
             // 'this' is an lvalue that refers to the current object
             // It's effectively a const reference to the object
             let data_type = DataType::with_handle(class_hash, false);
-            Ok(ExprInfo::const_lvalue(data_type))
+            Ok(ExprInfo::this_ptr(data_type))
         }
         None => Err(CompilationError::ThisOutsideClass { span }),
     }
@@ -95,22 +91,14 @@ fn compile_local(compiler: &mut ExprCompiler<'_, '_, '_>, lookup: VarLookup) -> 
     match lookup {
         VarLookup::Local(var) => {
             compiler.emitter().emit_get_local(var.slot);
-            let info = if var.is_const {
-                ExprInfo::const_lvalue(var.data_type)
-            } else {
-                ExprInfo::lvalue(var.data_type)
-            };
-            Ok(info)
+            // Track that this is a local variable (not safe for ref return)
+            Ok(ExprInfo::local(var.data_type, var.is_const))
         }
         VarLookup::Captured(captured) => {
             // For captured variables, emit a closure variable access
             // TODO: Implement closure variable opcodes
-            let info = if captured.is_const {
-                ExprInfo::const_lvalue(captured.data_type)
-            } else {
-                ExprInfo::lvalue(captured.data_type)
-            };
-            Ok(info)
+            // Captured variables are also local to the enclosing function
+            Ok(ExprInfo::local(captured.data_type, captured.is_const))
         }
     }
 }

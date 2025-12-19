@@ -188,20 +188,44 @@
         {
           "id": "task-45b",
           "name": "Statement Compilation - Try/Catch",
-          "status": "pending",
+          "status": "complete",
           "task": "tasks/45b_try_catch.md"
         },
         {
           "id": "task-46",
           "name": "Function Compilation",
-          "status": "pending",
+          "status": "complete",
           "task": "tasks/46_function_compilation.md"
+        },
+        {
+          "id": "task-43b",
+          "name": "Assignment Expressions",
+          "status": "pending",
+          "task": "tasks/43b_assignment_expressions.md"
+        },
+        {
+          "id": "task-46b",
+          "name": "Class Member Initialization",
+          "status": "pending",
+          "task": "tasks/46b_member_initialization.md"
+        },
+        {
+          "id": "task-46c",
+          "name": "Import Declarations",
+          "status": "pending",
+          "task": "tasks/46c_import_declarations.md"
         },
         {
           "id": "task-49",
           "name": "Multi-Section Compilation",
           "status": "pending",
           "task": "tasks/49_multi_section_compilation.md"
+        },
+        {
+          "id": "task-50",
+          "name": "Constant Folding Optimization",
+          "status": "pending",
+          "task": "tasks/50_constant_folding.md"
         }
       ],
       "verification": "cargo nextest run -p angelscript-compiler"
@@ -223,6 +247,6 @@
       "verification": "cargo nextest run -p angelscript-registry"
     }
   ],
-  "next_task": "task-45b",
+  "next_task": "task-43b",
   "project": "angelscript-rust"
 }

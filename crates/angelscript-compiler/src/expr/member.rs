@@ -78,13 +78,10 @@ fn compile_field_access(
         // Direct field access
         compiler.emitter().emit_get_field(field_index as u16);
 
-        // Determine mutability based on object
+        // Determine mutability based on object - use member source for ref return validation
         let result_type = property.data_type;
-        if obj_type.is_effectively_const() {
-            Ok(ExprInfo::const_lvalue(result_type))
-        } else {
-            Ok(ExprInfo::lvalue(result_type))
-        }
+        let is_const = obj_type.is_effectively_const();
+        Ok(ExprInfo::member(result_type, is_const))
     } else if let Some(getter_hash) = property.getter {
         // Virtual property with getter
         // Check const-correctness
@@ -234,13 +231,11 @@ fn compile_opindex(
         .emitter()
         .emit_call_method(overload.func_hash, arg_count as u8);
 
-    // opIndex typically returns a reference, so it's an lvalue
-    // The mutability depends on the object's const-ness
-    if obj_type.is_effectively_const() {
-        Ok(ExprInfo::const_lvalue(return_type))
-    } else {
-        Ok(ExprInfo::lvalue(return_type))
-    }
+    // opIndex typically returns a reference to an element within the container,
+    // so it's an lvalue with Member source (safe for reference returns).
+    // The mutability depends on the object's const-ness.
+    let is_const = obj_type.is_effectively_const();
+    Ok(ExprInfo::member(return_type, is_const))
 }
 
 /// Compile get_opIndex access (read-only, returns rvalue).
