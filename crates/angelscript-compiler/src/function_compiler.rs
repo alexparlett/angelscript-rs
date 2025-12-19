@@ -80,7 +80,11 @@ impl<'a, 'ctx, 'pool> FunctionCompiler<'a, 'ctx, 'pool> {
     /// Set up local scope with function parameters.
     ///
     /// For methods, adds implicit `this` parameter first.
-    pub fn setup_parameters(&mut self) -> Result<()> {
+    ///
+    /// # Arguments
+    ///
+    /// * `span` - Source location of the function declaration for error reporting
+    pub fn setup_parameters(&mut self, span: Span) -> Result<()> {
         self.ctx.begin_function();
 
         // Add implicit 'this' for methods
@@ -88,8 +92,9 @@ impl<'a, 'ctx, 'pool> FunctionCompiler<'a, 'ctx, 'pool> {
             // Create a handle type for 'this'
             let this_type = DataType::with_handle(owner_hash, self.def.traits.is_const);
             let is_const = self.def.traits.is_const;
+            // 'this' is implicit, so use the function span for any errors
             self.ctx
-                .declare_param("this".into(), this_type, is_const, Span::default())?;
+                .declare_param("this".into(), this_type, is_const, span)?;
         }
 
         // Add explicit parameters
@@ -98,7 +103,7 @@ impl<'a, 'ctx, 'pool> FunctionCompiler<'a, 'ctx, 'pool> {
                 param.name.clone(),
                 param.data_type,
                 param.data_type.is_const,
-                Span::default(),
+                span,
             )?;
         }
 
@@ -273,7 +278,7 @@ mod tests {
         let def = create_func_with_params("add");
 
         let mut compiler = FunctionCompiler::new(&mut ctx, &mut constants, &def, None);
-        compiler.setup_parameters().unwrap();
+        compiler.setup_parameters(Span::default()).unwrap();
 
         // Check parameters were declared
         assert!(ctx.get_local("a").is_some());
@@ -291,7 +296,7 @@ mod tests {
         let class_hash = TypeHash::from_name("MyClass");
 
         let mut compiler = FunctionCompiler::new(&mut ctx, &mut constants, &def, Some(class_hash));
-        compiler.setup_parameters().unwrap();
+        compiler.setup_parameters(Span::default()).unwrap();
 
         // Check 'this' was declared
         let this_var = ctx.get_local("this");
@@ -307,7 +312,7 @@ mod tests {
         let def = create_void_func_def("doNothing");
 
         let mut compiler = FunctionCompiler::new(&mut ctx, &mut constants, &def, None);
-        compiler.setup_parameters().unwrap();
+        compiler.setup_parameters(Span::default()).unwrap();
 
         // Empty body - no explicit return
         let bytecode = compiler.finish();
@@ -324,7 +329,7 @@ mod tests {
         let def = create_int_func_def("getValue");
 
         let mut compiler = FunctionCompiler::new(&mut ctx, &mut constants, &def, None);
-        compiler.setup_parameters().unwrap();
+        compiler.setup_parameters(Span::default()).unwrap();
 
         // Empty body - no return
         let result = compiler.verify_returns(Span::default());

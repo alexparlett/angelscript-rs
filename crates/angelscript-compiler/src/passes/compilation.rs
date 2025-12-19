@@ -239,7 +239,7 @@ impl<'a, 'reg> CompilationPass<'a, 'reg> {
             FunctionCompiler::new(self.ctx, &mut self.constants, &func_entry.def, owner);
 
         // Set up parameters
-        compiler.setup_parameters()?;
+        compiler.setup_parameters(span)?;
 
         // Compile body
         compiler.compile_body(body)?;
