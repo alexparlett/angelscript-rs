@@ -255,6 +255,46 @@ impl ScriptArray {
     }
 
     // =========================================================================
+    // FOREACH OPERATORS
+    // =========================================================================
+
+    /// Begin foreach iteration.
+    ///
+    /// Returns an iterator handle (or index) for use with opForEnd/opForNext/opForValue.
+    #[angelscript_macros::function(instance, const, operator = Operator::ForBegin)]
+    pub fn op_for_begin(&self) -> i32 {
+        todo!()
+    }
+
+    /// Check if foreach iteration is complete.
+    ///
+    /// Returns true if there are no more elements.
+    #[angelscript_macros::function(instance, const, operator = Operator::ForEnd)]
+    pub fn op_for_end(&self, iter: i32) -> bool {
+        let _ = iter;
+        todo!()
+    }
+
+    /// Advance to next foreach element.
+    ///
+    /// Returns the next iterator value.
+    #[angelscript_macros::function(instance, const, operator = Operator::ForNext)]
+    pub fn op_for_next(&self, iter: i32) -> i32 {
+        let _ = iter;
+        todo!()
+    }
+
+    /// Get current foreach value.
+    ///
+    /// Returns the element at the current iterator position.
+    #[angelscript_macros::function(instance, const, operator = Operator::ForValue)]
+    #[returns(template = "T")]
+    pub fn op_for_value(&self, iter: i32) -> Dynamic {
+        let _ = iter;
+        todo!()
+    }
+
+    // =========================================================================
     // LIST INITIALIZATION
     // =========================================================================
 
@@ -314,6 +354,11 @@ pub fn module() -> Module {
         .function(ScriptArray::op_index_const__meta)
         .function(ScriptArray::op_equals__meta)
         .function(ScriptArray::op_assign__meta)
+        // Foreach operators
+        .function(ScriptArray::op_for_begin__meta)
+        .function(ScriptArray::op_for_end__meta)
+        .function(ScriptArray::op_for_next__meta)
+        .function(ScriptArray::op_for_value__meta)
         // List initialization
         .function(ScriptArray::list_factory__meta)
 }
