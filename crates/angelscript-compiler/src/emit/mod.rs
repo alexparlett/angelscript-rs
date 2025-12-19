@@ -498,20 +498,20 @@ impl<'pool> BytecodeEmitter<'pool> {
     ///
     /// The `func_hash` is the hash of the addref behavior function to call.
     /// For FFI types, this is `behaviors.addref`. For script types, use
-    /// `TypeHash::SCRIPT_ADDREF` as a placeholder.
+    /// `primitives::SCRIPT_ADDREF` as a placeholder.
     pub fn emit_add_ref(&mut self, func_hash: TypeHash) {
-        let index = self.constants.add(Constant::TypeHash(func_hash));
-        self.emit_u16(OpCode::AddRef, index as u16);
+        self.chunk.write_op(OpCode::AddRef, self.current_line);
+        self.chunk.write_u64(func_hash.as_u64(), self.current_line);
     }
 
     /// Emit release reference count.
     ///
     /// The `func_hash` is the hash of the release behavior function to call.
     /// For FFI types, this is `behaviors.release`. For script types, use
-    /// `TypeHash::SCRIPT_RELEASE` as a placeholder.
+    /// `primitives::SCRIPT_RELEASE` as a placeholder.
     pub fn emit_release(&mut self, func_hash: TypeHash) {
-        let index = self.constants.add(Constant::TypeHash(func_hash));
-        self.emit_u16(OpCode::Release, index as u16);
+        self.chunk.write_op(OpCode::Release, self.current_line);
+        self.chunk.write_u64(func_hash.as_u64(), self.current_line);
     }
 
     // ==========================================================================
@@ -915,8 +915,8 @@ mod tests {
 
         let chunk = emitter.finish();
         assert_eq!(chunk.read_op(0), Some(OpCode::AddRef));
-        // After AddRef opcode and u16 index (3 bytes total), Release is at offset 3
-        assert_eq!(chunk.read_op(3), Some(OpCode::Release));
+        // After AddRef opcode (1 byte) and u64 hash (8 bytes), Release is at offset 9
+        assert_eq!(chunk.read_op(9), Some(OpCode::Release));
     }
 
     #[test]

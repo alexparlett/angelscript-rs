@@ -64,6 +64,26 @@ impl BytecodeChunk {
         self.lines.push(line);
     }
 
+    /// Write a 64-bit operand (big-endian).
+    pub fn write_u64(&mut self, value: u64, line: u32) {
+        self.code.push((value >> 56) as u8);
+        self.lines.push(line);
+        self.code.push((value >> 48) as u8);
+        self.lines.push(line);
+        self.code.push((value >> 40) as u8);
+        self.lines.push(line);
+        self.code.push((value >> 32) as u8);
+        self.lines.push(line);
+        self.code.push((value >> 24) as u8);
+        self.lines.push(line);
+        self.code.push((value >> 16) as u8);
+        self.lines.push(line);
+        self.code.push((value >> 8) as u8);
+        self.lines.push(line);
+        self.code.push(value as u8);
+        self.lines.push(line);
+    }
+
     /// Get current code offset (for jump patching).
     pub fn current_offset(&self) -> usize {
         self.code.len()
