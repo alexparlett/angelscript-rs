@@ -105,11 +105,7 @@ impl<'a, 'ctx, 'pool> StmtCompiler<'a, 'ctx, 'pool> {
         for (i, var) in foreach.vars.iter().enumerate() {
             // Resolve type
             let var_type = TypeResolver::new(self.ctx).resolve(&var.ty)?;
-            let expected_type = if foreach.vars.len() == 1 {
-                &foreach_behaviors.value_types[0]
-            } else {
-                &foreach_behaviors.value_types[i]
-            };
+            let expected_type = &foreach_behaviors.value_types[i];
 
             // Check type compatibility
             if var_type != *expected_type {
