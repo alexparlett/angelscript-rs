@@ -39,10 +39,31 @@ use angelscript_parser::ast::{
     FunctionParam, GlobalVarDecl, InterfaceDecl, InterfaceMember, InterfaceMethod, Item, MixinDecl,
     NamespaceDecl, Script, TypedefDecl, UsingNamespaceDecl, VirtualPropertyDecl,
 };
+use rustc_hash::FxHashMap;
 
 use crate::context::CompilationContext;
 use crate::passes::{PendingInheritance, PendingResolutions};
 use crate::type_resolver::TypeResolver;
+
+/// Tracks which special members a class has defined or deleted.
+///
+/// This consolidates the 6 separate Vec fields into a single hashmap,
+/// providing O(1) lookup and reducing struct size.
+#[derive(Debug, Default, Clone, Copy)]
+struct ClassTraits {
+    /// Class has any user-defined constructor (prevents default ctor generation).
+    has_constructor: bool,
+    /// Class has a user-defined copy constructor.
+    has_copy_constructor: bool,
+    /// Class has a user-defined opAssign.
+    has_op_assign: bool,
+    /// Default constructor is explicitly deleted.
+    deleted_default_ctor: bool,
+    /// Copy constructor is explicitly deleted.
+    deleted_copy_ctor: bool,
+    /// opAssign is explicitly deleted.
+    deleted_op_assign: bool,
+}
 
 /// Output of the registration pass.
 #[derive(Debug, Default)]
@@ -74,18 +95,8 @@ pub struct RegistrationPass<'a, 'reg> {
     next_global_slot: u32,
     /// All script classes registered in this pass (for auto-generation).
     registered_classes: Vec<TypeHash>,
-    /// Track which classes have any user-defined constructor.
-    classes_with_constructor: Vec<TypeHash>,
-    /// Track which classes have a user-defined copy constructor.
-    classes_with_copy_constructor: Vec<TypeHash>,
-    /// Track which classes have a user-defined opAssign.
-    classes_with_op_assign: Vec<TypeHash>,
-    /// Track which classes have deleted default constructor.
-    classes_with_deleted_default_ctor: Vec<TypeHash>,
-    /// Track which classes have deleted copy constructor.
-    classes_with_deleted_copy_ctor: Vec<TypeHash>,
-    /// Track which classes have deleted opAssign.
-    classes_with_deleted_op_assign: Vec<TypeHash>,
+    /// Tracks special member traits (constructors, copy ctors, opAssign) per class.
+    class_traits: FxHashMap<TypeHash, ClassTraits>,
     /// Pending inheritance resolutions (resolved in Pass 1b).
     pending_resolutions: PendingResolutions,
 }
@@ -101,12 +112,7 @@ impl<'a, 'reg> RegistrationPass<'a, 'reg> {
             globals_registered: 0,
             next_global_slot: 0,
             registered_classes: Vec::new(),
-            classes_with_constructor: Vec::new(),
-            classes_with_copy_constructor: Vec::new(),
-            classes_with_op_assign: Vec::new(),
-            classes_with_deleted_default_ctor: Vec::new(),
-            classes_with_deleted_copy_ctor: Vec::new(),
-            classes_with_deleted_op_assign: Vec::new(),
+            class_traits: FxHashMap::default(),
             pending_resolutions: PendingResolutions::default(),
         }
     }
@@ -242,12 +248,13 @@ impl<'a, 'reg> RegistrationPass<'a, 'reg> {
                     } else {
                         // Check if this is opAssign
                         if method.name.name == "opAssign" {
+                            let traits = self.class_traits.entry(type_hash).or_default();
                             if method.attrs.delete {
                                 // Deleted opAssign - track it but don't register
-                                self.classes_with_deleted_op_assign.push(type_hash);
+                                traits.deleted_op_assign = true;
                                 continue;
                             }
-                            self.classes_with_op_assign.push(type_hash);
+                            traits.has_op_assign = true;
                         }
                         self.visit_function(method, Some(type_hash));
                     }
@@ -509,26 +516,27 @@ impl<'a, 'reg> RegistrationPass<'a, 'reg> {
         let is_default_constructor = params.is_empty();
 
         // Track user-defined or deleted constructors to prevent auto-generation
+        let traits = self.class_traits.entry(class_hash).or_default();
         if is_deleted {
             // Track deleted constructors - these prevent auto-generation
             if is_default_constructor {
-                self.classes_with_deleted_default_ctor.push(class_hash);
+                traits.deleted_default_ctor = true;
             }
             if is_copy_constructor {
-                self.classes_with_deleted_copy_ctor.push(class_hash);
+                traits.deleted_copy_ctor = true;
             }
             // Any constructor (deleted or not) counts as "having a constructor"
             // to prevent default constructor auto-generation
-            self.classes_with_constructor.push(class_hash);
+            traits.has_constructor = true;
             // Deleted constructors are not registered - they don't exist
             return;
         }
 
         // Track that this class has a user-defined constructor
-        self.classes_with_constructor.push(class_hash);
+        traits.has_constructor = true;
 
         if is_copy_constructor {
-            self.classes_with_copy_constructor.push(class_hash);
+            traits.has_copy_constructor = true;
         }
 
         let func_hash = TypeHash::from_constructor(class_hash, &param_hashes);
@@ -1072,27 +1080,28 @@ impl<'a, 'reg> RegistrationPass<'a, 'reg> {
                 None => continue,
             };
 
+            // Get traits for this class (default if none recorded)
+            let traits = self
+                .class_traits
+                .get(&class_hash)
+                .copied()
+                .unwrap_or_default();
+
             // Generate default constructor if no user-defined constructor exists
             // and it hasn't been explicitly deleted
-            let has_constructor = self.classes_with_constructor.contains(&class_hash);
-            let deleted_default = self.classes_with_deleted_default_ctor.contains(&class_hash);
-            if !has_constructor && !deleted_default {
+            if !traits.has_constructor && !traits.deleted_default_ctor {
                 self.generate_default_constructor(class_hash, &class_name, &namespace);
             }
 
             // Generate copy constructor if no user-defined copy constructor exists
             // and it hasn't been explicitly deleted
-            let has_copy_ctor = self.classes_with_copy_constructor.contains(&class_hash);
-            let deleted_copy = self.classes_with_deleted_copy_ctor.contains(&class_hash);
-            if !has_copy_ctor && !deleted_copy {
+            if !traits.has_copy_constructor && !traits.deleted_copy_ctor {
                 self.generate_copy_constructor(class_hash, &class_name, &namespace);
             }
 
             // Generate opAssign if no user-defined opAssign exists
             // and it hasn't been explicitly deleted
-            let has_op_assign = self.classes_with_op_assign.contains(&class_hash);
-            let deleted_op_assign = self.classes_with_deleted_op_assign.contains(&class_hash);
-            if !has_op_assign && !deleted_op_assign {
+            if !traits.has_op_assign && !traits.deleted_op_assign {
                 self.generate_op_assign(class_hash, &class_name, &namespace);
             }
         }
