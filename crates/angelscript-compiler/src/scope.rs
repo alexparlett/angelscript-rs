@@ -131,7 +131,17 @@ impl LocalScope {
     }
 
     /// Exit the current scope, removing variables declared in it.
-    pub fn pop_scope(&mut self) {
+    ///
+    /// Returns the variables that went out of scope, for cleanup bytecode emission.
+    pub fn pop_scope(&mut self) -> Vec<LocalVar> {
+        // Collect variables declared at current depth before removing them
+        let exiting_vars: Vec<LocalVar> = self
+            .variables
+            .values()
+            .filter(|var| var.depth == self.scope_depth)
+            .cloned()
+            .collect();
+
         // Remove all variables declared at current depth
         self.variables.retain(|_, var| var.depth < self.scope_depth);
 
@@ -150,6 +160,8 @@ impl LocalScope {
         // can be reused but the max must account for all simultaneously live vars
 
         self.scope_depth -= 1;
+
+        exiting_vars
     }
 
     /// Get current scope depth.

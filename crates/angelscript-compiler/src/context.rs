@@ -628,12 +628,13 @@ impl<'a> CompilationContext<'a> {
 
     /// Exit the current block scope.
     ///
+    /// Returns the variables that went out of scope, for cleanup bytecode emission.
     /// Panics if not in a function.
-    pub fn pop_local_scope(&mut self) {
+    pub fn pop_local_scope(&mut self) -> Vec<crate::scope::LocalVar> {
         self.local_scope
             .as_mut()
             .expect("pop_local_scope called outside function")
-            .pop_scope();
+            .pop_scope()
     }
 
     /// Declare a local variable in the current scope.

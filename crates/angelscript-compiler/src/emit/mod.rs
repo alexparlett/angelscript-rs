@@ -495,13 +495,23 @@ impl<'pool> BytecodeEmitter<'pool> {
     // ==========================================================================
 
     /// Emit add reference count.
-    pub fn emit_add_ref(&mut self) {
-        self.emit(OpCode::AddRef);
+    ///
+    /// The `func_hash` is the hash of the addref behavior function to call.
+    /// For FFI types, this is `behaviors.addref`. For script types, use
+    /// `primitives::SCRIPT_ADDREF` as a placeholder.
+    pub fn emit_add_ref(&mut self, func_hash: TypeHash) {
+        self.chunk.write_op(OpCode::AddRef, self.current_line);
+        self.chunk.write_u64(func_hash.as_u64(), self.current_line);
     }
 
     /// Emit release reference count.
-    pub fn emit_release(&mut self) {
-        self.emit(OpCode::Release);
+    ///
+    /// The `func_hash` is the hash of the release behavior function to call.
+    /// For FFI types, this is `behaviors.release`. For script types, use
+    /// `primitives::SCRIPT_RELEASE` as a placeholder.
+    pub fn emit_release(&mut self, func_hash: TypeHash) {
+        self.chunk.write_op(OpCode::Release, self.current_line);
+        self.chunk.write_u64(func_hash.as_u64(), self.current_line);
     }
 
     // ==========================================================================
@@ -897,12 +907,21 @@ mod tests {
         let mut constants = ConstantPool::new();
         let mut emitter = BytecodeEmitter::new(&mut constants);
 
-        emitter.emit_add_ref();
-        emitter.emit_release();
+        let addref_hash = TypeHash::from_name("TestClass::AddRef");
+        let release_hash = TypeHash::from_name("TestClass::Release");
+
+        emitter.emit_add_ref(addref_hash);
+        emitter.emit_release(release_hash);
 
         let chunk = emitter.finish();
+
+        // AddRef at offset 0, followed by 8-byte hash
         assert_eq!(chunk.read_op(0), Some(OpCode::AddRef));
-        assert_eq!(chunk.read_op(1), Some(OpCode::Release));
+        assert_eq!(chunk.read_u64(1), Some(addref_hash.as_u64()));
+
+        // Release at offset 9 (1 + 8), followed by 8-byte hash
+        assert_eq!(chunk.read_op(9), Some(OpCode::Release));
+        assert_eq!(chunk.read_u64(10), Some(release_hash.as_u64()));
     }
 
     #[test]
