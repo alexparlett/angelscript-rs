@@ -182,8 +182,14 @@
         {
           "id": "task-45",
           "name": "Statement Compilation - Loops",
-          "status": "pending",
+          "status": "complete",
           "task": "tasks/45_statement_loops.md"
+        },
+        {
+          "id": "task-45b",
+          "name": "Statement Compilation - Try/Catch",
+          "status": "pending",
+          "task": "tasks/45b_try_catch.md"
         },
         {
           "id": "task-46",
@@ -217,6 +223,6 @@
       "verification": "cargo nextest run -p angelscript-registry"
     }
   ],
-  "next_task": "task-45",
+  "next_task": "task-45b",
   "project": "angelscript-rust"
 }

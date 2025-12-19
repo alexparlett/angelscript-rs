@@ -389,8 +389,19 @@ fn operator_path_to_variant(op_str: &str) -> TokenStream2 {
         op_str
     };
 
-    let variant_ident = syn::Ident::new(variant, proc_macro2::Span::call_site());
-    quote! { ::angelscript_core::Operator::#variant_ident }
+    // Check if this is a parameterized variant like "ForValueN(0)"
+    if let Some(paren_pos) = variant.find('(') {
+        let variant_name = &variant[..paren_pos];
+        let args = &variant[paren_pos..]; // includes parentheses, e.g., "(0)"
+
+        let variant_ident = syn::Ident::new(variant_name, proc_macro2::Span::call_site());
+        // Parse the argument part as tokens
+        let args_tokens: TokenStream2 = args.parse().unwrap_or_else(|_| quote! {});
+        quote! { ::angelscript_core::Operator::#variant_ident #args_tokens }
+    } else {
+        let variant_ident = syn::Ident::new(variant, proc_macro2::Span::call_site());
+        quote! { ::angelscript_core::Operator::#variant_ident }
+    }
 }
 
 /// Generate GenericParamMeta tokens from parsed #[param] attributes.

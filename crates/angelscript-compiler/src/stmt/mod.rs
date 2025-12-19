@@ -17,8 +17,12 @@
 //! ```
 
 mod block;
+mod do_while_stmt;
+mod for_stmt;
+mod foreach_stmt;
 mod if_stmt;
 mod return_stmt;
+mod switch_stmt;
 mod var_decl;
 mod while_stmt;
 
@@ -86,25 +90,14 @@ impl<'a, 'ctx, 'pool> StmtCompiler<'a, 'ctx, 'pool> {
             Stmt::If(if_stmt) => self.compile_if(if_stmt),
             Stmt::While(while_stmt) => self.compile_while(while_stmt),
 
-            // Deferred to Task 45
-            Stmt::DoWhile(_) => Err(CompilationError::Other {
-                message: "do-while not yet implemented (Task 45)".to_string(),
-                span,
-            }),
-            Stmt::For(_) => Err(CompilationError::Other {
-                message: "for loops not yet implemented (Task 45)".to_string(),
-                span,
-            }),
-            Stmt::Foreach(_) => Err(CompilationError::Other {
-                message: "foreach loops not yet implemented (Task 45)".to_string(),
-                span,
-            }),
-            Stmt::Switch(_) => Err(CompilationError::Other {
-                message: "switch statements not yet implemented (Task 45)".to_string(),
-                span,
-            }),
+            Stmt::DoWhile(do_while) => self.compile_do_while(do_while),
+            Stmt::For(for_stmt) => self.compile_for(for_stmt),
+            Stmt::Foreach(foreach) => self.compile_foreach(foreach),
+            Stmt::Switch(switch) => self.compile_switch(switch),
+
+            // Deferred to later task
             Stmt::TryCatch(_) => Err(CompilationError::Other {
-                message: "try-catch not yet implemented (Task 45)".to_string(),
+                message: "try-catch not yet implemented".to_string(),
                 span,
             }),
         }

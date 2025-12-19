@@ -136,16 +136,11 @@ pub enum Operator {
     ForEnd,
     /// Advance to next foreach element
     ForNext,
-    /// Get current foreach value (single value)
+    /// Get current foreach value (single value, equivalent to ForValueN(0))
     ForValue,
-    /// Get foreach value at index 0 (multi-value iteration)
-    ForValue0,
-    /// Get foreach value at index 1 (multi-value iteration)
-    ForValue1,
-    /// Get foreach value at index 2 (multi-value iteration)
-    ForValue2,
-    /// Get foreach value at index 3 (multi-value iteration)
-    ForValue3,
+    /// Get foreach value at index N (multi-value iteration)
+    /// The index is dynamic, allowing any number of iteration variables (up to 256)
+    ForValueN(u8),
 
     // === Conversion ===
     /// Explicit value conversion (`opConv`)
@@ -226,10 +221,8 @@ impl Operator {
             Operator::ForEnd => "opForEnd",
             Operator::ForNext => "opForNext",
             Operator::ForValue => "opForValue",
-            Operator::ForValue0 => "opForValue0",
-            Operator::ForValue1 => "opForValue1",
-            Operator::ForValue2 => "opForValue2",
-            Operator::ForValue3 => "opForValue3",
+            // ForValueN is handled in Display impl since it needs dynamic formatting
+            Operator::ForValueN(_) => "opForValue",
 
             // Conversion
             Operator::Conv => "opConv",
@@ -357,17 +350,17 @@ impl Operator {
                 | Operator::ForEnd
                 | Operator::ForNext
                 | Operator::ForValue
-                | Operator::ForValue0
-                | Operator::ForValue1
-                | Operator::ForValue2
-                | Operator::ForValue3
+                | Operator::ForValueN(_)
         )
     }
 }
 
 impl fmt::Display for Operator {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.method_name())
+        match self {
+            Operator::ForValueN(n) => write!(f, "opForValue{}", n),
+            other => write!(f, "{}", other.method_name()),
+        }
     }
 }
 
@@ -471,9 +464,18 @@ mod tests {
         assert!(Operator::ForEnd.is_foreach());
         assert!(Operator::ForNext.is_foreach());
         assert!(Operator::ForValue.is_foreach());
-        assert!(Operator::ForValue0.is_foreach());
-        assert!(Operator::ForValue1.is_foreach());
+        assert!(Operator::ForValueN(0).is_foreach());
+        assert!(Operator::ForValueN(1).is_foreach());
+        assert!(Operator::ForValueN(255).is_foreach());
         assert!(!Operator::Add.is_foreach());
         assert!(!Operator::Index.is_foreach());
+    }
+
+    #[test]
+    fn for_value_n_display() {
+        assert_eq!(format!("{}", Operator::ForValueN(0)), "opForValue0");
+        assert_eq!(format!("{}", Operator::ForValueN(1)), "opForValue1");
+        assert_eq!(format!("{}", Operator::ForValueN(42)), "opForValue42");
+        assert_eq!(format!("{}", Operator::ForValueN(255)), "opForValue255");
     }
 }

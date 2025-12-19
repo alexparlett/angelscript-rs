@@ -288,10 +288,34 @@ impl FunctionAttrs {
                                         .collect::<Vec<_>>()
                                         .join("::"),
                                 );
+                            } else if let Expr::Call(call) = value {
+                                // Handle parameterized variants like Operator::ForValueN(0)
+                                if let Expr::Path(path) = call.func.as_ref() {
+                                    let base_path = path
+                                        .path
+                                        .segments
+                                        .iter()
+                                        .map(|s| s.ident.to_string())
+                                        .collect::<Vec<_>>()
+                                        .join("::");
+                                    // Extract arguments as string
+                                    let args = call
+                                        .args
+                                        .iter()
+                                        .map(|arg| quote::quote!(#arg).to_string())
+                                        .collect::<Vec<_>>()
+                                        .join(", ");
+                                    result.operator = Some(format!("{}({})", base_path, args));
+                                } else {
+                                    return Err(syn::Error::new(
+                                        name.span(),
+                                        "operator value must be a path like Operator::Add or Operator::ForValueN(0)",
+                                    ));
+                                }
                             } else {
                                 return Err(syn::Error::new(
                                     name.span(),
-                                    "operator value must be a path like Operator::Add",
+                                    "operator value must be a path like Operator::Add or Operator::ForValueN(0)",
                                 ));
                             }
                         }

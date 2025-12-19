@@ -556,16 +556,11 @@ pub enum OperatorBehavior {
     OpForEnd,
     /// Next foreach iteration
     OpForNext,
-    /// Foreach value (single)
+    /// Foreach value (single, equivalent to OpForValueN(0))
     OpForValue,
-    /// Foreach value 0
-    OpForValue0,
-    /// Foreach value 1
-    OpForValue1,
-    /// Foreach value 2
-    OpForValue2,
-    /// Foreach value 3
-    OpForValue3,
+    /// Foreach value at index N (for multi-value iteration)
+    /// The index is dynamic, allowing any number of iteration variables
+    OpForValueN(u8),
 }
 
 impl OperatorBehavior {
@@ -649,10 +644,12 @@ impl OperatorBehavior {
             "opForEnd" => Some(OperatorBehavior::OpForEnd),
             "opForNext" => Some(OperatorBehavior::OpForNext),
             "opForValue" => Some(OperatorBehavior::OpForValue),
-            "opForValue0" => Some(OperatorBehavior::OpForValue0),
-            "opForValue1" => Some(OperatorBehavior::OpForValue1),
-            "opForValue2" => Some(OperatorBehavior::OpForValue2),
-            "opForValue3" => Some(OperatorBehavior::OpForValue3),
+
+            // Dynamic opForValue{N} - parse the index
+            _ if name.starts_with("opForValue") => {
+                let suffix = &name[10..]; // "opForValue".len() == 10
+                suffix.parse::<u8>().ok().map(OperatorBehavior::OpForValueN)
+            }
 
             _ => None,
         }
