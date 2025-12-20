@@ -32,7 +32,6 @@ fn build_script(filename: &str) -> Unit {
 // =============================================================================
 
 #[test]
-#[ignore = "requires string factory and print() function"]
 fn test_hello_world() {
     let module = build_script("hello_world.as");
     assert!(module.is_built());
@@ -41,7 +40,6 @@ fn test_hello_world() {
 }
 
 #[test]
-#[ignore = "requires string factory"]
 fn test_literals() {
     let module = build_script("literals.as");
     assert!(module.is_built());
@@ -99,7 +97,6 @@ fn test_types() {
 // =============================================================================
 
 #[test]
-#[ignore = "requires class field access and default constructors"]
 fn test_class_basic() {
     let module = build_script("class_basic.as");
     assert!(module.is_built());
@@ -125,7 +122,6 @@ fn test_interface() {
 }
 
 #[test]
-#[ignore = "requires class field access and property support"]
 fn test_properties() {
     let module = build_script("properties.as");
     assert!(module.is_built());
@@ -165,7 +161,6 @@ fn test_using_namespace() {
 }
 
 #[test]
-#[ignore = "requires string factory"]
 fn test_expressions() {
     let module = build_script("expressions.as");
     assert!(module.is_built());
