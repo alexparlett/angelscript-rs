@@ -922,7 +922,11 @@ mod tests {
         // Should resolve function from global namespace
         let resolved = ctx.resolve_function("print").expect("print should resolve");
         assert_eq!(resolved.len(), 1);
-        assert_eq!(resolved[0].def.name, "print");
+        // Verify the resolved hash matches what we registered
+        assert_eq!(
+            resolved[0],
+            TypeHash::from_function("print", &[primitives::INT32])
+        );
     }
 
     #[test]
@@ -964,7 +968,11 @@ mod tests {
             .resolve_function("log")
             .expect("log should resolve in Game namespace");
         assert_eq!(resolved.len(), 1);
-        assert_eq!(resolved[0].def.name, "log");
+        // Verify the resolved hash matches what we registered
+        assert_eq!(
+            resolved[0],
+            TypeHash::from_function("Game::log", &[primitives::INT32])
+        );
     }
 
     #[test]
@@ -982,7 +990,8 @@ mod tests {
         let global = ctx
             .resolve_global("GRAVITY")
             .expect("GRAVITY should resolve");
-        assert_eq!(global.name, "GRAVITY");
+        // Verify the resolved hash matches what we registered
+        assert_eq!(global, TypeHash::from_name("GRAVITY"));
     }
 
     #[test]
@@ -1010,7 +1019,8 @@ mod tests {
         let global = ctx
             .resolve_global("MAX_SPEED")
             .expect("MAX_SPEED should resolve in Config namespace");
-        assert_eq!(global.name, "MAX_SPEED");
+        // Verify the resolved hash matches what we registered
+        assert_eq!(global, TypeHash::from_name("Config::MAX_SPEED"));
     }
 
     #[test]
