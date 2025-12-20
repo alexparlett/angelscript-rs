@@ -1,3 +1,6 @@
+// Allow approximate PI values in tests - we use 3.14 as a convenient test float value
+#![cfg_attr(test, allow(clippy::approx_constant))]
+
 //! AngelScript Core Types
 //!
 //! This crate provides the core type definitions shared between the FFI

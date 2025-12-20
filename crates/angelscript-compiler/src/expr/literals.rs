@@ -135,7 +135,7 @@ mod tests {
 
         let mut compiler = create_test_compiler(&mut ctx, &mut emitter);
 
-        let result = compile_float(&mut compiler, 3.14);
+        let result = compile_float(&mut compiler, 3.5);
         assert!(result.is_ok());
         let info = result.unwrap();
         assert_eq!(info.data_type.type_hash, primitives::FLOAT);

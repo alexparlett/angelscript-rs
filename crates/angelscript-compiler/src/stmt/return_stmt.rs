@@ -258,7 +258,7 @@ mod tests {
         let mut compiler = StmtCompiler::new(&mut ctx, &mut emitter, return_type, None);
 
         let expr = arena.alloc(Expr::Literal(LiteralExpr {
-            kind: LiteralKind::Float(3.14),
+            kind: LiteralKind::Float(3.5),
             span: Span::default(),
         }));
 
@@ -277,7 +277,7 @@ mod tests {
         assert_eq!(chunk.read_byte(1), Some(0)); // Index 0 in constant pool
         assert_eq!(chunk.read_op(2), Some(OpCode::Return));
 
-        // Verify the constant pool has 3.14 as Float32
+        // Verify the constant pool has 3.5 as Float32
         assert_eq!(constants.len(), 1);
     }
 

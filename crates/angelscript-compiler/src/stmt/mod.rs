@@ -50,6 +50,8 @@ pub struct StmtCompiler<'a, 'ctx, 'pool> {
     return_type: DataType,
     /// Current class type (for 'this' access in methods)
     current_class: Option<TypeHash>,
+    /// Whether we're compiling inside a constructor (for super() validation)
+    is_constructor: bool,
 }
 
 impl<'a, 'ctx, 'pool> StmtCompiler<'a, 'ctx, 'pool> {
@@ -72,6 +74,25 @@ impl<'a, 'ctx, 'pool> StmtCompiler<'a, 'ctx, 'pool> {
             emitter,
             return_type,
             current_class,
+            is_constructor: false,
+        }
+    }
+
+    /// Create a new statement compiler for a constructor context.
+    ///
+    /// This enables super() calls which are only valid in constructors.
+    pub fn new_for_constructor(
+        ctx: &'a mut CompilationContext<'ctx>,
+        emitter: &'a mut BytecodeEmitter<'pool>,
+        return_type: DataType,
+        current_class: Option<TypeHash>,
+    ) -> Self {
+        Self {
+            ctx,
+            emitter,
+            return_type,
+            current_class,
+            is_constructor: true,
         }
     }
 
@@ -155,7 +176,11 @@ impl<'a, 'ctx, 'pool> StmtCompiler<'a, 'ctx, 'pool> {
 
     /// Create an expression compiler using the current context.
     fn expr_compiler(&mut self) -> ExprCompiler<'_, 'ctx, 'pool> {
-        ExprCompiler::new(self.ctx, self.emitter, self.current_class)
+        if self.is_constructor {
+            ExprCompiler::new_for_constructor(self.ctx, self.emitter, self.current_class)
+        } else {
+            ExprCompiler::new(self.ctx, self.emitter, self.current_class)
+        }
     }
 
     // =========================================================================

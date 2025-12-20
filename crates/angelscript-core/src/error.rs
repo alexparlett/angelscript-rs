@@ -631,6 +631,19 @@ pub enum CompilationError {
         span: Span,
     },
 
+    /// Base class does not have a default constructor for implicit super() call.
+    #[error(
+        "at {span}: base class '{base_class}' has no default constructor - derived class '{derived_class}' must explicitly call a base constructor with super(...)"
+    )]
+    NoBaseDefaultConstructor {
+        /// The derived class name.
+        derived_class: String,
+        /// The base class name.
+        base_class: String,
+        /// Where the derived class constructor is defined.
+        span: Span,
+    },
+
     /// Internal compiler error.
     #[error("internal error: {message}")]
     Internal {
@@ -783,6 +796,7 @@ impl CompilationError {
             CompilationError::UnknownMethod { span, .. } => *span,
             CompilationError::ArgumentCountMismatch { span, .. } => *span,
             CompilationError::InvalidCast { span, .. } => *span,
+            CompilationError::NoBaseDefaultConstructor { span, .. } => *span,
         }
     }
 }

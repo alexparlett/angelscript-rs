@@ -31,8 +31,9 @@
 
 use angelscript_core::{
     ClassEntry, CompilationError, DataType, EnumEntry, FuncdefEntry, FunctionDef, FunctionEntry,
-    FunctionSource, FunctionTraits, GlobalPropertyEntry, GlobalPropertyImpl, InterfaceEntry, Param,
-    PropertyEntry, RefModifier, Span, TypeHash, TypeKind, TypeSource, UnitId, Visibility,
+    FunctionSource, FunctionTraits, GlobalPropertyEntry, GlobalPropertyImpl, InterfaceEntry,
+    OperatorBehavior, Param, PropertyEntry, RefModifier, Span, TypeHash, TypeKind, TypeSource,
+    UnitId, Visibility,
 };
 use angelscript_parser::ast::{
     ClassDecl, ClassMember, EnumDecl, Enumerator, FieldDecl, FuncdefDecl, FunctionDecl,
@@ -569,6 +570,11 @@ impl<'a, 'reg> RegistrationPass<'a, 'reg> {
             });
         } else {
             self.functions_registered += 1;
+
+            // Add constructor to class's behaviors.constructors
+            if let Some(class) = self.ctx.unit_registry_mut().get_class_mut(class_hash) {
+                class.behaviors.constructors.push(func_hash);
+            }
         }
     }
 
@@ -604,6 +610,11 @@ impl<'a, 'reg> RegistrationPass<'a, 'reg> {
             });
         } else {
             self.functions_registered += 1;
+
+            // Add destructor to class's behaviors.destructor
+            if let Some(class) = self.ctx.unit_registry_mut().get_class_mut(class_hash) {
+                class.behaviors.destructor = Some(func_hash);
+            }
         }
     }
 
@@ -855,6 +866,25 @@ impl<'a, 'reg> RegistrationPass<'a, 'reg> {
                 && let Some(class) = self.ctx.unit_registry_mut().get_class_mut(obj_hash)
             {
                 class.add_method(func.name.name, func_hash);
+
+                // Also add operator methods to behaviors.operators for O(1) lookup
+                // For conversion operators, use return type as target type
+                let target_type = if return_type.is_handle || !return_type.is_void() {
+                    Some(return_type.type_hash)
+                } else {
+                    None
+                };
+
+                if let Some(op_behavior) =
+                    OperatorBehavior::from_method_name(func.name.name, target_type)
+                {
+                    class
+                        .behaviors
+                        .operators
+                        .entry(op_behavior)
+                        .or_default()
+                        .push(func_hash);
+                }
             }
         }
     }
@@ -1148,6 +1178,11 @@ impl<'a, 'reg> RegistrationPass<'a, 'reg> {
             });
         } else {
             self.functions_registered += 1;
+
+            // Add auto-generated constructor to class's behaviors.constructors
+            if let Some(class) = self.ctx.unit_registry_mut().get_class_mut(class_hash) {
+                class.behaviors.constructors.push(func_hash);
+            }
         }
     }
 
@@ -1198,6 +1233,11 @@ impl<'a, 'reg> RegistrationPass<'a, 'reg> {
             });
         } else {
             self.functions_registered += 1;
+
+            // Add auto-generated copy constructor to class's behaviors.constructors
+            if let Some(class) = self.ctx.unit_registry_mut().get_class_mut(class_hash) {
+                class.behaviors.constructors.push(func_hash);
+            }
         }
     }
 
@@ -1255,6 +1295,16 @@ impl<'a, 'reg> RegistrationPass<'a, 'reg> {
             });
         } else {
             self.functions_registered += 1;
+
+            // Add auto-generated opAssign to class's behaviors.operators
+            if let Some(class) = self.ctx.unit_registry_mut().get_class_mut(class_hash) {
+                class
+                    .behaviors
+                    .operators
+                    .entry(OperatorBehavior::OpAssign)
+                    .or_default()
+                    .push(func_hash);
+            }
         }
     }
 }
@@ -1505,6 +1555,36 @@ mod tests {
         // Two user-defined constructors + auto-generated copy constructor + auto-generated opAssign
         assert_eq!(output.functions_registered, 4);
         assert!(output.errors.is_empty());
+
+        // Verify constructors are added to behaviors
+        let player_hash = ctx.resolve_type("Player").unwrap();
+        let player_entry = ctx.get_type(player_hash).unwrap().as_class().unwrap();
+
+        // Should have 3 constructors in behaviors: 2 user-defined + 1 auto-generated copy
+        assert_eq!(
+            player_entry.behaviors.constructors.len(),
+            3,
+            "Expected 3 constructors in behaviors (2 user + 1 copy)"
+        );
+
+        // Verify by hash
+        let default_ctor = TypeHash::from_constructor(player_hash, &[]);
+        let int_hash = ctx.resolve_type("int").unwrap();
+        let param_ctor = TypeHash::from_constructor(player_hash, &[int_hash]);
+        let copy_ctor = TypeHash::from_constructor(player_hash, &[player_hash]);
+        assert!(player_entry.behaviors.constructors.contains(&default_ctor));
+        assert!(player_entry.behaviors.constructors.contains(&param_ctor));
+        assert!(player_entry.behaviors.constructors.contains(&copy_ctor));
+
+        // Verify auto-generated opAssign is in behaviors.operators
+        let op_assign_ops = player_entry
+            .behaviors
+            .operators
+            .get(&OperatorBehavior::OpAssign);
+        assert!(
+            op_assign_ops.is_some(),
+            "behaviors.operators should contain OpAssign"
+        );
     }
 
     #[test]
@@ -1525,6 +1605,26 @@ mod tests {
         // Destructor + auto-generated (default ctor, copy ctor, opAssign)
         assert_eq!(output.functions_registered, 4);
         assert!(output.errors.is_empty());
+
+        // Verify destructor is added to behaviors
+        let resource_hash = ctx.resolve_type("Resource").unwrap();
+        let resource_entry = ctx.get_type(resource_hash).unwrap().as_class().unwrap();
+
+        assert!(
+            resource_entry.behaviors.destructor.is_some(),
+            "behaviors.destructor should be set"
+        );
+
+        // Verify by hash
+        let dtor_hash = TypeHash::from_method(resource_hash, "~", &[]);
+        assert_eq!(resource_entry.behaviors.destructor, Some(dtor_hash));
+
+        // Verify auto-generated constructors are in behaviors
+        assert_eq!(
+            resource_entry.behaviors.constructors.len(),
+            2,
+            "Expected 2 auto-generated constructors (default + copy)"
+        );
     }
 
     #[test]
@@ -1584,6 +1684,43 @@ mod tests {
         // Should have auto-generated: default constructor, copy constructor, opAssign
         assert_eq!(output.functions_registered, 3);
         assert!(output.errors.is_empty());
+
+        // Verify auto-generated constructors are in behaviors
+        let player_hash = ctx.resolve_type("Player").unwrap();
+        let player_entry = ctx.get_type(player_hash).unwrap().as_class().unwrap();
+
+        assert_eq!(
+            player_entry.behaviors.constructors.len(),
+            2,
+            "Expected 2 auto-generated constructors (default + copy)"
+        );
+
+        // Verify by hash
+        let default_ctor = TypeHash::from_constructor(player_hash, &[]);
+        let copy_ctor = TypeHash::from_constructor(player_hash, &[player_hash]);
+        assert!(
+            player_entry.behaviors.constructors.contains(&default_ctor),
+            "behaviors.constructors should contain default constructor"
+        );
+        assert!(
+            player_entry.behaviors.constructors.contains(&copy_ctor),
+            "behaviors.constructors should contain copy constructor"
+        );
+
+        // Verify auto-generated opAssign is in behaviors.operators
+        let op_assign_ops = player_entry
+            .behaviors
+            .operators
+            .get(&OperatorBehavior::OpAssign);
+        assert!(
+            op_assign_ops.is_some(),
+            "behaviors.operators should contain auto-generated OpAssign"
+        );
+        let op_assign_hash = TypeHash::from_method(player_hash, "opAssign", &[player_hash]);
+        assert!(
+            op_assign_ops.unwrap().contains(&op_assign_hash),
+            "behaviors.operators[OpAssign] should contain correct hash"
+        );
     }
 
     #[test]
@@ -1649,6 +1786,20 @@ mod tests {
         // user-defined opAssign + auto-generated default constructor + auto-generated copy constructor
         assert_eq!(output.functions_registered, 3);
         assert!(output.errors.is_empty());
+
+        // Verify user-defined opAssign is in behaviors.operators
+        let player_hash = ctx.resolve_type("Player").unwrap();
+        let player_entry = ctx.get_type(player_hash).unwrap().as_class().unwrap();
+
+        let op_assign_ops = player_entry
+            .behaviors
+            .operators
+            .get(&OperatorBehavior::OpAssign);
+        assert!(
+            op_assign_ops.is_some(),
+            "behaviors.operators should contain user-defined OpAssign"
+        );
+        assert_eq!(op_assign_ops.unwrap().len(), 1);
     }
 
     #[test]
@@ -2829,5 +2980,52 @@ mod tests {
         assert_eq!(player_entry.properties[2].name, "anotherField");
         assert!(player_entry.properties[2].getter.is_none());
         assert!(player_entry.properties[2].setter.is_none());
+    }
+
+    // ==========================================================================
+    // Conversion operator behavior test - demonstrates O(1) lookup with target type
+    // ==========================================================================
+
+    #[test]
+    fn conversion_operator_added_to_behaviors_with_target_type() {
+        let (registry, arena) = setup_context();
+        let source = r#"
+            class Wrapper {
+                int value;
+                int opConv() const { return value; }
+                int opImplConv() const { return value; }
+            }
+        "#;
+        let script = Parser::parse(source, &arena).unwrap();
+
+        let mut ctx = CompilationContext::new(&registry);
+        let pass = RegistrationPass::new(&mut ctx, UnitId::new(0));
+        let output = pass.run(&script);
+
+        assert!(output.errors.is_empty());
+
+        let wrapper_hash = ctx.resolve_type("Wrapper").unwrap();
+        let wrapper_entry = ctx.get_type(wrapper_hash).unwrap().as_class().unwrap();
+
+        // Should have opConv(int) in behaviors.operators with int as target
+        let int_hash = ctx.resolve_type("int").unwrap();
+        let op_conv = wrapper_entry
+            .behaviors
+            .operators
+            .get(&OperatorBehavior::OpConv(int_hash));
+        assert!(
+            op_conv.is_some(),
+            "behaviors.operators should contain OpConv(int)"
+        );
+
+        // Should have opImplConv(int) in behaviors.operators with int as target
+        let op_impl_conv = wrapper_entry
+            .behaviors
+            .operators
+            .get(&OperatorBehavior::OpImplConv(int_hash));
+        assert!(
+            op_impl_conv.is_some(),
+            "behaviors.operators should contain OpImplConv(int)"
+        );
     }
 }
