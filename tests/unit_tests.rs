@@ -32,50 +32,66 @@ fn build_script(filename: &str) -> Unit {
 // =============================================================================
 
 #[test]
-#[ignore = "requires assignment expressions (task-43b)"]
+#[ignore = "requires string factory and print() function"]
 fn test_hello_world() {
     let module = build_script("hello_world.as");
     assert!(module.is_built());
-    assert!(module.function_count() >= 1);
+    // Should have 1 function: main()
+    assert_eq!(module.function_count(), 1, "Expected 1 function (main)");
 }
 
 #[test]
-#[ignore = "requires assignment expressions (task-43b)"]
+#[ignore = "requires string factory"]
 fn test_literals() {
     let module = build_script("literals.as");
     assert!(module.is_built());
-    assert!(module.function_count() >= 1);
+    // Should have 1 function: testLiterals()
+    assert_eq!(
+        module.function_count(),
+        1,
+        "Expected 1 function (testLiterals)"
+    );
 }
 
 #[test]
-#[ignore = "requires assignment expressions (task-43b)"]
 fn test_operators() {
     let module = build_script("operators.as");
     assert!(module.is_built());
-    assert!(module.function_count() >= 1);
+    // Should have 1 function: testOperators()
+    assert_eq!(
+        module.function_count(),
+        1,
+        "Expected 1 function (testOperators)"
+    );
 }
 
 #[test]
-#[ignore = "requires assignment expressions (task-43b)"]
+#[ignore = "requires string factory, print() function, and class constructors"]
 fn test_control_flow() {
     let module = build_script("control_flow.as");
     assert!(module.is_built());
-    assert!(module.function_count() >= 1);
+    // Contains multiple test functions with control flow statements
+    assert!(module.function_count() >= 1, "Expected at least 1 function");
 }
 
 #[test]
-#[ignore = "requires assignment expressions (task-43b)"]
+#[ignore = "requires string factory, print() function, and array<int> default constructor"]
 fn test_functions() {
     let module = build_script("functions.as");
     assert!(module.is_built());
-    assert!(module.function_count() >= 3);
+    // Should have multiple functions with various parameter patterns
+    assert!(
+        module.function_count() >= 10,
+        "Expected at least 10 functions with various signatures"
+    );
 }
 
 #[test]
-#[ignore = "requires assignment expressions (task-43b)"]
+#[ignore = "requires type alias support and auto type inference"]
 fn test_types() {
     let module = build_script("types.as");
     assert!(module.is_built());
+    // Should contain type alias declarations and auto type usage
 }
 
 // =============================================================================
@@ -83,40 +99,45 @@ fn test_types() {
 // =============================================================================
 
 #[test]
-#[ignore = "requires assignment expressions (task-43b)"]
+#[ignore = "requires class field access and default constructors"]
 fn test_class_basic() {
     let module = build_script("class_basic.as");
     assert!(module.is_built());
-    assert!(module.function_count() >= 1);
+    // Should have basic class declarations with methods
+    assert!(module.function_count() >= 1, "Expected at least 1 function");
 }
 
 #[test]
-#[ignore = "requires assignment expressions (task-43b)"]
+#[ignore = "requires string factory, super() keyword, and class constructors"]
 fn test_inheritance() {
     let module = build_script("inheritance.as");
     assert!(module.is_built());
-    assert!(module.function_count() >= 1);
+    // Should have classes with inheritance
+    assert!(module.function_count() >= 1, "Expected at least 1 function");
 }
 
 #[test]
-#[ignore = "requires assignment expressions (task-43b)"]
+#[ignore = "requires class field access and default constructors"]
 fn test_interface() {
     let module = build_script("interface.as");
     assert!(module.is_built());
+    // Should have interface declarations
 }
 
 #[test]
-#[ignore = "requires assignment expressions (task-43b)"]
+#[ignore = "requires class field access and property support"]
 fn test_properties() {
     let module = build_script("properties.as");
     assert!(module.is_built());
+    // Should have classes with properties
 }
 
 #[test]
-#[ignore = "requires assignment expressions (task-43b)"]
+#[ignore = "requires enum member scoping (Color::Red)"]
 fn test_enum() {
     let module = build_script("enum.as");
     assert!(module.is_built());
+    // Should have enum declarations
 }
 
 // =============================================================================
@@ -124,41 +145,49 @@ fn test_enum() {
 // =============================================================================
 
 #[test]
-#[ignore = "requires assignment expressions (task-43b)"]
+#[ignore = "requires nested class field access, super() keyword, and class constructors"]
 fn test_nested() {
     let module = build_script("nested.as");
     assert!(module.is_built());
+    // Should have nested namespace and class declarations
 }
 
 #[test]
-#[ignore = "namespace support not yet complete"]
+#[ignore = "requires namespace scoping and class constructors"]
 fn test_using_namespace() {
     let module = build_script("using_namespace.as");
     assert!(module.is_built());
-    assert!(module.function_count() >= 5);
+    // Should have multiple namespaces with functions
+    assert!(
+        module.function_count() >= 5,
+        "Expected at least 5 functions across namespaces"
+    );
 }
 
 #[test]
-#[ignore = "requires assignment expressions (task-43b)"]
+#[ignore = "requires string factory"]
 fn test_expressions() {
     let module = build_script("expressions.as");
     assert!(module.is_built());
-    assert!(module.function_count() >= 1);
+    // Should have functions demonstrating various expression types
+    assert!(module.function_count() >= 1, "Expected at least 1 function");
 }
 
 #[test]
-#[ignore = "requires assignment expressions (task-43b)"]
+#[ignore = "requires array<T> default constructor and template instantiation"]
 fn test_templates() {
     let module = build_script("templates.as");
     assert!(module.is_built());
+    // Should have template type usage
 }
 
 #[test]
-#[ignore = "requires assignment expressions (task-43b)"]
+#[ignore = "requires lambda statement compilation (Task 44)"]
 fn test_lambdas() {
     let module = build_script("lambdas.as");
     assert!(module.is_built());
-    assert!(module.function_count() >= 1);
+    // Should have functions using lambda expressions
+    assert!(module.function_count() >= 1, "Expected at least 1 function");
 }
 
 // =============================================================================
@@ -166,27 +195,36 @@ fn test_lambdas() {
 // =============================================================================
 
 #[test]
-#[ignore = "requires assignment expressions (task-43b)"]
+#[ignore = "requires class field access, default constructors, and is/!is operators"]
 fn test_game_logic() {
     let module = build_script("game_logic.as");
     assert!(module.is_built());
-    assert!(module.function_count() >= 3);
+    // Should have game classes with logic functions
+    assert!(
+        module.function_count() >= 3,
+        "Expected at least 3 functions"
+    );
 }
 
 #[test]
-#[ignore = "utilities test needs investigation"]
+#[ignore = "requires string methods, array methods, string factory, and distance() function"]
 fn test_utilities() {
     let module = build_script("utilities.as");
     assert!(module.is_built());
-    assert!(module.function_count() >= 10);
+    // Should have utility functions
+    assert!(
+        module.function_count() >= 10,
+        "Expected at least 10 utility functions"
+    );
 }
 
 #[test]
-#[ignore = "requires assignment expressions (task-43b)"]
+#[ignore = "requires class field access, default constructors, and operator overloading"]
 fn test_data_structures() {
     let module = build_script("data_structures.as");
     assert!(module.is_built());
-    assert!(module.function_count() >= 1);
+    // Should have data structure implementations
+    assert!(module.function_count() >= 1, "Expected at least 1 function");
 }
 
 // =============================================================================
@@ -194,41 +232,54 @@ fn test_data_structures() {
 // =============================================================================
 
 #[test]
-#[ignore = "requires assignment expressions (task-43b)"]
+#[ignore = "requires init list support"]
 fn test_large_function() {
     let module = build_script("large_function.as");
     assert!(module.is_built());
-    assert!(module.function_count() >= 1);
+    // Single large function with many statements
+    assert_eq!(module.function_count(), 1, "Expected 1 large function");
 }
 
 #[test]
-#[ignore = "requires assignment expressions (task-43b)"]
 fn test_many_functions() {
     let module = build_script("many_functions.as");
     assert!(module.is_built());
-    assert!(module.function_count() >= 20);
+    // Should have 60 functions total (various types and helpers)
+    assert_eq!(module.function_count(), 60, "Expected exactly 60 functions");
 }
 
 #[test]
-#[ignore = "performance test needs investigation"]
+#[ignore = "requires class field access, constructors, operators, and super()"]
 fn test_performance_large_500() {
     let module = build_script("performance/large_500.as");
     assert!(module.is_built());
-    assert!(module.function_count() >= 10);
+    // Complex performance test with many classes and functions
+    assert!(
+        module.function_count() >= 10,
+        "Expected at least 10 functions"
+    );
 }
 
 #[test]
-#[ignore = "performance test needs investigation"]
+#[ignore = "requires class field access, constructors, operators, super(), and forward declarations"]
 fn test_performance_xlarge_1000() {
     let module = build_script("performance/xlarge_1000.as");
     assert!(module.is_built());
-    assert!(module.function_count() >= 20);
+    // Large performance test with complex class hierarchies
+    assert!(
+        module.function_count() >= 20,
+        "Expected at least 20 functions"
+    );
 }
 
 #[test]
-#[ignore = "requires assignment expressions (task-43b)"]
+#[ignore = "requires class field access, constructors, operators, super(), and forward declarations"]
 fn test_performance_xxlarge_5000() {
     let module = build_script("performance/xxlarge_5000.as");
     assert!(module.is_built());
-    assert!(module.function_count() >= 50);
+    // Very large performance test
+    assert!(
+        module.function_count() >= 50,
+        "Expected at least 50 functions"
+    );
 }

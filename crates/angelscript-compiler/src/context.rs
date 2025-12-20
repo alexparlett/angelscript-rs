@@ -777,9 +777,9 @@ mod tests {
         let ctx = CompilationContext::new(&registry);
 
         // Should resolve primitives from global namespace
-        assert!(ctx.resolve_type("int").is_some());
-        assert!(ctx.resolve_type("float").is_some());
-        assert!(ctx.resolve_type("bool").is_some());
+        assert_eq!(ctx.resolve_type("int"), Some(primitives::INT32));
+        assert_eq!(ctx.resolve_type("float"), Some(primitives::FLOAT));
+        assert_eq!(ctx.resolve_type("bool"), Some(primitives::BOOL));
     }
 
     #[test]
@@ -798,10 +798,16 @@ mod tests {
         let ctx = CompilationContext::new(&registry);
 
         // Qualified name should work
-        assert!(ctx.resolve_type("Game::Player").is_some());
+        assert_eq!(
+            ctx.resolve_type("Game::Player"),
+            Some(TypeHash::from_name("Game::Player"))
+        );
 
         // Unqualified shouldn't work from global namespace
-        assert!(ctx.resolve_type("Player").is_none());
+        assert!(
+            ctx.resolve_type("Player").is_none(),
+            "Player should not resolve without namespace"
+        );
     }
 
     #[test]
@@ -823,7 +829,10 @@ mod tests {
         ctx.enter_namespace("Game");
 
         // Now Player should be resolvable
-        assert!(ctx.resolve_type("Player").is_some());
+        assert_eq!(
+            ctx.resolve_type("Player"),
+            Some(TypeHash::from_name("Game::Player"))
+        );
     }
 
     #[test]
@@ -845,7 +854,10 @@ mod tests {
         ctx.add_import("Game");
 
         // Now Utils should be resolvable
-        assert!(ctx.resolve_type("Utils").is_some());
+        assert_eq!(
+            ctx.resolve_type("Utils"),
+            Some(TypeHash::from_name("Game::Utils"))
+        );
     }
 
     #[test]
@@ -908,9 +920,13 @@ mod tests {
         let ctx = CompilationContext::new(&registry);
 
         // Should resolve function from global namespace
-        let resolved = ctx.resolve_function("print");
-        assert!(resolved.is_some());
-        assert_eq!(resolved.unwrap().len(), 1);
+        let resolved = ctx.resolve_function("print").expect("print should resolve");
+        assert_eq!(resolved.len(), 1);
+        // Verify the resolved hash matches what we registered
+        assert_eq!(
+            resolved[0],
+            TypeHash::from_function("print", &[primitives::INT32])
+        );
     }
 
     #[test]
@@ -939,14 +955,24 @@ mod tests {
         let mut ctx = CompilationContext::new(&registry);
 
         // Not visible from global namespace
-        assert!(ctx.resolve_function("log").is_none());
+        assert!(
+            ctx.resolve_function("log").is_none(),
+            "log should not resolve from global namespace"
+        );
 
         // Enter Game namespace
         ctx.enter_namespace("Game");
 
         // Now visible
-        let resolved = ctx.resolve_function("log");
-        assert!(resolved.is_some());
+        let resolved = ctx
+            .resolve_function("log")
+            .expect("log should resolve in Game namespace");
+        assert_eq!(resolved.len(), 1);
+        // Verify the resolved hash matches what we registered
+        assert_eq!(
+            resolved[0],
+            TypeHash::from_function("Game::log", &[primitives::INT32])
+        );
     }
 
     #[test]
@@ -961,7 +987,11 @@ mod tests {
         let ctx = CompilationContext::new(&registry);
 
         // Should resolve global from global namespace
-        assert!(ctx.resolve_global("GRAVITY").is_some());
+        let global = ctx
+            .resolve_global("GRAVITY")
+            .expect("GRAVITY should resolve");
+        // Verify the resolved hash matches what we registered
+        assert_eq!(global, TypeHash::from_name("GRAVITY"));
     }
 
     #[test]
@@ -977,13 +1007,20 @@ mod tests {
         let mut ctx = CompilationContext::new(&registry);
 
         // Not visible from global namespace
-        assert!(ctx.resolve_global("MAX_SPEED").is_none());
+        assert!(
+            ctx.resolve_global("MAX_SPEED").is_none(),
+            "MAX_SPEED should not resolve from global namespace"
+        );
 
         // Enter Config namespace
         ctx.enter_namespace("Config");
 
         // Now visible
-        assert!(ctx.resolve_global("MAX_SPEED").is_some());
+        let global = ctx
+            .resolve_global("MAX_SPEED")
+            .expect("MAX_SPEED should resolve in Config namespace");
+        // Verify the resolved hash matches what we registered
+        assert_eq!(global, TypeHash::from_name("Config::MAX_SPEED"));
     }
 
     #[test]
@@ -1003,11 +1040,17 @@ mod tests {
         let mut ctx = CompilationContext::new(&registry);
 
         // Not visible from global
-        assert!(ctx.resolve_type("Entity").is_none());
+        assert!(
+            ctx.resolve_type("Entity").is_none(),
+            "Entity should not resolve from global namespace"
+        );
 
         // Not visible from Game (it's in Game::Entities)
         ctx.enter_namespace("Game");
-        assert!(ctx.resolve_type("Entity").is_none());
+        assert!(
+            ctx.resolve_type("Entity").is_none(),
+            "Entity should not resolve from Game namespace"
+        );
 
         // Leave Game, enter Game::Entities
         ctx.exit_namespace();
@@ -1015,7 +1058,10 @@ mod tests {
         ctx.enter_namespace("Entities");
 
         // Now visible
-        assert!(ctx.resolve_type("Entity").is_some());
+        assert_eq!(
+            ctx.resolve_type("Entity"),
+            Some(TypeHash::from_name("Game::Entities::Entity"))
+        );
     }
 
     #[test]
@@ -1035,11 +1081,20 @@ mod tests {
         ctx.register_type(class.into()).unwrap();
 
         // With try-combinations approach, types are resolvable immediately after registration
-        assert!(ctx.resolve_type("LocalClass").is_some());
+        assert_eq!(
+            ctx.resolve_type("LocalClass"),
+            Some(TypeHash::from_name("LocalClass"))
+        );
 
         // Should be in unit registry, not global
-        assert!(ctx.unit_registry().get_by_name("LocalClass").is_some());
-        assert!(ctx.global_registry().get_by_name("LocalClass").is_none());
+        assert!(
+            ctx.unit_registry().get_by_name("LocalClass").is_some(),
+            "LocalClass should be in unit registry"
+        );
+        assert!(
+            ctx.global_registry().get_by_name("LocalClass").is_none(),
+            "LocalClass should not be in global registry"
+        );
     }
 
     #[test]
@@ -1060,11 +1115,17 @@ mod tests {
 
         // Enter Game namespace
         ctx.enter_namespace("Game");
-        assert!(ctx.resolve_type("Player").is_some());
+        assert_eq!(
+            ctx.resolve_type("Player"),
+            Some(TypeHash::from_name("Game::Player"))
+        );
 
         // Exit Game namespace
         ctx.exit_namespace();
-        assert!(ctx.resolve_type("Player").is_none());
+        assert!(
+            ctx.resolve_type("Player").is_none(),
+            "Player should not resolve after exiting namespace"
+        );
     }
 
     #[test]
@@ -1145,7 +1206,10 @@ mod tests {
         }
 
         // resolve_type (non-checked) returns None on ambiguity
-        assert!(ctx.resolve_type("Player").is_none());
+        assert!(
+            ctx.resolve_type("Player").is_none(),
+            "resolve_type should return None on ambiguity"
+        );
     }
 
     #[test]
@@ -1274,7 +1338,10 @@ mod tests {
         }
 
         // resolve_global (non-checked) returns None on ambiguity
-        assert!(ctx.resolve_global("MAX_VALUE").is_none());
+        assert!(
+            ctx.resolve_global("MAX_VALUE").is_none(),
+            "resolve_global should return None on ambiguity"
+        );
     }
 
     #[test]
@@ -1334,7 +1401,10 @@ mod tests {
         assert!(!ctx.has_errors());
 
         // Widget should resolve correctly
-        assert!(ctx.resolve_type("Widget").is_some());
+        assert_eq!(
+            ctx.resolve_type("Widget"),
+            Some(TypeHash::from_name("UI::Widget"))
+        );
     }
 
     #[test]
@@ -1441,12 +1511,18 @@ mod tests {
 
         // Not in function initially
         assert!(!ctx.in_function());
-        assert!(ctx.local_scope().is_none());
+        assert!(
+            ctx.local_scope().is_none(),
+            "local_scope should be None before begin_function"
+        );
 
         // Begin function
         ctx.begin_function();
         assert!(ctx.in_function());
-        assert!(ctx.local_scope().is_some());
+        assert!(
+            ctx.local_scope().is_some(),
+            "local_scope should be Some after begin_function"
+        );
 
         // Declare a variable
         let slot = ctx
@@ -1460,8 +1536,9 @@ mod tests {
         assert_eq!(slot, 0);
 
         // Look it up
-        let var = ctx.get_local("x");
-        assert!(var.is_some());
+        let var = ctx.get_local("x").expect("x should be declared");
+        assert_eq!(var.slot, 0);
+        assert_eq!(var.data_type.type_hash, primitives::INT32);
 
         // End function
         let scope = ctx.end_function().unwrap();
@@ -1498,15 +1575,23 @@ mod tests {
         .unwrap();
 
         // Both visible
-        assert!(ctx.get_local("outer").is_some());
-        assert!(ctx.get_local("inner").is_some());
+        let outer = ctx.get_local("outer").expect("outer should be visible");
+        assert_eq!(outer.slot, 0);
+        let inner = ctx.get_local("inner").expect("inner should be visible");
+        assert_eq!(inner.slot, 1);
 
         // Exit block
         ctx.pop_local_scope();
 
         // Only outer visible
-        assert!(ctx.get_local("outer").is_some());
-        assert!(ctx.get_local("inner").is_none());
+        assert!(
+            ctx.get_local("outer").is_some(),
+            "outer should still be visible after popping scope"
+        );
+        assert!(
+            ctx.get_local("inner").is_none(),
+            "inner should not be visible after popping scope"
+        );
 
         ctx.end_function();
     }
@@ -1541,7 +1626,10 @@ mod tests {
         assert_eq!(lambda_scope.captures().len(), 1);
 
         // Back in outer function
-        assert!(ctx.get_local("captured").is_some());
+        let var = ctx
+            .get_local("captured")
+            .expect("captured should still be in outer scope");
+        assert_eq!(var.data_type.type_hash, primitives::INT32);
 
         ctx.end_function();
     }

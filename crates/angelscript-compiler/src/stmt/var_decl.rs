@@ -392,7 +392,16 @@ mod tests {
         let mut compiler = StmtCompiler::new(&mut ctx, &mut emitter, DataType::void(), None);
 
         let result = compiler.compile_var_decl(&decl);
-        assert!(result.is_err());
+        match result.unwrap_err() {
+            CompilationError::Other { message, .. } => {
+                assert!(
+                    message.contains("auto variable must have an initializer"),
+                    "Expected error about auto requiring initializer, got: {}",
+                    message
+                );
+            }
+            other => panic!("Expected CompilationError::Other, got: {:?}", other),
+        }
     }
 
     #[test]
@@ -708,16 +717,7 @@ mod tests {
 
         // Should emit New for the constructor
         let chunk = emitter.finish();
-        assert!(chunk.len() > 0);
-        // Look for New opcode
-        let mut found_new = false;
-        for i in 0..chunk.len() {
-            if chunk.read_op(i) == Some(OpCode::New) {
-                found_new = true;
-                break;
-            }
-        }
-        assert!(found_new, "Expected New opcode for constructor");
+        chunk.assert_contains_opcodes(&[OpCode::New]);
     }
 
     #[test]
@@ -762,7 +762,16 @@ mod tests {
         let mut compiler = StmtCompiler::new(&mut ctx, &mut emitter, DataType::void(), None);
 
         let result = compiler.compile_var_decl(&decl);
-        assert!(result.is_err());
+        match result.unwrap_err() {
+            CompilationError::Other { message, .. } => {
+                assert!(
+                    message.contains("no default constructor"),
+                    "Expected error about missing default constructor, got: {}",
+                    message
+                );
+            }
+            other => panic!("Expected CompilationError::Other, got: {:?}", other),
+        }
     }
 
     #[test]
@@ -817,21 +826,13 @@ mod tests {
 
         let mut compiler = StmtCompiler::new(&mut ctx, &mut emitter, DataType::void(), None);
 
-        assert!(compiler.compile_var_decl(&decl).is_ok());
+        compiler
+            .compile_var_decl(&decl)
+            .expect("Handle variable declaration should succeed");
 
         // Verify AddRef was emitted by checking bytecode
         let chunk = emitter.finish();
-        let mut found_addref = false;
-        for i in 0..chunk.len() {
-            if chunk.read_op(i) == Some(OpCode::AddRef) {
-                found_addref = true;
-                break;
-            }
-        }
-        assert!(
-            found_addref,
-            "Expected AddRef opcode for handle initialization"
-        );
+        chunk.assert_contains_opcodes(&[OpCode::AddRef]);
     }
 
     #[test]

@@ -375,7 +375,7 @@ mod tests {
     use crate::bytecode::ConstantPool;
     use crate::context::CompilationContext;
     use crate::emit::BytecodeEmitter;
-    use angelscript_core::Span;
+    use angelscript_core::{CompilationError, Span};
     use angelscript_parser::ast::{
         Block, Expr, Ident, LiteralExpr, LiteralKind, PrimitiveType, Stmt, TypeExpr,
     };
@@ -423,5 +423,14 @@ mod tests {
 
         // Should fail because int is not a class type
         assert!(result.is_err());
+        match result.unwrap_err() {
+            CompilationError::Other { message, .. } => {
+                assert!(message.contains("class") || message.contains("iterable"));
+            }
+            other => panic!(
+                "Expected Other error for foreach on primitive, got: {:?}",
+                other
+            ),
+        }
     }
 }

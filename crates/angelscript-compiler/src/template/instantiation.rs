@@ -926,10 +926,10 @@ mod tests {
         );
 
         assert!(result.is_err());
-        matches!(
+        assert!(matches!(
             result.unwrap_err(),
             CompilationError::FunctionNotFound { .. }
-        );
+        ));
     }
 
     #[test]
@@ -1132,7 +1132,10 @@ mod tests {
         );
 
         assert!(result.is_err());
-        matches!(result.unwrap_err(), CompilationError::UnknownType { .. });
+        assert!(matches!(
+            result.unwrap_err(),
+            CompilationError::UnknownType { .. }
+        ));
     }
 
     // === Tests for validation callback failure ===
@@ -1535,7 +1538,10 @@ mod tests {
         );
 
         assert!(result.is_err());
-        matches!(result.unwrap_err(), CompilationError::UnknownType { .. });
+        assert!(matches!(
+            result.unwrap_err(),
+            CompilationError::UnknownType { .. }
+        ));
     }
 
     // === Test for child funcdef not a funcdef error ===
@@ -1572,7 +1578,10 @@ mod tests {
 
         assert!(result.is_err());
         // Should fail because SomeClass is not a funcdef
-        matches!(result.unwrap_err(), CompilationError::UnknownType { .. });
+        assert!(matches!(
+            result.unwrap_err(),
+            CompilationError::UnknownType { .. }
+        ));
     }
 
     // === Test for global funcdef (no parent) ===
@@ -1606,7 +1615,10 @@ mod tests {
 
         assert!(result.is_err());
         // Should fail because GlobalCallback has no parent
-        matches!(result.unwrap_err(), CompilationError::Internal { .. });
+        assert!(matches!(
+            result.unwrap_err(),
+            CompilationError::Internal { .. }
+        ));
     }
 
     // === Test for child funcdef parent not a template ===

@@ -171,7 +171,8 @@ fn format_type_name(hash: TypeHash, ctx: &CompilationContext<'_>) -> String {
 mod tests {
     use super::*;
     use angelscript_core::{
-        DataType, FunctionDef, FunctionEntry, FunctionTraits, Param, Visibility, primitives,
+        CompilationError, DataType, FunctionDef, FunctionEntry, FunctionTraits, Param, Visibility,
+        primitives,
     };
     use angelscript_registry::SymbolRegistry;
 
@@ -338,6 +339,13 @@ mod tests {
         let result = resolve_overload(&[func_hash], &arg_types, &ctx, Span::default());
 
         assert!(result.is_err());
+        match result.unwrap_err() {
+            CompilationError::NoMatchingOverload { .. } => {}
+            other => panic!(
+                "Expected NoMatchingOverload error for wrong argument count, got: {:?}",
+                other
+            ),
+        }
     }
 
     #[test]

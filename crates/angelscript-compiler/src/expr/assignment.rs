@@ -1485,11 +1485,8 @@ mod tests {
         assert!(!info.is_lvalue); // Assignment returns rvalue
 
         let chunk = emitter.finish();
-        // Bytecode: Constant (1 + 1), SetLocal (1 + 1) = 4 bytes
-        assert_eq!(chunk.read_op(0), Some(OpCode::Constant));
-        assert_eq!(chunk.read_byte(1), Some(0)); // constant index
-        assert_eq!(chunk.read_op(2), Some(OpCode::SetLocal));
-        assert_eq!(chunk.read_byte(3), Some(0)); // slot 0
+        // Bytecode: Constant, SetLocal
+        chunk.assert_opcodes(&[OpCode::Constant, OpCode::SetLocal]);
     }
 
     #[test]
@@ -1555,10 +1552,16 @@ mod tests {
 
         assert!(result.is_err());
         // Should fail because a literal is not a valid assignment target
-        assert!(matches!(
-            result.unwrap_err(),
-            CompilationError::Other { .. }
-        ));
+        match result.unwrap_err() {
+            CompilationError::Other { message, .. } => {
+                assert!(
+                    message.contains("invalid assignment target"),
+                    "Expected error about invalid assignment target, got: {}",
+                    message
+                );
+            }
+            other => panic!("Expected Other error, got: {:?}", other),
+        }
     }
 
     #[test]
@@ -1597,14 +1600,13 @@ mod tests {
         assert_eq!(info.data_type.type_hash, primitives::INT32);
 
         let chunk = emitter.finish();
-        // Bytecode: GetLocal (1+1), Constant (1+1), AddI32 (1), SetLocal (1+1) = 7 bytes
-        assert_eq!(chunk.read_op(0), Some(OpCode::GetLocal));
-        assert_eq!(chunk.read_byte(1), Some(0)); // slot 0
-        assert_eq!(chunk.read_op(2), Some(OpCode::Constant));
-        assert_eq!(chunk.read_byte(3), Some(0)); // constant index
-        assert_eq!(chunk.read_op(4), Some(OpCode::AddI32));
-        assert_eq!(chunk.read_op(5), Some(OpCode::SetLocal));
-        assert_eq!(chunk.read_byte(6), Some(0)); // slot 0
+        // Bytecode: GetLocal, Constant, AddI32, SetLocal
+        chunk.assert_opcodes(&[
+            OpCode::GetLocal,
+            OpCode::Constant,
+            OpCode::AddI32,
+            OpCode::SetLocal,
+        ]);
     }
 
     #[test]
@@ -1685,10 +1687,16 @@ mod tests {
         let result = compile_assign(&mut compiler, assign_expr);
 
         assert!(result.is_err());
-        assert!(matches!(
-            result.unwrap_err(),
-            CompilationError::Other { .. }
-        ));
+        match result.unwrap_err() {
+            CompilationError::Other { message, .. } => {
+                assert!(
+                    message.contains("cannot assign to 'this'"),
+                    "Expected error about assigning to 'this', got: {}",
+                    message
+                );
+            }
+            other => panic!("Expected Other error, got: {:?}", other),
+        }
     }
 
     #[test]
@@ -1764,17 +1772,8 @@ mod tests {
         assert_eq!(info.data_type.type_hash, primitives::INT32);
 
         let chunk = emitter.finish();
-        // Bytecode: GetLocal (1+1), Constant (1+1), CallMethod (1+2+1) = 8 bytes
-        // GetLocal container
-        assert_eq!(chunk.read_op(0), Some(OpCode::GetLocal));
-        assert_eq!(chunk.read_byte(1), Some(0)); // slot 0
-        // Constant 42
-        assert_eq!(chunk.read_op(2), Some(OpCode::Constant));
-        assert_eq!(chunk.read_byte(3), Some(0)); // constant index for 42
-        // CallMethod setter_hash with 1 arg
-        assert_eq!(chunk.read_op(4), Some(OpCode::CallMethod));
-        // Note: constant index 1 (for setter_hash), then arg count 1
-        assert_eq!(chunk.read_byte(7), Some(1)); // arg count
+        // Bytecode: GetLocal container, Constant 42, CallMethod setter
+        chunk.assert_opcodes(&[OpCode::GetLocal, OpCode::Constant, OpCode::CallMethod]);
     }
 
     #[test]
@@ -1816,33 +1815,15 @@ mod tests {
         assert_eq!(info.data_type.type_hash, primitives::INT32);
 
         let chunk = emitter.finish();
-        // Bytecode: GetLocal (2), Dup (1), CallMethod getter (4), Constant (2), AddI32 (1), CallMethod setter (4)
-        let mut offset = 0;
-
-        // GetLocal container
-        assert_eq!(chunk.read_op(offset), Some(OpCode::GetLocal));
-        offset += 2;
-
-        // Dup (to keep object for setter)
-        assert_eq!(chunk.read_op(offset), Some(OpCode::Dup));
-        offset += 1;
-
-        // CallMethod getter with 0 args: opcode (1) + constant_index (2) + arg_count (1) = 4 bytes
-        assert_eq!(chunk.read_op(offset), Some(OpCode::CallMethod));
-        assert_eq!(chunk.read_byte(offset + 3), Some(0)); // 0 args
-        offset += 4;
-
-        // Constant 5
-        assert_eq!(chunk.read_op(offset), Some(OpCode::Constant));
-        offset += 2;
-
-        // AddI32
-        assert_eq!(chunk.read_op(offset), Some(OpCode::AddI32));
-        offset += 1;
-
-        // CallMethod setter with 1 arg
-        assert_eq!(chunk.read_op(offset), Some(OpCode::CallMethod));
-        assert_eq!(chunk.read_byte(offset + 3), Some(1)); // 1 arg
+        // Bytecode: GetLocal, Dup, CallMethod getter, Constant, AddI32, CallMethod setter
+        chunk.assert_opcodes(&[
+            OpCode::GetLocal,
+            OpCode::Dup,
+            OpCode::CallMethod, // getter
+            OpCode::Constant,
+            OpCode::AddI32,
+            OpCode::CallMethod, // setter
+        ]);
     }
 
     #[test]
@@ -1922,6 +1903,10 @@ mod tests {
 
         // Write-only properties can be assigned to
         assert!(result.is_ok());
+
+        let chunk = emitter.finish();
+        // Bytecode: GetLocal container, Constant value, CallMethod setter
+        chunk.assert_opcodes(&[OpCode::GetLocal, OpCode::Constant, OpCode::CallMethod]);
     }
 
     #[test]
@@ -1960,6 +1945,16 @@ mod tests {
 
         // Compound assignment on write-only property should fail (no getter)
         assert!(result.is_err());
+        match result.unwrap_err() {
+            CompilationError::Other { message, .. } => {
+                assert!(
+                    message.contains("compound assignment on write-only property"),
+                    "Expected error about compound assignment on write-only property, got: {}",
+                    message
+                );
+            }
+            other => panic!("Expected Other error, got: {:?}", other),
+        }
     }
 
     // =========================================================================
@@ -2005,24 +2000,13 @@ mod tests {
         assert_eq!(info.data_type.type_hash, primitives::INT32);
 
         let chunk = emitter.finish();
-        // Bytecode: GetLocal (2), PushZero (1), Constant (2), CallMethod setter (4)
-        let mut offset = 0;
-
-        // GetLocal container
-        assert_eq!(chunk.read_op(offset), Some(OpCode::GetLocal));
-        offset += 2;
-
-        // PushZero (index 0)
-        assert_eq!(chunk.read_op(offset), Some(OpCode::PushZero));
-        offset += 1;
-
-        // Constant 42 (value)
-        assert_eq!(chunk.read_op(offset), Some(OpCode::Constant));
-        offset += 2;
-
-        // CallMethod set_opIndex with 2 args (index + value)
-        assert_eq!(chunk.read_op(offset), Some(OpCode::CallMethod));
-        assert_eq!(chunk.read_byte(offset + 3), Some(2)); // 2 args
+        // Bytecode: GetLocal container, PushZero index, Constant value, CallMethod setter
+        chunk.assert_opcodes(&[
+            OpCode::GetLocal,
+            OpCode::PushZero,
+            OpCode::Constant,
+            OpCode::CallMethod,
+        ]);
     }
 
     #[test]
@@ -2064,40 +2048,17 @@ mod tests {
         assert_eq!(info.data_type.type_hash, primitives::INT32);
 
         let chunk = emitter.finish();
-        // Bytecode: GetLocal (2), PushZero (1), Pick (2), Pick (2), CallMethod getter (4),
-        //           Constant (2), AddI32 (1), CallMethod setter (4)
-        let mut offset = 0;
-
-        // GetLocal container
-        assert_eq!(chunk.read_op(offset), Some(OpCode::GetLocal));
-        offset += 2;
-
-        // PushZero (index 0)
-        assert_eq!(chunk.read_op(offset), Some(OpCode::PushZero));
-        offset += 1;
-
-        // Pick to duplicate obj+index for getter call
-        assert_eq!(chunk.read_op(offset), Some(OpCode::Pick));
-        offset += 2;
-        assert_eq!(chunk.read_op(offset), Some(OpCode::Pick));
-        offset += 2;
-
-        // CallMethod get_opIndex with 1 arg
-        assert_eq!(chunk.read_op(offset), Some(OpCode::CallMethod));
-        assert_eq!(chunk.read_byte(offset + 3), Some(1)); // 1 arg (index)
-        offset += 4;
-
-        // Constant 5
-        assert_eq!(chunk.read_op(offset), Some(OpCode::Constant));
-        offset += 2;
-
-        // AddI32
-        assert_eq!(chunk.read_op(offset), Some(OpCode::AddI32));
-        offset += 1;
-
-        // CallMethod set_opIndex with 2 args
-        assert_eq!(chunk.read_op(offset), Some(OpCode::CallMethod));
-        assert_eq!(chunk.read_byte(offset + 3), Some(2)); // 2 args
+        // Bytecode: GetLocal, PushZero, Pick, Pick, CallMethod getter, Constant, AddI32, CallMethod setter
+        chunk.assert_opcodes(&[
+            OpCode::GetLocal,
+            OpCode::PushZero,
+            OpCode::Pick,
+            OpCode::Pick,
+            OpCode::CallMethod, // getter
+            OpCode::Constant,
+            OpCode::AddI32,
+            OpCode::CallMethod, // setter
+        ]);
     }
 
     // =========================================================================
@@ -2143,33 +2104,15 @@ mod tests {
         assert_eq!(info.data_type.type_hash, primitives::INT32);
 
         let chunk = emitter.finish();
-        // Bytecode: GetLocal (2), PushZero (1), CallMethod opIndex (4), Constant (2), Swap (1), SetField (3)
-        let mut offset = 0;
-
-        // GetLocal container
-        assert_eq!(chunk.read_op(offset), Some(OpCode::GetLocal));
-        offset += 2;
-
-        // PushZero (index 0)
-        assert_eq!(chunk.read_op(offset), Some(OpCode::PushZero));
-        offset += 1;
-
-        // CallMethod opIndex with 1 arg (returns reference)
-        assert_eq!(chunk.read_op(offset), Some(OpCode::CallMethod));
-        assert_eq!(chunk.read_byte(offset + 3), Some(1)); // 1 arg (index)
-        offset += 4;
-
-        // Constant 42 (value)
-        assert_eq!(chunk.read_op(offset), Some(OpCode::Constant));
-        offset += 2;
-
-        // Swap (ref, value) -> (value, ref)
-        assert_eq!(chunk.read_op(offset), Some(OpCode::Swap));
-        offset += 1;
-
-        // SetField 0 (store through reference)
-        assert_eq!(chunk.read_op(offset), Some(OpCode::SetField));
-        assert_eq!(chunk.read_u16(offset + 1), Some(0)); // field index 0
+        // Bytecode: GetLocal, PushZero, CallMethod opIndex (returns ref), Constant, Swap, SetField
+        chunk.assert_opcodes(&[
+            OpCode::GetLocal,
+            OpCode::PushZero,
+            OpCode::CallMethod,
+            OpCode::Constant,
+            OpCode::Swap,
+            OpCode::SetField,
+        ]);
     }
 
     #[test]
@@ -2211,47 +2154,18 @@ mod tests {
         assert_eq!(info.data_type.type_hash, primitives::INT32);
 
         let chunk = emitter.finish();
-        // Bytecode: GetLocal (2), PushZero (1), CallMethod opIndex (4), Dup (1), GetField (3),
-        //           Constant (2), AddI32 (1), Swap (1), SetField (3)
-        let mut offset = 0;
-
-        // GetLocal container
-        assert_eq!(chunk.read_op(offset), Some(OpCode::GetLocal));
-        offset += 2;
-
-        // PushZero (index 0)
-        assert_eq!(chunk.read_op(offset), Some(OpCode::PushZero));
-        offset += 1;
-
-        // CallMethod opIndex with 1 arg (returns reference)
-        assert_eq!(chunk.read_op(offset), Some(OpCode::CallMethod));
-        assert_eq!(chunk.read_byte(offset + 3), Some(1)); // 1 arg (index)
-        offset += 4;
-
-        // Dup (ref -> ref, ref)
-        assert_eq!(chunk.read_op(offset), Some(OpCode::Dup));
-        offset += 1;
-
-        // GetField 0 (load through reference -> current value)
-        assert_eq!(chunk.read_op(offset), Some(OpCode::GetField));
-        assert_eq!(chunk.read_u16(offset + 1), Some(0));
-        offset += 3;
-
-        // Constant 5
-        assert_eq!(chunk.read_op(offset), Some(OpCode::Constant));
-        offset += 2;
-
-        // AddI32
-        assert_eq!(chunk.read_op(offset), Some(OpCode::AddI32));
-        offset += 1;
-
-        // Swap (ref, new_value) -> (new_value, ref)
-        assert_eq!(chunk.read_op(offset), Some(OpCode::Swap));
-        offset += 1;
-
-        // SetField 0 (store through reference)
-        assert_eq!(chunk.read_op(offset), Some(OpCode::SetField));
-        assert_eq!(chunk.read_u16(offset + 1), Some(0));
+        // Bytecode: GetLocal, PushZero, CallMethod opIndex, Dup, GetField, Constant, AddI32, Swap, SetField
+        chunk.assert_opcodes(&[
+            OpCode::GetLocal,
+            OpCode::PushZero,
+            OpCode::CallMethod,
+            OpCode::Dup,
+            OpCode::GetField,
+            OpCode::Constant,
+            OpCode::AddI32,
+            OpCode::Swap,
+            OpCode::SetField,
+        ]);
     }
 
     #[test]
@@ -2390,26 +2304,8 @@ mod tests {
         assert_eq!(info.data_type.type_hash, primitives::INT32);
 
         let chunk = emitter.finish();
-        // Bytecode: GetLocal provider (2), CallMethod getValue (4), SetLocal x (2)
-        let mut offset = 0;
-
-        // GetLocal provider (slot 1)
-        assert_eq!(chunk.read_op(offset), Some(OpCode::GetLocal));
-        assert_eq!(chunk.read_byte(offset + 1), Some(1)); // slot 1
-        offset += 2;
-
-        // CallMethod getValue with 0 args
-        assert_eq!(chunk.read_op(offset), Some(OpCode::CallMethod));
-        // Verify it's calling a method (constant index for method_hash)
-        assert_eq!(chunk.read_byte(offset + 3), Some(0)); // 0 args
-        offset += 4;
-
-        // SetLocal x (slot 0)
-        assert_eq!(chunk.read_op(offset), Some(OpCode::SetLocal));
-        assert_eq!(chunk.read_byte(offset + 1), Some(0)); // slot 0
-
-        // Verify the method hash is in constants
-        assert!(constants.get(0).is_some());
+        // Bytecode: GetLocal provider, CallMethod getValue, SetLocal x
+        chunk.assert_opcodes(&[OpCode::GetLocal, OpCode::CallMethod, OpCode::SetLocal]);
     }
 
     #[test]
@@ -2460,32 +2356,14 @@ mod tests {
         assert_eq!(info.data_type.type_hash, primitives::INT32);
 
         let chunk = emitter.finish();
-        // Bytecode: GetLocal container (2), PushZero (1), GetLocal provider (2),
-        //           CallMethod getValue (4), CallMethod set_opIndex (4)
-        let mut offset = 0;
-
-        // GetLocal container (slot 0)
-        assert_eq!(chunk.read_op(offset), Some(OpCode::GetLocal));
-        assert_eq!(chunk.read_byte(offset + 1), Some(0));
-        offset += 2;
-
-        // PushZero (index)
-        assert_eq!(chunk.read_op(offset), Some(OpCode::PushZero));
-        offset += 1;
-
-        // GetLocal provider (slot 1)
-        assert_eq!(chunk.read_op(offset), Some(OpCode::GetLocal));
-        assert_eq!(chunk.read_byte(offset + 1), Some(1));
-        offset += 2;
-
-        // CallMethod getValue with 0 args
-        assert_eq!(chunk.read_op(offset), Some(OpCode::CallMethod));
-        assert_eq!(chunk.read_byte(offset + 3), Some(0)); // 0 args
-        offset += 4;
-
-        // CallMethod set_opIndex with 2 args
-        assert_eq!(chunk.read_op(offset), Some(OpCode::CallMethod));
-        assert_eq!(chunk.read_byte(offset + 3), Some(2)); // 2 args (index + value)
+        // Bytecode: GetLocal container, PushZero, GetLocal provider, CallMethod getValue, CallMethod set_opIndex
+        chunk.assert_opcodes(&[
+            OpCode::GetLocal,
+            OpCode::PushZero,
+            OpCode::GetLocal,
+            OpCode::CallMethod, // getValue
+            OpCode::CallMethod, // set_opIndex
+        ]);
     }
 
     #[test]
@@ -2535,28 +2413,13 @@ mod tests {
         assert_eq!(info.data_type.type_hash, primitives::INT32);
 
         let chunk = emitter.finish();
-        // Bytecode: GetLocal container (2), GetLocal provider (2),
-        //           CallMethod getValue (4), CallMethod set_value (4)
-        let mut offset = 0;
-
-        // GetLocal container (slot 0)
-        assert_eq!(chunk.read_op(offset), Some(OpCode::GetLocal));
-        assert_eq!(chunk.read_byte(offset + 1), Some(0));
-        offset += 2;
-
-        // GetLocal provider (slot 1)
-        assert_eq!(chunk.read_op(offset), Some(OpCode::GetLocal));
-        assert_eq!(chunk.read_byte(offset + 1), Some(1));
-        offset += 2;
-
-        // CallMethod getValue with 0 args
-        assert_eq!(chunk.read_op(offset), Some(OpCode::CallMethod));
-        assert_eq!(chunk.read_byte(offset + 3), Some(0)); // 0 args
-        offset += 4;
-
-        // CallMethod set_value with 1 arg
-        assert_eq!(chunk.read_op(offset), Some(OpCode::CallMethod));
-        assert_eq!(chunk.read_byte(offset + 3), Some(1)); // 1 arg
+        // Bytecode: GetLocal container, GetLocal provider, CallMethod getValue, CallMethod set_value
+        chunk.assert_opcodes(&[
+            OpCode::GetLocal,
+            OpCode::GetLocal,
+            OpCode::CallMethod, // getValue
+            OpCode::CallMethod, // set_value
+        ]);
     }
 
     #[test]
@@ -2606,40 +2469,15 @@ mod tests {
         assert_eq!(info.data_type.type_hash, primitives::INT32);
 
         let chunk = emitter.finish();
-        // Bytecode: GetLocal container (2), PushZero (1), CallMethod opIndex (4),
-        //           GetLocal provider (2), CallMethod getValue (4), Swap (1), SetField (3)
-        let mut offset = 0;
-
-        // GetLocal container (slot 0)
-        assert_eq!(chunk.read_op(offset), Some(OpCode::GetLocal));
-        assert_eq!(chunk.read_byte(offset + 1), Some(0));
-        offset += 2;
-
-        // PushZero (index)
-        assert_eq!(chunk.read_op(offset), Some(OpCode::PushZero));
-        offset += 1;
-
-        // CallMethod opIndex with 1 arg (returns reference)
-        assert_eq!(chunk.read_op(offset), Some(OpCode::CallMethod));
-        assert_eq!(chunk.read_byte(offset + 3), Some(1)); // 1 arg
-        offset += 4;
-
-        // GetLocal provider (slot 1)
-        assert_eq!(chunk.read_op(offset), Some(OpCode::GetLocal));
-        assert_eq!(chunk.read_byte(offset + 1), Some(1));
-        offset += 2;
-
-        // CallMethod getValue with 0 args
-        assert_eq!(chunk.read_op(offset), Some(OpCode::CallMethod));
-        assert_eq!(chunk.read_byte(offset + 3), Some(0)); // 0 args
-        offset += 4;
-
-        // Swap (ref, value) -> (value, ref)
-        assert_eq!(chunk.read_op(offset), Some(OpCode::Swap));
-        offset += 1;
-
-        // SetField 0
-        assert_eq!(chunk.read_op(offset), Some(OpCode::SetField));
-        assert_eq!(chunk.read_u16(offset + 1), Some(0));
+        // Bytecode: GetLocal container, PushZero, CallMethod opIndex, GetLocal provider, CallMethod getValue, Swap, SetField
+        chunk.assert_opcodes(&[
+            OpCode::GetLocal,
+            OpCode::PushZero,
+            OpCode::CallMethod, // opIndex
+            OpCode::GetLocal,
+            OpCode::CallMethod, // getValue
+            OpCode::Swap,
+            OpCode::SetField,
+        ]);
     }
 }

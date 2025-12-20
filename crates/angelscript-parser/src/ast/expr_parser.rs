@@ -1393,6 +1393,14 @@ mod tests {
                 MemberAccess::Method { ref args, .. } => {
                     assert_eq!(args.len(), 1);
                     assert!(args[0].name.is_some());
+                    assert_eq!(args[0].name.unwrap().name, "x");
+                    // Verify the value is 42
+                    match args[0].value {
+                        Expr::Literal(lit) => {
+                            assert!(matches!(lit.kind, LiteralKind::Int(42)));
+                        }
+                        _ => panic!("Expected literal value"),
+                    }
                 }
                 _ => panic!("Expected method call"),
             },
@@ -1469,6 +1477,7 @@ mod tests {
             Expr::Index(idx) => {
                 assert_eq!(idx.indices.len(), 1);
                 assert!(idx.indices[0].name.is_some());
+                assert_eq!(idx.indices[0].name.unwrap().name, "key");
             }
             _ => panic!("Expected index expression"),
         }
@@ -1545,7 +1554,19 @@ mod tests {
         match expr {
             Expr::Lambda(lambda) => {
                 assert_eq!(lambda.params.len(), 0);
-                assert!(lambda.body.stmts.len() > 0);
+                // Verify body contains a return statement with literal 42
+                assert_eq!(lambda.body.stmts.len(), 1);
+                match &lambda.body.stmts[0] {
+                    crate::ast::Stmt::Return(ret_stmt) => {
+                        assert!(ret_stmt.value.is_some());
+                        if let Some(Expr::Literal(lit)) = ret_stmt.value {
+                            assert!(matches!(lit.kind, LiteralKind::Int(42)));
+                        } else {
+                            panic!("Expected literal 42 in return statement");
+                        }
+                    }
+                    _ => panic!("Expected return statement"),
+                }
             }
             _ => panic!("Expected lambda expression"),
         }
@@ -1804,6 +1825,7 @@ mod tests {
         assert!(result.is_err());
         // Record the error so we can check it
         if let Err(err) = result {
+            assert!(matches!(err.kind, ParseErrorKind::ExpectedExpression));
             parser.errors.push(err);
         }
         assert!(parser.has_errors());
@@ -1817,6 +1839,7 @@ mod tests {
         assert!(result.is_err());
         // Record the error so we can check it
         if let Err(err) = result {
+            assert!(matches!(err.kind, ParseErrorKind::InvalidExpression));
             parser.errors.push(err);
         }
         assert!(parser.has_errors());
@@ -2368,6 +2391,9 @@ string""""#,
         let mut parser = Parser::new(r#""\z""#, &arena);
         let result = parser.parse_expr(0);
         assert!(result.is_err());
+        if let Err(err) = result {
+            assert!(matches!(err.kind, ParseErrorKind::InvalidEscapeSequence));
+        }
     }
 
     #[test]
@@ -2376,6 +2402,9 @@ string""""#,
         let mut parser = Parser::new(r#""\xF""#, &arena);
         let result = parser.parse_expr(0);
         assert!(result.is_err());
+        if let Err(err) = result {
+            assert!(matches!(err.kind, ParseErrorKind::InvalidEscapeSequence));
+        }
     }
 
     #[test]
@@ -2384,6 +2413,9 @@ string""""#,
         let mut parser = Parser::new(r#""\xGG""#, &arena);
         let result = parser.parse_expr(0);
         assert!(result.is_err());
+        if let Err(err) = result {
+            assert!(matches!(err.kind, ParseErrorKind::InvalidEscapeSequence));
+        }
     }
 
     #[test]

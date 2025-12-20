@@ -196,7 +196,7 @@ impl<'a, 'ctx, 'pool> FunctionCompiler<'a, 'ctx, 'pool> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use angelscript_core::{FunctionTraits, Param, Visibility, primitives};
+    use angelscript_core::{CompilationError, FunctionTraits, Param, Visibility, primitives};
     use angelscript_registry::SymbolRegistry;
 
     fn create_test_context() -> (SymbolRegistry, ConstantPool) {
@@ -334,5 +334,11 @@ mod tests {
         // Empty body - no return
         let result = compiler.verify_returns(Span::default());
         assert!(result.is_err());
+        match result.unwrap_err() {
+            CompilationError::Other { message, .. } => {
+                assert!(message.contains("return") || message.contains("code paths"));
+            }
+            other => panic!("Expected Other error for missing return, got: {:?}", other),
+        }
     }
 }

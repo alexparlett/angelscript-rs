@@ -748,7 +748,19 @@ mod tests {
 
         let result = validate_instantiable(&compiler, type_hash, Span::default());
 
-        assert!(result.is_err());
+        match result {
+            Err(CompilationError::Other { message, .. }) => {
+                assert!(
+                    message.contains("abstract"),
+                    "error should mention abstract: {message}"
+                );
+                assert!(
+                    message.contains("AbstractClass"),
+                    "error should mention class name: {message}"
+                );
+            }
+            other => panic!("expected Other error for abstract class, got {:?}", other),
+        }
     }
 
     #[test]
@@ -768,7 +780,19 @@ mod tests {
 
         let result = validate_instantiable(&compiler, type_hash, Span::default());
 
-        assert!(result.is_err());
+        match result {
+            Err(CompilationError::Other { message, .. }) => {
+                assert!(
+                    message.contains("interface"),
+                    "error should mention interface: {message}"
+                );
+                assert!(
+                    message.contains("IDrawable"),
+                    "error should mention interface name: {message}"
+                );
+            }
+            other => panic!("expected Other error for interface, got {:?}", other),
+        }
     }
 
     #[test]

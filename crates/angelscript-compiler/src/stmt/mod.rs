@@ -297,7 +297,7 @@ impl<'a, 'ctx, 'pool> StmtCompiler<'a, 'ctx, 'pool> {
 mod tests {
     use super::*;
     use crate::bytecode::ConstantPool;
-    use angelscript_core::{Span, primitives};
+    use angelscript_core::{CompilationError, Span, primitives};
     use angelscript_registry::SymbolRegistry;
 
     fn create_test_context() -> (SymbolRegistry, ConstantPool) {
@@ -379,6 +379,15 @@ mod tests {
         };
         let result = compiler.compile_break(&brk);
         assert!(result.is_err());
+        match result.unwrap_err() {
+            CompilationError::Other { message, .. } => {
+                assert!(message.contains("break") && message.contains("loop"));
+            }
+            other => panic!(
+                "Expected Other error for break outside loop, got: {:?}",
+                other
+            ),
+        }
     }
 
     #[test]
@@ -397,6 +406,15 @@ mod tests {
         };
         let result = compiler.compile_continue(&cont);
         assert!(result.is_err());
+        match result.unwrap_err() {
+            CompilationError::Other { message, .. } => {
+                assert!(message.contains("continue") && message.contains("loop"));
+            }
+            other => panic!(
+                "Expected Other error for continue outside loop, got: {:?}",
+                other
+            ),
+        }
     }
 
     #[test]

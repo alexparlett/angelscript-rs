@@ -83,7 +83,7 @@ mod tests {
     use crate::bytecode::ConstantPool;
     use crate::context::CompilationContext;
     use crate::emit::BytecodeEmitter;
-    use angelscript_core::Span;
+    use angelscript_core::{CompilationError, Span};
     use angelscript_parser::ast::{
         Block, BreakStmt, ContinueStmt, Expr, LiteralExpr, LiteralKind, Stmt,
     };
@@ -294,6 +294,13 @@ mod tests {
         let mut compiler = StmtCompiler::new(&mut ctx, &mut emitter, DataType::void(), None);
         let result = compiler.compile_do_while(&do_while);
         assert!(result.is_err());
+        match result.unwrap_err() {
+            CompilationError::TypeMismatch { .. } => {}
+            other => panic!(
+                "Expected TypeMismatch error for non-bool condition, got: {:?}",
+                other
+            ),
+        }
     }
 
     #[test]
