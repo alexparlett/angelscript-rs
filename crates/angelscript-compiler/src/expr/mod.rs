@@ -53,6 +53,8 @@ pub struct ExprCompiler<'a, 'ctx, 'pool> {
     emitter: &'a mut BytecodeEmitter<'pool>,
     /// Current class type (for 'this' and method access)
     current_class: Option<TypeHash>,
+    /// Whether we're compiling inside a constructor (for super() validation)
+    is_constructor: bool,
 }
 
 impl<'a, 'ctx, 'pool> ExprCompiler<'a, 'ctx, 'pool> {
@@ -72,7 +74,29 @@ impl<'a, 'ctx, 'pool> ExprCompiler<'a, 'ctx, 'pool> {
             ctx,
             emitter,
             current_class,
+            is_constructor: false,
         }
+    }
+
+    /// Create a new expression compiler for a constructor context.
+    ///
+    /// This enables super() calls which are only valid in constructors.
+    pub fn new_for_constructor(
+        ctx: &'a mut CompilationContext<'ctx>,
+        emitter: &'a mut BytecodeEmitter<'pool>,
+        current_class: Option<TypeHash>,
+    ) -> Self {
+        Self {
+            ctx,
+            emitter,
+            current_class,
+            is_constructor: true,
+        }
+    }
+
+    /// Returns true if we're compiling inside a constructor.
+    pub fn is_constructor(&self) -> bool {
+        self.is_constructor
     }
 
     /// Synthesize type from expression (infer mode).

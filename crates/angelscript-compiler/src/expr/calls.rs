@@ -83,11 +83,19 @@ fn compile_super_call(
 ) -> Result<ExprInfo> {
     let span = call.span;
 
-    // Get the current class - super() is only valid in a method
+    // Verify we're inside a constructor - super() is not valid in regular methods
+    if !compiler.is_constructor() {
+        return Err(CompilationError::Other {
+            message: "super() can only be used inside a class constructor".to_string(),
+            span,
+        });
+    }
+
+    // Get the current class - super() is only valid in a class context
     let class_hash = compiler
         .current_class()
         .ok_or_else(|| CompilationError::Other {
-            message: "super() can only be used inside a class method".to_string(),
+            message: "super() can only be used inside a class constructor".to_string(),
             span,
         })?;
 
@@ -131,7 +139,10 @@ fn compile_super_call(
             (base_hash, base_class.name.clone())
         };
 
-    // Compile arguments and collect their types
+    // Emit GetThis FIRST - the calling convention requires 'this' on stack before arguments
+    compiler.emitter().emit_get_this();
+
+    // Compile arguments and collect their types (pushed after 'this')
     let (arg_types, arg_count) = compile_arguments(compiler, call)?;
 
     // Get base class constructor candidates.
@@ -199,10 +210,7 @@ fn compile_super_call(
     // Apply argument conversions
     apply_argument_conversions(compiler, &overload)?;
 
-    // Emit GetThis to push the object reference for method call
-    compiler.emitter().emit_get_this();
-
-    // Emit method call to base constructor
+    // Emit method call to base constructor (this is already on stack from earlier)
     compiler
         .emitter()
         .emit_call_method(overload.func_hash, arg_count as u8);

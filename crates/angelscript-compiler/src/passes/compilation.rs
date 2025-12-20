@@ -195,7 +195,8 @@ impl<'a, 'reg> CompilationPass<'a, 'reg> {
         }
 
         // Compile auto-generated methods (default ctor, copy ctor, opAssign)
-        self.compile_auto_generated_methods(class_hash, field_inits.as_ref());
+        // Pass the class name span for better error messages
+        self.compile_auto_generated_methods(class_hash, field_inits.as_ref(), class.name.span);
     }
 
     fn compile_constructor<'ast>(
@@ -396,7 +397,7 @@ impl<'a, 'reg> CompilationPass<'a, 'reg> {
             // Explicit super() call exists
             // Compile statements before super()
             {
-                let mut stmt_compiler = StmtCompiler::new(
+                let mut stmt_compiler = StmtCompiler::new_for_constructor(
                     self.ctx,
                     &mut emitter,
                     func_entry.def.return_type,
@@ -409,7 +410,7 @@ impl<'a, 'reg> CompilationPass<'a, 'reg> {
 
             // Compile the super() call
             {
-                let mut stmt_compiler = StmtCompiler::new(
+                let mut stmt_compiler = StmtCompiler::new_for_constructor(
                     self.ctx,
                     &mut emitter,
                     func_entry.def.return_type,
@@ -423,7 +424,7 @@ impl<'a, 'reg> CompilationPass<'a, 'reg> {
 
             // Compile statements after super()
             {
-                let mut stmt_compiler = StmtCompiler::new(
+                let mut stmt_compiler = StmtCompiler::new_for_constructor(
                     self.ctx,
                     &mut emitter,
                     func_entry.def.return_type,
@@ -471,7 +472,7 @@ impl<'a, 'reg> CompilationPass<'a, 'reg> {
 
             // Compile the rest of the constructor body
             {
-                let mut stmt_compiler = StmtCompiler::new(
+                let mut stmt_compiler = StmtCompiler::new_for_constructor(
                     self.ctx,
                     &mut emitter,
                     func_entry.def.return_type,
@@ -514,6 +515,7 @@ impl<'a, 'reg> CompilationPass<'a, 'reg> {
         &mut self,
         class_hash: TypeHash,
         field_inits: Option<&(Vec<FieldInit<'ast>>, Vec<FieldInit<'ast>>)>,
+        class_span: Span,
     ) {
         use angelscript_core::AutoGenKind;
 
@@ -540,13 +542,18 @@ impl<'a, 'reg> CompilationPass<'a, 'reg> {
             };
 
             let result = match auto_kind {
-                AutoGenKind::DefaultConstructor => {
-                    self.compile_auto_default_constructor(&func_entry, class_hash, field_inits)
-                }
+                AutoGenKind::DefaultConstructor => self.compile_auto_default_constructor(
+                    &func_entry,
+                    class_hash,
+                    field_inits,
+                    class_span,
+                ),
                 AutoGenKind::CopyConstructor => {
-                    self.compile_auto_copy_constructor(&func_entry, class_hash)
+                    self.compile_auto_copy_constructor(&func_entry, class_hash, class_span)
                 }
-                AutoGenKind::OpAssign => self.compile_auto_op_assign(&func_entry, class_hash),
+                AutoGenKind::OpAssign => {
+                    self.compile_auto_op_assign(&func_entry, class_hash, class_span)
+                }
             };
 
             match result {
@@ -578,6 +585,7 @@ impl<'a, 'reg> CompilationPass<'a, 'reg> {
         _func_entry: &FunctionEntry,
         class_hash: TypeHash,
         field_inits: Option<&(Vec<FieldInit<'ast>>, Vec<FieldInit<'ast>>)>,
+        class_span: Span,
     ) -> Result<BytecodeChunk, CompilationError> {
         use crate::bytecode::OpCode;
         use crate::emit::BytecodeEmitter;
@@ -621,7 +629,7 @@ impl<'a, 'reg> CompilationPass<'a, 'reg> {
                 return Err(CompilationError::NoBaseDefaultConstructor {
                     derived_class: derived_name,
                     base_class: base_name,
-                    span: Span::default(),
+                    span: class_span,
                 });
             }
 
@@ -652,6 +660,7 @@ impl<'a, 'reg> CompilationPass<'a, 'reg> {
         &mut self,
         func_entry: &FunctionEntry,
         class_hash: TypeHash,
+        class_span: Span,
     ) -> Result<BytecodeChunk, CompilationError> {
         use crate::bytecode::OpCode;
         use crate::emit::BytecodeEmitter;
@@ -703,7 +712,7 @@ impl<'a, 'reg> CompilationPass<'a, 'reg> {
                 return Err(CompilationError::Other {
                     message: "cannot generate copy constructor: base class has no copy constructor"
                         .to_string(),
-                    span: Span::default(),
+                    span: class_span,
                 });
             }
 
@@ -748,6 +757,7 @@ impl<'a, 'reg> CompilationPass<'a, 'reg> {
         &mut self,
         func_entry: &FunctionEntry,
         class_hash: TypeHash,
+        class_span: Span,
     ) -> Result<BytecodeChunk, CompilationError> {
         use crate::bytecode::OpCode;
         use crate::emit::BytecodeEmitter;
@@ -799,7 +809,7 @@ impl<'a, 'reg> CompilationPass<'a, 'reg> {
             if self.ctx.get_function(base_op_assign).is_none() {
                 return Err(CompilationError::Other {
                     message: "cannot generate opAssign: base class has no opAssign".to_string(),
-                    span: Span::default(),
+                    span: class_span,
                 });
             }
 
@@ -1516,7 +1526,7 @@ mod tests {
         };
 
         // Call compile_auto_generated_methods
-        pass.compile_auto_generated_methods(derived_hash, None);
+        pass.compile_auto_generated_methods(derived_hash, None, Span::default());
 
         // Check that we got the default constructor compiled
         assert_eq!(pass.compiled_functions.len(), 1);
@@ -1633,7 +1643,7 @@ mod tests {
         };
 
         // Call compile_auto_generated_methods
-        pass.compile_auto_generated_methods(derived_hash, None);
+        pass.compile_auto_generated_methods(derived_hash, None, Span::default());
 
         // Check that we got the copy constructor compiled
         assert_eq!(pass.compiled_functions.len(), 1);
@@ -1757,7 +1767,7 @@ mod tests {
         };
 
         // Call compile_auto_generated_methods
-        pass.compile_auto_generated_methods(derived_hash, None);
+        pass.compile_auto_generated_methods(derived_hash, None, Span::default());
 
         // Check that we got the opAssign compiled
         assert_eq!(pass.compiled_functions.len(), 1);
@@ -1849,7 +1859,7 @@ mod tests {
             global_inits: vec![],
         };
 
-        pass.compile_auto_generated_methods(class_hash, None);
+        pass.compile_auto_generated_methods(class_hash, None, Span::default());
 
         assert_eq!(pass.compiled_functions.len(), 1);
         let bytecode = &pass.compiled_functions[0].bytecode;
@@ -1949,7 +1959,7 @@ mod tests {
         };
 
         // This should NOT produce any compiled functions because the auto-generation should fail
-        pass.compile_auto_generated_methods(derived_hash, None);
+        pass.compile_auto_generated_methods(derived_hash, None, Span::default());
 
         // No functions should be compiled (error occurred)
         assert_eq!(
@@ -2038,7 +2048,7 @@ mod tests {
         };
 
         // This should NOT produce any compiled functions because base has no copy ctor
-        pass.compile_auto_generated_methods(derived_hash, None);
+        pass.compile_auto_generated_methods(derived_hash, None, Span::default());
 
         // No functions should be compiled (error suppressed per AngelScript spec)
         assert_eq!(
@@ -2127,7 +2137,7 @@ mod tests {
         };
 
         // This should NOT produce any compiled functions because base has no opAssign
-        pass.compile_auto_generated_methods(derived_hash, None);
+        pass.compile_auto_generated_methods(derived_hash, None, Span::default());
 
         // No functions should be compiled (error suppressed per AngelScript spec)
         assert_eq!(
