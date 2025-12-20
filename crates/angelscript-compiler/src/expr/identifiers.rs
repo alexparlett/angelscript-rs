@@ -46,6 +46,52 @@ pub fn compile_ident<'ast>(
         }
     }
 
+    // Check if we're inside a class and the identifier is a member field (implicit this.field)
+    if ident.scope.is_none()
+        && let Some(class_hash) = compiler.current_class()
+    {
+        // Extract field info before mutably borrowing compiler
+        let field_info = compiler
+            .ctx()
+            .get_type(class_hash)
+            .and_then(|e| e.as_class())
+            .and_then(|class| {
+                class
+                    .properties
+                    .iter()
+                    .enumerate()
+                    .find(|(_, p)| p.name == name)
+                    .map(|(idx, p)| (idx, p.clone()))
+            });
+
+        if let Some((field_idx, property)) = field_info {
+            // Get 'this' const status from the declared parameter
+            let this_is_const = compiler
+                .ctx()
+                .get_local("this")
+                .map(|v| v.is_const)
+                .unwrap_or(false);
+
+            // Emit: GetThis, GetField (implicit this.field)
+            compiler.emitter().emit_get_this();
+
+            if property.is_direct_field() {
+                compiler.emitter().emit_get_field(field_idx as u16);
+                return Ok(ExprInfo::member(property.data_type, this_is_const));
+            } else if let Some(getter_hash) = property.getter {
+                // Virtual property - call getter
+                compiler.emitter().emit_call_method(getter_hash, 0);
+                return Ok(ExprInfo::rvalue(property.data_type));
+            } else {
+                // Write-only property - cannot read
+                return Err(CompilationError::Other {
+                    message: format!("property '{}' is write-only", name),
+                    span,
+                });
+            }
+        }
+    }
+
     // Check if it's a function name (for function pointers)
     if let Some(func_hashes) = compiler.ctx().resolve_function(&qualified_name)
         && let Some(&func_hash) = func_hashes.first()
@@ -252,5 +298,175 @@ mod tests {
             result,
             Err(CompilationError::ThisOutsideClass { .. })
         ));
+    }
+
+    // =========================================================================
+    // Implicit this.field access tests
+    // =========================================================================
+
+    use angelscript_core::entries::{ClassEntry, PropertyEntry};
+    use angelscript_core::{TypeKind, Visibility};
+
+    fn create_class_with_field(registry: &mut SymbolRegistry) -> TypeHash {
+        let class_hash = TypeHash::from_name("TestClass");
+
+        let mut class = ClassEntry::ffi("TestClass", TypeKind::script_object());
+        class.properties.push(PropertyEntry::field(
+            "x",
+            DataType::simple(primitives::INT32),
+            Visibility::Public,
+        ));
+        class.properties.push(PropertyEntry::field(
+            "y",
+            DataType::simple(primitives::INT32),
+            Visibility::Public,
+        ));
+        registry.register_type(class.into()).unwrap();
+
+        class_hash
+    }
+
+    #[test]
+    fn compile_implicit_field_access_in_method() {
+        let mut registry = SymbolRegistry::with_primitives();
+        let class_hash = create_class_with_field(&mut registry);
+
+        let mut ctx = CompilationContext::new(&registry);
+        ctx.begin_function();
+
+        // Declare 'this' parameter (as methods do)
+        let _ = ctx.declare_local(
+            "this".to_string(),
+            DataType::with_handle(class_hash, false),
+            false, // mutable this
+            Span::default(),
+        );
+
+        let mut constants = ConstantPool::new();
+        let mut emitter = BytecodeEmitter::new(&mut constants);
+
+        let mut compiler = create_test_compiler(&mut ctx, &mut emitter, Some(class_hash));
+
+        // Access 'x' - should resolve to this.x
+        let ident = make_ident_expr("x");
+        let result = compile_ident(&mut compiler, &ident);
+
+        assert!(result.is_ok(), "Expected Ok, got: {:?}", result);
+        let info = result.unwrap();
+        assert_eq!(info.data_type.type_hash, primitives::INT32);
+        assert!(info.is_lvalue);
+
+        let chunk = emitter.finish();
+        // Bytecode: GetThis, GetField
+        chunk.assert_opcodes(&[OpCode::GetThis, OpCode::GetField]);
+    }
+
+    #[test]
+    fn compile_implicit_field_access_const_method() {
+        let mut registry = SymbolRegistry::with_primitives();
+        let class_hash = create_class_with_field(&mut registry);
+
+        let mut ctx = CompilationContext::new(&registry);
+        ctx.begin_function();
+
+        // Declare 'this' parameter as const (const method)
+        let _ = ctx.declare_local(
+            "this".to_string(),
+            DataType::with_handle(class_hash, false),
+            true, // const this
+            Span::default(),
+        );
+
+        let mut constants = ConstantPool::new();
+        let mut emitter = BytecodeEmitter::new(&mut constants);
+
+        let mut compiler = create_test_compiler(&mut ctx, &mut emitter, Some(class_hash));
+
+        // Access 'x' - should resolve to this.x
+        let ident = make_ident_expr("x");
+        let result = compile_ident(&mut compiler, &ident);
+
+        assert!(result.is_ok(), "Expected Ok, got: {:?}", result);
+        let info = result.unwrap();
+        assert_eq!(info.data_type.type_hash, primitives::INT32);
+        assert!(info.is_lvalue);
+        assert!(!info.is_mutable); // const method means field is not mutable
+
+        let chunk = emitter.finish();
+        chunk.assert_opcodes(&[OpCode::GetThis, OpCode::GetField]);
+    }
+
+    #[test]
+    fn compile_implicit_field_local_takes_precedence() {
+        let mut registry = SymbolRegistry::with_primitives();
+        let class_hash = create_class_with_field(&mut registry);
+
+        let mut ctx = CompilationContext::new(&registry);
+        ctx.begin_function();
+
+        // Declare 'this' parameter
+        let _ = ctx.declare_local(
+            "this".to_string(),
+            DataType::with_handle(class_hash, false),
+            false,
+            Span::default(),
+        );
+
+        // Also declare a local variable named 'x' that shadows the field
+        let _ = ctx.declare_local(
+            "x".to_string(),
+            DataType::simple(primitives::FLOAT),
+            false,
+            Span::default(),
+        );
+
+        let mut constants = ConstantPool::new();
+        let mut emitter = BytecodeEmitter::new(&mut constants);
+
+        let mut compiler = create_test_compiler(&mut ctx, &mut emitter, Some(class_hash));
+
+        // Access 'x' - should resolve to local variable, NOT field
+        let ident = make_ident_expr("x");
+        let result = compile_ident(&mut compiler, &ident);
+
+        assert!(result.is_ok(), "Expected Ok, got: {:?}", result);
+        let info = result.unwrap();
+        // Should be float (local), not int (field)
+        assert_eq!(info.data_type.type_hash, primitives::FLOAT);
+
+        let chunk = emitter.finish();
+        // Should use GetLocal, not GetThis + GetField
+        chunk.assert_opcodes(&[OpCode::GetLocal]);
+    }
+
+    #[test]
+    fn compile_implicit_field_not_in_class() {
+        let mut registry = SymbolRegistry::with_primitives();
+        let class_hash = create_class_with_field(&mut registry);
+
+        let mut ctx = CompilationContext::new(&registry);
+        ctx.begin_function();
+
+        // No 'this' parameter - not in a class method
+        let mut constants = ConstantPool::new();
+        let mut emitter = BytecodeEmitter::new(&mut constants);
+
+        // current_class is None
+        let mut compiler = create_test_compiler(&mut ctx, &mut emitter, None);
+
+        // Access 'x' - should fail as undefined variable
+        let ident = make_ident_expr("x");
+        let result = compile_ident(&mut compiler, &ident);
+
+        // Even though 'x' is a field in the class, we're not in a class method
+        // so it should be UndefinedVariable
+        assert!(result.is_err());
+        assert!(matches!(
+            result.unwrap_err(),
+            CompilationError::UndefinedVariable { .. }
+        ));
+
+        // Suppress unused warning
+        let _ = class_hash;
     }
 }

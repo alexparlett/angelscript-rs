@@ -645,6 +645,61 @@ fn analyze_ident_target(
         });
     }
 
+    // Check if we're inside a class and the identifier is a member field (implicit this.field)
+    if ident.scope.is_none()
+        && let Some(class_hash) = compiler.current_class()
+    {
+        // Extract field info before mutably borrowing compiler
+        let field_info = compiler
+            .ctx()
+            .get_type(class_hash)
+            .and_then(|e| e.as_class())
+            .and_then(|class| {
+                class
+                    .properties
+                    .iter()
+                    .enumerate()
+                    .find(|(_, p)| p.name == name)
+                    .map(|(idx, p)| (idx, p.clone()))
+            });
+
+        if let Some((field_idx, property)) = field_info {
+            // Get 'this' const status from the declared parameter
+            let this_is_const = compiler
+                .ctx()
+                .get_local("this")
+                .map(|v| v.is_const)
+                .unwrap_or(false);
+
+            // Emit GetThis now - puts object on stack for Field/VirtualProperty handling
+            compiler.emitter().emit_get_this();
+
+            if property.is_direct_field() {
+                return Ok(AssignTarget {
+                    data_type: property.data_type,
+                    is_mutable: !this_is_const,
+                    kind: AssignTargetKind::Field {
+                        field_index: field_idx as u16,
+                    },
+                });
+            } else if let Some(setter_hash) = property.setter {
+                return Ok(AssignTarget {
+                    data_type: property.data_type,
+                    is_mutable: !this_is_const,
+                    kind: AssignTargetKind::VirtualProperty {
+                        setter_hash,
+                        getter_hash: property.getter,
+                    },
+                });
+            } else {
+                return Err(CompilationError::CannotModifyConst {
+                    message: format!("property '{}' is read-only", name),
+                    span,
+                });
+            }
+        }
+    }
+
     Err(CompilationError::UndefinedVariable {
         name: qualified_name,
         span,
@@ -2479,5 +2534,222 @@ mod tests {
             OpCode::Swap,
             OpCode::SetField,
         ]);
+    }
+
+    // =========================================================================
+    // Implicit this.field assignment tests
+    // =========================================================================
+
+    fn create_class_with_field(registry: &mut SymbolRegistry) -> TypeHash {
+        let class_hash = TypeHash::from_name("TestClass");
+
+        let mut class = ClassEntry::ffi("TestClass", TypeKind::script_object());
+        class.properties.push(PropertyEntry::field(
+            "x",
+            DataType::simple(primitives::INT32),
+            Visibility::Public,
+        ));
+        class.properties.push(PropertyEntry::field(
+            "y",
+            DataType::simple(primitives::INT32),
+            Visibility::Public,
+        ));
+        registry.register_type(class.into()).unwrap();
+
+        class_hash
+    }
+
+    fn create_test_compiler_with_class<'a, 'ctx, 'pool>(
+        ctx: &'a mut CompilationContext<'ctx>,
+        emitter: &'a mut BytecodeEmitter<'pool>,
+        current_class: TypeHash,
+    ) -> ExprCompiler<'a, 'ctx, 'pool> {
+        ExprCompiler::new(ctx, emitter, Some(current_class))
+    }
+
+    #[test]
+    fn implicit_field_simple_assignment() {
+        let mut registry = SymbolRegistry::with_primitives();
+        let class_hash = create_class_with_field(&mut registry);
+
+        let mut ctx = CompilationContext::new(&registry);
+        ctx.begin_function();
+
+        // Declare 'this' parameter (as methods do)
+        let _ = ctx.declare_local(
+            "this".to_string(),
+            DataType::with_handle(class_hash, false),
+            false, // mutable this
+            Span::default(),
+        );
+
+        let mut constants = ConstantPool::new();
+        let mut emitter = BytecodeEmitter::new(&mut constants);
+
+        let arena = Bump::new();
+        let target = make_ident_expr(&arena, "x");
+        let value = make_int_literal(&arena, 42);
+
+        let assign_expr = arena.alloc(AssignExpr {
+            target,
+            op: AssignOp::Assign,
+            value,
+            span: Span::new(1, 1, 6),
+        });
+
+        let mut compiler = create_test_compiler_with_class(&mut ctx, &mut emitter, class_hash);
+        let result = compile_assign(&mut compiler, assign_expr);
+
+        assert!(result.is_ok(), "Expected Ok, got: {:?}", result);
+        let info = result.unwrap();
+        assert_eq!(info.data_type.type_hash, primitives::INT32);
+
+        let chunk = emitter.finish();
+        // Bytecode: GetThis, Constant 42, SetField
+        chunk.assert_opcodes(&[OpCode::GetThis, OpCode::Constant, OpCode::SetField]);
+    }
+
+    #[test]
+    fn implicit_field_compound_assignment() {
+        let mut registry = SymbolRegistry::with_primitives();
+        let class_hash = create_class_with_field(&mut registry);
+
+        let mut ctx = CompilationContext::new(&registry);
+        ctx.begin_function();
+
+        // Declare 'this' parameter (as methods do)
+        let _ = ctx.declare_local(
+            "this".to_string(),
+            DataType::with_handle(class_hash, false),
+            false, // mutable this
+            Span::default(),
+        );
+
+        let mut constants = ConstantPool::new();
+        let mut emitter = BytecodeEmitter::new(&mut constants);
+
+        let arena = Bump::new();
+        let target = make_ident_expr(&arena, "x");
+        let value = make_int_literal(&arena, 5);
+
+        let assign_expr = arena.alloc(AssignExpr {
+            target,
+            op: AssignOp::AddAssign, // x += 5
+            value,
+            span: Span::new(1, 1, 6),
+        });
+
+        let mut compiler = create_test_compiler_with_class(&mut ctx, &mut emitter, class_hash);
+        let result = compile_assign(&mut compiler, assign_expr);
+
+        assert!(result.is_ok(), "Expected Ok, got: {:?}", result);
+        let info = result.unwrap();
+        assert_eq!(info.data_type.type_hash, primitives::INT32);
+
+        let chunk = emitter.finish();
+        // Bytecode: GetThis, Dup, GetField, Constant, AddI32, SetField
+        chunk.assert_opcodes(&[
+            OpCode::GetThis,
+            OpCode::Dup,
+            OpCode::GetField,
+            OpCode::Constant,
+            OpCode::AddI32,
+            OpCode::SetField,
+        ]);
+    }
+
+    #[test]
+    fn implicit_field_assignment_const_method_rejected() {
+        let mut registry = SymbolRegistry::with_primitives();
+        let class_hash = create_class_with_field(&mut registry);
+
+        let mut ctx = CompilationContext::new(&registry);
+        ctx.begin_function();
+
+        // Declare 'this' parameter as const (const method)
+        let _ = ctx.declare_local(
+            "this".to_string(),
+            DataType::with_handle(class_hash, false),
+            true, // const this
+            Span::default(),
+        );
+
+        let mut constants = ConstantPool::new();
+        let mut emitter = BytecodeEmitter::new(&mut constants);
+
+        let arena = Bump::new();
+        let target = make_ident_expr(&arena, "x");
+        let value = make_int_literal(&arena, 42);
+
+        let assign_expr = arena.alloc(AssignExpr {
+            target,
+            op: AssignOp::Assign,
+            value,
+            span: Span::new(1, 1, 6),
+        });
+
+        let mut compiler = create_test_compiler_with_class(&mut ctx, &mut emitter, class_hash);
+        let result = compile_assign(&mut compiler, assign_expr);
+
+        // Should fail because we're in a const method
+        assert!(result.is_err());
+        assert!(matches!(
+            result.unwrap_err(),
+            CompilationError::CannotModifyConst { .. }
+        ));
+    }
+
+    #[test]
+    fn implicit_field_local_takes_precedence_in_assignment() {
+        let mut registry = SymbolRegistry::with_primitives();
+        let class_hash = create_class_with_field(&mut registry);
+
+        let mut ctx = CompilationContext::new(&registry);
+        ctx.begin_function();
+
+        // Declare 'this' parameter
+        let _ = ctx.declare_local(
+            "this".to_string(),
+            DataType::with_handle(class_hash, false),
+            false,
+            Span::default(),
+        );
+
+        // Also declare a local variable named 'x' that shadows the field
+        let _ = ctx.declare_local(
+            "x".to_string(),
+            DataType::simple(primitives::FLOAT),
+            false,
+            Span::default(),
+        );
+
+        let mut constants = ConstantPool::new();
+        let mut emitter = BytecodeEmitter::new(&mut constants);
+
+        let arena = Bump::new();
+        let target = make_ident_expr(&arena, "x");
+        let value = arena.alloc(Expr::Literal(LiteralExpr {
+            kind: LiteralKind::Float(42.0),
+            span: Span::new(1, 1, 4),
+        }));
+
+        let assign_expr = arena.alloc(AssignExpr {
+            target,
+            op: AssignOp::Assign,
+            value,
+            span: Span::new(1, 1, 10),
+        });
+
+        let mut compiler = create_test_compiler_with_class(&mut ctx, &mut emitter, class_hash);
+        let result = compile_assign(&mut compiler, assign_expr);
+
+        assert!(result.is_ok(), "Expected Ok, got: {:?}", result);
+        let info = result.unwrap();
+        // Should be float (local), not int (field)
+        assert_eq!(info.data_type.type_hash, primitives::FLOAT);
+
+        let chunk = emitter.finish();
+        // Should use Constant + SetLocal, not GetThis + Constant + SetField
+        chunk.assert_opcodes(&[OpCode::Constant, OpCode::SetLocal]);
     }
 }
