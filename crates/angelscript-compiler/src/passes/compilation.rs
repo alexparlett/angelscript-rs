@@ -373,12 +373,11 @@ impl<'a, 'reg> CompilationPass<'a, 'reg> {
 
         // Check for explicit super() call in constructor body
         let super_call_idx = field_init::find_super_call(body);
-        let has_base_class = self
+        let base_class = self
             .ctx
             .get_type(class_hash)
             .and_then(|e| e.as_class())
-            .map(|c| c.base_class.is_some())
-            .unwrap_or(false);
+            .and_then(|c| c.base_class);
 
         // Get field initializers
         let (_without_init, with_init) = field_inits
@@ -435,10 +434,13 @@ impl<'a, 'reg> CompilationPass<'a, 'reg> {
                 }
             }
         } else {
-            // No explicit super() call
-            if has_base_class {
-                // TODO: Emit implicit super() call for base class default constructor
-                // For now, we just emit field initializers
+            // No explicit super() call - emit implicit super() if there's a base class
+            if let Some(base_class_hash) = base_class {
+                // Emit implicit super() call for base class default constructor
+                // Bytecode: GetThis, CallMethod(base_default_ctor)
+                let base_default_ctor = TypeHash::from_constructor(base_class_hash, &[]);
+                emitter.emit_get_this();
+                emitter.emit_call_method(base_default_ctor, 0);
             }
 
             // Step 3: Compile field initializers (fields with explicit init)
@@ -569,18 +571,18 @@ impl<'a, 'reg> CompilationPass<'a, 'reg> {
         self.ctx
             .declare_param("this".into(), this_type, false, Span::default())?;
 
-        // Check if class has a base class
-        let has_base_class = self
+        // Get base class if it exists
+        let base_class = self
             .ctx
             .get_type(class_hash)
             .and_then(|e| e.as_class())
-            .map(|c| c.base_class.is_some())
-            .unwrap_or(false);
+            .and_then(|c| c.base_class);
 
         // Step 1: Call base class default constructor if needed
-        if has_base_class {
-            // TODO: Emit call to base class default constructor
-            // For now, we skip this - base class init needs super() call support
+        if let Some(base_class_hash) = base_class {
+            let base_default_ctor = TypeHash::from_constructor(base_class_hash, &[]);
+            emitter.emit_get_this();
+            emitter.emit_call_method(base_default_ctor, 0);
         }
 
         // Step 2: Initialize fields with explicit initializers
@@ -639,17 +641,21 @@ impl<'a, 'reg> CompilationPass<'a, 'reg> {
             .map(|c| c.properties.clone())
             .unwrap_or_default();
 
-        // Check if class has a base class
-        let has_base_class = self
+        // Get base class if it exists
+        let base_class = self
             .ctx
             .get_type(class_hash)
             .and_then(|e| e.as_class())
-            .map(|c| c.base_class.is_some())
-            .unwrap_or(false);
+            .and_then(|c| c.base_class);
 
         // Step 1: Call base class copy constructor if needed
-        if has_base_class {
-            // TODO: Emit call to base class copy constructor
+        if let Some(base_class_hash) = base_class {
+            // Copy constructor takes one param: const BaseClass &in
+            // The hash is computed from the base class type hash
+            let base_copy_ctor = TypeHash::from_constructor(base_class_hash, &[base_class_hash]);
+            emitter.emit_get_this();
+            emitter.emit_get_local(1); // 'other' parameter
+            emitter.emit_call_method(base_copy_ctor, 1);
         }
 
         // Step 2: Copy each field from other
@@ -721,17 +727,24 @@ impl<'a, 'reg> CompilationPass<'a, 'reg> {
             .map(|c| c.properties.clone())
             .unwrap_or_default();
 
-        // Check if class has a base class
-        let has_base_class = self
+        // Get base class if it exists
+        let base_class = self
             .ctx
             .get_type(class_hash)
             .and_then(|e| e.as_class())
-            .map(|c| c.base_class.is_some())
-            .unwrap_or(false);
+            .and_then(|c| c.base_class);
 
         // Step 1: Call base class opAssign if needed
-        if has_base_class {
-            // TODO: Emit call to base class opAssign
+        if let Some(base_class_hash) = base_class {
+            // opAssign takes one param: const BaseClass &in
+            // opAssign is a method, not a constructor
+            let base_op_assign =
+                TypeHash::from_method(base_class_hash, "opAssign", &[base_class_hash]);
+            emitter.emit_get_this();
+            emitter.emit_get_local(1); // 'other' parameter
+            emitter.emit_call_method(base_op_assign, 1);
+            // opAssign returns this, but we discard it since we'll return our own this
+            emitter.emit_pop();
         }
 
         // Step 2: Assign each field from other
