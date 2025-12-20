@@ -669,7 +669,8 @@ mod tests {
             is_destructor: false,
             span: Span::new(1, 1, 12),
         };
-        assert!(func.body.is_some());
+        let body = func.body.expect("constructor should have body");
+        assert!(body.stmts.is_empty());
         assert!(func.is_constructor());
     }
 
@@ -694,7 +695,11 @@ mod tests {
             is_variadic: false,
             span: Span::new(1, 1, 10),
         };
-        assert!(param.default.is_some());
+        // Verify default value is literal 10
+        match param.default.expect("should have default") {
+            Expr::Literal(lit) => assert!(matches!(lit.kind, LiteralKind::Int(10))),
+            _ => panic!("expected literal default"),
+        }
         assert!(!param.is_variadic);
     }
 
@@ -714,7 +719,7 @@ mod tests {
             span: Span::new(1, 1, 6),
         };
         assert!(param.is_variadic);
-        assert!(param.name.is_none());
+        assert!(param.name.is_none(), "variadic params may omit name");
     }
 
     #[test]
@@ -778,7 +783,11 @@ mod tests {
             }))),
             span: Span::new(1, 1, 7),
         };
-        assert!(enumerator.value.is_some());
+        // Verify enumerator value is literal 1
+        match enumerator.value.expect("should have explicit value") {
+            Expr::Literal(lit) => assert!(matches!(lit.kind, LiteralKind::Int(1))),
+            _ => panic!("expected literal value"),
+        }
     }
 
     #[test]
@@ -798,7 +807,11 @@ mod tests {
             }))),
             span: Span::new(1, 1, 22),
         };
-        assert!(field.init.is_some());
+        // Verify field init is literal 0
+        match field.init.expect("should have initializer") {
+            Expr::Literal(lit) => assert!(matches!(lit.kind, LiteralKind::Int(0))),
+            _ => panic!("expected literal initializer"),
+        }
     }
 
     #[test]
@@ -816,7 +829,8 @@ mod tests {
             span: Span::new(1, 5, 12),
         };
         assert!(accessor.is_const);
-        assert!(accessor.body.is_some());
+        let body = accessor.body.expect("accessor should have body");
+        assert!(body.stmts.is_empty());
     }
 
     #[test]

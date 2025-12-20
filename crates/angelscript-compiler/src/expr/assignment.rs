@@ -1552,10 +1552,16 @@ mod tests {
 
         assert!(result.is_err());
         // Should fail because a literal is not a valid assignment target
-        assert!(matches!(
-            result.unwrap_err(),
-            CompilationError::Other { .. }
-        ));
+        match result.unwrap_err() {
+            CompilationError::Other { message, .. } => {
+                assert!(
+                    message.contains("invalid assignment target"),
+                    "Expected error about invalid assignment target, got: {}",
+                    message
+                );
+            }
+            other => panic!("Expected Other error, got: {:?}", other),
+        }
     }
 
     #[test]
@@ -1681,10 +1687,16 @@ mod tests {
         let result = compile_assign(&mut compiler, assign_expr);
 
         assert!(result.is_err());
-        assert!(matches!(
-            result.unwrap_err(),
-            CompilationError::Other { .. }
-        ));
+        match result.unwrap_err() {
+            CompilationError::Other { message, .. } => {
+                assert!(
+                    message.contains("cannot assign to 'this'"),
+                    "Expected error about assigning to 'this', got: {}",
+                    message
+                );
+            }
+            other => panic!("Expected Other error, got: {:?}", other),
+        }
     }
 
     #[test]
@@ -1933,6 +1945,16 @@ mod tests {
 
         // Compound assignment on write-only property should fail (no getter)
         assert!(result.is_err());
+        match result.unwrap_err() {
+            CompilationError::Other { message, .. } => {
+                assert!(
+                    message.contains("compound assignment on write-only property"),
+                    "Expected error about compound assignment on write-only property, got: {}",
+                    message
+                );
+            }
+            other => panic!("Expected Other error, got: {:?}", other),
+        }
     }
 
     // =========================================================================

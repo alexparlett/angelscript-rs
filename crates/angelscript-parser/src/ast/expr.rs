@@ -584,7 +584,7 @@ mod tests {
             value,
             span: Span::new(1, 1, 9),
         };
-        assert!(arg.name.is_some());
+        assert_eq!(arg.name.unwrap().name, "value");
     }
 
     #[test]
@@ -601,7 +601,7 @@ mod tests {
             index,
             span: Span::new(1, 5, 12),
         };
-        assert!(item.name.is_some());
+        assert_eq!(item.name.unwrap().name, "key");
     }
 
     #[test]
@@ -637,8 +637,12 @@ mod tests {
             name: Some(Ident::new("x", Span::new(1, 5, 1))),
             span: Span::new(1, 1, 5),
         };
-        assert!(param.ty.is_some());
-        assert!(param.name.is_some());
+        let ty = param.ty.expect("param should have type");
+        assert!(matches!(
+            ty.ty.base,
+            crate::ast::types::TypeBase::Primitive(PrimitiveType::Int)
+        ));
+        assert_eq!(param.name.unwrap().name, "x");
     }
 
     #[test]
@@ -648,6 +652,7 @@ mod tests {
             name: Some(Ident::new("x", Span::new(1, 1, 1))),
             span: Span::new(1, 1, 1),
         };
-        assert!(param.ty.is_none());
+        assert!(param.ty.is_none(), "param should have no explicit type");
+        assert_eq!(param.name.unwrap().name, "x");
     }
 }

@@ -624,7 +624,15 @@ mod tests {
         let type_expr = TypeExpr::new(false, None, TypeBase::Auto, &[], &[], Span::new(1, 1, 4));
 
         let result = resolver.resolve(&type_expr);
-        assert!(result.is_err());
+        match result {
+            Err(CompilationError::Other { message, .. }) => {
+                assert!(
+                    message.contains("auto type"),
+                    "expected auto type error, got: {message}"
+                );
+            }
+            other => panic!("expected Other error for auto type, got {:?}", other),
+        }
     }
 
     #[test]
@@ -636,7 +644,15 @@ mod tests {
         let type_expr = TypeExpr::new(false, None, TypeBase::Unknown, &[], &[], Span::new(1, 1, 1));
 
         let result = resolver.resolve(&type_expr);
-        assert!(result.is_err());
+        match result {
+            Err(CompilationError::Other { message, .. }) => {
+                assert!(
+                    message.contains("unknown type placeholder"),
+                    "expected unknown placeholder error, got: {message}"
+                );
+            }
+            other => panic!("expected Other error for unknown type, got {:?}", other),
+        }
     }
 
     #[test]

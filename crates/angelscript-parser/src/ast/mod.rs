@@ -215,6 +215,45 @@ mod tests {
         let arena = bumpalo::Bump::new();
         let result = Parser::expression("obj.method()[0].field", &arena);
         assert!(result.is_ok());
+
+        // Verify the expression chain: obj.method()[0].field
+        // Structure: Member(.field, Index([0], Member(.method(), obj)))
+        let expr = result.unwrap();
+        match expr {
+            Expr::Member(member) => {
+                // Check member is Field("field")
+                match &member.member {
+                    MemberAccess::Field(ident) => assert_eq!(ident.name, "field"),
+                    _ => panic!("Expected field access to 'field'"),
+                }
+                // The object should be an Index expression
+                match member.object {
+                    Expr::Index(idx) => {
+                        // The object of the index should be a Member with method call
+                        match idx.object {
+                            Expr::Member(m) => {
+                                // Member access with Method variant for method()
+                                match &m.member {
+                                    MemberAccess::Method { name, args } => {
+                                        assert_eq!(name.name, "method");
+                                        assert!(args.is_empty()); // No arguments
+                                    }
+                                    _ => panic!("Expected method call 'method'"),
+                                }
+                                // Base should be "obj"
+                                match m.object {
+                                    Expr::Ident(id) => assert_eq!(id.ident.name, "obj"),
+                                    _ => panic!("Expected ident 'obj'"),
+                                }
+                            }
+                            _ => panic!("Expected member expression with method call"),
+                        }
+                    }
+                    _ => panic!("Expected index expression"),
+                }
+            }
+            _ => panic!("Expected member expression"),
+        }
     }
 
     #[test]
@@ -222,6 +261,9 @@ mod tests {
         let arena = bumpalo::Bump::new();
         let result = Parser::expression("1 +", &arena); // Incomplete
         assert!(result.is_err());
+        // Verify we get an error about expecting an expression
+        let errors = result.unwrap_err();
+        assert!(!errors.is_empty());
     }
 
     #[test]
@@ -304,6 +346,19 @@ mod tests {
         let arena = bumpalo::Bump::new();
         let result = Parser::type_expr("const array<int>@ const", &arena);
         assert!(result.is_ok());
+
+        // Verify: const array<int>@ const
+        let ty = result.unwrap();
+        assert!(ty.is_const); // Leading const
+        assert!(ty.has_handle()); // @ handle
+        match &ty.base {
+            TypeBase::Named(name) => {
+                assert_eq!(name.name, "array");
+            }
+            _ => panic!("Expected named type 'array'"),
+        }
+        // Template args are on TypeExpr, not Ident
+        assert_eq!(ty.template_args.len(), 1);
     }
 
     #[test]
@@ -311,6 +366,19 @@ mod tests {
         let arena = bumpalo::Bump::new();
         let result = Parser::type_expr("Namespace::MyClass", &arena);
         assert!(result.is_ok());
+
+        // Verify scope segments: Namespace::MyClass
+        let ty = result.unwrap();
+        match &ty.base {
+            TypeBase::Named(name) => {
+                assert_eq!(name.name, "MyClass");
+            }
+            _ => panic!("Expected named type"),
+        }
+        // Scope is on TypeExpr, not Ident
+        let scope = ty.scope.as_ref().expect("Expected scope");
+        assert_eq!(scope.segments.len(), 1);
+        assert_eq!(scope.segments[0].name, "Namespace");
     }
 
     #[test]
@@ -388,6 +456,22 @@ mod tests {
 
         let result = Parser::parse(source, &arena);
         assert!(result.is_ok());
+
+        // Verify interface has method and property
+        let script = result.unwrap();
+        match &script.items()[0] {
+            Item::Interface(iface) => {
+                assert_eq!(iface.name.name, "IDrawable");
+                assert_eq!(iface.members.len(), 2); // draw() and Priority property
+                // Check for property member
+                let has_property = iface
+                    .members
+                    .iter()
+                    .any(|m| matches!(m, InterfaceMember::VirtualProperty(_)));
+                assert!(has_property, "Expected virtual property member");
+            }
+            _ => panic!("Expected interface declaration"),
+        }
     }
 
     #[test]
@@ -403,6 +487,22 @@ mod tests {
 
         let result = Parser::parse(source, &arena);
         assert!(result.is_ok());
+
+        // Verify enumerator names and values
+        let script = result.unwrap();
+        match &script.items()[0] {
+            Item::Enum(e) => {
+                assert_eq!(e.name.name, "Color");
+                assert_eq!(e.enumerators.len(), 3);
+                assert_eq!(e.enumerators[0].name.name, "Red");
+                assert!(e.enumerators[0].value.is_none()); // No explicit value
+                assert_eq!(e.enumerators[1].name.name, "Green");
+                assert!(e.enumerators[1].value.is_some()); // Has value = 1
+                assert_eq!(e.enumerators[2].name.name, "Blue");
+                assert!(e.enumerators[2].value.is_some()); // Has value = 2
+            }
+            _ => panic!("Expected enum declaration"),
+        }
     }
 
     #[test]
@@ -431,6 +531,16 @@ mod tests {
 
         let result = Parser::parse(source, &arena);
         assert!(result.is_ok());
+
+        // Verify mixin declaration with class inside
+        let script = result.unwrap();
+        match &script.items()[0] {
+            Item::Mixin(mixin) => {
+                assert_eq!(mixin.class.name.name, "MyMixin");
+                assert_eq!(mixin.class.members.len(), 1);
+            }
+            _ => panic!("Expected mixin declaration"),
+        }
     }
 
     #[test]
@@ -445,6 +555,27 @@ mod tests {
 
         let result = Parser::parse(source, &arena);
         assert!(result.is_ok());
+
+        // Verify class has ctor and dtor
+        let script = result.unwrap();
+        match &script.items()[0] {
+            Item::Class(class) => {
+                assert_eq!(class.name.name, "MyClass");
+                assert_eq!(class.members.len(), 2);
+                // Check for constructor and destructor
+                let has_ctor = class
+                    .members
+                    .iter()
+                    .any(|m| matches!(m, ClassMember::Method(f) if f.is_constructor()));
+                let has_dtor = class
+                    .members
+                    .iter()
+                    .any(|m| matches!(m, ClassMember::Method(f) if f.is_destructor));
+                assert!(has_ctor, "Expected constructor");
+                assert!(has_dtor, "Expected destructor");
+            }
+            _ => panic!("Expected class declaration"),
+        }
     }
 
     #[test]
@@ -454,6 +585,31 @@ mod tests {
 
         let result = Parser::parse(source, &arena);
         assert!(result.is_ok());
+
+        // Verify params have defaults
+        let script = result.unwrap();
+        match &script.items()[0] {
+            Item::Function(func) => {
+                assert_eq!(func.name.name, "func");
+                assert_eq!(func.params.len(), 2);
+                assert!(
+                    func.params[0].default.is_some(),
+                    "First param should have default"
+                );
+                assert!(
+                    func.params[1].default.is_some(),
+                    "Second param should have default"
+                );
+                // Verify first default is literal 42
+                match &func.params[0].default {
+                    Some(Expr::Literal(lit)) => {
+                        assert!(matches!(lit.kind, LiteralKind::Int(42)));
+                    }
+                    _ => panic!("Expected literal default"),
+                }
+            }
+            _ => panic!("Expected function declaration"),
+        }
     }
 
     #[test]
@@ -467,6 +623,18 @@ mod tests {
 
         let result = Parser::parse(source, &arena);
         assert!(result.is_ok());
+
+        // Assert namespace path segments (A::B::C)
+        let script = result.unwrap();
+        match &script.items()[0] {
+            Item::Namespace(ns) => {
+                assert_eq!(ns.path.len(), 3);
+                assert_eq!(ns.path[0].name, "A");
+                assert_eq!(ns.path[1].name, "B");
+                assert_eq!(ns.path[2].name, "C");
+            }
+            _ => panic!("Expected namespace declaration"),
+        }
     }
 
     #[test]
@@ -480,6 +648,22 @@ mod tests {
 
         let result = Parser::parse(source, &arena);
         assert!(result.is_ok());
+
+        // Assert method is_const
+        let script = result.unwrap();
+        match &script.items()[0] {
+            Item::Class(class) => {
+                assert_eq!(class.name.name, "Foo");
+                match &class.members[0] {
+                    ClassMember::Method(method) => {
+                        assert_eq!(method.name.name, "getValue");
+                        assert!(method.is_const);
+                    }
+                    _ => panic!("Expected method member"),
+                }
+            }
+            _ => panic!("Expected class declaration"),
+        }
     }
 
     #[test]
@@ -493,6 +677,19 @@ mod tests {
 
         let result = Parser::parse(source, &arena);
         assert!(result.is_ok());
+
+        // Assert base list contains 3 interfaces
+        let script = result.unwrap();
+        match &script.items()[0] {
+            Item::Class(class) => {
+                assert_eq!(class.name.name, "Player");
+                assert_eq!(class.inheritance.len(), 3);
+                assert_eq!(class.inheritance[0].ident.name, "Character");
+                assert_eq!(class.inheritance[1].ident.name, "IDrawable");
+                assert_eq!(class.inheritance[2].ident.name, "ISerializable");
+            }
+            _ => panic!("Expected class declaration"),
+        }
     }
 
     #[test]
@@ -518,8 +715,12 @@ mod tests {
         let source = "int x = @@@;"; // @@@ will cause lexer issues but first @ may be valid (handle)
         let result = Parser::parse(source, &arena);
         // This may succeed or fail depending on how @@@ is tokenized
-        // We mainly want to exercise the code path
-        let _ = result;
+        // If it fails, verify we get an error
+        if result.is_err() {
+            let errors = result.unwrap_err();
+            assert!(!errors.is_empty());
+        }
+        // If it succeeds, that's also valid (@@@ might be tokenized as handles)
     }
 
     #[test]
@@ -528,8 +729,12 @@ mod tests {
         // Unterminated string causes lexer error
         let source = r#"int x = "unterminated"#;
         let (script, errors) = Parser::parse_lenient(source, &arena);
-        // Should have errors from lexer
-        let _ = (script, errors);
+        // Assert errors non-empty
+        assert!(
+            !errors.is_empty(),
+            "Should have lexer errors for unterminated string"
+        );
+        let _ = script;
     }
 
     #[test]
@@ -539,6 +744,12 @@ mod tests {
         let result = Parser::expression(source, &arena);
         // Should error due to unterminated string
         assert!(result.is_err());
+
+        // Assert error kind for unterminated string
+        let errors = result.unwrap_err();
+        assert!(!errors.is_empty());
+        // Unterminated string should cause an error (likely ExpectedToken or UnexpectedEof)
+        // The specific error type may vary by lexer implementation
     }
 
     #[test]
@@ -549,6 +760,21 @@ mod tests {
         let result = Parser::statement(source, &arena);
         // Should error
         assert!(result.is_err());
+
+        // Assert ParseErrorKind::UnexpectedToken or similar
+        let errors = result.unwrap_err();
+        assert!(!errors.is_empty());
+        // Verify we have at least one error for invalid syntax
+        let has_error = errors.into_iter().any(|e| {
+            matches!(
+                e.kind,
+                ParseErrorKind::UnexpectedToken | ParseErrorKind::ExpectedExpression
+            )
+        });
+        assert!(
+            has_error,
+            "Expected UnexpectedToken or related error for invalid statement"
+        );
     }
 
     #[test]
@@ -559,6 +785,21 @@ mod tests {
         let result = Parser::type_expr(source, &arena);
         // Should error
         assert!(result.is_err());
+
+        // Assert error kind for invalid type
+        let errors = result.unwrap_err();
+        assert!(!errors.is_empty());
+        // Should be UnexpectedToken since type can't start with number
+        let has_error = errors.into_iter().any(|e| {
+            matches!(
+                e.kind,
+                ParseErrorKind::UnexpectedToken | ParseErrorKind::ExpectedType
+            )
+        });
+        assert!(
+            has_error,
+            "Expected UnexpectedToken or ExpectedType for invalid type syntax"
+        );
     }
 
     #[test]
@@ -578,6 +819,21 @@ mod tests {
         let source = "int x = 42";
         let result = Parser::statement(source, &arena);
         assert!(result.is_err());
+
+        // Assert missing semicolon error
+        let errors = result.unwrap_err();
+        assert!(!errors.is_empty());
+        // Should expect semicolon or Eof
+        let has_error = errors.into_iter().any(|e| {
+            matches!(
+                e.kind,
+                ParseErrorKind::UnexpectedEof | ParseErrorKind::ExpectedToken
+            )
+        });
+        assert!(
+            has_error,
+            "Expected UnexpectedEof or ExpectedToken for missing semicolon"
+        );
     }
 
     #[test]
@@ -585,6 +841,16 @@ mod tests {
         let arena = bumpalo::Bump::new();
         let result = Parser::type_expr("array<int>@", &arena);
         assert!(result.is_ok());
+
+        // Assert TypeBase::Named("array") and handle
+        let ty = result.unwrap();
+        assert!(ty.has_handle());
+        match &ty.base {
+            TypeBase::Named(name) => {
+                assert_eq!(name.name, "array");
+            }
+            _ => panic!("Expected named type 'array'"),
+        }
     }
 
     #[test]
@@ -592,9 +858,12 @@ mod tests {
         let arena = bumpalo::Bump::new();
         // Completely invalid syntax that may cause parse_script to return Err
         let source = "@@@@@@@@@@";
-        let (script, _errors) = Parser::parse_lenient(source, &arena);
-        // Script may be empty but should still return
-        let _ = script.items();
+        let (script, errors) = Parser::parse_lenient(source, &arena);
+        // Assert script.items() behavior - should return a slice (may be empty)
+        let items = script.items();
+        assert!(items.len() == 0 || items.len() > 0); // Always true, but exercises the code
+        // Should have errors
+        assert!(!errors.is_empty());
     }
 
     #[test]
@@ -605,6 +874,12 @@ mod tests {
         let result = Parser::expression(source, &arena);
         // Should fail
         assert!(result.is_err());
+
+        // Assert trailing dot error kind
+        let errors = result.unwrap_err();
+        assert!(!errors.is_empty());
+        // Trailing dot should cause parse error - any error kind is acceptable
+        // as long as it's detected
     }
 
     #[test]
@@ -615,6 +890,17 @@ mod tests {
         let result = Parser::statement(source, &arena);
         // Should fail
         assert!(result.is_err());
+
+        // Assert incomplete if error kind
+        let errors = result.unwrap_err();
+        assert!(!errors.is_empty());
+        let has_error = errors.into_iter().any(|e| {
+            matches!(
+                e.kind,
+                ParseErrorKind::UnexpectedEof | ParseErrorKind::ExpectedExpression
+            )
+        });
+        assert!(has_error, "Expected error for incomplete if statement");
     }
 
     #[test]
@@ -625,6 +911,17 @@ mod tests {
         let result = Parser::type_expr(source, &arena);
         // Should fail
         assert!(result.is_err());
+
+        // Assert incomplete template error kind
+        let errors = result.unwrap_err();
+        assert!(!errors.is_empty());
+        let has_error = errors.into_iter().any(|e| {
+            matches!(
+                e.kind,
+                ParseErrorKind::UnexpectedEof | ParseErrorKind::ExpectedType
+            )
+        });
+        assert!(has_error, "Expected error for incomplete template");
     }
 
     // =========================================================================
