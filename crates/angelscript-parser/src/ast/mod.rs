@@ -101,6 +101,20 @@ mod tests {
         assert!(result.is_ok());
         let script = result.unwrap();
         assert_eq!(script.items().len(), 1);
+
+        // Verify it's a function with name "foo" and void return
+        match &script.items()[0] {
+            Item::Function(func) => {
+                assert_eq!(func.name.name, "foo");
+                assert!(func.return_type.is_some());
+                if let Some(ret) = &func.return_type {
+                    assert!(ret.ty.is_void());
+                }
+                assert_eq!(func.params.len(), 0);
+                assert!(func.body.is_some());
+            }
+            _ => panic!("Expected function declaration"),
+        }
     }
 
     #[test]
@@ -118,6 +132,31 @@ mod tests {
         assert!(result.is_ok());
         let script = result.unwrap();
         assert_eq!(script.items().len(), 1);
+
+        // Verify it's a class named "Player" with 1 field and 1 method
+        match &script.items()[0] {
+            Item::Class(class) => {
+                assert_eq!(class.name.name, "Player");
+                assert_eq!(class.members.len(), 2);
+
+                // Check for the field
+                let field_count = class
+                    .members
+                    .iter()
+                    .filter(|m| matches!(m, ClassMember::Field(_)))
+                    .count();
+                assert_eq!(field_count, 1);
+
+                // Check for the method
+                let method_count = class
+                    .members
+                    .iter()
+                    .filter(|m| matches!(m, ClassMember::Method(_)))
+                    .count();
+                assert_eq!(method_count, 1);
+            }
+            _ => panic!("Expected class declaration"),
+        }
     }
 
     #[test]
@@ -160,6 +199,15 @@ mod tests {
         let arena = bumpalo::Bump::new();
         let result = Parser::expression("1 + 2", &arena);
         assert!(result.is_ok());
+
+        // Verify it's a BinaryExpr with Add operator
+        let expr = result.unwrap();
+        match expr {
+            Expr::Binary(bin) => {
+                assert!(matches!(bin.op, BinaryOp::Add));
+            }
+            _ => panic!("Expected binary expression"),
+        }
     }
 
     #[test]
@@ -181,6 +229,15 @@ mod tests {
         let arena = bumpalo::Bump::new();
         let result = Parser::statement("return 42;", &arena);
         assert!(result.is_ok());
+
+        // Verify it's a ReturnStmt
+        let stmt = result.unwrap();
+        match stmt {
+            Stmt::Return(_) => {
+                // Successfully verified it's a return statement
+            }
+            _ => panic!("Expected return statement"),
+        }
     }
 
     #[test]
@@ -188,6 +245,23 @@ mod tests {
         let arena = bumpalo::Bump::new();
         let result = Parser::statement("if (x > 0) { return x; }", &arena);
         assert!(result.is_ok());
+
+        // Verify it's an IfStmt with a condition
+        let stmt = result.unwrap();
+        match stmt {
+            Stmt::If(if_stmt) => {
+                // Verify it has a condition expression (checking it's a binary expression)
+                match if_stmt.condition {
+                    Expr::Binary(bin) => {
+                        assert!(matches!(bin.op, BinaryOp::Greater));
+                    }
+                    _ => {
+                        // Any non-error expression is valid
+                    }
+                }
+            }
+            _ => panic!("Expected if statement"),
+        }
     }
 
     #[test]
@@ -195,6 +269,18 @@ mod tests {
         let arena = bumpalo::Bump::new();
         let result = Parser::statement("for (int i = 0; i < 10; i++) { }", &arena);
         assert!(result.is_ok());
+
+        // Verify it's a ForStmt
+        let stmt = result.unwrap();
+        match stmt {
+            Stmt::For(for_stmt) => {
+                // Verify it has an initializer, condition, and update
+                assert!(for_stmt.init.is_some());
+                assert!(for_stmt.condition.is_some());
+                assert!(!for_stmt.update.is_empty());
+            }
+            _ => panic!("Expected for statement"),
+        }
     }
 
     #[test]
@@ -202,6 +288,15 @@ mod tests {
         let arena = bumpalo::Bump::new();
         let result = Parser::type_expr("int", &arena);
         assert!(result.is_ok());
+
+        // Verify the type is an int primitive
+        let ty = result.unwrap();
+        match ty.base {
+            TypeBase::Primitive(PrimitiveType::Int) => {
+                // Successfully verified it's an int type
+            }
+            _ => panic!("Expected int primitive type"),
+        }
     }
 
     #[test]

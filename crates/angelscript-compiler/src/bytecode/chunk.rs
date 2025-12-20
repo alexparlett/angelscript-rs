@@ -190,6 +190,67 @@ impl BytecodeChunk {
     pub fn read_op(&self, offset: usize) -> Option<OpCode> {
         self.code.get(offset).and_then(|&b| OpCode::from_u8(b))
     }
+
+    /// Extract all opcodes from the chunk, skipping operands.
+    ///
+    /// This is useful for testing bytecode sequences without worrying about
+    /// specific operand values or instruction offsets.
+    pub fn opcodes(&self) -> Vec<OpCode> {
+        let mut ops = Vec::new();
+        let mut offset = 0;
+
+        while offset < self.code.len() {
+            if let Some(op) = self.read_op(offset) {
+                ops.push(op);
+                offset += 1 + op.operand_size();
+            } else {
+                // Invalid opcode, skip one byte
+                offset += 1;
+            }
+        }
+
+        ops
+    }
+
+    /// Check if this chunk contains exactly the given opcode sequence.
+    ///
+    /// This ignores operand values, only checking the opcodes themselves.
+    /// Panics with a descriptive message if the sequences don't match.
+    #[track_caller]
+    pub fn assert_opcodes(&self, expected: &[OpCode]) {
+        let actual = self.opcodes();
+        assert_eq!(
+            actual,
+            expected,
+            "Bytecode mismatch.\nExpected: {:?}\nActual:   {:?}",
+            expected.iter().map(|op| op.name()).collect::<Vec<_>>(),
+            actual.iter().map(|op| op.name()).collect::<Vec<_>>(),
+        );
+    }
+
+    /// Check if this chunk contains the given opcodes (in order, but not necessarily contiguous).
+    ///
+    /// Useful for verifying key opcodes are present without checking every instruction.
+    #[track_caller]
+    pub fn assert_contains_opcodes(&self, expected: &[OpCode]) {
+        let actual = self.opcodes();
+        let mut expected_iter = expected.iter().peekable();
+
+        for op in &actual {
+            if expected_iter.peek() == Some(&op) {
+                expected_iter.next();
+            }
+        }
+
+        if expected_iter.peek().is_some() {
+            let remaining: Vec<_> = expected_iter.map(|op| op.name()).collect();
+            panic!(
+                "Missing opcodes in sequence.\nExpected to find: {:?}\nActual bytecode:  {:?}",
+                remaining,
+                actual.iter().map(|op| op.name()).collect::<Vec<_>>(),
+            );
+        }
+    }
 }
 
 #[cfg(test)]
@@ -269,5 +330,86 @@ mod tests {
     fn read_byte_out_of_bounds() {
         let chunk = BytecodeChunk::new();
         assert_eq!(chunk.read_byte(0), None);
+    }
+
+    #[test]
+    fn opcodes_extraction() {
+        let mut chunk = BytecodeChunk::new();
+
+        // Constant (1 byte operand) + AddI32 (no operand) + SetLocal (1 byte operand)
+        chunk.write_op(OpCode::Constant, 1);
+        chunk.write_byte(0, 1); // constant index
+        chunk.write_op(OpCode::AddI32, 1);
+        chunk.write_op(OpCode::SetLocal, 1);
+        chunk.write_byte(0, 1); // slot
+
+        let ops = chunk.opcodes();
+        assert_eq!(
+            ops,
+            vec![OpCode::Constant, OpCode::AddI32, OpCode::SetLocal]
+        );
+    }
+
+    #[test]
+    fn opcodes_with_wide_operands() {
+        let mut chunk = BytecodeChunk::new();
+
+        // Call has 3-byte operand (u16 + u8)
+        chunk.write_op(OpCode::Call, 1);
+        chunk.write_u16(0x1234, 1); // function hash index
+        chunk.write_byte(2, 1); // arg count
+        chunk.write_op(OpCode::Return, 1);
+
+        let ops = chunk.opcodes();
+        assert_eq!(ops, vec![OpCode::Call, OpCode::Return]);
+    }
+
+    #[test]
+    fn assert_opcodes_success() {
+        let mut chunk = BytecodeChunk::new();
+        chunk.write_op(OpCode::Constant, 1);
+        chunk.write_byte(0, 1);
+        chunk.write_op(OpCode::SetLocal, 1);
+        chunk.write_byte(0, 1);
+
+        // Should not panic
+        chunk.assert_opcodes(&[OpCode::Constant, OpCode::SetLocal]);
+    }
+
+    #[test]
+    #[should_panic(expected = "Bytecode mismatch")]
+    fn assert_opcodes_failure() {
+        let mut chunk = BytecodeChunk::new();
+        chunk.write_op(OpCode::Constant, 1);
+        chunk.write_byte(0, 1);
+
+        // Should panic - wrong opcode
+        chunk.assert_opcodes(&[OpCode::GetLocal]);
+    }
+
+    #[test]
+    fn assert_contains_opcodes_success() {
+        let mut chunk = BytecodeChunk::new();
+        chunk.write_op(OpCode::GetLocal, 1);
+        chunk.write_byte(0, 1);
+        chunk.write_op(OpCode::Constant, 1);
+        chunk.write_byte(0, 1);
+        chunk.write_op(OpCode::AddI32, 1);
+        chunk.write_op(OpCode::SetLocal, 1);
+        chunk.write_byte(0, 1);
+
+        // Should find these in order (not contiguous)
+        chunk.assert_contains_opcodes(&[OpCode::GetLocal, OpCode::AddI32, OpCode::SetLocal]);
+    }
+
+    #[test]
+    #[should_panic(expected = "Missing opcodes")]
+    fn assert_contains_opcodes_failure() {
+        let mut chunk = BytecodeChunk::new();
+        chunk.write_op(OpCode::Constant, 1);
+        chunk.write_byte(0, 1);
+
+        // Should panic - SubI32 not present
+        chunk.assert_contains_opcodes(&[OpCode::Constant, OpCode::SubI32]);
     }
 }

@@ -318,10 +318,10 @@ impl<'a, 'ctx, 'pool> StmtCompiler<'a, 'ctx, 'pool> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::bytecode::ConstantPool;
+    use crate::bytecode::{ConstantPool, OpCode};
     use crate::context::CompilationContext;
     use crate::emit::BytecodeEmitter;
-    use angelscript_core::Span;
+    use angelscript_core::{CompilationError, Span};
     use angelscript_parser::ast::{BreakStmt, Expr, LiteralExpr, LiteralKind, Stmt, SwitchCase};
     use angelscript_registry::SymbolRegistry;
     use bumpalo::Bump;
@@ -354,8 +354,9 @@ mod tests {
         compiler.compile_switch(&switch).unwrap();
 
         let chunk = emitter.finish();
-        // Should have switch value + pop + break jump (patched to end)
-        assert!(chunk.len() > 0);
+        // Empty switch: load value (Constant), pop it, jump to end
+        // Should contain: Constant (the 42), Pop
+        chunk.assert_contains_opcodes(&[OpCode::Constant, OpCode::Pop]);
     }
 
     #[test]
@@ -400,8 +401,17 @@ mod tests {
         compiler.compile_switch(&switch).unwrap();
 
         let chunk = emitter.finish();
-        // Should compile without errors
-        assert!(chunk.len() > 0);
+        // Single case: load switch expr, dup, load case value, compare, jump to body if match
+        // The pattern is: Constant (42), Dup, Constant (42), EqI32, JumpIfTrue (to body), Pop, Pop, Jump (to end)
+        chunk.assert_contains_opcodes(&[
+            OpCode::Constant,
+            OpCode::Dup,
+            OpCode::Constant,
+            OpCode::EqI32,
+            OpCode::JumpIfTrue,
+            OpCode::Pop,
+            OpCode::Jump,
+        ]);
     }
 
     #[test]
@@ -440,7 +450,9 @@ mod tests {
         compiler.compile_switch(&switch).unwrap();
 
         let chunk = emitter.finish();
-        assert!(chunk.len() > 0);
+        // Default only: load switch expr, pop it (no comparison), execute default body, jump out
+        // Should contain: Constant (42), Pop, Jump
+        chunk.assert_contains_opcodes(&[OpCode::Constant, OpCode::Pop, OpCode::Jump]);
     }
 
     #[test]
@@ -484,6 +496,15 @@ mod tests {
         let result = compiler.compile_switch(&switch);
 
         assert!(result.is_err());
+        match result.unwrap_err() {
+            CompilationError::Other { message, .. } => {
+                assert!(message.contains("default") || message.contains("duplicate"));
+            }
+            other => panic!(
+                "Expected Other error for duplicate default, got: {:?}",
+                other
+            ),
+        }
     }
 
     #[test]
@@ -533,7 +554,16 @@ mod tests {
         compiler.compile_switch(&switch).unwrap();
 
         let chunk = emitter.finish();
-        assert!(chunk.len() > 0);
+        // Case + default: load expr, dup, load case val, compare, jump to body if match
+        // Actual pattern uses JumpIfTrue when case matches, then jumps to end after body
+        chunk.assert_contains_opcodes(&[
+            OpCode::Constant,
+            OpCode::Dup,
+            OpCode::EqI32,
+            OpCode::JumpIfTrue,
+            OpCode::Pop,
+            OpCode::Jump,
+        ]);
     }
 
     #[test]
@@ -582,7 +612,19 @@ mod tests {
         compiler.compile_switch(&switch).unwrap();
 
         let chunk = emitter.finish();
-        assert!(chunk.len() > 0);
+        // Multiple case values (case 1, case 2): should have two comparisons with JumpIfTrue for each
+        // Pattern: Constant (42), Dup, PushOne (1), EqI32, JumpIfTrue, Pop, Dup, Constant (2), EqI32, JumpIfTrue
+        chunk.assert_contains_opcodes(&[
+            OpCode::Constant, // 42
+            OpCode::Dup,
+            OpCode::EqI32,
+            OpCode::JumpIfTrue, // Match case 1 -> jump to body
+            OpCode::Pop,
+            OpCode::Dup,
+            OpCode::Constant, // 2
+            OpCode::EqI32,
+            OpCode::JumpIfTrue, // Match case 2 -> jump to body
+        ]);
     }
 
     #[test]
@@ -627,7 +669,15 @@ mod tests {
         compiler.compile_switch(&switch).unwrap();
 
         let chunk = emitter.finish();
-        assert!(chunk.len() > 0);
+        // Bool switch: load true, dup, load true, compare bools, jump to body if match
+        // Pattern: PushTrue (value), Dup, PushTrue (case), EqBool, JumpIfTrue
+        chunk.assert_contains_opcodes(&[
+            OpCode::PushTrue,
+            OpCode::Dup,
+            OpCode::PushTrue,
+            OpCode::EqBool,
+            OpCode::JumpIfTrue,
+        ]);
     }
 
     #[test]
@@ -815,7 +865,15 @@ mod tests {
         compiler.compile_switch(&switch).unwrap();
 
         let chunk = emitter.finish();
-        assert!(chunk.len() > 0);
+        // Const var case: load switch expr, dup, load const var, compare, jump to body if match
+        // Pattern: Constant (42), Dup, GetLocal (CONST_VAL), EqI32, JumpIfTrue
+        chunk.assert_contains_opcodes(&[
+            OpCode::Constant,
+            OpCode::Dup,
+            OpCode::GetLocal,
+            OpCode::EqI32,
+            OpCode::JumpIfTrue,
+        ]);
     }
 
     #[test]
@@ -869,7 +927,15 @@ mod tests {
         compiler.compile_switch(&switch).unwrap();
 
         let chunk = emitter.finish();
-        assert!(chunk.len() > 0);
+        // Negative literal case: load expr, dup, load 1, negate, compare, jump to body if match
+        // Actual pattern: Constant (42), Dup, PushOne (1), NegI32, EqI32, JumpIfTrue
+        chunk.assert_contains_opcodes(&[
+            OpCode::Constant,
+            OpCode::Dup,
+            OpCode::NegI32,
+            OpCode::EqI32,
+            OpCode::JumpIfTrue,
+        ]);
     }
 
     #[test]
@@ -937,6 +1003,15 @@ mod tests {
         compiler.compile_switch(&switch).unwrap();
 
         let chunk = emitter.finish();
-        assert!(chunk.len() > 0);
+        // Negated const var case: load expr, dup, load const var, negate, compare, jump to body if match
+        // Pattern: Constant (42), Dup, GetLocal (CONST_VAL), NegI32, EqI32, JumpIfTrue
+        chunk.assert_contains_opcodes(&[
+            OpCode::Constant,
+            OpCode::Dup,
+            OpCode::GetLocal,
+            OpCode::NegI32,
+            OpCode::EqI32,
+            OpCode::JumpIfTrue,
+        ]);
     }
 }

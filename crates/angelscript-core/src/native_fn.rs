@@ -830,35 +830,41 @@ mod tests {
 
     #[test]
     fn call_context_this_wrong_type() {
+        use crate::NativeError;
+
         let mut slots = vec![Dynamic::Native(Box::new(42i32))];
         let mut ret = Dynamic::Void;
         let mut heap = ObjectHeap::new();
 
         let ctx = CallContext::new(&mut slots, 0, &mut ret, &mut heap);
         let result: Result<&String, _> = ctx.this();
-        assert!(result.is_err());
+        assert!(matches!(result, Err(NativeError::InvalidThis { .. })));
     }
 
     #[test]
     fn call_context_this_no_slots() {
+        use crate::NativeError;
+
         let mut slots: Vec<Dynamic> = vec![];
         let mut ret = Dynamic::Void;
         let mut heap = ObjectHeap::new();
 
         let ctx = CallContext::new(&mut slots, 0, &mut ret, &mut heap);
         let result: Result<&i32, _> = ctx.this();
-        assert!(result.is_err());
+        assert!(matches!(result, Err(NativeError::InvalidThis { .. })));
     }
 
     #[test]
     fn call_context_this_not_native() {
+        use crate::NativeError;
+
         let mut slots = vec![Dynamic::Int(42)];
         let mut ret = Dynamic::Void;
         let mut heap = ObjectHeap::new();
 
         let ctx = CallContext::new(&mut slots, 0, &mut ret, &mut heap);
         let result: Result<&i32, _> = ctx.this();
-        assert!(result.is_err());
+        assert!(matches!(result, Err(NativeError::InvalidThis { .. })));
     }
 
     // Additional tests for better coverage
@@ -1039,12 +1045,18 @@ mod tests {
 
     #[test]
     fn call_context_arg_slot_out_of_bounds() {
+        use crate::NativeError;
+
         let mut slots = vec![Dynamic::Int(42)];
         let mut ret = Dynamic::Void;
         let mut heap = ObjectHeap::new();
 
         let ctx = CallContext::new(&mut slots, 0, &mut ret, &mut heap);
-        assert!(ctx.arg_slot(5).is_err());
+        let result = ctx.arg_slot(5);
+        assert!(matches!(
+            result,
+            Err(NativeError::ArgumentIndexOutOfBounds { index: 5, count: 1 })
+        ));
     }
 
     #[test]
@@ -1062,12 +1074,18 @@ mod tests {
 
     #[test]
     fn call_context_arg_slot_mut_out_of_bounds() {
+        use crate::NativeError;
+
         let mut slots = vec![Dynamic::Int(42)];
         let mut ret = Dynamic::Void;
         let mut heap = ObjectHeap::new();
 
         let mut ctx = CallContext::new(&mut slots, 0, &mut ret, &mut heap);
-        assert!(ctx.arg_slot_mut(5).is_err());
+        let result = ctx.arg_slot_mut(5);
+        assert!(matches!(
+            result,
+            Err(NativeError::ArgumentIndexOutOfBounds { index: 5, count: 1 })
+        ));
     }
 
     #[test]

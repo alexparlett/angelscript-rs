@@ -280,24 +280,49 @@ mod tests {
 
     #[test]
     fn from_dynamic_i8() {
+        use crate::ConversionError;
+
         assert_eq!(i8::from_dynamic(&Dynamic::Int(42)).unwrap(), 42i8);
         assert_eq!(i8::from_dynamic(&Dynamic::Int(-128)).unwrap(), -128i8);
         assert_eq!(i8::from_dynamic(&Dynamic::Int(127)).unwrap(), 127i8);
-        assert!(i8::from_dynamic(&Dynamic::Int(128)).is_err());
-        assert!(i8::from_dynamic(&Dynamic::Int(-129)).is_err());
-        assert!(i8::from_dynamic(&Dynamic::Bool(true)).is_err());
+
+        // Overflow checks
+        assert!(matches!(
+            i8::from_dynamic(&Dynamic::Int(128)),
+            Err(ConversionError::IntegerOverflow { value: 128, .. })
+        ));
+        assert!(matches!(
+            i8::from_dynamic(&Dynamic::Int(-129)),
+            Err(ConversionError::IntegerOverflow { value: -129, .. })
+        ));
+
+        // Type mismatch
+        assert!(matches!(
+            i8::from_dynamic(&Dynamic::Bool(true)),
+            Err(ConversionError::TypeMismatch { .. })
+        ));
     }
 
     #[test]
     fn from_dynamic_i16() {
+        use crate::ConversionError;
+
         assert_eq!(i16::from_dynamic(&Dynamic::Int(1000)).unwrap(), 1000i16);
-        assert!(i16::from_dynamic(&Dynamic::Int(40000)).is_err());
+        assert!(matches!(
+            i16::from_dynamic(&Dynamic::Int(40000)),
+            Err(ConversionError::IntegerOverflow { value: 40000, .. })
+        ));
     }
 
     #[test]
     fn from_dynamic_i32() {
+        use crate::ConversionError;
+
         assert_eq!(i32::from_dynamic(&Dynamic::Int(100000)).unwrap(), 100000i32);
-        assert!(i32::from_dynamic(&Dynamic::Int(i64::MAX)).is_err());
+        assert!(matches!(
+            i32::from_dynamic(&Dynamic::Int(i64::MAX)),
+            Err(ConversionError::IntegerOverflow { .. })
+        ));
     }
 
     #[test]
@@ -314,24 +339,42 @@ mod tests {
 
     #[test]
     fn from_dynamic_u8() {
+        use crate::ConversionError;
+
         assert_eq!(u8::from_dynamic(&Dynamic::Int(255)).unwrap(), 255u8);
-        assert!(u8::from_dynamic(&Dynamic::Int(-1)).is_err());
-        assert!(u8::from_dynamic(&Dynamic::Int(256)).is_err());
+        assert!(matches!(
+            u8::from_dynamic(&Dynamic::Int(-1)),
+            Err(ConversionError::IntegerOverflow { value: -1, .. })
+        ));
+        assert!(matches!(
+            u8::from_dynamic(&Dynamic::Int(256)),
+            Err(ConversionError::IntegerOverflow { value: 256, .. })
+        ));
     }
 
     #[test]
     fn from_dynamic_u16() {
+        use crate::ConversionError;
+
         assert_eq!(u16::from_dynamic(&Dynamic::Int(65535)).unwrap(), 65535u16);
-        assert!(u16::from_dynamic(&Dynamic::Int(-1)).is_err());
+        assert!(matches!(
+            u16::from_dynamic(&Dynamic::Int(-1)),
+            Err(ConversionError::IntegerOverflow { value: -1, .. })
+        ));
     }
 
     #[test]
     fn from_dynamic_u32() {
+        use crate::ConversionError;
+
         assert_eq!(
             u32::from_dynamic(&Dynamic::Int(4294967295)).unwrap(),
             u32::MAX
         );
-        assert!(u32::from_dynamic(&Dynamic::Int(-1)).is_err());
+        assert!(matches!(
+            u32::from_dynamic(&Dynamic::Int(-1)),
+            Err(ConversionError::IntegerOverflow { value: -1, .. })
+        ));
     }
 
     #[test]
@@ -344,6 +387,8 @@ mod tests {
 
     #[test]
     fn from_dynamic_f32() {
+        use crate::ConversionError;
+
         assert_eq!(f32::from_dynamic(&Dynamic::Float(3.14)).unwrap(), 3.14f32);
         assert_eq!(f32::from_dynamic(&Dynamic::Int(42)).unwrap(), 42.0f32);
         assert!(
@@ -351,7 +396,10 @@ mod tests {
                 .unwrap()
                 .is_infinite()
         );
-        assert!(f32::from_dynamic(&Dynamic::Bool(true)).is_err());
+        assert!(matches!(
+            f32::from_dynamic(&Dynamic::Bool(true)),
+            Err(ConversionError::TypeMismatch { .. })
+        ));
     }
 
     #[test]
@@ -365,15 +413,25 @@ mod tests {
 
     #[test]
     fn from_dynamic_bool() {
+        use crate::ConversionError;
+
         assert_eq!(bool::from_dynamic(&Dynamic::Bool(true)).unwrap(), true);
         assert_eq!(bool::from_dynamic(&Dynamic::Bool(false)).unwrap(), false);
-        assert!(bool::from_dynamic(&Dynamic::Int(1)).is_err());
+        assert!(matches!(
+            bool::from_dynamic(&Dynamic::Int(1)),
+            Err(ConversionError::TypeMismatch { .. })
+        ));
     }
 
     #[test]
     fn from_dynamic_unit() {
+        use crate::ConversionError;
+
         assert_eq!(<()>::from_dynamic(&Dynamic::Void).unwrap(), ());
-        assert!(<()>::from_dynamic(&Dynamic::Int(0)).is_err());
+        assert!(matches!(
+            <()>::from_dynamic(&Dynamic::Int(0)),
+            Err(ConversionError::TypeMismatch { .. })
+        ));
     }
 
     // ========================================================================
@@ -488,11 +546,16 @@ mod tests {
 
     #[test]
     fn from_dynamic_string() {
+        use crate::ConversionError;
+
         assert_eq!(
             String::from_dynamic(&Dynamic::String("test".into())).unwrap(),
             "test"
         );
-        assert!(String::from_dynamic(&Dynamic::Int(42)).is_err());
+        assert!(matches!(
+            String::from_dynamic(&Dynamic::Int(42)),
+            Err(ConversionError::TypeMismatch { .. })
+        ));
     }
 
     #[test]

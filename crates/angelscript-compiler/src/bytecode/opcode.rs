@@ -432,6 +432,156 @@ impl OpCode {
         }
     }
 
+    /// Get the size of operands for this opcode in bytes.
+    ///
+    /// This does NOT include the opcode byte itself.
+    pub fn operand_size(&self) -> usize {
+        match self {
+            // No operands (1 byte total)
+            OpCode::PushNull
+            | OpCode::PushTrue
+            | OpCode::PushFalse
+            | OpCode::PushZero
+            | OpCode::PushOne
+            | OpCode::Pop
+            | OpCode::Dup
+            | OpCode::Swap
+            | OpCode::GetThis
+            | OpCode::AddI32
+            | OpCode::SubI32
+            | OpCode::MulI32
+            | OpCode::DivI32
+            | OpCode::ModI32
+            | OpCode::NegI32
+            | OpCode::PowI32
+            | OpCode::AddI64
+            | OpCode::SubI64
+            | OpCode::MulI64
+            | OpCode::DivI64
+            | OpCode::ModI64
+            | OpCode::NegI64
+            | OpCode::PowI64
+            | OpCode::AddF32
+            | OpCode::SubF32
+            | OpCode::MulF32
+            | OpCode::DivF32
+            | OpCode::NegF32
+            | OpCode::PowF32
+            | OpCode::AddF64
+            | OpCode::SubF64
+            | OpCode::MulF64
+            | OpCode::DivF64
+            | OpCode::NegF64
+            | OpCode::PowF64
+            | OpCode::BitAnd
+            | OpCode::BitOr
+            | OpCode::BitXor
+            | OpCode::BitNot
+            | OpCode::Shl
+            | OpCode::Shr
+            | OpCode::Ushr
+            | OpCode::EqI32
+            | OpCode::EqI64
+            | OpCode::EqF32
+            | OpCode::EqF64
+            | OpCode::EqBool
+            | OpCode::EqHandle
+            | OpCode::LtI32
+            | OpCode::LtI64
+            | OpCode::LtF32
+            | OpCode::LtF64
+            | OpCode::LeI32
+            | OpCode::LeI64
+            | OpCode::LeF32
+            | OpCode::LeF64
+            | OpCode::GtI32
+            | OpCode::GtI64
+            | OpCode::GtF32
+            | OpCode::GtF64
+            | OpCode::GeI32
+            | OpCode::GeI64
+            | OpCode::GeF32
+            | OpCode::GeF64
+            | OpCode::Not
+            | OpCode::Return
+            | OpCode::ReturnVoid
+            | OpCode::I8toI16
+            | OpCode::I8toI32
+            | OpCode::I8toI64
+            | OpCode::I16toI32
+            | OpCode::I16toI64
+            | OpCode::I32toI64
+            | OpCode::U8toU16
+            | OpCode::U8toU32
+            | OpCode::U8toU64
+            | OpCode::U16toU32
+            | OpCode::U16toU64
+            | OpCode::U32toU64
+            | OpCode::I64toI32
+            | OpCode::I64toI16
+            | OpCode::I64toI8
+            | OpCode::I32toI16
+            | OpCode::I32toI8
+            | OpCode::I16toI8
+            | OpCode::I32toF32
+            | OpCode::I32toF64
+            | OpCode::I64toF32
+            | OpCode::I64toF64
+            | OpCode::F32toI32
+            | OpCode::F32toI64
+            | OpCode::F64toI32
+            | OpCode::F64toI64
+            | OpCode::F32toF64
+            | OpCode::F64toF32
+            | OpCode::HandleToConst
+            | OpCode::ValueToHandle
+            | OpCode::PreInc
+            | OpCode::PreDec
+            | OpCode::PostInc
+            | OpCode::PostDec
+            | OpCode::HandleOf
+            | OpCode::AddRef
+            | OpCode::Release
+            | OpCode::TryEnd
+            | OpCode::InitListEnd => 0,
+
+            // 1-byte operand
+            OpCode::Constant // u8 constant index
+            | OpCode::PopN   // u8 count
+            | OpCode::Pick   // u8 offset
+            | OpCode::GetLocal  // u8 slot
+            | OpCode::SetLocal  // u8 slot
+            | OpCode::CallFuncPtr => 1, // u8 arg count
+
+            // 2-byte operand
+            OpCode::ConstantWide // u16 constant index
+            | OpCode::GetLocalWide  // u16 slot
+            | OpCode::SetLocalWide  // u16 slot
+            | OpCode::GetGlobal     // u16 constant index (TypeHash)
+            | OpCode::SetGlobal     // u16 constant index (TypeHash)
+            | OpCode::GetField      // u16 field index
+            | OpCode::SetField      // u16 field index
+            | OpCode::Jump          // i16 offset
+            | OpCode::JumpIfFalse   // i16 offset
+            | OpCode::JumpIfTrue    // i16 offset
+            | OpCode::Loop          // u16 offset
+            | OpCode::DerivedToBase     // u16 constant index
+            | OpCode::ClassToInterface  // u16 constant index
+            | OpCode::InstanceOf        // u16 constant index
+            | OpCode::Cast              // u16 constant index
+            | OpCode::FuncPtr           // u16 constant index
+            | OpCode::InitListBegin     // u16 size
+            | OpCode::TryBegin => 2, // i16 offset
+
+            // 3-byte operand (u16 + u8)
+            OpCode::Call        // u16 constant index + u8 arg count
+            | OpCode::CallMethod    // u16 constant index + u8 arg count
+            | OpCode::CallVirtual   // u16 constant index + u8 arg count
+            | OpCode::New           // u16 constant index + u8 arg count
+            | OpCode::NewFactory => 3, // u16 constant index + u8 arg count
+        }
+    }
+
     /// Get the name of this opcode for debugging.
     pub fn name(&self) -> &'static str {
         match self {
@@ -612,5 +762,28 @@ mod tests {
 
         // TryEnd should be the last opcode
         assert_eq!(OpCode::from_u8(try_end_val + 1), None);
+    }
+
+    #[test]
+    fn operand_sizes() {
+        // No operands
+        assert_eq!(OpCode::Pop.operand_size(), 0);
+        assert_eq!(OpCode::AddI32.operand_size(), 0);
+        assert_eq!(OpCode::Return.operand_size(), 0);
+
+        // 1-byte operand
+        assert_eq!(OpCode::Constant.operand_size(), 1);
+        assert_eq!(OpCode::GetLocal.operand_size(), 1);
+        assert_eq!(OpCode::SetLocal.operand_size(), 1);
+
+        // 2-byte operand
+        assert_eq!(OpCode::ConstantWide.operand_size(), 2);
+        assert_eq!(OpCode::Jump.operand_size(), 2);
+        assert_eq!(OpCode::GetField.operand_size(), 2);
+
+        // 3-byte operand
+        assert_eq!(OpCode::Call.operand_size(), 3);
+        assert_eq!(OpCode::CallMethod.operand_size(), 3);
+        assert_eq!(OpCode::New.operand_size(), 3);
     }
 }

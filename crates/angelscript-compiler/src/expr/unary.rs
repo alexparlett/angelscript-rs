@@ -200,6 +200,10 @@ mod tests {
 
         let info = result.unwrap();
         assert_eq!(info.data_type.type_hash, primitives::INT32);
+
+        let chunk = emitter.finish();
+        // Bytecode: Constant (operand), NegI32
+        chunk.assert_opcodes(&[OpCode::Constant, OpCode::NegI32]);
     }
 
     #[test]
@@ -228,6 +232,10 @@ mod tests {
 
         let info = result.unwrap();
         assert_eq!(info.data_type.type_hash, primitives::BOOL);
+
+        let chunk = emitter.finish();
+        // Bytecode: PushTrue (operand), Not
+        chunk.assert_opcodes(&[OpCode::PushTrue, OpCode::Not]);
     }
 
     #[test]
@@ -254,5 +262,9 @@ mod tests {
         // Unary plus is a no-op
         let info = result.unwrap();
         assert_eq!(info.data_type.type_hash, primitives::INT32);
+
+        let chunk = emitter.finish();
+        // Bytecode: Constant (operand only, no-op for unary plus)
+        chunk.assert_opcodes(&[OpCode::Constant]);
     }
 }

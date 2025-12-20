@@ -247,6 +247,10 @@ mod tests {
 
         let info = result.unwrap();
         assert_eq!(info.data_type.type_hash, primitives::INT32);
+
+        let chunk = emitter.finish();
+        // Bytecode: PushOne (left=1), Constant (right=2), AddI32
+        chunk.assert_opcodes(&[OpCode::PushOne, OpCode::Constant, OpCode::AddI32]);
     }
 
     #[test]
@@ -275,6 +279,10 @@ mod tests {
         let info = result.unwrap();
         // Comparison should return bool
         assert_eq!(info.data_type.type_hash, primitives::BOOL);
+
+        let chunk = emitter.finish();
+        // Bytecode: Constant (left), Constant (right), LtI32
+        chunk.assert_opcodes(&[OpCode::Constant, OpCode::Constant, OpCode::LtI32]);
     }
 
     #[test]
@@ -302,6 +310,15 @@ mod tests {
 
         let info = result.unwrap();
         assert_eq!(info.data_type.type_hash, primitives::BOOL);
+
+        let chunk = emitter.finish();
+        // Bytecode: PushTrue (left), JumpIfFalse, Pop, PushFalse (right)
+        chunk.assert_contains_opcodes(&[
+            OpCode::PushTrue,
+            OpCode::JumpIfFalse,
+            OpCode::Pop,
+            OpCode::PushFalse,
+        ]);
     }
 
     #[test]
@@ -329,6 +346,15 @@ mod tests {
 
         let info = result.unwrap();
         assert_eq!(info.data_type.type_hash, primitives::BOOL);
+
+        let chunk = emitter.finish();
+        // Bytecode: PushFalse (left), JumpIfTrue, Pop, PushTrue (right)
+        chunk.assert_contains_opcodes(&[
+            OpCode::PushFalse,
+            OpCode::JumpIfTrue,
+            OpCode::Pop,
+            OpCode::PushTrue,
+        ]);
     }
 
     #[test]
@@ -356,5 +382,14 @@ mod tests {
 
         let info = result.unwrap();
         assert_eq!(info.data_type.type_hash, primitives::BOOL);
+
+        let chunk = emitter.finish();
+        // Bytecode: PushTrue (left), PushTrue (right), EqBool, Not
+        chunk.assert_opcodes(&[
+            OpCode::PushTrue,
+            OpCode::PushTrue,
+            OpCode::EqBool,
+            OpCode::Not,
+        ]);
     }
 }
