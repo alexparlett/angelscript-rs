@@ -97,22 +97,26 @@ impl ReturnChecker {
             | OpCode::DivI32
             | OpCode::ModI32
             | OpCode::NegI32
+            | OpCode::PowI32
             | OpCode::AddI64
             | OpCode::SubI64
             | OpCode::MulI64
             | OpCode::DivI64
             | OpCode::ModI64
             | OpCode::NegI64
+            | OpCode::PowI64
             | OpCode::AddF32
             | OpCode::SubF32
             | OpCode::MulF32
             | OpCode::DivF32
             | OpCode::NegF32
+            | OpCode::PowF32
             | OpCode::AddF64
             | OpCode::SubF64
             | OpCode::MulF64
             | OpCode::DivF64
             | OpCode::NegF64
+            | OpCode::PowF64
             | OpCode::BitAnd
             | OpCode::BitOr
             | OpCode::BitXor
@@ -187,6 +191,7 @@ impl ReturnChecker {
             // 1-byte operand
             OpCode::Constant
             | OpCode::PopN
+            | OpCode::Pick
             | OpCode::GetLocal
             | OpCode::SetLocal
             | OpCode::CallFuncPtr => 1,

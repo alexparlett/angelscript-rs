@@ -40,6 +40,10 @@ pub enum OpCode {
     PopN,
     /// Duplicate top of stack.
     Dup,
+    /// Copy value at offset from top of stack to top.
+    /// Operand: u8 offset (0 = top, 1 = second from top, etc.)
+    /// Like Forth's PICK: stack[n] -> top (without removing original)
+    Pick,
 
     // =========================================================================
     // Local Variables
@@ -94,6 +98,8 @@ pub enum OpCode {
     ModI32,
     /// Negate i32 value.
     NegI32,
+    /// Exponentiation i32 base with u32 exponent.
+    PowI32,
 
     // =========================================================================
     // Arithmetic (i64)
@@ -110,6 +116,8 @@ pub enum OpCode {
     ModI64,
     /// Negate i64 value.
     NegI64,
+    /// Exponentiation i64 base with u32 exponent.
+    PowI64,
 
     // =========================================================================
     // Arithmetic (f32)
@@ -124,6 +132,8 @@ pub enum OpCode {
     DivF32,
     /// Negate f32 value.
     NegF32,
+    /// Exponentiation of two f32 values.
+    PowF32,
 
     // =========================================================================
     // Arithmetic (f64)
@@ -138,6 +148,8 @@ pub enum OpCode {
     DivF64,
     /// Negate f64 value.
     NegF64,
+    /// Exponentiation of two f64 values.
+    PowF64,
 
     // =========================================================================
     // Bitwise Operations
@@ -433,6 +445,7 @@ impl OpCode {
             OpCode::Pop => "POP",
             OpCode::PopN => "POP_N",
             OpCode::Dup => "DUP",
+            OpCode::Pick => "PICK",
             OpCode::GetLocal => "GET_LOCAL",
             OpCode::SetLocal => "SET_LOCAL",
             OpCode::GetLocalWide => "GET_LOCAL_WIDE",
@@ -448,22 +461,26 @@ impl OpCode {
             OpCode::DivI32 => "DIV_I32",
             OpCode::ModI32 => "MOD_I32",
             OpCode::NegI32 => "NEG_I32",
+            OpCode::PowI32 => "POW_I32",
             OpCode::AddI64 => "ADD_I64",
             OpCode::SubI64 => "SUB_I64",
             OpCode::MulI64 => "MUL_I64",
             OpCode::DivI64 => "DIV_I64",
             OpCode::ModI64 => "MOD_I64",
             OpCode::NegI64 => "NEG_I64",
+            OpCode::PowI64 => "POW_I64",
             OpCode::AddF32 => "ADD_F32",
             OpCode::SubF32 => "SUB_F32",
             OpCode::MulF32 => "MUL_F32",
             OpCode::DivF32 => "DIV_F32",
             OpCode::NegF32 => "NEG_F32",
+            OpCode::PowF32 => "POW_F32",
             OpCode::AddF64 => "ADD_F64",
             OpCode::SubF64 => "SUB_F64",
             OpCode::MulF64 => "MUL_F64",
             OpCode::DivF64 => "DIV_F64",
             OpCode::NegF64 => "NEG_F64",
+            OpCode::PowF64 => "POW_F64",
             OpCode::BitAnd => "BIT_AND",
             OpCode::BitOr => "BIT_OR",
             OpCode::BitXor => "BIT_XOR",

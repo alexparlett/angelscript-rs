@@ -11,7 +11,7 @@ mod unary;
 pub use binary::resolve_binary;
 pub use unary::resolve_unary;
 
-use angelscript_core::{DataType, TypeHash};
+use angelscript_core::{DataType, TypeHash, primitives};
 
 use crate::bytecode::OpCode;
 
@@ -52,6 +52,18 @@ pub enum OperatorResolution {
         /// True for `!is`, false for `is`.
         negate: bool,
     },
+}
+
+impl OperatorResolution {
+    /// Get the result type of this operator resolution.
+    pub fn result_type(&self) -> DataType {
+        match self {
+            OperatorResolution::Primitive { result_type, .. } => *result_type,
+            OperatorResolution::MethodOnLeft { result_type, .. } => *result_type,
+            OperatorResolution::MethodOnRight { result_type, .. } => *result_type,
+            OperatorResolution::HandleComparison { .. } => DataType::simple(primitives::BOOL),
+        }
+    }
 }
 
 /// Result of unary operator resolution.
@@ -661,5 +673,117 @@ mod tests {
         let result = primitive::try_primitive_unary(&class_type, UnaryOp::Neg);
 
         assert_eq!(result, None);
+    }
+
+    // =========================================================================
+    // Pow Operator Tests
+    // =========================================================================
+
+    #[test]
+    fn resolve_i32_pow() {
+        let left = DataType::simple(primitives::INT32);
+        let right = DataType::simple(primitives::INT32);
+
+        let result = primitive::try_primitive_binary(&left, &right, BinaryOp::Pow);
+
+        assert_eq!(
+            result,
+            Some(OperatorResolution::Primitive {
+                opcode: OpCode::PowI32,
+                left_conv: None,
+                right_conv: None, // INT32 -> UINT32 conversion not available
+                result_type: DataType::simple(primitives::INT32),
+            })
+        );
+    }
+
+    #[test]
+    fn resolve_i64_pow() {
+        let left = DataType::simple(primitives::INT64);
+        let right = DataType::simple(primitives::INT64);
+
+        let result = primitive::try_primitive_binary(&left, &right, BinaryOp::Pow);
+
+        assert_eq!(
+            result,
+            Some(OperatorResolution::Primitive {
+                opcode: OpCode::PowI64,
+                left_conv: None,
+                right_conv: None, // INT64 to UINT32 conversion
+                result_type: DataType::simple(primitives::INT64),
+            })
+        );
+    }
+
+    #[test]
+    fn resolve_f32_pow() {
+        let left = DataType::simple(primitives::FLOAT);
+        let right = DataType::simple(primitives::FLOAT);
+
+        let result = primitive::try_primitive_binary(&left, &right, BinaryOp::Pow);
+
+        assert_eq!(
+            result,
+            Some(OperatorResolution::Primitive {
+                opcode: OpCode::PowF32,
+                left_conv: None,
+                right_conv: None,
+                result_type: DataType::simple(primitives::FLOAT),
+            })
+        );
+    }
+
+    #[test]
+    fn resolve_f64_pow() {
+        let left = DataType::simple(primitives::DOUBLE);
+        let right = DataType::simple(primitives::DOUBLE);
+
+        let result = primitive::try_primitive_binary(&left, &right, BinaryOp::Pow);
+
+        assert_eq!(
+            result,
+            Some(OperatorResolution::Primitive {
+                opcode: OpCode::PowF64,
+                left_conv: None,
+                right_conv: None,
+                result_type: DataType::simple(primitives::DOUBLE),
+            })
+        );
+    }
+
+    #[test]
+    fn resolve_i32_f64_pow_promotes_to_f64() {
+        let left = DataType::simple(primitives::INT32);
+        let right = DataType::simple(primitives::DOUBLE);
+
+        let result = primitive::try_primitive_binary(&left, &right, BinaryOp::Pow);
+
+        assert_eq!(
+            result,
+            Some(OperatorResolution::Primitive {
+                opcode: OpCode::PowF64,
+                left_conv: Some(OpCode::I32toF64),
+                right_conv: None,
+                result_type: DataType::simple(primitives::DOUBLE),
+            })
+        );
+    }
+
+    #[test]
+    fn resolve_f32_f64_pow_promotes_to_f64() {
+        let left = DataType::simple(primitives::FLOAT);
+        let right = DataType::simple(primitives::DOUBLE);
+
+        let result = primitive::try_primitive_binary(&left, &right, BinaryOp::Pow);
+
+        assert_eq!(
+            result,
+            Some(OperatorResolution::Primitive {
+                opcode: OpCode::PowF64,
+                left_conv: Some(OpCode::F32toF64),
+                right_conv: None,
+                result_type: DataType::simple(primitives::DOUBLE),
+            })
+        );
     }
 }
