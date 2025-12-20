@@ -1,7 +1,7 @@
 //! Primitive type operator resolution.
 //!
 //! Handles operator resolution for built-in primitive types (int, float, etc.)
-//! using direct VM opcodes.
+//! using direct VM opcodes. Enums are treated as int32 for operator purposes.
 
 use angelscript_core::{DataType, TypeHash, primitives};
 use angelscript_parser::ast::{BinaryOp, UnaryOp};
@@ -9,18 +9,29 @@ use angelscript_parser::ast::{BinaryOp, UnaryOp};
 use super::{OperatorResolution, UnaryResolution};
 use crate::bytecode::OpCode;
 
+/// Normalize a type for operator resolution.
+/// Enums are treated as int32 since they're just integers under the hood.
+#[inline]
+fn normalize_type_hash(data_type: &DataType) -> TypeHash {
+    if data_type.is_enum {
+        primitives::INT32
+    } else {
+        data_type.type_hash
+    }
+}
+
 /// Try to resolve a binary operator for primitive types.
 ///
-/// Returns `Some(resolution)` if both operands are primitives and the operator
+/// Returns `Some(resolution)` if both operands are primitives (or enums) and the operator
 /// is supported, `None` otherwise.
 pub fn try_primitive_binary(
     left: &DataType,
     right: &DataType,
     op: BinaryOp,
 ) -> Option<OperatorResolution> {
-    // Get the underlying type hashes (ignoring qualifiers for now)
-    let left_hash = left.type_hash;
-    let right_hash = right.type_hash;
+    // Get the underlying type hashes, treating enums as int32
+    let left_hash = normalize_type_hash(left);
+    let right_hash = normalize_type_hash(right);
 
     // Both must be numeric or bool primitives
     if !is_numeric_primitive(left_hash) && left_hash != primitives::BOOL {
@@ -64,10 +75,11 @@ pub fn try_primitive_binary(
 
 /// Try to resolve a unary operator for primitive types.
 ///
-/// Returns `Some(resolution)` if the operand is a primitive and the operator
+/// Returns `Some(resolution)` if the operand is a primitive (or enum) and the operator
 /// is supported, `None` otherwise.
 pub fn try_primitive_unary(operand: &DataType, op: UnaryOp) -> Option<UnaryResolution> {
-    let type_hash = operand.type_hash;
+    // Normalize type hash - enums become int32
+    let type_hash = normalize_type_hash(operand);
 
     match op {
         UnaryOp::Neg => resolve_negation(type_hash),

@@ -129,7 +129,6 @@ fn test_properties() {
 }
 
 #[test]
-#[ignore = "requires enum member scoping (Color::Red)"]
 fn test_enum() {
     let module = build_script("enum.as");
     assert!(module.is_built());

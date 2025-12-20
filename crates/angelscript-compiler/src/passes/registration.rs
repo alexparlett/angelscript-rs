@@ -1202,6 +1202,7 @@ impl<'a, 'reg> RegistrationPass<'a, 'reg> {
             ref_modifier: RefModifier::In,
             is_mixin: false,
             is_interface: false,
+            is_enum: false,
         };
 
         let params = vec![Param::new("other", param_type)];
@@ -1252,6 +1253,7 @@ impl<'a, 'reg> RegistrationPass<'a, 'reg> {
             ref_modifier: RefModifier::In,
             is_mixin: false,
             is_interface: false,
+            is_enum: false,
         };
 
         let params = vec![Param::new("other", param_type)];
@@ -1266,6 +1268,7 @@ impl<'a, 'reg> RegistrationPass<'a, 'reg> {
             ref_modifier: RefModifier::InOut,
             is_mixin: false,
             is_interface: false,
+            is_enum: false,
         };
 
         let func_hash = TypeHash::from_method(class_hash, "opAssign", &param_hashes);

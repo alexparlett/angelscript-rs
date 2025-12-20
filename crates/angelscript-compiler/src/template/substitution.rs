@@ -53,6 +53,7 @@ pub fn substitute_type(data_type: DataType, subst_map: &SubstitutionMap) -> Data
             ref_modifier: data_type.ref_modifier, // Keep original ref modifier
             is_mixin: replacement.is_mixin,       // Inherit mixin status from replacement
             is_interface: replacement.is_interface, // Inherit interface status from replacement
+            is_enum: replacement.is_enum,         // Inherit enum status from replacement
         }
     } else {
         // Not a template param, return unchanged
@@ -104,6 +105,7 @@ pub fn substitute_type_with_handle_const(
             ref_modifier: data_type.ref_modifier,
             is_mixin: replacement.is_mixin,
             is_interface: replacement.is_interface,
+            is_enum: replacement.is_enum,
         }
     } else {
         data_type

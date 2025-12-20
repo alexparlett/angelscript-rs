@@ -32,6 +32,46 @@ pub fn compile_ident<'ast>(
         return compile_local(compiler, lookup);
     }
 
+    // Check if scope refers to an enum type (e.g., Color::Red)
+    if let Some(scope) = ident.scope {
+        if scope.segments.len() == 1 && !scope.is_absolute {
+            let enum_name = scope.segments[0].name;
+
+            // Try to resolve the scope as a type
+            if let Some(type_hash) = compiler.ctx().resolve_type(enum_name) {
+                // Check if it's an enum - extract data before mutably borrowing
+                let enum_value = compiler
+                    .ctx()
+                    .get_type(type_hash)
+                    .and_then(|t| t.as_enum())
+                    .and_then(|enum_entry| enum_entry.get_value(name));
+
+                if let Some(value) = enum_value {
+                    // Emit constant integer value
+                    compiler.emitter().emit_int(value);
+
+                    // Return enum type with is_enum flag set
+                    let mut data_type = DataType::simple(type_hash);
+                    data_type.is_enum = true;
+                    return Ok(ExprInfo::rvalue(data_type));
+                }
+
+                // Check if it's an enum but with an invalid member
+                if compiler
+                    .ctx()
+                    .get_type(type_hash)
+                    .and_then(|t| t.as_enum())
+                    .is_some()
+                {
+                    return Err(CompilationError::Other {
+                        message: format!("enum '{}' has no member '{}'", enum_name, name),
+                        span,
+                    });
+                }
+            }
+        }
+    }
+
     // Check for globals via CompilationContext
     if let Some(global_hash) = compiler.ctx().resolve_global(&qualified_name) {
         // Get the global entry info before borrowing emitter mutably
@@ -468,5 +508,180 @@ mod tests {
 
         // Suppress unused warning
         let _ = class_hash;
+    }
+
+    // =========================================================================
+    // Enum member access tests
+    // =========================================================================
+
+    use angelscript_core::TypeSource;
+    use angelscript_core::entries::EnumEntry;
+
+    fn create_enum(registry: &mut SymbolRegistry) -> TypeHash {
+        let enum_hash = TypeHash::from_name("Color");
+
+        let enum_entry = EnumEntry::new(
+            "Color".to_string(),
+            vec![],
+            "Color".to_string(),
+            enum_hash,
+            TypeSource::ffi_untyped(),
+        )
+        .with_value("Red", 0)
+        .with_value("Green", 1)
+        .with_value("Blue", 2);
+
+        registry.register_type(enum_entry.into()).unwrap();
+
+        enum_hash
+    }
+
+    fn make_scoped_ident_expr<'a>(
+        arena: &'a bumpalo::Bump,
+        scope_name: &'a str,
+        member_name: &'a str,
+    ) -> IdentExpr<'a> {
+        use angelscript_parser::ast::{Ident, Scope};
+
+        let scope_ident = arena.alloc(Ident::new(
+            scope_name,
+            Span::new(1, 1, scope_name.len() as u32),
+        ));
+        let segments: &[Ident<'_>] = arena.alloc_slice_copy(&[*scope_ident]);
+
+        IdentExpr {
+            scope: Some(Scope {
+                is_absolute: false,
+                segments,
+                span: Span::new(1, 1, scope_name.len() as u32),
+            }),
+            ident: Ident::new(
+                member_name,
+                Span::new(1, scope_name.len() as u32 + 3, member_name.len() as u32),
+            ),
+            type_args: &[],
+            span: Span::new(1, 1, (scope_name.len() + member_name.len() + 2) as u32),
+        }
+    }
+
+    #[test]
+    fn compile_enum_member_access() {
+        let mut registry = SymbolRegistry::with_primitives();
+        let enum_hash = create_enum(&mut registry);
+
+        let mut ctx = CompilationContext::new(&registry);
+        ctx.begin_function();
+
+        let mut constants = ConstantPool::new();
+        let mut emitter = BytecodeEmitter::new(&mut constants);
+
+        let mut compiler = create_test_compiler(&mut ctx, &mut emitter, None);
+
+        let arena = bumpalo::Bump::new();
+        let ident = make_scoped_ident_expr(&arena, "Color", "Red");
+        let result = compile_ident(&mut compiler, &ident);
+
+        assert!(result.is_ok(), "Expected Ok, got: {:?}", result);
+        let info = result.unwrap();
+        assert_eq!(info.data_type.type_hash, enum_hash);
+        assert!(!info.is_lvalue); // Enum values are rvalues (constants)
+
+        let chunk = emitter.finish();
+        // Should emit a constant integer (PushZero is an optimization for 0)
+        chunk.assert_opcodes(&[OpCode::PushZero]);
+    }
+
+    #[test]
+    fn compile_enum_member_with_explicit_value() {
+        let mut registry = SymbolRegistry::with_primitives();
+
+        // Create an enum with explicit values
+        let enum_hash = TypeHash::from_name("Difficulty");
+        let enum_entry = EnumEntry::new(
+            "Difficulty".to_string(),
+            vec![],
+            "Difficulty".to_string(),
+            enum_hash,
+            TypeSource::ffi_untyped(),
+        )
+        .with_value("Easy", 0)
+        .with_value("Normal", 1)
+        .with_value("Hard", 2)
+        .with_value("Expert", 3);
+        registry.register_type(enum_entry.into()).unwrap();
+
+        let mut ctx = CompilationContext::new(&registry);
+        ctx.begin_function();
+
+        let mut constants = ConstantPool::new();
+        let mut emitter = BytecodeEmitter::new(&mut constants);
+
+        let mut compiler = create_test_compiler(&mut ctx, &mut emitter, None);
+
+        let arena = bumpalo::Bump::new();
+        let ident = make_scoped_ident_expr(&arena, "Difficulty", "Hard");
+        let result = compile_ident(&mut compiler, &ident);
+
+        assert!(result.is_ok(), "Expected Ok, got: {:?}", result);
+        let info = result.unwrap();
+        assert_eq!(info.data_type.type_hash, enum_hash);
+    }
+
+    #[test]
+    fn compile_enum_invalid_member_error() {
+        let mut registry = SymbolRegistry::with_primitives();
+        let _ = create_enum(&mut registry);
+
+        let mut ctx = CompilationContext::new(&registry);
+        ctx.begin_function();
+
+        let mut constants = ConstantPool::new();
+        let mut emitter = BytecodeEmitter::new(&mut constants);
+
+        let mut compiler = create_test_compiler(&mut ctx, &mut emitter, None);
+
+        let arena = bumpalo::Bump::new();
+        // "Yellow" is not a member of Color
+        let ident = make_scoped_ident_expr(&arena, "Color", "Yellow");
+        let result = compile_ident(&mut compiler, &ident);
+
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            CompilationError::Other { message, .. } => {
+                assert!(message.contains("has no member"));
+                assert!(message.contains("Yellow"));
+            }
+            other => panic!("Expected Other error, got: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn compile_non_enum_scoped_ident_falls_through() {
+        let mut registry = SymbolRegistry::with_primitives();
+
+        // Create a class, not an enum
+        let _class_hash = TypeHash::from_name("MyClass");
+        let class = ClassEntry::ffi("MyClass", TypeKind::script_object());
+        registry.register_type(class.into()).unwrap();
+
+        let mut ctx = CompilationContext::new(&registry);
+        ctx.begin_function();
+
+        let mut constants = ConstantPool::new();
+        let mut emitter = BytecodeEmitter::new(&mut constants);
+
+        let mut compiler = create_test_compiler(&mut ctx, &mut emitter, None);
+
+        let arena = bumpalo::Bump::new();
+        // MyClass::Something - MyClass is a class, not an enum
+        let ident = make_scoped_ident_expr(&arena, "MyClass", "Something");
+        let result = compile_ident(&mut compiler, &ident);
+
+        // Should fall through to UndefinedVariable since MyClass is not an enum
+        assert!(result.is_err());
+        assert!(matches!(
+            result.unwrap_err(),
+            CompilationError::UndefinedVariable { .. }
+        ));
     }
 }
