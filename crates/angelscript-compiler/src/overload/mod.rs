@@ -107,12 +107,19 @@ fn try_match_candidate(
 ) -> Option<OverloadMatch> {
     let func = ctx.get_function(func_hash)?;
     let params = &func.def.params;
+    let is_variadic = func.def.is_variadic;
 
-    // Check argument count (considering defaults)
+    // Check argument count (considering defaults and variadic)
     let required_params = params.iter().filter(|p| !p.has_default).count();
     let max_params = params.len();
 
-    if arg_types.len() < required_params || arg_types.len() > max_params {
+    // Too few arguments
+    if arg_types.len() < required_params {
+        return None;
+    }
+
+    // Too many arguments (unless variadic)
+    if !is_variadic && arg_types.len() > max_params {
         return None;
     }
 
@@ -124,6 +131,13 @@ fn try_match_candidate(
         let conv = find_conversion(arg, &param.data_type, ctx, true)?;
         total_cost = total_cost.saturating_add(conv.cost);
         arg_conversions.push(Some(conv));
+    }
+
+    // For variadic functions, extra arguments are accepted without type checking
+    // (they'll be handled at runtime via the generic calling convention)
+    for _ in params.len()..arg_types.len() {
+        // Mark variadic args with identity conversion (no-op)
+        arg_conversions.push(Some(Conversion::identity()));
     }
 
     // Fill in None for default parameters not provided
@@ -440,5 +454,148 @@ mod tests {
         assert_eq!(m.arg_conversions.len(), 2);
         assert!(m.arg_conversions[0].is_some()); // Both args have conversions
         assert!(m.arg_conversions[1].is_some());
+    }
+
+    fn make_variadic_function(name: &str, params: Vec<Param>) -> FunctionEntry {
+        let param_types: Vec<_> = params.iter().map(|p| p.data_type.type_hash).collect();
+        let hash = TypeHash::from_function(name, &param_types);
+        let mut def = FunctionDef::new(
+            hash,
+            name.to_string(),
+            vec![],
+            params,
+            DataType::void(),
+            None,
+            FunctionTraits::default(),
+            false,
+            Visibility::Public,
+        );
+        def.is_variadic = true;
+        FunctionEntry::ffi(def)
+    }
+
+    #[test]
+    fn variadic_function_accepts_exact_required_params() {
+        let mut registry = setup_registry_with_primitives();
+
+        // print(string format, ...) - one required param, variadic after
+        let func = make_variadic_function(
+            "print",
+            vec![Param::new("format", DataType::simple(primitives::STRING))],
+        );
+        let func_hash = func.def.func_hash;
+        registry.register_function(func).unwrap();
+
+        let ctx = CompilationContext::new(&registry);
+
+        // Call with exactly one argument (format string only, no variadic args)
+        let arg_types = vec![DataType::simple(primitives::STRING)];
+        let result = resolve_overload(&[func_hash], &arg_types, &ctx, Span::default());
+
+        assert!(result.is_ok());
+        let m = result.unwrap();
+        assert_eq!(m.func_hash, func_hash);
+        assert_eq!(m.arg_conversions.len(), 1);
+        assert!(m.arg_conversions[0].as_ref().unwrap().is_exact());
+    }
+
+    #[test]
+    fn variadic_function_accepts_extra_args() {
+        let mut registry = setup_registry_with_primitives();
+
+        // print(string format, ...) - one required param, variadic after
+        let func = make_variadic_function(
+            "print",
+            vec![Param::new("format", DataType::simple(primitives::STRING))],
+        );
+        let func_hash = func.def.func_hash;
+        registry.register_function(func).unwrap();
+
+        let ctx = CompilationContext::new(&registry);
+
+        // Call with format + 2 extra variadic args
+        let arg_types = vec![
+            DataType::simple(primitives::STRING),
+            DataType::simple(primitives::INT32),
+            DataType::simple(primitives::FLOAT),
+        ];
+        let result = resolve_overload(&[func_hash], &arg_types, &ctx, Span::default());
+
+        assert!(result.is_ok());
+        let m = result.unwrap();
+        assert_eq!(m.func_hash, func_hash);
+        assert_eq!(m.arg_conversions.len(), 3);
+        // First is the format parameter
+        assert!(m.arg_conversions[0].as_ref().unwrap().is_exact());
+        // Extra variadic args get identity conversions
+        assert!(m.arg_conversions[1].is_some());
+        assert!(m.arg_conversions[2].is_some());
+    }
+
+    #[test]
+    fn variadic_function_rejects_fewer_than_required() {
+        let mut registry = setup_registry_with_primitives();
+
+        // print(string format, ...) - one required param, variadic after
+        let func = make_variadic_function(
+            "print",
+            vec![Param::new("format", DataType::simple(primitives::STRING))],
+        );
+        let func_hash = func.def.func_hash;
+        registry.register_function(func).unwrap();
+
+        let ctx = CompilationContext::new(&registry);
+
+        // Call with zero arguments - should fail because format is required
+        let arg_types: Vec<DataType> = vec![];
+        let result = resolve_overload(&[func_hash], &arg_types, &ctx, Span::default());
+
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            CompilationError::NoMatchingOverload { name, .. } => {
+                assert_eq!(name, "print");
+            }
+            other => panic!("Expected NoMatchingOverload, got: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn variadic_function_with_multiple_required_params() {
+        let mut registry = setup_registry_with_primitives();
+
+        // format(string fmt, int precision, ...) - two required params
+        let func = make_variadic_function(
+            "format",
+            vec![
+                Param::new("fmt", DataType::simple(primitives::STRING)),
+                Param::new("precision", DataType::simple(primitives::INT32)),
+            ],
+        );
+        let func_hash = func.def.func_hash;
+        registry.register_function(func).unwrap();
+
+        let ctx = CompilationContext::new(&registry);
+
+        // Call with exactly 2 required args - should succeed
+        let arg_types = vec![
+            DataType::simple(primitives::STRING),
+            DataType::simple(primitives::INT32),
+        ];
+        let result = resolve_overload(&[func_hash], &arg_types, &ctx, Span::default());
+        assert!(result.is_ok());
+
+        // Call with 2 required + 1 extra - should succeed
+        let arg_types = vec![
+            DataType::simple(primitives::STRING),
+            DataType::simple(primitives::INT32),
+            DataType::simple(primitives::FLOAT),
+        ];
+        let result = resolve_overload(&[func_hash], &arg_types, &ctx, Span::default());
+        assert!(result.is_ok());
+
+        // Call with only 1 arg - should fail (needs 2 required)
+        let arg_types = vec![DataType::simple(primitives::STRING)];
+        let result = resolve_overload(&[func_hash], &arg_types, &ctx, Span::default());
+        assert!(result.is_err());
     }
 }

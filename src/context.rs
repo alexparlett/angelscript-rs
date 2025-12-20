@@ -255,32 +255,65 @@ impl Context {
     ) -> Result<(), ContextError> {
         let name = meta.as_name.unwrap_or(meta.name);
 
+        // For generic calling convention, use generic_params; otherwise use params
+        // Variadic parameters are excluded from the function hash
+        let (param_hashes, params, is_variadic) = if meta.is_generic {
+            let hashes: Vec<TypeHash> = meta
+                .generic_params
+                .iter()
+                .filter(|p| !p.is_variadic)
+                .map(|p| p.type_hash)
+                .collect();
+
+            let params: Vec<Param> = meta
+                .generic_params
+                .iter()
+                .filter(|p| !p.is_variadic)
+                .map(|p| {
+                    let param = if p.default_value.is_some() {
+                        Param::with_default("", DataType::simple(p.type_hash))
+                    } else {
+                        Param::new("", DataType::simple(p.type_hash))
+                    };
+                    if p.if_handle_then_const {
+                        param.with_if_handle_then_const(true)
+                    } else {
+                        param
+                    }
+                })
+                .collect();
+
+            let is_variadic = meta.generic_params.iter().any(|p| p.is_variadic);
+            (hashes, params, is_variadic)
+        } else {
+            let hashes: Vec<TypeHash> = meta.params.iter().map(|p| p.type_hash).collect();
+
+            let params: Vec<Param> = meta
+                .params
+                .iter()
+                .map(|p| {
+                    let param = if p.default_value.is_some() {
+                        Param::with_default(p.name, DataType::simple(p.type_hash))
+                    } else {
+                        Param::new(p.name, DataType::simple(p.type_hash))
+                    };
+                    if p.if_handle_then_const {
+                        param.with_if_handle_then_const(true)
+                    } else {
+                        param
+                    }
+                })
+                .collect();
+
+            (hashes, params, false)
+        };
+
         // Compute function hash - use from_method for methods, from_function for globals
-        let param_hashes: Vec<TypeHash> = meta.params.iter().map(|p| p.type_hash).collect();
         let func_hash = if let Some(owner) = object_type {
             TypeHash::from_method(owner, name, &param_hashes)
         } else {
             TypeHash::from_function(name, &param_hashes)
         };
-
-        // Convert parameters
-        let params: Vec<Param> = meta
-            .params
-            .iter()
-            .map(|p| {
-                let param = if p.default_value.is_some() {
-                    Param::with_default(p.name, DataType::simple(p.type_hash))
-                } else {
-                    Param::new(p.name, DataType::simple(p.type_hash))
-                };
-                // Set if_handle_then_const for template parameters
-                if p.if_handle_then_const {
-                    param.with_if_handle_then_const(true)
-                } else {
-                    param
-                }
-            })
-            .collect();
 
         // Determine return type
         let return_type = meta
@@ -353,6 +386,10 @@ impl Context {
                 template_param_hashes,
             )
         };
+
+        // Set variadic flag if this function accepts variadic arguments
+        let mut def = def;
+        def.is_variadic = is_variadic;
 
         // Create function entry - use native_fn if available
         let entry = match meta.native_fn {
@@ -1053,5 +1090,171 @@ mod tests {
 
         let factory = ctx.string_factory().unwrap();
         assert_eq!(factory.type_hash(), TypeHash::from_name("string"));
+    }
+
+    #[test]
+    fn context_install_generic_function_with_params() {
+        use angelscript_core::{GenericParamMeta, RefModifier, ReturnMeta};
+
+        let mut ctx = Context::new();
+
+        // Generic function with one required param (like print with format string)
+        let mut module = Module::new();
+        module.functions.push(FunctionMeta {
+            name: "print",
+            as_name: None,
+            native_fn: None,
+            params: vec![], // Normal params are empty for generic functions
+            generic_params: vec![GenericParamMeta {
+                type_hash: primitives::STRING,
+                ref_mode: RefModifier::In,
+                is_variadic: false,
+                default_value: None,
+                if_handle_then_const: false,
+            }],
+            return_meta: ReturnMeta::default(),
+            is_method: false,
+            associated_type: None,
+            behavior: None,
+            is_const: false,
+            is_property: false,
+            property_name: None,
+            is_generic: true,
+            list_pattern: None,
+            template_params: vec![],
+        });
+        ctx.install(module).unwrap();
+
+        // Verify the function was registered with the correct params
+        let func_hash = TypeHash::from_function("print", &[primitives::STRING]);
+        let func_entry = ctx.registry().get_function(func_hash);
+        assert!(func_entry.is_some(), "print function should be registered");
+
+        let func = func_entry.unwrap();
+        assert_eq!(
+            func.def.params.len(),
+            1,
+            "should have 1 param from generic_params"
+        );
+        assert_eq!(func.def.params[0].data_type.type_hash, primitives::STRING);
+    }
+
+    #[test]
+    fn context_install_generic_function_variadic() {
+        use angelscript_core::{GenericParamMeta, RefModifier, ReturnMeta};
+
+        let mut ctx = Context::new();
+
+        // Generic variadic function: print(string format, ...)
+        let mut module = Module::new();
+        module.functions.push(FunctionMeta {
+            name: "print",
+            as_name: None,
+            native_fn: None,
+            params: vec![],
+            generic_params: vec![
+                GenericParamMeta {
+                    type_hash: primitives::STRING,
+                    ref_mode: RefModifier::In,
+                    is_variadic: false,
+                    default_value: None,
+                    if_handle_then_const: false,
+                },
+                GenericParamMeta {
+                    type_hash: primitives::VARIABLE_PARAM,
+                    ref_mode: RefModifier::In,
+                    is_variadic: true,
+                    default_value: None,
+                    if_handle_then_const: false,
+                },
+            ],
+            return_meta: ReturnMeta::default(),
+            is_method: false,
+            associated_type: None,
+            behavior: None,
+            is_const: false,
+            is_property: false,
+            property_name: None,
+            is_generic: true,
+            list_pattern: None,
+            template_params: vec![],
+        });
+        ctx.install(module).unwrap();
+
+        // Function hash is computed WITHOUT variadic params
+        let func_hash = TypeHash::from_function("print", &[primitives::STRING]);
+        let func_entry = ctx.registry().get_function(func_hash);
+        assert!(func_entry.is_some(), "variadic print should be registered");
+
+        let func = func_entry.unwrap();
+        // Only non-variadic params are in the def.params
+        assert_eq!(
+            func.def.params.len(),
+            1,
+            "variadic params excluded from def.params"
+        );
+        assert!(
+            func.def.is_variadic,
+            "function should be marked as variadic"
+        );
+    }
+
+    #[test]
+    fn context_install_generic_function_variadic_excluded_from_hash() {
+        use angelscript_core::{GenericParamMeta, RefModifier, ReturnMeta};
+
+        let mut ctx = Context::new();
+
+        // Function with two required params and variadic
+        let mut module = Module::new();
+        module.functions.push(FunctionMeta {
+            name: "format",
+            as_name: None,
+            native_fn: None,
+            params: vec![],
+            generic_params: vec![
+                GenericParamMeta {
+                    type_hash: primitives::STRING,
+                    ref_mode: RefModifier::In,
+                    is_variadic: false,
+                    default_value: None,
+                    if_handle_then_const: false,
+                },
+                GenericParamMeta {
+                    type_hash: primitives::INT32,
+                    ref_mode: RefModifier::In,
+                    is_variadic: false,
+                    default_value: None,
+                    if_handle_then_const: false,
+                },
+                GenericParamMeta {
+                    type_hash: primitives::VARIABLE_PARAM,
+                    ref_mode: RefModifier::In,
+                    is_variadic: true,
+                    default_value: None,
+                    if_handle_then_const: false,
+                },
+            ],
+            return_meta: ReturnMeta::default(),
+            is_method: false,
+            associated_type: None,
+            behavior: None,
+            is_const: false,
+            is_property: false,
+            property_name: None,
+            is_generic: true,
+            list_pattern: None,
+            template_params: vec![],
+        });
+        ctx.install(module).unwrap();
+
+        // Hash computed with only required params (not variadic)
+        let func_hash = TypeHash::from_function("format", &[primitives::STRING, primitives::INT32]);
+        let func_entry = ctx.registry().get_function(func_hash);
+        assert!(func_entry.is_some(), "format function should be found");
+
+        let func = func_entry.unwrap();
+        assert_eq!(func.def.params.len(), 2);
+        assert!(func.def.is_variadic);
     }
 }
