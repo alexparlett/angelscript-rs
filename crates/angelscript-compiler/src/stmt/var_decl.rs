@@ -505,9 +505,9 @@ mod tests {
         ctx.begin_function();
         let mut emitter = BytecodeEmitter::new(&mut constants);
 
-        // float x = 3.14;
+        // float x = 3.5;
         let init = arena.alloc(Expr::Literal(LiteralExpr {
-            kind: LiteralKind::Float(3.14),
+            kind: LiteralKind::Float(3.5),
             span: Span::default(),
         }));
 

@@ -1,3 +1,6 @@
+// Allow approximate PI values in tests - we use 3.14/3.5 as convenient test float values
+#![cfg_attr(test, allow(clippy::approx_constant))]
+
 //! AngelScript Compiler
 //!
 //! A clean 2-pass compiler implementation for AngelScript.

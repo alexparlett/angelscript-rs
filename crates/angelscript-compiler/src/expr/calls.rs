@@ -43,6 +43,7 @@ pub fn compile_call<'ast>(
 /// This could be:
 /// - A function call: `print("hello")`
 /// - A constructor call: `Vector3(1, 2, 3)`
+/// - A super() call in a constructor: `super(args)` to call base class constructor
 fn compile_ident_call<'ast>(
     compiler: &mut ExprCompiler<'_, '_, '_>,
     ident: &IdentExpr<'ast>,
@@ -50,6 +51,11 @@ fn compile_ident_call<'ast>(
 ) -> Result<ExprInfo> {
     let name = ident.ident.name;
     let span = call.span;
+
+    // Check for super() call (base class constructor call)
+    if name == "super" {
+        return compile_super_call(compiler, call);
+    }
 
     // First, check if this is a type (constructor call)
     if let Some(type_hash) = compiler.ctx().resolve_type(name) {
@@ -66,6 +72,143 @@ fn compile_ident_call<'ast>(
         name: name.to_string(),
         span,
     })
+}
+
+/// Compile a super() call to the base class constructor.
+///
+/// This is only valid inside a constructor of a derived class.
+fn compile_super_call(
+    compiler: &mut ExprCompiler<'_, '_, '_>,
+    call: &CallExpr<'_>,
+) -> Result<ExprInfo> {
+    let span = call.span;
+
+    // Get the current class - super() is only valid in a method
+    let class_hash = compiler
+        .current_class()
+        .ok_or_else(|| CompilationError::Other {
+            message: "super() can only be used inside a class method".to_string(),
+            span,
+        })?;
+
+    // Get the base class hash and name
+    let (base_class_hash, base_class_name) =
+        {
+            let type_entry = compiler.ctx().get_type(class_hash).ok_or_else(|| {
+                CompilationError::UnknownType {
+                    name: format!("{:?}", class_hash),
+                    span,
+                }
+            })?;
+
+            let class = type_entry
+                .as_class()
+                .ok_or_else(|| CompilationError::Other {
+                    message: "super() used in non-class context".to_string(),
+                    span,
+                })?;
+
+            let base_hash = class.base_class.ok_or_else(|| CompilationError::Other {
+                message: "super() used in class without base class".to_string(),
+                span,
+            })?;
+
+            // Now get the base class name for method lookup
+            let base_entry = compiler.ctx().get_type(base_hash).ok_or_else(|| {
+                CompilationError::UnknownType {
+                    name: format!("{:?}", base_hash),
+                    span,
+                }
+            })?;
+
+            let base_class = base_entry
+                .as_class()
+                .ok_or_else(|| CompilationError::Other {
+                    message: "base type is not a class".to_string(),
+                    span,
+                })?;
+
+            (base_hash, base_class.name.clone())
+        };
+
+    // Compile arguments and collect their types
+    let (arg_types, arg_count) = compile_arguments(compiler, call)?;
+
+    // Get base class constructor candidates.
+    // For auto-generated constructors, they're registered as functions but not in
+    // the class's methods list. We need to check multiple sources.
+    let mut candidates = Vec::new();
+
+    // First, check behaviors.constructors (for FFI types)
+    {
+        let base_entry = compiler.ctx().get_type(base_class_hash).ok_or_else(|| {
+            CompilationError::UnknownType {
+                name: format!("{:?}", base_class_hash),
+                span,
+            }
+        })?;
+
+        let base_class = base_entry
+            .as_class()
+            .ok_or_else(|| CompilationError::Other {
+                message: "base type is not a class".to_string(),
+                span,
+            })?;
+
+        candidates.extend(base_class.behaviors.constructors.iter().copied());
+
+        // Also check the class's methods list (for script-declared constructors)
+        candidates.extend(base_class.find_methods(&base_class_name).iter().copied());
+    }
+
+    // Also check for auto-generated constructors by constructing their TypeHashes directly
+    // Auto-generated default constructor
+    let default_ctor = TypeHash::from_constructor(base_class_hash, &[]);
+    if compiler.ctx().get_function(default_ctor).is_some() && !candidates.contains(&default_ctor) {
+        candidates.push(default_ctor);
+    }
+
+    // Auto-generated copy constructor (takes const base_class &in)
+    let copy_ctor = TypeHash::from_constructor(base_class_hash, &[base_class_hash]);
+    if compiler.ctx().get_function(copy_ctor).is_some() && !candidates.contains(&copy_ctor) {
+        candidates.push(copy_ctor);
+    }
+
+    // If arguments were provided, also check for a constructor matching those exact types
+    // This handles user-defined constructors that might not be in the methods list yet
+    if !arg_types.is_empty() {
+        let arg_hashes: Vec<TypeHash> = arg_types.iter().map(|dt| dt.type_hash).collect();
+        let specific_ctor = TypeHash::from_constructor(base_class_hash, &arg_hashes);
+        if compiler.ctx().get_function(specific_ctor).is_some()
+            && !candidates.contains(&specific_ctor)
+        {
+            candidates.push(specific_ctor);
+        }
+    }
+
+    if candidates.is_empty() {
+        return Err(CompilationError::Other {
+            message: format!("base class '{}' has no constructors", base_class_name),
+            span,
+        });
+    }
+
+    // Resolve overload among base class constructors
+    let overload = resolve_overload(&candidates, &arg_types, compiler.ctx(), span)?;
+
+    // Apply argument conversions
+    apply_argument_conversions(compiler, &overload)?;
+
+    // Emit GetThis to push the object reference for method call
+    compiler.emitter().emit_get_this();
+
+    // Emit method call to base constructor
+    compiler
+        .emitter()
+        .emit_call_method(overload.func_hash, arg_count as u8);
+
+    // super() returns void
+    Ok(ExprInfo::rvalue(DataType::void()))
 }
 
 /// Compile a direct function call.

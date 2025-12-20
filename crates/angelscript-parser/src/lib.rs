@@ -1,3 +1,6 @@
+// Allow approximate PI/E values in tests - we use convenient test float values
+#![cfg_attr(test, allow(clippy::approx_constant))]
+
 //! AngelScript Parser crate.
 //!
 //! This crate provides the lexer and parser for AngelScript source code.

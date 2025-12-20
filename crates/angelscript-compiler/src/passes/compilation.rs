@@ -436,9 +436,31 @@ impl<'a, 'reg> CompilationPass<'a, 'reg> {
         } else {
             // No explicit super() call - emit implicit super() if there's a base class
             if let Some(base_class_hash) = base_class {
+                // Verify base class has a default constructor
+                let base_default_ctor = TypeHash::from_constructor(base_class_hash, &[]);
+                if self.ctx.get_function(base_default_ctor).is_none() {
+                    // Base class has no default constructor - error
+                    let derived_name = self
+                        .ctx
+                        .get_type(class_hash)
+                        .and_then(|e| e.as_class())
+                        .map(|c| c.name.clone())
+                        .unwrap_or_else(|| "unknown".to_string());
+                    let base_name = self
+                        .ctx
+                        .get_type(base_class_hash)
+                        .and_then(|e| e.as_class())
+                        .map(|c| c.name.clone())
+                        .unwrap_or_else(|| "unknown".to_string());
+                    return Err(CompilationError::NoBaseDefaultConstructor {
+                        derived_class: derived_name,
+                        base_class: base_name,
+                        span,
+                    });
+                }
+
                 // Emit implicit super() call for base class default constructor
                 // Bytecode: GetThis, CallMethod(base_default_ctor)
-                let base_default_ctor = TypeHash::from_constructor(base_class_hash, &[]);
                 emitter.emit_get_this();
                 emitter.emit_call_method(base_default_ctor, 0);
             }
@@ -580,7 +602,29 @@ impl<'a, 'reg> CompilationPass<'a, 'reg> {
 
         // Step 1: Call base class default constructor if needed
         if let Some(base_class_hash) = base_class {
+            // Verify base class has a default constructor
             let base_default_ctor = TypeHash::from_constructor(base_class_hash, &[]);
+            if self.ctx.get_function(base_default_ctor).is_none() {
+                // Base class has no default constructor - can't auto-generate default ctor
+                let derived_name = self
+                    .ctx
+                    .get_type(class_hash)
+                    .and_then(|e| e.as_class())
+                    .map(|c| c.name.clone())
+                    .unwrap_or_else(|| "unknown".to_string());
+                let base_name = self
+                    .ctx
+                    .get_type(base_class_hash)
+                    .and_then(|e| e.as_class())
+                    .map(|c| c.name.clone())
+                    .unwrap_or_else(|| "unknown".to_string());
+                return Err(CompilationError::NoBaseDefaultConstructor {
+                    derived_class: derived_name,
+                    base_class: base_name,
+                    span: Span::default(),
+                });
+            }
+
             emitter.emit_get_this();
             emitter.emit_call_method(base_default_ctor, 0);
         }
@@ -653,6 +697,16 @@ impl<'a, 'reg> CompilationPass<'a, 'reg> {
             // Copy constructor takes one param: const BaseClass &in
             // The hash is computed from the base class type hash
             let base_copy_ctor = TypeHash::from_constructor(base_class_hash, &[base_class_hash]);
+
+            // Check if base class has a copy constructor - if not, we can't generate one
+            if self.ctx.get_function(base_copy_ctor).is_none() {
+                return Err(CompilationError::Other {
+                    message: "cannot generate copy constructor: base class has no copy constructor"
+                        .to_string(),
+                    span: Span::default(),
+                });
+            }
+
             emitter.emit_get_this();
             emitter.emit_get_local(1); // 'other' parameter
             emitter.emit_call_method(base_copy_ctor, 1);
@@ -740,6 +794,15 @@ impl<'a, 'reg> CompilationPass<'a, 'reg> {
             // opAssign is a method, not a constructor
             let base_op_assign =
                 TypeHash::from_method(base_class_hash, "opAssign", &[base_class_hash]);
+
+            // Check if base class has opAssign - if not, we can't generate one
+            if self.ctx.get_function(base_op_assign).is_none() {
+                return Err(CompilationError::Other {
+                    message: "cannot generate opAssign: base class has no opAssign".to_string(),
+                    span: Span::default(),
+                });
+            }
+
             emitter.emit_get_this();
             emitter.emit_get_local(1); // 'other' parameter
             emitter.emit_call_method(base_op_assign, 1);
@@ -1062,6 +1125,276 @@ mod tests {
         }
     }
 
+    #[test]
+    fn explicit_super_call_no_duplicate_implicit() {
+        // Test: When constructor has explicit super(), no implicit super() should be added
+        let source = r#"
+            class Base {}
+            class Derived : Base {
+                Derived() {
+                    super();
+                }
+            }
+        "#;
+
+        let (output, constants) = full_compile(source);
+        assert!(
+            output.errors.is_empty(),
+            "Compilation errors: {:?}",
+            output.errors
+        );
+
+        // Find the Derived constructor
+        let derived_ctor = output
+            .functions
+            .iter()
+            .find(|f| f.name.contains("Derived") && f.name.contains("Derived"))
+            .expect("Derived constructor not found");
+
+        let bytecode = &derived_ctor.bytecode;
+        let base_ctor_hash = TypeHash::from_constructor(TypeHash::from_name("Base"), &[]);
+
+        // Count CallMethod instructions calling base constructor
+        let mut call_count = 0;
+        let mut offset = 0;
+        while let Some(op) = bytecode.read_op(offset) {
+            if op == OpCode::CallMethod {
+                let const_idx = bytecode
+                    .read_u16(offset + 1)
+                    .expect("Expected constant index");
+                if let Some(crate::bytecode::Constant::TypeHash(h)) =
+                    constants.get(const_idx as u32)
+                    && *h == base_ctor_hash
+                {
+                    call_count += 1;
+                }
+                offset += 4; // OpCode + u16 + u8
+            } else {
+                offset += 1;
+            }
+        }
+
+        // Should have exactly ONE call to base constructor (explicit, not implicit)
+        assert_eq!(
+            call_count, 1,
+            "Expected exactly 1 call to base constructor, not duplicate"
+        );
+    }
+
+    #[test]
+    fn explicit_super_call_with_args_no_implicit() {
+        // Test: When constructor has explicit super(args), no implicit super() should be added
+        let source = r#"
+            class Base {
+                Base(int x) {}
+            }
+            class Derived : Base {
+                Derived() {
+                    super(42);
+                }
+            }
+        "#;
+
+        let (output, _constants) = full_compile(source);
+        assert!(
+            output.errors.is_empty(),
+            "Compilation errors: {:?}",
+            output.errors
+        );
+
+        // Find the Derived constructor
+        let derived_ctor = output
+            .functions
+            .iter()
+            .find(|f| f.name.contains("Derived") && f.name.contains("Derived"))
+            .expect("Derived constructor not found");
+
+        let bytecode = &derived_ctor.bytecode;
+
+        // Count CallMethod instructions (should only have one for super(42))
+        let mut call_method_count = 0;
+        let mut offset = 0;
+        while let Some(op) = bytecode.read_op(offset) {
+            if op == OpCode::CallMethod {
+                call_method_count += 1;
+                offset += 4;
+            } else {
+                offset += 1;
+            }
+        }
+
+        // Should have exactly ONE CallMethod (explicit super(42), no implicit super())
+        assert_eq!(
+            call_method_count, 1,
+            "Expected exactly 1 CallMethod for explicit super(42), no implicit super()"
+        );
+    }
+
+    // =========================================================================
+    // Field Initializer Bytecode Tests
+    // Doc: "Members can be initialized at declaration: int a = 10;"
+    // =========================================================================
+
+    #[test]
+    fn field_initializer_emits_set_field() {
+        // Test: Field with initializer should generate GetThis + value + SetField
+        let source = r#"
+            class Foo {
+                int a = 42;
+                Foo() {}
+            }
+        "#;
+
+        let (output, _constants) = full_compile(source);
+        assert!(
+            output.errors.is_empty(),
+            "Compilation errors: {:?}",
+            output.errors
+        );
+
+        // Find the Foo constructor
+        let ctor = output
+            .functions
+            .iter()
+            .find(|f| f.name.contains("Foo") && !f.name.contains("$"))
+            .expect("Constructor not found");
+
+        let bytecode = &ctor.bytecode;
+
+        // Look for SetField operation
+        let mut found_set_field = false;
+        let mut offset = 0;
+        while let Some(op) = bytecode.read_op(offset) {
+            if op == OpCode::SetField {
+                found_set_field = true;
+                // Verify field index is 0 (first field)
+                let field_idx = bytecode.read_u16(offset + 1).expect("Expected field index");
+                assert_eq!(field_idx, 0, "Expected field index 0 for first field");
+                break;
+            }
+            offset += 1;
+        }
+
+        assert!(
+            found_set_field,
+            "Expected SetField instruction for field initializer"
+        );
+    }
+
+    #[test]
+    fn multiple_field_initializers_emit_set_fields_in_order() {
+        // Test: Multiple fields with initializers should generate SetField for each
+        let source = r#"
+            class Foo {
+                int a = 10;
+                int b = 20;
+                int c = 30;
+                Foo() {}
+            }
+        "#;
+
+        let (output, _constants) = full_compile(source);
+        assert!(
+            output.errors.is_empty(),
+            "Compilation errors: {:?}",
+            output.errors
+        );
+
+        // Find the Foo constructor
+        let ctor = output
+            .functions
+            .iter()
+            .find(|f| f.name.contains("Foo") && !f.name.contains("$"))
+            .expect("Constructor not found");
+
+        let bytecode = &ctor.bytecode;
+
+        // Collect all SetField instructions and their field indices
+        let mut set_field_indices = Vec::new();
+        let mut offset = 0;
+        while let Some(op) = bytecode.read_op(offset) {
+            if op == OpCode::SetField {
+                let field_idx = bytecode.read_u16(offset + 1).expect("Expected field index");
+                set_field_indices.push(field_idx);
+                offset += 3; // OpCode + u16 field index
+            } else {
+                offset += 1;
+            }
+        }
+
+        // Should have 3 SetField operations, one for each field
+        assert_eq!(
+            set_field_indices.len(),
+            3,
+            "Expected 3 SetField operations for 3 field initializers"
+        );
+
+        // Fields should be set in declaration order: a(0), b(1), c(2)
+        assert_eq!(
+            set_field_indices,
+            vec![0, 1, 2],
+            "Expected SetField for fields 0, 1, 2 in order"
+        );
+    }
+
+    #[test]
+    fn field_initializer_order_respects_init_grouping() {
+        // Test: Fields without init come first, then fields with init
+        // class Foo { int a; int b = 10; int c; int d = 20; }
+        // Order: a(0), c(2) - no init, then b(1), d(3) - with init
+        let source = r#"
+            class Foo {
+                int a;
+                int b = 10;
+                int c;
+                int d = 20;
+                Foo() {}
+            }
+        "#;
+
+        let (output, _constants) = full_compile(source);
+        assert!(
+            output.errors.is_empty(),
+            "Compilation errors: {:?}",
+            output.errors
+        );
+
+        // Find the Foo constructor
+        let ctor = output
+            .functions
+            .iter()
+            .find(|f| f.name.contains("Foo") && !f.name.contains("$"))
+            .expect("Constructor not found");
+
+        let bytecode = &ctor.bytecode;
+
+        // Collect all SetField instructions
+        let mut set_field_indices = Vec::new();
+        let mut offset = 0;
+        while let Some(op) = bytecode.read_op(offset) {
+            if op == OpCode::SetField {
+                let field_idx = bytecode.read_u16(offset + 1).expect("Expected field index");
+                set_field_indices.push(field_idx);
+                offset += 3;
+            } else {
+                offset += 1;
+            }
+        }
+
+        // Only fields WITH init should have SetField: b(1), d(3)
+        // (Fields without init are default-initialized by VM, no SetField)
+        assert_eq!(
+            set_field_indices.len(),
+            2,
+            "Expected 2 SetField operations for fields with initializers"
+        );
+        assert_eq!(
+            set_field_indices,
+            vec![1, 3],
+            "Expected SetField for fields 1 (b) and 3 (d) in declaration order"
+        );
+    }
+
     // =========================================================================
     // Auto-Generated Constructor Tests (with stubbed ClassEntry)
     // These tests set up ClassEntry directly with base_class set, then verify
@@ -1112,7 +1445,10 @@ mod tests {
         let (registry, base_hash, derived_hash) = setup_inheritance_context();
         let mut ctx = CompilationContext::new(&registry);
 
-        // Register Base class
+        // Register Base class default constructor (so derived can call it)
+        let base_default_ctor_hash = TypeHash::from_constructor(base_hash, &[]);
+
+        // Register Base class with its default constructor
         let base_class = ClassEntry::new(
             "Base",
             vec![],
@@ -1120,8 +1456,24 @@ mod tests {
             base_hash,
             TypeKind::ScriptObject,
             TypeSource::script(UnitId::new(1), Span::default()),
-        );
+        )
+        .with_method("Base", base_default_ctor_hash);
         ctx.register_type(TypeEntry::Class(base_class)).unwrap();
+
+        // Register Base default constructor function
+        let base_default_ctor_def = make_auto_ctor_def(
+            base_default_ctor_hash,
+            "Base",
+            vec![],
+            DataType::void(),
+            base_hash,
+        );
+        let base_default_ctor = FunctionEntry::new(
+            base_default_ctor_def,
+            FunctionImpl::AutoGenerated(AutoGenKind::DefaultConstructor),
+            FunctionSource::script(Span::default()),
+        );
+        ctx.register_function(base_default_ctor).unwrap();
 
         // Register auto-generated default constructor for Derived
         let default_ctor_hash = TypeHash::from_constructor(derived_hash, &[]);
@@ -1200,7 +1552,10 @@ mod tests {
         let (registry, base_hash, derived_hash) = setup_inheritance_context();
         let mut ctx = CompilationContext::new(&registry);
 
-        // Register Base class
+        // Register Base class copy constructor (so derived can call it)
+        let base_copy_ctor_hash = TypeHash::from_constructor(base_hash, &[base_hash]);
+
+        // Register Base class with its copy constructor
         let base_class = ClassEntry::new(
             "Base",
             vec![],
@@ -1208,8 +1563,29 @@ mod tests {
             base_hash,
             TypeKind::ScriptObject,
             TypeSource::script(UnitId::new(1), Span::default()),
-        );
+        )
+        .with_method("Base", base_copy_ctor_hash);
         ctx.register_type(TypeEntry::Class(base_class)).unwrap();
+
+        // Register Base copy constructor function
+        let base_copy_ctor_def = make_auto_ctor_def(
+            base_copy_ctor_hash,
+            "Base",
+            vec![Param {
+                name: "other".into(),
+                data_type: DataType::with_handle(base_hash, true),
+                has_default: false,
+                if_handle_then_const: false,
+            }],
+            DataType::void(),
+            base_hash,
+        );
+        let base_copy_ctor = FunctionEntry::new(
+            base_copy_ctor_def,
+            FunctionImpl::AutoGenerated(AutoGenKind::CopyConstructor),
+            FunctionSource::script(Span::default()),
+        );
+        ctx.register_function(base_copy_ctor).unwrap();
 
         // Register auto-generated copy constructor for Derived
         let copy_ctor_hash = TypeHash::from_constructor(derived_hash, &[derived_hash]);
@@ -1300,7 +1676,10 @@ mod tests {
         let (registry, base_hash, derived_hash) = setup_inheritance_context();
         let mut ctx = CompilationContext::new(&registry);
 
-        // Register Base class
+        // Register Base class opAssign (so derived can call it)
+        let base_op_assign_hash = TypeHash::from_method(base_hash, "opAssign", &[base_hash]);
+
+        // Register Base class with its opAssign
         let base_class = ClassEntry::new(
             "Base",
             vec![],
@@ -1308,8 +1687,29 @@ mod tests {
             base_hash,
             TypeKind::ScriptObject,
             TypeSource::script(UnitId::new(1), Span::default()),
-        );
+        )
+        .with_method("opAssign", base_op_assign_hash);
         ctx.register_type(TypeEntry::Class(base_class)).unwrap();
+
+        // Register Base opAssign function
+        let base_op_assign_def = make_auto_ctor_def(
+            base_op_assign_hash,
+            "opAssign",
+            vec![Param {
+                name: "other".into(),
+                data_type: DataType::with_handle(base_hash, true),
+                has_default: false,
+                if_handle_then_const: false,
+            }],
+            DataType::with_handle(base_hash, false),
+            base_hash,
+        );
+        let base_op_assign = FunctionEntry::new(
+            base_op_assign_def,
+            FunctionImpl::AutoGenerated(AutoGenKind::OpAssign),
+            FunctionSource::script(Span::default()),
+        );
+        ctx.register_function(base_op_assign).unwrap();
 
         // Register auto-generated opAssign for Derived
         let op_assign_hash = TypeHash::from_method(derived_hash, "opAssign", &[derived_hash]);
@@ -1464,5 +1864,276 @@ mod tests {
             );
             offset += 1;
         }
+    }
+
+    #[test]
+    fn auto_default_constructor_errors_when_base_has_no_default_ctor() {
+        use angelscript_core::primitives;
+
+        let (registry, base_hash, derived_hash) = setup_inheritance_context();
+        let mut ctx = CompilationContext::new(&registry);
+
+        // Register Base class WITHOUT a default constructor (only has parameterized one)
+        let base_param_ctor_hash = TypeHash::from_constructor(base_hash, &[primitives::INT32]);
+
+        let base_class = ClassEntry::new(
+            "Base",
+            vec![],
+            "Base",
+            base_hash,
+            TypeKind::ScriptObject,
+            TypeSource::script(UnitId::new(1), Span::default()),
+        )
+        .with_method("Base", base_param_ctor_hash); // Only has Base(int), no Base()
+        ctx.register_type(TypeEntry::Class(base_class)).unwrap();
+
+        // Register the parameterized constructor (NOT a default constructor)
+        let base_param_ctor_def = make_auto_ctor_def(
+            base_param_ctor_hash,
+            "Base",
+            vec![Param {
+                name: "value".into(),
+                data_type: DataType::simple(primitives::INT32),
+                has_default: false,
+                if_handle_then_const: false,
+            }],
+            DataType::void(),
+            base_hash,
+        );
+        let base_param_ctor = FunctionEntry::new(
+            base_param_ctor_def,
+            FunctionImpl::Script {
+                unit_id: UnitId::new(1),
+            },
+            FunctionSource::script(Span::default()),
+        );
+        ctx.register_function(base_param_ctor).unwrap();
+
+        // Register auto-generated default constructor for Derived
+        let default_ctor_hash = TypeHash::from_constructor(derived_hash, &[]);
+
+        let derived_class = ClassEntry::new(
+            "Derived",
+            vec![],
+            "Derived",
+            derived_hash,
+            TypeKind::ScriptObject,
+            TypeSource::script(UnitId::new(1), Span::default()),
+        )
+        .with_base(base_hash)
+        .with_method("Derived", default_ctor_hash);
+        ctx.register_type(TypeEntry::Class(derived_class)).unwrap();
+
+        let default_ctor_def = make_auto_ctor_def(
+            default_ctor_hash,
+            "Derived",
+            vec![],
+            DataType::void(),
+            derived_hash,
+        );
+        let default_ctor = FunctionEntry::new(
+            default_ctor_def,
+            FunctionImpl::AutoGenerated(AutoGenKind::DefaultConstructor),
+            FunctionSource::script(Span::default()),
+        );
+        ctx.register_function(default_ctor).unwrap();
+
+        // Create compilation pass
+        let constants = ConstantPool::new();
+        let mut pass = CompilationPass {
+            ctx: &mut ctx,
+            unit_id: UnitId::new(1),
+            constants,
+            compiled_functions: vec![],
+            global_inits: vec![],
+        };
+
+        // This should NOT produce any compiled functions because the auto-generation should fail
+        pass.compile_auto_generated_methods(derived_hash, None);
+
+        // No functions should be compiled (error occurred)
+        assert_eq!(
+            pass.compiled_functions.len(),
+            0,
+            "Expected no compiled functions when base has no default constructor"
+        );
+    }
+
+    #[test]
+    fn auto_copy_constructor_errors_when_base_has_no_copy_ctor() {
+        let (registry, base_hash, derived_hash) = setup_inheritance_context();
+        let mut ctx = CompilationContext::new(&registry);
+
+        // Register Base class WITHOUT a copy constructor
+        let base_default_ctor_hash = TypeHash::from_constructor(base_hash, &[]);
+
+        let base_class = ClassEntry::new(
+            "Base",
+            vec![],
+            "Base",
+            base_hash,
+            TypeKind::ScriptObject,
+            TypeSource::script(UnitId::new(1), Span::default()),
+        )
+        .with_method("Base", base_default_ctor_hash); // Only has Base(), no Base(const Base &in)
+        ctx.register_type(TypeEntry::Class(base_class)).unwrap();
+
+        // Register only the default constructor (NOT copy constructor)
+        let base_default_ctor_def = make_auto_ctor_def(
+            base_default_ctor_hash,
+            "Base",
+            vec![],
+            DataType::void(),
+            base_hash,
+        );
+        let base_default_ctor = FunctionEntry::new(
+            base_default_ctor_def,
+            FunctionImpl::AutoGenerated(AutoGenKind::DefaultConstructor),
+            FunctionSource::script(Span::default()),
+        );
+        ctx.register_function(base_default_ctor).unwrap();
+
+        // Register auto-generated copy constructor for Derived
+        let copy_ctor_hash = TypeHash::from_constructor(derived_hash, &[derived_hash]);
+
+        let derived_class = ClassEntry::new(
+            "Derived",
+            vec![],
+            "Derived",
+            derived_hash,
+            TypeKind::ScriptObject,
+            TypeSource::script(UnitId::new(1), Span::default()),
+        )
+        .with_base(base_hash)
+        .with_method("Derived", copy_ctor_hash);
+        ctx.register_type(TypeEntry::Class(derived_class)).unwrap();
+
+        let copy_ctor_def = make_auto_ctor_def(
+            copy_ctor_hash,
+            "Derived",
+            vec![Param {
+                name: "other".into(),
+                data_type: DataType::with_handle(derived_hash, true),
+                has_default: false,
+                if_handle_then_const: false,
+            }],
+            DataType::void(),
+            derived_hash,
+        );
+        let copy_ctor = FunctionEntry::new(
+            copy_ctor_def,
+            FunctionImpl::AutoGenerated(AutoGenKind::CopyConstructor),
+            FunctionSource::script(Span::default()),
+        );
+        ctx.register_function(copy_ctor).unwrap();
+
+        // Create compilation pass
+        let constants = ConstantPool::new();
+        let mut pass = CompilationPass {
+            ctx: &mut ctx,
+            unit_id: UnitId::new(1),
+            constants,
+            compiled_functions: vec![],
+            global_inits: vec![],
+        };
+
+        // This should NOT produce any compiled functions because base has no copy ctor
+        pass.compile_auto_generated_methods(derived_hash, None);
+
+        // No functions should be compiled (error suppressed per AngelScript spec)
+        assert_eq!(
+            pass.compiled_functions.len(),
+            0,
+            "Expected no compiled functions when base has no copy constructor"
+        );
+    }
+
+    #[test]
+    fn auto_op_assign_errors_when_base_has_no_op_assign() {
+        let (registry, base_hash, derived_hash) = setup_inheritance_context();
+        let mut ctx = CompilationContext::new(&registry);
+
+        // Register Base class WITHOUT opAssign
+        let base_default_ctor_hash = TypeHash::from_constructor(base_hash, &[]);
+
+        let base_class = ClassEntry::new(
+            "Base",
+            vec![],
+            "Base",
+            base_hash,
+            TypeKind::ScriptObject,
+            TypeSource::script(UnitId::new(1), Span::default()),
+        )
+        .with_method("Base", base_default_ctor_hash); // Only has Base(), no opAssign
+        ctx.register_type(TypeEntry::Class(base_class)).unwrap();
+
+        // Register only the default constructor (NOT opAssign)
+        let base_default_ctor_def = make_auto_ctor_def(
+            base_default_ctor_hash,
+            "Base",
+            vec![],
+            DataType::void(),
+            base_hash,
+        );
+        let base_default_ctor = FunctionEntry::new(
+            base_default_ctor_def,
+            FunctionImpl::AutoGenerated(AutoGenKind::DefaultConstructor),
+            FunctionSource::script(Span::default()),
+        );
+        ctx.register_function(base_default_ctor).unwrap();
+
+        // Register auto-generated opAssign for Derived
+        let op_assign_hash = TypeHash::from_method(derived_hash, "opAssign", &[derived_hash]);
+
+        let derived_class = ClassEntry::new(
+            "Derived",
+            vec![],
+            "Derived",
+            derived_hash,
+            TypeKind::ScriptObject,
+            TypeSource::script(UnitId::new(1), Span::default()),
+        )
+        .with_base(base_hash)
+        .with_method("opAssign", op_assign_hash);
+        ctx.register_type(TypeEntry::Class(derived_class)).unwrap();
+
+        let op_assign_def = make_auto_ctor_def(
+            op_assign_hash,
+            "opAssign",
+            vec![Param {
+                name: "other".into(),
+                data_type: DataType::with_handle(derived_hash, true),
+                has_default: false,
+                if_handle_then_const: false,
+            }],
+            DataType::with_handle(derived_hash, false),
+            derived_hash,
+        );
+        let op_assign = FunctionEntry::new(
+            op_assign_def,
+            FunctionImpl::AutoGenerated(AutoGenKind::OpAssign),
+            FunctionSource::script(Span::default()),
+        );
+        ctx.register_function(op_assign).unwrap();
+
+        // Create compilation pass
+        let constants = ConstantPool::new();
+        let mut pass = CompilationPass {
+            ctx: &mut ctx,
+            unit_id: UnitId::new(1),
+            constants,
+            compiled_functions: vec![],
+            global_inits: vec![],
+        };
+
+        // This should NOT produce any compiled functions because base has no opAssign
+        pass.compile_auto_generated_methods(derived_hash, None);
+
+        // No functions should be compiled (error suppressed per AngelScript spec)
+        assert_eq!(
+            pass.compiled_functions.len(),
+            0,
+            "Expected no compiled functions when base has no opAssign"
+        );
     }
 }

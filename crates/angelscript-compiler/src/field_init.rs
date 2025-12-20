@@ -117,12 +117,11 @@ pub fn compile_post_base_inits<'ast>(
 /// Returns the index of the super() call statement if found.
 pub fn find_super_call<'ast>(body: &angelscript_parser::ast::Block<'ast>) -> Option<usize> {
     for (idx, stmt) in body.stmts.iter().enumerate() {
-        if let Stmt::Expr(expr_stmt) = stmt {
-            if let Some(expr) = expr_stmt.expr {
-                if is_super_call(expr) {
-                    return Some(idx);
-                }
-            }
+        if let Stmt::Expr(expr_stmt) = stmt
+            && let Some(expr) = expr_stmt.expr
+            && is_super_call(expr)
+        {
+            return Some(idx);
         }
     }
 
@@ -131,10 +130,10 @@ pub fn find_super_call<'ast>(body: &angelscript_parser::ast::Block<'ast>) -> Opt
 
 /// Check if an expression is a super() call.
 fn is_super_call(expr: &Expr<'_>) -> bool {
-    if let Expr::Call(call) = expr {
-        if let Expr::Ident(ident) = call.callee {
-            return ident.ident.name == "super";
-        }
+    if let Expr::Call(call) = expr
+        && let Expr::Ident(ident) = call.callee
+    {
+        return ident.ident.name == "super";
     }
 
     false
@@ -144,9 +143,59 @@ fn is_super_call(expr: &Expr<'_>) -> bool {
 mod tests {
     use super::*;
     use angelscript_parser::Parser;
-    use angelscript_parser::ast::Item;
+    use angelscript_parser::ast::{
+        Argument, Block, CallExpr, Expr, ExprStmt, Ident, IdentExpr, Item, Stmt,
+    };
     use angelscript_registry::SymbolRegistry;
     use bumpalo::Bump;
+
+    /// Helper to create a super() call expression
+    fn make_super_call<'ast>(arena: &'ast Bump) -> Stmt<'ast> {
+        let ident_expr = arena.alloc(Expr::Ident(IdentExpr {
+            scope: None,
+            ident: Ident::new("super", Span::default()),
+            type_args: &[],
+            span: Span::default(),
+        }));
+        let call_data = arena.alloc(CallExpr {
+            callee: ident_expr,
+            args: &[],
+            span: Span::default(),
+        });
+        let call_expr = arena.alloc(Expr::Call(call_data));
+        Stmt::Expr(ExprStmt {
+            expr: Some(call_expr),
+            span: Span::default(),
+        })
+    }
+
+    /// Helper to create a dummy non-super statement
+    fn make_dummy_stmt<'ast>(arena: &'ast Bump) -> Stmt<'ast> {
+        let ident_expr = arena.alloc(Expr::Ident(IdentExpr {
+            scope: None,
+            ident: Ident::new("foo", Span::default()),
+            type_args: &[],
+            span: Span::default(),
+        }));
+        let call_data = arena.alloc(CallExpr {
+            callee: ident_expr,
+            args: &[],
+            span: Span::default(),
+        });
+        let call_expr = arena.alloc(Expr::Call(call_data));
+        Stmt::Expr(ExprStmt {
+            expr: Some(call_expr),
+            span: Span::default(),
+        })
+    }
+
+    /// Helper to create a Block from statements
+    fn make_block<'ast>(arena: &'ast Bump, stmts: Vec<Stmt<'ast>>) -> Block<'ast> {
+        Block {
+            stmts: arena.alloc_slice_copy(&stmts),
+            span: Span::default(),
+        }
+    }
 
     // =========================================================================
     // Basic Declaration Order Tests
@@ -317,186 +366,110 @@ mod tests {
     #[test]
     fn find_super_call_at_start() {
         let arena = Bump::new();
-        let source = r#"
-            class Foo : Bar {
-                Foo() {
-                    super();
-                    int x = 5;
-                }
-            }
-        "#;
-        let script = Parser::parse(source, &arena).unwrap();
-        let class = match &script.items()[0] {
-            Item::Class(c) => c,
-            _ => panic!("expected class"),
-        };
+        let block = make_block(
+            &arena,
+            vec![make_super_call(&arena), make_dummy_stmt(&arena)],
+        );
 
-        for member in class.members {
-            if let ClassMember::Method(func) = member {
-                if func.is_constructor() {
-                    if let Some(body) = &func.body {
-                        let idx = find_super_call(body);
-                        assert_eq!(idx, Some(0)); // super() is first
-                        return;
-                    }
-                }
-            }
-        }
-        panic!("No constructor found");
+        let idx = find_super_call(&block);
+        assert_eq!(idx, Some(0)); // super() is first
     }
 
     #[test]
     fn find_super_call_in_middle() {
         let arena = Bump::new();
-        let source = r#"
-            class Foo : Bar {
-                Foo() {
-                    int x = 5;
-                    super();
-                    int y = 10;
-                }
-            }
-        "#;
-        let script = Parser::parse(source, &arena).unwrap();
-        let class = match &script.items()[0] {
-            Item::Class(c) => c,
-            _ => panic!("expected class"),
-        };
+        let block = make_block(
+            &arena,
+            vec![
+                make_dummy_stmt(&arena),
+                make_super_call(&arena),
+                make_dummy_stmt(&arena),
+            ],
+        );
 
-        for member in class.members {
-            if let ClassMember::Method(func) = member {
-                if func.is_constructor() {
-                    if let Some(body) = &func.body {
-                        let idx = find_super_call(body);
-                        assert_eq!(idx, Some(1)); // super() is at index 1
-                        return;
-                    }
-                }
-            }
-        }
-        panic!("No constructor found");
+        let idx = find_super_call(&block);
+        assert_eq!(idx, Some(1)); // super() is at index 1
     }
 
     #[test]
     fn find_super_call_at_end() {
         let arena = Bump::new();
-        let source = r#"
-            class Foo : Bar {
-                Foo() {
-                    int x = 5;
-                    int y = 10;
-                    super();
-                }
-            }
-        "#;
-        let script = Parser::parse(source, &arena).unwrap();
-        let class = match &script.items()[0] {
-            Item::Class(c) => c,
-            _ => panic!("expected class"),
-        };
+        let block = make_block(
+            &arena,
+            vec![
+                make_dummy_stmt(&arena),
+                make_dummy_stmt(&arena),
+                make_super_call(&arena),
+            ],
+        );
 
-        for member in class.members {
-            if let ClassMember::Method(func) = member {
-                if func.is_constructor() {
-                    if let Some(body) = &func.body {
-                        let idx = find_super_call(body);
-                        assert_eq!(idx, Some(2)); // super() is last
-                        return;
-                    }
-                }
-            }
-        }
-        panic!("No constructor found");
+        let idx = find_super_call(&block);
+        assert_eq!(idx, Some(2)); // super() is last
     }
 
     #[test]
     fn find_super_call_with_arguments() {
         // super() can take arguments for non-default base constructors
         let arena = Bump::new();
-        let source = r#"
-            class Foo : Bar {
-                Foo(int x) {
-                    super(x, 10);
-                }
-            }
-        "#;
-        let script = Parser::parse(source, &arena).unwrap();
-        let class = match &script.items()[0] {
-            Item::Class(c) => c,
-            _ => panic!("expected class"),
-        };
 
-        for member in class.members {
-            if let ClassMember::Method(func) = member {
-                if func.is_constructor() {
-                    if let Some(body) = &func.body {
-                        let idx = find_super_call(body);
-                        assert_eq!(idx, Some(0));
-                        return;
-                    }
-                }
-            }
-        }
-        panic!("No constructor found");
+        // Build super(x, 10) call
+        let ident_expr = arena.alloc(Expr::Ident(IdentExpr {
+            scope: None,
+            ident: Ident::new("super", Span::default()),
+            type_args: &[],
+            span: Span::default(),
+        }));
+        let arg1 = arena.alloc(Expr::Ident(IdentExpr {
+            scope: None,
+            ident: Ident::new("x", Span::default()),
+            type_args: &[],
+            span: Span::default(),
+        }));
+        let args = arena.alloc_slice_copy(&[
+            Argument {
+                name: None,
+                value: arg1,
+                span: Span::default(),
+            },
+            Argument {
+                name: None,
+                value: arg1, // reuse for simplicity
+                span: Span::default(),
+            },
+        ]);
+        let call_data = arena.alloc(CallExpr {
+            callee: ident_expr,
+            args,
+            span: Span::default(),
+        });
+        let call_expr = arena.alloc(Expr::Call(call_data));
+        let super_stmt = Stmt::Expr(ExprStmt {
+            expr: Some(call_expr),
+            span: Span::default(),
+        });
+
+        let block = make_block(&arena, vec![super_stmt]);
+        let idx = find_super_call(&block);
+        assert_eq!(idx, Some(0));
     }
 
     #[test]
     fn find_super_call_absent() {
-        // No base class, no super() call
+        // No super() call, just regular statements
         let arena = Bump::new();
-        let source = r#"
-            class Foo {
-                Foo() {
-                    int x = 5;
-                }
-            }
-        "#;
-        let script = Parser::parse(source, &arena).unwrap();
-        let class = match &script.items()[0] {
-            Item::Class(c) => c,
-            _ => panic!("expected class"),
-        };
+        let block = make_block(&arena, vec![make_dummy_stmt(&arena)]);
 
-        for member in class.members {
-            if let ClassMember::Method(func) = member {
-                if func.is_constructor() {
-                    if let Some(body) = &func.body {
-                        let idx = find_super_call(body);
-                        assert!(idx.is_none());
-                        return;
-                    }
-                }
-            }
-        }
-        panic!("No constructor found");
+        let idx = find_super_call(&block);
+        assert!(idx.is_none());
     }
 
     #[test]
     fn find_super_call_empty_constructor() {
         let arena = Bump::new();
-        let source = r#"
-            class Foo {
-                Foo() {}
-            }
-        "#;
-        let script = Parser::parse(source, &arena).unwrap();
-        let class = match &script.items()[0] {
-            Item::Class(c) => c,
-            _ => panic!("expected class"),
-        };
+        let block = make_block(&arena, vec![]);
 
-        for member in class.members {
-            if let ClassMember::Method(func) = member {
-                if func.is_constructor() {
-                    if let Some(body) = &func.body {
-                        let idx = find_super_call(body);
-                        assert!(idx.is_none());
-                        return;
-                    }
-                }
-            }
-        }
-        panic!("No constructor found");
+        let idx = find_super_call(&block);
+        assert!(idx.is_none());
     }
 
     // =========================================================================
@@ -547,40 +520,19 @@ mod tests {
     // =========================================================================
 
     #[test]
-    fn find_super_call_multiple_constructors() {
+    fn find_super_call_multiple_blocks() {
         let arena = Bump::new();
-        let source = r#"
-            class Foo : Bar {
-                Foo() {
-                    super();
-                }
-                Foo(int x) {
-                    int y = x;
-                    super(x);
-                }
-            }
-        "#;
-        let script = Parser::parse(source, &arena).unwrap();
-        let class = match &script.items()[0] {
-            Item::Class(c) => c,
-            _ => panic!("expected class"),
-        };
 
-        let mut super_positions = Vec::new();
-        for member in class.members {
-            if let ClassMember::Method(func) = member {
-                if func.is_constructor() {
-                    if let Some(body) = &func.body {
-                        super_positions.push(find_super_call(body));
-                    }
-                }
-            }
-        }
+        // First block: super() at index 0
+        let block1 = make_block(&arena, vec![make_super_call(&arena)]);
 
-        // First constructor: super() at index 0
-        // Second constructor: super(x) at index 1
-        assert_eq!(super_positions.len(), 2);
-        assert_eq!(super_positions[0], Some(0));
-        assert_eq!(super_positions[1], Some(1));
+        // Second block: dummy stmt then super() at index 1
+        let block2 = make_block(
+            &arena,
+            vec![make_dummy_stmt(&arena), make_super_call(&arena)],
+        );
+
+        assert_eq!(find_super_call(&block1), Some(0));
+        assert_eq!(find_super_call(&block2), Some(1));
     }
 }
