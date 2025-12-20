@@ -29,6 +29,7 @@ pub mod conversion;
 pub mod emit;
 pub mod expr;
 mod expr_info;
+pub mod field_init;
 pub mod function_compiler;
 pub mod operators;
 pub mod overload;
