@@ -69,6 +69,22 @@ pub struct PendingInheritance {
     pub imports: Vec<String>,
 }
 
+/// Pending typedef from AST.
+///
+/// Collected during Pass 1 and resolved after registration. This enables
+/// typedefs to reference template instantiations and forward-declared types.
+#[derive(Debug, Clone)]
+pub struct PendingTypedef {
+    /// Alias name (e.g., "EntityId", "StringArray")
+    pub alias_name: String,
+    /// Target type name from source (e.g., "int", "array<string>")
+    pub target_type_name: String,
+    /// Source location for error reporting
+    pub span: Span,
+    /// Namespace where typedef was declared
+    pub namespace: Vec<String>,
+}
+
 /// Pending resolutions collected during Pass 1, consumed by Pass 1b.
 ///
 /// This struct holds all unresolved type references that need namespace-aware
@@ -79,4 +95,6 @@ pub struct PendingResolutions {
     pub class_inheritance: FxHashMap<TypeHash, Vec<PendingInheritance>>,
     /// Interface inheritance: interface_hash -> pending base interfaces
     pub interface_bases: FxHashMap<TypeHash, Vec<PendingInheritance>>,
+    /// Pending typedefs to be resolved
+    pub typedefs: Vec<PendingTypedef>,
 }

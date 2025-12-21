@@ -1066,10 +1066,32 @@ impl<'a, 'reg> RegistrationPass<'a, 'reg> {
         self.types_registered += 1;
     }
 
-    fn visit_typedef(&mut self, _td: &TypedefDecl<'_>) {
-        // Typedef creates an alias - handled in type resolution
-        // For now, we just skip registration as typedefs don't create new types
-        // They're resolved as aliases during type resolution
+    fn visit_typedef(&mut self, td: &TypedefDecl<'_>) {
+        // Resolve the target type using TypeResolver
+        let mut resolver = TypeResolver::new(self.ctx);
+        let target_type = match resolver.resolve(&td.base_type) {
+            Ok(dt) => dt,
+            Err(e) => {
+                self.ctx.add_error(e);
+                return;
+            }
+        };
+
+        // Get current namespace
+        let namespace = self.current_namespace_vec();
+        let alias_name = td.name.name;
+
+        // Register the type alias in the unit registry
+        if let Err(e) = self.ctx.unit_registry_mut().register_type_alias(
+            alias_name,
+            &namespace,
+            target_type.type_hash,
+        ) {
+            self.ctx.add_error(CompilationError::Other {
+                message: format!("failed to register typedef {}: {}", alias_name, e),
+                span: td.span,
+            });
+        }
     }
 
     // ==========================================================================

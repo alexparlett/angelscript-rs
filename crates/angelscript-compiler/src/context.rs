@@ -169,6 +169,13 @@ impl<'a> CompilationContext<'a> {
             || self.global_registry.get_global(hash).is_some()
     }
 
+    /// Get a type alias by qualified name from either registry.
+    fn get_type_alias(&self, qualified_name: &str) -> Option<TypeHash> {
+        self.unit_registry
+            .get_type_alias(qualified_name)
+            .or_else(|| self.global_registry.get_type_alias(qualified_name))
+    }
+
     /// Resolve a type name to its hash using try-combinations.
     ///
     /// Resolution order:
@@ -184,10 +191,11 @@ impl<'a> CompilationContext<'a> {
     /// Resolve a type name with ambiguity checking.
     ///
     /// Resolution order:
-    /// 1. If already qualified (contains `::`), try direct lookup
+    /// 1. If already qualified (contains `::`), try direct lookup (types, then aliases)
     /// 2. Try current namespace hierarchy (innermost to outermost, NOT global)
     /// 3. Try imports - collect all matches, error if ambiguous
     /// 4. Fall back to global namespace
+    /// 5. Check type aliases with the same resolution order
     ///
     /// Returns `Err` with an ambiguity error if the name matches in multiple imports.
     /// Returns `Ok(None)` if not found, `Ok(Some(hash))` if found unambiguously.
@@ -197,6 +205,10 @@ impl<'a> CompilationContext<'a> {
             let hash = TypeHash::from_name(name);
             if self.type_exists(hash) {
                 return Ok(Some(hash));
+            }
+            // Also check qualified type aliases
+            if let Some(target_hash) = self.get_type_alias(name) {
+                return Ok(Some(target_hash));
             }
             return Ok(None);
         }
@@ -209,6 +221,10 @@ impl<'a> CompilationContext<'a> {
             let hash = TypeHash::from_name(&qualified);
             if self.type_exists(hash) {
                 return Ok(Some(hash));
+            }
+            // Check type aliases in this namespace
+            if let Some(target_hash) = self.get_type_alias(&qualified) {
+                return Ok(Some(target_hash));
             }
         }
 
@@ -229,7 +245,22 @@ impl<'a> CompilationContext<'a> {
                         });
                     }
                 } else {
-                    found = Some((hash, qualified));
+                    found = Some((hash, qualified.clone()));
+                }
+            }
+            // Also check type aliases in imports
+            if let Some(target_hash) = self.get_type_alias(&qualified) {
+                if let Some((existing_hash, ref existing_qualified)) = found {
+                    if existing_hash != target_hash {
+                        return Err(CompilationError::AmbiguousSymbol {
+                            kind: "type".to_string(),
+                            name: name.to_string(),
+                            candidates: format!("{}, {}", existing_qualified, qualified),
+                            span: Span::default(),
+                        });
+                    }
+                } else {
+                    found = Some((target_hash, qualified));
                 }
             }
         }
@@ -242,6 +273,11 @@ impl<'a> CompilationContext<'a> {
         let hash = TypeHash::from_name(name);
         if self.type_exists(hash) {
             return Ok(Some(hash));
+        }
+
+        // 5. Check type aliases in global namespace
+        if let Some(target_hash) = self.get_type_alias(name) {
+            return Ok(Some(target_hash));
         }
 
         Ok(None)
@@ -1698,5 +1734,108 @@ mod tests {
         assert!(result.is_ok());
 
         ctx.end_function();
+    }
+
+    // =========================================================================
+    // Type Alias Resolution Tests
+    // =========================================================================
+
+    #[test]
+    fn context_resolves_type_alias_global() {
+        let mut registry = SymbolRegistry::with_primitives();
+        registry
+            .register_type_alias("EntityId", &[], primitives::INT32)
+            .unwrap();
+
+        let ctx = CompilationContext::new(&registry);
+
+        // Should resolve typedef to target type
+        let resolved = ctx.resolve_type("EntityId");
+        assert_eq!(resolved, Some(primitives::INT32));
+    }
+
+    #[test]
+    fn context_resolves_type_alias_in_namespace() {
+        let mut registry = SymbolRegistry::with_primitives();
+        registry
+            .register_type_alias("EntityId", &["Game".to_string()], primitives::INT32)
+            .unwrap();
+
+        let mut ctx = CompilationContext::new(&registry);
+
+        // Not visible from global namespace
+        assert!(
+            ctx.resolve_type("EntityId").is_none(),
+            "EntityId should not resolve from global namespace"
+        );
+
+        // Enter the Game namespace
+        ctx.enter_namespace("Game");
+
+        // Now visible
+        let resolved = ctx.resolve_type("EntityId");
+        assert_eq!(resolved, Some(primitives::INT32));
+    }
+
+    #[test]
+    fn context_resolves_qualified_type_alias() {
+        let mut registry = SymbolRegistry::with_primitives();
+        registry
+            .register_type_alias("EntityId", &["Game".to_string()], primitives::INT32)
+            .unwrap();
+
+        let ctx = CompilationContext::new(&registry);
+
+        // Should resolve qualified alias from global namespace
+        let resolved = ctx.resolve_type("Game::EntityId");
+        assert_eq!(resolved, Some(primitives::INT32));
+    }
+
+    #[test]
+    fn context_type_shadows_type_alias() {
+        let mut registry = SymbolRegistry::with_primitives();
+
+        // Register a class named "EntityId"
+        let class = ClassEntry::new(
+            "EntityId",
+            vec![],
+            "EntityId",
+            TypeHash::from_name("EntityId"),
+            TypeKind::reference(),
+            angelscript_core::entries::TypeSource::ffi_untyped(),
+        );
+        registry.register_type(class.into()).unwrap();
+
+        // Also register a typedef with the same name (unusual but possible)
+        registry
+            .register_type_alias("EntityId", &["Other".to_string()], primitives::INT32)
+            .unwrap();
+
+        let ctx = CompilationContext::new(&registry);
+
+        // The type should have priority over the alias in global namespace
+        let resolved = ctx.resolve_type("EntityId");
+        assert_eq!(resolved, Some(TypeHash::from_name("EntityId")));
+
+        // The namespaced alias should still work
+        let resolved = ctx.resolve_type("Other::EntityId");
+        assert_eq!(resolved, Some(primitives::INT32));
+    }
+
+    #[test]
+    fn context_resolves_type_alias_via_import() {
+        let mut registry = SymbolRegistry::with_primitives();
+        registry
+            .register_type_alias("EntityId", &["Game".to_string()], primitives::INT32)
+            .unwrap();
+
+        let mut ctx = CompilationContext::new(&registry);
+
+        // Import the Game namespace
+        ctx.add_import("Game");
+
+        // Should resolve via import
+        let resolved = ctx.resolve_type("EntityId");
+        assert_eq!(resolved, Some(primitives::INT32));
     }
 }

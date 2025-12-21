@@ -87,6 +87,13 @@ pub struct SymbolRegistry {
 
     /// Globals indexed by namespace: namespace -> (simple_name -> hash).
     globals_by_namespace: FxHashMap<String, FxHashMap<String, TypeHash>>,
+
+    /// Type aliases (typedef): alias_name -> target_type_hash.
+    /// These are resolved during type lookup to their target types.
+    type_aliases: FxHashMap<String, TypeHash>,
+
+    /// Type aliases indexed by namespace: namespace -> (simple_name -> target_hash).
+    type_aliases_by_namespace: FxHashMap<String, FxHashMap<String, TypeHash>>,
 }
 
 impl SymbolRegistry {
@@ -580,6 +587,80 @@ impl SymbolRegistry {
         }
 
         errors
+	}
+
+    // ==========================================================================
+    // Type Aliases (typedef)
+    // ==========================================================================
+
+    /// Register a type alias.
+    ///
+    /// Creates a mapping from alias_name to target_type_hash. The alias behaves
+    /// as an alternative name for the target type (not a distinct type).
+    ///
+    /// # Arguments
+    /// * `alias_name` - Simple name of the alias (e.g., "EntityId")
+    /// * `namespace` - Namespace parts (empty for global namespace)
+    /// * `target_hash` - Hash of the target type this alias refers to
+    pub fn register_type_alias(
+        &mut self,
+        alias_name: &str,
+        namespace: &[String],
+        target_hash: TypeHash,
+    ) -> Result<(), RegistrationError> {
+        let qualified_name = if namespace.is_empty() {
+            alias_name.to_string()
+        } else {
+            format!("{}::{}", namespace.join("::"), alias_name)
+        };
+
+        // Check for duplicate alias
+        if self.type_aliases.contains_key(&qualified_name) {
+            return Err(RegistrationError::DuplicateRegistration {
+                name: qualified_name,
+                kind: "type alias".to_string(),
+            });
+        }
+
+        // Add to qualified name lookup
+        self.type_aliases.insert(qualified_name, target_hash);
+
+        // Add to namespace index
+        let ns_key = namespace.join("::");
+        self.type_aliases_by_namespace
+            .entry(ns_key)
+            .or_default()
+            .insert(alias_name.to_string(), target_hash);
+
+        Ok(())
+    }
+
+    /// Get a type alias by its qualified name.
+    ///
+    /// Returns the target TypeHash if the alias exists.
+    pub fn get_type_alias(&self, qualified_name: &str) -> Option<TypeHash> {
+        self.type_aliases.get(qualified_name).copied()
+    }
+
+    /// Get type aliases in a namespace.
+    ///
+    /// Returns a map of simple name -> target TypeHash for all aliases in the namespace.
+    /// Use empty string for the global namespace.
+    pub fn get_namespace_type_aliases(
+        &self,
+        namespace: &str,
+    ) -> Option<&FxHashMap<String, TypeHash>> {
+        self.type_aliases_by_namespace.get(namespace)
+    }
+
+    /// Check if a type alias exists by qualified name.
+    pub fn contains_type_alias(&self, qualified_name: &str) -> bool {
+        self.type_aliases.contains_key(qualified_name)
+    }
+
+    /// Get the number of registered type aliases.
+    pub fn type_alias_count(&self) -> usize {
+        self.type_aliases.len()
     }
 }
 
@@ -590,6 +671,7 @@ impl std::fmt::Debug for SymbolRegistry {
             .field("functions", &self.functions.len())
             .field("globals", &self.globals.len())
             .field("namespaces", &self.namespaces.len())
+            .field("type_aliases", &self.type_aliases.len())
             .finish()
     }
 }
