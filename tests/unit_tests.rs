@@ -145,7 +145,6 @@ fn test_nested() {
 }
 
 #[test]
-#[ignore = "requires namespace scoping and class constructors"]
 fn test_using_namespace() {
     let module = build_script("using_namespace.as");
     assert!(module.is_built());
