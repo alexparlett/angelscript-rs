@@ -73,7 +73,6 @@ fn test_control_flow() {
 }
 
 #[test]
-#[ignore = "requires string factory, print() function, and array<int> default constructor"]
 fn test_functions() {
     let module = build_script("functions.as");
     assert!(module.is_built());
@@ -175,7 +174,6 @@ fn test_templates() {
 }
 
 #[test]
-#[ignore = "requires lambda statement compilation (Task 44)"]
 fn test_lambdas() {
     let module = build_script("lambdas.as");
     assert!(module.is_built());

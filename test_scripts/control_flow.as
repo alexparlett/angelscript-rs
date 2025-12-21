@@ -136,55 +136,55 @@ class Cat : Animal {
     void speak() { print("meow"); }
 }
 
-void testSwitchHandleNull() {
-    Animal@ pet = null;
+// We removed pattern matching
+// void testSwitchHandleNull() {
+//     Animal@ pet = null;
 
-    switch (pet) {
-        case null:
-            print("no pet");
-            break;
-        default:
-            print("has a pet");
-            break;
-    }
-}
+//     switch (pet) {
+//         case null:
+//             print("no pet");
+//             break;
+//         default:
+//             print("has a pet");
+//             break;
+//     }
+// }
+// void testSwitchTypePattern() {
+//     Dog@ dog = Dog();
+//     Animal@ pet = dog;
 
-void testSwitchTypePattern() {
-    Dog@ dog = Dog();
-    Animal@ pet = dog;
+//     switch (pet) {
+//         case Dog:
+//             print("it's a dog");
+//             break;
+//         case Cat:
+//             print("it's a cat");
+//             break;
+//         case null:
+//             print("no animal");
+//             break;
+//         default:
+//             print("some other animal");
+//             break;
+//     }
+// }
 
-    switch (pet) {
-        case Dog:
-            print("it's a dog");
-            break;
-        case Cat:
-            print("it's a cat");
-            break;
-        case null:
-            print("no animal");
-            break;
-        default:
-            print("some other animal");
-            break;
-    }
-}
+// void testSwitchTypePatternCat() {
+//     Cat@ cat = Cat();
+//     Animal@ pet = cat;
 
-void testSwitchTypePatternCat() {
-    Cat@ cat = Cat();
-    Animal@ pet = cat;
-
-    switch (pet) {
-        case Dog:
-            print("it's a dog");
-            break;
-        case Cat:
-            print("it's a cat");
-            break;
-        default:
-            print("unknown animal");
-            break;
-    }
-}
+//     switch (pet) {
+//         case Dog:
+//             print("it's a dog");
+//             break;
+//         case Cat:
+//             print("it's a cat");
+//             break;
+//         default:
+//             print("unknown animal");
+//             break;
+//     }
+// }
 
 void testBreakContinue() {
     for (int i = 0; i < 10; i++) {

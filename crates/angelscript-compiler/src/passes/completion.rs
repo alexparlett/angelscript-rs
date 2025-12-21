@@ -407,8 +407,8 @@ impl<'reg, 'global> TypeCompletionPass<'reg, 'global> {
         class_hash: TypeHash,
         output: &mut CompletionOutput,
     ) -> Result<bool, CompilationError> {
-        // Phase 1: Read what to inherit from base class (immutable borrow)
-        let (inherited, mixin_hashes) = {
+        // Phase 1: Read what to inherit from base class and collect own methods (immutable borrow)
+        let (inherited, mixin_hashes, own_method_hashes) = {
             let class = self
                 .registry
                 .get(class_hash)
@@ -425,6 +425,10 @@ impl<'reg, 'global> TypeCompletionPass<'reg, 'global> {
             }
 
             let mixin_hashes = class.mixins.clone();
+
+            // Collect the class's own method hashes (for override detection)
+            let own_method_hashes: Vec<TypeHash> =
+                class.methods.values().flatten().copied().collect();
 
             let inherited = if let Some(base_hash) = class.base_class {
                 // Get base class (may be in global registry for FFI types)
@@ -443,10 +447,20 @@ impl<'reg, 'global> TypeCompletionPass<'reg, 'global> {
                 InheritedMembers::default()
             };
 
-            (inherited, mixin_hashes)
+            (inherited, mixin_hashes, own_method_hashes)
         }; // immutable borrow ends here
 
-        // Phase 2: Apply base class inheritance to derived class (mutable borrow)
+        // Phase 2: Filter inherited methods (check for overrides before mutable borrow)
+        let methods_to_inherit: Vec<_> = inherited
+            .methods
+            .into_iter()
+            .filter(|(_, method_hash)| {
+                // Skip if derived class has an override with the exact same signature
+                !self.is_overridden_by(&own_method_hashes, *method_hash)
+            })
+            .collect();
+
+        // Phase 3: Apply base class inheritance to derived class (mutable borrow)
         {
             let class =
                 self.registry
@@ -456,8 +470,8 @@ impl<'reg, 'global> TypeCompletionPass<'reg, 'global> {
                         span: Span::default(),
                     })?;
 
-            // Copy methods from base class
-            for (name, method_hash) in inherited.methods {
+            // Copy methods from base class (already filtered for overrides)
+            for (name, method_hash) in methods_to_inherit {
                 class.add_method(name, method_hash);
                 output.methods_inherited += 1;
             }
@@ -469,12 +483,12 @@ impl<'reg, 'global> TypeCompletionPass<'reg, 'global> {
             }
         }
 
-        // Phase 3: Apply mixin members (after base class so mixins can override)
+        // Phase 4: Apply mixin members (after base class so mixins can override)
         for mixin_hash in mixin_hashes {
             self.apply_mixin(class_hash, mixin_hash, output)?;
         }
 
-        // Phase 4: Validate interface compliance (after all members are in place)
+        // Phase 5: Validate interface compliance (after all members are in place)
         self.validate_interface_compliance(class_hash, output);
 
         Ok(true)
@@ -735,6 +749,54 @@ impl<'reg, 'global> TypeCompletionPass<'reg, 'global> {
         }
 
         inherited
+    }
+
+    /// Check if a base method is overridden by any of the derived class's own methods.
+    ///
+    /// A method is considered overridden if there exists a method in `own_methods` with:
+    /// - The same name
+    /// - The same parameter types (exact match)
+    ///
+    /// This prevents the base method from being inherited when an override exists,
+    /// avoiding ambiguous overload errors.
+    fn is_overridden_by(&self, own_methods: &[TypeHash], base_method: TypeHash) -> bool {
+        let Some(base_func) = self
+            .registry
+            .get_function(base_method)
+            .or_else(|| self.global_registry.get_function(base_method))
+        else {
+            return false;
+        };
+
+        own_methods.iter().any(|&own_hash| {
+            let Some(own_func) = self
+                .registry
+                .get_function(own_hash)
+                .or_else(|| self.global_registry.get_function(own_hash))
+            else {
+                return false;
+            };
+
+            // Must have same name
+            if own_func.def.name != base_func.def.name {
+                return false;
+            }
+
+            // Must have same parameter count
+            if own_func.def.params.len() != base_func.def.params.len() {
+                return false;
+            }
+
+            // Must have same parameter types (exact match)
+            own_func
+                .def
+                .params
+                .iter()
+                .zip(&base_func.def.params)
+                .all(|(own_param, base_param)| {
+                    own_param.data_type.type_hash == base_param.data_type.type_hash
+                })
+        })
     }
 
     /// Topologically sort classes by inheritance (base before derived).
