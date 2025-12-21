@@ -91,32 +91,13 @@ impl ReturnChecker {
             | OpCode::GetThis
             | OpCode::Return
             | OpCode::ReturnVoid
-            | OpCode::AddI32
-            | OpCode::SubI32
-            | OpCode::MulI32
-            | OpCode::DivI32
-            | OpCode::ModI32
-            | OpCode::NegI32
-            | OpCode::PowI32
-            | OpCode::AddI64
-            | OpCode::SubI64
-            | OpCode::MulI64
-            | OpCode::DivI64
-            | OpCode::ModI64
-            | OpCode::NegI64
-            | OpCode::PowI64
-            | OpCode::AddF32
-            | OpCode::SubF32
-            | OpCode::MulF32
-            | OpCode::DivF32
-            | OpCode::NegF32
-            | OpCode::PowF32
-            | OpCode::AddF64
-            | OpCode::SubF64
-            | OpCode::MulF64
-            | OpCode::DivF64
-            | OpCode::NegF64
-            | OpCode::PowF64
+            | OpCode::Add
+            | OpCode::Sub
+            | OpCode::Mul
+            | OpCode::Div
+            | OpCode::Mod
+            | OpCode::Neg
+            | OpCode::Pow
             | OpCode::BitAnd
             | OpCode::BitOr
             | OpCode::BitXor
@@ -124,28 +105,11 @@ impl ReturnChecker {
             | OpCode::Shl
             | OpCode::Shr
             | OpCode::Ushr
-            | OpCode::EqI32
-            | OpCode::EqI64
-            | OpCode::EqF32
-            | OpCode::EqF64
-            | OpCode::EqBool
-            | OpCode::EqHandle
-            | OpCode::LtI32
-            | OpCode::LtI64
-            | OpCode::LtF32
-            | OpCode::LtF64
-            | OpCode::LeI32
-            | OpCode::LeI64
-            | OpCode::LeF32
-            | OpCode::LeF64
-            | OpCode::GtI32
-            | OpCode::GtI64
-            | OpCode::GtF32
-            | OpCode::GtF64
-            | OpCode::GeI32
-            | OpCode::GeI64
-            | OpCode::GeF32
-            | OpCode::GeF64
+            | OpCode::Eq
+            | OpCode::Lt
+            | OpCode::Le
+            | OpCode::Gt
+            | OpCode::Ge
             | OpCode::Not
             | OpCode::HandleToConst
             | OpCode::ValueToHandle

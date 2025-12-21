@@ -64,7 +64,6 @@ fn test_operators() {
 }
 
 #[test]
-#[ignore = "requires string factory, print() function, and class constructors"]
 fn test_control_flow() {
     let module = build_script("control_flow.as");
     assert!(module.is_built());
@@ -103,7 +102,6 @@ fn test_class_basic() {
 }
 
 #[test]
-#[ignore = "requires string factory, super() keyword, and class constructors"]
 fn test_inheritance() {
     let module = build_script("inheritance.as");
     assert!(module.is_built());
@@ -183,7 +181,6 @@ fn test_lambdas() {
 // =============================================================================
 
 #[test]
-#[ignore = "requires class field access, default constructors, and is/!is operators"]
 fn test_game_logic() {
     let module = build_script("game_logic.as");
     assert!(module.is_built());
@@ -195,7 +192,6 @@ fn test_game_logic() {
 }
 
 #[test]
-#[ignore = "requires string methods, array methods, string factory, and distance() function"]
 fn test_utilities() {
     let module = build_script("utilities.as");
     assert!(module.is_built());
@@ -207,7 +203,6 @@ fn test_utilities() {
 }
 
 #[test]
-#[ignore = "requires class field access, default constructors, and operator overloading"]
 fn test_data_structures() {
     let module = build_script("data_structures.as");
     assert!(module.is_built());
@@ -236,7 +231,6 @@ fn test_many_functions() {
 }
 
 #[test]
-#[ignore = "requires class field access, constructors, operators, and super()"]
 fn test_performance_large_500() {
     let module = build_script("performance/large_500.as");
     assert!(module.is_built());
@@ -248,7 +242,6 @@ fn test_performance_large_500() {
 }
 
 #[test]
-#[ignore = "requires class field access, constructors, operators, super(), and forward declarations"]
 fn test_performance_xlarge_1000() {
     let module = build_script("performance/xlarge_1000.as");
     assert!(module.is_built());
@@ -260,7 +253,6 @@ fn test_performance_xlarge_1000() {
 }
 
 #[test]
-#[ignore = "requires class field access, constructors, operators, super(), and forward declarations"]
 fn test_performance_xxlarge_5000() {
     let module = build_script("performance/xxlarge_5000.as");
     assert!(module.is_built());

@@ -219,33 +219,14 @@ fn conversion_opcode(from: TypeHash, to: TypeHash) -> Option<OpCode> {
     }
 }
 
-/// Get the arithmetic opcode for the given type and operation.
-fn arithmetic_opcode(promoted_type: TypeHash, op: BinaryOp) -> Option<OpCode> {
-    match (promoted_type, op) {
-        // i32 arithmetic
-        (t, BinaryOp::Add) if t == primitives::INT32 => Some(OpCode::AddI32),
-        (t, BinaryOp::Sub) if t == primitives::INT32 => Some(OpCode::SubI32),
-        (t, BinaryOp::Mul) if t == primitives::INT32 => Some(OpCode::MulI32),
-        (t, BinaryOp::Div) if t == primitives::INT32 => Some(OpCode::DivI32),
-
-        // i64 arithmetic
-        (t, BinaryOp::Add) if t == primitives::INT64 => Some(OpCode::AddI64),
-        (t, BinaryOp::Sub) if t == primitives::INT64 => Some(OpCode::SubI64),
-        (t, BinaryOp::Mul) if t == primitives::INT64 => Some(OpCode::MulI64),
-        (t, BinaryOp::Div) if t == primitives::INT64 => Some(OpCode::DivI64),
-
-        // f32 arithmetic
-        (t, BinaryOp::Add) if t == primitives::FLOAT => Some(OpCode::AddF32),
-        (t, BinaryOp::Sub) if t == primitives::FLOAT => Some(OpCode::SubF32),
-        (t, BinaryOp::Mul) if t == primitives::FLOAT => Some(OpCode::MulF32),
-        (t, BinaryOp::Div) if t == primitives::FLOAT => Some(OpCode::DivF32),
-
-        // f64 arithmetic
-        (t, BinaryOp::Add) if t == primitives::DOUBLE => Some(OpCode::AddF64),
-        (t, BinaryOp::Sub) if t == primitives::DOUBLE => Some(OpCode::SubF64),
-        (t, BinaryOp::Mul) if t == primitives::DOUBLE => Some(OpCode::MulF64),
-        (t, BinaryOp::Div) if t == primitives::DOUBLE => Some(OpCode::DivF64),
-
+/// Get the arithmetic opcode for the given operation.
+/// Now uses generic opcodes - VM determines type from stack values.
+fn arithmetic_opcode(op: BinaryOp) -> Option<OpCode> {
+    match op {
+        BinaryOp::Add => Some(OpCode::Add),
+        BinaryOp::Sub => Some(OpCode::Sub),
+        BinaryOp::Mul => Some(OpCode::Mul),
+        BinaryOp::Div => Some(OpCode::Div),
         _ => None,
     }
 }
@@ -257,7 +238,7 @@ fn resolve_arithmetic(left: TypeHash, right: TypeHash, op: BinaryOp) -> Option<O
     }
 
     let promoted = promote_types(left, right)?;
-    let opcode = arithmetic_opcode(promoted, op)?;
+    let opcode = arithmetic_opcode(op)?;
     let left_conv = conversion_opcode(left, promoted);
     let right_conv = conversion_opcode(right, promoted);
 
@@ -277,16 +258,9 @@ fn resolve_modulo(left: TypeHash, right: TypeHash) -> Option<OperatorResolution>
 
     let promoted = promote_types(left, right)?;
 
-    let opcode = match promoted {
-        t if t == primitives::INT32 => OpCode::ModI32,
-        t if t == primitives::INT64 => OpCode::ModI64,
-        // For smaller integer types, promote to int32
-        t if t == primitives::INT8 || t == primitives::INT16 => OpCode::ModI32,
-        _ => return None,
-    };
-
-    let result_type = if promoted == primitives::INT64 {
-        primitives::INT64
+    // For smaller integer types, promote to int32
+    let result_type = if promoted == primitives::INT64 || promoted == primitives::UINT64 {
+        promoted
     } else {
         primitives::INT32
     };
@@ -304,7 +278,7 @@ fn resolve_modulo(left: TypeHash, right: TypeHash) -> Option<OperatorResolution>
     };
 
     Some(OperatorResolution::Primitive {
-        opcode,
+        opcode: OpCode::Mod,
         left_conv,
         right_conv,
         result_type: DataType::simple(result_type),
@@ -314,9 +288,8 @@ fn resolve_modulo(left: TypeHash, right: TypeHash) -> Option<OperatorResolution>
 fn resolve_equality(left: TypeHash, right: TypeHash, op: BinaryOp) -> Option<OperatorResolution> {
     // Bool can be compared with bool
     if left == primitives::BOOL && right == primitives::BOOL {
-        let opcode = OpCode::EqBool;
         return Some(OperatorResolution::Primitive {
-            opcode,
+            opcode: OpCode::Eq,
             left_conv: None,
             right_conv: None,
             result_type: DataType::simple(primitives::BOOL),
@@ -329,14 +302,6 @@ fn resolve_equality(left: TypeHash, right: TypeHash, op: BinaryOp) -> Option<Ope
     }
 
     let promoted = promote_types(left, right)?;
-    let opcode = match promoted {
-        t if t == primitives::INT32 => OpCode::EqI32,
-        t if t == primitives::INT64 => OpCode::EqI64,
-        t if t == primitives::FLOAT => OpCode::EqF32,
-        t if t == primitives::DOUBLE => OpCode::EqF64,
-        _ => return None,
-    };
-
     let left_conv = conversion_opcode(left, promoted);
     let right_conv = conversion_opcode(right, promoted);
 
@@ -344,7 +309,7 @@ fn resolve_equality(left: TypeHash, right: TypeHash, op: BinaryOp) -> Option<Ope
     let _ = op; // Both Equal and NotEqual use same base opcode
 
     Some(OperatorResolution::Primitive {
-        opcode,
+        opcode: OpCode::Eq,
         left_conv,
         right_conv,
         result_type: DataType::simple(primitives::BOOL),
@@ -359,43 +324,11 @@ fn resolve_comparison(left: TypeHash, right: TypeHash, op: BinaryOp) -> Option<O
 
     let promoted = promote_types(left, right)?;
 
-    let opcode = match (promoted, op) {
-        // i32/u32 comparisons (same opcodes, VM interprets as unsigned when appropriate)
-        (t, BinaryOp::Less) if t == primitives::INT32 || t == primitives::UINT32 => OpCode::LtI32,
-        (t, BinaryOp::LessEqual) if t == primitives::INT32 || t == primitives::UINT32 => {
-            OpCode::LeI32
-        }
-        (t, BinaryOp::Greater) if t == primitives::INT32 || t == primitives::UINT32 => {
-            OpCode::GtI32
-        }
-        (t, BinaryOp::GreaterEqual) if t == primitives::INT32 || t == primitives::UINT32 => {
-            OpCode::GeI32
-        }
-
-        // i64/u64 comparisons
-        (t, BinaryOp::Less) if t == primitives::INT64 || t == primitives::UINT64 => OpCode::LtI64,
-        (t, BinaryOp::LessEqual) if t == primitives::INT64 || t == primitives::UINT64 => {
-            OpCode::LeI64
-        }
-        (t, BinaryOp::Greater) if t == primitives::INT64 || t == primitives::UINT64 => {
-            OpCode::GtI64
-        }
-        (t, BinaryOp::GreaterEqual) if t == primitives::INT64 || t == primitives::UINT64 => {
-            OpCode::GeI64
-        }
-
-        // f32 comparisons
-        (t, BinaryOp::Less) if t == primitives::FLOAT => OpCode::LtF32,
-        (t, BinaryOp::LessEqual) if t == primitives::FLOAT => OpCode::LeF32,
-        (t, BinaryOp::Greater) if t == primitives::FLOAT => OpCode::GtF32,
-        (t, BinaryOp::GreaterEqual) if t == primitives::FLOAT => OpCode::GeF32,
-
-        // f64 comparisons
-        (t, BinaryOp::Less) if t == primitives::DOUBLE => OpCode::LtF64,
-        (t, BinaryOp::LessEqual) if t == primitives::DOUBLE => OpCode::LeF64,
-        (t, BinaryOp::Greater) if t == primitives::DOUBLE => OpCode::GtF64,
-        (t, BinaryOp::GreaterEqual) if t == primitives::DOUBLE => OpCode::GeF64,
-
+    let opcode = match op {
+        BinaryOp::Less => OpCode::Lt,
+        BinaryOp::LessEqual => OpCode::Le,
+        BinaryOp::Greater => OpCode::Gt,
+        BinaryOp::GreaterEqual => OpCode::Ge,
         _ => return None,
     };
 
@@ -442,15 +375,10 @@ fn resolve_bitwise(left: TypeHash, right: TypeHash, op: BinaryOp) -> Option<Oper
 }
 
 fn resolve_negation(type_hash: TypeHash) -> Option<UnaryResolution> {
-    let opcode = match type_hash {
-        t if t == primitives::INT32 => OpCode::NegI32,
-        t if t == primitives::INT64 => OpCode::NegI64,
-        t if t == primitives::FLOAT => OpCode::NegF32,
-        t if t == primitives::DOUBLE => OpCode::NegF64,
-        // Smaller integer types get promoted to int32 for negation
-        t if t == primitives::INT8 || t == primitives::INT16 => OpCode::NegI32,
-        _ => return None,
-    };
+    // Negation works on all numeric types
+    if !is_numeric_primitive(type_hash) {
+        return None;
+    }
 
     // For smaller types, the result is promoted to int32
     let result_type = match type_hash {
@@ -459,7 +387,7 @@ fn resolve_negation(type_hash: TypeHash) -> Option<UnaryResolution> {
     };
 
     Some(UnaryResolution::Primitive {
-        opcode,
+        opcode: OpCode::Neg,
         result_type: DataType::simple(result_type),
     })
 }
@@ -484,16 +412,11 @@ fn resolve_pow(left: TypeHash, right: TypeHash) -> Option<OperatorResolution> {
     // For floats: base ** exp where both are promoted to same float type
     if is_float_primitive(left) || is_float_primitive(right) {
         let promoted = promote_types(left, right)?;
-        let opcode = match promoted {
-            t if t == primitives::FLOAT => OpCode::PowF32,
-            t if t == primitives::DOUBLE => OpCode::PowF64,
-            _ => return None,
-        };
         let left_conv = conversion_opcode(left, promoted);
         let right_conv = conversion_opcode(right, promoted);
 
         return Some(OperatorResolution::Primitive {
-            opcode,
+            opcode: OpCode::Pow,
             left_conv,
             right_conv,
             result_type: DataType::simple(promoted),
@@ -503,19 +426,6 @@ fn resolve_pow(left: TypeHash, right: TypeHash) -> Option<OperatorResolution> {
     // For integers: base ** exp where exp is converted to u32
     // Result type is the promoted integer type
     let promoted = promote_types(left, right)?;
-    let opcode = match promoted {
-        t if t == primitives::INT32 || t == primitives::UINT32 => OpCode::PowI32,
-        t if t == primitives::INT64 || t == primitives::UINT64 => OpCode::PowI64,
-        // Smaller integer types promote to int32
-        t if t == primitives::INT8
-            || t == primitives::INT16
-            || t == primitives::UINT8
-            || t == primitives::UINT16 =>
-        {
-            OpCode::PowI32
-        }
-        _ => return None,
-    };
 
     // For integer pow, left operand type determines result type
     // Right operand (exponent) is converted to u32
@@ -533,7 +443,7 @@ fn resolve_pow(left: TypeHash, right: TypeHash) -> Option<OperatorResolution> {
     };
 
     Some(OperatorResolution::Primitive {
-        opcode,
+        opcode: OpCode::Pow,
         left_conv,
         right_conv,
         result_type: DataType::simple(result_type),

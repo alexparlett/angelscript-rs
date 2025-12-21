@@ -1751,7 +1751,7 @@ mod tests {
         chunk.assert_opcodes(&[
             OpCode::GetLocal,
             OpCode::Constant,
-            OpCode::AddI32,
+            OpCode::Add,
             OpCode::SetLocal,
         ]);
     }
@@ -1972,7 +1972,7 @@ mod tests {
             OpCode::Dup,
             OpCode::CallMethod, // getter
             OpCode::Constant,
-            OpCode::AddI32,
+            OpCode::Add,
             OpCode::CallMethod, // setter
         ]);
     }
@@ -2212,7 +2212,7 @@ mod tests {
             OpCode::Pick,
             OpCode::CallMethod, // getter
             OpCode::Constant,
-            OpCode::AddI32,
+            OpCode::Add,
             OpCode::CallMethod, // setter
         ]);
     }
@@ -2320,7 +2320,7 @@ mod tests {
             OpCode::Dup,
             OpCode::GetField,
             OpCode::Constant,
-            OpCode::AddI32,
+            OpCode::Add,
             OpCode::Swap,
             OpCode::SetField,
         ]);
@@ -2763,7 +2763,7 @@ mod tests {
             OpCode::Dup,
             OpCode::GetField,
             OpCode::Constant,
-            OpCode::AddI32,
+            OpCode::Add,
             OpCode::SetField,
         ]);
     }

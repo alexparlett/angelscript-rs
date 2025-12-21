@@ -114,7 +114,7 @@ pub fn compile_binary<'ast>(
         }
         OperatorResolution::HandleComparison { negate } => {
             // Operands already on the stack
-            compiler.emitter().emit(OpCode::EqHandle);
+            compiler.emitter().emit(OpCode::Eq);
             if negate {
                 compiler.emitter().emit(OpCode::Not);
             }
@@ -184,7 +184,7 @@ fn compile_logical_xor<'ast>(
     compiler.check(expr.right, &bool_type)?;
 
     // XOR for booleans: a != b
-    compiler.emitter().emit(OpCode::EqBool);
+    compiler.emitter().emit(OpCode::Eq);
     compiler.emitter().emit(OpCode::Not);
 
     Ok(ExprInfo::rvalue(bool_type))
@@ -250,8 +250,8 @@ mod tests {
         assert_eq!(info.data_type.type_hash, primitives::INT32);
 
         let chunk = emitter.finish_chunk();
-        // Bytecode: PushOne (left=1), Constant (right=2), AddI32
-        chunk.assert_opcodes(&[OpCode::PushOne, OpCode::Constant, OpCode::AddI32]);
+        // Bytecode: PushOne (left=1), Constant (right=2), Add
+        chunk.assert_opcodes(&[OpCode::PushOne, OpCode::Constant, OpCode::Add]);
     }
 
     #[test]
@@ -283,8 +283,8 @@ mod tests {
         assert_eq!(info.data_type.type_hash, primitives::BOOL);
 
         let chunk = emitter.finish_chunk();
-        // Bytecode: Constant (left), Constant (right), LtI32
-        chunk.assert_opcodes(&[OpCode::Constant, OpCode::Constant, OpCode::LtI32]);
+        // Bytecode: Constant (left), Constant (right), Lt
+        chunk.assert_opcodes(&[OpCode::Constant, OpCode::Constant, OpCode::Lt]);
     }
 
     #[test]
@@ -389,12 +389,7 @@ mod tests {
         assert_eq!(info.data_type.type_hash, primitives::BOOL);
 
         let chunk = emitter.finish_chunk();
-        // Bytecode: PushTrue (left), PushTrue (right), EqBool, Not
-        chunk.assert_opcodes(&[
-            OpCode::PushTrue,
-            OpCode::PushTrue,
-            OpCode::EqBool,
-            OpCode::Not,
-        ]);
+        // Bytecode: PushTrue (left), PushTrue (right), Eq, Not
+        chunk.assert_opcodes(&[OpCode::PushTrue, OpCode::PushTrue, OpCode::Eq, OpCode::Not]);
     }
 }

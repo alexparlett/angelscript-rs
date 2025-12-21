@@ -2,7 +2,7 @@
 //!
 //! Handles switch statements with case values and default case.
 
-use angelscript_core::{CompilationError, DataType, OperatorBehavior, Span, primitives};
+use angelscript_core::{CompilationError, DataType, OperatorBehavior, Span};
 use angelscript_parser::ast::{Expr, SwitchStmt, UnaryOp};
 
 use crate::bytecode::OpCode;
@@ -262,44 +262,8 @@ impl<'a, 'ctx> StmtCompiler<'a, 'ctx> {
         equals_method: Option<angelscript_core::TypeHash>,
     ) -> Result<()> {
         if data_type.is_primitive() {
-            // Use primitive equality
-            match data_type.type_hash {
-                h if h == primitives::INT8 || h == primitives::INT16 || h == primitives::INT32 => {
-                    self.emitter.emit(OpCode::EqI32);
-                }
-                h if h == primitives::INT64 => {
-                    self.emitter.emit(OpCode::EqI64);
-                }
-                h if h == primitives::UINT8
-                    || h == primitives::UINT16
-                    || h == primitives::UINT32 =>
-                {
-                    self.emitter.emit(OpCode::EqI32);
-                }
-                h if h == primitives::UINT64 => {
-                    self.emitter.emit(OpCode::EqI64);
-                }
-                h if h == primitives::FLOAT => {
-                    self.emitter.emit(OpCode::EqF32);
-                }
-                h if h == primitives::DOUBLE => {
-                    self.emitter.emit(OpCode::EqF64);
-                }
-                h if h == primitives::BOOL => {
-                    self.emitter.emit(OpCode::EqBool);
-                }
-                _ => {
-                    // Fall back to opEquals for other types
-                    if let Some(method) = equals_method {
-                        self.emitter.emit_call_method(method, 1);
-                    } else {
-                        return Err(CompilationError::Other {
-                            message: "cannot compare this type".to_string(),
-                            span: angelscript_core::Span::default(),
-                        });
-                    }
-                }
-            }
+            // Use generic equality opcode - VM determines types from stack values
+            self.emitter.emit(OpCode::Eq);
         } else {
             // Call opEquals method
             if let Some(method) = equals_method {
@@ -409,7 +373,7 @@ mod tests {
             OpCode::Constant,
             OpCode::Dup,
             OpCode::Constant,
-            OpCode::EqI32,
+            OpCode::Eq,
             OpCode::JumpIfTrue,
             OpCode::Pop,
             OpCode::Jump,
@@ -564,7 +528,7 @@ mod tests {
         chunk.assert_contains_opcodes(&[
             OpCode::Constant,
             OpCode::Dup,
-            OpCode::EqI32,
+            OpCode::Eq,
             OpCode::JumpIfTrue,
             OpCode::Pop,
             OpCode::Jump,
@@ -623,12 +587,12 @@ mod tests {
         chunk.assert_contains_opcodes(&[
             OpCode::Constant, // 42
             OpCode::Dup,
-            OpCode::EqI32,
+            OpCode::Eq,
             OpCode::JumpIfTrue, // Match case 1 -> jump to body
             OpCode::Pop,
             OpCode::Dup,
             OpCode::Constant, // 2
-            OpCode::EqI32,
+            OpCode::Eq,
             OpCode::JumpIfTrue, // Match case 2 -> jump to body
         ]);
     }
@@ -677,12 +641,12 @@ mod tests {
 
         let chunk = emitter.finish_chunk();
         // Bool switch: load true, dup, load true, compare bools, jump to body if match
-        // Pattern: PushTrue (value), Dup, PushTrue (case), EqBool, JumpIfTrue
+        // Pattern: PushTrue (value), Dup, PushTrue (case), Eq, JumpIfTrue
         chunk.assert_contains_opcodes(&[
             OpCode::PushTrue,
             OpCode::Dup,
             OpCode::PushTrue,
-            OpCode::EqBool,
+            OpCode::Eq,
             OpCode::JumpIfTrue,
         ]);
     }
@@ -881,7 +845,7 @@ mod tests {
             OpCode::Constant,
             OpCode::Dup,
             OpCode::GetLocal,
-            OpCode::EqI32,
+            OpCode::Eq,
             OpCode::JumpIfTrue,
         ]);
     }
@@ -943,8 +907,8 @@ mod tests {
         chunk.assert_contains_opcodes(&[
             OpCode::Constant,
             OpCode::Dup,
-            OpCode::NegI32,
-            OpCode::EqI32,
+            OpCode::Neg,
+            OpCode::Eq,
             OpCode::JumpIfTrue,
         ]);
     }
@@ -1021,8 +985,8 @@ mod tests {
             OpCode::Constant,
             OpCode::Dup,
             OpCode::GetLocal,
-            OpCode::NegI32,
-            OpCode::EqI32,
+            OpCode::Neg,
+            OpCode::Eq,
             OpCode::JumpIfTrue,
         ]);
     }

@@ -84,72 +84,22 @@ pub enum OpCode {
     GetThis,
 
     // =========================================================================
-    // Arithmetic (i32)
+    // Arithmetic (generic - VM determines types from stack values)
     // =========================================================================
-    /// Add two i32 values.
-    AddI32,
-    /// Subtract two i32 values.
-    SubI32,
-    /// Multiply two i32 values.
-    MulI32,
-    /// Divide two i32 values.
-    DivI32,
-    /// Modulo of two i32 values.
-    ModI32,
-    /// Negate i32 value.
-    NegI32,
-    /// Exponentiation i32 base with u32 exponent.
-    PowI32,
-
-    // =========================================================================
-    // Arithmetic (i64)
-    // =========================================================================
-    /// Add two i64 values.
-    AddI64,
-    /// Subtract two i64 values.
-    SubI64,
-    /// Multiply two i64 values.
-    MulI64,
-    /// Divide two i64 values.
-    DivI64,
-    /// Modulo of two i64 values.
-    ModI64,
-    /// Negate i64 value.
-    NegI64,
-    /// Exponentiation i64 base with u32 exponent.
-    PowI64,
-
-    // =========================================================================
-    // Arithmetic (f32)
-    // =========================================================================
-    /// Add two f32 values.
-    AddF32,
-    /// Subtract two f32 values.
-    SubF32,
-    /// Multiply two f32 values.
-    MulF32,
-    /// Divide two f32 values.
-    DivF32,
-    /// Negate f32 value.
-    NegF32,
-    /// Exponentiation of two f32 values.
-    PowF32,
-
-    // =========================================================================
-    // Arithmetic (f64)
-    // =========================================================================
-    /// Add two f64 values.
-    AddF64,
-    /// Subtract two f64 values.
-    SubF64,
-    /// Multiply two f64 values.
-    MulF64,
-    /// Divide two f64 values.
-    DivF64,
-    /// Negate f64 value.
-    NegF64,
-    /// Exponentiation of two f64 values.
-    PowF64,
+    /// Add two numeric values (i8/i16/i32/i64/u8/u16/u32/u64/f32/f64).
+    Add,
+    /// Subtract two numeric values.
+    Sub,
+    /// Multiply two numeric values.
+    Mul,
+    /// Divide two numeric values (signed/unsigned handled by VM).
+    Div,
+    /// Modulo of two integer values.
+    Mod,
+    /// Negate numeric value.
+    Neg,
+    /// Exponentiation (base ** exp).
+    Pow,
 
     // =========================================================================
     // Bitwise Operations
@@ -170,56 +120,18 @@ pub enum OpCode {
     Ushr,
 
     // =========================================================================
-    // Comparisons (produce bool)
+    // Comparisons (produce bool - generic, VM determines types from stack)
     // =========================================================================
-    /// Compare i32 equality.
-    EqI32,
-    /// Compare i64 equality.
-    EqI64,
-    /// Compare f32 equality.
-    EqF32,
-    /// Compare f64 equality.
-    EqF64,
-    /// Compare bool equality.
-    EqBool,
-    /// Reference equality for handles.
-    EqHandle,
-
-    /// i32 less than.
-    LtI32,
-    /// i64 less than.
-    LtI64,
-    /// f32 less than.
-    LtF32,
-    /// f64 less than.
-    LtF64,
-
-    /// i32 less than or equal.
-    LeI32,
-    /// i64 less than or equal.
-    LeI64,
-    /// f32 less than or equal.
-    LeF32,
-    /// f64 less than or equal.
-    LeF64,
-
-    /// i32 greater than.
-    GtI32,
-    /// i64 greater than.
-    GtI64,
-    /// f32 greater than.
-    GtF32,
-    /// f64 greater than.
-    GtF64,
-
-    /// i32 greater than or equal.
-    GeI32,
-    /// i64 greater than or equal.
-    GeI64,
-    /// f32 greater than or equal.
-    GeF32,
-    /// f64 greater than or equal.
-    GeF64,
+    /// Equality comparison (works for all numeric types, bool, handles).
+    Eq,
+    /// Less than comparison.
+    Lt,
+    /// Less than or equal comparison.
+    Le,
+    /// Greater than comparison.
+    Gt,
+    /// Greater than or equal comparison.
+    Ge,
 
     // =========================================================================
     // Logical Operations
@@ -452,32 +364,13 @@ impl OpCode {
             | OpCode::Dup
             | OpCode::Swap
             | OpCode::GetThis
-            | OpCode::AddI32
-            | OpCode::SubI32
-            | OpCode::MulI32
-            | OpCode::DivI32
-            | OpCode::ModI32
-            | OpCode::NegI32
-            | OpCode::PowI32
-            | OpCode::AddI64
-            | OpCode::SubI64
-            | OpCode::MulI64
-            | OpCode::DivI64
-            | OpCode::ModI64
-            | OpCode::NegI64
-            | OpCode::PowI64
-            | OpCode::AddF32
-            | OpCode::SubF32
-            | OpCode::MulF32
-            | OpCode::DivF32
-            | OpCode::NegF32
-            | OpCode::PowF32
-            | OpCode::AddF64
-            | OpCode::SubF64
-            | OpCode::MulF64
-            | OpCode::DivF64
-            | OpCode::NegF64
-            | OpCode::PowF64
+            | OpCode::Add
+            | OpCode::Sub
+            | OpCode::Mul
+            | OpCode::Div
+            | OpCode::Mod
+            | OpCode::Neg
+            | OpCode::Pow
             | OpCode::BitAnd
             | OpCode::BitOr
             | OpCode::BitXor
@@ -485,28 +378,11 @@ impl OpCode {
             | OpCode::Shl
             | OpCode::Shr
             | OpCode::Ushr
-            | OpCode::EqI32
-            | OpCode::EqI64
-            | OpCode::EqF32
-            | OpCode::EqF64
-            | OpCode::EqBool
-            | OpCode::EqHandle
-            | OpCode::LtI32
-            | OpCode::LtI64
-            | OpCode::LtF32
-            | OpCode::LtF64
-            | OpCode::LeI32
-            | OpCode::LeI64
-            | OpCode::LeF32
-            | OpCode::LeF64
-            | OpCode::GtI32
-            | OpCode::GtI64
-            | OpCode::GtF32
-            | OpCode::GtF64
-            | OpCode::GeI32
-            | OpCode::GeI64
-            | OpCode::GeF32
-            | OpCode::GeF64
+            | OpCode::Eq
+            | OpCode::Lt
+            | OpCode::Le
+            | OpCode::Gt
+            | OpCode::Ge
             | OpCode::Not
             | OpCode::Return
             | OpCode::ReturnVoid
@@ -613,32 +489,13 @@ impl OpCode {
             OpCode::GetField => "GET_FIELD",
             OpCode::SetField => "SET_FIELD",
             OpCode::GetThis => "GET_THIS",
-            OpCode::AddI32 => "ADD_I32",
-            OpCode::SubI32 => "SUB_I32",
-            OpCode::MulI32 => "MUL_I32",
-            OpCode::DivI32 => "DIV_I32",
-            OpCode::ModI32 => "MOD_I32",
-            OpCode::NegI32 => "NEG_I32",
-            OpCode::PowI32 => "POW_I32",
-            OpCode::AddI64 => "ADD_I64",
-            OpCode::SubI64 => "SUB_I64",
-            OpCode::MulI64 => "MUL_I64",
-            OpCode::DivI64 => "DIV_I64",
-            OpCode::ModI64 => "MOD_I64",
-            OpCode::NegI64 => "NEG_I64",
-            OpCode::PowI64 => "POW_I64",
-            OpCode::AddF32 => "ADD_F32",
-            OpCode::SubF32 => "SUB_F32",
-            OpCode::MulF32 => "MUL_F32",
-            OpCode::DivF32 => "DIV_F32",
-            OpCode::NegF32 => "NEG_F32",
-            OpCode::PowF32 => "POW_F32",
-            OpCode::AddF64 => "ADD_F64",
-            OpCode::SubF64 => "SUB_F64",
-            OpCode::MulF64 => "MUL_F64",
-            OpCode::DivF64 => "DIV_F64",
-            OpCode::NegF64 => "NEG_F64",
-            OpCode::PowF64 => "POW_F64",
+            OpCode::Add => "ADD",
+            OpCode::Sub => "SUB",
+            OpCode::Mul => "MUL",
+            OpCode::Div => "DIV",
+            OpCode::Mod => "MOD",
+            OpCode::Neg => "NEG",
+            OpCode::Pow => "POW",
             OpCode::BitAnd => "BIT_AND",
             OpCode::BitOr => "BIT_OR",
             OpCode::BitXor => "BIT_XOR",
@@ -646,28 +503,11 @@ impl OpCode {
             OpCode::Shl => "SHL",
             OpCode::Shr => "SHR",
             OpCode::Ushr => "USHR",
-            OpCode::EqI32 => "EQ_I32",
-            OpCode::EqI64 => "EQ_I64",
-            OpCode::EqF32 => "EQ_F32",
-            OpCode::EqF64 => "EQ_F64",
-            OpCode::EqBool => "EQ_BOOL",
-            OpCode::EqHandle => "EQ_HANDLE",
-            OpCode::LtI32 => "LT_I32",
-            OpCode::LtI64 => "LT_I64",
-            OpCode::LtF32 => "LT_F32",
-            OpCode::LtF64 => "LT_F64",
-            OpCode::LeI32 => "LE_I32",
-            OpCode::LeI64 => "LE_I64",
-            OpCode::LeF32 => "LE_F32",
-            OpCode::LeF64 => "LE_F64",
-            OpCode::GtI32 => "GT_I32",
-            OpCode::GtI64 => "GT_I64",
-            OpCode::GtF32 => "GT_F32",
-            OpCode::GtF64 => "GT_F64",
-            OpCode::GeI32 => "GE_I32",
-            OpCode::GeI64 => "GE_I64",
-            OpCode::GeF32 => "GE_F32",
-            OpCode::GeF64 => "GE_F64",
+            OpCode::Eq => "EQ",
+            OpCode::Lt => "LT",
+            OpCode::Le => "LE",
+            OpCode::Gt => "GT",
+            OpCode::Ge => "GE",
             OpCode::Not => "NOT",
             OpCode::Jump => "JUMP",
             OpCode::JumpIfFalse => "JUMP_IF_FALSE",
@@ -753,7 +593,7 @@ mod tests {
     #[test]
     fn opcode_name() {
         assert_eq!(OpCode::Constant.name(), "CONSTANT");
-        assert_eq!(OpCode::AddI32.name(), "ADD_I32");
+        assert_eq!(OpCode::Add.name(), "ADD");
         assert_eq!(OpCode::JumpIfFalse.name(), "JUMP_IF_FALSE");
     }
 
@@ -777,7 +617,7 @@ mod tests {
     fn operand_sizes() {
         // No operands
         assert_eq!(OpCode::Pop.operand_size(), 0);
-        assert_eq!(OpCode::AddI32.operand_size(), 0);
+        assert_eq!(OpCode::Add.operand_size(), 0);
         assert_eq!(OpCode::Return.operand_size(), 0);
 
         // 1-byte operand

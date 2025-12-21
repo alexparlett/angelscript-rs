@@ -203,8 +203,8 @@ mod tests {
         assert_eq!(info.data_type.type_hash, primitives::INT32);
 
         let chunk = emitter.finish_chunk();
-        // Bytecode: Constant (operand), NegI32
-        chunk.assert_opcodes(&[OpCode::Constant, OpCode::NegI32]);
+        // Bytecode: Constant (operand), Neg
+        chunk.assert_opcodes(&[OpCode::Constant, OpCode::Neg]);
     }
 
     #[test]
