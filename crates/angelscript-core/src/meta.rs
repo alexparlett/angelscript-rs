@@ -69,6 +69,10 @@ pub struct ReturnMeta {
     pub is_const: bool,
     /// Whether this is a variable/any type (`?`) - for generic calling convention.
     pub is_variable: bool,
+    /// Template parameter name (e.g., "T", "V") if this is a template return type.
+    /// When set, the type_hash is ignored during template instantiation and the concrete
+    /// type for this template parameter is substituted instead.
+    pub template_param: Option<&'static str>,
 }
 
 /// Metadata for a generic calling convention parameter.

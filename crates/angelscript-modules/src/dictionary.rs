@@ -221,6 +221,18 @@ impl ScriptDict {
     pub fn list_factory(_ctx: &mut CallContext) -> Result<(), NativeError> {
         todo!()
     }
+
+    // =========================================================================
+    // DEFAULT FACTORY
+    // =========================================================================
+
+    /// Default factory for creating empty dictionaries.
+    ///
+    /// Called when: `dictionary<string, int> d;` or `dictionary<string, int>()`
+    #[angelscript_macros::function(factory, generic)]
+    pub fn default_factory(_ctx: &mut CallContext) -> Result<(), NativeError> {
+        todo!()
+    }
 }
 
 // =========================================================================
@@ -262,6 +274,8 @@ pub fn module() -> Module {
         .function(ScriptDict::op_for_value_1__meta)
         // List initialization
         .function(ScriptDict::list_factory__meta)
+        // Default factory
+        .function(ScriptDict::default_factory__meta)
 }
 
 #[cfg(test)]

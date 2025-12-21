@@ -295,6 +295,18 @@ impl ScriptArray {
     }
 
     // =========================================================================
+    // FACTORIES
+    // =========================================================================
+
+    /// Default factory for creating empty arrays.
+    ///
+    /// Called when: `array<int> arr;` or `array<int>()`
+    #[angelscript_macros::function(factory, generic)]
+    pub fn default_factory(_ctx: &mut CallContext) -> Result<(), NativeError> {
+        todo!()
+    }
+
+    // =========================================================================
     // LIST INITIALIZATION
     // =========================================================================
 
@@ -359,6 +371,8 @@ pub fn module() -> Module {
         .function(ScriptArray::op_for_end__meta)
         .function(ScriptArray::op_for_next__meta)
         .function(ScriptArray::op_for_value__meta)
+        // Factories
+        .function(ScriptArray::default_factory__meta)
         // List initialization
         .function(ScriptArray::list_factory__meta)
 }

@@ -215,6 +215,7 @@ mod tests {
             ref_modifier: RefModifier::None,
             is_mixin: false,
             is_interface: false,
+            is_enum: false,
         };
         let result = substitute_type(input, &map);
 
@@ -239,6 +240,7 @@ mod tests {
             ref_modifier: RefModifier::In,
             is_mixin: false,
             is_interface: false,
+            is_enum: false,
         };
         let result = substitute_type(input, &map);
 
@@ -258,6 +260,7 @@ mod tests {
             ref_modifier: RefModifier::None,
             is_mixin: false,
             is_interface: false,
+            is_enum: false,
         };
 
         let mut map = SubstitutionMap::default();
@@ -317,6 +320,7 @@ mod tests {
             ref_modifier: RefModifier::None,
             is_mixin: false,
             is_interface: false,
+            is_enum: false,
         };
 
         let mut map = SubstitutionMap::default();
@@ -331,6 +335,7 @@ mod tests {
             ref_modifier: RefModifier::None,
             is_mixin: false,
             is_interface: false,
+            is_enum: false,
         };
         let result = substitute_type_with_handle_const(input, &map, true);
 
@@ -349,6 +354,7 @@ mod tests {
             ref_modifier: RefModifier::None,
             is_mixin: false,
             is_interface: false,
+            is_enum: false,
         };
 
         let mut map = SubstitutionMap::default();
@@ -363,6 +369,7 @@ mod tests {
             ref_modifier: RefModifier::None,
             is_mixin: false,
             is_interface: false,
+            is_enum: false,
         };
         let result = substitute_type_with_handle_const(input, &map, false);
 

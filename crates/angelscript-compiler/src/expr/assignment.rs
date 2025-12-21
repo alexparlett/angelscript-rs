@@ -6,8 +6,8 @@
 //! - Member assignment: `obj.field = value`
 //! - Index assignment: `arr[i] = value`
 
-use angelscript_core::{CompilationError, DataType, Span, TypeHash};
-use angelscript_parser::ast::{AssignExpr, AssignOp, BinaryOp, Expr, MemberAccess};
+use angelscript_core::{CompilationError, DataType, OperatorBehavior, Span, TypeHash};
+use angelscript_parser::ast::{AssignExpr, AssignOp, BinaryOp, Expr, MemberAccess, UnaryOp};
 
 use super::{ExprCompiler, Result};
 use crate::bytecode::OpCode;
@@ -113,7 +113,20 @@ fn compile_index_simple_assign<'ast>(
         })?;
 
     let class_name = class.qualified_name.clone();
-    let set_opindex_methods = class.find_methods("set_opIndex").to_vec();
+    // Look up set_opIndex from behaviors, falling back to methods for backwards compatibility
+    let set_opindex_methods = class
+        .behaviors
+        .get_operator(OperatorBehavior::OpIndexSet)
+        .map(|v| v.to_vec())
+        .or_else(|| {
+            let methods = class.find_methods("set_opIndex");
+            if methods.is_empty() {
+                None
+            } else {
+                Some(methods.to_vec())
+            }
+        })
+        .unwrap_or_default();
 
     if !set_opindex_methods.is_empty() {
         // IndexSetter style: set_opIndex(indices..., value)
@@ -172,37 +185,61 @@ fn compile_index_simple_assign<'ast>(
                 .ok_or_else(|| CompilationError::Internal {
                     message: "type not found".to_string(),
                 })?;
-            class.find_methods("opIndex").to_vec()
+            // Look up opIndex from behaviors, falling back to methods
+            class
+                .behaviors
+                .get_operator(OperatorBehavior::OpIndex)
+                .map(|v| v.to_vec())
+                .or_else(|| {
+                    let methods = class.find_methods("opIndex");
+                    if methods.is_empty() {
+                        None
+                    } else {
+                        Some(methods.to_vec())
+                    }
+                })
+                .unwrap_or_default()
         };
 
         if !op_index_methods.is_empty() {
             use crate::overload::resolve_overload;
-            let overload = resolve_overload(&op_index_methods, &index_types, compiler.ctx(), span)?;
+            // Filter to non-const methods for assignment (mutable opIndex)
+            let is_const_obj = obj_info.data_type.is_effectively_const();
+            let mutable_candidates: Vec<TypeHash> = op_index_methods
+                .iter()
+                .filter(|&&hash| {
+                    compiler
+                        .ctx()
+                        .get_function(hash)
+                        .is_some_and(|f| !f.def.is_const())
+                })
+                .copied()
+                .collect();
 
-            let func = compiler
-                .ctx()
-                .get_function(overload.func_hash)
-                .ok_or_else(|| CompilationError::Internal {
-                    message: format!("opIndex method not found: {:?}", overload.func_hash),
-                })?;
-
-            let return_type = func.def.return_type;
-            let is_const_method = func.def.traits.is_const;
-
-            if is_const_method {
+            if mutable_candidates.is_empty() {
                 return Err(CompilationError::CannotModifyConst {
                     message: format!("cannot assign via const opIndex on type '{}'", class_name),
                     span,
                 });
             }
 
-            let is_const_obj = obj_info.data_type.is_effectively_const();
             if is_const_obj {
                 return Err(CompilationError::CannotModifyConst {
                     message: "cannot assign to index on const object".to_string(),
                     span,
                 });
             }
+
+            let overload = resolve_overload(&mutable_candidates, &index_types, compiler.ctx(), span)?;
+
+            let return_type = compiler
+                .ctx()
+                .get_function(overload.func_hash)
+                .ok_or_else(|| CompilationError::Internal {
+                    message: format!("opIndex method not found: {:?}", overload.func_hash),
+                })?
+                .def
+                .return_type;
 
             // Call opIndex to get reference
             // Stack: [obj, idx...] -> [ref]
@@ -327,7 +364,20 @@ fn compile_index_compound_assign<'ast>(
         })?;
 
     let class_name = class.qualified_name.clone();
-    let set_opindex_methods = class.find_methods("set_opIndex").to_vec();
+    // Look up set_opIndex from behaviors, falling back to methods for backwards compatibility
+    let set_opindex_methods = class
+        .behaviors
+        .get_operator(OperatorBehavior::OpIndexSet)
+        .map(|v| v.to_vec())
+        .or_else(|| {
+            let methods = class.find_methods("set_opIndex");
+            if methods.is_empty() {
+                None
+            } else {
+                Some(methods.to_vec())
+            }
+        })
+        .unwrap_or_default();
 
     if !set_opindex_methods.is_empty() {
         // IndexSetter style: need getter first, then setter
@@ -586,11 +636,40 @@ fn analyze_assign_target<'ast>(
         Expr::Ident(ident) => analyze_ident_target(compiler, ident, span),
         Expr::Member(member) => analyze_member_target(compiler, member, span),
         Expr::Index(index) => analyze_index_target(compiler, index, span),
+        Expr::Unary(unary) if unary.op == UnaryOp::HandleOf => {
+            analyze_handle_assign_target(compiler, unary.operand, span)
+        }
         _ => Err(CompilationError::Other {
             message: "invalid assignment target".to_string(),
             span,
         }),
     }
+}
+
+/// Analyze a handle assignment target (`@var = value`).
+///
+/// When the `@` operator is used on the left side of an assignment,
+/// it means we're assigning to the handle itself, not dereferencing it.
+/// The operand must be a valid assignment target that holds a handle type.
+fn analyze_handle_assign_target<'ast>(
+    compiler: &mut ExprCompiler<'_, '_, '_>,
+    operand: &Expr<'ast>,
+    span: Span,
+) -> Result<AssignTarget> {
+    // Recursively analyze the operand (must be ident, member, or index)
+    let target = analyze_assign_target(compiler, operand, span)?;
+
+    // The target must be a handle type for @target = value to make sense
+    if !target.data_type.is_handle {
+        return Err(CompilationError::Other {
+            message: "handle assignment target must be a handle type".to_string(),
+            span,
+        });
+    }
+
+    // Return the same target - handle assignment works the same as regular assignment
+    // The @ on the left side just confirms we're assigning the handle, not dereferencing
+    Ok(target)
 }
 
 /// Analyze an identifier as an assignment target.
@@ -805,10 +884,22 @@ fn analyze_index_target(
                 span,
             })?;
 
-        (
-            class.find_methods("set_opIndex").to_vec(),
-            class.qualified_name.clone(),
-        )
+        // Look up set_opIndex from behaviors, falling back to methods for backwards compatibility
+        let set_ops = class
+            .behaviors
+            .get_operator(OperatorBehavior::OpIndexSet)
+            .map(|v| v.to_vec())
+            .or_else(|| {
+                let methods = class.find_methods("set_opIndex");
+                if methods.is_empty() {
+                    None
+                } else {
+                    Some(methods.to_vec())
+                }
+            })
+            .unwrap_or_default();
+
+        (set_ops, class.qualified_name.clone())
     };
 
     if !set_opindex_methods.is_empty() {

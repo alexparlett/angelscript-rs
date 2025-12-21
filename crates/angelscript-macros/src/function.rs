@@ -669,12 +669,19 @@ fn generate_return_meta(
             let is_const = attrs.is_const;
             let is_variable = attrs.is_variable;
 
+            // Template parameter name for return type substitution
+            let template_param = match &attrs.template_param {
+                Some(name) => quote! { Some(#name) },
+                None => quote! { None },
+            };
+
             quote! {
                 ::angelscript_core::ReturnMeta {
                     type_hash: #type_hash,
                     mode: #mode,
                     is_const: #is_const,
                     is_variable: #is_variable,
+                    template_param: #template_param,
                 }
             }
         }
@@ -688,6 +695,7 @@ fn generate_return_meta(
                         mode: ::angelscript_core::ReturnMode::Value,
                         is_const: false,
                         is_variable: false,
+                        template_param: None,
                     }
                 }
             } else {
@@ -698,6 +706,7 @@ fn generate_return_meta(
                             mode: ::angelscript_core::ReturnMode::Value,
                             is_const: false,
                             is_variable: false,
+                            template_param: None,
                         }
                     },
                     ReturnType::Type(_, ty) => quote! {
@@ -706,6 +715,7 @@ fn generate_return_meta(
                             mode: ::angelscript_core::ReturnMode::Value,
                             is_const: false,
                             is_variable: false,
+                            template_param: None,
                         }
                     },
                 }

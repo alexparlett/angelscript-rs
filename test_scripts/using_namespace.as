@@ -27,7 +27,7 @@ namespace utils {
 
     class Logger {
         void log(const string &in msg) {
-            print(msg);
+            print("{}", msg);
         }
     }
 }

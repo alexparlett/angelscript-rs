@@ -255,6 +255,28 @@ impl Context {
     ) -> Result<(), ContextError> {
         let name = meta.as_name.unwrap_or(meta.name);
 
+        // Get owner class qualified name for resolving template param names
+        let owner_qualified_name = object_type.and_then(|owner| {
+            self.registry
+                .get(owner)
+                .and_then(|e| e.as_class())
+                .map(|c| c.qualified_name.clone())
+        });
+
+        // Helper to resolve template param name to type hash
+        let resolve_template_param = |template_param: Option<&str>, default_hash: TypeHash| {
+            if let Some(param_name) = template_param {
+                if let Some(ref qualified_name) = owner_qualified_name {
+                    // Compute hash as "qualified_name::param_name" (e.g., "dictionary::K")
+                    TypeHash::from_name(&format!("{}::{}", qualified_name, param_name))
+                } else {
+                    default_hash
+                }
+            } else {
+                default_hash
+            }
+        };
+
         // For generic calling convention, use generic_params; otherwise use params
         // Variadic parameters are excluded from the function hash
         let (param_hashes, params, is_variadic) = if meta.is_generic {
@@ -286,16 +308,21 @@ impl Context {
             let is_variadic = meta.generic_params.iter().any(|p| p.is_variadic);
             (hashes, params, is_variadic)
         } else {
-            let hashes: Vec<TypeHash> = meta.params.iter().map(|p| p.type_hash).collect();
+            let hashes: Vec<TypeHash> = meta
+                .params
+                .iter()
+                .map(|p| resolve_template_param(p.template_param, p.type_hash))
+                .collect();
 
             let params: Vec<Param> = meta
                 .params
                 .iter()
                 .map(|p| {
+                    let type_hash = resolve_template_param(p.template_param, p.type_hash);
                     let param = if p.default_value.is_some() {
-                        Param::with_default(p.name, DataType::simple(p.type_hash))
+                        Param::with_default(p.name, DataType::simple(type_hash))
                     } else {
-                        Param::new(p.name, DataType::simple(p.type_hash))
+                        Param::new(p.name, DataType::simple(type_hash))
                     };
                     if p.if_handle_then_const {
                         param.with_if_handle_then_const(true)
@@ -315,12 +342,14 @@ impl Context {
             TypeHash::from_function(name, &param_hashes)
         };
 
-        // Determine return type
-        let return_type = meta
-            .return_meta
-            .type_hash
-            .map(DataType::simple)
-            .unwrap_or_else(DataType::void);
+        // Determine return type (resolve template param if specified)
+        let return_type = if let Some(type_hash) = meta.return_meta.type_hash {
+            let resolved_hash =
+                resolve_template_param(meta.return_meta.template_param, type_hash);
+            DataType::simple(resolved_hash)
+        } else {
+            DataType::void()
+        };
 
         // Build function traits
         let (is_constructor, is_destructor) = match &meta.behavior {
@@ -400,6 +429,13 @@ impl Context {
         self.registry
             .register_function(entry)
             .map_err(|e| ContextError::RegistrationFailed(e.to_string()))?;
+
+        // Add method to the class's methods map (for method lookup during compilation)
+        if let Some(type_hash) = object_type {
+            if let Some(class) = self.registry.get_mut(type_hash).and_then(|e| e.as_class_mut()) {
+                class.add_method(name, func_hash);
+            }
+        }
 
         // Wire behavior to the type's behaviors if this function has an associated behavior
         if let (Some(type_hash), Some(behavior)) = (object_type, &meta.behavior) {

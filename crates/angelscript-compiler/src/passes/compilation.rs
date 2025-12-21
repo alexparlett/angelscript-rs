@@ -129,7 +129,7 @@ impl<'a, 'reg> CompilationPass<'a, 'reg> {
         match item {
             Item::Namespace(ns) => self.compile_namespace(ns),
             Item::Class(class) => self.compile_class(class),
-            Item::Function(func) => self.compile_function(func, None, None),
+            Item::Function(func) => self.compile_function(func, None),
             Item::GlobalVar(var) => self.compile_global_var(var),
 
             // These have no code generation in Pass 2
@@ -182,7 +182,7 @@ impl<'a, 'reg> CompilationPass<'a, 'reg> {
                     if func.is_constructor() {
                         self.compile_constructor(func, class_hash, class, field_inits.as_ref());
                     } else {
-                        self.compile_function(func, Some(class_hash), None);
+                        self.compile_function(func, Some(class_hash));
                     }
                 }
                 ClassMember::Field(_)
@@ -265,7 +265,6 @@ impl<'a, 'reg> CompilationPass<'a, 'reg> {
         &mut self,
         func: &FunctionDecl<'ast>,
         owner: Option<TypeHash>,
-        _field_inits: Option<&(Vec<FieldInit<'ast>>, Vec<FieldInit<'ast>>)>,
     ) {
         // Skip functions without bodies (external, abstract, interface)
         let body = match &func.body {

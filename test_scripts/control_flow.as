@@ -25,28 +25,28 @@ void testIf() {
 void testWhile() {
     int i = 0;
     while (i < 10) {
-        print(i);
+        print("{}", i);
         i++;
     }
-    
+
     int j = 0;
     do {
-        print(j);
+        print("{}", j);
         j++;
     } while (j < 5);
 }
 
 void testFor() {
     for (int i = 0; i < 10; i++) {
-        print(i);
+        print("{}", i);
     }
-    
+
     // Infinite loop (commented out)
     // for (;;) { }
-    
+
     // With complex expressions
     for (int i = 0, j = 10; i < j; i++, j--) {
-        print(i + j);
+        print("{}", i + j);
     }
 }
 
@@ -190,12 +190,12 @@ void testBreakContinue() {
     for (int i = 0; i < 10; i++) {
         if (i == 3) continue;
         if (i == 7) break;
-        print(i);
+        print("{}", i);
     }
 }
 
 void testReturn() {
     int x = 5;
     if (x < 0) return;
-    print(x);
+    print("{}", x);
 }

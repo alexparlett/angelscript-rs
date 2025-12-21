@@ -7,10 +7,11 @@
 //! - Indirect calls: `callable(args)` (opCall or funcdef)
 
 use angelscript_core::{CompilationError, DataType, Span, TypeHash};
-use angelscript_parser::ast::{CallExpr, Expr, IdentExpr};
+use angelscript_parser::ast::{CallExpr, Expr, IdentExpr, TypeBase, TypeExpr};
 
 use crate::expr_info::ExprInfo;
 use crate::overload::{OverloadMatch, resolve_overload};
+use crate::type_resolver::TypeResolver;
 
 use super::{ExprCompiler, emit_conversion};
 
@@ -43,6 +44,7 @@ pub fn compile_call<'ast>(
 /// This could be:
 /// - A function call: `print("hello")`
 /// - A constructor call: `Vector3(1, 2, 3)`
+/// - A template constructor call: `array<int>()`
 /// - A super() call in a constructor: `super(args)` to call base class constructor
 fn compile_ident_call<'ast>(
     compiler: &mut ExprCompiler<'_, '_, '_>,
@@ -55,6 +57,29 @@ fn compile_ident_call<'ast>(
     // Check for super() call (base class constructor call)
     if name == "super" {
         return compile_super_call(compiler, call);
+    }
+
+    // Check if this identifier has template type arguments (e.g., array<int>)
+    // If so, we need to resolve the full template type including instantiation
+    if !ident.type_args.is_empty() {
+        // Build a TypeExpr from the ident to use the TypeResolver
+        let type_expr = TypeExpr::new(
+            false,            // is_const
+            ident.scope,      // scope
+            TypeBase::Named(ident.ident),
+            ident.type_args,  // template_args
+            &[],              // suffixes (handles, etc.)
+            ident.span,
+        );
+
+        // Resolve the template type (this handles instantiation)
+        let resolved_type = {
+            let mut resolver = TypeResolver::new(compiler.ctx_mut());
+            resolver.resolve(&type_expr)?
+        };
+
+        // Call the constructor/factory for the instantiated type
+        return compile_constructor_call(compiler, resolved_type.type_hash, call);
     }
 
     // First, check if this is a type (constructor call)

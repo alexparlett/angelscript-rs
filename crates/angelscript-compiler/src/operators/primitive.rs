@@ -360,17 +360,29 @@ fn resolve_comparison(left: TypeHash, right: TypeHash, op: BinaryOp) -> Option<O
     let promoted = promote_types(left, right)?;
 
     let opcode = match (promoted, op) {
-        // i32 comparisons
-        (t, BinaryOp::Less) if t == primitives::INT32 => OpCode::LtI32,
-        (t, BinaryOp::LessEqual) if t == primitives::INT32 => OpCode::LeI32,
-        (t, BinaryOp::Greater) if t == primitives::INT32 => OpCode::GtI32,
-        (t, BinaryOp::GreaterEqual) if t == primitives::INT32 => OpCode::GeI32,
+        // i32/u32 comparisons (same opcodes, VM interprets as unsigned when appropriate)
+        (t, BinaryOp::Less) if t == primitives::INT32 || t == primitives::UINT32 => OpCode::LtI32,
+        (t, BinaryOp::LessEqual) if t == primitives::INT32 || t == primitives::UINT32 => {
+            OpCode::LeI32
+        }
+        (t, BinaryOp::Greater) if t == primitives::INT32 || t == primitives::UINT32 => {
+            OpCode::GtI32
+        }
+        (t, BinaryOp::GreaterEqual) if t == primitives::INT32 || t == primitives::UINT32 => {
+            OpCode::GeI32
+        }
 
-        // i64 comparisons
-        (t, BinaryOp::Less) if t == primitives::INT64 => OpCode::LtI64,
-        (t, BinaryOp::LessEqual) if t == primitives::INT64 => OpCode::LeI64,
-        (t, BinaryOp::Greater) if t == primitives::INT64 => OpCode::GtI64,
-        (t, BinaryOp::GreaterEqual) if t == primitives::INT64 => OpCode::GeI64,
+        // i64/u64 comparisons
+        (t, BinaryOp::Less) if t == primitives::INT64 || t == primitives::UINT64 => OpCode::LtI64,
+        (t, BinaryOp::LessEqual) if t == primitives::INT64 || t == primitives::UINT64 => {
+            OpCode::LeI64
+        }
+        (t, BinaryOp::Greater) if t == primitives::INT64 || t == primitives::UINT64 => {
+            OpCode::GtI64
+        }
+        (t, BinaryOp::GreaterEqual) if t == primitives::INT64 || t == primitives::UINT64 => {
+            OpCode::GeI64
+        }
 
         // f32 comparisons
         (t, BinaryOp::Less) if t == primitives::FLOAT => OpCode::LtF32,

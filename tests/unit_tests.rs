@@ -168,7 +168,6 @@ fn test_expressions() {
 }
 
 #[test]
-#[ignore = "requires array<T> default constructor and template instantiation"]
 fn test_templates() {
     let module = build_script("templates.as");
     assert!(module.is_built());

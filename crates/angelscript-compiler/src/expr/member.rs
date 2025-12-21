@@ -6,7 +6,7 @@
 //! - Method calls: `obj.method(args)`
 //! - Index access: `arr[i]` (via opIndex/get_opIndex/set_opIndex)
 
-use angelscript_core::{CompilationError, DataType, Span, TypeHash};
+use angelscript_core::{CompilationError, DataType, OperatorBehavior, Span, TypeHash};
 use angelscript_parser::ast::{IndexExpr, MemberAccess, MemberExpr};
 
 use crate::expr_info::ExprInfo;
@@ -139,7 +139,8 @@ pub fn compile_index(
         index_types.push(info.data_type);
     }
 
-    // Check for opIndex methods (extract what we need to avoid borrow conflicts)
+    // Check for opIndex operators (extract what we need to avoid borrow conflicts)
+    // Use behaviors.get_operator for operator lookup (not methods map)
     let (op_index_methods, get_opindex_methods, class_name) = {
         let class = compiler
             .ctx()
@@ -150,11 +151,36 @@ pub fn compile_index(
                 span,
             })?;
 
-        (
-            class.find_methods("opIndex").to_vec(),
-            class.find_methods("get_opIndex").to_vec(),
-            class.qualified_name.clone(),
-        )
+        // Look up operators from behaviors, falling back to methods for backwards compatibility
+        let op_index = class
+            .behaviors
+            .get_operator(OperatorBehavior::OpIndex)
+            .map(|v| v.to_vec())
+            .or_else(|| {
+                let methods = class.find_methods("opIndex");
+                if methods.is_empty() {
+                    None
+                } else {
+                    Some(methods.to_vec())
+                }
+            })
+            .unwrap_or_default();
+
+        let get_opindex = class
+            .behaviors
+            .get_operator(OperatorBehavior::OpIndexGet)
+            .map(|v| v.to_vec())
+            .or_else(|| {
+                let methods = class.find_methods("get_opIndex");
+                if methods.is_empty() {
+                    None
+                } else {
+                    Some(methods.to_vec())
+                }
+            })
+            .unwrap_or_default();
+
+        (op_index, get_opindex, class.qualified_name.clone())
     };
 
     // Try opIndex first (unified read/write)
@@ -200,26 +226,62 @@ fn compile_opindex(
 
     let arg_count = index_types.len();
 
-    // Resolve overload with the index types as arguments
-    let overload = resolve_overload(candidates, index_types, compiler.ctx(), span)?;
+    // Filter candidates by const-ness to avoid ambiguous overloads
+    // For mutable objects: prefer non-const methods, but allow const
+    // For const objects: only const methods are valid
+    let is_const_obj = obj_type.is_effectively_const();
+    let filtered_candidates: Vec<TypeHash> = candidates
+        .iter()
+        .filter(|&&hash| {
+            compiler
+                .ctx()
+                .get_function(hash)
+                .is_some_and(|f| !is_const_obj || f.def.is_const())
+        })
+        .copied()
+        .collect();
 
-    // Const-correctness check and get return type
-    let (is_const_method, return_type) = {
+    // If mutable object and we have both const and non-const, prefer non-const
+    let final_candidates = if !is_const_obj {
+        let non_const: Vec<TypeHash> = filtered_candidates
+            .iter()
+            .filter(|&&hash| {
+                compiler
+                    .ctx()
+                    .get_function(hash)
+                    .is_some_and(|f| !f.def.is_const())
+            })
+            .copied()
+            .collect();
+        if !non_const.is_empty() {
+            non_const
+        } else {
+            filtered_candidates
+        }
+    } else {
+        filtered_candidates
+    };
+
+    if final_candidates.is_empty() {
+        return Err(CompilationError::CannotModifyConst {
+            message: "cannot call non-const opIndex on const object".to_string(),
+            span,
+        });
+    }
+
+    // Resolve overload with the filtered candidates
+    let overload = resolve_overload(&final_candidates, index_types, compiler.ctx(), span)?;
+
+    // Get return type
+    let return_type = {
         let func = compiler
             .ctx()
             .get_function(overload.func_hash)
             .ok_or_else(|| CompilationError::Internal {
                 message: format!("opIndex method not found: {:?}", overload.func_hash),
             })?;
-        (func.def.is_const(), func.def.return_type)
+        func.def.return_type
     };
-
-    if obj_type.is_effectively_const() && !is_const_method {
-        return Err(CompilationError::CannotModifyConst {
-            message: "cannot call non-const opIndex on const object".to_string(),
-            span,
-        });
-    }
 
     // Apply argument conversions
     for conv in overload.arg_conversions.iter().flatten() {

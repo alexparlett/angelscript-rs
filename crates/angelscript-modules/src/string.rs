@@ -807,6 +807,105 @@ impl ScriptString {
         self.0.push_str(&other.0);
     }
 
+    // =========================================================================
+    // STRING + PRIMITIVE OPERATORS
+    // =========================================================================
+
+    /// Concatenate string with int64: "str" + 42
+    #[angelscript_macros::function(instance, const, operator = Operator::Add)]
+    pub fn concat_int(&self, val: i64) -> Self {
+        Self(format!("{}{}", self.0, val))
+    }
+
+    /// Concatenate int64 with string: 42 + "str"
+    #[angelscript_macros::function(instance, const, operator = Operator::AddR)]
+    pub fn concat_int_r(&self, val: i64) -> Self {
+        Self(format!("{}{}", val, self.0))
+    }
+
+    /// Append int64 to string: str += 42
+    #[angelscript_macros::function(instance, operator = Operator::AddAssign)]
+    pub fn append_int(&mut self, val: i64) {
+        use std::fmt::Write;
+        write!(self.0, "{}", val).unwrap();
+    }
+
+    /// Concatenate string with uint64: "str" + 42u
+    #[angelscript_macros::function(instance, const, operator = Operator::Add)]
+    pub fn concat_uint(&self, val: u64) -> Self {
+        Self(format!("{}{}", self.0, val))
+    }
+
+    /// Concatenate uint64 with string: 42u + "str"
+    #[angelscript_macros::function(instance, const, operator = Operator::AddR)]
+    pub fn concat_uint_r(&self, val: u64) -> Self {
+        Self(format!("{}{}", val, self.0))
+    }
+
+    /// Append uint64 to string: str += 42u
+    #[angelscript_macros::function(instance, operator = Operator::AddAssign)]
+    pub fn append_uint(&mut self, val: u64) {
+        use std::fmt::Write;
+        write!(self.0, "{}", val).unwrap();
+    }
+
+    /// Concatenate string with double: "str" + 3.14
+    #[angelscript_macros::function(instance, const, operator = Operator::Add)]
+    pub fn concat_double(&self, val: f64) -> Self {
+        Self(format!("{}{}", self.0, val))
+    }
+
+    /// Concatenate double with string: 3.14 + "str"
+    #[angelscript_macros::function(instance, const, operator = Operator::AddR)]
+    pub fn concat_double_r(&self, val: f64) -> Self {
+        Self(format!("{}{}", val, self.0))
+    }
+
+    /// Append double to string: str += 3.14
+    #[angelscript_macros::function(instance, operator = Operator::AddAssign)]
+    pub fn append_double(&mut self, val: f64) {
+        use std::fmt::Write;
+        write!(self.0, "{}", val).unwrap();
+    }
+
+    /// Concatenate string with float: "str" + 3.14f
+    #[angelscript_macros::function(instance, const, operator = Operator::Add)]
+    pub fn concat_float(&self, val: f32) -> Self {
+        Self(format!("{}{}", self.0, val))
+    }
+
+    /// Concatenate float with string: 3.14f + "str"
+    #[angelscript_macros::function(instance, const, operator = Operator::AddR)]
+    pub fn concat_float_r(&self, val: f32) -> Self {
+        Self(format!("{}{}", val, self.0))
+    }
+
+    /// Append float to string: str += 3.14f
+    #[angelscript_macros::function(instance, operator = Operator::AddAssign)]
+    pub fn append_float(&mut self, val: f32) {
+        use std::fmt::Write;
+        write!(self.0, "{}", val).unwrap();
+    }
+
+    /// Concatenate string with bool: "str" + true
+    #[angelscript_macros::function(instance, const, operator = Operator::Add)]
+    pub fn concat_bool(&self, val: bool) -> Self {
+        Self(format!("{}{}", self.0, val))
+    }
+
+    /// Concatenate bool with string: true + "str"
+    #[angelscript_macros::function(instance, const, operator = Operator::AddR)]
+    pub fn concat_bool_r(&self, val: bool) -> Self {
+        Self(format!("{}{}", val, self.0))
+    }
+
+    /// Append bool to string: str += true
+    #[angelscript_macros::function(instance, operator = Operator::AddAssign)]
+    pub fn append_bool(&mut self, val: bool) {
+        use std::fmt::Write;
+        write!(self.0, "{}", val).unwrap();
+    }
+
     /// Equality comparison.
     #[angelscript_macros::function(operator = Operator::Equals, const)]
     pub fn eq_op(&self, other: Self) -> bool {
@@ -1003,6 +1102,22 @@ pub fn module() -> Module {
         .function(ScriptString::eq_op__meta)
         .function(ScriptString::cmp_op__meta)
         .function(ScriptString::byte_at__meta)
+        // String + primitive operators
+        .function(ScriptString::concat_int__meta)
+        .function(ScriptString::concat_int_r__meta)
+        .function(ScriptString::append_int__meta)
+        .function(ScriptString::concat_uint__meta)
+        .function(ScriptString::concat_uint_r__meta)
+        .function(ScriptString::append_uint__meta)
+        .function(ScriptString::concat_double__meta)
+        .function(ScriptString::concat_double_r__meta)
+        .function(ScriptString::append_double__meta)
+        .function(ScriptString::concat_float__meta)
+        .function(ScriptString::concat_float_r__meta)
+        .function(ScriptString::append_float__meta)
+        .function(ScriptString::concat_bool__meta)
+        .function(ScriptString::concat_bool_r__meta)
+        .function(ScriptString::append_bool__meta)
         // Parsing functions
         .function(parse_int)
         .function(parse_int_radix)

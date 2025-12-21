@@ -5,8 +5,8 @@
 
 use angelscript_core::{
     ClassEntry, CompilationError, DataType, FuncdefEntry, FunctionDef, FunctionEntry, FunctionImpl,
-    PropertyEntry, RegistrationError, Span, TemplateInstanceInfo, TypeBehaviors, TypeHash,
-    TypeKind, entries::TypeSource,
+    ListBehavior, PropertyEntry, RegistrationError, Span, TemplateInstanceInfo, TypeBehaviors,
+    TypeHash, TypeKind, entries::TypeSource, primitives,
 };
 use angelscript_registry::SymbolRegistry;
 
@@ -124,7 +124,16 @@ pub fn instantiate_template_type<T: TemplateCallback>(
     }
 
     // 6. Build substitution map
-    let subst_map = build_substitution_map(&snapshot.params, type_args, span)?;
+    let mut subst_map = build_substitution_map(&snapshot.params, type_args, span)?;
+
+    // Also map primitives::SELF to the first type argument.
+    // Methods with #[template("T")] parameters use SELF as the type hash,
+    // so we need to substitute it with the concrete type.
+    // For single-parameter templates, SELF maps to the only type arg.
+    // For multi-parameter templates, SELF typically represents the primary/first param.
+    if !type_args.is_empty() {
+        subst_map.insert(primitives::SELF, type_args[0]);
+    }
 
     // 7. Create instance entry
     let instance_name =
@@ -147,8 +156,8 @@ pub fn instantiate_template_type<T: TemplateCallback>(
         instance.base_class = Some(substituted_base.type_hash);
     }
 
-    // 9. Copy behaviors (method hashes will be updated when methods are instantiated)
-    instance.behaviors = snapshot.behaviors;
+    // 9. Copy behaviors (will be updated with instantiated function hashes later)
+    instance.behaviors = snapshot.behaviors.clone();
 
     // 10. Copy properties with substituted types
     for prop in &snapshot.properties {
@@ -203,6 +212,18 @@ pub fn instantiate_template_type<T: TemplateCallback>(
             }
         }
     }
+
+    // 14. Instantiate behavior functions (factories, constructors, operators)
+    // The behaviors were copied from the template but contain template function hashes.
+    // We need to instantiate each behavior function with the concrete type arguments.
+    instantiate_behaviors(
+        &snapshot.behaviors,
+        &subst_map,
+        instance_hash,
+        span,
+        registry,
+        global_registry,
+    )?;
 
     Ok(instance_hash)
 }
@@ -481,6 +502,97 @@ fn instantiate_method_for_type(
         })?;
 
     Ok(instance_method_hash)
+}
+
+/// Instantiate behavior functions for a template type instance.
+///
+/// This updates the class's behaviors to use instantiated function hashes
+/// instead of the template's generic function hashes.
+fn instantiate_behaviors(
+    template_behaviors: &TypeBehaviors,
+    subst_map: &super::substitution::SubstitutionMap,
+    instance_hash: TypeHash,
+    span: Span,
+    registry: &mut SymbolRegistry,
+    global_registry: &SymbolRegistry,
+) -> Result<(), CompilationError> {
+    // Helper to instantiate a single function hash
+    let mut instantiate_func = |func_hash: TypeHash| -> Result<TypeHash, CompilationError> {
+        let func = registry
+            .get_function(func_hash)
+            .or_else(|| global_registry.get_function(func_hash));
+
+        if let Some(func) = func {
+            let func_def = func.def.clone();
+            let func_impl = func.implementation.clone();
+            let func_source = func.source;
+
+            instantiate_method_for_type(
+                &func_def,
+                &func_impl,
+                &func_source,
+                subst_map,
+                instance_hash,
+                span,
+                registry,
+            )
+        } else {
+            // Function not found - this shouldn't happen for valid templates
+            Ok(func_hash)
+        }
+    };
+
+    // Instantiate factories
+    let mut inst_factories = Vec::with_capacity(template_behaviors.factories.len());
+    for &factory_hash in &template_behaviors.factories {
+        inst_factories.push(instantiate_func(factory_hash)?);
+    }
+
+    // Instantiate constructors
+    let mut inst_constructors = Vec::with_capacity(template_behaviors.constructors.len());
+    for &ctor_hash in &template_behaviors.constructors {
+        inst_constructors.push(instantiate_func(ctor_hash)?);
+    }
+
+    // Instantiate list factories
+    let mut inst_list_factories = Vec::with_capacity(template_behaviors.list_factories.len());
+    for list_behavior in &template_behaviors.list_factories {
+        let inst_hash = instantiate_func(list_behavior.func_hash)?;
+        inst_list_factories.push(ListBehavior::new(inst_hash, list_behavior.pattern.clone()));
+    }
+
+    // Instantiate list constructs
+    let mut inst_list_constructs = Vec::with_capacity(template_behaviors.list_constructs.len());
+    for list_behavior in &template_behaviors.list_constructs {
+        let inst_hash = instantiate_func(list_behavior.func_hash)?;
+        inst_list_constructs.push(ListBehavior::new(inst_hash, list_behavior.pattern.clone()));
+    }
+
+    // Instantiate operators
+    let mut inst_operators = rustc_hash::FxHashMap::default();
+    for (op_behavior, func_hashes) in &template_behaviors.operators {
+        let mut inst_hashes = Vec::with_capacity(func_hashes.len());
+        for &func_hash in func_hashes {
+            inst_hashes.push(instantiate_func(func_hash)?);
+        }
+        inst_operators.insert(*op_behavior, inst_hashes);
+    }
+
+    // Update the instance's behaviors
+    if let Some(instance_entry) = registry.get_mut(instance_hash)
+        && let Some(class) = instance_entry.as_class_mut()
+    {
+        class.behaviors.factories = inst_factories;
+        class.behaviors.constructors = inst_constructors;
+        class.behaviors.list_factories = inst_list_factories;
+        class.behaviors.list_constructs = inst_list_constructs;
+        class.behaviors.operators = inst_operators;
+        // Note: destructor, addref, release, get_weakref_flag, and template_callback
+        // don't take template parameters, so they don't need instantiation.
+        // They were already copied from the template.
+    }
+
+    Ok(())
 }
 
 /// Format template instance name: "array<int>" or "dict<string, int>".

@@ -121,26 +121,42 @@ impl<'a, 'ctx, 'pool> StmtCompiler<'a, 'ctx, 'pool> {
                 self.emitter.emit_set_local(slot);
                 Ok(())
             } else if let Some(class) = type_entry.as_class() {
-                // Value type - call default constructor
-                if class.behaviors.constructors.is_empty() {
+                // Determine if we use constructors or factories based on type kind
+                let (candidates, uses_constructors) = if class.type_kind.uses_constructors() {
+                    (&class.behaviors.constructors, true)
+                } else if class.type_kind.uses_factories() {
+                    (&class.behaviors.factories, false)
+                } else {
                     return Err(CompilationError::Other {
                         message: format!(
-                            "type '{}' has no default constructor",
+                            "type '{}' cannot be default-initialized",
                             type_entry.qualified_name()
+                        ),
+                        span,
+                    });
+                };
+
+                if candidates.is_empty() {
+                    return Err(CompilationError::Other {
+                        message: format!(
+                            "type '{}' has no default {}",
+                            type_entry.qualified_name(),
+                            if uses_constructors { "constructor" } else { "factory" }
                         ),
                         span,
                     });
                 }
 
-                // Resolve default constructor (0 args) via overload resolution
-                let overload = crate::overload::resolve_overload(
-                    &class.behaviors.constructors,
-                    &[],
-                    self.ctx,
-                    span,
-                )?;
+                // Resolve default constructor/factory (0 args) via overload resolution
+                let overload =
+                    crate::overload::resolve_overload(candidates, &[], self.ctx, span)?;
 
-                self.emitter.emit_new(type_hash, overload.func_hash, 0);
+                if uses_constructors {
+                    self.emitter.emit_new(type_hash, overload.func_hash, 0);
+                } else {
+                    // Reference type - call factory
+                    self.emitter.emit_new_factory(overload.func_hash, 0);
+                }
                 self.emitter.emit_set_local(slot);
                 Ok(())
             } else {

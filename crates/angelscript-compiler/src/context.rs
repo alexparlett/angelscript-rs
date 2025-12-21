@@ -1646,6 +1646,7 @@ mod tests {
             ref_modifier: RefModifier::None,
             is_mixin: true,
             is_interface: false,
+            is_enum: false,
         };
 
         let result = ctx.declare_local("x".into(), mixin_type, false, Span::default());
@@ -1676,6 +1677,7 @@ mod tests {
             ref_modifier: RefModifier::None,
             is_mixin: true,
             is_interface: false,
+            is_enum: false,
         };
 
         let result = ctx.declare_param("param".into(), mixin_type, false, Span::default());
