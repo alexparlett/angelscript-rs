@@ -92,7 +92,34 @@ fn compile_ident_call<'ast>(
         return compile_constructor_call(compiler, type_hash, call);
     }
 
-    // Otherwise, try as a function call - use qualified name for namespaced functions
+    // For unqualified names, check class methods before global functions (cheaper lookup)
+    if ident.scope.is_none()
+        && let Some(class_hash) = compiler.current_class()
+    {
+        let candidates = compiler.ctx().find_methods(class_hash, name);
+        if !candidates.is_empty() {
+            // Get 'this' const status from the declared parameter
+            let this_is_const = compiler
+                .ctx()
+                .get_local("this")
+                .map(|v| v.is_const)
+                .unwrap_or(false);
+
+            // Push 'this' onto the stack
+            compiler.emitter().emit_get_this();
+
+            // Create the object type with const if applicable
+            let mut obj_type = DataType::with_handle(class_hash, false);
+            if this_is_const {
+                obj_type.is_const = true;
+            }
+
+            // Compile as method call
+            return compile_method_call(compiler, &obj_type, name, call.args, span);
+        }
+    }
+
+    // Try as a function call - use qualified name for namespaced functions
     if let Some(candidates) = compiler.ctx().resolve_function(&qualified_name) {
         // Route lambda arguments to specialized handler
         if has_lambda_argument(call) {
@@ -2404,5 +2431,334 @@ mod tests {
             result.unwrap_err(),
             CompilationError::ArgumentCountMismatch { .. }
         ));
+    }
+
+    // =========================================================================
+    // Implicit this method call tests
+    // =========================================================================
+
+    fn register_class_with_methods(registry: &mut SymbolRegistry, class_name: &str) -> TypeHash {
+        let type_hash = TypeHash::from_name(class_name);
+
+        // Create class with two methods: getValue (const) and setValue (non-const)
+        let get_method_hash = TypeHash::from_method(type_hash, "getValue", &[]);
+        let set_method_hash = TypeHash::from_method(type_hash, "setValue", &[primitives::INT32]);
+
+        let mut class = ClassEntry::ffi(class_name, TypeKind::script_object());
+        class.add_method("getValue", get_method_hash);
+        class.add_method("setValue", set_method_hash);
+        registry.register_type(class.into()).unwrap();
+
+        // Register getValue (const method)
+        let mut get_traits = FunctionTraits::default();
+        get_traits.is_const = true;
+        let get_def = FunctionDef::new(
+            get_method_hash,
+            "getValue".to_string(),
+            vec![],
+            vec![],
+            DataType::simple(primitives::INT32),
+            Some(type_hash),
+            get_traits,
+            true,
+            Visibility::Public,
+        );
+        registry
+            .register_function(FunctionEntry::ffi(get_def))
+            .unwrap();
+
+        // Register setValue (non-const method)
+        use angelscript_core::Param;
+        let set_def = FunctionDef::new(
+            set_method_hash,
+            "setValue".to_string(),
+            vec![],
+            vec![Param {
+                name: "value".to_string(),
+                data_type: DataType::simple(primitives::INT32),
+                has_default: false,
+                if_handle_then_const: false,
+            }],
+            DataType::void(),
+            Some(type_hash),
+            FunctionTraits::default(),
+            true,
+            Visibility::Public,
+        );
+        registry
+            .register_function(FunctionEntry::ffi(set_def))
+            .unwrap();
+
+        type_hash
+    }
+
+    #[test]
+    fn implicit_this_method_call_resolves() {
+        use angelscript_parser::ast::{CallExpr, Expr, Ident, IdentExpr};
+        use bumpalo::Bump;
+
+        let (mut registry, _) = create_test_context();
+        let class_hash = register_class_with_methods(&mut registry, "TestClass");
+
+        let mut ctx = CompilationContext::new(&registry);
+        ctx.begin_function();
+
+        // Declare 'this' parameter (as methods do)
+        let _ = ctx.declare_local(
+            "this".to_string(),
+            DataType::with_handle(class_hash, false),
+            false, // mutable this
+            Span::default(),
+        );
+
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
+
+        let mut compiler = ExprCompiler::new(&mut ctx, &mut emitter, Some(class_hash));
+
+        let arena = Bump::new();
+
+        // Call getValue() without 'this.' prefix
+        let callee = arena.alloc(Expr::Ident(IdentExpr {
+            scope: None,
+            ident: Ident::new("getValue", Span::default()),
+            type_args: &[],
+            span: Span::default(),
+        }));
+        let call = CallExpr {
+            callee,
+            args: &[],
+            span: Span::default(),
+        };
+
+        let result = compile_call(&mut compiler, &call);
+
+        assert!(result.is_ok(), "Expected Ok, got: {:?}", result);
+        let info = result.unwrap();
+        assert_eq!(info.data_type.type_hash, primitives::INT32);
+
+        // Verify bytecode: GetThis, CallMethod
+        let chunk = emitter.finish_chunk();
+        use crate::bytecode::OpCode;
+        assert_eq!(chunk.read_op(0), Some(OpCode::GetThis));
+        assert_eq!(chunk.read_op(1), Some(OpCode::CallMethod));
+    }
+
+    #[test]
+    fn implicit_this_const_method_on_const_this_allowed() {
+        use angelscript_parser::ast::{CallExpr, Expr, Ident, IdentExpr};
+        use bumpalo::Bump;
+
+        let (mut registry, _) = create_test_context();
+        let class_hash = register_class_with_methods(&mut registry, "TestClass2");
+
+        let mut ctx = CompilationContext::new(&registry);
+        ctx.begin_function();
+
+        // Declare 'this' as const (const method)
+        let _ = ctx.declare_local(
+            "this".to_string(),
+            DataType::with_handle(class_hash, false),
+            true, // const this
+            Span::default(),
+        );
+
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
+
+        let mut compiler = ExprCompiler::new(&mut ctx, &mut emitter, Some(class_hash));
+
+        let arena = Bump::new();
+
+        // Call getValue() (const method) - should work
+        let callee = arena.alloc(Expr::Ident(IdentExpr {
+            scope: None,
+            ident: Ident::new("getValue", Span::default()),
+            type_args: &[],
+            span: Span::default(),
+        }));
+        let call = CallExpr {
+            callee,
+            args: &[],
+            span: Span::default(),
+        };
+
+        let result = compile_call(&mut compiler, &call);
+
+        assert!(
+            result.is_ok(),
+            "Const method on const this should work: {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn implicit_this_non_const_method_on_const_this_rejected() {
+        use angelscript_parser::ast::{
+            Argument, CallExpr, Expr, Ident, IdentExpr, LiteralExpr, LiteralKind,
+        };
+        use bumpalo::Bump;
+
+        let (mut registry, _) = create_test_context();
+        let class_hash = register_class_with_methods(&mut registry, "TestClass3");
+
+        let mut ctx = CompilationContext::new(&registry);
+        ctx.begin_function();
+
+        // Declare 'this' as const (const method)
+        let _ = ctx.declare_local(
+            "this".to_string(),
+            DataType::with_handle(class_hash, false),
+            true, // const this
+            Span::default(),
+        );
+
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
+
+        let mut compiler = ExprCompiler::new(&mut ctx, &mut emitter, Some(class_hash));
+
+        let arena = Bump::new();
+
+        // Call setValue(42) (non-const method) - should fail
+        let callee = arena.alloc(Expr::Ident(IdentExpr {
+            scope: None,
+            ident: Ident::new("setValue", Span::default()),
+            type_args: &[],
+            span: Span::default(),
+        }));
+        let arg_expr = arena.alloc(Expr::Literal(LiteralExpr {
+            kind: LiteralKind::Int(42),
+            span: Span::default(),
+        }));
+        let args = arena.alloc_slice_copy(&[Argument {
+            name: None,
+            value: arg_expr,
+            span: Span::default(),
+        }]);
+        let call = CallExpr {
+            callee,
+            args,
+            span: Span::default(),
+        };
+
+        let result = compile_call(&mut compiler, &call);
+
+        assert!(result.is_err());
+        assert!(matches!(
+            result.unwrap_err(),
+            CompilationError::CannotModifyConst { .. }
+        ));
+    }
+
+    #[test]
+    fn implicit_this_not_in_class_context() {
+        use angelscript_parser::ast::{CallExpr, Expr, Ident, IdentExpr};
+        use bumpalo::Bump;
+
+        let (mut registry, _) = create_test_context();
+        let _ = register_class_with_methods(&mut registry, "TestClass4");
+
+        let mut ctx = CompilationContext::new(&registry);
+        ctx.begin_function();
+
+        // No 'this' - not in a class method
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
+
+        // current_class is None
+        let mut compiler = ExprCompiler::new(&mut ctx, &mut emitter, None);
+
+        let arena = Bump::new();
+
+        // Call getValue() - should fail as unknown function
+        let callee = arena.alloc(Expr::Ident(IdentExpr {
+            scope: None,
+            ident: Ident::new("getValue", Span::default()),
+            type_args: &[],
+            span: Span::default(),
+        }));
+        let call = CallExpr {
+            callee,
+            args: &[],
+            span: Span::default(),
+        };
+
+        let result = compile_call(&mut compiler, &call);
+
+        assert!(result.is_err());
+        assert!(matches!(
+            result.unwrap_err(),
+            CompilationError::UnknownFunction { .. }
+        ));
+    }
+
+    #[test]
+    fn implicit_this_global_function_takes_precedence_when_scoped() {
+        use angelscript_parser::ast::{CallExpr, Expr, Ident, IdentExpr, Scope};
+        use bumpalo::Bump;
+
+        let (mut registry, _) = create_test_context();
+        let class_hash = register_class_with_methods(&mut registry, "TestClass5");
+
+        // Register a global function with the same name in a namespace
+        let global_func_hash = TypeHash::from_function("ns::getValue", &[]);
+        let global_def = FunctionDef::new(
+            global_func_hash,
+            "getValue".to_string(),
+            vec!["ns".to_string()],
+            vec![],
+            DataType::simple(primitives::FLOAT), // Different return type
+            None,
+            FunctionTraits::default(),
+            false,
+            Visibility::Public,
+        );
+        registry
+            .register_function(FunctionEntry::ffi(global_def))
+            .unwrap();
+
+        let mut ctx = CompilationContext::new(&registry);
+        ctx.begin_function();
+
+        let _ = ctx.declare_local(
+            "this".to_string(),
+            DataType::with_handle(class_hash, false),
+            false,
+            Span::default(),
+        );
+
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
+
+        let mut compiler = ExprCompiler::new(&mut ctx, &mut emitter, Some(class_hash));
+
+        let arena = Bump::new();
+
+        // Call ns::getValue() - should resolve to global, not method
+        let scope_ident = arena.alloc(Ident::new("ns", Span::default()));
+        let segments: &[Ident<'_>] = arena.alloc_slice_copy(&[*scope_ident]);
+        let callee = arena.alloc(Expr::Ident(IdentExpr {
+            scope: Some(Scope {
+                is_absolute: false,
+                segments,
+                span: Span::default(),
+            }),
+            ident: Ident::new("getValue", Span::default()),
+            type_args: &[],
+            span: Span::default(),
+        }));
+        let call = CallExpr {
+            callee,
+            args: &[],
+            span: Span::default(),
+        };
+
+        let result = compile_call(&mut compiler, &call);
+
+        assert!(result.is_ok(), "Expected Ok, got: {:?}", result);
+        let info = result.unwrap();
+        // Should be float (global function), not int (method)
+        assert_eq!(info.data_type.type_hash, primitives::FLOAT);
     }
 }
