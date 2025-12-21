@@ -67,8 +67,7 @@ impl<'a, 'ctx> StmtCompiler<'a, 'ctx> {
 
                 // For handles, AddRef before storing (we Release on scope exit)
                 if var_type.is_handle {
-                    let addref_hash = self.get_addref_behavior(var_type.type_hash, var.span)?;
-                    self.emitter.emit_add_ref(addref_hash);
+                    self.emitter.emit_add_ref();
                 }
 
                 // Store the result in the local slot

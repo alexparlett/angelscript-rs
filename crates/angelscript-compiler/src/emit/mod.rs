@@ -679,26 +679,22 @@ impl BytecodeEmitter {
 
     /// Emit add reference count.
     ///
-    /// The `func_hash` is the hash of the addref behavior function to call.
-    /// For FFI types, this is `behaviors.addref`. For script types, use
-    /// `primitives::SCRIPT_ADDREF` as a placeholder.
-    pub fn emit_add_ref(&mut self, func_hash: TypeHash) {
+    /// The VM will inspect the value on the stack and call the appropriate
+    /// addref behavior based on the runtime type of the object.
+    pub fn emit_add_ref(&mut self) {
         let line = self.current_line;
         let chunk = self.current_chunk();
         chunk.write_op(OpCode::AddRef, line);
-        chunk.write_u64(func_hash.as_u64(), line);
     }
 
     /// Emit release reference count.
     ///
-    /// The `func_hash` is the hash of the release behavior function to call.
-    /// For FFI types, this is `behaviors.release`. For script types, use
-    /// `primitives::SCRIPT_RELEASE` as a placeholder.
-    pub fn emit_release(&mut self, func_hash: TypeHash) {
+    /// The VM will inspect the value on the stack and call the appropriate
+    /// release behavior based on the runtime type of the object.
+    pub fn emit_release(&mut self) {
         let line = self.current_line;
         let chunk = self.current_chunk();
         chunk.write_op(OpCode::Release, line);
-        chunk.write_u64(func_hash.as_u64(), line);
     }
 
     // ==========================================================================
@@ -1107,21 +1103,17 @@ mod tests {
     fn emit_ref_counting() {
         let mut emitter = BytecodeEmitter::new();
         emitter.start_chunk();
-        let addref_hash = TypeHash::from_name("TestClass::AddRef");
-        let release_hash = TypeHash::from_name("TestClass::Release");
 
-        emitter.emit_add_ref(addref_hash);
-        emitter.emit_release(release_hash);
+        emitter.emit_add_ref();
+        emitter.emit_release();
 
         let chunk = emitter.finish_chunk();
 
-        // AddRef at offset 0, followed by 8-byte hash
+        // AddRef at offset 0 (no operands)
         assert_eq!(chunk.read_op(0), Some(OpCode::AddRef));
-        assert_eq!(chunk.read_u64(1), Some(addref_hash.as_u64()));
 
-        // Release at offset 9 (1 + 8), followed by 8-byte hash
-        assert_eq!(chunk.read_op(9), Some(OpCode::Release));
-        assert_eq!(chunk.read_u64(10), Some(release_hash.as_u64()));
+        // Release at offset 1 (no operands)
+        assert_eq!(chunk.read_op(1), Some(OpCode::Release));
     }
 
     #[test]

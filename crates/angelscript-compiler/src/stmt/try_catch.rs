@@ -60,10 +60,8 @@ impl<'a, 'ctx> StmtCompiler<'a, 'ctx> {
         let try_exiting_vars = self.ctx.pop_local_scope();
         for var in &try_exiting_vars {
             if var.data_type.is_handle {
-                let release_hash =
-                    self.get_release_behavior(var.data_type.type_hash, try_catch.try_block.span)?;
                 self.emitter.emit_get_local(var.slot);
-                self.emitter.emit_release(release_hash);
+                self.emitter.emit_release();
             }
         }
 
@@ -88,10 +86,8 @@ impl<'a, 'ctx> StmtCompiler<'a, 'ctx> {
         let catch_exiting_vars = self.ctx.pop_local_scope();
         for var in &catch_exiting_vars {
             if var.data_type.is_handle {
-                let release_hash =
-                    self.get_release_behavior(var.data_type.type_hash, try_catch.catch_block.span)?;
                 self.emitter.emit_get_local(var.slot);
-                self.emitter.emit_release(release_hash);
+                self.emitter.emit_release();
             }
         }
 

@@ -126,9 +126,8 @@ impl<'a, 'ctx> StmtCompiler<'a, 'ctx> {
         let exiting_vars = self.ctx.pop_local_scope();
         for var in exiting_vars {
             if var.data_type.is_handle {
-                let release = self.get_release_behavior(var.data_type.type_hash, for_stmt.span)?;
                 self.emitter.emit_get_local(var.slot);
-                self.emitter.emit_release(release);
+                self.emitter.emit_release();
             }
         }
 
