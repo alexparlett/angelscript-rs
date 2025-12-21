@@ -25,7 +25,7 @@
 //!   Example: `MyVec3` with `Fixed([float, float, float])` expects `{1.0, 2.0, 3.0}`.
 
 use angelscript_core::list_buffer::ListPattern;
-use angelscript_core::{CompilationError, DataType, ListBehavior, Span};
+use angelscript_core::{CompilationError, DataType, ListBehavior, Span, TypeHash};
 use angelscript_parser::ast::{InitElement, InitListExpr};
 
 use super::{ExprCompiler, Result};
@@ -132,6 +132,7 @@ pub fn compile_init_list<'ast>(
 /// Get the list behavior (function + pattern) for a type.
 ///
 /// Returns the first list behavior, preferring factories over constructs.
+/// If the type is a template instance, substitutes template parameters in the pattern.
 fn get_list_behavior(
     compiler: &ExprCompiler<'_, '_>,
     type_hash: angelscript_core::TypeHash,
@@ -159,7 +160,7 @@ fn get_list_behavior(
         })?;
 
     // Get the first list behavior (factories preferred over constructs)
-    class
+    let mut behavior = class
         .behaviors
         .list_behaviors()
         .first()
@@ -170,7 +171,27 @@ fn get_list_behavior(
                 type_entry.qualified_name()
             ),
             span,
-        })
+        })?;
+
+    // If this is a template instance, substitute template parameters in the pattern
+    if let Some(template_hash) = class.template
+        && !class.type_args.is_empty()
+        && let Some(template_entry) = compiler.ctx().get_type(template_hash)
+        && let Some(template_class) = template_entry.as_class()
+    {
+        // Build substitution map: template_params -> type_args
+        // Map from template param hash to concrete type hash
+        let param_map: Vec<(TypeHash, TypeHash)> = template_class
+            .template_params
+            .iter()
+            .zip(class.type_args.iter())
+            .map(|(param, arg)| (*param, arg.type_hash))
+            .collect();
+
+        behavior.pattern = behavior.pattern.substitute_types(&param_map);
+    }
+
+    Ok(behavior)
 }
 
 /// Compile a single element of an init list.
@@ -966,5 +987,259 @@ mod tests {
             }
             _ => panic!("Expected TypeMismatch error, got {:?}", err),
         }
+    }
+
+    #[test]
+    fn init_list_template_substitution_single_param() {
+        let mut registry = SymbolRegistry::with_primitives();
+
+        // Create template parameter T for array<T>
+        let t_param_hash = TypeHash::from_name("array::T");
+
+        // Create the template definition: array<T> with pattern Repeat(T)
+        let array_template_hash = TypeHash::from_name("array");
+        let list_factory_hash = TypeHash::from_name("array::$list");
+
+        let mut template_behaviors = TypeBehaviors::new();
+        template_behaviors.add_list_factory(ListBehavior::new(
+            list_factory_hash,
+            ListPattern::Repeat(t_param_hash), // Pattern uses template param T
+        ));
+
+        let mut array_template = ClassEntry::ffi("array", TypeKind::reference());
+        array_template.behaviors = template_behaviors;
+        array_template.template_params = vec![t_param_hash];
+        registry.register_type(array_template.into()).unwrap();
+
+        // Create the template instance: array<int>
+        let array_int_hash = TypeHash::from_name("array<int>");
+
+        let mut instance_behaviors = TypeBehaviors::new();
+        instance_behaviors.add_list_factory(ListBehavior::new(
+            list_factory_hash,
+            ListPattern::Repeat(t_param_hash), // Still has T, not int!
+        ));
+
+        let mut array_int = ClassEntry::ffi("array<int>", TypeKind::reference());
+        array_int.behaviors = instance_behaviors;
+        array_int.template = Some(array_template_hash); // Points to template
+        array_int.type_args = vec![DataType::simple(primitives::INT32)]; // T = int
+        registry.register_type(array_int.into()).unwrap();
+
+        let mut ctx = CompilationContext::new(&registry);
+        ctx.begin_function();
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
+
+        let arena = Bump::new();
+
+        // Create init list: {1, 2, 3}
+        let elem1 = arena.alloc(Expr::Literal(LiteralExpr {
+            kind: LiteralKind::Int(1),
+            span: Span::new(1, 2, 1),
+        }));
+        let elem2 = arena.alloc(Expr::Literal(LiteralExpr {
+            kind: LiteralKind::Int(2),
+            span: Span::new(1, 5, 1),
+        }));
+        let elem3 = arena.alloc(Expr::Literal(LiteralExpr {
+            kind: LiteralKind::Int(3),
+            span: Span::new(1, 8, 1),
+        }));
+
+        let elements = arena.alloc_slice_copy(&[
+            InitElement::Expr(elem1),
+            InitElement::Expr(elem2),
+            InitElement::Expr(elem3),
+        ]);
+
+        let init_list_expr = InitListExpr {
+            ty: None,
+            elements,
+            span: Span::new(1, 1, 9),
+        };
+
+        let expected_type = DataType::simple(array_int_hash);
+        let mut compiler = create_test_compiler(&mut ctx, &mut emitter);
+        let result = compile_init_list(&mut compiler, &init_list_expr, Some(&expected_type));
+
+        // This should succeed because T is substituted with int
+        assert!(
+            result.is_ok(),
+            "Template substitution should allow int elements: {:?}",
+            result
+        );
+        let info = result.unwrap();
+        assert_eq!(info.data_type.type_hash, array_int_hash);
+    }
+
+    #[test]
+    fn init_list_template_substitution_multiple_params() {
+        let mut registry = SymbolRegistry::with_primitives();
+
+        // Create template parameters K and V for dictionary<K, V>
+        let k_param_hash = TypeHash::from_name("dictionary::K");
+        let v_param_hash = TypeHash::from_name("dictionary::V");
+
+        // Create the template definition: dictionary<K, V> with pattern RepeatTuple([K, V])
+        let dict_template_hash = TypeHash::from_name("dictionary");
+        let list_factory_hash = TypeHash::from_name("dictionary::$list");
+
+        let mut template_behaviors = TypeBehaviors::new();
+        template_behaviors.add_list_factory(ListBehavior::new(
+            list_factory_hash,
+            ListPattern::RepeatTuple(vec![k_param_hash, v_param_hash]), // Pattern uses K, V
+        ));
+
+        let mut dict_template = ClassEntry::ffi("dictionary", TypeKind::reference());
+        dict_template.behaviors = template_behaviors;
+        dict_template.template_params = vec![k_param_hash, v_param_hash];
+        registry.register_type(dict_template.into()).unwrap();
+
+        // Create the template instance: dictionary<int, float>
+        let dict_int_float_hash = TypeHash::from_name("dictionary<int,float>");
+
+        let mut instance_behaviors = TypeBehaviors::new();
+        instance_behaviors.add_list_factory(ListBehavior::new(
+            list_factory_hash,
+            ListPattern::RepeatTuple(vec![k_param_hash, v_param_hash]), // Still has K, V
+        ));
+
+        let mut dict_int_float = ClassEntry::ffi("dictionary<int,float>", TypeKind::reference());
+        dict_int_float.behaviors = instance_behaviors;
+        dict_int_float.template = Some(dict_template_hash);
+        dict_int_float.type_args = vec![
+            DataType::simple(primitives::INT32), // K = int
+            DataType::simple(primitives::FLOAT), // V = float
+        ];
+        registry.register_type(dict_int_float.into()).unwrap();
+
+        let mut ctx = CompilationContext::new(&registry);
+        ctx.begin_function();
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
+
+        let arena = Bump::new();
+
+        // Create init list: {{1, 1.0}, {2, 2.0}}
+        let key1 = arena.alloc(Expr::Literal(LiteralExpr {
+            kind: LiteralKind::Int(1),
+            span: Span::new(1, 3, 1),
+        }));
+        let val1 = arena.alloc(Expr::Literal(LiteralExpr {
+            kind: LiteralKind::Float(1.0),
+            span: Span::new(1, 6, 3),
+        }));
+        let pair1 = InitListExpr {
+            ty: None,
+            elements: arena.alloc_slice_copy(&[InitElement::Expr(key1), InitElement::Expr(val1)]),
+            span: Span::new(1, 2, 8),
+        };
+
+        let key2 = arena.alloc(Expr::Literal(LiteralExpr {
+            kind: LiteralKind::Int(2),
+            span: Span::new(1, 13, 1),
+        }));
+        let val2 = arena.alloc(Expr::Literal(LiteralExpr {
+            kind: LiteralKind::Float(2.0),
+            span: Span::new(1, 16, 3),
+        }));
+        let pair2 = InitListExpr {
+            ty: None,
+            elements: arena.alloc_slice_copy(&[InitElement::Expr(key2), InitElement::Expr(val2)]),
+            span: Span::new(1, 12, 8),
+        };
+
+        let elements =
+            arena.alloc_slice_copy(&[InitElement::InitList(pair1), InitElement::InitList(pair2)]);
+
+        let init_list_expr = InitListExpr {
+            ty: None,
+            elements,
+            span: Span::new(1, 1, 22),
+        };
+
+        let expected_type = DataType::simple(dict_int_float_hash);
+        let mut compiler = create_test_compiler(&mut ctx, &mut emitter);
+        let result = compile_init_list(&mut compiler, &init_list_expr, Some(&expected_type));
+
+        // This should succeed because K and V are substituted with int and float
+        assert!(
+            result.is_ok(),
+            "Multi-param template substitution should work: {:?}",
+            result
+        );
+        let info = result.unwrap();
+        assert_eq!(info.data_type.type_hash, dict_int_float_hash);
+    }
+
+    #[test]
+    fn init_list_non_template_no_substitution() {
+        let mut registry = SymbolRegistry::with_primitives();
+
+        // Create a non-template class with list behavior (no template/type_args)
+        let vec3_hash = TypeHash::from_name("Vec3");
+        let list_construct_hash = TypeHash::from_name("Vec3::$list");
+
+        let mut behaviors = TypeBehaviors::new();
+        behaviors.add_list_construct(ListBehavior::new(
+            list_construct_hash,
+            ListPattern::Fixed(vec![
+                primitives::FLOAT,
+                primitives::FLOAT,
+                primitives::FLOAT,
+            ]),
+        ));
+
+        let mut vec3_class = ClassEntry::ffi("Vec3", TypeKind::value_sized(12, 4, true));
+        vec3_class.behaviors = behaviors;
+        // Note: no template or type_args set
+        registry.register_type(vec3_class.into()).unwrap();
+
+        let mut ctx = CompilationContext::new(&registry);
+        ctx.begin_function();
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
+
+        let arena = Bump::new();
+
+        // Create init list: {1.0, 2.0, 3.0}
+        let x = arena.alloc(Expr::Literal(LiteralExpr {
+            kind: LiteralKind::Float(1.0),
+            span: Span::new(1, 2, 3),
+        }));
+        let y = arena.alloc(Expr::Literal(LiteralExpr {
+            kind: LiteralKind::Float(2.0),
+            span: Span::new(1, 7, 3),
+        }));
+        let z = arena.alloc(Expr::Literal(LiteralExpr {
+            kind: LiteralKind::Float(3.0),
+            span: Span::new(1, 12, 3),
+        }));
+
+        let elements = arena.alloc_slice_copy(&[
+            InitElement::Expr(x),
+            InitElement::Expr(y),
+            InitElement::Expr(z),
+        ]);
+
+        let init_list_expr = InitListExpr {
+            ty: None,
+            elements,
+            span: Span::new(1, 1, 15),
+        };
+
+        let expected_type = DataType::simple(vec3_hash);
+        let mut compiler = create_test_compiler(&mut ctx, &mut emitter);
+        let result = compile_init_list(&mut compiler, &init_list_expr, Some(&expected_type));
+
+        // Non-template types should still work without substitution
+        assert!(
+            result.is_ok(),
+            "Non-template init list should work: {:?}",
+            result
+        );
+        let info = result.unwrap();
+        assert_eq!(info.data_type.type_hash, vec3_hash);
     }
 }

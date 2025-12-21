@@ -223,7 +223,6 @@ fn test_data_structures() {
 // =============================================================================
 
 #[test]
-#[ignore = "requires init list support"]
 fn test_large_function() {
     let module = build_script("large_function.as");
     assert!(module.is_built());
