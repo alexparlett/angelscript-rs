@@ -477,6 +477,26 @@ pub enum RegistrationError {
     /// The type is invalid or malformed.
     #[error("invalid type: {0}")]
     InvalidType(String),
+
+    /// A behavior is forbidden for this type kind.
+    #[error("type '{type_name}': {behavior} behavior not allowed - {reason}")]
+    ForbiddenBehavior {
+        /// The type name.
+        type_name: String,
+        /// The behavior that was forbidden.
+        behavior: &'static str,
+        /// Why it's forbidden.
+        reason: String,
+    },
+
+    /// Required behaviors are missing for this type kind.
+    #[error("type '{type_name}' is missing required behaviors: {}", missing.join(", "))]
+    MissingBehaviors {
+        /// The type name.
+        type_name: String,
+        /// List of missing behavior names.
+        missing: Vec<&'static str>,
+    },
 }
 
 // ============================================================================
@@ -763,6 +783,28 @@ pub enum CompilationError {
         /// Where the cast occurred.
         span: Span,
     },
+
+    /// Invalid handle type - type does not support handles.
+    #[error("at {span}: cannot create handle to '{type_name}': {reason}")]
+    InvalidHandleType {
+        /// The type name.
+        type_name: String,
+        /// The reason why handles are not allowed.
+        reason: String,
+        /// Where the handle was declared.
+        span: Span,
+    },
+
+    /// Invalid parameter type - type cannot be used as a parameter.
+    #[error("at {span}: type '{type_name}' cannot be used as a parameter: {reason}")]
+    InvalidParameterType {
+        /// The type name.
+        type_name: String,
+        /// The reason why the type cannot be a parameter.
+        reason: String,
+        /// Where the parameter was declared.
+        span: Span,
+    },
 }
 
 impl CompilationError {
@@ -797,6 +839,8 @@ impl CompilationError {
             CompilationError::ArgumentCountMismatch { span, .. } => *span,
             CompilationError::InvalidCast { span, .. } => *span,
             CompilationError::NoBaseDefaultConstructor { span, .. } => *span,
+            CompilationError::InvalidHandleType { span, .. } => *span,
+            CompilationError::InvalidParameterType { span, .. } => *span,
         }
     }
 }

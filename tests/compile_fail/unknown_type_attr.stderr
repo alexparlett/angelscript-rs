@@ -1,4 +1,4 @@
-error: unknown angelscript attribute 'unknown_attr'. Valid attributes are: name, value, pod, reference, scoped, nocount, as_handle, template, specialization_of, specialization_args
+error: unknown angelscript attribute 'unknown_attr'. Valid attributes are: name, value, pod, reference, scoped, nocount, nohandle, as_handle, template, specialization_of, specialization_args
  --> tests/compile_fail/unknown_type_attr.rs:6:15
   |
 6 | #[angelscript(unknown_attr)]

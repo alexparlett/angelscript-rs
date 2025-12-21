@@ -519,6 +519,46 @@ impl SymbolRegistry {
     pub fn get_namespace_globals(&self, namespace: &str) -> Option<&FxHashMap<String, TypeHash>> {
         self.globals_by_namespace.get(namespace)
     }
+
+    // ==========================================================================
+    // Validation
+    // ==========================================================================
+
+    /// Validate all FFI types have correct behaviors for their type kinds.
+    ///
+    /// This should be called during module installation to ensure:
+    /// - Standard reference types have AddRef and Release
+    /// - Scoped types have Release
+    /// - Non-POD value types have constructor and destructor
+    /// - NoCount/NoHandle types don't have forbidden behaviors
+    ///
+    /// Only validates FFI types - script types have behaviors auto-generated.
+    ///
+    /// Returns a list of all validation errors found.
+    pub fn validate_ffi_behaviors(&self) -> Vec<RegistrationError> {
+        let mut errors = Vec::new();
+
+        for entry in self.types.values() {
+            if let TypeEntry::Class(class) = entry {
+                // Skip non-FFI types (script types have auto-generated behaviors)
+                if !class.source.is_ffi() {
+                    continue;
+                }
+
+                // Skip template definitions (validated when instantiated)
+                if class.is_template() {
+                    continue;
+                }
+
+                let result = class.behaviors.validate(&class.type_kind);
+                if !result.is_ok() {
+                    errors.extend(result.into_errors(class.qualified_name.clone()));
+                }
+            }
+        }
+
+        errors
+    }
 }
 
 impl std::fmt::Debug for SymbolRegistry {
@@ -1029,5 +1069,180 @@ mod tests {
         assert!(types.get("int").is_some());
         assert!(types.get("float").is_some());
         assert!(types.get("bool").is_some());
+    }
+
+    // =========================================================================
+    // Behavior Validation Tests
+    // =========================================================================
+
+    #[test]
+    fn validate_standard_ref_missing_behaviors() {
+        let mut registry = SymbolRegistry::new();
+
+        // Standard reference type without AddRef/Release
+        let class = ClassEntry::ffi("BadRefType", TypeKind::reference());
+        registry.register_type(class.into()).unwrap();
+
+        let errors = registry.validate_ffi_behaviors();
+        assert!(!errors.is_empty());
+        assert!(errors.iter().any(|e| matches!(e, RegistrationError::MissingBehaviors { missing, .. } if missing.contains(&"AddRef"))));
+    }
+
+    #[test]
+    fn validate_standard_ref_with_behaviors() {
+        use angelscript_core::TypeHash;
+
+        let mut registry = SymbolRegistry::new();
+
+        // Standard reference type with proper behaviors
+        let mut class = ClassEntry::ffi("GoodRefType", TypeKind::reference());
+        class.behaviors.set_addref(TypeHash::from_name("addref"));
+        class.behaviors.set_release(TypeHash::from_name("release"));
+        registry.register_type(class.into()).unwrap();
+
+        let errors = registry.validate_ffi_behaviors();
+        assert!(errors.is_empty(), "Expected no errors, got: {:?}", errors);
+    }
+
+    #[test]
+    fn validate_nocount_forbids_addref_release() {
+        use angelscript_core::TypeHash;
+
+        let mut registry = SymbolRegistry::new();
+
+        // NoCount type with forbidden AddRef
+        let mut class = ClassEntry::ffi("BadNoCount", TypeKind::no_count());
+        class.behaviors.set_addref(TypeHash::from_name("addref"));
+        registry.register_type(class.into()).unwrap();
+
+        let errors = registry.validate_ffi_behaviors();
+        assert!(!errors.is_empty());
+        assert!(errors.iter().any(|e| matches!(
+            e,
+            RegistrationError::ForbiddenBehavior {
+                behavior: "AddRef",
+                ..
+            }
+        )));
+    }
+
+    #[test]
+    fn validate_nocount_without_forbidden_behaviors() {
+        let mut registry = SymbolRegistry::new();
+
+        // NoCount type without any behaviors (valid)
+        let class = ClassEntry::ffi("GoodNoCount", TypeKind::no_count());
+        registry.register_type(class.into()).unwrap();
+
+        let errors = registry.validate_ffi_behaviors();
+        assert!(errors.is_empty(), "Expected no errors, got: {:?}", errors);
+    }
+
+    #[test]
+    fn validate_nohandle_forbids_factory() {
+        use angelscript_core::TypeHash;
+
+        let mut registry = SymbolRegistry::new();
+
+        // NoHandle type with forbidden factory
+        let mut class = ClassEntry::ffi("BadNoHandle", TypeKind::no_handle());
+        class.behaviors.add_factory(TypeHash::from_name("factory"));
+        registry.register_type(class.into()).unwrap();
+
+        let errors = registry.validate_ffi_behaviors();
+        assert!(!errors.is_empty());
+        assert!(errors.iter().any(|e| matches!(
+            e,
+            RegistrationError::ForbiddenBehavior {
+                behavior: "Factory",
+                ..
+            }
+        )));
+    }
+
+    #[test]
+    fn validate_scoped_needs_release() {
+        let mut registry = SymbolRegistry::new();
+
+        // Scoped type without Release
+        let class = ClassEntry::ffi("BadScoped", TypeKind::scoped());
+        registry.register_type(class.into()).unwrap();
+
+        let errors = registry.validate_ffi_behaviors();
+        assert!(!errors.is_empty());
+        assert!(errors.iter().any(|e| matches!(e, RegistrationError::MissingBehaviors { missing, .. } if missing.contains(&"Release"))));
+    }
+
+    #[test]
+    fn validate_scoped_with_release() {
+        use angelscript_core::TypeHash;
+
+        let mut registry = SymbolRegistry::new();
+
+        // Scoped type with Release (valid)
+        let mut class = ClassEntry::ffi("GoodScoped", TypeKind::scoped());
+        class.behaviors.set_release(TypeHash::from_name("release"));
+        registry.register_type(class.into()).unwrap();
+
+        let errors = registry.validate_ffi_behaviors();
+        assert!(errors.is_empty(), "Expected no errors, got: {:?}", errors);
+    }
+
+    #[test]
+    fn validate_scoped_forbids_addref() {
+        use angelscript_core::TypeHash;
+
+        let mut registry = SymbolRegistry::new();
+
+        // Scoped type with forbidden AddRef
+        let mut class = ClassEntry::ffi("BadScoped", TypeKind::scoped());
+        class.behaviors.set_addref(TypeHash::from_name("addref"));
+        class.behaviors.set_release(TypeHash::from_name("release"));
+        registry.register_type(class.into()).unwrap();
+
+        let errors = registry.validate_ffi_behaviors();
+        assert!(!errors.is_empty());
+        assert!(errors.iter().any(|e| matches!(
+            e,
+            RegistrationError::ForbiddenBehavior {
+                behavior: "AddRef",
+                ..
+            }
+        )));
+    }
+
+    #[test]
+    fn validate_skips_templates() {
+        use angelscript_core::TypeHash;
+
+        let mut registry = SymbolRegistry::new();
+
+        // Template definition without behaviors (should be skipped)
+        let mut class = ClassEntry::ffi("array", TypeKind::reference());
+        class.template_params = vec![TypeHash::from_name("array::T")];
+        registry.register_type(class.into()).unwrap();
+
+        let errors = registry.validate_ffi_behaviors();
+        // Templates are skipped, so no errors
+        assert!(errors.is_empty(), "Expected no errors, got: {:?}", errors);
+    }
+
+    #[test]
+    fn validate_behaviors_directly() {
+        use angelscript_core::TypeHash;
+
+        // Test validating behaviors directly on a class
+        let mut class = ClassEntry::ffi("TestClass", TypeKind::reference());
+        class.behaviors.set_addref(TypeHash::from_name("addref"));
+        class.behaviors.set_release(TypeHash::from_name("release"));
+
+        let result = class.behaviors.validate(&class.type_kind);
+        assert!(result.is_ok());
+
+        // Now test with missing behaviors
+        let bad_class = ClassEntry::ffi("BadClass", TypeKind::reference());
+        let result = bad_class.behaviors.validate(&bad_class.type_kind);
+        assert!(!result.is_ok());
+        assert!(result.missing.contains(&"AddRef"));
     }
 }
