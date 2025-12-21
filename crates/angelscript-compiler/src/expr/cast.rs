@@ -18,8 +18,8 @@
 use angelscript_core::{CompilationError, TypeHash};
 use angelscript_parser::ast::CastExpr;
 
-use super::{ExprCompiler, Result};
-use crate::conversion::find_cast;
+use super::{ExprCompiler, Result, emit_conversion};
+use crate::conversion::{find_cast, find_primitive_conversion};
 use crate::expr_info::ExprInfo;
 use crate::type_resolver::TypeResolver;
 
@@ -52,15 +52,25 @@ pub fn compile_cast<'ast>(
         return Ok(ExprInfo::rvalue(target_type));
     }
 
-    // 4. Handle casts only work between handle types
+    // 4. Primitive conversions (int -> float, float -> int, etc.)
+    // This handles explicit Type(expr) syntax for primitives
+    if source_type.is_primitive()
+        && target_type.is_primitive()
+        && let Some(conv) = find_primitive_conversion(source_type, &target_type)
+    {
+        emit_conversion(compiler.emitter(), &conv);
+        return Ok(ExprInfo::rvalue(target_type));
+    }
+
+    // 5. Handle casts only work between handle types
     if source_type.is_handle && target_type.is_handle {
-        // 4a. Try hierarchy casts (derived to base, base to derived, interface)
+        // 5a. Try hierarchy casts (derived to base, base to derived, interface)
         if let Some(()) = try_hierarchy_cast(source_type.type_hash, target_type.type_hash, compiler)
         {
             return Ok(ExprInfo::rvalue(target_type));
         }
 
-        // 4b. Try user-defined cast operators (opCast, opImplCast)
+        // 5b. Try user-defined cast operators (opCast, opImplCast)
         if let Some((method_hash, _is_implicit)) =
             find_cast(source_type, &target_type, compiler.ctx())
         {
@@ -70,7 +80,7 @@ pub fn compile_cast<'ast>(
         }
     }
 
-    // 5. No valid cast found
+    // 6. No valid cast found
     Err(CompilationError::InvalidCast {
         from: compiler
             .ctx()

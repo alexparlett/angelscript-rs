@@ -189,6 +189,8 @@ impl Conversion {
     pub const COST_CLASS_TO_INTERFACE: u32 = Self::COST_REFERENCE_CAST;
     /// Cost for user-defined implicit conversion.
     pub const COST_USER_IMPLICIT: u32 = Self::COST_TO_OBJECT;
+    /// Cost for identity conversion (alias for COST_EXACT).
+    pub const COST_IDENTITY: u32 = Self::COST_EXACT;
 
     /// Create an identity conversion (no conversion needed).
     pub(crate) fn identity() -> Self {

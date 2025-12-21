@@ -11,6 +11,15 @@ pub fn find_primitive_conversion(source: &DataType, target: &DataType) -> Option
     let from = source.type_hash;
     let to = target.type_hash;
 
+    // Identity conversion (same type) - cheapest, no operation needed
+    if from == to && is_primitive_numeric(from) {
+        return Some(Conversion {
+            kind: ConversionKind::Identity,
+            cost: Conversion::COST_IDENTITY,
+            is_implicit: true,
+        });
+    }
+
     // Integer widening (always implicit)
     if is_integer_widening(from, to) {
         return Some(Conversion {
@@ -70,6 +79,16 @@ pub fn find_primitive_conversion(source: &DataType, target: &DataType) -> Option
         return Some(Conversion {
             kind: ConversionKind::Primitive { from, to },
             cost: Conversion::COST_PRIMITIVE_NARROWING,
+            is_implicit: true,
+        });
+    }
+
+    // Catch-all: any numeric to any other numeric is allowed
+    // This handles edge cases not covered above (e.g., cross-signed narrowing)
+    if is_primitive_numeric(from) && is_primitive_numeric(to) {
+        return Some(Conversion {
+            kind: ConversionKind::Primitive { from, to },
+            cost: Conversion::COST_PRIMITIVE_NARROWING, // Use narrowing cost as conservative default
             is_implicit: true,
         });
     }
@@ -320,13 +339,17 @@ mod tests {
     }
 
     #[test]
-    fn no_conversion_for_same_type() {
+    fn identity_conversion_for_same_type() {
         let from = DataType::simple(primitives::INT32);
         let to = DataType::simple(primitives::INT32);
         let conv = find_primitive_conversion(&from, &to);
 
-        // Identity is handled at higher level, not here
-        assert!(conv.is_none());
+        // Identity conversion is the cheapest (cost 0)
+        assert!(conv.is_some());
+        let conv = conv.unwrap();
+        assert!(conv.is_implicit);
+        assert_eq!(conv.cost, Conversion::COST_IDENTITY);
+        assert!(matches!(conv.kind, ConversionKind::Identity));
     }
 
     #[test]
