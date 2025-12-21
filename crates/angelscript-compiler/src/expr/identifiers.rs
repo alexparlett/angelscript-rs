@@ -32,15 +32,22 @@ pub fn compile_ident<'ast>(
         return compile_local(compiler, lookup);
     }
 
-    // Check if scope refers to an enum type (e.g., Color::Red)
+    // Check if scope refers to an enum type (e.g., Color::Red or test::Color::Green)
     if let Some(scope) = ident.scope
-        && scope.segments.len() == 1
-        && !scope.is_absolute
+        && !scope.segments.is_empty()
     {
-        let enum_name = scope.segments[0].name;
+        // Build the full scope path as the enum type name
+        // For `test::Color::Green`: scope = ["test", "Color"], ident = "Green"
+        // So enum_name = "test::Color" and value_name = "Green"
+        let enum_name: String = scope
+            .segments
+            .iter()
+            .map(|s| s.name)
+            .collect::<Vec<_>>()
+            .join("::");
 
         // Try to resolve the scope as a type
-        if let Some(type_hash) = compiler.ctx().resolve_type(enum_name) {
+        if let Some(type_hash) = compiler.ctx().resolve_type(&enum_name) {
             // Check if it's an enum - extract data before mutably borrowing
             let enum_value = compiler
                 .ctx()

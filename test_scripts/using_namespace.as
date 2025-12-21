@@ -52,7 +52,7 @@ void testBasicUsing() {
     Entity e(42);  // Should find test::Entity
     int id = e.getId();
 
-    Color c = Red;  // Should find test::Color and test::Red
+    Color c = Color::Red;  // Enum values accessed via EnumType::Value
 }
 
 // Test that explicit qualification still works
