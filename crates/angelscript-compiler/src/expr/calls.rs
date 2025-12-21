@@ -2043,4 +2043,362 @@ mod tests {
 
         assert!(class.is_abstract);
     }
+
+    // =========================================================================
+    // Lambda function call tests
+    // =========================================================================
+
+    #[test]
+    fn has_lambda_argument_detects_lambda() {
+        use angelscript_parser::ast::{
+            Argument, Block, CallExpr, Expr, Ident, IdentExpr, LambdaExpr,
+        };
+        use bumpalo::Bump;
+
+        let arena = Bump::new();
+
+        // Create a lambda expression
+        let body = arena.alloc(Block {
+            stmts: &[],
+            span: Span::default(),
+        });
+        let lambda_expr = arena.alloc(LambdaExpr {
+            params: &[],
+            return_type: None,
+            body,
+            span: Span::default(),
+        });
+        let lambda = arena.alloc(Expr::Lambda(lambda_expr));
+
+        // Create a call with lambda argument
+        let callee = arena.alloc(Expr::Ident(IdentExpr {
+            scope: None,
+            ident: Ident::new("test", Span::default()),
+            type_args: &[],
+            span: Span::default(),
+        }));
+        let args = arena.alloc_slice_copy(&[Argument {
+            name: None,
+            value: lambda,
+            span: Span::default(),
+        }]);
+        let call = CallExpr {
+            callee,
+            args,
+            span: Span::default(),
+        };
+
+        assert!(has_lambda_argument(&call));
+    }
+
+    #[test]
+    fn has_lambda_argument_no_lambda() {
+        use angelscript_parser::ast::{
+            Argument, CallExpr, Expr, Ident, IdentExpr, LiteralExpr, LiteralKind,
+        };
+        use bumpalo::Bump;
+
+        let arena = Bump::new();
+
+        // Create a non-lambda expression
+        let literal = arena.alloc(Expr::Literal(LiteralExpr {
+            kind: LiteralKind::Int(42),
+            span: Span::default(),
+        }));
+
+        // Create a call without lambda argument
+        let callee = arena.alloc(Expr::Ident(IdentExpr {
+            scope: None,
+            ident: Ident::new("test", Span::default()),
+            type_args: &[],
+            span: Span::default(),
+        }));
+        let args = arena.alloc_slice_copy(&[Argument {
+            name: None,
+            value: literal,
+            span: Span::default(),
+        }]);
+        let call = CallExpr {
+            callee,
+            args,
+            span: Span::default(),
+        };
+
+        assert!(!has_lambda_argument(&call));
+    }
+
+    #[test]
+    fn has_lambda_argument_empty_args() {
+        use angelscript_parser::ast::{CallExpr, Expr, Ident, IdentExpr};
+        use bumpalo::Bump;
+
+        let arena = Bump::new();
+
+        let callee = arena.alloc(Expr::Ident(IdentExpr {
+            scope: None,
+            ident: Ident::new("test", Span::default()),
+            type_args: &[],
+            span: Span::default(),
+        }));
+        let call = CallExpr {
+            callee,
+            args: &[],
+            span: Span::default(),
+        };
+
+        assert!(!has_lambda_argument(&call));
+    }
+
+    #[test]
+    fn compile_lambda_function_call_multiple_candidates_error() {
+        use angelscript_core::FuncdefEntry;
+        use angelscript_parser::ast::{
+            Argument, Block, CallExpr, Expr, Ident, IdentExpr, LambdaExpr,
+        };
+        use bumpalo::Bump;
+
+        let (mut registry, _) = create_test_context();
+
+        // Register funcdef for the lambda parameter type
+        let funcdef_hash = TypeHash::from_name("Callback");
+        let funcdef = FuncdefEntry::ffi("Callback", vec![], DataType::void());
+        registry.register_type(funcdef.into()).unwrap();
+
+        // Register two overloaded functions that take the funcdef
+        let func1_hash = register_function_with_params(
+            &mut registry,
+            "apply",
+            vec![DataType::simple(funcdef_hash)],
+            DataType::void(),
+        );
+        let func2_hash = register_function_with_params(
+            &mut registry,
+            "apply",
+            vec![
+                DataType::simple(funcdef_hash),
+                DataType::simple(primitives::INT32),
+            ],
+            DataType::void(),
+        );
+
+        let mut ctx = CompilationContext::new(&registry);
+        ctx.begin_function();
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
+        let mut compiler = ExprCompiler::new(&mut ctx, &mut emitter, None);
+
+        let arena = Bump::new();
+
+        // Create lambda expression
+        let body = arena.alloc(Block {
+            stmts: &[],
+            span: Span::default(),
+        });
+        let lambda_expr = arena.alloc(LambdaExpr {
+            params: &[],
+            return_type: None,
+            body,
+            span: Span::default(),
+        });
+        let lambda = arena.alloc(Expr::Lambda(lambda_expr));
+
+        // Create call with lambda argument
+        let callee = arena.alloc(Expr::Ident(IdentExpr {
+            scope: None,
+            ident: Ident::new("apply", Span::default()),
+            type_args: &[],
+            span: Span::default(),
+        }));
+        let args = arena.alloc_slice_copy(&[Argument {
+            name: None,
+            value: lambda,
+            span: Span::default(),
+        }]);
+        let call = CallExpr {
+            callee,
+            args,
+            span: Span::default(),
+        };
+
+        // Multiple candidates should error
+        let result =
+            compile_lambda_function_call(&mut compiler, vec![func1_hash, func2_hash], &call);
+
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            CompilationError::TypeMismatch { message, .. } => {
+                assert!(
+                    message.contains("unambiguous"),
+                    "Error should mention ambiguity: {}",
+                    message
+                );
+            }
+            other => panic!("Expected TypeMismatch error, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn compile_lambda_function_call_single_candidate_succeeds() {
+        use angelscript_core::FuncdefEntry;
+        use angelscript_parser::ast::{
+            Argument, Block, CallExpr, Expr, Ident, IdentExpr, LambdaExpr,
+        };
+        use bumpalo::Bump;
+
+        let (mut registry, _) = create_test_context();
+
+        // Register funcdef for the lambda parameter type
+        let funcdef_hash = TypeHash::from_name("VoidCallback");
+        let funcdef = FuncdefEntry::ffi("VoidCallback", vec![], DataType::void());
+        registry.register_type(funcdef.into()).unwrap();
+
+        // Register single function that takes the funcdef
+        let func_hash = register_function_with_params(
+            &mut registry,
+            "execute",
+            vec![DataType::simple(funcdef_hash)],
+            DataType::simple(primitives::INT32),
+        );
+
+        let mut ctx = CompilationContext::new(&registry);
+        ctx.begin_function();
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
+        let mut compiler = ExprCompiler::new(&mut ctx, &mut emitter, None);
+
+        let arena = Bump::new();
+
+        // Create lambda expression with no params (matches funcdef)
+        let body = arena.alloc(Block {
+            stmts: &[],
+            span: Span::default(),
+        });
+        let lambda_expr = arena.alloc(LambdaExpr {
+            params: &[],
+            return_type: None,
+            body,
+            span: Span::default(),
+        });
+        let lambda = arena.alloc(Expr::Lambda(lambda_expr));
+
+        // Create call with lambda argument
+        let callee = arena.alloc(Expr::Ident(IdentExpr {
+            scope: None,
+            ident: Ident::new("execute", Span::default()),
+            type_args: &[],
+            span: Span::default(),
+        }));
+        let args = arena.alloc_slice_copy(&[Argument {
+            name: None,
+            value: lambda,
+            span: Span::default(),
+        }]);
+        let call = CallExpr {
+            callee,
+            args,
+            span: Span::default(),
+        };
+
+        // Single candidate should succeed
+        let result = compile_lambda_function_call(&mut compiler, vec![func_hash], &call);
+
+        assert!(
+            result.is_ok(),
+            "Single candidate should succeed: {:?}",
+            result
+        );
+        let info = result.unwrap();
+
+        // Validate return type matches the function's return type
+        assert_eq!(info.data_type.type_hash, primitives::INT32);
+
+        // Validate a lambda was compiled (registered as a function)
+        let compiled = emitter.compiled_functions();
+        assert_eq!(compiled.len(), 1, "Lambda should be registered");
+
+        // Validate the lambda's bytecode contains ReturnVoid (void lambda with empty body)
+        use crate::bytecode::OpCode;
+        let lambda_bytecode = &compiled[0].bytecode;
+        let code = lambda_bytecode.code();
+        assert!(!code.is_empty(), "Lambda bytecode should not be empty");
+        assert_eq!(
+            code[code.len() - 1],
+            OpCode::ReturnVoid as u8,
+            "Void lambda should end with ReturnVoid"
+        );
+    }
+
+    #[test]
+    fn compile_lambda_function_call_arg_count_mismatch() {
+        use angelscript_core::FuncdefEntry;
+        use angelscript_parser::ast::{
+            Argument, Block, CallExpr, Expr, Ident, IdentExpr, LambdaExpr,
+        };
+        use bumpalo::Bump;
+
+        let (mut registry, _) = create_test_context();
+
+        // Register funcdef
+        let funcdef_hash = TypeHash::from_name("Callback2");
+        let funcdef = FuncdefEntry::ffi("Callback2", vec![], DataType::void());
+        registry.register_type(funcdef.into()).unwrap();
+
+        // Register function that takes TWO funcdef params
+        let func_hash = register_function_with_params(
+            &mut registry,
+            "dualApply",
+            vec![
+                DataType::simple(funcdef_hash),
+                DataType::simple(funcdef_hash),
+            ],
+            DataType::void(),
+        );
+
+        let mut ctx = CompilationContext::new(&registry);
+        ctx.begin_function();
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
+        let mut compiler = ExprCompiler::new(&mut ctx, &mut emitter, None);
+
+        let arena = Bump::new();
+
+        // Create only ONE lambda argument (but function expects TWO)
+        let body = arena.alloc(Block {
+            stmts: &[],
+            span: Span::default(),
+        });
+        let lambda_expr = arena.alloc(LambdaExpr {
+            params: &[],
+            return_type: None,
+            body,
+            span: Span::default(),
+        });
+        let lambda = arena.alloc(Expr::Lambda(lambda_expr));
+
+        let callee = arena.alloc(Expr::Ident(IdentExpr {
+            scope: None,
+            ident: Ident::new("dualApply", Span::default()),
+            type_args: &[],
+            span: Span::default(),
+        }));
+        let args = arena.alloc_slice_copy(&[Argument {
+            name: None,
+            value: lambda,
+            span: Span::default(),
+        }]);
+        let call = CallExpr {
+            callee,
+            args,
+            span: Span::default(),
+        };
+
+        // Should fail with argument count mismatch
+        let result = compile_lambda_function_call(&mut compiler, vec![func_hash], &call);
+
+        assert!(result.is_err());
+        assert!(matches!(
+            result.unwrap_err(),
+            CompilationError::ArgumentCountMismatch { .. }
+        ));
+    }
 }
