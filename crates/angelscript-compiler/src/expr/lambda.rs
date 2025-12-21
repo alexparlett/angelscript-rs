@@ -133,6 +133,7 @@ pub fn compile_lambda<'ast>(
 ///
 /// This is a separate function to work around borrow checker limitations
 /// when accessing both ctx and emitter from ExprCompiler.
+#[allow(clippy::too_many_arguments)]
 fn compile_lambda_body<'ast>(
     ctx: &mut CompilationContext<'_>,
     emitter: &mut BytecodeEmitter,

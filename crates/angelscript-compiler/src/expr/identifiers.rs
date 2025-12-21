@@ -33,41 +33,42 @@ pub fn compile_ident<'ast>(
     }
 
     // Check if scope refers to an enum type (e.g., Color::Red)
-    if let Some(scope) = ident.scope {
-        if scope.segments.len() == 1 && !scope.is_absolute {
-            let enum_name = scope.segments[0].name;
+    if let Some(scope) = ident.scope
+        && scope.segments.len() == 1
+        && !scope.is_absolute
+    {
+        let enum_name = scope.segments[0].name;
 
-            // Try to resolve the scope as a type
-            if let Some(type_hash) = compiler.ctx().resolve_type(enum_name) {
-                // Check if it's an enum - extract data before mutably borrowing
-                let enum_value = compiler
-                    .ctx()
-                    .get_type(type_hash)
-                    .and_then(|t| t.as_enum())
-                    .and_then(|enum_entry| enum_entry.get_value(name));
+        // Try to resolve the scope as a type
+        if let Some(type_hash) = compiler.ctx().resolve_type(enum_name) {
+            // Check if it's an enum - extract data before mutably borrowing
+            let enum_value = compiler
+                .ctx()
+                .get_type(type_hash)
+                .and_then(|t| t.as_enum())
+                .and_then(|enum_entry| enum_entry.get_value(name));
 
-                if let Some(value) = enum_value {
-                    // Emit constant integer value
-                    compiler.emitter().emit_int(value);
+            if let Some(value) = enum_value {
+                // Emit constant integer value
+                compiler.emitter().emit_int(value);
 
-                    // Return enum type with is_enum flag set
-                    let mut data_type = DataType::simple(type_hash);
-                    data_type.is_enum = true;
-                    return Ok(ExprInfo::rvalue(data_type));
-                }
+                // Return enum type with is_enum flag set
+                let mut data_type = DataType::simple(type_hash);
+                data_type.is_enum = true;
+                return Ok(ExprInfo::rvalue(data_type));
+            }
 
-                // Check if it's an enum but with an invalid member
-                if compiler
-                    .ctx()
-                    .get_type(type_hash)
-                    .and_then(|t| t.as_enum())
-                    .is_some()
-                {
-                    return Err(CompilationError::Other {
-                        message: format!("enum '{}' has no member '{}'", enum_name, name),
-                        span,
-                    });
-                }
+            // Check if it's an enum but with an invalid member
+            if compiler
+                .ctx()
+                .get_type(type_hash)
+                .and_then(|t| t.as_enum())
+                .is_some()
+            {
+                return Err(CompilationError::Other {
+                    message: format!("enum '{}' has no member '{}'", enum_name, name),
+                    span,
+                });
             }
         }
     }

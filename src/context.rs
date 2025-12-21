@@ -430,14 +430,13 @@ impl Context {
             .map_err(|e| ContextError::RegistrationFailed(e.to_string()))?;
 
         // Add method to the class's methods map (for method lookup during compilation)
-        if let Some(type_hash) = object_type {
-            if let Some(class) = self
+        if let Some(type_hash) = object_type
+            && let Some(class) = self
                 .registry
                 .get_mut(type_hash)
                 .and_then(|e| e.as_class_mut())
-            {
-                class.add_method(name, func_hash);
-            }
+        {
+            class.add_method(name, func_hash);
         }
 
         // Wire behavior to the type's behaviors if this function has an associated behavior
