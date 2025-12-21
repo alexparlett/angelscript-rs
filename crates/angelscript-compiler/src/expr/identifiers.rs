@@ -705,4 +705,224 @@ mod tests {
             CompilationError::UndefinedVariable { .. }
         ));
     }
+
+    // =========================================================================
+    // Qualified enum path tests (Namespace::Enum::Value)
+    // =========================================================================
+
+    fn create_namespaced_enum(registry: &mut SymbolRegistry) -> TypeHash {
+        let enum_hash = TypeHash::from_name("test::Color");
+
+        let enum_entry = EnumEntry::new(
+            "test::Color".to_string(),
+            vec!["test".to_string()],
+            "Color".to_string(),
+            enum_hash,
+            TypeSource::ffi_untyped(),
+        )
+        .with_value("Red", 0)
+        .with_value("Green", 1)
+        .with_value("Blue", 2);
+
+        registry.register_type(enum_entry.into()).unwrap();
+
+        enum_hash
+    }
+
+    fn make_multi_segment_scoped_ident_expr<'a>(
+        arena: &'a bumpalo::Bump,
+        scope_segments: &[&'a str],
+        member_name: &'a str,
+    ) -> IdentExpr<'a> {
+        use angelscript_parser::ast::{Ident, Scope};
+
+        let segments: Vec<Ident<'_>> = scope_segments
+            .iter()
+            .map(|s| Ident::new(*s, Span::default()))
+            .collect();
+        let segments = arena.alloc_slice_copy(&segments);
+
+        IdentExpr {
+            scope: Some(Scope {
+                is_absolute: false,
+                segments,
+                span: Span::default(),
+            }),
+            ident: Ident::new(member_name, Span::default()),
+            type_args: &[],
+            span: Span::default(),
+        }
+    }
+
+    #[test]
+    fn compile_qualified_enum_path() {
+        // Test: test::Color::Green
+        let mut registry = SymbolRegistry::with_primitives();
+        let enum_hash = create_namespaced_enum(&mut registry);
+
+        let mut ctx = CompilationContext::new(&registry);
+        ctx.begin_function();
+
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
+
+        let mut compiler = create_test_compiler(&mut ctx, &mut emitter, None);
+
+        let arena = bumpalo::Bump::new();
+        // test::Color::Green - scope = ["test", "Color"], ident = "Green"
+        let ident = make_multi_segment_scoped_ident_expr(&arena, &["test", "Color"], "Green");
+        let result = compile_ident(&mut compiler, &ident);
+
+        assert!(result.is_ok(), "Expected Ok, got: {:?}", result);
+        let info = result.unwrap();
+        assert_eq!(info.data_type.type_hash, enum_hash);
+        assert!(info.data_type.is_enum);
+        assert!(!info.is_lvalue);
+
+        let chunk = emitter.finish_chunk();
+        // Green = 1
+        chunk.assert_opcodes(&[OpCode::PushOne]);
+    }
+
+    #[test]
+    fn compile_qualified_enum_path_invalid_member() {
+        // Test: test::Color::Yellow (Yellow doesn't exist)
+        let mut registry = SymbolRegistry::with_primitives();
+        let _ = create_namespaced_enum(&mut registry);
+
+        let mut ctx = CompilationContext::new(&registry);
+        ctx.begin_function();
+
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
+
+        let mut compiler = create_test_compiler(&mut ctx, &mut emitter, None);
+
+        let arena = bumpalo::Bump::new();
+        let ident = make_multi_segment_scoped_ident_expr(&arena, &["test", "Color"], "Yellow");
+        let result = compile_ident(&mut compiler, &ident);
+
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            CompilationError::Other { message, .. } => {
+                assert!(message.contains("has no member"));
+                assert!(message.contains("Yellow"));
+            }
+            other => panic!("Expected Other error, got: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn compile_deeply_nested_enum_path() {
+        // Test: deeply::nested::ns::Status::Active
+        let mut registry = SymbolRegistry::with_primitives();
+
+        let enum_hash = TypeHash::from_name("deeply::nested::ns::Status");
+        let enum_entry = EnumEntry::new(
+            "deeply::nested::ns::Status".to_string(),
+            vec!["deeply".to_string(), "nested".to_string(), "ns".to_string()],
+            "Status".to_string(),
+            enum_hash,
+            TypeSource::ffi_untyped(),
+        )
+        .with_value("Inactive", 0)
+        .with_value("Active", 1)
+        .with_value("Pending", 2);
+        registry.register_type(enum_entry.into()).unwrap();
+
+        let mut ctx = CompilationContext::new(&registry);
+        ctx.begin_function();
+
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
+
+        let mut compiler = create_test_compiler(&mut ctx, &mut emitter, None);
+
+        let arena = bumpalo::Bump::new();
+        let ident = make_multi_segment_scoped_ident_expr(
+            &arena,
+            &["deeply", "nested", "ns", "Status"],
+            "Active",
+        );
+        let result = compile_ident(&mut compiler, &ident);
+
+        assert!(result.is_ok(), "Expected Ok, got: {:?}", result);
+        let info = result.unwrap();
+        assert_eq!(info.data_type.type_hash, enum_hash);
+        assert!(info.data_type.is_enum);
+    }
+
+    // =========================================================================
+    // build_qualified_name tests
+    // =========================================================================
+
+    #[test]
+    fn build_qualified_name_no_scope() {
+        use angelscript_parser::ast::Ident;
+
+        let ident = IdentExpr {
+            scope: None,
+            ident: Ident::new("Entity", Span::default()),
+            type_args: &[],
+            span: Span::default(),
+        };
+
+        assert_eq!(build_qualified_name(&ident), "Entity");
+    }
+
+    #[test]
+    fn build_qualified_name_single_segment() {
+        use angelscript_parser::ast::{Ident, Scope};
+
+        let arena = bumpalo::Bump::new();
+        let segments = arena.alloc_slice_copy(&[Ident::new("Game", Span::default())]);
+        let scope = Scope::new(false, segments, Span::default());
+
+        let ident = IdentExpr {
+            scope: Some(scope),
+            ident: Ident::new("Entity", Span::default()),
+            type_args: &[],
+            span: Span::default(),
+        };
+
+        assert_eq!(build_qualified_name(&ident), "Game::Entity");
+    }
+
+    #[test]
+    fn build_qualified_name_nested_scope() {
+        use angelscript_parser::ast::{Ident, Scope};
+
+        let arena = bumpalo::Bump::new();
+        let segments = arena.alloc_slice_copy(&[
+            Ident::new("Game", Span::default()),
+            Ident::new("Physics", Span::default()),
+        ]);
+        let scope = Scope::new(false, segments, Span::default());
+
+        let ident = IdentExpr {
+            scope: Some(scope),
+            ident: Ident::new("Body", Span::default()),
+            type_args: &[],
+            span: Span::default(),
+        };
+
+        assert_eq!(build_qualified_name(&ident), "Game::Physics::Body");
+    }
+
+    #[test]
+    fn build_qualified_name_empty_scope_segments() {
+        use angelscript_parser::ast::{Ident, Scope};
+
+        let scope = Scope::new(false, &[], Span::default());
+
+        let ident = IdentExpr {
+            scope: Some(scope),
+            ident: Ident::new("Widget", Span::default()),
+            type_args: &[],
+            span: Span::default(),
+        };
+
+        // Empty segments should behave like no scope
+        assert_eq!(build_qualified_name(&ident), "Widget");
+    }
 }

@@ -2097,4 +2097,143 @@ mod tests {
             "Expected no compiled functions when base has no opAssign"
         );
     }
+
+    // =========================================================================
+    // Auto Type Global Variable Tests (47b6)
+    // Tests that compile_global_var correctly handles auto-typed globals
+    // by looking up the type from registration instead of resolving directly
+    // =========================================================================
+
+    #[test]
+    fn compile_auto_global_int_literal() {
+        let source = "auto x = 42;";
+        let (output, _constants) = full_compile(source);
+        assert!(
+            output.errors.is_empty(),
+            "Expected no errors, got: {:?}",
+            output.errors
+        );
+        // Global init should exist
+        assert_eq!(output.global_inits.len(), 1);
+    }
+
+    // Note: string literal test omitted - requires string factory registration
+    // which is tested via integration tests (test_types)
+
+    #[test]
+    fn compile_auto_global_bool_literal() {
+        let source = "auto b = true;";
+        let (output, _constants) = full_compile(source);
+        assert!(
+            output.errors.is_empty(),
+            "Expected no errors, got: {:?}",
+            output.errors
+        );
+        assert_eq!(output.global_inits.len(), 1);
+    }
+
+    #[test]
+    fn compile_auto_global_float_literal() {
+        let source = "auto f = 3.14f;";
+        let (output, _constants) = full_compile(source);
+        assert!(
+            output.errors.is_empty(),
+            "Expected no errors, got: {:?}",
+            output.errors
+        );
+        assert_eq!(output.global_inits.len(), 1);
+    }
+
+    #[test]
+    fn compile_auto_global_double_literal() {
+        let source = "auto d = 3.14;";
+        let (output, _constants) = full_compile(source);
+        assert!(
+            output.errors.is_empty(),
+            "Expected no errors, got: {:?}",
+            output.errors
+        );
+        assert_eq!(output.global_inits.len(), 1);
+    }
+
+    #[test]
+    fn compile_auto_global_negative_int() {
+        let source = "auto x = -42;";
+        let (output, _constants) = full_compile(source);
+        assert!(
+            output.errors.is_empty(),
+            "Expected no errors, got: {:?}",
+            output.errors
+        );
+        assert_eq!(output.global_inits.len(), 1);
+    }
+
+    #[test]
+    fn compile_auto_global_not_bool() {
+        let source = "auto x = !false;";
+        let (output, _constants) = full_compile(source);
+        assert!(
+            output.errors.is_empty(),
+            "Expected no errors, got: {:?}",
+            output.errors
+        );
+        assert_eq!(output.global_inits.len(), 1);
+    }
+
+    #[test]
+    fn compile_auto_global_from_other_global() {
+        let source = r#"
+            int first = 100;
+            auto second = first;
+        "#;
+        let (output, _constants) = full_compile(source);
+        assert!(
+            output.errors.is_empty(),
+            "Expected no errors, got: {:?}",
+            output.errors
+        );
+        // Two global inits
+        assert_eq!(output.global_inits.len(), 2);
+    }
+
+    #[test]
+    fn compile_auto_global_parenthesized() {
+        let source = "auto x = (42);";
+        let (output, _constants) = full_compile(source);
+        assert!(
+            output.errors.is_empty(),
+            "Expected no errors, got: {:?}",
+            output.errors
+        );
+        assert_eq!(output.global_inits.len(), 1);
+    }
+
+    #[test]
+    fn compile_multiple_auto_globals() {
+        let source = r#"
+            auto a = 1;
+            auto b = 2.0;
+            auto c = true;
+        "#;
+        let (output, _constants) = full_compile(source);
+        assert!(
+            output.errors.is_empty(),
+            "Expected no errors, got: {:?}",
+            output.errors
+        );
+        assert_eq!(output.global_inits.len(), 3);
+    }
+
+    #[test]
+    fn compile_explicit_type_global_still_works() {
+        // Ensure non-auto globals still work correctly
+        let source = "int x = 42;";
+        let (output, _constants) = full_compile(source);
+        assert!(
+            output.errors.is_empty(),
+            "Expected no errors, got: {:?}",
+            output.errors
+        );
+        assert_eq!(output.global_inits.len(), 1);
+    }
 }

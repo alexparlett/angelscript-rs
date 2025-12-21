@@ -1464,6 +1464,7 @@ fn convert_visibility(v: angelscript_parser::ast::Visibility) -> Visibility {
 mod tests {
     use super::*;
     use crate::passes::TypeCompletionPass;
+    use angelscript_core::primitives;
     use angelscript_parser::Parser;
     use angelscript_registry::SymbolRegistry;
     use bumpalo::Bump;
@@ -3165,5 +3166,357 @@ mod tests {
             op_impl_conv.is_some(),
             "behaviors.operators should contain OpImplConv(int)"
         );
+    }
+
+    // ==========================================================================
+    // Auto type inference for globals
+    // ==========================================================================
+
+    #[test]
+    fn auto_global_int_literal() {
+        let (registry, arena) = setup_context();
+        let source = "auto x = 42;";
+        let script = Parser::parse(source, &arena).unwrap();
+
+        let mut ctx = CompilationContext::new(&registry);
+        let pass = RegistrationPass::new(&mut ctx, UnitId::new(0));
+        let output = pass.run(&script);
+
+        assert!(
+            output.errors.is_empty(),
+            "Expected no errors: {:?}",
+            output.errors
+        );
+        assert_eq!(output.globals_registered, 1);
+
+        let x_hash = TypeHash::from_name("x");
+        let global = ctx.get_global_entry(x_hash).unwrap();
+        assert_eq!(global.data_type.type_hash, primitives::INT32);
+    }
+
+    #[test]
+    fn auto_global_large_int_literal() {
+        let (registry, arena) = setup_context();
+        let source = "auto x = 9999999999;"; // Larger than i32
+        let script = Parser::parse(source, &arena).unwrap();
+
+        let mut ctx = CompilationContext::new(&registry);
+        let pass = RegistrationPass::new(&mut ctx, UnitId::new(0));
+        let output = pass.run(&script);
+
+        assert!(
+            output.errors.is_empty(),
+            "Expected no errors: {:?}",
+            output.errors
+        );
+        let x_hash = TypeHash::from_name("x");
+        let global = ctx.get_global_entry(x_hash).unwrap();
+        assert_eq!(global.data_type.type_hash, primitives::INT64);
+    }
+
+    #[test]
+    fn auto_global_float_literal() {
+        let (registry, arena) = setup_context();
+        let source = "auto x = 3.14f;";
+        let script = Parser::parse(source, &arena).unwrap();
+
+        let mut ctx = CompilationContext::new(&registry);
+        let pass = RegistrationPass::new(&mut ctx, UnitId::new(0));
+        let output = pass.run(&script);
+
+        assert!(
+            output.errors.is_empty(),
+            "Expected no errors: {:?}",
+            output.errors
+        );
+        let x_hash = TypeHash::from_name("x");
+        let global = ctx.get_global_entry(x_hash).unwrap();
+        assert_eq!(global.data_type.type_hash, primitives::FLOAT);
+    }
+
+    #[test]
+    fn auto_global_double_literal() {
+        let (registry, arena) = setup_context();
+        let source = "auto x = 3.14;";
+        let script = Parser::parse(source, &arena).unwrap();
+
+        let mut ctx = CompilationContext::new(&registry);
+        let pass = RegistrationPass::new(&mut ctx, UnitId::new(0));
+        let output = pass.run(&script);
+
+        assert!(
+            output.errors.is_empty(),
+            "Expected no errors: {:?}",
+            output.errors
+        );
+        let x_hash = TypeHash::from_name("x");
+        let global = ctx.get_global_entry(x_hash).unwrap();
+        assert_eq!(global.data_type.type_hash, primitives::DOUBLE);
+    }
+
+    #[test]
+    fn auto_global_bool_literal() {
+        let (registry, arena) = setup_context();
+        let source = "auto x = true;";
+        let script = Parser::parse(source, &arena).unwrap();
+
+        let mut ctx = CompilationContext::new(&registry);
+        let pass = RegistrationPass::new(&mut ctx, UnitId::new(0));
+        let output = pass.run(&script);
+
+        assert!(
+            output.errors.is_empty(),
+            "Expected no errors: {:?}",
+            output.errors
+        );
+        let x_hash = TypeHash::from_name("x");
+        let global = ctx.get_global_entry(x_hash).unwrap();
+        assert_eq!(global.data_type.type_hash, primitives::BOOL);
+    }
+
+    #[test]
+    fn auto_global_negative_int() {
+        let (registry, arena) = setup_context();
+        let source = "auto x = -42;";
+        let script = Parser::parse(source, &arena).unwrap();
+
+        let mut ctx = CompilationContext::new(&registry);
+        let pass = RegistrationPass::new(&mut ctx, UnitId::new(0));
+        let output = pass.run(&script);
+
+        assert!(
+            output.errors.is_empty(),
+            "Expected no errors: {:?}",
+            output.errors
+        );
+        let x_hash = TypeHash::from_name("x");
+        let global = ctx.get_global_entry(x_hash).unwrap();
+        assert_eq!(global.data_type.type_hash, primitives::INT32);
+    }
+
+    #[test]
+    fn auto_global_logical_not() {
+        let (registry, arena) = setup_context();
+        let source = "auto x = !false;";
+        let script = Parser::parse(source, &arena).unwrap();
+
+        let mut ctx = CompilationContext::new(&registry);
+        let pass = RegistrationPass::new(&mut ctx, UnitId::new(0));
+        let output = pass.run(&script);
+
+        assert!(
+            output.errors.is_empty(),
+            "Expected no errors: {:?}",
+            output.errors
+        );
+        let x_hash = TypeHash::from_name("x");
+        let global = ctx.get_global_entry(x_hash).unwrap();
+        assert_eq!(global.data_type.type_hash, primitives::BOOL);
+    }
+
+    #[test]
+    fn auto_global_parenthesized() {
+        let (registry, arena) = setup_context();
+        let source = "auto x = (42);";
+        let script = Parser::parse(source, &arena).unwrap();
+
+        let mut ctx = CompilationContext::new(&registry);
+        let pass = RegistrationPass::new(&mut ctx, UnitId::new(0));
+        let output = pass.run(&script);
+
+        assert!(
+            output.errors.is_empty(),
+            "Expected no errors: {:?}",
+            output.errors
+        );
+        let x_hash = TypeHash::from_name("x");
+        let global = ctx.get_global_entry(x_hash).unwrap();
+        assert_eq!(global.data_type.type_hash, primitives::INT32);
+    }
+
+    #[test]
+    fn auto_global_from_other_global() {
+        let (registry, arena) = setup_context();
+        let source = "int y = 10; auto x = y;";
+        let script = Parser::parse(source, &arena).unwrap();
+
+        let mut ctx = CompilationContext::new(&registry);
+        let pass = RegistrationPass::new(&mut ctx, UnitId::new(0));
+        let output = pass.run(&script);
+
+        assert!(
+            output.errors.is_empty(),
+            "Expected no errors: {:?}",
+            output.errors
+        );
+        let x_hash = TypeHash::from_name("x");
+        let global = ctx.get_global_entry(x_hash).unwrap();
+        assert_eq!(global.data_type.type_hash, primitives::INT32);
+    }
+
+    #[test]
+    fn auto_global_no_initializer_error() {
+        let (registry, arena) = setup_context();
+        let source = "auto x;";
+        let script = Parser::parse(source, &arena).unwrap();
+
+        let mut ctx = CompilationContext::new(&registry);
+        let pass = RegistrationPass::new(&mut ctx, UnitId::new(0));
+        let output = pass.run(&script);
+
+        assert_eq!(output.errors.len(), 1);
+        assert!(
+            output.errors[0]
+                .to_string()
+                .contains("must have an initializer")
+        );
+    }
+
+    #[test]
+    fn auto_global_null_literal_error() {
+        let (registry, arena) = setup_context();
+        let source = "auto x = null;";
+        let script = Parser::parse(source, &arena).unwrap();
+
+        let mut ctx = CompilationContext::new(&registry);
+        let pass = RegistrationPass::new(&mut ctx, UnitId::new(0));
+        let output = pass.run(&script);
+
+        assert_eq!(output.errors.len(), 1);
+        assert!(output.errors[0].to_string().contains("null"));
+    }
+
+    #[test]
+    fn auto_global_unsupported_expr_error() {
+        let (registry, arena) = setup_context();
+        let source = "auto x = 1 + 2;"; // Binary expression not supported
+        let script = Parser::parse(source, &arena).unwrap();
+
+        let mut ctx = CompilationContext::new(&registry);
+        let pass = RegistrationPass::new(&mut ctx, UnitId::new(0));
+        let output = pass.run(&script);
+
+        assert_eq!(output.errors.len(), 1);
+        assert!(
+            output.errors[0]
+                .to_string()
+                .contains("literal or simple expression")
+        );
+    }
+
+    // ==========================================================================
+    // Typedef tests
+    // ==========================================================================
+
+    #[test]
+    fn register_typedef_primitive() {
+        let (registry, arena) = setup_context();
+        let source = "typedef int EntityId;";
+        let script = Parser::parse(source, &arena).unwrap();
+
+        let mut ctx = CompilationContext::new(&registry);
+        let pass = RegistrationPass::new(&mut ctx, UnitId::new(0));
+        let output = pass.run(&script);
+
+        assert!(output.errors.is_empty());
+
+        // EntityId should resolve to int
+        let resolved = ctx.resolve_type("EntityId");
+        assert_eq!(resolved, ctx.resolve_type("int"));
+    }
+
+    #[test]
+    fn register_typedef_in_namespace() {
+        let (registry, arena) = setup_context();
+        let source = r#"
+            namespace Game {
+                typedef int EntityId;
+            }
+        "#;
+        let script = Parser::parse(source, &arena).unwrap();
+
+        let mut ctx = CompilationContext::new(&registry);
+        let pass = RegistrationPass::new(&mut ctx, UnitId::new(0));
+        let output = pass.run(&script);
+
+        assert!(output.errors.is_empty());
+
+        // Game::EntityId should resolve to int
+        let resolved = ctx.resolve_type("Game::EntityId");
+        assert_eq!(resolved, ctx.resolve_type("int"));
+    }
+
+    #[test]
+    fn register_typedef_template() {
+        use angelscript_core::entries::TypeSource;
+
+        let (mut registry, arena) = setup_context();
+
+        // Register array template
+        let array_hash = TypeHash::from_name("array");
+        let t_param =
+            angelscript_core::TemplateParamEntry::for_template("T", 0, array_hash, "array");
+        let t_hash = t_param.type_hash;
+        registry.register_type(t_param.into()).unwrap();
+
+        let array_entry = ClassEntry::new(
+            "array",
+            vec![],
+            "array",
+            array_hash,
+            TypeKind::reference(),
+            TypeSource::ffi_untyped(),
+        )
+        .with_template_params(vec![t_hash]);
+        registry.register_type(array_entry.into()).unwrap();
+
+        let source = "typedef array<int> IntArray;";
+        let script = Parser::parse(source, &arena).unwrap();
+
+        let mut ctx = CompilationContext::new(&registry);
+        let pass = RegistrationPass::new(&mut ctx, UnitId::new(0));
+        let output = pass.run(&script);
+
+        assert!(
+            output.errors.is_empty(),
+            "Expected no errors, got: {:?}",
+            output.errors
+        );
+
+        // IntArray should resolve to array<int>
+        let resolved = ctx.resolve_type("IntArray");
+        assert!(resolved.is_some(), "IntArray should be resolvable");
+
+        // The resolved type should be array<int>
+        let entry = ctx.get_type(resolved.unwrap());
+        assert!(entry.is_some());
+        let class = entry.unwrap().as_class().unwrap();
+        assert_eq!(class.qualified_name, "array<int>");
+    }
+
+    #[test]
+    fn register_typedef_used_in_variable() {
+        let (registry, arena) = setup_context();
+        let source = r#"
+            typedef int EntityId;
+            EntityId playerId;
+        "#;
+        let script = Parser::parse(source, &arena).unwrap();
+
+        let mut ctx = CompilationContext::new(&registry);
+        let pass = RegistrationPass::new(&mut ctx, UnitId::new(0));
+        let output = pass.run(&script);
+
+        assert!(
+            output.errors.is_empty(),
+            "Expected no errors, got: {:?}",
+            output.errors
+        );
+        assert_eq!(output.globals_registered, 1);
+
+        // The global should have type int (resolved from EntityId)
+        let hash = ctx.resolve_global("playerId").unwrap();
+        let global = ctx.get_global_entry(hash).unwrap();
+        assert_eq!(global.data_type.type_hash, ctx.resolve_type("int").unwrap());
     }
 }
