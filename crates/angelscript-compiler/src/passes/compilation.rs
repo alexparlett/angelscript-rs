@@ -30,7 +30,7 @@
 
 use angelscript_core::{CompilationError, DataType, FunctionEntry, Span, TypeHash, UnitId};
 use angelscript_parser::ast::{
-    ClassDecl, ClassMember, FunctionDecl, GlobalVarDecl, Item, NamespaceDecl, Script,
+    ClassDecl, ClassMember, FunctionDecl, GlobalVarDecl, Item, NamespaceDecl, Script, TypeBase,
 };
 
 use crate::bytecode::ConstantPool;
@@ -874,13 +874,28 @@ impl<'a, 'reg> CompilationPass<'a, 'reg> {
         let qualified_name = self.qualified_name(&name);
         let var_hash = TypeHash::from_name(&qualified_name);
 
-        // Resolve the variable type
-        let mut resolver = TypeResolver::new(self.ctx);
-        let var_type = match resolver.resolve(&var.ty) {
-            Ok(dt) => dt,
-            Err(e) => {
-                self.ctx.add_error(e);
-                return;
+        // Resolve the variable type (for auto, look up the registered global)
+        let is_auto = matches!(var.ty.base, TypeBase::Auto);
+        let var_type = if is_auto {
+            // Auto type was resolved during registration - look up the registered global
+            match self.ctx.get_global_entry(var_hash) {
+                Some(entry) => entry.data_type,
+                None => {
+                    self.ctx.add_error(CompilationError::Other {
+                        message: format!("global variable '{}' not found", qualified_name),
+                        span: var.span,
+                    });
+                    return;
+                }
+            }
+        } else {
+            let mut resolver = TypeResolver::new(self.ctx);
+            match resolver.resolve(&var.ty) {
+                Ok(dt) => dt,
+                Err(e) => {
+                    self.ctx.add_error(e);
+                    return;
+                }
             }
         };
 

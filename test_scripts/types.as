@@ -62,3 +62,5 @@ StringArray names;
 // Auto type (type inference)
 auto inferredInt = 42;
 auto inferredString = "hello";
+auto negativeInt = -42;
+auto inferredBool = !false;

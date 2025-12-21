@@ -42,6 +42,8 @@ use angelscript_parser::ast::{
 };
 use rustc_hash::FxHashMap;
 
+use angelscript_parser::ast::{Expr, LiteralKind, TypeBase, UnaryOp};
+
 use crate::context::CompilationContext;
 use crate::passes::{PendingInheritance, PendingResolutions};
 use crate::type_resolver::TypeResolver;
@@ -941,13 +943,36 @@ impl<'a, 'reg> RegistrationPass<'a, 'reg> {
         // Compute hash using the qualified name
         let type_hash = TypeHash::from_name(&qualified_name);
 
-        // Resolve the variable's type
-        let mut resolver = TypeResolver::new(self.ctx);
-        let data_type = match resolver.resolve(&var.ty) {
-            Ok(dt) => dt,
-            Err(e) => {
-                self.ctx.add_error(e);
+        // Resolve the variable's type (special handling for auto)
+        let is_auto = matches!(var.ty.base, TypeBase::Auto);
+
+        let data_type = if is_auto {
+            // Auto type - must have initializer to infer type from
+            let Some(init) = &var.init else {
+                self.ctx.add_error(CompilationError::Other {
+                    message: "auto global variable must have an initializer".to_string(),
+                    span: var.span,
+                });
                 return;
+            };
+
+            // Infer type from initializer without bytecode emission
+            match self.infer_global_init_type(init) {
+                Ok(dt) => dt,
+                Err(e) => {
+                    self.ctx.add_error(e);
+                    return;
+                }
+            }
+        } else {
+            // Normal type resolution
+            let mut resolver = TypeResolver::new(self.ctx);
+            match resolver.resolve(&var.ty) {
+                Ok(dt) => dt,
+                Err(e) => {
+                    self.ctx.add_error(e);
+                    return;
+                }
             }
         };
 
@@ -985,6 +1010,94 @@ impl<'a, 'reg> RegistrationPass<'a, 'reg> {
             });
         } else {
             self.globals_registered += 1;
+        }
+    }
+
+    /// Infer the type of a global variable initializer without bytecode emission.
+    ///
+    /// For auto globals, we need to determine the type from the initializer expression.
+    /// This is done by analyzing the expression structure rather than compiling it.
+    fn infer_global_init_type(&self, expr: &Expr<'_>) -> Result<DataType, CompilationError> {
+        use angelscript_core::primitives;
+
+        match expr {
+            Expr::Literal(lit) => {
+                let type_hash = match &lit.kind {
+                    LiteralKind::Int(v) => {
+                        // Use int32 for values that fit, int64 otherwise
+                        if *v >= i32::MIN as i64 && *v <= i32::MAX as i64 {
+                            primitives::INT32
+                        } else {
+                            primitives::INT64
+                        }
+                    }
+                    LiteralKind::Float(_) => primitives::FLOAT,
+                    LiteralKind::Double(_) => primitives::DOUBLE,
+                    LiteralKind::Bool(_) => primitives::BOOL,
+                    LiteralKind::String(_) => self
+                        .ctx
+                        .string_type_hash()
+                        .ok_or(CompilationError::NoStringFactory { span: lit.span })?,
+                    LiteralKind::Null => {
+                        return Err(CompilationError::Other {
+                            message: "cannot infer type from null literal".to_string(),
+                            span: lit.span,
+                        });
+                    }
+                };
+                Ok(DataType::simple(type_hash))
+            }
+
+            Expr::Ident(ident) => {
+                // Look up identifier - could be another global
+                let name = ident.ident.name;
+
+                // Try to find as a global property by qualified name
+                let qualified_name = self.qualified_name(name);
+                let hash = TypeHash::from_name(&qualified_name);
+                if let Some(global) = self.ctx.get_global_entry(hash) {
+                    return Ok(global.data_type);
+                }
+
+                // Try unqualified name (global namespace)
+                let hash = TypeHash::from_name(name);
+                if let Some(global) = self.ctx.get_global_entry(hash) {
+                    return Ok(global.data_type);
+                }
+
+                Err(CompilationError::Other {
+                    message: format!(
+                        "cannot infer type from '{}' - only literals and globals are supported for auto global initializers",
+                        name
+                    ),
+                    span: ident.span,
+                })
+            }
+
+            Expr::Paren(p) => self.infer_global_init_type(p.expr),
+
+            Expr::Unary(unary) => {
+                // For unary operators, infer from operand type
+                let operand_type = self.infer_global_init_type(unary.operand)?;
+
+                match unary.op {
+                    // Numeric operators preserve type
+                    UnaryOp::Neg | UnaryOp::Plus | UnaryOp::BitwiseNot => Ok(operand_type),
+                    // Logical not always returns bool
+                    UnaryOp::LogicalNot => Ok(DataType::simple(primitives::BOOL)),
+                    // Increment/decrement and handle-of are not valid in global initializers
+                    _ => Err(CompilationError::Other {
+                        message: "increment, decrement, and handle-of operators are not supported in auto global initializers".to_string(),
+                        span: unary.span,
+                    }),
+                }
+            }
+
+            _ => Err(CompilationError::Other {
+                message: "auto global initializer must be a literal or simple expression"
+                    .to_string(),
+                span: expr.span(),
+            }),
         }
     }
 

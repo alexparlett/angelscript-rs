@@ -84,7 +84,6 @@ fn test_functions() {
 }
 
 #[test]
-#[ignore = "requires type alias support and auto type inference"]
 fn test_types() {
     let module = build_script("types.as");
     assert!(module.is_built());
