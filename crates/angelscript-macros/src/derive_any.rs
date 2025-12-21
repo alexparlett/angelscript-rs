@@ -64,7 +64,8 @@ fn generate_type_meta(
         Some(TypeKindAttr::Pod) => quote! { ::angelscript_core::TypeKind::pod::<#name>() },
         Some(TypeKindAttr::Reference) => quote! { ::angelscript_core::TypeKind::reference() },
         Some(TypeKindAttr::Scoped) => quote! { ::angelscript_core::TypeKind::scoped() },
-        Some(TypeKindAttr::NoCount) => quote! { ::angelscript_core::TypeKind::single_ref() },
+        Some(TypeKindAttr::NoCount) => quote! { ::angelscript_core::TypeKind::no_count() },
+        Some(TypeKindAttr::NoHandle) => quote! { ::angelscript_core::TypeKind::no_handle() },
         Some(TypeKindAttr::AsHandle) => quote! { ::angelscript_core::TypeKind::generic_handle() },
         None => quote! { ::angelscript_core::TypeKind::reference() },
     };

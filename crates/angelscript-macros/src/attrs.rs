@@ -31,6 +31,7 @@ pub enum TypeKindAttr {
     Reference,
     Scoped,
     NoCount,
+    NoHandle,
     AsHandle,
 }
 
@@ -132,6 +133,8 @@ impl TypeAttrs {
                     result.type_kind = Some(TypeKindAttr::Scoped);
                 } else if meta.path.is_ident("nocount") {
                     result.type_kind = Some(TypeKindAttr::NoCount);
+                } else if meta.path.is_ident("nohandle") {
+                    result.type_kind = Some(TypeKindAttr::NoHandle);
                 } else if meta.path.is_ident("as_handle") {
                     result.type_kind = Some(TypeKindAttr::AsHandle);
                 } else if meta.path.is_ident("template") {
@@ -150,7 +153,7 @@ impl TypeAttrs {
                 } else {
                     return Err(meta.error(format!(
                         "unknown angelscript attribute '{}'. Valid attributes are: \
-                         name, value, pod, reference, scoped, nocount, as_handle, \
+                         name, value, pod, reference, scoped, nocount, nohandle, as_handle, \
                          template, specialization_of, specialization_args",
                         meta.path
                             .get_ident()

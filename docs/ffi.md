@@ -24,10 +24,11 @@ Apply these to the struct/enum with `#[angelscript(...)]`:
 |-----------|-------------|
 | `name = "Name"` | Override the AngelScript type name (default: Rust struct name) |
 | `value` | Value type - copied by value, no ref counting |
-| `pod` | Plain Old Data - value type safe for raw memory operations |
-| `reference` | Reference type - passed by handle, uses ref counting |
-| `scoped` | Scoped reference - automatically released at scope exit |
-| `nocount` | Single-ref type - no reference counting |
+| `pod` | Plain Old Data - value type safe for raw memory operations (requires `Copy`) |
+| `reference` | Reference type - passed by handle (`@`) or reference (`&`), uses ref counting |
+| `scoped` | Scoped reference - automatically released at scope exit, no handles |
+| `nocount` | Single-ref type - app manages memory, handles work but no AddRef/Release |
+| `nohandle` | Single-ref type - no handles allowed, cannot be function parameters |
 | `template = "<T>"` | Template type with type parameters |
 | `specialization_of = "name"` | Base template name for template specialization |
 | `specialization_args(T1, T2)` | Type arguments for template specialization |
@@ -924,7 +925,7 @@ pub fn find(_ctx: &CallContext) {
 
 ```rust
 #[derive(Any)]
-#[angelscript(name = "...", value|pod|reference|scoped|nocount, template = "<T>")]
+#[angelscript(name = "...", value|pod|reference|scoped|nocount|nohandle, template = "<T>")]
 pub struct MyType {
     #[angelscript(get, set, name = "...")]
     pub field: i32,

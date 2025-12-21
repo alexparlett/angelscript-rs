@@ -77,6 +77,20 @@ impl<'a, 'reg> TypeResolver<'a, 'reg> {
         for suffix in type_expr.suffixes {
             match suffix {
                 TypeSuffix::Handle { is_const } => {
+                    // Check if this type supports handles
+                    if !self.type_supports_handles(base_hash) {
+                        let type_name = self
+                            .ctx
+                            .get_type(base_hash)
+                            .map(|e| e.qualified_name().to_string())
+                            .unwrap_or_else(|| format!("{:?}", base_hash));
+                        return Err(CompilationError::InvalidHandleType {
+                            type_name,
+                            reason: "type does not support handle references".to_string(),
+                            span: type_expr.span,
+                        });
+                    }
+
                     data_type.is_handle = true;
                     if *is_const {
                         // Trailing const on handle (@ const) means handle-to-const
@@ -87,6 +101,33 @@ impl<'a, 'reg> TypeResolver<'a, 'reg> {
         }
 
         Ok(data_type)
+    }
+
+    /// Check if a type supports handle references (`T@`).
+    ///
+    /// Returns `true` for:
+    /// - Standard reference types
+    /// - NoCount reference types
+    /// - Script objects
+    /// - GenericHandle types
+    ///
+    /// Returns `false` for:
+    /// - Value types (cannot have handles)
+    /// - NoHandle reference types (explicitly forbids handles)
+    /// - Scoped reference types (RAII semantics, no handles)
+    fn type_supports_handles(&self, type_hash: TypeHash) -> bool {
+        if let Some(entry) = self.ctx.get_type(type_hash) {
+            if let Some(class) = entry.as_class() {
+                class.type_kind.supports_handles()
+            } else {
+                // Primitives, enums, funcdefs, interfaces don't support handles in the typical sense
+                // Interfaces can have handles but they're always reference types
+                entry.is_interface() || entry.is_funcdef()
+            }
+        } else {
+            // Unknown type - assume it might support handles (will fail elsewhere)
+            true
+        }
     }
 
     /// Resolve a ParamType to a DataType (includes reference modifiers).
@@ -108,7 +149,41 @@ impl<'a, 'reg> TypeResolver<'a, 'reg> {
             RefKind::RefInOut => RefModifier::InOut,
         };
 
+        // Validate that this type can be used as a parameter
+        self.validate_parameter_type(&data_type, param_type.ty.span)?;
+
         Ok(data_type)
+    }
+
+    /// Validate that a type can be used as a function parameter.
+    ///
+    /// NoHandle types cannot be used as parameters at all - not by value,
+    /// not by reference, and not as handle (which is already blocked in resolve()).
+    /// Per AngelScript docs: "The script engine will not permit declaration of
+    /// functions that take this type as a parameter, neither as a reference nor as a handle."
+    fn validate_parameter_type(
+        &self,
+        data_type: &DataType,
+        span: angelscript_core::Span,
+    ) -> Result<(), CompilationError> {
+        // Check if the base type allows being a parameter
+        // NoHandle types cannot be parameters regardless of modifiers
+        if let Some(entry) = self.ctx.get_type(data_type.type_hash)
+            && let Some(class) = entry.as_class()
+            && let Some(ref_kind) = class.type_kind.reference_kind()
+            && !ref_kind.allows_as_parameter()
+        {
+            return Err(CompilationError::InvalidParameterType {
+                type_name: class.qualified_name.clone(),
+                reason: format!(
+                    "{} types cannot be used as function parameters (only accessible via global properties or return values)",
+                    ref_kind.name()
+                ),
+                span,
+            });
+        }
+
+        Ok(())
     }
 
     /// Resolve the base type hash from a TypeExpr.
@@ -1046,5 +1121,247 @@ mod tests {
 
         // Should return same hash (cached)
         assert_eq!(result1.type_hash, result2.type_hash);
+    }
+
+    // =========================================================================
+    // NoHandle Type Validation Tests
+    // =========================================================================
+
+    #[test]
+    fn resolve_nohandle_type_rejects_handle_suffix() {
+        use bumpalo::Bump;
+
+        let mut registry = SymbolRegistry::with_primitives();
+
+        // Register a NoHandle type
+        let class = ClassEntry::new(
+            "Singleton",
+            vec![],
+            "Singleton",
+            TypeHash::from_name("Singleton"),
+            TypeKind::no_handle(),
+            TypeSource::ffi_untyped(),
+        );
+        registry.register_type(class.into()).unwrap();
+
+        let mut ctx = CompilationContext::new(&registry);
+        let mut resolver = TypeResolver::new(&mut ctx);
+
+        let arena = Bump::new();
+        // Try to create Singleton@ - should fail
+        let suffixes = arena.alloc_slice_copy(&[TypeSuffix::Handle { is_const: false }]);
+        let type_expr = TypeExpr::new(
+            false,
+            None,
+            TypeBase::Named(Ident::new("Singleton", Span::new(1, 1, 9))),
+            &[],
+            suffixes,
+            Span::new(1, 1, 10),
+        );
+
+        let result = resolver.resolve(&type_expr);
+        assert!(result.is_err(), "NoHandle type should reject handle suffix");
+
+        match result.unwrap_err() {
+            CompilationError::InvalidHandleType { type_name, .. } => {
+                assert_eq!(type_name, "Singleton");
+            }
+            other => panic!("expected InvalidHandleType error, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn resolve_nohandle_type_rejects_parameter_by_value() {
+        let mut registry = SymbolRegistry::with_primitives();
+
+        // Register a NoHandle type
+        let class = ClassEntry::new(
+            "Singleton",
+            vec![],
+            "Singleton",
+            TypeHash::from_name("Singleton"),
+            TypeKind::no_handle(),
+            TypeSource::ffi_untyped(),
+        );
+        registry.register_type(class.into()).unwrap();
+
+        let mut ctx = CompilationContext::new(&registry);
+        let mut resolver = TypeResolver::new(&mut ctx);
+
+        // Try to use Singleton as parameter (by value)
+        let type_expr = TypeExpr::named(Ident::new("Singleton", Span::new(1, 1, 9)));
+        let param_type = ParamType::new(type_expr, RefKind::None, Span::new(1, 1, 9));
+
+        let result = resolver.resolve_param(&param_type);
+        assert!(
+            result.is_err(),
+            "NoHandle type should reject parameter by value"
+        );
+
+        match result.unwrap_err() {
+            CompilationError::InvalidParameterType { type_name, .. } => {
+                assert_eq!(type_name, "Singleton");
+            }
+            other => panic!("expected InvalidParameterType error, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn resolve_nohandle_type_rejects_parameter_by_ref() {
+        let mut registry = SymbolRegistry::with_primitives();
+
+        // Register a NoHandle type
+        let class = ClassEntry::new(
+            "Singleton",
+            vec![],
+            "Singleton",
+            TypeHash::from_name("Singleton"),
+            TypeKind::no_handle(),
+            TypeSource::ffi_untyped(),
+        );
+        registry.register_type(class.into()).unwrap();
+
+        let mut ctx = CompilationContext::new(&registry);
+        let mut resolver = TypeResolver::new(&mut ctx);
+
+        // Try to use Singleton& as parameter (by reference)
+        let type_expr = TypeExpr::named(Ident::new("Singleton", Span::new(1, 1, 9)));
+        let param_type = ParamType::new(type_expr, RefKind::RefIn, Span::new(1, 1, 13));
+
+        let result = resolver.resolve_param(&param_type);
+        assert!(
+            result.is_err(),
+            "NoHandle type should reject parameter by reference"
+        );
+
+        match result.unwrap_err() {
+            CompilationError::InvalidParameterType { type_name, .. } => {
+                assert_eq!(type_name, "Singleton");
+            }
+            other => panic!("expected InvalidParameterType error, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn resolve_nocount_type_allows_handles() {
+        use bumpalo::Bump;
+
+        let mut registry = SymbolRegistry::with_primitives();
+
+        // Register a NoCount type - these DO allow handles
+        let class = ClassEntry::new(
+            "GameEngine",
+            vec![],
+            "GameEngine",
+            TypeHash::from_name("GameEngine"),
+            TypeKind::no_count(),
+            TypeSource::ffi_untyped(),
+        );
+        registry.register_type(class.into()).unwrap();
+
+        let mut ctx = CompilationContext::new(&registry);
+        let mut resolver = TypeResolver::new(&mut ctx);
+
+        let arena = Bump::new();
+        // GameEngine@ should work for NoCount types
+        let suffixes = arena.alloc_slice_copy(&[TypeSuffix::Handle { is_const: false }]);
+        let type_expr = TypeExpr::new(
+            false,
+            None,
+            TypeBase::Named(Ident::new("GameEngine", Span::new(1, 1, 10))),
+            &[],
+            suffixes,
+            Span::new(1, 1, 11),
+        );
+
+        let result = resolver.resolve(&type_expr);
+        assert!(result.is_ok(), "NoCount type should allow handles");
+        assert!(result.unwrap().is_handle);
+    }
+
+    #[test]
+    fn resolve_scoped_type_rejects_handles() {
+        use bumpalo::Bump;
+
+        let mut registry = SymbolRegistry::with_primitives();
+
+        // Register a Scoped type - RAII semantics, no handles
+        let class = ClassEntry::new(
+            "Lock",
+            vec![],
+            "Lock",
+            TypeHash::from_name("Lock"),
+            TypeKind::scoped(),
+            TypeSource::ffi_untyped(),
+        );
+        registry.register_type(class.into()).unwrap();
+
+        let mut ctx = CompilationContext::new(&registry);
+        let mut resolver = TypeResolver::new(&mut ctx);
+
+        let arena = Bump::new();
+        // Lock@ should fail for Scoped types
+        let suffixes = arena.alloc_slice_copy(&[TypeSuffix::Handle { is_const: false }]);
+        let type_expr = TypeExpr::new(
+            false,
+            None,
+            TypeBase::Named(Ident::new("Lock", Span::new(1, 1, 4))),
+            &[],
+            suffixes,
+            Span::new(1, 1, 5),
+        );
+
+        let result = resolver.resolve(&type_expr);
+        assert!(result.is_err(), "Scoped type should reject handles");
+
+        match result.unwrap_err() {
+            CompilationError::InvalidHandleType { type_name, .. } => {
+                assert_eq!(type_name, "Lock");
+            }
+            other => panic!("expected InvalidHandleType error, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn resolve_value_type_rejects_handles() {
+        use bumpalo::Bump;
+
+        let mut registry = SymbolRegistry::with_primitives();
+
+        // Register a value type
+        let class = ClassEntry::new(
+            "Vector3",
+            vec![],
+            "Vector3",
+            TypeHash::from_name("Vector3"),
+            TypeKind::value::<[f32; 3]>(),
+            TypeSource::ffi_untyped(),
+        );
+        registry.register_type(class.into()).unwrap();
+
+        let mut ctx = CompilationContext::new(&registry);
+        let mut resolver = TypeResolver::new(&mut ctx);
+
+        let arena = Bump::new();
+        // Vector3@ should fail for value types
+        let suffixes = arena.alloc_slice_copy(&[TypeSuffix::Handle { is_const: false }]);
+        let type_expr = TypeExpr::new(
+            false,
+            None,
+            TypeBase::Named(Ident::new("Vector3", Span::new(1, 1, 7))),
+            &[],
+            suffixes,
+            Span::new(1, 1, 8),
+        );
+
+        let result = resolver.resolve(&type_expr);
+        assert!(result.is_err(), "Value type should reject handles");
+
+        match result.unwrap_err() {
+            CompilationError::InvalidHandleType { type_name, .. } => {
+                assert_eq!(type_name, "Vector3");
+            }
+            other => panic!("expected InvalidHandleType error, got {:?}", other),
+        }
     }
 }

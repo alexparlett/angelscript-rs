@@ -59,7 +59,8 @@ fn derive_any_value_type() {
 }
 
 /// Test `#[derive(Any)]` with POD type.
-#[derive(Any)]
+/// POD types must be `Copy` since they are passed by value.
+#[derive(Any, Clone, Copy)]
 #[angelscript(name = "Color", pod)]
 struct Color {
     r: u8,
@@ -831,7 +832,30 @@ struct NoCountRef {
 fn derive_any_nocount_type() {
     let meta = <NoCountRef as HasClassMeta>::__as_type_meta();
     assert_eq!(meta.name, "NoCountRef");
-    // nocount types have asOBJ_NOCOUNT flag
+    // nocount types have asOBJ_NOCOUNT flag - handles work but no AddRef/Release
+    assert!(meta.type_kind.is_reference());
+    assert!(meta.type_kind.supports_handles());
+}
+
+/// NoHandle reference type (single ref, no handles allowed).
+/// Scripts cannot create handles (@) to this type.
+#[derive(Any)]
+#[angelscript(nohandle)]
+struct Singleton {
+    instance_id: u32,
+}
+
+#[test]
+fn derive_any_nohandle_type() {
+    let meta = <Singleton as HasClassMeta>::__as_type_meta();
+    assert_eq!(meta.name, "Singleton");
+    // nohandle types cannot have handles, cannot be function parameters
+    assert!(meta.type_kind.is_reference());
+    assert!(!meta.type_kind.supports_handles());
+    if let Some(ref_kind) = meta.type_kind.reference_kind() {
+        assert!(!ref_kind.allows_as_parameter());
+        assert!(!ref_kind.allows_factories());
+    }
 }
 
 /// AsHandle type (can be used as handle).

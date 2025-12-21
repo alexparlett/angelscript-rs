@@ -150,7 +150,32 @@ impl TypeKind {
     }
 
     /// Create a POD value type kind.
-    pub fn pod<T>() -> Self {
+    ///
+    /// POD (Plain Old Data) types are safe to memcpy and have no
+    /// constructor or destructor requirements.
+    ///
+    /// Requires `T: Copy` to ensure the type is truly POD:
+    /// - No `Drop` implementation that could be skipped
+    /// - Bitwise copy is safe (no internal pointers that would be duplicated)
+    pub fn pod<T: Copy>() -> Self {
+        TypeKind::Value {
+            size: std::mem::size_of::<T>(),
+            align: std::mem::align_of::<T>(),
+            is_pod: true,
+        }
+    }
+
+    /// Create a POD value type kind without the `Copy` bound.
+    ///
+    /// # Safety
+    ///
+    /// Caller must ensure the type is safe to memcpy:
+    /// - No `Drop` implementation that could be skipped
+    /// - No internal pointers that would be duplicated
+    /// - No invariants that could be violated by bitwise copy
+    ///
+    /// Prefer `pod<T>()` when possible.
+    pub unsafe fn pod_unchecked<T>() -> Self {
         TypeKind::Value {
             size: std::mem::size_of::<T>(),
             align: std::mem::align_of::<T>(),
@@ -181,10 +206,24 @@ impl TypeKind {
         }
     }
 
-    /// Create a single-ref type kind.
-    pub fn single_ref() -> Self {
+    /// Create a no-count reference type kind.
+    ///
+    /// No-count types have app-managed memory but handles still work.
+    /// Scripts can pass handles around, but no AddRef/Release calls are made.
+    pub fn no_count() -> Self {
         TypeKind::Reference {
-            kind: ReferenceKind::SingleRef,
+            kind: ReferenceKind::NoCount,
+        }
+    }
+
+    /// Create a no-handle (single-reference) type kind.
+    ///
+    /// No-handle types cannot have handles in script (`T@` is invalid).
+    /// They also cannot be used as function parameters.
+    /// Only accessible via global properties or return values.
+    pub fn no_handle() -> Self {
+        TypeKind::Reference {
+            kind: ReferenceKind::NoHandle,
         }
     }
 
@@ -231,6 +270,28 @@ impl TypeKind {
     pub fn is_pod(&self) -> bool {
         matches!(self, TypeKind::Value { is_pod: true, .. })
     }
+
+    /// Get the reference kind if this is a reference type.
+    ///
+    /// Returns `None` for value types and script objects.
+    pub fn reference_kind(&self) -> Option<ReferenceKind> {
+        match self {
+            TypeKind::Reference { kind } => Some(*kind),
+            _ => None,
+        }
+    }
+
+    /// Check if this type supports handles (`T@`).
+    ///
+    /// Returns `true` for reference types that support handles and script objects.
+    /// Returns `false` for value types and NoHandle/Scoped reference types.
+    pub fn supports_handles(&self) -> bool {
+        match self {
+            TypeKind::Reference { kind } => kind.supports_handles(),
+            TypeKind::ScriptObject => true, // Script objects always support handles
+            TypeKind::Value { .. } => false,
+        }
+    }
 }
 
 impl Default for TypeKind {
@@ -241,20 +302,100 @@ impl Default for TypeKind {
 }
 
 /// Reference type variants for different ownership/lifetime semantics.
+///
+/// These correspond to AngelScript's reference type flags:
+/// - `Standard` = `asOBJ_REF` (full ref counting with AddRef/Release)
+/// - `NoCount` = `asOBJ_REF | asOBJ_NOCOUNT` (app manages memory, handles work)
+/// - `NoHandle` = `asOBJ_REF | asOBJ_NOHANDLE` (single-reference, no handles allowed)
+/// - `Scoped` = `asOBJ_REF | asOBJ_SCOPED` (RAII-style, destroyed at scope exit)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ReferenceKind {
     /// Standard reference type - full handle support with AddRef/Release ref counting.
+    /// Requires: AddRef and Release behaviors.
     #[default]
     Standard,
 
-    /// Scoped reference type - RAII-style, destroyed at scope exit, no handles.
+    /// Scoped reference type - RAII-style, destroyed at scope exit.
+    /// Requires: Release behavior (called at scope exit).
+    /// Forbids: AddRef behavior.
+    /// Handles: Not allowed in script (except return values from app functions).
     Scoped,
 
-    /// Single-ref type - app-controlled lifetime, no handles in script.
-    SingleRef,
+    /// No-count reference type - application manages memory, no ref counting.
+    /// Handles ARE allowed (`T@` is valid) - scripts can pass handles around.
+    /// Forbids: AddRef and Release behaviors.
+    /// Use case: Pooled objects, arena-allocated types, externally managed objects.
+    NoCount,
+
+    /// No-handle (single-reference) type - scripts cannot store handles.
+    /// Handles NOT allowed (`T@` is invalid type).
+    /// Forbids: AddRef, Release, and Factory behaviors.
+    /// Cannot be used as function parameter (would create stack reference).
+    /// Only accessible via global properties or return values.
+    /// Use case: Singleton managers, game state objects.
+    NoHandle,
 
     /// Generic handle - type-erased container that can hold any type.
     GenericHandle,
+}
+
+impl ReferenceKind {
+    /// Whether this reference kind supports handle types (`T@`).
+    ///
+    /// Returns `true` for Standard, NoCount, and GenericHandle.
+    /// Returns `false` for Scoped and NoHandle.
+    pub fn supports_handles(&self) -> bool {
+        match self {
+            ReferenceKind::Standard | ReferenceKind::NoCount | ReferenceKind::GenericHandle => true,
+            ReferenceKind::Scoped | ReferenceKind::NoHandle => false,
+        }
+    }
+
+    /// Whether AddRef behavior is allowed for this reference kind.
+    ///
+    /// Only Standard reference types can have AddRef.
+    pub fn allows_addref(&self) -> bool {
+        matches!(self, ReferenceKind::Standard)
+    }
+
+    /// Whether Release behavior is allowed for this reference kind.
+    ///
+    /// Standard and Scoped types can have Release.
+    pub fn allows_release(&self) -> bool {
+        matches!(self, ReferenceKind::Standard | ReferenceKind::Scoped)
+    }
+
+    /// Whether AddRef/Release are required for this reference kind.
+    ///
+    /// Only Standard reference types require ref counting behaviors.
+    pub fn requires_ref_counting(&self) -> bool {
+        matches!(self, ReferenceKind::Standard)
+    }
+
+    /// Whether factories are allowed for this reference kind.
+    ///
+    /// NoHandle types cannot have factories (factories return handles).
+    pub fn allows_factories(&self) -> bool {
+        !matches!(self, ReferenceKind::NoHandle)
+    }
+
+    /// Whether this type can be used as a function parameter.
+    ///
+    /// NoHandle types cannot be parameters (would create stack reference).
+    pub fn allows_as_parameter(&self) -> bool {
+        !matches!(self, ReferenceKind::NoHandle)
+    }
+
+    /// Get a human-readable name for this reference kind.
+    pub fn name(&self) -> &'static str {
+        match self {
+            ReferenceKind::Standard => "Standard",
+            ReferenceKind::Scoped => "Scoped",
+            ReferenceKind::NoCount => "NoCount",
+            ReferenceKind::NoHandle => "NoHandle",
+            ReferenceKind::GenericHandle => "GenericHandle",
+        }
+    }
 }
 
 /// A field definition in a class.
@@ -1217,5 +1358,152 @@ mod tests {
             type_hash: primitives::INT32,
         };
         assert_eq!(format!("{}", typedef), "int");
+    }
+
+    // =========================================================================
+    // ReferenceKind Tests
+    // =========================================================================
+
+    #[test]
+    fn reference_kind_supports_handles() {
+        // Standard, NoCount, GenericHandle support handles
+        assert!(ReferenceKind::Standard.supports_handles());
+        assert!(ReferenceKind::NoCount.supports_handles());
+        assert!(ReferenceKind::GenericHandle.supports_handles());
+
+        // Scoped and NoHandle do NOT support handles
+        assert!(!ReferenceKind::Scoped.supports_handles());
+        assert!(!ReferenceKind::NoHandle.supports_handles());
+    }
+
+    #[test]
+    fn reference_kind_allows_addref() {
+        // Only Standard allows AddRef
+        assert!(ReferenceKind::Standard.allows_addref());
+
+        // All others forbid AddRef
+        assert!(!ReferenceKind::Scoped.allows_addref());
+        assert!(!ReferenceKind::NoCount.allows_addref());
+        assert!(!ReferenceKind::NoHandle.allows_addref());
+        assert!(!ReferenceKind::GenericHandle.allows_addref());
+    }
+
+    #[test]
+    fn reference_kind_allows_release() {
+        // Standard and Scoped allow Release
+        assert!(ReferenceKind::Standard.allows_release());
+        assert!(ReferenceKind::Scoped.allows_release());
+
+        // Others forbid Release
+        assert!(!ReferenceKind::NoCount.allows_release());
+        assert!(!ReferenceKind::NoHandle.allows_release());
+        assert!(!ReferenceKind::GenericHandle.allows_release());
+    }
+
+    #[test]
+    fn reference_kind_requires_ref_counting() {
+        // Only Standard requires ref counting
+        assert!(ReferenceKind::Standard.requires_ref_counting());
+
+        // All others don't require ref counting
+        assert!(!ReferenceKind::Scoped.requires_ref_counting());
+        assert!(!ReferenceKind::NoCount.requires_ref_counting());
+        assert!(!ReferenceKind::NoHandle.requires_ref_counting());
+        assert!(!ReferenceKind::GenericHandle.requires_ref_counting());
+    }
+
+    #[test]
+    fn reference_kind_allows_factories() {
+        // All except NoHandle allow factories
+        assert!(ReferenceKind::Standard.allows_factories());
+        assert!(ReferenceKind::Scoped.allows_factories());
+        assert!(ReferenceKind::NoCount.allows_factories());
+        assert!(ReferenceKind::GenericHandle.allows_factories());
+
+        // NoHandle forbids factories (factories return handles)
+        assert!(!ReferenceKind::NoHandle.allows_factories());
+    }
+
+    #[test]
+    fn reference_kind_allows_as_parameter() {
+        // All except NoHandle can be parameters
+        assert!(ReferenceKind::Standard.allows_as_parameter());
+        assert!(ReferenceKind::Scoped.allows_as_parameter());
+        assert!(ReferenceKind::NoCount.allows_as_parameter());
+        assert!(ReferenceKind::GenericHandle.allows_as_parameter());
+
+        // NoHandle cannot be parameter (would create stack reference)
+        assert!(!ReferenceKind::NoHandle.allows_as_parameter());
+    }
+
+    #[test]
+    fn reference_kind_names() {
+        assert_eq!(ReferenceKind::Standard.name(), "Standard");
+        assert_eq!(ReferenceKind::Scoped.name(), "Scoped");
+        assert_eq!(ReferenceKind::NoCount.name(), "NoCount");
+        assert_eq!(ReferenceKind::NoHandle.name(), "NoHandle");
+        assert_eq!(ReferenceKind::GenericHandle.name(), "GenericHandle");
+    }
+
+    #[test]
+    fn type_kind_no_count() {
+        let kind = TypeKind::no_count();
+        assert!(kind.is_reference());
+        assert_eq!(kind.reference_kind(), Some(ReferenceKind::NoCount));
+        assert!(kind.supports_handles()); // NoCount supports handles
+    }
+
+    #[test]
+    fn type_kind_no_handle() {
+        let kind = TypeKind::no_handle();
+        assert!(kind.is_reference());
+        assert_eq!(kind.reference_kind(), Some(ReferenceKind::NoHandle));
+        assert!(!kind.supports_handles()); // NoHandle does NOT support handles
+    }
+
+    #[test]
+    fn type_kind_supports_handles() {
+        // Reference types depend on their ReferenceKind
+        assert!(TypeKind::reference().supports_handles()); // Standard
+        assert!(TypeKind::no_count().supports_handles());
+        assert!(!TypeKind::no_handle().supports_handles());
+        assert!(!TypeKind::scoped().supports_handles());
+        assert!(TypeKind::generic_handle().supports_handles());
+
+        // Script objects always support handles
+        assert!(TypeKind::script_object().supports_handles());
+
+        // Value types never support handles
+        assert!(!TypeKind::value::<i32>().supports_handles());
+        assert!(!TypeKind::pod::<i32>().supports_handles());
+    }
+
+    #[test]
+    fn type_kind_reference_kind() {
+        assert_eq!(
+            TypeKind::reference().reference_kind(),
+            Some(ReferenceKind::Standard)
+        );
+        assert_eq!(
+            TypeKind::scoped().reference_kind(),
+            Some(ReferenceKind::Scoped)
+        );
+        assert_eq!(
+            TypeKind::no_count().reference_kind(),
+            Some(ReferenceKind::NoCount)
+        );
+        assert_eq!(
+            TypeKind::no_handle().reference_kind(),
+            Some(ReferenceKind::NoHandle)
+        );
+        assert_eq!(
+            TypeKind::generic_handle().reference_kind(),
+            Some(ReferenceKind::GenericHandle)
+        );
+
+        // Non-reference types return None
+        assert_eq!(TypeKind::script_object().reference_kind(), None);
+        assert_eq!(TypeKind::value::<i32>().reference_kind(), None);
+        assert_eq!(TypeKind::pod::<i32>().reference_kind(), None);
     }
 }
