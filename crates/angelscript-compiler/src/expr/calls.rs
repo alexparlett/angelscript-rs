@@ -24,7 +24,7 @@ type Result<T> = std::result::Result<T, CompilationError>;
 /// - Member expression: method call (handled in member.rs)
 /// - Other: indirect call (opCall or funcdef)
 pub fn compile_call<'ast>(
-    compiler: &mut ExprCompiler<'_, '_, '_>,
+    compiler: &mut ExprCompiler<'_, '_>,
     call: &CallExpr<'ast>,
 ) -> Result<ExprInfo> {
     match call.callee {
@@ -46,8 +46,9 @@ pub fn compile_call<'ast>(
 /// - A constructor call: `Vector3(1, 2, 3)`
 /// - A template constructor call: `array<int>()`
 /// - A super() call in a constructor: `super(args)` to call base class constructor
+/// - A funcdef variable call: `callback(args)` where callback is a funcdef handle
 fn compile_ident_call<'ast>(
-    compiler: &mut ExprCompiler<'_, '_, '_>,
+    compiler: &mut ExprCompiler<'_, '_>,
     ident: &IdentExpr<'ast>,
     call: &CallExpr<'ast>,
 ) -> Result<ExprInfo> {
@@ -64,11 +65,11 @@ fn compile_ident_call<'ast>(
     if !ident.type_args.is_empty() {
         // Build a TypeExpr from the ident to use the TypeResolver
         let type_expr = TypeExpr::new(
-            false,            // is_const
-            ident.scope,      // scope
+            false,       // is_const
+            ident.scope, // scope
             TypeBase::Named(ident.ident),
-            ident.type_args,  // template_args
-            &[],              // suffixes (handles, etc.)
+            ident.type_args, // template_args
+            &[],             // suffixes (handles, etc.)
             ident.span,
         );
 
@@ -89,7 +90,36 @@ fn compile_ident_call<'ast>(
 
     // Otherwise, try as a function call
     if let Some(candidates) = compiler.ctx().resolve_function(name) {
+        // Route lambda arguments to specialized handler
+        if has_lambda_argument(call) {
+            return compile_lambda_function_call(compiler, candidates.to_vec(), call);
+        }
         return compile_function_call(compiler, candidates.to_vec(), call);
+    }
+
+    // Check if this is a local variable that's a funcdef handle (e.g., `add(5, 3)` where add is `BinaryOp @add`)
+    if ident.scope.is_none() {
+        // Extract all needed data from context first to avoid borrow conflicts
+        let funcdef_info = compiler.ctx().get_local(name).and_then(|var| {
+            let funcdef = compiler
+                .ctx()
+                .get_type(var.data_type.type_hash)
+                .and_then(|e| e.as_funcdef())?;
+            Some((
+                var.slot,
+                funcdef.name.clone(),
+                funcdef.params.clone(),
+                funcdef.return_type,
+            ))
+        });
+
+        if let Some((slot, funcdef_name, params, return_type)) = funcdef_info {
+            // Emit GetLocal to push the funcdef handle onto the stack
+            compiler.emitter().emit_get_local(slot);
+
+            // Then compile the funcdef call
+            return compile_funcdef_call(compiler, &funcdef_name, &params, &return_type, call);
+        }
     }
 
     // Could be a variable or unknown identifier
@@ -103,7 +133,7 @@ fn compile_ident_call<'ast>(
 ///
 /// This is only valid inside a constructor of a derived class.
 fn compile_super_call(
-    compiler: &mut ExprCompiler<'_, '_, '_>,
+    compiler: &mut ExprCompiler<'_, '_>,
     call: &CallExpr<'_>,
 ) -> Result<ExprInfo> {
     let span = call.span;
@@ -244,17 +274,24 @@ fn compile_super_call(
     Ok(ExprInfo::rvalue(DataType::void()))
 }
 
+/// Check if any argument in a call is a lambda expression.
+fn has_lambda_argument(call: &CallExpr<'_>) -> bool {
+    call.args
+        .iter()
+        .any(|arg| matches!(arg.value, Expr::Lambda(_)))
+}
+
 /// Compile a direct function call.
 ///
 /// Resolves overloads and emits the appropriate call bytecode.
 pub fn compile_function_call(
-    compiler: &mut ExprCompiler<'_, '_, '_>,
+    compiler: &mut ExprCompiler<'_, '_>,
     candidates: Vec<TypeHash>,
     call: &CallExpr<'_>,
 ) -> Result<ExprInfo> {
     let span = call.span;
 
-    // Compile arguments and collect their types
+    // Compile arguments using infer()
     let (arg_types, arg_count) = compile_arguments(compiler, call)?;
 
     // Resolve overload
@@ -274,12 +311,81 @@ pub fn compile_function_call(
     Ok(ExprInfo::rvalue(return_type))
 }
 
+/// Compile a function call with lambda arguments.
+///
+/// For single-candidate functions, uses `check()` with expected parameter types
+/// to enable lambda type inference. For multiple candidates, errors per AngelScript
+/// spec: "If there are multiple matching uses for the anonymous function it will
+/// be necessary to explicitly inform the parameter types."
+fn compile_lambda_function_call(
+    compiler: &mut ExprCompiler<'_, '_>,
+    candidates: Vec<TypeHash>,
+    call: &CallExpr<'_>,
+) -> Result<ExprInfo> {
+    let span = call.span;
+
+    // Multiple candidates with lambda args is an error per AngelScript spec
+    if candidates.len() != 1 {
+        return Err(CompilationError::TypeMismatch {
+            message: "lambda with untyped parameters requires unambiguous function overload; \
+                      use explicit parameter types or ensure only one overload matches"
+                .to_string(),
+            span,
+        });
+    }
+
+    let func_hash = candidates[0];
+
+    // Get function info
+    let (param_types, required_count, func_name, return_type) =
+        {
+            let func = compiler.ctx().get_function(func_hash).ok_or_else(|| {
+                CompilationError::Internal {
+                    message: format!("Function not found: {:?}", func_hash),
+                }
+            })?;
+            (
+                func.def
+                    .params
+                    .iter()
+                    .map(|p| p.data_type)
+                    .collect::<Vec<_>>(),
+                func.def.required_param_count(),
+                func.def.name.clone(),
+                func.def.return_type,
+            )
+        };
+
+    // Check argument count
+    let arg_count = call.args.len();
+    let total_params = param_types.len();
+
+    if arg_count < required_count || arg_count > total_params {
+        return Err(CompilationError::ArgumentCountMismatch {
+            name: func_name,
+            expected: required_count,
+            got: arg_count,
+            span,
+        });
+    }
+
+    // Compile arguments using check() with expected types (enables lambda inference)
+    for (arg, expected_type) in call.args.iter().zip(&param_types) {
+        compiler.check(arg.value, expected_type)?;
+    }
+
+    // Emit call
+    compiler.emitter().emit_call(func_hash, arg_count as u8);
+
+    Ok(ExprInfo::rvalue(return_type))
+}
+
 /// Compile a constructor or factory call.
 ///
 /// Validates that the type is instantiable and selects the appropriate
 /// constructor/factory based on the type kind.
 pub fn compile_constructor_call(
-    compiler: &mut ExprCompiler<'_, '_, '_>,
+    compiler: &mut ExprCompiler<'_, '_>,
     type_hash: TypeHash,
     call: &CallExpr<'_>,
 ) -> Result<ExprInfo> {
@@ -361,11 +467,16 @@ pub fn compile_constructor_call(
     Ok(ExprInfo::rvalue(result_type))
 }
 
+/// Check if any argument in a slice is a lambda expression.
+fn has_lambda_in_args(args: &[angelscript_parser::ast::Argument<'_>]) -> bool {
+    args.iter().any(|arg| matches!(arg.value, Expr::Lambda(_)))
+}
+
 /// Compile a method call on an object.
 ///
 /// This is called from member.rs when processing `obj.method(args)`.
 pub fn compile_method_call(
-    compiler: &mut ExprCompiler<'_, '_, '_>,
+    compiler: &mut ExprCompiler<'_, '_>,
     obj_type: &DataType,
     method_name: &str,
     call_args: &[angelscript_parser::ast::Argument<'_>],
@@ -397,7 +508,19 @@ pub fn compile_method_call(
         (candidates.to_vec(), is_interface)
     };
 
-    // Compile arguments
+    // Route lambda arguments to specialized handler
+    if has_lambda_in_args(call_args) {
+        return compile_lambda_method_call(
+            compiler,
+            obj_type,
+            &candidates,
+            call_args,
+            is_interface,
+            span,
+        );
+    }
+
+    // Standard path: infer argument types, resolve overload
     let mut arg_types = Vec::with_capacity(call_args.len());
     for arg in call_args {
         let info = compiler.infer(arg.value)?;
@@ -529,6 +652,124 @@ pub fn compile_method_call(
     Ok(ExprInfo::rvalue(return_type))
 }
 
+/// Compile a method call with lambda arguments.
+///
+/// For single-candidate methods, uses `check()` with expected parameter types
+/// to enable lambda type inference. For multiple candidates, errors per AngelScript spec.
+fn compile_lambda_method_call(
+    compiler: &mut ExprCompiler<'_, '_>,
+    obj_type: &DataType,
+    candidates: &[TypeHash],
+    call_args: &[angelscript_parser::ast::Argument<'_>],
+    is_interface: bool,
+    span: Span,
+) -> Result<ExprInfo> {
+    // Multiple candidates with lambda args is an error per AngelScript spec
+    if candidates.len() != 1 {
+        return Err(CompilationError::TypeMismatch {
+            message: "lambda with untyped parameters requires unambiguous method overload; \
+                      use explicit parameter types or ensure only one overload matches"
+                .to_string(),
+            span,
+        });
+    }
+
+    let method_hash = candidates[0];
+
+    // Get method info
+    let (param_types, required_count, method_name, is_const_method, return_type) =
+        {
+            let func = compiler.ctx().get_function(method_hash).ok_or_else(|| {
+                CompilationError::Internal {
+                    message: format!("Method not found: {:?}", method_hash),
+                }
+            })?;
+            (
+                func.def
+                    .params
+                    .iter()
+                    .map(|p| p.data_type)
+                    .collect::<Vec<_>>(),
+                func.def.required_param_count(),
+                func.def.name.clone(),
+                func.def.is_const(),
+                func.def.return_type,
+            )
+        };
+
+    // Const-correctness check
+    if obj_type.is_effectively_const() && !is_const_method {
+        return Err(CompilationError::CannotModifyConst {
+            message: format!(
+                "cannot call non-const method '{}' on const object",
+                method_name
+            ),
+            span,
+        });
+    }
+
+    // Check argument count
+    let arg_count = call_args.len();
+    let total_params = param_types.len();
+
+    if arg_count < required_count || arg_count > total_params {
+        return Err(CompilationError::ArgumentCountMismatch {
+            name: method_name,
+            expected: required_count,
+            got: arg_count,
+            span,
+        });
+    }
+
+    // Compile arguments using check() with expected types (enables lambda inference)
+    for (arg, expected_type) in call_args.iter().zip(&param_types) {
+        compiler.check(arg.value, expected_type)?;
+    }
+
+    // Emit call - use interface dispatch for interfaces, direct call for classes
+    if is_interface {
+        // Compute signature hash from resolved method's parameters
+        let sig_hash = {
+            let func = compiler
+                .ctx()
+                .get_function(method_hash)
+                .ok_or_else(|| CompilationError::Internal {
+                    message: format!("Method not found: {:?}", method_hash),
+                })?;
+            let param_sig_hashes: Vec<_> = func
+                .def
+                .params
+                .iter()
+                .map(|p| p.data_type.signature_hash())
+                .collect();
+            TypeHash::from_signature(&method_name, &param_sig_hashes, is_const_method).0
+        };
+
+        // Get interface method slot by signature hash
+        let slot = compiler
+            .ctx()
+            .get_type(obj_type.type_hash)
+            .and_then(|e| e.as_interface())
+            .and_then(|iface| iface.method_slot(sig_hash))
+            .ok_or_else(|| CompilationError::Internal {
+                message: format!(
+                    "Interface method slot not found for '{}' on {:?}",
+                    method_name, obj_type.type_hash
+                ),
+            })?;
+
+        compiler
+            .emitter()
+            .emit_call_interface(obj_type.type_hash, slot, arg_count as u8);
+    } else {
+        compiler
+            .emitter()
+            .emit_call_method(method_hash, arg_count as u8);
+    }
+
+    Ok(ExprInfo::rvalue(return_type))
+}
+
 /// Result of checking a callee type for callability.
 enum CalleeKind {
     /// Has opCall methods
@@ -549,7 +790,7 @@ enum CalleeKind {
 /// - Callable objects via opCall
 /// - Function pointers/funcdefs
 fn compile_indirect_call(
-    compiler: &mut ExprCompiler<'_, '_, '_>,
+    compiler: &mut ExprCompiler<'_, '_>,
     call: &CallExpr<'_>,
 ) -> Result<ExprInfo> {
     let span = call.span;
@@ -600,7 +841,7 @@ fn compile_indirect_call(
 
 /// Compile a call through opCall operator.
 fn compile_opcall(
-    compiler: &mut ExprCompiler<'_, '_, '_>,
+    compiler: &mut ExprCompiler<'_, '_>,
     obj_type: &DataType,
     candidates: &[TypeHash],
     call: &CallExpr<'_>,
@@ -649,7 +890,7 @@ fn compile_opcall(
 
 /// Compile a call through a funcdef (function pointer).
 fn compile_funcdef_call(
-    compiler: &mut ExprCompiler<'_, '_, '_>,
+    compiler: &mut ExprCompiler<'_, '_>,
     name: &str,
     params: &[DataType],
     return_type: &DataType,
@@ -688,7 +929,7 @@ fn compile_funcdef_call(
 
 /// Compile call arguments and return their types.
 fn compile_arguments(
-    compiler: &mut ExprCompiler<'_, '_, '_>,
+    compiler: &mut ExprCompiler<'_, '_>,
     call: &CallExpr<'_>,
 ) -> Result<(Vec<DataType>, usize)> {
     let mut arg_types = Vec::with_capacity(call.args.len());
@@ -704,7 +945,7 @@ fn compile_arguments(
 
 /// Apply conversions to arguments after overload resolution.
 fn apply_argument_conversions(
-    compiler: &mut ExprCompiler<'_, '_, '_>,
+    compiler: &mut ExprCompiler<'_, '_>,
     overload: &OverloadMatch,
 ) -> Result<()> {
     for conv in overload.arg_conversions.iter().flatten() {
@@ -715,7 +956,7 @@ fn apply_argument_conversions(
 
 /// Get the return type of a function.
 fn get_function_return_type(
-    compiler: &ExprCompiler<'_, '_, '_>,
+    compiler: &ExprCompiler<'_, '_>,
     func_hash: TypeHash,
 ) -> Result<DataType> {
     let func =
@@ -731,7 +972,7 @@ fn get_function_return_type(
 
 /// Validate that a type can be instantiated.
 fn validate_instantiable(
-    compiler: &ExprCompiler<'_, '_, '_>,
+    compiler: &ExprCompiler<'_, '_>,
     type_hash: TypeHash,
     span: Span,
 ) -> Result<()> {
@@ -828,7 +1069,8 @@ mod tests {
 
         let mut ctx = CompilationContext::new(&registry);
         ctx.begin_function();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
         let compiler = ExprCompiler::new(&mut ctx, &mut emitter, None);
 
         let result = validate_instantiable(&compiler, type_hash, Span::default());
@@ -851,7 +1093,8 @@ mod tests {
         let mut ctx = CompilationContext::new(&registry);
         ctx.begin_function();
         let mut constants = ConstantPool::new();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
         let compiler = ExprCompiler::new(&mut ctx, &mut emitter, None);
 
         let result = validate_instantiable(&compiler, type_hash, Span::default());
@@ -883,7 +1126,8 @@ mod tests {
         let mut ctx = CompilationContext::new(&registry);
         ctx.begin_function();
         let mut constants = ConstantPool::new();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
         let compiler = ExprCompiler::new(&mut ctx, &mut emitter, None);
 
         let result = validate_instantiable(&compiler, type_hash, Span::default());
@@ -915,7 +1159,8 @@ mod tests {
         let mut ctx = CompilationContext::new(&registry);
         ctx.begin_function();
         let mut constants = ConstantPool::new();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
         let compiler = ExprCompiler::new(&mut ctx, &mut emitter, None);
 
         let result = validate_instantiable(&compiler, type_hash, Span::default());
@@ -934,7 +1179,8 @@ mod tests {
 
         let mut ctx = CompilationContext::new(&registry);
         ctx.begin_function();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
         let compiler = ExprCompiler::new(&mut ctx, &mut emitter, None);
 
         // Test get_function_return_type helper
@@ -949,7 +1195,8 @@ mod tests {
 
         let mut ctx = CompilationContext::new(&registry);
         ctx.begin_function();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
         let compiler = ExprCompiler::new(&mut ctx, &mut emitter, None);
 
         let unknown_hash = TypeHash::from_function("unknown", &[]);
@@ -999,7 +1246,8 @@ mod tests {
         let mut ctx = CompilationContext::new(&registry);
         ctx.begin_function();
         let mut constants = ConstantPool::new();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
         let compiler = ExprCompiler::new(&mut ctx, &mut emitter, None);
 
         // Value type should be instantiable
@@ -1077,7 +1325,8 @@ mod tests {
 
         let mut ctx = CompilationContext::new(&registry);
         ctx.begin_function();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
         let mut compiler = ExprCompiler::new(&mut ctx, &mut emitter, None);
 
         let mut obj_type = DataType::simple(type_hash);
@@ -1095,7 +1344,8 @@ mod tests {
 
         let mut ctx = CompilationContext::new(&registry);
         ctx.begin_function();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
         let mut compiler = ExprCompiler::new(&mut ctx, &mut emitter, None);
 
         let mut obj_type = DataType::simple(type_hash);
@@ -1117,7 +1367,8 @@ mod tests {
 
         let mut ctx = CompilationContext::new(&registry);
         ctx.begin_function();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
         let mut compiler = ExprCompiler::new(&mut ctx, &mut emitter, None);
 
         let obj_type = DataType::simple(type_hash);
@@ -1136,7 +1387,8 @@ mod tests {
 
         let mut ctx = CompilationContext::new(&registry);
         ctx.begin_function();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
         let mut compiler = ExprCompiler::new(&mut ctx, &mut emitter, None);
 
         let obj_type = DataType::simple(type_hash);
@@ -1200,7 +1452,8 @@ mod tests {
         let (registry, mut constants) = create_test_context();
         let mut ctx = CompilationContext::new(&registry);
         ctx.begin_function();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
         let mut compiler = ExprCompiler::new(&mut ctx, &mut emitter, None);
 
         let overload = OverloadMatch {
@@ -1218,7 +1471,8 @@ mod tests {
         let (registry, mut constants) = create_test_context();
         let mut ctx = CompilationContext::new(&registry);
         ctx.begin_function();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
         let mut compiler = ExprCompiler::new(&mut ctx, &mut emitter, None);
 
         let overload = OverloadMatch {
@@ -1430,7 +1684,8 @@ mod tests {
 
         let mut ctx = CompilationContext::new(&registry);
         ctx.begin_function();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
         let compiler = ExprCompiler::new(&mut ctx, &mut emitter, None);
 
         // Create call expression manually isn't easy, but we can test the helper
@@ -1539,7 +1794,8 @@ mod tests {
 
         let mut ctx = CompilationContext::new(&registry);
         ctx.begin_function();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
         let compiler = ExprCompiler::new(&mut ctx, &mut emitter, None);
 
         let unknown_hash = TypeHash::from_name("NonExistentType");
@@ -1581,7 +1837,8 @@ mod tests {
 
         let mut ctx = CompilationContext::new(&registry);
         ctx.begin_function();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
         let compiler = ExprCompiler::new(&mut ctx, &mut emitter, None);
 
         // validate_instantiable only checks mixin/abstract/interface
@@ -1610,7 +1867,8 @@ mod tests {
 
         let mut ctx = CompilationContext::new(&registry);
         ctx.begin_function();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
         let compiler = ExprCompiler::new(&mut ctx, &mut emitter, None);
 
         let return_type = get_function_return_type(&compiler, func_hash).unwrap();
@@ -1670,7 +1928,8 @@ mod tests {
 
         let mut ctx = CompilationContext::new(&registry);
         ctx.begin_function();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
         let compiler = ExprCompiler::new(&mut ctx, &mut emitter, None);
 
         // Calling on non-const object should find both methods
@@ -1685,7 +1944,8 @@ mod tests {
         let (registry, mut constants) = create_test_context();
         let mut ctx = CompilationContext::new(&registry);
         ctx.begin_function();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
         let mut compiler = ExprCompiler::new(&mut ctx, &mut emitter, None);
 
         // Create a conversion that would emit bytecode

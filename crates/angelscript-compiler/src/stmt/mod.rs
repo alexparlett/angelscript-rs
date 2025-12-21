@@ -41,11 +41,11 @@ type Result<T> = std::result::Result<T, CompilationError>;
 /// The compiler maintains references to the compilation context and
 /// bytecode emitter. It tracks the expected return type for the current
 /// function to validate return statements.
-pub struct StmtCompiler<'a, 'ctx, 'pool> {
+pub struct StmtCompiler<'a, 'ctx> {
     /// Compilation context with type registry, namespace info, and local scope
     ctx: &'a mut CompilationContext<'ctx>,
     /// Bytecode emitter
-    emitter: &'a mut BytecodeEmitter<'pool>,
+    emitter: &'a mut BytecodeEmitter,
     /// Expected return type for the current function
     return_type: DataType,
     /// Current class type (for 'this' access in methods)
@@ -54,7 +54,7 @@ pub struct StmtCompiler<'a, 'ctx, 'pool> {
     is_constructor: bool,
 }
 
-impl<'a, 'ctx, 'pool> StmtCompiler<'a, 'ctx, 'pool> {
+impl<'a, 'ctx> StmtCompiler<'a, 'ctx> {
     /// Create a new statement compiler.
     ///
     /// # Arguments
@@ -65,7 +65,7 @@ impl<'a, 'ctx, 'pool> StmtCompiler<'a, 'ctx, 'pool> {
     /// * `current_class` - The class being compiled (for methods)
     pub fn new(
         ctx: &'a mut CompilationContext<'ctx>,
-        emitter: &'a mut BytecodeEmitter<'pool>,
+        emitter: &'a mut BytecodeEmitter,
         return_type: DataType,
         current_class: Option<TypeHash>,
     ) -> Self {
@@ -83,7 +83,7 @@ impl<'a, 'ctx, 'pool> StmtCompiler<'a, 'ctx, 'pool> {
     /// This enables super() calls which are only valid in constructors.
     pub fn new_for_constructor(
         ctx: &'a mut CompilationContext<'ctx>,
-        emitter: &'a mut BytecodeEmitter<'pool>,
+        emitter: &'a mut BytecodeEmitter,
         return_type: DataType,
         current_class: Option<TypeHash>,
     ) -> Self {
@@ -175,7 +175,7 @@ impl<'a, 'ctx, 'pool> StmtCompiler<'a, 'ctx, 'pool> {
     }
 
     /// Create an expression compiler using the current context.
-    fn expr_compiler(&mut self) -> ExprCompiler<'_, 'ctx, 'pool> {
+    fn expr_compiler(&mut self) -> ExprCompiler<'_, 'ctx> {
         if self.is_constructor {
             ExprCompiler::new_for_constructor(self.ctx, self.emitter, self.current_class)
         } else {
@@ -190,7 +190,7 @@ impl<'a, 'ctx, 'pool> StmtCompiler<'a, 'ctx, 'pool> {
     /// Get the addref behavior function hash for a type.
     ///
     /// For FFI types, returns the registered `behaviors.addref` function.
-    /// For script types, returns `TypeHash::SCRIPT_ADDREF` placeholder.
+    /// For script types and funcdefs, returns `TypeHash::SCRIPT_ADDREF` placeholder.
     pub(crate) fn get_addref_behavior(&self, type_hash: TypeHash, span: Span) -> Result<TypeHash> {
         let type_entry = self
             .ctx
@@ -199,6 +199,11 @@ impl<'a, 'ctx, 'pool> StmtCompiler<'a, 'ctx, 'pool> {
                 message: format!("unknown type for addref behavior: {:?}", type_hash),
                 span,
             })?;
+
+        // Funcdefs use placeholder hash (they're reference counted internally)
+        if type_entry.as_funcdef().is_some() {
+            return Ok(primitives::SCRIPT_ADDREF);
+        }
 
         let Some(class) = type_entry.as_class() else {
             return Err(CompilationError::Other {
@@ -228,7 +233,7 @@ impl<'a, 'ctx, 'pool> StmtCompiler<'a, 'ctx, 'pool> {
     /// Get the release behavior function hash for a type.
     ///
     /// For FFI types, returns the registered `behaviors.release` function.
-    /// For script types, returns `TypeHash::SCRIPT_RELEASE` placeholder.
+    /// For script types and funcdefs, returns `TypeHash::SCRIPT_RELEASE` placeholder.
     pub(crate) fn get_release_behavior(&self, type_hash: TypeHash, span: Span) -> Result<TypeHash> {
         let type_entry = self
             .ctx
@@ -237,6 +242,11 @@ impl<'a, 'ctx, 'pool> StmtCompiler<'a, 'ctx, 'pool> {
                 message: format!("unknown type for release behavior: {:?}", type_hash),
                 span,
             })?;
+
+        // Funcdefs use placeholder hash (they're reference counted internally)
+        if type_entry.as_funcdef().is_some() {
+            return Ok(primitives::SCRIPT_RELEASE);
+        }
 
         let Some(class) = type_entry.as_class() else {
             return Err(CompilationError::Other {
@@ -278,7 +288,7 @@ impl<'a, 'ctx, 'pool> StmtCompiler<'a, 'ctx, 'pool> {
     }
 
     /// Get the bytecode emitter.
-    pub fn emitter(&mut self) -> &mut BytecodeEmitter<'pool> {
+    pub fn emitter(&mut self) -> &mut BytecodeEmitter {
         self.emitter
     }
 
@@ -309,7 +319,8 @@ mod tests {
         let (registry, mut constants) = create_test_context();
         let mut ctx = CompilationContext::new(&registry);
         ctx.begin_function();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         let _compiler = StmtCompiler::new(&mut ctx, &mut emitter, DataType::void(), None);
     }
@@ -319,7 +330,8 @@ mod tests {
         let (registry, mut constants) = create_test_context();
         let mut ctx = CompilationContext::new(&registry);
         ctx.begin_function();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         let class_hash = TypeHash::from_name("MyClass");
         let compiler =
@@ -333,7 +345,8 @@ mod tests {
         let (registry, mut constants) = create_test_context();
         let mut ctx = CompilationContext::new(&registry);
         ctx.begin_function();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         let return_type = DataType::simple(primitives::INT32);
         let compiler = StmtCompiler::new(&mut ctx, &mut emitter, return_type, None);
@@ -348,7 +361,8 @@ mod tests {
         let (registry, mut constants) = create_test_context();
         let mut ctx = CompilationContext::new(&registry);
         ctx.begin_function();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         let mut compiler = StmtCompiler::new(&mut ctx, &mut emitter, DataType::void(), None);
 
@@ -359,7 +373,7 @@ mod tests {
         compiler.compile_expr_stmt(&stmt).unwrap();
 
         // Empty expression statement emits no bytecode
-        let chunk = emitter.finish();
+        let chunk = emitter.finish_chunk();
         assert_eq!(chunk.len(), 0);
     }
 
@@ -370,7 +384,8 @@ mod tests {
         let (registry, mut constants) = create_test_context();
         let mut ctx = CompilationContext::new(&registry);
         ctx.begin_function();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         let mut compiler = StmtCompiler::new(&mut ctx, &mut emitter, DataType::void(), None);
 
@@ -397,7 +412,8 @@ mod tests {
         let (registry, mut constants) = create_test_context();
         let mut ctx = CompilationContext::new(&registry);
         ctx.begin_function();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         let mut compiler = StmtCompiler::new(&mut ctx, &mut emitter, DataType::void(), None);
 
@@ -425,7 +441,8 @@ mod tests {
         let (registry, mut constants) = create_test_context();
         let mut ctx = CompilationContext::new(&registry);
         ctx.begin_function();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         // Enter a loop context
         let loop_start = emitter.current_offset();
@@ -439,7 +456,7 @@ mod tests {
         compiler.compile_break(&brk).unwrap();
 
         // Break emits a Jump instruction
-        let chunk = emitter.finish();
+        let chunk = emitter.finish_chunk();
         assert_eq!(chunk.len(), 3); // Jump(1) + offset(2)
         assert_eq!(chunk.read_op(0), Some(OpCode::Jump));
     }
@@ -452,7 +469,8 @@ mod tests {
         let (registry, mut constants) = create_test_context();
         let mut ctx = CompilationContext::new(&registry);
         ctx.begin_function();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         // Enter a loop context
         let loop_start = emitter.current_offset();
@@ -466,7 +484,7 @@ mod tests {
         compiler.compile_continue(&cont).unwrap();
 
         // Continue emits a Loop instruction back to loop start
-        let chunk = emitter.finish();
+        let chunk = emitter.finish_chunk();
         assert_eq!(chunk.len(), 3); // Loop(1) + offset(2)
         assert_eq!(chunk.read_op(0), Some(OpCode::Loop));
     }

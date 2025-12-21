@@ -9,7 +9,7 @@ use crate::bytecode::OpCode;
 
 use super::{Result, StmtCompiler};
 
-impl<'a, 'ctx, 'pool> StmtCompiler<'a, 'ctx, 'pool> {
+impl<'a, 'ctx> StmtCompiler<'a, 'ctx> {
     /// Compile a for loop.
     ///
     /// For loops have the form: `for (init; condition; update) body`
@@ -160,7 +160,8 @@ mod tests {
         let (registry, mut constants) = create_test_context();
         let mut ctx = CompilationContext::new(&registry);
         ctx.begin_function();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         // for (;;) { break; }
         let break_stmt = Stmt::Break(BreakStmt {
@@ -184,7 +185,7 @@ mod tests {
         let mut compiler = StmtCompiler::new(&mut ctx, &mut emitter, DataType::void(), None);
         compiler.compile_for(&for_stmt).unwrap();
 
-        let chunk = emitter.finish();
+        let chunk = emitter.finish_chunk();
         // Bytecode: Jump(3, break) + Loop(3) = 6 bytes
         assert_eq!(chunk.len(), 6);
         assert_eq!(chunk.read_op(0), Some(OpCode::Jump)); // break
@@ -197,7 +198,8 @@ mod tests {
         let (registry, mut constants) = create_test_context();
         let mut ctx = CompilationContext::new(&registry);
         ctx.begin_function();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         // for (; false;) {}
         let body = arena.alloc(Stmt::Block(Block {
@@ -221,7 +223,7 @@ mod tests {
         let mut compiler = StmtCompiler::new(&mut ctx, &mut emitter, DataType::void(), None);
         compiler.compile_for(&for_stmt).unwrap();
 
-        let chunk = emitter.finish();
+        let chunk = emitter.finish_chunk();
         // Bytecode: PushFalse(1) + JumpIfFalse(3) + Pop(1) + Loop(3) + Pop(1) = 9 bytes
         assert_eq!(chunk.len(), 9);
         assert_eq!(chunk.read_op(0), Some(OpCode::PushFalse));
@@ -237,7 +239,8 @@ mod tests {
         let (registry, mut constants) = create_test_context();
         let mut ctx = CompilationContext::new(&registry);
         ctx.begin_function();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         // for (int i = 0; false;) {}
         let init_expr = arena.alloc(Expr::Literal(LiteralExpr {
@@ -281,7 +284,7 @@ mod tests {
         // Variable i should be out of scope after the loop
         assert!(ctx.get_local("i").is_none());
 
-        let chunk = emitter.finish();
+        let chunk = emitter.finish_chunk();
         // Bytecode: PushZero(1) + SetLocal(2) + PushFalse(1) + JumpIfFalse(3) + Pop(1) + Loop(3) + Pop(1) = 12
         assert_eq!(chunk.len(), 12);
         assert_eq!(chunk.read_op(0), Some(OpCode::PushZero)); // int i = 0
@@ -299,7 +302,8 @@ mod tests {
         let (registry, mut constants) = create_test_context();
         let mut ctx = CompilationContext::new(&registry);
         ctx.begin_function();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         // for (; true;) { break; }
         let break_stmt = Stmt::Break(BreakStmt {
@@ -328,7 +332,7 @@ mod tests {
         let mut compiler = StmtCompiler::new(&mut ctx, &mut emitter, DataType::void(), None);
         compiler.compile_for(&for_stmt).unwrap();
 
-        let chunk = emitter.finish();
+        let chunk = emitter.finish_chunk();
         // Bytecode: PushTrue(1) + JumpIfFalse(3) + Pop(1) + Jump(3, break) + Loop(3) + Pop(1) = 12
         assert_eq!(chunk.len(), 12);
         assert_eq!(chunk.read_op(0), Some(OpCode::PushTrue));
@@ -341,7 +345,8 @@ mod tests {
         let (registry, mut constants) = create_test_context();
         let mut ctx = CompilationContext::new(&registry);
         ctx.begin_function();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         // for (; false;) { continue; }
         let continue_stmt = Stmt::Continue(ContinueStmt {
@@ -370,7 +375,7 @@ mod tests {
         let mut compiler = StmtCompiler::new(&mut ctx, &mut emitter, DataType::void(), None);
         compiler.compile_for(&for_stmt).unwrap();
 
-        let chunk = emitter.finish();
+        let chunk = emitter.finish_chunk();
         // Continue should be Loop instruction
         // The continue target is set to the update section (offset 5 - after Pop)
         assert_eq!(chunk.read_op(5), Some(OpCode::Loop)); // continue
@@ -382,7 +387,8 @@ mod tests {
         let (registry, mut constants) = create_test_context();
         let mut ctx = CompilationContext::new(&registry);
         ctx.begin_function();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         // for (; 42;) {} - should fail
         let body = arena.alloc(Stmt::Block(Block {
@@ -421,7 +427,8 @@ mod tests {
         let (registry, mut constants) = create_test_context();
         let mut ctx = CompilationContext::new(&registry);
         ctx.begin_function();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         // for (int i = 0;;) { break; }
         let init_expr = arena.alloc(Expr::Literal(LiteralExpr {
@@ -472,7 +479,8 @@ mod tests {
         let (registry, mut constants) = create_test_context();
         let mut ctx = CompilationContext::new(&registry);
         ctx.begin_function();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         // Inner for loop
         let inner_body = arena.alloc(Stmt::Block(Block {
@@ -516,7 +524,7 @@ mod tests {
         let mut compiler = StmtCompiler::new(&mut ctx, &mut emitter, DataType::void(), None);
         compiler.compile_for(&outer_for).unwrap();
 
-        let chunk = emitter.finish();
+        let chunk = emitter.finish_chunk();
         // Both loops should compile correctly
         // Outer: PushFalse(1) + JumpIfFalse(3) + Pop(1) = 5 bytes before inner
         // Inner: PushFalse(1) + JumpIfFalse(3) + Pop(1) + Loop(3) + Pop(1) = 9 bytes

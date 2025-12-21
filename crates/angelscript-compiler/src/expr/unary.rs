@@ -12,7 +12,7 @@ use crate::operators::{UnaryResolution, resolve_unary};
 
 /// Compile a unary prefix expression.
 pub fn compile_unary<'ast>(
-    compiler: &mut ExprCompiler<'_, '_, '_>,
+    compiler: &mut ExprCompiler<'_, '_>,
     expr: &UnaryExpr<'ast>,
 ) -> Result<ExprInfo> {
     match expr.op {
@@ -24,14 +24,14 @@ pub fn compile_unary<'ast>(
 
 /// Compile a postfix expression (++, --).
 pub fn compile_postfix<'ast>(
-    compiler: &mut ExprCompiler<'_, '_, '_>,
+    compiler: &mut ExprCompiler<'_, '_>,
     expr: &PostfixExpr<'ast>,
 ) -> Result<ExprInfo> {
     compile_postfix_inc_dec(compiler, expr)
 }
 
 fn compile_simple_unary<'ast>(
-    compiler: &mut ExprCompiler<'_, '_, '_>,
+    compiler: &mut ExprCompiler<'_, '_>,
     expr: &UnaryExpr<'ast>,
 ) -> Result<ExprInfo> {
     // Compile operand
@@ -64,7 +64,7 @@ fn compile_simple_unary<'ast>(
 }
 
 fn compile_prefix_inc_dec<'ast>(
-    compiler: &mut ExprCompiler<'_, '_, '_>,
+    compiler: &mut ExprCompiler<'_, '_>,
     expr: &UnaryExpr<'ast>,
 ) -> Result<ExprInfo> {
     // Compile operand as lvalue
@@ -98,7 +98,7 @@ fn compile_prefix_inc_dec<'ast>(
 }
 
 fn compile_postfix_inc_dec<'ast>(
-    compiler: &mut ExprCompiler<'_, '_, '_>,
+    compiler: &mut ExprCompiler<'_, '_>,
     expr: &PostfixExpr<'ast>,
 ) -> Result<ExprInfo> {
     // Compile operand as lvalue
@@ -130,7 +130,7 @@ fn compile_postfix_inc_dec<'ast>(
 }
 
 fn compile_handle_of<'ast>(
-    compiler: &mut ExprCompiler<'_, '_, '_>,
+    compiler: &mut ExprCompiler<'_, '_>,
     expr: &UnaryExpr<'ast>,
 ) -> Result<ExprInfo> {
     // Compile operand
@@ -163,10 +163,10 @@ mod tests {
     use angelscript_registry::SymbolRegistry;
     use bumpalo::Bump;
 
-    fn create_test_compiler<'a, 'ctx, 'pool>(
+    fn create_test_compiler<'a, 'ctx>(
         ctx: &'a mut CompilationContext<'ctx>,
-        emitter: &'a mut BytecodeEmitter<'pool>,
-    ) -> ExprCompiler<'a, 'ctx, 'pool> {
+        emitter: &'a mut BytecodeEmitter,
+    ) -> ExprCompiler<'a, 'ctx> {
         ExprCompiler::new(ctx, emitter, None)
     }
 
@@ -183,7 +183,8 @@ mod tests {
         let mut ctx = CompilationContext::new(&registry);
         ctx.begin_function();
         let mut constants = ConstantPool::new();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         let arena = Bump::new();
         let operand = make_int_literal(&arena, 42);
@@ -201,7 +202,7 @@ mod tests {
         let info = result.unwrap();
         assert_eq!(info.data_type.type_hash, primitives::INT32);
 
-        let chunk = emitter.finish();
+        let chunk = emitter.finish_chunk();
         // Bytecode: Constant (operand), NegI32
         chunk.assert_opcodes(&[OpCode::Constant, OpCode::NegI32]);
     }
@@ -212,7 +213,8 @@ mod tests {
         let mut ctx = CompilationContext::new(&registry);
         ctx.begin_function();
         let mut constants = ConstantPool::new();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         let arena = Bump::new();
         let operand = arena.alloc(Expr::Literal(LiteralExpr {
@@ -233,7 +235,7 @@ mod tests {
         let info = result.unwrap();
         assert_eq!(info.data_type.type_hash, primitives::BOOL);
 
-        let chunk = emitter.finish();
+        let chunk = emitter.finish_chunk();
         // Bytecode: PushTrue (operand), Not
         chunk.assert_opcodes(&[OpCode::PushTrue, OpCode::Not]);
     }
@@ -244,7 +246,8 @@ mod tests {
         let mut ctx = CompilationContext::new(&registry);
         ctx.begin_function();
         let mut constants = ConstantPool::new();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         let arena = Bump::new();
         let operand = make_int_literal(&arena, 42);
@@ -263,7 +266,7 @@ mod tests {
         let info = result.unwrap();
         assert_eq!(info.data_type.type_hash, primitives::INT32);
 
-        let chunk = emitter.finish();
+        let chunk = emitter.finish_chunk();
         // Bytecode: Constant (operand only, no-op for unary plus)
         chunk.assert_opcodes(&[OpCode::Constant]);
     }

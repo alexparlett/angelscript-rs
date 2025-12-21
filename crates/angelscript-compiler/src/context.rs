@@ -75,8 +75,9 @@ pub struct CompilationContext<'a> {
     /// Template instance cache for avoiding duplicate instantiation
     template_cache: TemplateInstanceCache,
 
-    /// Local scope for function compilation (None when not in a function)
-    local_scope: Option<LocalScope>,
+    /// Stack of local scopes for nested function compilation (e.g., lambdas).
+    /// Empty when not in a function. Top of stack is the current function's scope.
+    local_scope_stack: Vec<LocalScope>,
 
     /// String type hash from the string factory (None if not configured)
     string_type_hash: Option<TypeHash>,
@@ -92,7 +93,7 @@ impl<'a> CompilationContext<'a> {
             imports: Vec::new(),
             errors: Vec::new(),
             template_cache: TemplateInstanceCache::new(),
-            local_scope: None,
+            local_scope_stack: Vec::new(),
             string_type_hash: None,
         }
     }
@@ -586,29 +587,38 @@ impl<'a> CompilationContext<'a> {
     // Local Scope Management (for function compilation)
     // ========================================================================
 
-    /// Begin compiling a function - creates a new local scope.
+    /// Begin compiling a function - pushes a new local scope onto the stack.
+    ///
+    /// This supports nested function compilation (e.g., lambdas inside functions).
     pub fn begin_function(&mut self) {
-        self.local_scope = Some(LocalScope::new());
+        self.local_scope_stack.push(LocalScope::new());
     }
 
-    /// End function compilation - returns the local scope with frame info.
+    /// End function compilation - pops and returns the current local scope.
     ///
     /// Returns `None` if not in a function.
     pub fn end_function(&mut self) -> Option<LocalScope> {
-        self.local_scope.take()
+        self.local_scope_stack.pop()
     }
 
     /// Check if currently compiling a function.
     pub fn in_function(&self) -> bool {
-        self.local_scope.is_some()
+        !self.local_scope_stack.is_empty()
+    }
+
+    /// Get the current function scope nesting depth.
+    ///
+    /// Returns 0 if not in a function, 1 for top-level function, 2+ for nested lambdas.
+    pub fn function_depth(&self) -> usize {
+        self.local_scope_stack.len()
     }
 
     /// Enter a nested block scope (if body, loop body, etc.).
     ///
     /// Panics if not in a function.
     pub fn push_local_scope(&mut self) {
-        self.local_scope
-            .as_mut()
+        self.local_scope_stack
+            .last_mut()
             .expect("push_local_scope called outside function")
             .push_scope();
     }
@@ -618,8 +628,8 @@ impl<'a> CompilationContext<'a> {
     /// Returns the variables that went out of scope, for cleanup bytecode emission.
     /// Panics if not in a function.
     pub fn pop_local_scope(&mut self) -> Vec<crate::scope::LocalVar> {
-        self.local_scope
-            .as_mut()
+        self.local_scope_stack
+            .last_mut()
             .expect("pop_local_scope called outside function")
             .pop_scope()
     }
@@ -638,8 +648,8 @@ impl<'a> CompilationContext<'a> {
         // Validate type is instantiable (not a mixin)
         self.validate_instantiable_type(&data_type, span, "as local variable type")?;
 
-        self.local_scope
-            .as_mut()
+        self.local_scope_stack
+            .last_mut()
             .expect("declare_local called outside function")
             .declare(name, data_type, is_const, span)
     }
@@ -658,8 +668,8 @@ impl<'a> CompilationContext<'a> {
         // Validate type is instantiable (not a mixin)
         self.validate_instantiable_type(&data_type, span, "as function parameter type")?;
 
-        self.local_scope
-            .as_mut()
+        self.local_scope_stack
+            .last_mut()
             .expect("declare_param called outside function")
             .declare_param(name, data_type, is_const, span)
     }
@@ -668,8 +678,8 @@ impl<'a> CompilationContext<'a> {
     ///
     /// Panics if not in a function.
     pub fn mark_local_initialized(&mut self, name: &str) {
-        self.local_scope
-            .as_mut()
+        self.local_scope_stack
+            .last_mut()
             .expect("mark_local_initialized called outside function")
             .mark_initialized(name);
     }
@@ -678,47 +688,19 @@ impl<'a> CompilationContext<'a> {
     ///
     /// Returns `None` if not in a function or variable not found.
     pub fn get_local(&self, name: &str) -> Option<&LocalVar> {
-        self.local_scope.as_ref()?.get(name)
+        self.local_scope_stack.last()?.get(name)
     }
 
     /// Look up a variable, capturing from parent scopes if in a lambda.
     ///
     /// Returns `None` if not in a function or variable not found.
     pub fn get_local_or_capture(&mut self, name: &str) -> Option<VarLookup> {
-        self.local_scope.as_mut()?.get_or_capture(name)
+        self.local_scope_stack.last_mut()?.get_or_capture(name)
     }
 
     /// Get the local scope (if in a function).
     pub fn local_scope(&self) -> Option<&LocalScope> {
-        self.local_scope.as_ref()
-    }
-
-    /// Begin compiling a lambda - creates nested scope from current.
-    ///
-    /// The current scope becomes the parent of the new lambda scope.
-    /// Panics if not in a function.
-    pub fn begin_lambda(&mut self) {
-        let parent = self
-            .local_scope
-            .take()
-            .expect("begin_lambda called outside function");
-        self.local_scope = Some(LocalScope::nested(parent));
-    }
-
-    /// End lambda compilation - restores parent scope.
-    ///
-    /// Returns the lambda's local scope (with captures).
-    /// Panics if not in a lambda or no parent scope.
-    pub fn end_lambda(&mut self) -> LocalScope {
-        let mut lambda_scope = self
-            .local_scope
-            .take()
-            .expect("end_lambda called without active scope");
-        let parent = lambda_scope
-            .take_parent()
-            .expect("end_lambda called but no parent scope");
-        self.local_scope = Some(parent);
-        lambda_scope
+        self.local_scope_stack.last()
     }
 
     // ========================================================================
@@ -1594,41 +1576,50 @@ mod tests {
     }
 
     #[test]
-    fn context_lambda_capture() {
+    fn context_nested_function_scopes() {
         use angelscript_core::primitives;
 
         let registry = SymbolRegistry::with_primitives();
         let mut ctx = CompilationContext::new(&registry);
 
+        // Outer function
         ctx.begin_function();
+        assert_eq!(ctx.function_depth(), 1);
 
-        // Declare variable in outer function
         ctx.declare_local(
-            "captured".into(),
+            "outer_var".into(),
             DataType::simple(primitives::INT32),
             false,
             Span::default(),
         )
         .unwrap();
 
-        // Begin lambda
-        ctx.begin_lambda();
+        // Nested lambda (inner function)
+        ctx.begin_function();
+        assert_eq!(ctx.function_depth(), 2);
 
-        // Try to access the variable - should capture it
-        let lookup = ctx.get_local_or_capture("captured");
-        assert!(matches!(lookup, Some(VarLookup::Captured(_))));
+        // Lambda has its own isolated scope - outer_var not visible
+        assert!(ctx.get_local("outer_var").is_none());
+
+        ctx.declare_local(
+            "inner_var".into(),
+            DataType::simple(primitives::BOOL),
+            false,
+            Span::default(),
+        )
+        .unwrap();
+        assert!(ctx.get_local("inner_var").is_some());
 
         // End lambda
-        let lambda_scope = ctx.end_lambda();
-        assert_eq!(lambda_scope.captures().len(), 1);
+        ctx.end_function();
+        assert_eq!(ctx.function_depth(), 1);
 
-        // Back in outer function
-        let var = ctx
-            .get_local("captured")
-            .expect("captured should still be in outer scope");
-        assert_eq!(var.data_type.type_hash, primitives::INT32);
+        // Back in outer function - outer_var visible again, inner_var not
+        assert!(ctx.get_local("outer_var").is_some());
+        assert!(ctx.get_local("inner_var").is_none());
 
         ctx.end_function();
+        assert_eq!(ctx.function_depth(), 0);
     }
 
     #[test]

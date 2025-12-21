@@ -12,7 +12,7 @@ use crate::bytecode::OpCode;
 
 use super::{Result, StmtCompiler};
 
-impl<'a, 'ctx, 'pool> StmtCompiler<'a, 'ctx, 'pool> {
+impl<'a, 'ctx> StmtCompiler<'a, 'ctx> {
     /// Compile an if statement.
     ///
     /// The condition must evaluate to bool. Generates appropriate jump
@@ -134,7 +134,8 @@ mod tests {
         let (registry, mut constants) = create_test_context();
         let mut ctx = CompilationContext::new(&registry);
         ctx.begin_function();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         let condition = arena.alloc(Expr::Literal(LiteralExpr {
             kind: LiteralKind::Bool(true),
@@ -157,7 +158,7 @@ mod tests {
 
         compiler.compile_if(&if_stmt).unwrap();
 
-        let chunk = emitter.finish();
+        let chunk = emitter.finish_chunk();
         // Bytecode layout:
         // PushTrue: 1 byte (offset 0)
         // JumpIfFalse + offset: 3 bytes (offset 1-3)
@@ -184,7 +185,8 @@ mod tests {
         let (registry, mut constants) = create_test_context();
         let mut ctx = CompilationContext::new(&registry);
         ctx.begin_function();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         let condition = arena.alloc(Expr::Literal(LiteralExpr {
             kind: LiteralKind::Bool(true),
@@ -212,7 +214,7 @@ mod tests {
 
         compiler.compile_if(&if_stmt).unwrap();
 
-        let chunk = emitter.finish();
+        let chunk = emitter.finish_chunk();
         // Bytecode layout:
         // PushTrue: 1 byte (offset 0)
         // JumpIfFalse + offset: 3 bytes (offset 1-3)
@@ -240,7 +242,8 @@ mod tests {
         let (registry, mut constants) = create_test_context();
         let mut ctx = CompilationContext::new(&registry);
         ctx.begin_function();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         // Use an integer as condition - should fail
         let condition = arena.alloc(Expr::Literal(LiteralExpr {
@@ -272,7 +275,8 @@ mod tests {
         let (registry, mut constants) = create_test_context();
         let mut ctx = CompilationContext::new(&registry);
         ctx.begin_function();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         // Inner if
         let inner_condition = arena.alloc(Expr::Literal(LiteralExpr {
@@ -311,7 +315,7 @@ mod tests {
 
         compiler.compile_if(&outer_if).unwrap();
 
-        let chunk = emitter.finish();
+        let chunk = emitter.finish_chunk();
         // Bytecode layout:
         // Outer: PushTrue(1) + JumpIfFalse(3) + Pop(1) = 5 bytes before inner
         // Inner: PushFalse(1) + JumpIfFalse(3) + Pop(1) + Jump(3) + Pop(1) = 9 bytes
@@ -332,7 +336,8 @@ mod tests {
         let (registry, mut constants) = create_test_context();
         let mut ctx = CompilationContext::new(&registry);
         ctx.begin_function();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         // else if (false) {}
         let else_if_condition = arena.alloc(Expr::Literal(LiteralExpr {
@@ -381,7 +386,7 @@ mod tests {
 
         compiler.compile_if(&if_stmt).unwrap();
 
-        let chunk = emitter.finish();
+        let chunk = emitter.finish_chunk();
         // Bytecode layout:
         // 0: PushTrue
         // 1-3: JumpIfFalse -> 8 (else-if condition)
@@ -433,7 +438,8 @@ mod tests {
         let (registry, mut constants) = create_test_context();
         let mut ctx = CompilationContext::new(&registry);
         ctx.begin_function();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         // int x = 42;
         let init = arena.alloc(Expr::Literal(LiteralExpr {
@@ -481,7 +487,7 @@ mod tests {
         // Variable x should be out of scope after the if block
         assert!(ctx.get_local("x").is_none());
 
-        let chunk = emitter.finish();
+        let chunk = emitter.finish_chunk();
         // Bytecode layout:
         // PushTrue(1) + JumpIfFalse(3) + Pop(1) = 5 bytes
         // var decl: Constant(2) + SetLocal(2) = 4 bytes

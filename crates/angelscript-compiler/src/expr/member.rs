@@ -22,7 +22,7 @@ type Result<T> = std::result::Result<T, CompilationError>;
 /// - Field: direct field or property getter
 /// - Method: method call with arguments
 pub fn compile_member<'ast>(
-    compiler: &mut ExprCompiler<'_, '_, '_>,
+    compiler: &mut ExprCompiler<'_, '_>,
     member: &MemberExpr<'ast>,
 ) -> Result<ExprInfo> {
     // Compile the object expression first
@@ -44,7 +44,7 @@ pub fn compile_member<'ast>(
 /// - Emits GetField for direct fields
 /// - Calls the getter method for virtual properties
 fn compile_field_access(
-    compiler: &mut ExprCompiler<'_, '_, '_>,
+    compiler: &mut ExprCompiler<'_, '_>,
     obj_type: &DataType,
     field_name: &str,
     span: Span,
@@ -124,7 +124,7 @@ fn compile_field_access(
 ///
 /// Note: set_opIndex is used during assignment compilation (Task 43).
 pub fn compile_index(
-    compiler: &mut ExprCompiler<'_, '_, '_>,
+    compiler: &mut ExprCompiler<'_, '_>,
     index: &IndexExpr<'_>,
 ) -> Result<ExprInfo> {
     let span = index.span;
@@ -216,7 +216,7 @@ pub fn compile_index(
 
 /// Compile opIndex access (returns lvalue for read/write).
 fn compile_opindex(
-    compiler: &mut ExprCompiler<'_, '_, '_>,
+    compiler: &mut ExprCompiler<'_, '_>,
     obj_type: &DataType,
     candidates: &[TypeHash],
     index_types: &[DataType],
@@ -302,7 +302,7 @@ fn compile_opindex(
 
 /// Compile get_opIndex access (read-only, returns rvalue).
 fn compile_opindex_get(
-    compiler: &mut ExprCompiler<'_, '_, '_>,
+    compiler: &mut ExprCompiler<'_, '_>,
     obj_type: &DataType,
     candidates: &[TypeHash],
     index_types: &[DataType],
@@ -420,7 +420,8 @@ mod tests {
 
         let mut ctx = CompilationContext::new(&registry);
         ctx.begin_function();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
         let mut compiler = ExprCompiler::new(&mut ctx, &mut emitter, None);
 
         let obj_type = DataType::simple(type_hash);
@@ -440,7 +441,8 @@ mod tests {
 
         let mut ctx = CompilationContext::new(&registry);
         ctx.begin_function();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
         let mut compiler = ExprCompiler::new(&mut ctx, &mut emitter, None);
 
         let mut obj_type = DataType::simple(type_hash);
@@ -460,7 +462,8 @@ mod tests {
 
         let mut ctx = CompilationContext::new(&registry);
         ctx.begin_function();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
         let mut compiler = ExprCompiler::new(&mut ctx, &mut emitter, None);
 
         let obj_type = DataType::simple(type_hash);
@@ -480,7 +483,8 @@ mod tests {
 
         let mut ctx = CompilationContext::new(&registry);
         ctx.begin_function();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
         let mut compiler = ExprCompiler::new(&mut ctx, &mut emitter, None);
 
         let obj_type = DataType::simple(type_hash);
@@ -578,7 +582,8 @@ mod tests {
 
         let mut ctx = CompilationContext::new(&registry);
         ctx.begin_function();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
         let mut compiler = ExprCompiler::new(&mut ctx, &mut emitter, None);
 
         let obj_type = DataType::simple(type_hash);
@@ -613,7 +618,8 @@ mod tests {
 
         let mut ctx = CompilationContext::new(&registry);
         ctx.begin_function();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
         let mut compiler = ExprCompiler::new(&mut ctx, &mut emitter, None);
 
         let mut obj_type = DataType::simple(type_hash);
@@ -649,7 +655,8 @@ mod tests {
 
         let mut ctx = CompilationContext::new(&registry);
         ctx.begin_function();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
         let mut compiler = ExprCompiler::new(&mut ctx, &mut emitter, None);
 
         let mut obj_type = DataType::simple(type_hash);
@@ -686,7 +693,8 @@ mod tests {
 
         let mut ctx = CompilationContext::new(&registry);
         ctx.begin_function();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
         let mut compiler = ExprCompiler::new(&mut ctx, &mut emitter, None);
 
         let obj_type = DataType::simple(type_hash);
@@ -720,7 +728,8 @@ mod tests {
 
         let mut ctx = CompilationContext::new(&registry);
         ctx.begin_function();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
         let mut compiler = ExprCompiler::new(&mut ctx, &mut emitter, None);
 
         let mut obj_type = DataType::simple(type_hash);
@@ -795,7 +804,8 @@ mod tests {
 
         let mut ctx = CompilationContext::new(&registry);
         ctx.begin_function();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
         let mut compiler = ExprCompiler::new(&mut ctx, &mut emitter, None);
 
         let mut obj_type = DataType::simple(type_hash);
@@ -816,7 +826,8 @@ mod tests {
 
         let mut ctx = CompilationContext::new(&registry);
         ctx.begin_function();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
         let mut compiler = ExprCompiler::new(&mut ctx, &mut emitter, None);
 
         let obj_type = DataType::simple(type_hash);

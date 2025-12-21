@@ -6,7 +6,7 @@ use angelscript_parser::ast::Block;
 
 use super::{Result, StmtCompiler};
 
-impl<'a, 'ctx, 'pool> StmtCompiler<'a, 'ctx, 'pool> {
+impl<'a, 'ctx> StmtCompiler<'a, 'ctx> {
     /// Compile a block statement.
     ///
     /// Creates a new scope for the block, compiles all statements within it,
@@ -63,7 +63,8 @@ mod tests {
         let (registry, mut constants) = create_test_context();
         let mut ctx = CompilationContext::new(&registry);
         ctx.begin_function();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         let mut compiler = StmtCompiler::new(&mut ctx, &mut emitter, DataType::void(), None);
 
@@ -75,7 +76,7 @@ mod tests {
         compiler.compile_block(&block).unwrap();
 
         // Empty block emits no bytecode
-        let chunk = emitter.finish();
+        let chunk = emitter.finish_chunk();
         assert_eq!(chunk.len(), 0);
     }
 
@@ -87,7 +88,8 @@ mod tests {
         let (registry, mut constants) = create_test_context();
         let mut ctx = CompilationContext::new(&registry);
         ctx.begin_function();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         // Create a variable declaration: int x = 42;
         let init_expr = arena.alloc(Expr::Literal(LiteralExpr {
@@ -122,7 +124,7 @@ mod tests {
         assert!(ctx.get_local("x").is_none());
 
         // Bytecode: Constant(0) [2 bytes] + SetLocal(0) [2 bytes] = 4 bytes
-        let chunk = emitter.finish();
+        let chunk = emitter.finish_chunk();
         assert_eq!(chunk.len(), 4);
         assert_eq!(chunk.read_op(0), Some(OpCode::Constant));
         assert_eq!(chunk.read_byte(1), Some(0)); // Constant pool index
@@ -138,7 +140,8 @@ mod tests {
         let (registry, mut constants) = create_test_context();
         let mut ctx = CompilationContext::new(&registry);
         ctx.begin_function();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         // Outer block variable: int x = 1;
         let outer_init = arena.alloc(Expr::Literal(LiteralExpr {
@@ -203,7 +206,7 @@ mod tests {
         // int x = 1: PushOne(1 byte) + SetLocal(1 byte) + slot(1 byte) = 3 bytes
         // int y = 2: Constant(1 byte) + index(1 byte) + SetLocal(1 byte) + slot(1 byte) = 4 bytes
         // Total: 7 bytes
-        let chunk = emitter.finish();
+        let chunk = emitter.finish_chunk();
         assert_eq!(chunk.len(), 7);
         assert_eq!(chunk.read_op(0), Some(OpCode::PushOne));
         assert_eq!(chunk.read_op(1), Some(OpCode::SetLocal));
@@ -222,7 +225,8 @@ mod tests {
         let (registry, mut constants) = create_test_context();
         let mut ctx = CompilationContext::new(&registry);
         ctx.begin_function();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         // Outer x: int x = 1;
         let outer_init = arena.alloc(Expr::Literal(LiteralExpr {
@@ -282,7 +286,7 @@ mod tests {
         // int x = 1: PushOne(1) + SetLocal(1) + slot(1) = 3 bytes
         // float x = 2.0: Constant(1) + index(1) + SetLocal(1) + slot(1) = 4 bytes
         // Total: 7 bytes
-        let chunk = emitter.finish();
+        let chunk = emitter.finish_chunk();
         assert_eq!(chunk.len(), 7);
         assert_eq!(chunk.read_op(0), Some(OpCode::PushOne));
         assert_eq!(chunk.read_op(1), Some(OpCode::SetLocal));

@@ -12,21 +12,24 @@
 //! # Example
 //!
 //! ```ignore
+//! // Caller starts a chunk first via emitter.start_chunk()
 //! let mut compiler = FunctionCompiler::new(
 //!     ctx,
-//!     &mut constants,
+//!     &mut emitter,
 //!     &func_def,
 //!     Some(class_hash), // for methods
 //! );
+//! compiler.setup_parameters(span)?;
 //! compiler.compile_body(&body)?;
 //! compiler.verify_returns(span)?;
-//! let bytecode = compiler.finish();
+//! compiler.finish();
+//! // Caller finishes via emitter.finish_function(hash, name)
 //! ```
 
 use angelscript_core::{CompilationError, DataType, FunctionDef, Span, TypeHash};
 use angelscript_parser::ast::Block;
 
-use crate::bytecode::{BytecodeChunk, ConstantPool, OpCode};
+use crate::bytecode::OpCode;
 use crate::context::CompilationContext;
 use crate::emit::BytecodeEmitter;
 use crate::return_checker::ReturnChecker;
@@ -38,11 +41,14 @@ type Result<T> = std::result::Result<T, CompilationError>;
 ///
 /// Handles parameter setup, body compilation, return verification,
 /// and implicit returns for void functions.
-pub struct FunctionCompiler<'a, 'ctx, 'pool> {
+///
+/// Note: The caller is responsible for calling `emitter.start_chunk()` before
+/// creating this compiler, and `emitter.finish_function()` after calling `finish()`.
+pub struct FunctionCompiler<'a, 'ctx> {
     /// Compilation context for type lookups and local scope
     ctx: &'a mut CompilationContext<'ctx>,
-    /// Bytecode emitter
-    emitter: BytecodeEmitter<'pool>,
+    /// Bytecode emitter (owned by the compilation pass)
+    emitter: &'a mut BytecodeEmitter,
     /// Function definition (signature)
     def: &'a FunctionDef,
     /// Owner class type (Some for methods, None for global functions)
@@ -51,23 +57,21 @@ pub struct FunctionCompiler<'a, 'ctx, 'pool> {
     has_explicit_return: bool,
 }
 
-impl<'a, 'ctx, 'pool> FunctionCompiler<'a, 'ctx, 'pool> {
+impl<'a, 'ctx> FunctionCompiler<'a, 'ctx> {
     /// Create a new function compiler.
     ///
     /// # Arguments
     ///
     /// * `ctx` - Compilation context with type registry
-    /// * `constants` - Constant pool for the module
+    /// * `emitter` - Bytecode emitter (caller must have called `start_chunk()` first)
     /// * `def` - Function definition (signature and traits)
     /// * `owner` - Owner class type hash (Some for methods, None for global functions)
     pub fn new(
         ctx: &'a mut CompilationContext<'ctx>,
-        constants: &'pool mut ConstantPool,
+        emitter: &'a mut BytecodeEmitter,
         def: &'a FunctionDef,
         owner: Option<TypeHash>,
     ) -> Self {
-        let emitter = BytecodeEmitter::new(constants);
-
         Self {
             ctx,
             emitter,
@@ -116,15 +120,13 @@ impl<'a, 'ctx, 'pool> FunctionCompiler<'a, 'ctx, 'pool> {
     ///
     /// * `body` - The function body (block of statements)
     pub fn compile_body<'ast>(&mut self, body: &Block<'ast>) -> Result<()> {
-        let mut stmt_compiler = StmtCompiler::new(
-            self.ctx,
-            &mut self.emitter,
-            self.def.return_type,
-            self.owner,
-        );
+        {
+            let mut stmt_compiler =
+                StmtCompiler::new(self.ctx, self.emitter, self.def.return_type, self.owner);
 
-        for stmt in body.stmts {
-            stmt_compiler.compile(stmt)?;
+            for stmt in body.stmts {
+                stmt_compiler.compile(stmt)?;
+            }
         }
 
         // Check if we saw an explicit return by looking at the bytecode
@@ -162,10 +164,11 @@ impl<'a, 'ctx, 'pool> FunctionCompiler<'a, 'ctx, 'pool> {
         Ok(())
     }
 
-    /// Finish compilation and return the bytecode.
+    /// Finish compilation.
     ///
     /// For void functions without explicit return, adds implicit `ReturnVoid`.
-    pub fn finish(mut self) -> BytecodeChunk {
+    /// The caller should call `emitter.finish_function()` after this.
+    pub fn finish(self) {
         // End function scope
         let _scope = self.ctx.end_function();
 
@@ -173,8 +176,6 @@ impl<'a, 'ctx, 'pool> FunctionCompiler<'a, 'ctx, 'pool> {
         if self.def.return_type.is_void() && !self.has_explicit_return {
             self.emitter.emit(OpCode::ReturnVoid);
         }
-
-        self.emitter.finish()
     }
 
     /// Get the function definition.
@@ -198,10 +199,6 @@ mod tests {
     use super::*;
     use angelscript_core::{CompilationError, FunctionTraits, Param, Visibility, primitives};
     use angelscript_registry::SymbolRegistry;
-
-    fn create_test_context() -> (SymbolRegistry, ConstantPool) {
-        (SymbolRegistry::with_primitives(), ConstantPool::new())
-    }
 
     fn create_void_func_def(name: &str) -> FunctionDef {
         FunctionDef::new(
@@ -250,34 +247,40 @@ mod tests {
 
     #[test]
     fn function_compiler_creation() {
-        let (registry, mut constants) = create_test_context();
+        let registry = SymbolRegistry::with_primitives();
         let mut ctx = CompilationContext::new(&registry);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
         let def = create_void_func_def("test");
 
-        let compiler = FunctionCompiler::new(&mut ctx, &mut constants, &def, None);
+        let compiler = FunctionCompiler::new(&mut ctx, &mut emitter, &def, None);
         assert!(!compiler.is_method());
         assert!(compiler.owner().is_none());
     }
 
     #[test]
     fn method_compiler_creation() {
-        let (registry, mut constants) = create_test_context();
+        let registry = SymbolRegistry::with_primitives();
         let mut ctx = CompilationContext::new(&registry);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
         let def = create_void_func_def("test");
         let class_hash = TypeHash::from_name("MyClass");
 
-        let compiler = FunctionCompiler::new(&mut ctx, &mut constants, &def, Some(class_hash));
+        let compiler = FunctionCompiler::new(&mut ctx, &mut emitter, &def, Some(class_hash));
         assert!(compiler.is_method());
         assert_eq!(compiler.owner(), Some(class_hash));
     }
 
     #[test]
     fn setup_parameters_for_function() {
-        let (registry, mut constants) = create_test_context();
+        let registry = SymbolRegistry::with_primitives();
         let mut ctx = CompilationContext::new(&registry);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
         let def = create_func_with_params("add");
 
-        let mut compiler = FunctionCompiler::new(&mut ctx, &mut constants, &def, None);
+        let mut compiler = FunctionCompiler::new(&mut ctx, &mut emitter, &def, None);
         compiler.setup_parameters(Span::default()).unwrap();
 
         // Check parameters were declared
@@ -290,12 +293,14 @@ mod tests {
 
     #[test]
     fn setup_parameters_for_method() {
-        let (registry, mut constants) = create_test_context();
+        let registry = SymbolRegistry::with_primitives();
         let mut ctx = CompilationContext::new(&registry);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
         let def = create_void_func_def("getValue");
         let class_hash = TypeHash::from_name("MyClass");
 
-        let mut compiler = FunctionCompiler::new(&mut ctx, &mut constants, &def, Some(class_hash));
+        let mut compiler = FunctionCompiler::new(&mut ctx, &mut emitter, &def, Some(class_hash));
         compiler.setup_parameters(Span::default()).unwrap();
 
         // Check 'this' was declared
@@ -307,15 +312,20 @@ mod tests {
 
     #[test]
     fn void_function_gets_implicit_return() {
-        let (registry, mut constants) = create_test_context();
+        let registry = SymbolRegistry::with_primitives();
         let mut ctx = CompilationContext::new(&registry);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
         let def = create_void_func_def("doNothing");
 
-        let mut compiler = FunctionCompiler::new(&mut ctx, &mut constants, &def, None);
+        let mut compiler = FunctionCompiler::new(&mut ctx, &mut emitter, &def, None);
         compiler.setup_parameters(Span::default()).unwrap();
 
         // Empty body - no explicit return
-        let bytecode = compiler.finish();
+        compiler.finish();
+
+        // Get the chunk
+        let bytecode = emitter.finish_chunk();
 
         // Should have implicit ReturnVoid
         assert!(!bytecode.is_empty());
@@ -324,11 +334,13 @@ mod tests {
 
     #[test]
     fn non_void_function_requires_return() {
-        let (registry, mut constants) = create_test_context();
+        let registry = SymbolRegistry::with_primitives();
         let mut ctx = CompilationContext::new(&registry);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
         let def = create_int_func_def("getValue");
 
-        let mut compiler = FunctionCompiler::new(&mut ctx, &mut constants, &def, None);
+        let mut compiler = FunctionCompiler::new(&mut ctx, &mut emitter, &def, None);
         compiler.setup_parameters(Span::default()).unwrap();
 
         // Empty body - no return

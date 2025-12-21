@@ -16,7 +16,7 @@ use crate::expr_info::ExprInfo;
 /// otherwise the else branch. Only one branch is evaluated at runtime
 /// (short-circuit evaluation).
 pub fn compile_ternary<'ast>(
-    compiler: &mut ExprCompiler<'_, '_, '_>,
+    compiler: &mut ExprCompiler<'_, '_>,
     expr: &TernaryExpr<'ast>,
 ) -> Result<ExprInfo> {
     let bool_type = DataType::simple(primitives::BOOL);
@@ -62,7 +62,7 @@ pub fn compile_ternary<'ast>(
 fn unify_types(
     then_type: &DataType,
     else_type: &DataType,
-    compiler: &ExprCompiler<'_, '_, '_>,
+    compiler: &ExprCompiler<'_, '_>,
     span: angelscript_core::Span,
 ) -> Result<DataType> {
     // Same type - no conversion needed
@@ -115,10 +115,10 @@ mod tests {
     use angelscript_registry::SymbolRegistry;
     use bumpalo::Bump;
 
-    fn create_test_compiler<'a, 'ctx, 'pool>(
+    fn create_test_compiler<'a, 'ctx>(
         ctx: &'a mut CompilationContext<'ctx>,
-        emitter: &'a mut BytecodeEmitter<'pool>,
-    ) -> ExprCompiler<'a, 'ctx, 'pool> {
+        emitter: &'a mut BytecodeEmitter,
+    ) -> ExprCompiler<'a, 'ctx> {
         ExprCompiler::new(ctx, emitter, None)
     }
 
@@ -142,7 +142,8 @@ mod tests {
         let mut ctx = CompilationContext::new(&registry);
         ctx.begin_function();
         let mut constants = ConstantPool::new();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         let arena = Bump::new();
         let cond = make_bool_literal(&arena, true);
@@ -170,7 +171,8 @@ mod tests {
         let mut ctx = CompilationContext::new(&registry);
         ctx.begin_function();
         let mut constants = ConstantPool::new();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         let arena = Bump::new();
         let cond = make_bool_literal(&arena, true);
@@ -187,7 +189,7 @@ mod tests {
         let mut compiler = create_test_compiler(&mut ctx, &mut emitter);
         let _ = compile_ternary(&mut compiler, &ternary_expr);
 
-        let chunk = emitter.finish();
+        let chunk = emitter.finish_chunk();
         // Should contain JumpIfFalse and Jump opcodes
         let mut found_jump_if_false = false;
         let mut found_jump = false;
@@ -211,7 +213,8 @@ mod tests {
         let mut ctx = CompilationContext::new(&registry);
         ctx.begin_function();
         let mut constants = ConstantPool::new();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         let arena = Bump::new();
         let cond = make_bool_literal(&arena, true);

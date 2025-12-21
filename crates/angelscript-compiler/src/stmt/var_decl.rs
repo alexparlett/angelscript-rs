@@ -14,7 +14,7 @@ use crate::type_resolver::TypeResolver;
 
 use super::{Result, StmtCompiler};
 
-impl<'a, 'ctx, 'pool> StmtCompiler<'a, 'ctx, 'pool> {
+impl<'a, 'ctx> StmtCompiler<'a, 'ctx> {
     /// Compile a variable declaration statement.
     ///
     /// Supports multiple declarators, auto type inference, and default initialization.
@@ -141,15 +141,18 @@ impl<'a, 'ctx, 'pool> StmtCompiler<'a, 'ctx, 'pool> {
                         message: format!(
                             "type '{}' has no default {}",
                             type_entry.qualified_name(),
-                            if uses_constructors { "constructor" } else { "factory" }
+                            if uses_constructors {
+                                "constructor"
+                            } else {
+                                "factory"
+                            }
                         ),
                         span,
                     });
                 }
 
                 // Resolve default constructor/factory (0 args) via overload resolution
-                let overload =
-                    crate::overload::resolve_overload(candidates, &[], self.ctx, span)?;
+                let overload = crate::overload::resolve_overload(candidates, &[], self.ctx, span)?;
 
                 if uses_constructors {
                     self.emitter.emit_new(type_hash, overload.func_hash, 0);
@@ -197,7 +200,8 @@ mod tests {
         let (registry, mut constants) = create_test_context();
         let mut ctx = CompilationContext::new(&registry);
         ctx.begin_function();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         // int x = 42;
         let init = arena.alloc(Expr::Literal(LiteralExpr {
@@ -228,7 +232,7 @@ mod tests {
         assert!(var.unwrap().is_initialized);
 
         // Bytecode: Constant(2) + SetLocal(2) = 4 bytes
-        let chunk = emitter.finish();
+        let chunk = emitter.finish_chunk();
         assert_eq!(chunk.len(), 4);
         assert_eq!(chunk.read_op(0), Some(OpCode::Constant));
         assert_eq!(chunk.read_byte(1), Some(0)); // Constant pool index
@@ -244,7 +248,8 @@ mod tests {
         let (registry, mut constants) = create_test_context();
         let mut ctx = CompilationContext::new(&registry);
         ctx.begin_function();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         // int x;
         let vars = arena.alloc_slice_copy(&[VarDeclarator {
@@ -268,7 +273,7 @@ mod tests {
         assert!(var.unwrap().is_initialized);
 
         // Bytecode: PushZero(1) + SetLocal(2) = 3 bytes (default init to 0)
-        let chunk = emitter.finish();
+        let chunk = emitter.finish_chunk();
         assert_eq!(chunk.len(), 3);
         assert_eq!(chunk.read_op(0), Some(OpCode::PushZero));
         assert_eq!(chunk.read_op(1), Some(OpCode::SetLocal));
@@ -283,7 +288,8 @@ mod tests {
         let (registry, mut constants) = create_test_context();
         let mut ctx = CompilationContext::new(&registry);
         ctx.begin_function();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         // int x = 1, y = 2;
         let init1 = arena.alloc(Expr::Literal(LiteralExpr {
@@ -329,7 +335,7 @@ mod tests {
         // Bytecode: x=1 uses PushOne(1) + SetLocal(2) = 3 bytes
         //           y=2 uses Constant(2) + SetLocal(2) = 4 bytes
         // Total: 7 bytes
-        let chunk = emitter.finish();
+        let chunk = emitter.finish_chunk();
         assert_eq!(chunk.len(), 7);
         assert_eq!(chunk.read_op(0), Some(OpCode::PushOne));
         assert_eq!(chunk.read_op(1), Some(OpCode::SetLocal));
@@ -348,7 +354,8 @@ mod tests {
         let (registry, mut constants) = create_test_context();
         let mut ctx = CompilationContext::new(&registry);
         ctx.begin_function();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         // auto x = 42;
         let init = arena.alloc(Expr::Literal(LiteralExpr {
@@ -378,7 +385,7 @@ mod tests {
         assert_eq!(var.unwrap().data_type.type_hash, primitives::INT32);
 
         // Bytecode: Constant(2) + SetLocal(2) = 4 bytes
-        let chunk = emitter.finish();
+        let chunk = emitter.finish_chunk();
         assert_eq!(chunk.len(), 4);
         assert_eq!(chunk.read_op(0), Some(OpCode::Constant));
         assert_eq!(chunk.read_op(2), Some(OpCode::SetLocal));
@@ -390,7 +397,8 @@ mod tests {
         let (registry, mut constants) = create_test_context();
         let mut ctx = CompilationContext::new(&registry);
         ctx.begin_function();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         // auto x; - should error
         let vars = arena.alloc_slice_copy(&[VarDeclarator {
@@ -428,7 +436,8 @@ mod tests {
         let (registry, mut constants) = create_test_context();
         let mut ctx = CompilationContext::new(&registry);
         ctx.begin_function();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         // const int x = 42;
         let init = arena.alloc(Expr::Literal(LiteralExpr {
@@ -460,7 +469,7 @@ mod tests {
         assert!(var.unwrap().is_const);
 
         // Bytecode: Constant(2) + SetLocal(2) = 4 bytes
-        let chunk = emitter.finish();
+        let chunk = emitter.finish_chunk();
         assert_eq!(chunk.len(), 4);
         assert_eq!(chunk.read_op(0), Some(OpCode::Constant));
         assert_eq!(chunk.read_op(2), Some(OpCode::SetLocal));
@@ -472,7 +481,8 @@ mod tests {
         let (registry, mut constants) = create_test_context();
         let mut ctx = CompilationContext::new(&registry);
         ctx.begin_function();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         // First declaration: int x = 1;
         let init1 = arena.alloc(Expr::Literal(LiteralExpr {
@@ -528,7 +538,8 @@ mod tests {
         let (registry, mut constants) = create_test_context();
         let mut ctx = CompilationContext::new(&registry);
         ctx.begin_function();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         // float x = 3.5;
         let init = arena.alloc(Expr::Literal(LiteralExpr {
@@ -557,7 +568,7 @@ mod tests {
         assert_eq!(var.unwrap().data_type.type_hash, primitives::FLOAT);
 
         // Bytecode: Constant(2) + SetLocal(2) = 4 bytes
-        let chunk = emitter.finish();
+        let chunk = emitter.finish_chunk();
         assert_eq!(chunk.len(), 4);
         assert_eq!(chunk.read_op(0), Some(OpCode::Constant));
         assert_eq!(chunk.read_op(2), Some(OpCode::SetLocal));
@@ -571,7 +582,8 @@ mod tests {
         let (registry, mut constants) = create_test_context();
         let mut ctx = CompilationContext::new(&registry);
         ctx.begin_function();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         // bool x = true;
         let init = arena.alloc(Expr::Literal(LiteralExpr {
@@ -600,7 +612,7 @@ mod tests {
         assert_eq!(var.unwrap().data_type.type_hash, primitives::BOOL);
 
         // Bytecode: PushTrue(1) + SetLocal(2) = 3 bytes
-        let chunk = emitter.finish();
+        let chunk = emitter.finish_chunk();
         assert_eq!(chunk.len(), 3);
         assert_eq!(chunk.read_op(0), Some(OpCode::PushTrue));
         assert_eq!(chunk.read_op(1), Some(OpCode::SetLocal));
@@ -628,7 +640,8 @@ mod tests {
         let mut constants = ConstantPool::new();
         let mut ctx = CompilationContext::new(&registry);
         ctx.begin_function();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         // Color c; (should initialize to Red = 5)
         let vars = arena.alloc_slice_copy(&[VarDeclarator {
@@ -659,7 +672,7 @@ mod tests {
         assert_eq!(var.unwrap().data_type.type_hash, color_hash);
 
         // Bytecode: Constant(2, value=5) + SetLocal(2) = 4 bytes (5 is not 0 or 1)
-        let chunk = emitter.finish();
+        let chunk = emitter.finish_chunk();
         assert_eq!(chunk.len(), 4);
         assert_eq!(chunk.read_op(0), Some(OpCode::Constant));
         assert_eq!(chunk.read_op(2), Some(OpCode::SetLocal));
@@ -701,7 +714,8 @@ mod tests {
         let mut constants = ConstantPool::new();
         let mut ctx = CompilationContext::new(&registry);
         ctx.begin_function();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         // Vec2 v; (should call default constructor)
         let vars = arena.alloc_slice_copy(&[VarDeclarator {
@@ -732,7 +746,7 @@ mod tests {
         assert_eq!(var.unwrap().data_type.type_hash, vec2_hash);
 
         // Should emit New for the constructor
-        let chunk = emitter.finish();
+        let chunk = emitter.finish_chunk();
         chunk.assert_contains_opcodes(&[OpCode::New]);
     }
 
@@ -753,7 +767,8 @@ mod tests {
         let mut constants = ConstantPool::new();
         let mut ctx = CompilationContext::new(&registry);
         ctx.begin_function();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         // Vec2 v; (should error - no default constructor)
         let vars = arena.alloc_slice_copy(&[VarDeclarator {
@@ -809,7 +824,8 @@ mod tests {
         let mut constants = ConstantPool::new();
         let mut ctx = CompilationContext::new(&registry);
         ctx.begin_function();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         // Foo@ f = null; (handle with initializer should emit AddRef)
         let init = arena.alloc(Expr::Literal(LiteralExpr {
@@ -847,7 +863,7 @@ mod tests {
             .expect("Handle variable declaration should succeed");
 
         // Verify AddRef was emitted by checking bytecode
-        let chunk = emitter.finish();
+        let chunk = emitter.finish_chunk();
         chunk.assert_contains_opcodes(&[OpCode::AddRef]);
     }
 
@@ -868,7 +884,8 @@ mod tests {
         let mut constants = ConstantPool::new();
         let mut ctx = CompilationContext::new(&registry);
         ctx.begin_function();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         // Foo@ f; (default init to null - no AddRef needed for null)
         let vars = arena.alloc_slice_copy(&[VarDeclarator {
@@ -899,7 +916,7 @@ mod tests {
         assert!(compiler.compile_var_decl(&decl).is_ok());
 
         // Verify NO AddRef was emitted (null doesn't need AddRef)
-        let chunk = emitter.finish();
+        let chunk = emitter.finish_chunk();
         let mut found_addref = false;
         for i in 0..chunk.len() {
             if chunk.read_op(i) == Some(OpCode::AddRef) {

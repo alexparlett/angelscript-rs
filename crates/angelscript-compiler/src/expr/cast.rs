@@ -31,7 +31,7 @@ use crate::type_resolver::TypeResolver;
 /// - Interface casts (class to implemented interface)
 /// - User-defined casts via `opCast`/`opImplCast` methods
 pub fn compile_cast<'ast>(
-    compiler: &mut ExprCompiler<'_, '_, '_>,
+    compiler: &mut ExprCompiler<'_, '_>,
     expr: &CastExpr<'ast>,
 ) -> Result<ExprInfo> {
     let span = expr.span;
@@ -97,7 +97,7 @@ pub fn compile_cast<'ast>(
 fn try_hierarchy_cast(
     source_hash: TypeHash,
     target_hash: TypeHash,
-    compiler: &mut ExprCompiler<'_, '_, '_>,
+    compiler: &mut ExprCompiler<'_, '_>,
 ) -> Option<()> {
     let ctx = compiler.ctx();
 
@@ -138,10 +138,10 @@ mod tests {
     use angelscript_registry::SymbolRegistry;
     use bumpalo::Bump;
 
-    fn create_test_compiler<'a, 'ctx, 'pool>(
+    fn create_test_compiler<'a, 'ctx>(
         ctx: &'a mut CompilationContext<'ctx>,
-        emitter: &'a mut BytecodeEmitter<'pool>,
-    ) -> ExprCompiler<'a, 'ctx, 'pool> {
+        emitter: &'a mut BytecodeEmitter,
+    ) -> ExprCompiler<'a, 'ctx> {
         ExprCompiler::new(ctx, emitter, None)
     }
 
@@ -181,7 +181,8 @@ mod tests {
         .unwrap();
 
         let mut constants = ConstantPool::new();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         let arena = Bump::new();
 
@@ -242,7 +243,8 @@ mod tests {
         .unwrap();
 
         let mut constants = ConstantPool::new();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         let arena = Bump::new();
 
@@ -302,7 +304,8 @@ mod tests {
         .unwrap();
 
         let mut constants = ConstantPool::new();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         let arena = Bump::new();
 
@@ -393,7 +396,8 @@ mod tests {
         .unwrap();
 
         let mut constants = ConstantPool::new();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         let arena = Bump::new();
 
@@ -484,7 +488,8 @@ mod tests {
         .unwrap();
 
         let mut constants = ConstantPool::new();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         let arena = Bump::new();
 

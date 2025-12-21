@@ -344,8 +344,7 @@ impl Context {
 
         // Determine return type (resolve template param if specified)
         let return_type = if let Some(type_hash) = meta.return_meta.type_hash {
-            let resolved_hash =
-                resolve_template_param(meta.return_meta.template_param, type_hash);
+            let resolved_hash = resolve_template_param(meta.return_meta.template_param, type_hash);
             DataType::simple(resolved_hash)
         } else {
             DataType::void()
@@ -432,7 +431,11 @@ impl Context {
 
         // Add method to the class's methods map (for method lookup during compilation)
         if let Some(type_hash) = object_type {
-            if let Some(class) = self.registry.get_mut(type_hash).and_then(|e| e.as_class_mut()) {
+            if let Some(class) = self
+                .registry
+                .get_mut(type_hash)
+                .and_then(|e| e.as_class_mut())
+            {
                 class.add_method(name, func_hash);
             }
         }

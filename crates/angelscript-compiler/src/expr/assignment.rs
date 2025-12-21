@@ -16,7 +16,7 @@ use crate::operators::{OperatorResolution, resolve_binary};
 
 /// Compile an assignment expression.
 pub fn compile_assign<'ast>(
-    compiler: &mut ExprCompiler<'_, '_, '_>,
+    compiler: &mut ExprCompiler<'_, '_>,
     assign: &AssignExpr<'ast>,
 ) -> Result<ExprInfo> {
     let span = assign.span;
@@ -29,7 +29,7 @@ pub fn compile_assign<'ast>(
 
 /// Compile a simple assignment (`a = b`).
 fn compile_simple_assign<'ast>(
-    compiler: &mut ExprCompiler<'_, '_, '_>,
+    compiler: &mut ExprCompiler<'_, '_>,
     assign: &AssignExpr<'ast>,
     span: Span,
 ) -> Result<ExprInfo> {
@@ -85,7 +85,7 @@ fn compile_simple_assign<'ast>(
 /// 5. Emit value with type checking
 /// 6. Call set_opIndex
 fn compile_index_simple_assign<'ast>(
-    compiler: &mut ExprCompiler<'_, '_, '_>,
+    compiler: &mut ExprCompiler<'_, '_>,
     index: &angelscript_parser::ast::IndexExpr<'ast>,
     value: &Expr<'ast>,
     span: Span,
@@ -230,7 +230,8 @@ fn compile_index_simple_assign<'ast>(
                 });
             }
 
-            let overload = resolve_overload(&mutable_candidates, &index_types, compiler.ctx(), span)?;
+            let overload =
+                resolve_overload(&mutable_candidates, &index_types, compiler.ctx(), span)?;
 
             let return_type = compiler
                 .ctx()
@@ -270,7 +271,7 @@ fn compile_index_simple_assign<'ast>(
 
 /// Compile a compound assignment (`a += b`, etc.).
 fn compile_compound_assign<'ast>(
-    compiler: &mut ExprCompiler<'_, '_, '_>,
+    compiler: &mut ExprCompiler<'_, '_>,
     assign: &AssignExpr<'ast>,
     span: Span,
 ) -> Result<ExprInfo> {
@@ -335,7 +336,7 @@ fn compile_compound_assign<'ast>(
 /// 6. Resolve set_opIndex with result type
 /// 7. Call set_opIndex
 fn compile_index_compound_assign<'ast>(
-    compiler: &mut ExprCompiler<'_, '_, '_>,
+    compiler: &mut ExprCompiler<'_, '_>,
     index: &angelscript_parser::ast::IndexExpr<'ast>,
     op: AssignOp,
     value: &Expr<'ast>,
@@ -628,7 +629,7 @@ enum AssignTargetKind {
 ///
 /// This function does NOT emit code for loading the target - it only analyzes it.
 fn analyze_assign_target<'ast>(
-    compiler: &mut ExprCompiler<'_, '_, '_>,
+    compiler: &mut ExprCompiler<'_, '_>,
     target: &Expr<'ast>,
     span: Span,
 ) -> Result<AssignTarget> {
@@ -652,7 +653,7 @@ fn analyze_assign_target<'ast>(
 /// it means we're assigning to the handle itself, not dereferencing it.
 /// The operand must be a valid assignment target that holds a handle type.
 fn analyze_handle_assign_target<'ast>(
-    compiler: &mut ExprCompiler<'_, '_, '_>,
+    compiler: &mut ExprCompiler<'_, '_>,
     operand: &Expr<'ast>,
     span: Span,
 ) -> Result<AssignTarget> {
@@ -674,7 +675,7 @@ fn analyze_handle_assign_target<'ast>(
 
 /// Analyze an identifier as an assignment target.
 fn analyze_ident_target(
-    compiler: &mut ExprCompiler<'_, '_, '_>,
+    compiler: &mut ExprCompiler<'_, '_>,
     ident: &angelscript_parser::ast::IdentExpr<'_>,
     span: Span,
 ) -> Result<AssignTarget> {
@@ -787,7 +788,7 @@ fn analyze_ident_target(
 
 /// Analyze a member access as an assignment target.
 fn analyze_member_target(
-    compiler: &mut ExprCompiler<'_, '_, '_>,
+    compiler: &mut ExprCompiler<'_, '_>,
     member: &angelscript_parser::ast::MemberExpr<'_>,
     span: Span,
 ) -> Result<AssignTarget> {
@@ -859,7 +860,7 @@ fn analyze_member_target(
 
 /// Analyze an index expression as an assignment target.
 fn analyze_index_target(
-    compiler: &mut ExprCompiler<'_, '_, '_>,
+    compiler: &mut ExprCompiler<'_, '_>,
     index: &angelscript_parser::ast::IndexExpr<'_>,
     span: Span,
 ) -> Result<AssignTarget> {
@@ -1029,11 +1030,7 @@ fn analyze_index_target(
 }
 
 /// Emit code to load the current value of a target (for compound assignment).
-fn emit_load(
-    compiler: &mut ExprCompiler<'_, '_, '_>,
-    target: &AssignTarget,
-    span: Span,
-) -> Result<()> {
+fn emit_load(compiler: &mut ExprCompiler<'_, '_>, target: &AssignTarget, span: Span) -> Result<()> {
     match &target.kind {
         AssignTargetKind::Local { slot } => {
             compiler.emitter().emit_get_local(*slot);
@@ -1120,7 +1117,7 @@ fn emit_load(
 }
 
 /// Emit code to store a value to a target.
-fn emit_store(compiler: &mut ExprCompiler<'_, '_, '_>, target: &AssignTarget) -> Result<()> {
+fn emit_store(compiler: &mut ExprCompiler<'_, '_>, target: &AssignTarget) -> Result<()> {
     match &target.kind {
         AssignTargetKind::Local { slot } => {
             compiler.emitter().emit_set_local(*slot);
@@ -1188,7 +1185,7 @@ fn compound_to_binary_op(op: AssignOp, _span: Span) -> Result<BinaryOp> {
 /// For reverse operators (MethodOnRight), we need to swap so the right
 /// operand becomes the receiver.
 fn emit_binary_op(
-    compiler: &mut ExprCompiler<'_, '_, '_>,
+    compiler: &mut ExprCompiler<'_, '_>,
     resolution: &OperatorResolution,
     span: Span,
 ) -> Result<()> {
@@ -1265,10 +1262,10 @@ mod tests {
     use angelscript_registry::SymbolRegistry;
     use bumpalo::Bump;
 
-    fn create_test_compiler<'a, 'ctx, 'pool>(
+    fn create_test_compiler<'a, 'ctx>(
         ctx: &'a mut CompilationContext<'ctx>,
-        emitter: &'a mut BytecodeEmitter<'pool>,
-    ) -> ExprCompiler<'a, 'ctx, 'pool> {
+        emitter: &'a mut BytecodeEmitter,
+    ) -> ExprCompiler<'a, 'ctx> {
         ExprCompiler::new(ctx, emitter, None)
     }
 
@@ -1609,7 +1606,8 @@ mod tests {
         );
 
         let mut constants = ConstantPool::new();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         let arena = Bump::new();
         let target = make_ident_expr(&arena, "x");
@@ -1630,7 +1628,7 @@ mod tests {
         assert_eq!(info.data_type.type_hash, primitives::INT32);
         assert!(!info.is_lvalue); // Assignment returns rvalue
 
-        let chunk = emitter.finish();
+        let chunk = emitter.finish_chunk();
         // Bytecode: Constant, SetLocal
         chunk.assert_opcodes(&[OpCode::Constant, OpCode::SetLocal]);
     }
@@ -1650,7 +1648,8 @@ mod tests {
         );
 
         let mut constants = ConstantPool::new();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         let arena = Bump::new();
         let target = make_ident_expr(&arena, "x");
@@ -1680,7 +1679,8 @@ mod tests {
         ctx.begin_function();
 
         let mut constants = ConstantPool::new();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         let arena = Bump::new();
         let target = make_int_literal(&arena, 5); // rvalue - can't assign to this
@@ -1725,7 +1725,8 @@ mod tests {
         );
 
         let mut constants = ConstantPool::new();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         let arena = Bump::new();
         let target = make_ident_expr(&arena, "x");
@@ -1745,7 +1746,7 @@ mod tests {
         let info = result.unwrap();
         assert_eq!(info.data_type.type_hash, primitives::INT32);
 
-        let chunk = emitter.finish();
+        let chunk = emitter.finish_chunk();
         // Bytecode: GetLocal, Constant, AddI32, SetLocal
         chunk.assert_opcodes(&[
             OpCode::GetLocal,
@@ -1816,7 +1817,8 @@ mod tests {
         ctx.begin_function();
 
         let mut constants = ConstantPool::new();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         let arena = Bump::new();
         let target = make_ident_expr(&arena, "this");
@@ -1852,7 +1854,8 @@ mod tests {
         ctx.begin_function();
 
         let mut constants = ConstantPool::new();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         let arena = Bump::new();
         let target = make_ident_expr(&arena, "undefined_var");
@@ -1896,7 +1899,8 @@ mod tests {
         );
 
         let mut constants = ConstantPool::new();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         let arena = Bump::new();
         let obj = make_ident_expr(&arena, "container");
@@ -1917,7 +1921,7 @@ mod tests {
         let info = result.unwrap();
         assert_eq!(info.data_type.type_hash, primitives::INT32);
 
-        let chunk = emitter.finish();
+        let chunk = emitter.finish_chunk();
         // Bytecode: GetLocal container, Constant 42, CallMethod setter
         chunk.assert_opcodes(&[OpCode::GetLocal, OpCode::Constant, OpCode::CallMethod]);
     }
@@ -1939,7 +1943,8 @@ mod tests {
         );
 
         let mut constants = ConstantPool::new();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         let arena = Bump::new();
         let obj = make_ident_expr(&arena, "container");
@@ -1960,7 +1965,7 @@ mod tests {
         let info = result.unwrap();
         assert_eq!(info.data_type.type_hash, primitives::INT32);
 
-        let chunk = emitter.finish();
+        let chunk = emitter.finish_chunk();
         // Bytecode: GetLocal, Dup, CallMethod getter, Constant, AddI32, CallMethod setter
         chunk.assert_opcodes(&[
             OpCode::GetLocal,
@@ -1989,7 +1994,8 @@ mod tests {
         );
 
         let mut constants = ConstantPool::new();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         let arena = Bump::new();
         let obj = make_ident_expr(&arena, "container");
@@ -2030,7 +2036,8 @@ mod tests {
         );
 
         let mut constants = ConstantPool::new();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         let arena = Bump::new();
         let obj = make_ident_expr(&arena, "container");
@@ -2050,7 +2057,7 @@ mod tests {
         // Write-only properties can be assigned to
         assert!(result.is_ok());
 
-        let chunk = emitter.finish();
+        let chunk = emitter.finish_chunk();
         // Bytecode: GetLocal container, Constant value, CallMethod setter
         chunk.assert_opcodes(&[OpCode::GetLocal, OpCode::Constant, OpCode::CallMethod]);
     }
@@ -2072,7 +2079,8 @@ mod tests {
         );
 
         let mut constants = ConstantPool::new();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         let arena = Bump::new();
         let obj = make_ident_expr(&arena, "container");
@@ -2123,7 +2131,8 @@ mod tests {
         );
 
         let mut constants = ConstantPool::new();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         let arena = Bump::new();
         let obj = make_ident_expr(&arena, "container");
@@ -2145,7 +2154,7 @@ mod tests {
         let info = result.unwrap();
         assert_eq!(info.data_type.type_hash, primitives::INT32);
 
-        let chunk = emitter.finish();
+        let chunk = emitter.finish_chunk();
         // Bytecode: GetLocal container, PushZero index, Constant value, CallMethod setter
         chunk.assert_opcodes(&[
             OpCode::GetLocal,
@@ -2171,7 +2180,8 @@ mod tests {
         );
 
         let mut constants = ConstantPool::new();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         let arena = Bump::new();
         let obj = make_ident_expr(&arena, "container");
@@ -2193,7 +2203,7 @@ mod tests {
         let info = result.unwrap();
         assert_eq!(info.data_type.type_hash, primitives::INT32);
 
-        let chunk = emitter.finish();
+        let chunk = emitter.finish_chunk();
         // Bytecode: GetLocal, PushZero, Pick, Pick, CallMethod getter, Constant, AddI32, CallMethod setter
         chunk.assert_opcodes(&[
             OpCode::GetLocal,
@@ -2227,7 +2237,8 @@ mod tests {
         );
 
         let mut constants = ConstantPool::new();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         let arena = Bump::new();
         let obj = make_ident_expr(&arena, "container");
@@ -2249,7 +2260,7 @@ mod tests {
         let info = result.unwrap();
         assert_eq!(info.data_type.type_hash, primitives::INT32);
 
-        let chunk = emitter.finish();
+        let chunk = emitter.finish_chunk();
         // Bytecode: GetLocal, PushZero, CallMethod opIndex (returns ref), Constant, Swap, SetField
         chunk.assert_opcodes(&[
             OpCode::GetLocal,
@@ -2277,7 +2288,8 @@ mod tests {
         );
 
         let mut constants = ConstantPool::new();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         let arena = Bump::new();
         let obj = make_ident_expr(&arena, "container");
@@ -2299,7 +2311,7 @@ mod tests {
         let info = result.unwrap();
         assert_eq!(info.data_type.type_hash, primitives::INT32);
 
-        let chunk = emitter.finish();
+        let chunk = emitter.finish_chunk();
         // Bytecode: GetLocal, PushZero, CallMethod opIndex, Dup, GetField, Constant, AddI32, Swap, SetField
         chunk.assert_opcodes(&[
             OpCode::GetLocal,
@@ -2330,7 +2342,8 @@ mod tests {
         );
 
         let mut constants = ConstantPool::new();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         let arena = Bump::new();
         let obj = make_ident_expr(&arena, "container");
@@ -2428,7 +2441,8 @@ mod tests {
         );
 
         let mut constants = ConstantPool::new();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         let arena = Bump::new();
         let target = make_ident_expr(&arena, "x");
@@ -2449,7 +2463,7 @@ mod tests {
         let info = result.unwrap();
         assert_eq!(info.data_type.type_hash, primitives::INT32);
 
-        let chunk = emitter.finish();
+        let chunk = emitter.finish_chunk();
         // Bytecode: GetLocal provider, CallMethod getValue, SetLocal x
         chunk.assert_opcodes(&[OpCode::GetLocal, OpCode::CallMethod, OpCode::SetLocal]);
     }
@@ -2478,7 +2492,8 @@ mod tests {
         );
 
         let mut constants = ConstantPool::new();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         let arena = Bump::new();
         let container = make_ident_expr(&arena, "container");
@@ -2501,7 +2516,7 @@ mod tests {
         let info = result.unwrap();
         assert_eq!(info.data_type.type_hash, primitives::INT32);
 
-        let chunk = emitter.finish();
+        let chunk = emitter.finish_chunk();
         // Bytecode: GetLocal container, PushZero, GetLocal provider, CallMethod getValue, CallMethod set_opIndex
         chunk.assert_opcodes(&[
             OpCode::GetLocal,
@@ -2536,7 +2551,8 @@ mod tests {
         );
 
         let mut constants = ConstantPool::new();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         let arena = Bump::new();
         let container = make_ident_expr(&arena, "container");
@@ -2558,7 +2574,7 @@ mod tests {
         let info = result.unwrap();
         assert_eq!(info.data_type.type_hash, primitives::INT32);
 
-        let chunk = emitter.finish();
+        let chunk = emitter.finish_chunk();
         // Bytecode: GetLocal container, GetLocal provider, CallMethod getValue, CallMethod set_value
         chunk.assert_opcodes(&[
             OpCode::GetLocal,
@@ -2591,7 +2607,8 @@ mod tests {
         );
 
         let mut constants = ConstantPool::new();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         let arena = Bump::new();
         let container = make_ident_expr(&arena, "container");
@@ -2614,7 +2631,7 @@ mod tests {
         let info = result.unwrap();
         assert_eq!(info.data_type.type_hash, primitives::INT32);
 
-        let chunk = emitter.finish();
+        let chunk = emitter.finish_chunk();
         // Bytecode: GetLocal container, PushZero, CallMethod opIndex, GetLocal provider, CallMethod getValue, Swap, SetField
         chunk.assert_opcodes(&[
             OpCode::GetLocal,
@@ -2650,11 +2667,11 @@ mod tests {
         class_hash
     }
 
-    fn create_test_compiler_with_class<'a, 'ctx, 'pool>(
+    fn create_test_compiler_with_class<'a, 'ctx>(
         ctx: &'a mut CompilationContext<'ctx>,
-        emitter: &'a mut BytecodeEmitter<'pool>,
+        emitter: &'a mut BytecodeEmitter,
         current_class: TypeHash,
-    ) -> ExprCompiler<'a, 'ctx, 'pool> {
+    ) -> ExprCompiler<'a, 'ctx> {
         ExprCompiler::new(ctx, emitter, Some(current_class))
     }
 
@@ -2675,7 +2692,8 @@ mod tests {
         );
 
         let mut constants = ConstantPool::new();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         let arena = Bump::new();
         let target = make_ident_expr(&arena, "x");
@@ -2695,7 +2713,7 @@ mod tests {
         let info = result.unwrap();
         assert_eq!(info.data_type.type_hash, primitives::INT32);
 
-        let chunk = emitter.finish();
+        let chunk = emitter.finish_chunk();
         // Bytecode: GetThis, Constant 42, SetField
         chunk.assert_opcodes(&[OpCode::GetThis, OpCode::Constant, OpCode::SetField]);
     }
@@ -2717,7 +2735,8 @@ mod tests {
         );
 
         let mut constants = ConstantPool::new();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         let arena = Bump::new();
         let target = make_ident_expr(&arena, "x");
@@ -2737,7 +2756,7 @@ mod tests {
         let info = result.unwrap();
         assert_eq!(info.data_type.type_hash, primitives::INT32);
 
-        let chunk = emitter.finish();
+        let chunk = emitter.finish_chunk();
         // Bytecode: GetThis, Dup, GetField, Constant, AddI32, SetField
         chunk.assert_opcodes(&[
             OpCode::GetThis,
@@ -2766,7 +2785,8 @@ mod tests {
         );
 
         let mut constants = ConstantPool::new();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         let arena = Bump::new();
         let target = make_ident_expr(&arena, "x");
@@ -2815,7 +2835,8 @@ mod tests {
         );
 
         let mut constants = ConstantPool::new();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         let arena = Bump::new();
         let target = make_ident_expr(&arena, "x");
@@ -2839,7 +2860,7 @@ mod tests {
         // Should be float (local), not int (field)
         assert_eq!(info.data_type.type_hash, primitives::FLOAT);
 
-        let chunk = emitter.finish();
+        let chunk = emitter.finish_chunk();
         // Should use Constant + SetLocal, not GetThis + Constant + SetField
         chunk.assert_opcodes(&[OpCode::Constant, OpCode::SetLocal]);
     }

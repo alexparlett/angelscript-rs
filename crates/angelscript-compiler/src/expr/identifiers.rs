@@ -11,7 +11,7 @@ use crate::scope::VarLookup;
 
 /// Compile an identifier expression.
 pub fn compile_ident<'ast>(
-    compiler: &mut ExprCompiler<'_, '_, '_>,
+    compiler: &mut ExprCompiler<'_, '_>,
     ident: &IdentExpr<'ast>,
 ) -> Result<ExprInfo> {
     let name = ident.ident.name;
@@ -160,7 +160,7 @@ pub fn build_qualified_name(ident: &IdentExpr<'_>) -> String {
     }
 }
 
-fn compile_this(compiler: &mut ExprCompiler<'_, '_, '_>, span: Span) -> Result<ExprInfo> {
+fn compile_this(compiler: &mut ExprCompiler<'_, '_>, span: Span) -> Result<ExprInfo> {
     match compiler.current_class() {
         Some(class_hash) => {
             compiler.emitter().emit_get_this();
@@ -173,7 +173,7 @@ fn compile_this(compiler: &mut ExprCompiler<'_, '_, '_>, span: Span) -> Result<E
     }
 }
 
-fn compile_local(compiler: &mut ExprCompiler<'_, '_, '_>, lookup: VarLookup) -> Result<ExprInfo> {
+fn compile_local(compiler: &mut ExprCompiler<'_, '_>, lookup: VarLookup) -> Result<ExprInfo> {
     match lookup {
         VarLookup::Local(var) => {
             compiler.emitter().emit_get_local(var.slot);
@@ -198,11 +198,11 @@ mod tests {
     use angelscript_core::{TypeHash, primitives};
     use angelscript_registry::SymbolRegistry;
 
-    fn create_test_compiler<'a, 'ctx, 'pool>(
+    fn create_test_compiler<'a, 'ctx>(
         ctx: &'a mut CompilationContext<'ctx>,
-        emitter: &'a mut BytecodeEmitter<'pool>,
+        emitter: &'a mut BytecodeEmitter,
         current_class: Option<TypeHash>,
-    ) -> ExprCompiler<'a, 'ctx, 'pool> {
+    ) -> ExprCompiler<'a, 'ctx> {
         ExprCompiler::new(ctx, emitter, current_class)
     }
 
@@ -231,7 +231,8 @@ mod tests {
         );
 
         let mut constants = ConstantPool::new();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         let mut compiler = create_test_compiler(&mut ctx, &mut emitter, None);
 
@@ -244,7 +245,7 @@ mod tests {
         assert!(info.is_lvalue);
         assert!(info.is_mutable);
 
-        let chunk = emitter.finish();
+        let chunk = emitter.finish_chunk();
         assert_eq!(chunk.read_op(0), Some(OpCode::GetLocal));
     }
 
@@ -263,7 +264,8 @@ mod tests {
         );
 
         let mut constants = ConstantPool::new();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         let mut compiler = create_test_compiler(&mut ctx, &mut emitter, None);
 
@@ -282,7 +284,8 @@ mod tests {
         let mut ctx = CompilationContext::new(&registry);
         ctx.begin_function();
         let mut constants = ConstantPool::new();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         let mut compiler = create_test_compiler(&mut ctx, &mut emitter, None);
 
@@ -302,7 +305,8 @@ mod tests {
         let mut ctx = CompilationContext::new(&registry);
         ctx.begin_function();
         let mut constants = ConstantPool::new();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         let class_hash = TypeHash::from_name("MyClass");
         let mut compiler = create_test_compiler(&mut ctx, &mut emitter, Some(class_hash));
@@ -316,7 +320,7 @@ mod tests {
         assert!(info.is_lvalue);
         assert!(!info.is_mutable); // 'this' is const
 
-        let chunk = emitter.finish();
+        let chunk = emitter.finish_chunk();
         assert_eq!(chunk.read_op(0), Some(OpCode::GetThis));
     }
 
@@ -326,7 +330,8 @@ mod tests {
         let mut ctx = CompilationContext::new(&registry);
         ctx.begin_function();
         let mut constants = ConstantPool::new();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         let mut compiler = create_test_compiler(&mut ctx, &mut emitter, None);
 
@@ -383,7 +388,8 @@ mod tests {
         );
 
         let mut constants = ConstantPool::new();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         let mut compiler = create_test_compiler(&mut ctx, &mut emitter, Some(class_hash));
 
@@ -396,7 +402,7 @@ mod tests {
         assert_eq!(info.data_type.type_hash, primitives::INT32);
         assert!(info.is_lvalue);
 
-        let chunk = emitter.finish();
+        let chunk = emitter.finish_chunk();
         // Bytecode: GetThis, GetField
         chunk.assert_opcodes(&[OpCode::GetThis, OpCode::GetField]);
     }
@@ -418,7 +424,8 @@ mod tests {
         );
 
         let mut constants = ConstantPool::new();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         let mut compiler = create_test_compiler(&mut ctx, &mut emitter, Some(class_hash));
 
@@ -432,7 +439,7 @@ mod tests {
         assert!(info.is_lvalue);
         assert!(!info.is_mutable); // const method means field is not mutable
 
-        let chunk = emitter.finish();
+        let chunk = emitter.finish_chunk();
         chunk.assert_opcodes(&[OpCode::GetThis, OpCode::GetField]);
     }
 
@@ -461,7 +468,8 @@ mod tests {
         );
 
         let mut constants = ConstantPool::new();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         let mut compiler = create_test_compiler(&mut ctx, &mut emitter, Some(class_hash));
 
@@ -474,7 +482,7 @@ mod tests {
         // Should be float (local), not int (field)
         assert_eq!(info.data_type.type_hash, primitives::FLOAT);
 
-        let chunk = emitter.finish();
+        let chunk = emitter.finish_chunk();
         // Should use GetLocal, not GetThis + GetField
         chunk.assert_opcodes(&[OpCode::GetLocal]);
     }
@@ -489,7 +497,8 @@ mod tests {
 
         // No 'this' parameter - not in a class method
         let mut constants = ConstantPool::new();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         // current_class is None
         let mut compiler = create_test_compiler(&mut ctx, &mut emitter, None);
@@ -573,7 +582,8 @@ mod tests {
         ctx.begin_function();
 
         let mut constants = ConstantPool::new();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         let mut compiler = create_test_compiler(&mut ctx, &mut emitter, None);
 
@@ -586,7 +596,7 @@ mod tests {
         assert_eq!(info.data_type.type_hash, enum_hash);
         assert!(!info.is_lvalue); // Enum values are rvalues (constants)
 
-        let chunk = emitter.finish();
+        let chunk = emitter.finish_chunk();
         // Should emit a constant integer (PushZero is an optimization for 0)
         chunk.assert_opcodes(&[OpCode::PushZero]);
     }
@@ -614,7 +624,8 @@ mod tests {
         ctx.begin_function();
 
         let mut constants = ConstantPool::new();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         let mut compiler = create_test_compiler(&mut ctx, &mut emitter, None);
 
@@ -636,7 +647,8 @@ mod tests {
         ctx.begin_function();
 
         let mut constants = ConstantPool::new();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         let mut compiler = create_test_compiler(&mut ctx, &mut emitter, None);
 
@@ -668,7 +680,8 @@ mod tests {
         ctx.begin_function();
 
         let mut constants = ConstantPool::new();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         let mut compiler = create_test_compiler(&mut ctx, &mut emitter, None);
 

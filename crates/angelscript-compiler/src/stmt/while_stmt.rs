@@ -9,7 +9,7 @@ use crate::bytecode::OpCode;
 
 use super::{Result, StmtCompiler};
 
-impl<'a, 'ctx, 'pool> StmtCompiler<'a, 'ctx, 'pool> {
+impl<'a, 'ctx> StmtCompiler<'a, 'ctx> {
     /// Compile a while loop.
     ///
     /// The condition must evaluate to bool. Creates a loop context for
@@ -95,7 +95,8 @@ mod tests {
         let (registry, mut constants) = create_test_context();
         let mut ctx = CompilationContext::new(&registry);
         ctx.begin_function();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         let condition = arena.alloc(Expr::Literal(LiteralExpr {
             kind: LiteralKind::Bool(true),
@@ -117,7 +118,7 @@ mod tests {
 
         compiler.compile_while(&while_stmt).unwrap();
 
-        let chunk = emitter.finish();
+        let chunk = emitter.finish_chunk();
         // Bytecode layout:
         // PushTrue(1) + JumpIfFalse(3) + Pop(1) + Loop(3) + Pop(1) = 9 bytes
         assert_eq!(chunk.len(), 9);
@@ -138,7 +139,8 @@ mod tests {
         let (registry, mut constants) = create_test_context();
         let mut ctx = CompilationContext::new(&registry);
         ctx.begin_function();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         // Use an integer as condition - should fail
         let condition = arena.alloc(Expr::Literal(LiteralExpr {
@@ -176,7 +178,8 @@ mod tests {
         let (registry, mut constants) = create_test_context();
         let mut ctx = CompilationContext::new(&registry);
         ctx.begin_function();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         let condition = arena.alloc(Expr::Literal(LiteralExpr {
             kind: LiteralKind::Bool(true),
@@ -205,7 +208,7 @@ mod tests {
 
         compiler.compile_while(&while_stmt).unwrap();
 
-        let chunk = emitter.finish();
+        let chunk = emitter.finish_chunk();
         // Bytecode layout:
         // PushTrue(1) + JumpIfFalse(3) + Pop(1) + Jump(3, break) + Loop(3) + Pop(1) = 12 bytes
         assert_eq!(chunk.len(), 12);
@@ -225,7 +228,8 @@ mod tests {
         let (registry, mut constants) = create_test_context();
         let mut ctx = CompilationContext::new(&registry);
         ctx.begin_function();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         let condition = arena.alloc(Expr::Literal(LiteralExpr {
             kind: LiteralKind::Bool(true),
@@ -254,7 +258,7 @@ mod tests {
 
         compiler.compile_while(&while_stmt).unwrap();
 
-        let chunk = emitter.finish();
+        let chunk = emitter.finish_chunk();
         // Bytecode layout:
         // PushTrue(1) + JumpIfFalse(3) + Pop(1) + Loop(3, continue) + Loop(3) + Pop(1) = 12 bytes
         assert_eq!(chunk.len(), 12);
@@ -276,7 +280,8 @@ mod tests {
         let (registry, mut constants) = create_test_context();
         let mut ctx = CompilationContext::new(&registry);
         ctx.begin_function();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         // Inner while
         let inner_condition = arena.alloc(Expr::Literal(LiteralExpr {
@@ -317,7 +322,7 @@ mod tests {
 
         compiler.compile_while(&outer_while).unwrap();
 
-        let chunk = emitter.finish();
+        let chunk = emitter.finish_chunk();
         // Bytecode layout:
         // Outer: PushTrue(1) + JumpIfFalse(3) + Pop(1) = 5 bytes before inner
         // Inner: PushFalse(1) + JumpIfFalse(3) + Pop(1) + Loop(3) + Pop(1) = 9 bytes
@@ -340,7 +345,8 @@ mod tests {
         let (registry, mut constants) = create_test_context();
         let mut ctx = CompilationContext::new(&registry);
         ctx.begin_function();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         let condition = arena.alloc(Expr::Literal(LiteralExpr {
             kind: LiteralKind::Bool(false),
@@ -385,7 +391,7 @@ mod tests {
         // Variable x should be out of scope after the loop
         assert!(ctx.get_local("x").is_none());
 
-        let chunk = emitter.finish();
+        let chunk = emitter.finish_chunk();
         // Bytecode layout:
         // PushFalse(1) + JumpIfFalse(3) + Pop(1) = 5 bytes
         // var decl: PushZero(1) + SetLocal(2) = 3 bytes
@@ -408,7 +414,8 @@ mod tests {
         let (registry, mut constants) = create_test_context();
         let mut ctx = CompilationContext::new(&registry);
         ctx.begin_function();
-        let mut emitter = BytecodeEmitter::new(&mut constants);
+        let mut emitter = BytecodeEmitter::new();
+        emitter.start_chunk();
 
         // Inner while with break
         let inner_condition = arena.alloc(Expr::Literal(LiteralExpr {
@@ -454,7 +461,7 @@ mod tests {
 
         compiler.compile_while(&outer_while).unwrap();
 
-        let chunk = emitter.finish();
+        let chunk = emitter.finish_chunk();
         // Bytecode layout:
         // Outer: PushTrue(1) + JumpIfFalse(3) + Pop(1) = 5 bytes
         // Inner: PushTrue(1) + JumpIfFalse(3) + Pop(1) + Jump(3, break) + Loop(3) + Pop(1) = 12 bytes
