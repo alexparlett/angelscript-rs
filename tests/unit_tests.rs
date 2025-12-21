@@ -138,7 +138,6 @@ fn test_enum() {
 // =============================================================================
 
 #[test]
-#[ignore = "requires nested class field access, super() keyword, and class constructors"]
 fn test_nested() {
     let module = build_script("nested.as");
     assert!(module.is_built());

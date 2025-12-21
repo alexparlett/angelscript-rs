@@ -13,6 +13,7 @@ use crate::expr_info::ExprInfo;
 use crate::overload::{OverloadMatch, resolve_overload};
 use crate::type_resolver::TypeResolver;
 
+use super::identifiers::build_qualified_name;
 use super::{ExprCompiler, emit_conversion};
 
 type Result<T> = std::result::Result<T, CompilationError>;
@@ -60,6 +61,9 @@ fn compile_ident_call<'ast>(
         return compile_super_call(compiler, call);
     }
 
+    // Build qualified name from scope + identifier for type/function resolution
+    let qualified_name = build_qualified_name(ident);
+
     // Check if this identifier has template type arguments (e.g., array<int>)
     // If so, we need to resolve the full template type including instantiation
     if !ident.type_args.is_empty() {
@@ -83,13 +87,13 @@ fn compile_ident_call<'ast>(
         return compile_constructor_call(compiler, resolved_type.type_hash, call);
     }
 
-    // First, check if this is a type (constructor call)
-    if let Some(type_hash) = compiler.ctx().resolve_type(name) {
+    // First, check if this is a type (constructor call) - use qualified name for namespaced types
+    if let Some(type_hash) = compiler.ctx().resolve_type(&qualified_name) {
         return compile_constructor_call(compiler, type_hash, call);
     }
 
-    // Otherwise, try as a function call
-    if let Some(candidates) = compiler.ctx().resolve_function(name) {
+    // Otherwise, try as a function call - use qualified name for namespaced functions
+    if let Some(candidates) = compiler.ctx().resolve_function(&qualified_name) {
         // Route lambda arguments to specialized handler
         if has_lambda_argument(call) {
             return compile_lambda_function_call(compiler, candidates.to_vec(), call);
@@ -124,7 +128,7 @@ fn compile_ident_call<'ast>(
 
     // Could be a variable or unknown identifier
     Err(CompilationError::UnknownFunction {
-        name: name.to_string(),
+        name: qualified_name,
         span,
     })
 }
