@@ -178,6 +178,9 @@ impl SymbolRegistry {
     /// Register a type entry.
     ///
     /// Returns an error if a type with the same hash already exists.
+    ///
+    /// Note: FFI classes do not support inheritance. Script classes can only
+    /// inherit from other script classes.
     pub fn register_type(&mut self, entry: TypeEntry) -> Result<(), RegistrationError> {
         let hash = entry.type_hash();
 
@@ -233,6 +236,25 @@ impl SymbolRegistry {
                 .entry(simple_name)
                 .or_default()
                 .push(hash);
+        }
+
+        // If this is a method, add to the owning class's vtable
+        if let Some(owner_hash) = entry.def.object_type {
+            // Compute signature hash from params (including modifiers)
+            let param_sig_hashes: Vec<u64> = entry
+                .def
+                .params
+                .iter()
+                .map(|p| p.data_type.signature_hash())
+                .collect();
+            let sig_hash =
+                TypeHash::from_signature(&entry.def.name, &param_sig_hashes, entry.def.is_const())
+                    .0;
+
+            // Add to class vtable if the class exists
+            if let Some(class) = self.get_class_mut(owner_hash) {
+                class.vtable.add_method(&entry.def.name, sig_hash, hash);
+            }
         }
 
         self.function_overloads
@@ -576,7 +598,7 @@ impl std::fmt::Debug for SymbolRegistry {
 mod tests {
     use super::*;
     use angelscript_core::{
-        DataType, FunctionDef, FunctionTraits, TypeKind, Visibility, primitives,
+        DataType, FunctionDef, FunctionTraits, Param, TypeKind, Visibility, primitives,
     };
 
     #[test]
@@ -1244,5 +1266,202 @@ mod tests {
         let result = bad_class.behaviors.validate(&bad_class.type_kind);
         assert!(!result.is_ok());
         assert!(result.missing.contains(&"AddRef"));
+    }
+
+    // =========================================================================
+    // VTable Building Tests
+    // =========================================================================
+
+    #[test]
+    fn register_function_adds_method_to_vtable() {
+        let mut registry = SymbolRegistry::with_primitives();
+
+        // Register a class first
+        let class = ClassEntry::ffi("Entity", TypeKind::reference());
+        let class_hash = class.type_hash;
+        registry.register_type(class.into()).unwrap();
+
+        // Register a method for that class
+        let method_def = FunctionDef::new(
+            TypeHash::from_method(class_hash, "update", &[]),
+            "update".to_string(),
+            vec![],
+            vec![],
+            DataType::void(),
+            Some(class_hash),
+            FunctionTraits::default(),
+            true,
+            Visibility::Public,
+        );
+        registry
+            .register_function(FunctionEntry::ffi(method_def))
+            .unwrap();
+
+        // Verify vtable was populated
+        let class = registry.get_class_mut(class_hash).unwrap();
+        assert_eq!(class.vtable.len(), 1);
+        assert!(!class.vtable.slots_for_name("update").is_empty());
+    }
+
+    #[test]
+    fn register_function_multiple_methods_same_class() {
+        let mut registry = SymbolRegistry::with_primitives();
+
+        let class = ClassEntry::ffi("Entity", TypeKind::reference());
+        let class_hash = class.type_hash;
+        registry.register_type(class.into()).unwrap();
+
+        // Register two methods
+        let update_def = FunctionDef::new(
+            TypeHash::from_method(class_hash, "update", &[]),
+            "update".to_string(),
+            vec![],
+            vec![],
+            DataType::void(),
+            Some(class_hash),
+            FunctionTraits::default(),
+            true,
+            Visibility::Public,
+        );
+        let render_def = FunctionDef::new(
+            TypeHash::from_method(class_hash, "render", &[]),
+            "render".to_string(),
+            vec![],
+            vec![],
+            DataType::void(),
+            Some(class_hash),
+            FunctionTraits::default(),
+            true,
+            Visibility::Public,
+        );
+
+        registry
+            .register_function(FunctionEntry::ffi(update_def))
+            .unwrap();
+        registry
+            .register_function(FunctionEntry::ffi(render_def))
+            .unwrap();
+
+        let class = registry.get_class_mut(class_hash).unwrap();
+        assert_eq!(class.vtable.len(), 2);
+    }
+
+    #[test]
+    fn register_function_overloads_get_separate_slots() {
+        let mut registry = SymbolRegistry::with_primitives();
+
+        let class = ClassEntry::ffi("Entity", TypeKind::reference());
+        let class_hash = class.type_hash;
+        registry.register_type(class.into()).unwrap();
+
+        // Register two overloads of "foo" with different signatures
+        let foo_int = FunctionDef::new(
+            TypeHash::from_method(class_hash, "foo", &[primitives::INT32]),
+            "foo".to_string(),
+            vec![],
+            vec![Param::new("x", DataType::simple(primitives::INT32))],
+            DataType::void(),
+            Some(class_hash),
+            FunctionTraits::default(),
+            true,
+            Visibility::Public,
+        );
+        let foo_float = FunctionDef::new(
+            TypeHash::from_method(class_hash, "foo", &[primitives::FLOAT]),
+            "foo".to_string(),
+            vec![],
+            vec![Param::new("x", DataType::simple(primitives::FLOAT))],
+            DataType::void(),
+            Some(class_hash),
+            FunctionTraits::default(),
+            true,
+            Visibility::Public,
+        );
+
+        registry
+            .register_function(FunctionEntry::ffi(foo_int))
+            .unwrap();
+        registry
+            .register_function(FunctionEntry::ffi(foo_float))
+            .unwrap();
+
+        let class = registry.get_class_mut(class_hash).unwrap();
+        assert_eq!(class.vtable.len(), 2);
+        // Both should be under "foo" name
+        assert_eq!(class.vtable.slots_for_name("foo").len(), 2);
+    }
+
+    #[test]
+    fn register_function_const_and_nonconst_get_separate_slots() {
+        let mut registry = SymbolRegistry::with_primitives();
+
+        let class = ClassEntry::ffi("Entity", TypeKind::reference());
+        let class_hash = class.type_hash;
+        registry.register_type(class.into()).unwrap();
+
+        // Register const and non-const versions of same method
+        let foo_nonconst = FunctionDef::new(
+            TypeHash::from_method(class_hash, "foo", &[]),
+            "foo".to_string(),
+            vec![],
+            vec![],
+            DataType::void(),
+            Some(class_hash),
+            FunctionTraits::default(), // not const
+            true,
+            Visibility::Public,
+        );
+        let foo_const = FunctionDef::new(
+            TypeHash::from_method(class_hash, "foo_const", &[]),
+            "foo".to_string(),
+            vec![],
+            vec![],
+            DataType::void(),
+            Some(class_hash),
+            FunctionTraits::const_method(), // const
+            true,
+            Visibility::Public,
+        );
+
+        registry
+            .register_function(FunctionEntry::ffi(foo_nonconst))
+            .unwrap();
+        registry
+            .register_function(FunctionEntry::ffi(foo_const))
+            .unwrap();
+
+        let class = registry.get_class_mut(class_hash).unwrap();
+        // const and non-const should be separate overloads
+        assert_eq!(class.vtable.len(), 2);
+        assert_eq!(class.vtable.slots_for_name("foo").len(), 2);
+    }
+
+    #[test]
+    fn register_function_global_function_no_vtable() {
+        let mut registry = SymbolRegistry::with_primitives();
+
+        // Register a global function (no object_type)
+        let func_def = FunctionDef::new(
+            TypeHash::from_function("globalFunc", &[]),
+            "globalFunc".to_string(),
+            vec![],
+            vec![],
+            DataType::void(),
+            None, // No object_type = global function
+            FunctionTraits::default(),
+            true,
+            Visibility::Public,
+        );
+
+        registry
+            .register_function(FunctionEntry::ffi(func_def))
+            .unwrap();
+
+        // Should be registered as a function, not touch any vtable
+        assert!(
+            registry
+                .get_function(TypeHash::from_function("globalFunc", &[]))
+                .is_some()
+        );
     }
 }

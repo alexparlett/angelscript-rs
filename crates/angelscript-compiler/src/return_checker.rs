@@ -222,6 +222,9 @@ impl ReturnChecker {
             | OpCode::CallVirtual
             | OpCode::New
             | OpCode::NewFactory => 3,
+
+            // Interface call: hash (u16) + slot (u16) + arg count (u8)
+            OpCode::CallInterface => 5,
         }
     }
 }

@@ -467,6 +467,18 @@ impl MethodSignature {
             is_const: true,
         }
     }
+
+    /// Compute the signature hash for vtable/itable matching.
+    ///
+    /// Uses name and parameter types with modifiers (excludes owner and return type)
+    /// so that override matching works correctly in inheritance hierarchies.
+    /// The signature hash includes parameter modifiers (const, handle, ref) so that
+    /// `foo(int)` and `foo(int &in)` are treated as different signatures.
+    /// Also includes const flag so `foo()` and `foo() const` are different.
+    pub fn signature_hash(&self) -> u64 {
+        let param_sig_hashes: Vec<u64> = self.params.iter().map(|p| p.signature_hash()).collect();
+        TypeHash::from_signature(&self.name, &param_sig_hashes, self.is_const).0
+    }
 }
 
 /// Property accessor function hashes.
@@ -1505,5 +1517,94 @@ mod tests {
         assert_eq!(TypeKind::script_object().reference_kind(), None);
         assert_eq!(TypeKind::value::<i32>().reference_kind(), None);
         assert_eq!(TypeKind::pod::<i32>().reference_kind(), None);
+    }
+
+    // MethodSignature::signature_hash tests
+    #[test]
+    fn method_signature_hash_same_signature_same_hash() {
+        let sig1 = MethodSignature::new(
+            "foo",
+            vec![DataType::simple(primitives::INT32)],
+            DataType::void(),
+        );
+        let sig2 = MethodSignature::new(
+            "foo",
+            vec![DataType::simple(primitives::INT32)],
+            DataType::void(),
+        );
+        assert_eq!(sig1.signature_hash(), sig2.signature_hash());
+    }
+
+    #[test]
+    fn method_signature_hash_different_name_different_hash() {
+        let foo = MethodSignature::new("foo", vec![], DataType::void());
+        let bar = MethodSignature::new("bar", vec![], DataType::void());
+        assert_ne!(foo.signature_hash(), bar.signature_hash());
+    }
+
+    #[test]
+    fn method_signature_hash_different_params_different_hash() {
+        let foo_int = MethodSignature::new(
+            "foo",
+            vec![DataType::simple(primitives::INT32)],
+            DataType::void(),
+        );
+        let foo_float = MethodSignature::new(
+            "foo",
+            vec![DataType::simple(primitives::FLOAT)],
+            DataType::void(),
+        );
+        assert_ne!(foo_int.signature_hash(), foo_float.signature_hash());
+    }
+
+    #[test]
+    fn method_signature_hash_const_differs() {
+        let non_const = MethodSignature::new("foo", vec![], DataType::void());
+        let const_method = MethodSignature::new_const("foo", vec![], DataType::void());
+        assert_ne!(non_const.signature_hash(), const_method.signature_hash());
+    }
+
+    #[test]
+    fn method_signature_hash_ignores_return_type() {
+        // Return type should NOT affect signature hash (only name + params + const)
+        let returns_void = MethodSignature::new("foo", vec![], DataType::void());
+        let returns_int = MethodSignature::new("foo", vec![], DataType::simple(primitives::INT32));
+        assert_eq!(returns_void.signature_hash(), returns_int.signature_hash());
+    }
+
+    #[test]
+    fn method_signature_hash_param_modifiers_differ() {
+        let val = MethodSignature::new(
+            "foo",
+            vec![DataType::simple(primitives::INT32)],
+            DataType::void(),
+        );
+        let ref_in = MethodSignature::new(
+            "foo",
+            vec![DataType::with_ref_in(primitives::INT32)],
+            DataType::void(),
+        );
+        assert_ne!(val.signature_hash(), ref_in.signature_hash());
+    }
+
+    #[test]
+    fn method_signature_hash_param_order_matters() {
+        let int_float = MethodSignature::new(
+            "foo",
+            vec![
+                DataType::simple(primitives::INT32),
+                DataType::simple(primitives::FLOAT),
+            ],
+            DataType::void(),
+        );
+        let float_int = MethodSignature::new(
+            "foo",
+            vec![
+                DataType::simple(primitives::FLOAT),
+                DataType::simple(primitives::INT32),
+            ],
+            DataType::void(),
+        );
+        assert_ne!(int_float.signature_hash(), float_int.signature_hash());
     }
 }

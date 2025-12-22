@@ -213,6 +213,67 @@ impl TypeHash {
         TypeHash(hash)
     }
 
+    /// Create a method signature hash from name, parameter signature hashes, and const flag.
+    ///
+    /// This is used for vtable slot matching during polymorphic dispatch.
+    /// Unlike `from_method()`, this **excludes the owner type**, so:
+    /// - `Base::foo(int)` and `Derived::foo(int)` produce the same hash
+    /// - Override matching works correctly in inheritance hierarchies
+    ///
+    /// Also excludes return type to support covariant returns:
+    /// - `Base::clone() -> Base@` and `Derived::clone() -> Derived@` match
+    ///
+    /// Includes the const flag because `foo() const` and `foo()` are different
+    /// overloads in AngelScript.
+    ///
+    /// The parameter hashes should come from `DataType::signature_hash()`, which
+    /// includes type modifiers (const, handle, ref_modifier). This ensures that
+    /// `foo(int)` and `foo(int &in)` are treated as different signatures.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use angelscript_core::{TypeHash, DataType, primitives};
+    ///
+    /// let int_param = DataType::simple(primitives::INT32);
+    /// let int_ref_in = DataType::with_ref_in(primitives::INT32);
+    ///
+    /// // Same type with same modifiers = same signature hash
+    /// let sig1 = TypeHash::from_signature("foo", &[int_param.signature_hash()], false);
+    /// let sig2 = TypeHash::from_signature("foo", &[int_param.signature_hash()], false);
+    /// assert_eq!(sig1, sig2);
+    ///
+    /// // Different modifiers = different signature hash
+    /// let sig3 = TypeHash::from_signature("foo", &[int_ref_in.signature_hash()], false);
+    /// assert_ne!(sig1, sig3);
+    ///
+    /// // Const vs non-const = different signature hash
+    /// let sig_const = TypeHash::from_signature("foo", &[int_param.signature_hash()], true);
+    /// assert_ne!(sig1, sig_const);
+    /// ```
+    #[inline]
+    pub fn from_signature(name: &str, param_sig_hashes: &[u64], is_const: bool) -> Self {
+        // Use METHOD constant but without owner - makes it distinct from FUNCTION
+        // while still being "method-like" for vtable purposes
+        let mut hash = hash_constants::METHOD ^ xxh64(name.as_bytes(), 0);
+
+        // Include const flag in the hash
+        if is_const {
+            hash ^= 0xc0115747_u64; // "CONST" magic number
+        }
+
+        for (i, param) in param_sig_hashes.iter().enumerate() {
+            let marker = hash_constants::PARAM_MARKERS
+                .get(i)
+                .copied()
+                .unwrap_or_else(|| hash_constants::PARAM_MARKERS[0].wrapping_add(i as u64));
+            hash = hash
+                .wrapping_mul(hash_constants::SEP)
+                .wrapping_add(marker ^ param);
+        }
+        TypeHash(hash)
+    }
+
     /// Create an operator method hash from owner type, operator name, and parameter type hashes.
     ///
     /// Operators are like methods but use a different domain constant to distinguish
@@ -652,5 +713,92 @@ mod tests {
         // Should not panic with more than 32 parameters
         let func = TypeHash::from_function("many_params", &params);
         assert!(!func.is_empty());
+    }
+
+    #[test]
+    fn signature_hash_excludes_owner() {
+        use crate::{DataType, primitives};
+
+        let int_hash = TypeHash::from_name("int");
+        let base_hash = TypeHash::from_name("Base");
+        let derived_hash = TypeHash::from_name("Derived");
+
+        // Method hashes include owner - so Base::foo != Derived::foo
+        let base_method = TypeHash::from_method(base_hash, "foo", &[int_hash]);
+        let derived_method = TypeHash::from_method(derived_hash, "foo", &[int_hash]);
+        assert_ne!(base_method, derived_method);
+
+        // Signature hashes exclude owner - same signature = same hash
+        let int_param = DataType::simple(primitives::INT32);
+        let sig1 = TypeHash::from_signature("foo", &[int_param.signature_hash()], false);
+        let sig2 = TypeHash::from_signature("foo", &[int_param.signature_hash()], false);
+        assert_eq!(sig1, sig2);
+
+        // Signature hash is deterministic
+        assert!(!sig1.is_empty());
+    }
+
+    #[test]
+    fn signature_hash_distinguishes_overloads() {
+        use crate::{DataType, primitives};
+
+        let int_param = DataType::simple(primitives::INT32);
+        let float_param = DataType::simple(primitives::FLOAT);
+        let string_hash = TypeHash::from_name("string");
+        let string_param = DataType::simple(string_hash);
+
+        // Different parameter types = different signature hashes
+        let foo_int = TypeHash::from_signature("foo", &[int_param.signature_hash()], false);
+        let foo_string = TypeHash::from_signature("foo", &[string_param.signature_hash()], false);
+        let foo_int_float = TypeHash::from_signature(
+            "foo",
+            &[int_param.signature_hash(), float_param.signature_hash()],
+            false,
+        );
+
+        assert_ne!(foo_int, foo_string);
+        assert_ne!(foo_int, foo_int_float);
+        assert_ne!(foo_string, foo_int_float);
+    }
+
+    #[test]
+    fn signature_hash_parameter_order_matters() {
+        use crate::{DataType, primitives};
+
+        let int_param = DataType::simple(primitives::INT32);
+        let float_param = DataType::simple(primitives::FLOAT);
+
+        let sig1 = TypeHash::from_signature(
+            "foo",
+            &[int_param.signature_hash(), float_param.signature_hash()],
+            false,
+        );
+        let sig2 = TypeHash::from_signature(
+            "foo",
+            &[float_param.signature_hash(), int_param.signature_hash()],
+            false,
+        );
+        assert_ne!(sig1, sig2);
+    }
+
+    #[test]
+    fn signature_hash_distinguishes_modifiers() {
+        use crate::{DataType, primitives};
+
+        let int_val = DataType::simple(primitives::INT32);
+        let int_ref_in = DataType::with_ref_in(primitives::INT32);
+        let int_ref_out = DataType::with_ref_out(primitives::INT32);
+        let int_const = DataType::with_const(primitives::INT32);
+
+        // Same base type but different modifiers = different signature hashes
+        let sig_val = TypeHash::from_signature("foo", &[int_val.signature_hash()], false);
+        let sig_ref_in = TypeHash::from_signature("foo", &[int_ref_in.signature_hash()], false);
+        let sig_ref_out = TypeHash::from_signature("foo", &[int_ref_out.signature_hash()], false);
+        let sig_const = TypeHash::from_signature("foo", &[int_const.signature_hash()], false);
+
+        assert_ne!(sig_val, sig_ref_in);
+        assert_ne!(sig_val, sig_ref_out);
+        assert_ne!(sig_val, sig_const);
+        assert_ne!(sig_ref_in, sig_ref_out);
     }
 }

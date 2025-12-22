@@ -45,6 +45,10 @@ pub struct CompletionOutput {
     pub methods_inherited: usize,
     /// Number of properties copied from base classes.
     pub properties_inherited: usize,
+    /// Number of classes with vtables built.
+    pub vtables_built: usize,
+    /// Number of interface itables built across all classes.
+    pub itables_built: usize,
     /// Collected errors.
     pub errors: Vec<CompilationError>,
 }
@@ -117,7 +121,7 @@ impl<'reg, 'global> TypeCompletionPass<'reg, 'global> {
         };
 
         // Process each class in order
-        for class_hash in ordered {
+        for &class_hash in &ordered {
             match self.complete_class(class_hash, &mut output) {
                 Ok(completed) => {
                     if completed {
@@ -129,6 +133,14 @@ impl<'reg, 'global> TypeCompletionPass<'reg, 'global> {
                 }
             }
         }
+
+        // Phase 3: Build interface method slots (itables for interfaces)
+        // Must happen before class itables since classes need interface slot info
+        self.build_interface_method_slots(&mut output);
+
+        // Phase 4: Build vtables and itables for all classes
+        // Must happen after all inheritance is complete and interface slots are built
+        self.build_all_vtables(&ordered, &mut output);
 
         output
     }
@@ -802,6 +814,436 @@ impl<'reg, 'global> TypeCompletionPass<'reg, 'global> {
         stack.push(class_hash);
 
         Ok(())
+    }
+
+    // ========================================================================
+    // Phase 3: VTable/ITable Building
+    // ========================================================================
+
+    /// Build vtables and itables for all classes.
+    ///
+    /// Must be called after inheritance completion. Classes are processed in
+    /// topological order (base before derived) so each base's vtable is
+    /// available when building the derived class's vtable.
+    fn build_all_vtables(&mut self, ordered: &[TypeHash], output: &mut CompletionOutput) {
+        for &class_hash in ordered {
+            // Skip mixins - they don't have their own vtables
+            let is_mixin = self
+                .registry
+                .get(class_hash)
+                .and_then(|e| e.as_class())
+                .map(|c| c.is_mixin)
+                .unwrap_or(false);
+
+            if is_mixin {
+                continue;
+            }
+
+            if self.build_class_vtable(class_hash) {
+                output.vtables_built += 1;
+            }
+
+            let itables_count = self.build_class_itables(class_hash);
+            output.itables_built += itables_count;
+        }
+    }
+
+    /// Build the vtable for a single class.
+    ///
+    /// VTable layout:
+    /// - Slots 0..n: inherited from base class (in same order)
+    /// - Slots n..: new methods introduced in this class
+    ///
+    /// Override handling: when a derived class has a method with the same
+    /// signature (name + parameter types) as a base class method, the derived
+    /// method hash replaces the base's hash in that slot. This uses signature
+    /// hash (excludes owner type and return type) for proper override matching.
+    fn build_class_vtable(&mut self, class_hash: TypeHash) -> bool {
+        use angelscript_core::entries::VTable;
+
+        // Step 1: Get base class vtable (if any) - immutable borrow
+        let base_vtable = {
+            let class = match self.registry.get(class_hash).and_then(|e| e.as_class()) {
+                Some(c) => c,
+                None => return false,
+            };
+
+            if let Some(base_hash) = class.base_class {
+                // Try to get base from unit registry, then global
+                let base = self
+                    .registry
+                    .get(base_hash)
+                    .and_then(|e| e.as_class())
+                    .or_else(|| {
+                        self.global_registry
+                            .get(base_hash)
+                            .and_then(|e| e.as_class())
+                    });
+
+                if let Some(base) = base {
+                    base.vtable.clone()
+                } else {
+                    VTable::default()
+                }
+            } else {
+                VTable::default()
+            }
+        };
+
+        // Step 2: Collect own methods with their signature hashes
+        // Own methods = methods where object_type == this class
+        let own_methods: Vec<(String, u64, TypeHash)> = {
+            let class = match self.registry.get(class_hash).and_then(|e| e.as_class()) {
+                Some(c) => c,
+                None => return false,
+            };
+
+            let mut own = Vec::new();
+            for (name, method_hashes) in &class.methods {
+                for &method_hash in method_hashes {
+                    // Check if this method belongs to this class (not inherited)
+                    if let Some(func) = self
+                        .registry
+                        .get_function(method_hash)
+                        .filter(|f| f.def.object_type == Some(class_hash))
+                    {
+                        // Compute signature hash from name and parameter types (including modifiers)
+                        let param_sig_hashes: Vec<u64> = func
+                            .def
+                            .params
+                            .iter()
+                            .map(|p| p.data_type.signature_hash())
+                            .collect();
+                        let sig_hash =
+                            TypeHash::from_signature(name, &param_sig_hashes, func.def.is_const());
+                        own.push((name.clone(), sig_hash.0, method_hash));
+                    }
+                }
+            }
+            own
+        };
+
+        // Step 3: Build the derived class's vtable
+        let mut vtable = base_vtable;
+
+        // Process only OWN methods for vtable construction
+        for (name, sig_hash, method_hash) in own_methods {
+            if let Some(slot) = vtable.slot_by_signature(sig_hash) {
+                // Override: replace the method at the existing slot
+                vtable.override_slot(slot, method_hash);
+            } else {
+                // New method: add to vtable
+                vtable.add_method(&name, sig_hash, method_hash);
+            }
+        }
+
+        // Step 4: Apply to the class (mutable borrow)
+        let class = match self.registry.get_class_mut(class_hash) {
+            Some(c) => c,
+            None => return false,
+        };
+
+        class.vtable = vtable;
+
+        true
+    }
+
+    /// Build itables for all interfaces implemented by a class.
+    ///
+    /// Returns the number of itables built.
+    fn build_class_itables(&mut self, class_hash: TypeHash) -> usize {
+        // Step 1: Get all interfaces this class implements (including inherited)
+        let interface_hashes = {
+            let class = match self.registry.get(class_hash).and_then(|e| e.as_class()) {
+                Some(c) => c,
+                None => return 0,
+            };
+            self.collect_all_interfaces(&class.interfaces)
+        };
+
+        if interface_hashes.is_empty() {
+            return 0;
+        }
+
+        // Step 2: Build itable for each interface
+        let mut itables = rustc_hash::FxHashMap::default();
+
+        for iface_hash in &interface_hashes {
+            if let Some(itable) = self.build_itable_for_interface(class_hash, *iface_hash) {
+                itables.insert(*iface_hash, itable);
+            }
+        }
+
+        let count = itables.len();
+
+        // Step 3: Apply to the class (mutable borrow)
+        if let Some(class) = self.registry.get_class_mut(class_hash) {
+            class.itables = itables;
+        }
+
+        count
+    }
+
+    /// Collect all interfaces including those inherited from base interfaces.
+    fn collect_all_interfaces(&self, direct_interfaces: &[TypeHash]) -> Vec<TypeHash> {
+        let mut all_interfaces = Vec::new();
+        let mut visited = FxHashSet::default();
+
+        for &iface_hash in direct_interfaces {
+            self.collect_interface_recursive(iface_hash, &mut all_interfaces, &mut visited);
+        }
+
+        all_interfaces
+    }
+
+    /// Recursively collect an interface and its bases.
+    fn collect_interface_recursive(
+        &self,
+        iface_hash: TypeHash,
+        result: &mut Vec<TypeHash>,
+        visited: &mut FxHashSet<TypeHash>,
+    ) {
+        if !visited.insert(iface_hash) {
+            return;
+        }
+
+        // Add this interface
+        result.push(iface_hash);
+
+        // Get base interfaces
+        let base_interfaces = self
+            .registry
+            .get(iface_hash)
+            .and_then(|e| e.as_interface())
+            .or_else(|| {
+                self.global_registry
+                    .get(iface_hash)
+                    .and_then(|e| e.as_interface())
+            })
+            .map(|i| i.base_interfaces.clone())
+            .unwrap_or_default();
+
+        // Recurse into bases
+        for base_hash in base_interfaces {
+            self.collect_interface_recursive(base_hash, result, visited);
+        }
+    }
+
+    /// Build an itable for a specific interface on a class.
+    ///
+    /// The itable is a list of method hashes in the order defined by the
+    /// interface's method_slots.
+    fn build_itable_for_interface(
+        &self,
+        class_hash: TypeHash,
+        iface_hash: TypeHash,
+    ) -> Option<Vec<TypeHash>> {
+        let iface = self
+            .registry
+            .get(iface_hash)
+            .and_then(|e| e.as_interface())
+            .or_else(|| {
+                self.global_registry
+                    .get(iface_hash)
+                    .and_then(|e| e.as_interface())
+            })?;
+
+        let class = self.registry.get(class_hash).and_then(|e| e.as_class())?;
+
+        // Build itable in slot order
+        let num_slots = iface.itable.len() as usize;
+        let mut itable = vec![TypeHash::EMPTY; num_slots];
+
+        // For each interface method, find the matching class method by signature
+        for method_sig in &iface.methods {
+            let sig_hash = method_sig.signature_hash();
+            if let Some(slot) = iface.itable.slot_by_signature(sig_hash) {
+                // Find the class's implementation with matching signature
+                // Look up by name first, then match signature
+                let method_hashes = class.find_methods(&method_sig.name);
+                for &method_hash in method_hashes {
+                    // Check if this method matches the interface signature
+                    if let Some(func) = self
+                        .registry
+                        .get_function(method_hash)
+                        .or_else(|| self.global_registry.get_function(method_hash))
+                        .filter(|f| f.def.matches_signature(method_sig))
+                    {
+                        itable[slot as usize] = func.def.func_hash;
+                        break;
+                    }
+                }
+            }
+        }
+
+        Some(itable)
+    }
+
+    // ========================================================================
+    // Phase 4: Interface Method Slots
+    // ========================================================================
+
+    /// Build method_slots for all interfaces.
+    ///
+    /// Method slots assign a unique index to each method in an interface,
+    /// including methods inherited from base interfaces.
+    fn build_interface_method_slots(&mut self, _output: &mut CompletionOutput) {
+        // Collect all interface hashes from the unit registry
+        let interface_hashes: Vec<TypeHash> =
+            self.registry.interfaces().map(|i| i.type_hash).collect();
+
+        // Topologically sort interfaces (base before derived)
+        let ordered = match self.topological_sort_interfaces(&interface_hashes) {
+            Ok(ordered) => ordered,
+            Err(_) => return, // Cycle detected, error already reported
+        };
+
+        // Build slots for each interface
+        for iface_hash in ordered {
+            self.build_interface_slots(iface_hash);
+        }
+    }
+
+    /// Topologically sort interfaces by inheritance.
+    fn topological_sort_interfaces(
+        &self,
+        interfaces: &[TypeHash],
+    ) -> Result<Vec<TypeHash>, CompilationError> {
+        let mut visited = FxHashSet::default();
+        let mut stack = Vec::new();
+        let mut in_progress = FxHashSet::default();
+
+        for &iface_hash in interfaces {
+            if !visited.contains(&iface_hash) {
+                self.visit_interface(
+                    iface_hash,
+                    interfaces,
+                    &mut visited,
+                    &mut in_progress,
+                    &mut stack,
+                )?;
+            }
+        }
+
+        Ok(stack)
+    }
+
+    /// DFS visit for interface topological sort.
+    fn visit_interface(
+        &self,
+        iface_hash: TypeHash,
+        all_interfaces: &[TypeHash],
+        visited: &mut FxHashSet<TypeHash>,
+        in_progress: &mut FxHashSet<TypeHash>,
+        stack: &mut Vec<TypeHash>,
+    ) -> Result<(), CompilationError> {
+        if in_progress.contains(&iface_hash) {
+            return Err(CompilationError::CircularInheritance {
+                name: "interface".to_string(),
+                span: Span::default(),
+            });
+        }
+
+        if visited.contains(&iface_hash) {
+            return Ok(());
+        }
+
+        in_progress.insert(iface_hash);
+
+        // Visit base interfaces first
+        let base_interfaces = self
+            .registry
+            .get(iface_hash)
+            .and_then(|e| e.as_interface())
+            .map(|i| i.base_interfaces.clone())
+            .unwrap_or_default();
+
+        for base_hash in base_interfaces {
+            if all_interfaces.contains(&base_hash) {
+                self.visit_interface(base_hash, all_interfaces, visited, in_progress, stack)?;
+            }
+        }
+
+        in_progress.remove(&iface_hash);
+        visited.insert(iface_hash);
+        stack.push(iface_hash);
+
+        Ok(())
+    }
+
+    /// Build itable for a single interface.
+    ///
+    /// Uses signature hashes (name + params) for slot indexing to support
+    /// overloaded methods correctly.
+    fn build_interface_slots(&mut self, iface_hash: TypeHash) {
+        use angelscript_core::entries::ITable;
+
+        // Step 1: Get base interface itable (if any)
+        let base_itable = {
+            let iface = match self.registry.get(iface_hash).and_then(|e| e.as_interface()) {
+                Some(i) => i,
+                None => return,
+            };
+
+            // Merge itables from all base interfaces
+            let mut itable = ITable::new();
+            for &base_hash in &iface.base_interfaces {
+                let base = self
+                    .registry
+                    .get(base_hash)
+                    .and_then(|e| e.as_interface())
+                    .or_else(|| {
+                        self.global_registry
+                            .get(base_hash)
+                            .and_then(|e| e.as_interface())
+                    });
+
+                if let Some(base) = base {
+                    // Copy all slots from base interface
+                    for (&sig_hash, &slot) in &base.itable.index {
+                        if itable.slot_by_signature(sig_hash).is_none() {
+                            // Get the name for this slot from base's slots_by_name
+                            let name = base
+                                .itable
+                                .slots_by_name
+                                .iter()
+                                .find(|(_, slots)| slots.contains(&slot))
+                                .map(|(n, _)| n.clone())
+                                .unwrap_or_default();
+                            itable.add_method(&name, sig_hash);
+                        }
+                    }
+                }
+            }
+            itable
+        };
+
+        // Step 2: Collect this interface's own methods with signature hashes
+        let own_methods: Vec<(String, u64)> = {
+            let iface = match self.registry.get(iface_hash).and_then(|e| e.as_interface()) {
+                Some(i) => i,
+                None => return,
+            };
+            iface
+                .methods
+                .iter()
+                .map(|m| (m.name.clone(), m.signature_hash()))
+                .collect()
+        };
+
+        // Step 3: Build the itable
+        let mut itable = base_itable;
+
+        for (name, sig_hash) in own_methods {
+            if itable.slot_by_signature(sig_hash).is_none() {
+                itable.add_method(&name, sig_hash);
+            }
+        }
+
+        // Step 4: Apply to the interface
+        if let Some(iface) = self.registry.get_interface_mut(iface_hash) {
+            iface.itable = itable;
+        }
     }
 }
 
@@ -1982,5 +2424,372 @@ mod tests {
             "Expected no errors, got: {:?}",
             output.errors
         );
+    }
+
+    // ==========================================================================
+    // VTable/ITable tests
+    // ==========================================================================
+
+    #[test]
+    fn vtable_single_class() {
+        let mut registry = create_test_registry();
+
+        // class Entity { void update(); void render(); }
+        let entity = ClassEntry::script(
+            "Entity",
+            vec![],
+            "Entity",
+            TypeSource::script(UnitId::new(0), Span::new(0, 0, 10)),
+        );
+        let entity_hash = entity.type_hash;
+
+        let update_def = FunctionDef::new(
+            TypeHash::from_function("Entity::update", &[]),
+            "update".to_string(),
+            vec![],
+            vec![],
+            DataType::void(),
+            Some(entity_hash),
+            FunctionTraits::default(),
+            false,
+            Visibility::Public,
+        );
+        let update_hash = update_def.func_hash;
+
+        let render_def = FunctionDef::new(
+            TypeHash::from_function("Entity::render", &[]),
+            "render".to_string(),
+            vec![],
+            vec![],
+            DataType::void(),
+            Some(entity_hash),
+            FunctionTraits::default(),
+            false,
+            Visibility::Public,
+        );
+        let render_hash = render_def.func_hash;
+
+        let entity = entity
+            .with_method("update", update_hash)
+            .with_method("render", render_hash);
+        registry.register_type(entity.into()).unwrap();
+        register_script_function(&mut registry, update_def).unwrap();
+        register_script_function(&mut registry, render_def).unwrap();
+
+        // Run completion pass
+        let global_registry = SymbolRegistry::new();
+        let pass = TypeCompletionPass::new(
+            &mut registry,
+            &global_registry,
+            PendingResolutions::default(),
+        );
+        let output = pass.run();
+
+        assert_eq!(output.errors.len(), 0, "Expected no errors");
+        assert_eq!(output.vtables_built, 1);
+
+        // Verify vtable was built
+        let entity = registry.get(entity_hash).unwrap().as_class().unwrap();
+        assert_eq!(entity.vtable.len(), 2);
+        assert!(entity.vtable.slots.contains(&update_hash));
+        assert!(entity.vtable.slots.contains(&render_hash));
+
+        // Verify vtable index maps signature hashes to slots
+        // Compute signature hashes for the methods (no params)
+        let update_sig = TypeHash::from_signature("update", &[], false);
+        let render_sig = TypeHash::from_signature("render", &[], false);
+        assert!(entity.vtable_slot(update_sig.0).is_some());
+        assert!(entity.vtable_slot(render_sig.0).is_some());
+
+        // Verify slots_by_name for overload resolution
+        assert!(!entity.vtable_slots_by_name("update").is_empty());
+        assert!(!entity.vtable_slots_by_name("render").is_empty());
+    }
+
+    #[test]
+    fn vtable_inheritance_override() {
+        let mut registry = create_test_registry();
+
+        // class Base { void foo(); }
+        let base = ClassEntry::script(
+            "Base",
+            vec![],
+            "Base",
+            TypeSource::script(UnitId::new(0), Span::new(0, 0, 10)),
+        );
+        let base_hash = base.type_hash;
+
+        let base_foo_def = FunctionDef::new(
+            TypeHash::from_function("Base::foo", &[]),
+            "foo".to_string(),
+            vec![],
+            vec![],
+            DataType::void(),
+            Some(base_hash),
+            FunctionTraits::default(),
+            false,
+            Visibility::Public,
+        );
+        let base_foo_hash = base_foo_def.func_hash;
+
+        let base = base.with_method("foo", base_foo_hash);
+        registry.register_type(base.into()).unwrap();
+        register_script_function(&mut registry, base_foo_def).unwrap();
+
+        // class Derived : Base { void foo(); }  // Override
+        let derived = ClassEntry::script(
+            "Derived",
+            vec![],
+            "Derived",
+            TypeSource::script(UnitId::new(0), Span::new(0, 11, 20)),
+        )
+        .with_base(base_hash);
+        let derived_hash = derived.type_hash;
+
+        let derived_foo_def = FunctionDef::new(
+            TypeHash::from_function("Derived::foo", &[]),
+            "foo".to_string(),
+            vec![],
+            vec![],
+            DataType::void(),
+            Some(derived_hash),
+            FunctionTraits::default(),
+            false,
+            Visibility::Public,
+        );
+        let derived_foo_hash = derived_foo_def.func_hash;
+
+        let derived = derived.with_method("foo", derived_foo_hash);
+        registry.register_type(derived.into()).unwrap();
+        register_script_function(&mut registry, derived_foo_def).unwrap();
+
+        // Run completion pass
+        let global_registry = SymbolRegistry::new();
+        let pass = TypeCompletionPass::new(
+            &mut registry,
+            &global_registry,
+            PendingResolutions::default(),
+        );
+        let output = pass.run();
+
+        assert_eq!(output.errors.len(), 0, "Expected no errors");
+        assert_eq!(output.vtables_built, 2);
+
+        // Compute signature hash for foo (no params)
+        let foo_sig = TypeHash::from_signature("foo", &[], false);
+
+        // Base vtable should have base_foo
+        let base = registry.get(base_hash).unwrap().as_class().unwrap();
+        assert_eq!(base.vtable.len(), 1);
+        assert_eq!(base.vtable.method_at(0), Some(base_foo_hash));
+
+        // Derived vtable should have derived_foo in same slot
+        let derived = registry.get(derived_hash).unwrap().as_class().unwrap();
+        assert_eq!(derived.vtable.len(), 1);
+        assert_eq!(derived.vtable.method_at(0), Some(derived_foo_hash)); // Override!
+
+        // Same slot index for "foo" signature in both
+        assert_eq!(base.vtable_slot(foo_sig.0), derived.vtable_slot(foo_sig.0));
+    }
+
+    #[test]
+    fn interface_method_slots() {
+        let mut registry = create_test_registry();
+
+        // interface IDrawable { void draw(); void render(); }
+        let iface_hash = TypeHash::from_name("IDrawable");
+        let draw_sig = MethodSignature::new("draw", vec![], DataType::void());
+        let render_sig = MethodSignature::new("render", vec![], DataType::void());
+        let iface = angelscript_core::InterfaceEntry::new(
+            "IDrawable",
+            vec![],
+            "IDrawable",
+            iface_hash,
+            TypeSource::script(UnitId::new(0), Span::new(0, 0, 10)),
+        )
+        .with_method(draw_sig.clone())
+        .with_method(render_sig.clone());
+        registry.register_type(iface.into()).unwrap();
+
+        // Run completion pass
+        let global_registry = SymbolRegistry::new();
+        let pass = TypeCompletionPass::new(
+            &mut registry,
+            &global_registry,
+            PendingResolutions::default(),
+        );
+        let output = pass.run();
+
+        assert_eq!(output.errors.len(), 0, "Expected no errors");
+
+        // Verify itable was built with signature hashes
+        let iface = registry.get(iface_hash).unwrap().as_interface().unwrap();
+        assert_eq!(iface.itable.len(), 2);
+
+        // Look up by signature hash
+        let draw_sig_hash = draw_sig.signature_hash();
+        let render_sig_hash = render_sig.signature_hash();
+        assert!(iface.method_slot(draw_sig_hash).is_some());
+        assert!(iface.method_slot(render_sig_hash).is_some());
+
+        // Slots should be 0 and 1
+        let draw_slot = iface.method_slot(draw_sig_hash).unwrap();
+        let render_slot = iface.method_slot(render_sig_hash).unwrap();
+        assert!(draw_slot == 0 || draw_slot == 1);
+        assert!(render_slot == 0 || render_slot == 1);
+        assert_ne!(draw_slot, render_slot);
+
+        // Verify slots_by_name for overload resolution
+        assert!(!iface.method_slots_by_name("draw").is_empty());
+        assert!(!iface.method_slots_by_name("render").is_empty());
+    }
+
+    #[test]
+    fn itable_class_implements_interface() {
+        let mut registry = create_test_registry();
+
+        // interface IDrawable { void draw(); }
+        let iface_hash = TypeHash::from_name("IDrawable");
+        let draw_sig = MethodSignature::new("draw", vec![], DataType::void());
+        let iface = angelscript_core::InterfaceEntry::new(
+            "IDrawable",
+            vec![],
+            "IDrawable",
+            iface_hash,
+            TypeSource::script(UnitId::new(0), Span::new(0, 0, 10)),
+        )
+        .with_method(draw_sig);
+        registry.register_type(iface.into()).unwrap();
+
+        // class Sprite : IDrawable { void draw(); }
+        let sprite = ClassEntry::script(
+            "Sprite",
+            vec![],
+            "Sprite",
+            TypeSource::script(UnitId::new(0), Span::new(0, 11, 20)),
+        )
+        .with_interface(iface_hash);
+        let sprite_hash = sprite.type_hash;
+
+        let draw_def = FunctionDef::new(
+            TypeHash::from_function("Sprite::draw", &[]),
+            "draw".to_string(),
+            vec![],
+            vec![],
+            DataType::void(),
+            Some(sprite_hash),
+            FunctionTraits::default(),
+            false,
+            Visibility::Public,
+        );
+        let draw_hash = draw_def.func_hash;
+
+        let sprite = sprite.with_method("draw", draw_hash);
+        registry.register_type(sprite.into()).unwrap();
+        register_script_function(&mut registry, draw_def).unwrap();
+
+        // Run completion pass
+        let global_registry = SymbolRegistry::new();
+        let pass = TypeCompletionPass::new(
+            &mut registry,
+            &global_registry,
+            PendingResolutions::default(),
+        );
+        let output = pass.run();
+
+        assert_eq!(output.errors.len(), 0, "Expected no errors");
+        assert_eq!(output.itables_built, 1);
+
+        // Verify itable was built
+        let sprite = registry.get(sprite_hash).unwrap().as_class().unwrap();
+        let itable = sprite.itable(iface_hash).expect("itable should exist");
+        assert_eq!(itable.len(), 1);
+        assert_eq!(itable[0], draw_hash);
+    }
+
+    #[test]
+    fn itable_uses_interface_slot_order() {
+        let mut registry = create_test_registry();
+
+        // interface IEntity { void update(); void render(); }
+        let iface_hash = TypeHash::from_name("IEntity");
+        let update_sig = MethodSignature::new("update", vec![], DataType::void());
+        let render_sig = MethodSignature::new("render", vec![], DataType::void());
+        let iface = angelscript_core::InterfaceEntry::new(
+            "IEntity",
+            vec![],
+            "IEntity",
+            iface_hash,
+            TypeSource::script(UnitId::new(0), Span::new(0, 0, 10)),
+        )
+        .with_method(update_sig.clone())
+        .with_method(render_sig.clone());
+        registry.register_type(iface.into()).unwrap();
+
+        // class Player : IEntity { void render(); void update(); }
+        // Methods in different order than interface
+        let player = ClassEntry::script(
+            "Player",
+            vec![],
+            "Player",
+            TypeSource::script(UnitId::new(0), Span::new(0, 11, 20)),
+        )
+        .with_interface(iface_hash);
+        let player_hash = player.type_hash;
+
+        let update_def = FunctionDef::new(
+            TypeHash::from_function("Player::update", &[]),
+            "update".to_string(),
+            vec![],
+            vec![],
+            DataType::void(),
+            Some(player_hash),
+            FunctionTraits::default(),
+            false,
+            Visibility::Public,
+        );
+        let update_hash = update_def.func_hash;
+
+        let render_def = FunctionDef::new(
+            TypeHash::from_function("Player::render", &[]),
+            "render".to_string(),
+            vec![],
+            vec![],
+            DataType::void(),
+            Some(player_hash),
+            FunctionTraits::default(),
+            false,
+            Visibility::Public,
+        );
+        let render_hash = render_def.func_hash;
+
+        let player = player
+            .with_method("render", render_hash)
+            .with_method("update", update_hash);
+        registry.register_type(player.into()).unwrap();
+        register_script_function(&mut registry, update_def).unwrap();
+        register_script_function(&mut registry, render_def).unwrap();
+
+        // Run completion pass
+        let global_registry = SymbolRegistry::new();
+        let pass = TypeCompletionPass::new(
+            &mut registry,
+            &global_registry,
+            PendingResolutions::default(),
+        );
+        let output = pass.run();
+
+        assert_eq!(output.errors.len(), 0, "Expected no errors");
+
+        // Get interface slot order using signature hashes
+        let iface = registry.get(iface_hash).unwrap().as_interface().unwrap();
+        let update_slot = iface.method_slot(update_sig.signature_hash()).unwrap();
+        let render_slot = iface.method_slot(render_sig.signature_hash()).unwrap();
+
+        // Verify itable follows interface slot order, not class method order
+        let player = registry.get(player_hash).unwrap().as_class().unwrap();
+        let itable = player.itable(iface_hash).expect("itable should exist");
+        assert_eq!(itable[update_slot as usize], update_hash);
+        assert_eq!(itable[render_slot as usize], render_hash);
     }
 }

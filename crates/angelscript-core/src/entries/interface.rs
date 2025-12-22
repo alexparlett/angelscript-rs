@@ -2,9 +2,70 @@
 //!
 //! This module provides `InterfaceEntry` for interface types.
 
+use rustc_hash::FxHashMap;
+
 use crate::{MethodSignature, TypeHash};
 
 use super::TypeSource;
+
+/// Interface method table for dispatch.
+///
+/// Similar to VTable but for interface methods. Maps signature hashes
+/// to slot indices and provides name-based lookup for overload resolution.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct ITable {
+    /// Maps signature hash to slot index.
+    /// Signature hash = name + params (excludes owner for override matching).
+    pub index: FxHashMap<u64, u16>,
+    /// Maps method name to itable slots for overload resolution.
+    /// A single name may have multiple slots (one per overload).
+    pub slots_by_name: FxHashMap<String, Vec<u16>>,
+    /// Total number of slots.
+    slot_count: u16,
+}
+
+impl ITable {
+    /// Create an empty itable.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Get the slot index for a method by its signature hash.
+    pub fn slot_by_signature(&self, sig_hash: u64) -> Option<u16> {
+        self.index.get(&sig_hash).copied()
+    }
+
+    /// Get all slots for methods with a given name (for overload resolution).
+    pub fn slots_for_name(&self, name: &str) -> &[u16] {
+        self.slots_by_name
+            .get(name)
+            .map(|v| v.as_slice())
+            .unwrap_or(&[])
+    }
+
+    /// Check if the itable is empty.
+    pub fn is_empty(&self) -> bool {
+        self.slot_count == 0
+    }
+
+    /// Get the total number of slots.
+    pub fn len(&self) -> u16 {
+        self.slot_count
+    }
+
+    /// Add a method to the itable.
+    /// Returns the slot index assigned to the method.
+    pub fn add_method(&mut self, name: &str, sig_hash: u64) -> u16 {
+        let slot = self.slot_count;
+        self.slot_count += 1;
+        self.index.insert(sig_hash, slot);
+        self.slots_by_name
+            .entry(name.to_string())
+            .or_default()
+            .push(slot);
+        slot
+    }
+}
 
 /// Registry entry for an interface type.
 ///
@@ -25,6 +86,9 @@ pub struct InterfaceEntry {
     pub methods: Vec<MethodSignature>,
     /// Base interface type hashes.
     pub base_interfaces: Vec<TypeHash>,
+    /// Interface method table for dispatch.
+    /// Maps signature hashes to slot indices.
+    pub itable: ITable,
 }
 
 impl InterfaceEntry {
@@ -44,6 +108,7 @@ impl InterfaceEntry {
             source,
             methods: Vec::new(),
             base_interfaces: Vec::new(),
+            itable: ITable::default(),
         }
     }
 
@@ -59,6 +124,7 @@ impl InterfaceEntry {
             source: TypeSource::ffi_untyped(),
             methods: Vec::new(),
             base_interfaces: Vec::new(),
+            itable: ITable::default(),
         }
     }
 
@@ -82,6 +148,21 @@ impl InterfaceEntry {
     /// Check if this interface has a specific base interface.
     pub fn has_base(&self, base: TypeHash) -> bool {
         self.base_interfaces.contains(&base)
+    }
+
+    /// Get the itable slot index for a method by its signature hash.
+    pub fn method_slot(&self, sig_hash: u64) -> Option<u16> {
+        self.itable.slot_by_signature(sig_hash)
+    }
+
+    /// Get all itable slots for methods with a given name (for overload resolution).
+    pub fn method_slots_by_name(&self, name: &str) -> &[u16] {
+        self.itable.slots_for_name(name)
+    }
+
+    /// Get total number of itable slots (includes inherited methods).
+    pub fn total_slots(&self) -> u16 {
+        self.itable.len()
     }
 }
 
@@ -169,5 +250,79 @@ mod tests {
 
         assert!(entry.has_base(base));
         assert!(!entry.has_base(TypeHash::from_name("IOther")));
+    }
+
+    // ITable tests
+    #[test]
+    fn itable_new_is_empty() {
+        let itable = ITable::new();
+        assert_eq!(itable.len(), 0);
+    }
+
+    #[test]
+    fn itable_add_method_creates_slot() {
+        let mut itable = ITable::new();
+        let sig_hash = 12345u64;
+
+        let slot = itable.add_method("draw", sig_hash);
+
+        assert_eq!(slot, 0);
+        assert_eq!(itable.len(), 1);
+    }
+
+    #[test]
+    fn itable_add_multiple_methods() {
+        let mut itable = ITable::new();
+
+        let slot1 = itable.add_method("draw", 111);
+        let slot2 = itable.add_method("update", 222);
+
+        assert_eq!(slot1, 0);
+        assert_eq!(slot2, 1);
+        assert_eq!(itable.len(), 2);
+    }
+
+    #[test]
+    fn itable_slots_by_name() {
+        let mut itable = ITable::new();
+
+        // Two overloads of "draw"
+        itable.add_method("draw", 111);
+        itable.add_method("draw", 222);
+        itable.add_method("update", 333);
+
+        let draw_slots = itable.slots_for_name("draw");
+        assert_eq!(draw_slots.len(), 2);
+
+        let update_slots = itable.slots_for_name("update");
+        assert_eq!(update_slots.len(), 1);
+
+        let nonexistent = itable.slots_for_name("nonexistent");
+        assert!(nonexistent.is_empty());
+    }
+
+    #[test]
+    fn itable_slot_by_signature() {
+        let mut itable = ITable::new();
+        let sig_hash = 12345u64;
+
+        itable.add_method("draw", sig_hash);
+
+        assert_eq!(itable.slot_by_signature(sig_hash), Some(0));
+        assert_eq!(itable.slot_by_signature(99999), None);
+    }
+
+    #[test]
+    fn itable_overload_different_signatures() {
+        let mut itable = ITable::new();
+
+        // Same name, different signatures (different overloads)
+        let slot1 = itable.add_method("foo", 111);
+        let slot2 = itable.add_method("foo", 222);
+
+        assert_ne!(slot1, slot2);
+        assert_eq!(itable.len(), 2);
+        assert_eq!(itable.slot_by_signature(111), Some(0));
+        assert_eq!(itable.slot_by_signature(222), Some(1));
     }
 }
