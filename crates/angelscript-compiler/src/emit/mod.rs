@@ -243,14 +243,26 @@ impl<'pool> BytecodeEmitter<'pool> {
         self.chunk.write_byte(arg_count, self.current_line);
     }
 
-    /// Emit virtual method call (interface dispatch).
+    /// Emit virtual method call using vtable slot (for polymorphic class dispatch).
     ///
     /// # Arguments
-    /// * `method_hash` - Hash of the method to call
+    /// * `vtable_slot` - The vtable slot index for the method
     /// * `arg_count` - Number of arguments on the stack (excluding `this`)
-    pub fn emit_call_virtual(&mut self, method_hash: TypeHash, arg_count: u8) {
-        let index = self.constants.add(Constant::TypeHash(method_hash));
-        self.emit_u16(OpCode::CallVirtual, index as u16);
+    pub fn emit_call_virtual(&mut self, vtable_slot: u16, arg_count: u8) {
+        self.emit_u16(OpCode::CallVirtual, vtable_slot);
+        self.chunk.write_byte(arg_count, self.current_line);
+    }
+
+    /// Emit interface method call using itable (for polymorphic interface dispatch).
+    ///
+    /// # Arguments
+    /// * `interface_hash` - Hash of the interface type
+    /// * `slot` - The itable slot index for the method
+    /// * `arg_count` - Number of arguments on the stack (excluding `this`)
+    pub fn emit_call_interface(&mut self, interface_hash: TypeHash, slot: u16, arg_count: u8) {
+        let index = self.constants.add(Constant::TypeHash(interface_hash));
+        self.emit_u16(OpCode::CallInterface, index as u16);
+        self.chunk.write_u16(slot, self.current_line);
         self.chunk.write_byte(arg_count, self.current_line);
     }
 
@@ -1046,14 +1058,28 @@ mod tests {
         let method_hash = TypeHash::from_name("MyClass::getValue");
         emitter.emit_call_method(method_hash, 0);
 
-        let virtual_hash = TypeHash::from_name("IInterface::doSomething");
-        emitter.emit_call_virtual(virtual_hash, 2);
+        // CallVirtual now takes vtable slot instead of hash
+        emitter.emit_call_virtual(5, 2); // vtable slot 5, 2 args
 
         let chunk = emitter.finish();
         assert_eq!(chunk.read_op(0), Some(OpCode::CallMethod));
         assert_eq!(chunk.read_byte(3), Some(0)); // arg count
         assert_eq!(chunk.read_op(4), Some(OpCode::CallVirtual));
         assert_eq!(chunk.read_byte(7), Some(2)); // arg count
+    }
+
+    #[test]
+    fn emit_interface_call() {
+        let mut constants = ConstantPool::new();
+        let mut emitter = BytecodeEmitter::new(&mut constants);
+
+        let iface_hash = TypeHash::from_name("IDrawable");
+        emitter.emit_call_interface(iface_hash, 3, 1); // interface, slot 3, 1 arg
+
+        let chunk = emitter.finish();
+        assert_eq!(chunk.read_op(0), Some(OpCode::CallInterface));
+        // constant index at 1-2, slot at 3-4, arg count at 5
+        assert_eq!(chunk.read_byte(5), Some(1)); // arg count
     }
 
     #[test]

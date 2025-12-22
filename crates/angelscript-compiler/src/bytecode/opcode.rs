@@ -249,12 +249,17 @@ pub enum OpCode {
     /// Call function (hash in constant pool).
     /// Operands: u8/u16 constant index (TypeHash), u8 arg count
     Call,
-    /// Call method on object.
+    /// Call method on object (direct dispatch).
     /// Operands: u8/u16 constant index (method hash), u8 arg count
     CallMethod,
-    /// Call virtual method (interface dispatch).
-    /// Operands: u8/u16 constant index (method hash), u8 arg count
+    /// Call virtual method using vtable slot (for polymorphic class dispatch).
+    /// Stack: [obj, args...] -> [result]
+    /// Operands: u16 vtable slot index, u8 arg count
     CallVirtual,
+    /// Call interface method using itable (for polymorphic interface dispatch).
+    /// Stack: [obj, args...] -> [result]
+    /// Operands: u16 constant index (interface TypeHash), u16 slot index, u8 arg count
+    CallInterface,
     /// Return from function with value.
     Return,
     /// Return from void function.
@@ -576,9 +581,12 @@ impl OpCode {
             // 3-byte operand (u16 + u8)
             OpCode::Call        // u16 constant index + u8 arg count
             | OpCode::CallMethod    // u16 constant index + u8 arg count
-            | OpCode::CallVirtual   // u16 constant index + u8 arg count
+            | OpCode::CallVirtual   // u16 vtable slot + u8 arg count
             | OpCode::New           // u16 constant index + u8 arg count
             | OpCode::NewFactory => 3, // u16 constant index + u8 arg count
+
+            // 5-byte operand (u16 + u16 + u8)
+            OpCode::CallInterface => 5, // u16 iface hash constant + u16 slot + u8 arg count
         }
     }
 
@@ -668,6 +676,7 @@ impl OpCode {
             OpCode::Call => "CALL",
             OpCode::CallMethod => "CALL_METHOD",
             OpCode::CallVirtual => "CALL_VIRTUAL",
+            OpCode::CallInterface => "CALL_INTERFACE",
             OpCode::Return => "RETURN",
             OpCode::ReturnVoid => "RETURN_VOID",
             OpCode::New => "NEW",

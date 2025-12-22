@@ -450,6 +450,42 @@ impl DataType {
         }
     }
 
+    /// Compute a signature hash for this type.
+    ///
+    /// This hash includes all components relevant to method signature matching:
+    /// - Base type hash
+    /// - Const modifier
+    /// - Handle modifier
+    /// - Handle-to-const modifier
+    /// - Reference modifier (in/out/inout)
+    ///
+    /// Used for vtable override detection - two parameters with different
+    /// modifiers produce different hashes and are considered different signatures.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use angelscript_core::{DataType, primitives};
+    ///
+    /// let int_val = DataType::simple(primitives::INT32);
+    /// let int_ref_in = DataType::with_ref_in(primitives::INT32);
+    ///
+    /// // Different modifiers = different signature hashes
+    /// assert_ne!(int_val.signature_hash(), int_ref_in.signature_hash());
+    /// ```
+    #[inline]
+    pub const fn signature_hash(&self) -> u64 {
+        // Pack modifiers into a single byte for mixing
+        let modifiers: u64 = (self.is_const as u64)
+            | ((self.is_handle as u64) << 1)
+            | ((self.is_handle_to_const as u64) << 2)
+            | ((self.ref_modifier as u64) << 3);
+
+        // Mix type hash with modifiers
+        // Use a simple but effective mixing strategy
+        self.type_hash.0 ^ (modifiers.wrapping_mul(0x9e3779b97f4a7c15))
+    }
+
     /// Returns true if this type is effectively const.
     ///
     /// A type is effectively const if either:
@@ -761,5 +797,68 @@ mod tests {
 
         // const int@ const - both const, effectively const
         assert!(DataType::const_handle(primitives::INT32, true).is_effectively_const());
+    }
+
+    #[test]
+    fn signature_hash_same_type_same_hash() {
+        let dt1 = DataType::simple(primitives::INT32);
+        let dt2 = DataType::simple(primitives::INT32);
+        assert_eq!(dt1.signature_hash(), dt2.signature_hash());
+    }
+
+    #[test]
+    fn signature_hash_different_types_different_hash() {
+        let int_type = DataType::simple(primitives::INT32);
+        let float_type = DataType::simple(primitives::FLOAT);
+        assert_ne!(int_type.signature_hash(), float_type.signature_hash());
+    }
+
+    #[test]
+    fn signature_hash_const_modifier_differs() {
+        let plain = DataType::simple(primitives::INT32);
+        let const_type = DataType::with_const(primitives::INT32);
+        assert_ne!(plain.signature_hash(), const_type.signature_hash());
+    }
+
+    #[test]
+    fn signature_hash_handle_modifier_differs() {
+        let plain = DataType::simple(primitives::INT32);
+        let handle = DataType::with_handle(primitives::INT32, false);
+        assert_ne!(plain.signature_hash(), handle.signature_hash());
+    }
+
+    #[test]
+    fn signature_hash_handle_to_const_differs() {
+        let handle = DataType::with_handle(primitives::INT32, false);
+        let handle_to_const = DataType::with_handle(primitives::INT32, true);
+        assert_ne!(handle.signature_hash(), handle_to_const.signature_hash());
+    }
+
+    #[test]
+    fn signature_hash_ref_modifiers_differ() {
+        let ref_in = DataType::with_ref_in(primitives::INT32);
+        let ref_out = DataType::with_ref_out(primitives::INT32);
+        let ref_inout = DataType::with_ref_inout(primitives::INT32);
+
+        assert_ne!(ref_in.signature_hash(), ref_out.signature_hash());
+        assert_ne!(ref_in.signature_hash(), ref_inout.signature_hash());
+        assert_ne!(ref_out.signature_hash(), ref_inout.signature_hash());
+    }
+
+    #[test]
+    fn signature_hash_all_modifiers_combined() {
+        // Test that combining multiple modifiers produces unique hashes
+        let plain = DataType::simple(primitives::INT32);
+        let const_ref_in = DataType {
+            type_hash: primitives::INT32,
+            is_const: true,
+            is_handle: false,
+            is_handle_to_const: false,
+            ref_modifier: RefModifier::In,
+            is_interface: false,
+            is_mixin: false,
+        };
+
+        assert_ne!(plain.signature_hash(), const_ref_in.signature_hash());
     }
 }

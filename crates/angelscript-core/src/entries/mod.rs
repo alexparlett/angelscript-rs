@@ -34,11 +34,11 @@ pub use source::{FunctionSource, TypeSource};
 pub use common::{EnumValue, PropertyEntry};
 
 // Individual entry types
-pub use class::ClassEntry;
+pub use class::{ClassEntry, ITableMap, VTable};
 pub use enum_entry::EnumEntry;
 pub use funcdef::FuncdefEntry;
 pub use function::{AutoGenKind, FunctionEntry, FunctionImpl};
-pub use interface::InterfaceEntry;
+pub use interface::{ITable, InterfaceEntry};
 pub use primitive::PrimitiveEntry;
 pub use template_param::TemplateParamEntry;
 

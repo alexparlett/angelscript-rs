@@ -383,15 +383,20 @@ pub fn compile_method_call(
     // Resolve overload
     let overload = resolve_overload(&candidates, &arg_types, compiler.ctx(), span)?;
 
-    // Const-correctness check and get return type
-    let (is_const_method, return_type) = {
+    // Get method info for const-correctness, return type, and virtual dispatch
+    let (is_const_method, return_type, is_virtual_method, is_final_method) = {
         let func = compiler
             .ctx()
             .get_function(overload.func_hash)
             .ok_or_else(|| CompilationError::Internal {
                 message: format!("Method not found: {:?}", overload.func_hash),
             })?;
-        (func.def.is_const(), func.def.return_type)
+        (
+            func.def.is_const(),
+            func.def.return_type,
+            func.def.is_virtual(),
+            func.def.is_final(),
+        )
     };
 
     if obj_type.is_effectively_const() && !is_const_method {
@@ -407,15 +412,93 @@ pub fn compile_method_call(
     // Apply argument conversions
     apply_argument_conversions(compiler, &overload)?;
 
-    // Emit call - use virtual dispatch for interfaces, direct call for classes
+    // Emit call - use interface dispatch for interfaces, direct call for classes
     if is_interface {
+        // Compute signature hash from resolved method's parameters
+        let sig_hash = {
+            let func = compiler
+                .ctx()
+                .get_function(overload.func_hash)
+                .ok_or_else(|| CompilationError::Internal {
+                    message: format!("Method not found: {:?}", overload.func_hash),
+                })?;
+            let param_sig_hashes: Vec<_> = func
+                .def
+                .params
+                .iter()
+                .map(|p| p.data_type.signature_hash())
+                .collect();
+            TypeHash::from_signature(method_name, &param_sig_hashes, func.def.is_const()).0
+        };
+
+        // Get interface method slot by signature hash
+        let slot = compiler
+            .ctx()
+            .get_type(obj_type.type_hash)
+            .and_then(|e| e.as_interface())
+            .and_then(|iface| iface.method_slot(sig_hash))
+            .ok_or_else(|| CompilationError::Internal {
+                message: format!(
+                    "Interface method slot not found for '{}' on {:?}",
+                    method_name, obj_type.type_hash
+                ),
+            })?;
+
         compiler
             .emitter()
-            .emit_call_virtual(overload.func_hash, arg_count as u8);
+            .emit_call_interface(obj_type.type_hash, slot, arg_count as u8);
     } else {
-        compiler
-            .emitter()
-            .emit_call_method(overload.func_hash, arg_count as u8);
+        // For class methods, check if we need virtual dispatch
+        // Use virtual dispatch if:
+        // 1. Method is virtual (not final)
+        // 2. Class could have derived types (not final)
+        let needs_virtual_dispatch = is_virtual_method && !is_final_method && {
+            compiler
+                .ctx()
+                .get_type(obj_type.type_hash)
+                .and_then(|e| e.as_class())
+                .map(|class| !class.is_final)
+                .unwrap_or(false)
+        };
+
+        if needs_virtual_dispatch {
+            // Compute signature hash from resolved method's parameters
+            let sig_hash = {
+                let func = compiler
+                    .ctx()
+                    .get_function(overload.func_hash)
+                    .ok_or_else(|| CompilationError::Internal {
+                        message: format!("Method not found: {:?}", overload.func_hash),
+                    })?;
+                let param_sig_hashes: Vec<_> = func
+                    .def
+                    .params
+                    .iter()
+                    .map(|p| p.data_type.signature_hash())
+                    .collect();
+                TypeHash::from_signature(method_name, &param_sig_hashes, func.def.is_const()).0
+            };
+
+            // Get vtable slot by signature hash
+            let slot = compiler
+                .ctx()
+                .get_type(obj_type.type_hash)
+                .and_then(|e| e.as_class())
+                .and_then(|class| class.vtable_slot(sig_hash))
+                .ok_or_else(|| CompilationError::Internal {
+                    message: format!(
+                        "VTable slot not found for '{}' on {:?}",
+                        method_name, obj_type.type_hash
+                    ),
+                })?;
+
+            compiler.emitter().emit_call_virtual(slot, arg_count as u8);
+        } else {
+            // Direct call for non-virtual or final methods
+            compiler
+                .emitter()
+                .emit_call_method(overload.func_hash, arg_count as u8);
+        }
     }
 
     Ok(ExprInfo::rvalue(return_type))

@@ -492,17 +492,14 @@ impl<'a> CompilationContext<'a> {
             .or_else(|| self.global_registry.get_global(hash))
     }
 
-    /// Find methods on a type by name. O(1) lookup via method name index.
+    /// Find all callable methods on a type by name, including inherited.
     ///
-    /// TODO(Task 41b): This currently only finds methods declared directly on the type.
-    /// Inherited methods from base classes are not included. A type completion pass
-    /// is needed to copy public/protected methods from base classes during registration.
+    /// Uses the vtable for lookup, which contains all methods (own + inherited).
+    /// This is the method to use for overload resolution at call sites.
     pub fn find_methods(&self, type_hash: TypeHash, name: &str) -> Vec<TypeHash> {
-        let mut methods = Vec::new();
-
-        // Check type in unit registry
+        // Check type in unit registry first
         if let Some(class) = self.unit_registry.get(type_hash).and_then(|e| e.as_class()) {
-            methods.extend_from_slice(class.find_methods(name));
+            return class.find_callable_methods(name);
         }
 
         // Check type in global registry
@@ -511,10 +508,10 @@ impl<'a> CompilationContext<'a> {
             .get(type_hash)
             .and_then(|e| e.as_class())
         {
-            methods.extend_from_slice(class.find_methods(name));
+            return class.find_callable_methods(name);
         }
 
-        methods
+        Vec::new()
     }
 
     /// Check if `derived` is derived from `base` in the class hierarchy.
