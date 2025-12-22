@@ -717,9 +717,9 @@ impl<'a, 'reg> RegistrationPass<'a, 'reg> {
 
         let func_def = FunctionDef::new(
             func_hash,
-            name,
+            name.clone(),
             vec![],
-            params,
+            params.clone(),
             return_type,
             Some(iface_hash),
             traits,
@@ -737,6 +737,16 @@ impl<'a, 'reg> RegistrationPass<'a, 'reg> {
             });
         } else {
             self.functions_registered += 1;
+
+            // Add method signature to interface's methods list
+            let param_types: Vec<DataType> = params.into_iter().map(|p| p.data_type).collect();
+            let mut method_sig =
+                angelscript_core::MethodSignature::new(name, param_types, return_type);
+            method_sig.is_const = method.is_const;
+
+            if let Some(iface) = self.ctx.unit_registry_mut().get_interface_mut(iface_hash) {
+                iface.methods.push(method_sig);
+            }
         }
     }
 

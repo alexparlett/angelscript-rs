@@ -60,6 +60,8 @@ struct InheritedMembers {
     methods: Vec<(String, TypeHash)>,
     /// Properties to copy
     properties: Vec<angelscript_core::PropertyEntry>,
+    /// Interfaces implemented by base class (also apply to derived)
+    interfaces: Vec<TypeHash>,
 }
 
 /// Members to copy from a mixin to an including class.
@@ -481,6 +483,13 @@ impl<'reg, 'global> TypeCompletionPass<'reg, 'global> {
                 class.properties.push(property);
                 output.properties_inherited += 1;
             }
+
+            // Copy interfaces from base class (derived class also implements them)
+            for iface_hash in inherited.interfaces {
+                if !class.interfaces.contains(&iface_hash) {
+                    class.interfaces.push(iface_hash);
+                }
+            }
         }
 
         // Phase 4: Apply mixin members (after base class so mixins can override)
@@ -488,10 +497,34 @@ impl<'reg, 'global> TypeCompletionPass<'reg, 'global> {
             self.apply_mixin(class_hash, mixin_hash, output)?;
         }
 
-        // Phase 5: Validate interface compliance (after all members are in place)
+        // Phase 5: Expand interfaces to include base interfaces
+        // This ensures class.interfaces contains ALL interfaces (direct and inherited)
+        // which is needed for type conversion checks (e.g., Player@ -> IDamageable@)
+        self.expand_class_interfaces(class_hash);
+
+        // Phase 6: Validate interface compliance (after all members are in place)
         self.validate_interface_compliance(class_hash, output);
 
         Ok(true)
+    }
+
+    /// Expand a class's interfaces to include all base interfaces.
+    ///
+    /// If a class implements `IDerived` and `IDerived : IBase`, the class
+    /// should have both `IDerived` and `IBase` in its interfaces list.
+    fn expand_class_interfaces(&mut self, class_hash: TypeHash) {
+        // Collect expanded interfaces (immutable borrow)
+        let expanded = {
+            let Some(class) = self.registry.get(class_hash).and_then(|e| e.as_class()) else {
+                return;
+            };
+            self.collect_all_interfaces(&class.interfaces)
+        };
+
+        // Apply expanded list (mutable borrow)
+        if let Some(class) = self.registry.get_class_mut(class_hash) {
+            class.interfaces = expanded;
+        }
     }
 
     /// Validate that a class implements all methods required by its interfaces.
@@ -783,6 +816,10 @@ impl<'reg, 'global> TypeCompletionPass<'reg, 'global> {
                 inherited.properties.push(property.clone());
             }
         }
+
+        // Collect interfaces from base class
+        // These are inherited by the derived class
+        inherited.interfaces = base.interfaces.clone();
 
         inherited
     }
@@ -1308,7 +1345,10 @@ impl<'reg, 'global> TypeCompletionPass<'reg, 'global> {
                                 .find(|(_, slots)| slots.contains(&slot))
                                 .map(|(n, _)| n.clone())
                                 .unwrap_or_default();
-                            itable.add_method(&name, sig_hash);
+                            // Get the func_hash from the base's methods
+                            if let Some(func_hash) = base.itable.method_at(slot) {
+                                itable.add_method(&name, sig_hash, func_hash);
+                            }
                         }
                     }
                 }
@@ -1316,8 +1356,8 @@ impl<'reg, 'global> TypeCompletionPass<'reg, 'global> {
             itable
         };
 
-        // Step 2: Collect this interface's own methods with signature hashes
-        let own_methods: Vec<(String, u64)> = {
+        // Step 2: Collect this interface's own methods with signature hashes and func hashes
+        let own_methods: Vec<(String, u64, TypeHash)> = {
             let iface = match self.registry.get(iface_hash).and_then(|e| e.as_interface()) {
                 Some(i) => i,
                 None => return,
@@ -1325,16 +1365,21 @@ impl<'reg, 'global> TypeCompletionPass<'reg, 'global> {
             iface
                 .methods
                 .iter()
-                .map(|m| (m.name.clone(), m.signature_hash()))
+                .map(|m| {
+                    let param_hashes: Vec<TypeHash> =
+                        m.params.iter().map(|p| p.type_hash).collect();
+                    let func_hash = TypeHash::from_method(iface_hash, &m.name, &param_hashes);
+                    (m.name.clone(), m.signature_hash(), func_hash)
+                })
                 .collect()
         };
 
         // Step 3: Build the itable
         let mut itable = base_itable;
 
-        for (name, sig_hash) in own_methods {
-            if itable.slot_by_signature(sig_hash).is_none() {
-                itable.add_method(&name, sig_hash);
+        for (name, sig_hash, func_hash) in &own_methods {
+            if itable.slot_by_signature(*sig_hash).is_none() {
+                itable.add_method(name, *sig_hash, *func_hash);
             }
         }
 

@@ -531,21 +531,40 @@ impl<'a> CompilationContext<'a> {
 
     /// Find all callable methods on a type by name, including inherited.
     ///
-    /// Uses the vtable for lookup, which contains all methods (own + inherited).
+    /// Uses the vtable for lookup for classes (which contains all methods own + inherited),
+    /// and the itable for interfaces.
     /// This is the method to use for overload resolution at call sites.
     pub fn find_methods(&self, type_hash: TypeHash, name: &str) -> Vec<TypeHash> {
-        // Check type in unit registry first
+        // Check class in unit registry first
         if let Some(class) = self.unit_registry.get(type_hash).and_then(|e| e.as_class()) {
             return class.find_callable_methods(name);
         }
 
-        // Check type in global registry
+        // Check class in global registry
         if let Some(class) = self
             .global_registry
             .get(type_hash)
             .and_then(|e| e.as_class())
         {
             return class.find_callable_methods(name);
+        }
+
+        // Check interface in unit registry
+        if let Some(iface) = self
+            .unit_registry
+            .get(type_hash)
+            .and_then(|e| e.as_interface())
+        {
+            return iface.itable.find_methods(name);
+        }
+
+        // Check interface in global registry
+        if let Some(iface) = self
+            .global_registry
+            .get(type_hash)
+            .and_then(|e| e.as_interface())
+        {
+            return iface.itable.find_methods(name);
         }
 
         Vec::new()
