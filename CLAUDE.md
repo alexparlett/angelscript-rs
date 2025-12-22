@@ -1,78 +1,56 @@
 # Claude Code Instructions
 
-## Context Engineering
-This project uses Claude Code native hooks for automatic context management.
-- **SessionStart**: Injects project context on new session, resume, or /clear
-- **PreCompact**: Saves conversation summary before compaction
-
 ## Project Structure
 - `tasks/` - Task definitions (committed)
-- `feature_list.json` - Task progress and next_task pointer
-- `.agent/memory/` - Local state (constraints, failures, strategies)
-- `.agent-template/` - Bootstrap template for new worktrees (committed)
+
+## Quick Lookup
+- Primitives: docs/angelscript-lang/01-primitives.md
+- Handles/Objects: docs/angelscript-lang/02-objects-handles.md
+- Statements: docs/angelscript-lang/03-statements.md
+- Expressions: docs/angelscript-lang/04-expressions.md
+- Operators: docs/angelscript-lang/05-operators.md, docs/angelscript-lang/06-operator-overloads.md
+- Classes: docs/angelscript-lang/07-classes.md
+- Functions: docs/angelscript-lang/08-functions.md
+- Type conversions: docs/angelscript-lang/09-type-conversions.md
+- Globals (enums, interfaces, namespaces): docs/angelscript-lang/10-globals.md
+- Advanced types (strings, arrays, lambdas): docs/angelscript-lang/11-datatypes-advanced.md
+- Shared entities: docs/angelscript-lang/12-shared.md
+- C++ specifics: docs/angelscript-lang/cpp-*.md files
 
 ## ⚠️ MANDATORY: Run Tests Before Completing Any Feature
 You MUST run tests before marking any feature as complete:
 
 ```bash
 # Rust
-cargo test
-
-# Python  
-pytest
-
-# Node.js
-npm test
-
-# Go
-go test ./...
+cargo nextest --lib
 ```
 
 **Do NOT set `passes: true` unless tests actually pass!**
 
-## ⚠️ MANDATORY: Use Subagents
-After implementing a feature, you MUST invoke these subagents:
-
-### 1. Code Review (REQUIRED)
-```
-@code-reviewer Review the changes for this feature
-```
-Wait for the review. Address any issues before proceeding.
-
-### 2. Test Runner (REQUIRED)
-```
-@test-runner Run the test suite and analyze results
-```
-If tests fail, fix them before proceeding.
-
-### 3. Feature Verifier (REQUIRED)
-```
-@feature-verifier Verify feature [ID]: [description]
-```
-Confirm the feature works end-to-end.
-
-**Do NOT skip subagents. They catch issues before they compound.**
-
-## After Completing Work
-```bash
-# Only if tests pass and verification succeeds!
-.agent/commands.sh success "[feature-id]" "what worked"
-git add -A
-git commit -m "session: completed [feature-id]"
-```
-
-If something fails:
-```bash
-.agent/commands.sh failure "[feature-id]" "what failed and why"
-```
-
-## Commands
-- `.agent/commands.sh status` - Check progress
-- `.agent/commands.sh success <id> <msg>` - Mark feature complete
-- `.agent/commands.sh failure <id> <msg>` - Record failure (don't repeat!)
-- `.agent/commands.sh recall failures` - See past failures
-
 ## Key Principles
 1. **RUN TESTS** - no exceptions
-2. **USE SUBAGENTS** - code-reviewer, test-runner, feature-verifier
-3. Record failures so they're not repeated
+
+## Current Task: QualifiedName-Based Registry Architecture
+
+### Problem
+Forward declarations fail because type resolution happens during Registration before all types are registered.
+
+### Solution
+Index registry by `QualifiedName` (namespace, name) instead of `TypeHash`. TypeHash computed lazily for bytecode.
+
+### Implementation Phases
+1. **Core Types** (`angelscript-core`): `QualifiedName`, `UnresolvedType`, `UnresolvedParam`, `UnresolvedSignature`
+2. **Entry Types**: Update `ClassEntry`, `InterfaceEntry`, `FuncdefEntry`, `FunctionDef` with lazy TypeHash
+3. **Registry**: Rewrite `SymbolRegistry` with `QualifiedName` as primary key
+4. **Registration**: Store `UnresolvedType` instead of resolving immediately
+5. **Completion**: Resolve all types, build hash indexes
+6. **Compilation**: Use resolved types and hash lookups
+
+### Design Documents
+- `tasks/qualified_name_registry.md` - High-level design
+- `tasks/qualified_name_registry/01_core_types.md` - Core type implementations
+- `tasks/qualified_name_registry/02_entry_types.md` - Entry type updates
+- `tasks/qualified_name_registry/03_registry.md` - Registry rewrite
+- `tasks/qualified_name_registry/04_registration.md` - Registration pass
+- `tasks/qualified_name_registry/05_completion.md` - Completion pass
+- `tasks/qualified_name_registry/06_compilation.md` - Compilation pass
