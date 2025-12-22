@@ -166,56 +166,56 @@ impl ScriptArray {
 
     /// Insert element at position.
     #[angelscript_macros::function(instance, name = "insertAt")]
-    pub fn insert_at(&mut self, index: u32, #[template("T")] value: Dynamic) {
+    pub fn insert_at(&mut self, index: u32, #[param(template = "T", const, in)] value: Dynamic) {
         let _ = (index, value);
         todo!()
     }
 
     /// Insert another array at position.
     #[angelscript_macros::function(instance, name = "insertAt")]
-    pub fn insert_at_array(&mut self, index: u32, arr: &ScriptArray) {
+    pub fn insert_at_array(&mut self, index: u32, #[param(const)] arr: &ScriptArray) {
         let _ = (index, arr);
         todo!()
     }
 
     /// Insert element at the end.
     #[angelscript_macros::function(instance, name = "insertLast")]
-    pub fn insert_last(&mut self, #[template("T")] value: Dynamic) {
+    pub fn insert_last(&mut self, #[param(template = "T", const, in)] value: Dynamic) {
         let _ = value;
         todo!()
     }
 
     /// Find first occurrence of value.
     #[angelscript_macros::function(instance, const)]
-    pub fn find(&self, #[template("T")] value: Dynamic) -> i32 {
+    pub fn find(&self, #[param(template = "T", const, in)] value: Dynamic) -> i32 {
         let _ = value;
         todo!()
     }
 
     /// Find first occurrence of value starting from `start`.
     #[angelscript_macros::function(instance, const, name = "find")]
-    pub fn find_from(&self, start: u32, #[template("T")] value: Dynamic) -> i32 {
+    pub fn find_from(&self, start: u32, #[param(template = "T", const, in)] value: Dynamic) -> i32 {
         let _ = (start, value);
         todo!()
     }
 
     /// Check if array contains value.
     #[angelscript_macros::function(instance, const)]
-    pub fn contains(&self, #[template("T")] value: Dynamic) -> bool {
+    pub fn contains(&self, #[param(template = "T", const, in)] value: Dynamic) -> bool {
         let _ = value;
         todo!()
     }
 
     /// Find first occurrence of value by reference.
     #[angelscript_macros::function(instance, const, name = "findByRef")]
-    pub fn find_by_ref(&self, #[template("T")] value: Dynamic) -> i32 {
+    pub fn find_by_ref(&self, #[param(template = "T", const, in)] value: Dynamic) -> i32 {
         let _ = value;
         todo!()
     }
 
     /// Find first occurrence of value by reference starting from `start`.
     #[angelscript_macros::function(instance, const, name = "findByRef")]
-    pub fn find_by_ref_from(&self, start: u32, #[template("T")] value: Dynamic) -> i32 {
+    pub fn find_by_ref_from(&self, start: u32, #[param(template = "T", const, in)] value: Dynamic) -> i32 {
         let _ = (start, value);
         todo!()
     }
@@ -242,14 +242,14 @@ impl ScriptArray {
 
     /// Equality comparison.
     #[angelscript_macros::function(instance, const, operator = Operator::Equals)]
-    pub fn op_equals(&self, other: &Self) -> bool {
+    pub fn op_equals(&self, #[param(const, in)] other: &Self) -> bool {
         let _ = other;
         todo!()
     }
 
     /// Assignment operator.
     #[angelscript_macros::function(instance, operator = Operator::Assign)]
-    pub fn op_assign(&mut self, other: &Self) {
+    pub fn op_assign(&mut self, #[param(const, in)] other: &Self) {
         let _ = other;
         todo!()
     }

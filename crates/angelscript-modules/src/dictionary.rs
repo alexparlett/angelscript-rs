@@ -85,28 +85,28 @@ impl ScriptDict {
 
     /// Insert or update an entry.
     #[angelscript_macros::function(instance, name = "set")]
-    pub fn set(&mut self, #[template("K")] key: Dynamic, #[template("V")] value: Dynamic) {
+    pub fn set(&mut self, #[param(template = "K", const, in)] key: Dynamic, #[param(template = "V", const, in)] value: Dynamic) {
         let _ = (key, value);
         todo!()
     }
 
     /// Check if key exists.
     #[angelscript_macros::function(instance, const)]
-    pub fn exists(&self, #[template("K")] key: Dynamic) -> bool {
+    pub fn exists(&self, #[param(template = "K", const, in)] key: Dynamic) -> bool {
         let _ = key;
         todo!()
     }
 
     /// Get value by key (returns bool indicating success, value via out param).
     #[angelscript_macros::function(instance, const)]
-    pub fn get(&self, #[template("K")] key: Dynamic, #[template("V")] out_value: Dynamic) -> bool {
+    pub fn get(&self, #[param(template = "K", const, in)] key: Dynamic, #[param(template = "V")] out_value: Dynamic) -> bool {
         let _ = (key, out_value);
         todo!()
     }
 
     /// Delete entry by key.
     #[angelscript_macros::function(instance)]
-    pub fn delete(&mut self, #[template("K")] key: Dynamic) -> bool {
+    pub fn delete(&mut self, #[param(template = "K", const, in)] key: Dynamic) -> bool {
         let _ = key;
         todo!()
     }
@@ -132,7 +132,7 @@ impl ScriptDict {
     /// Index operator (mutable).
     #[angelscript_macros::function(instance, operator = Operator::Index)]
     #[returns(template = "V")]
-    pub fn op_index(&mut self, #[template("K")] key: Dynamic) -> Dynamic {
+    pub fn op_index(&mut self, #[param(template = "K", const, in)] key: Dynamic) -> Dynamic {
         let _ = key;
         todo!()
     }
@@ -140,21 +140,21 @@ impl ScriptDict {
     /// Index operator (const).
     #[angelscript_macros::function(instance, const, operator = Operator::Index)]
     #[returns(template = "V")]
-    pub fn op_index_const(&self, #[template("K")] key: Dynamic) -> Dynamic {
+    pub fn op_index_const(&self, #[param(template = "K", const, in)] key: Dynamic) -> Dynamic {
         let _ = key;
         todo!()
     }
 
     /// Equality comparison.
     #[angelscript_macros::function(instance, const, operator = Operator::Equals)]
-    pub fn op_equals(&self, other: &Self) -> bool {
+    pub fn op_equals(&self, #[param(const, in)] other: &Self) -> bool {
         let _ = other;
         todo!()
     }
 
     /// Assignment operator.
     #[angelscript_macros::function(instance, operator = Operator::Assign)]
-    pub fn op_assign(&mut self, other: &Self) {
+    pub fn op_assign(&mut self, #[param(const, in)] other: &Self) {
         let _ = other;
         todo!()
     }

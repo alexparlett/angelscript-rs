@@ -202,13 +202,13 @@ pub fn format_int(val: i64) -> ScriptString {
 
 /// Format i64 to string with options.
 #[angelscript_macros::function(name = "formatInt")]
-pub fn format_int_opts(val: i64, options: ScriptString) -> ScriptString {
+pub fn format_int_opts(val: i64, #[param(const, in)] options: &ScriptString) -> ScriptString {
     ScriptString(format_int_impl(val, &options.0, 0))
 }
 
 /// Format i64 to string with options and width.
 #[angelscript_macros::function(name = "formatInt")]
-pub fn format_int_opts_width(val: i64, options: ScriptString, width: u32) -> ScriptString {
+pub fn format_int_opts_width(val: i64, #[param(const, in)] options: &ScriptString, width: u32) -> ScriptString {
     ScriptString(format_int_impl(val, &options.0, width))
 }
 
@@ -220,13 +220,13 @@ pub fn format_uint(val: u64) -> ScriptString {
 
 /// Format u64 to string with options.
 #[angelscript_macros::function(name = "formatUInt")]
-pub fn format_uint_opts(val: u64, options: ScriptString) -> ScriptString {
+pub fn format_uint_opts(val: u64, #[param(const, in)] options: &ScriptString) -> ScriptString {
     ScriptString(format_uint_impl(val, &options.0, 0))
 }
 
 /// Format u64 to string with options and width.
 #[angelscript_macros::function(name = "formatUInt")]
-pub fn format_uint_opts_width(val: u64, options: ScriptString, width: u32) -> ScriptString {
+pub fn format_uint_opts_width(val: u64, #[param(const, in)] options: &ScriptString, width: u32) -> ScriptString {
     ScriptString(format_uint_impl(val, &options.0, width))
 }
 
@@ -238,13 +238,13 @@ pub fn format_float(val: f64) -> ScriptString {
 
 /// Format f64 to string with options.
 #[angelscript_macros::function(name = "formatFloat")]
-pub fn format_float_opts(val: f64, options: ScriptString) -> ScriptString {
+pub fn format_float_opts(val: f64, #[param(const, in)] options: &ScriptString) -> ScriptString {
     ScriptString(format_float_impl(val, &options.0, 0, 6))
 }
 
 /// Format f64 to string with options and width.
 #[angelscript_macros::function(name = "formatFloat")]
-pub fn format_float_opts_width(val: f64, options: ScriptString, width: u32) -> ScriptString {
+pub fn format_float_opts_width(val: f64, #[param(const, in)] options: &ScriptString, width: u32) -> ScriptString {
     ScriptString(format_float_impl(val, &options.0, width, 6))
 }
 
@@ -252,7 +252,7 @@ pub fn format_float_opts_width(val: f64, options: ScriptString, width: u32) -> S
 #[angelscript_macros::function(name = "formatFloat")]
 pub fn format_float_opts_width_prec(
     val: f64,
-    options: ScriptString,
+    #[param(const, in)] options: &ScriptString,
     width: u32,
     precision: u32,
 ) -> ScriptString {
@@ -267,7 +267,7 @@ use crate::array::ScriptArray;
 
 /// Join array elements into a string with delimiter.
 #[angelscript_macros::function]
-pub fn join(arr: &ScriptArray, delimiter: ScriptString) -> ScriptString {
+pub fn join(arr: &ScriptArray, #[param(const, in)] delimiter: &ScriptString) -> ScriptString {
     let _ = (arr, delimiter);
     todo!()
 }
@@ -497,7 +497,7 @@ impl ScriptString {
 
     /// Find last occurrence of substring. `start` of -1 means "from end". Returns -1 if not found.
     #[angelscript_macros::function(instance, const, name = "findLast")]
-    pub fn find_last(&self, needle: &Self, start: i32) -> i32 {
+    pub fn find_last(&self, #[param(const, in)] needle: &Self, start: i32) -> i32 {
         let search_end = if start < 0 {
             self.0.len()
         } else {
@@ -516,7 +516,7 @@ impl ScriptString {
 
     /// Find first occurrence of any character in `chars` starting from `start`.
     #[angelscript_macros::function(instance, const, name = "findFirstOf")]
-    pub fn find_first_of(&self, chars: Self, start: u32) -> i32 {
+    pub fn find_first_of(&self, #[param(const, in)] chars: &Self, start: u32) -> i32 {
         let start = start as usize;
         if start >= self.0.len() {
             return -1;
@@ -531,7 +531,7 @@ impl ScriptString {
 
     /// Find first occurrence of any character NOT in `chars` starting from `start`.
     #[angelscript_macros::function(instance, const, name = "findFirstNotOf")]
-    pub fn find_first_not_of(&self, chars: Self, start: u32) -> i32 {
+    pub fn find_first_not_of(&self, #[param(const, in)] chars: &Self, start: u32) -> i32 {
         let start = start as usize;
         if start >= self.0.len() {
             return -1;
@@ -546,7 +546,7 @@ impl ScriptString {
 
     /// Find last occurrence of any character in `chars`. `start` of -1 means "from end".
     #[angelscript_macros::function(instance, const, name = "findLastOf")]
-    pub fn find_last_of(&self, chars: Self, start: i32) -> i32 {
+    pub fn find_last_of(&self, #[param(const, in)] chars: &Self, start: i32) -> i32 {
         let search_end = if start < 0 {
             self.0.len()
         } else {
@@ -563,7 +563,7 @@ impl ScriptString {
 
     /// Find last occurrence of any character NOT in `chars`. `start` of -1 means "from end".
     #[angelscript_macros::function(instance, const, name = "findLastNotOf")]
-    pub fn find_last_not_of(&self, chars: Self, start: i32) -> i32 {
+    pub fn find_last_not_of(&self, #[param(const, in)] chars: &Self, start: i32) -> i32 {
         let search_end = if start < 0 {
             self.0.len()
         } else {
@@ -584,7 +584,7 @@ impl ScriptString {
 
     /// Insert string at byte position.
     #[angelscript_macros::function(instance)]
-    pub fn insert(&mut self, pos: u32, s: Self) {
+    pub fn insert(&mut self, pos: u32, #[param(const, in)] s: &Self) {
         let pos = (pos as usize).min(self.0.len());
         self.0.insert_str(pos, &s.0);
     }
@@ -626,7 +626,7 @@ impl ScriptString {
 
     /// Replace bytes in range [start..end] with `s`.
     #[angelscript_macros::function(instance, name = "replaceRange")]
-    pub fn replace_range(&mut self, start: u32, end: u32, s: Self) {
+    pub fn replace_range(&mut self, start: u32, end: u32, #[param(const, in)] s: &Self) {
         let start = (start as usize).min(self.0.len());
         let end = (end as usize).min(self.0.len());
         if start <= end {
@@ -686,7 +686,7 @@ impl ScriptString {
 
     /// Trim any characters in `chars` from both ends.
     #[angelscript_macros::function(instance, const, name = "trimMatches")]
-    pub fn trim_matches(&self, chars: Self) -> Self {
+    pub fn trim_matches(&self, #[param(const, in)] chars: &Self) -> Self {
         let chars_vec: Vec<char> = chars.0.chars().collect();
         Self(self.0.trim_matches(|c| chars_vec.contains(&c)).to_string())
     }
@@ -697,19 +697,19 @@ impl ScriptString {
 
     /// Check if string starts with `prefix`.
     #[angelscript_macros::function(instance, const, name = "startsWith")]
-    pub fn starts_with(&self, prefix: Self) -> bool {
+    pub fn starts_with(&self, #[param(const, in)] prefix: &Self) -> bool {
         self.0.starts_with(&prefix.0)
     }
 
     /// Check if string ends with `suffix`.
     #[angelscript_macros::function(instance, const, name = "endsWith")]
-    pub fn ends_with(&self, suffix: Self) -> bool {
+    pub fn ends_with(&self, #[param(const, in)] suffix: &Self) -> bool {
         self.0.ends_with(&suffix.0)
     }
 
     /// Check if string contains `needle`.
     #[angelscript_macros::function(instance, const)]
-    pub fn contains(&self, needle: Self) -> bool {
+    pub fn contains(&self, #[param(const, in)] needle: &Self) -> bool {
         self.0.contains(&needle.0)
     }
 
@@ -761,13 +761,13 @@ impl ScriptString {
 
     /// Replace all occurrences of `from` with `to`.
     #[angelscript_macros::function(instance, const, name = "replaceAll")]
-    pub fn replace_all(&self, from: Self, to: Self) -> Self {
+    pub fn replace_all(&self, #[param(const, in)] from: &Self, #[param(const, in)] to: &Self) -> Self {
         Self(self.0.replace(&from.0, &to.0))
     }
 
     /// Replace first occurrence of `from` with `to`.
     #[angelscript_macros::function(instance, const, name = "replaceFirst")]
-    pub fn replace_first(&self, from: Self, to: Self) -> Self {
+    pub fn replace_first(&self, #[param(const, in)] from: &Self, #[param(const, in)] to: &Self) -> Self {
         Self(self.0.replacen(&from.0, &to.0, 1))
     }
 
@@ -779,14 +779,14 @@ impl ScriptString {
 
     /// Count occurrences of `needle`.
     #[angelscript_macros::function(instance, const, name = "countOccurrences")]
-    pub fn count_occurrences(&self, needle: Self) -> u32 {
+    pub fn count_occurrences(&self, #[param(const, in)] needle: &Self) -> u32 {
         self.0.matches(&needle.0).count() as u32
     }
 
     /// Split string by delimiter, returning an array of strings.
     #[angelscript_macros::function(instance, const)]
     #[returns(template = "array<string>")]
-    pub fn split(&self, delimiter: Self) -> Dynamic {
+    pub fn split(&self, #[param(const, in)] delimiter: &Self) -> Dynamic {
         let _ = delimiter;
         todo!()
     }
@@ -797,13 +797,13 @@ impl ScriptString {
 
     /// Concatenation operator - self + other.
     #[angelscript_macros::function(operator = Operator::Add, const)]
-    pub fn concat(&self, other: Self) -> Self {
+    pub fn concat(&self, #[param(const, in)] other: &Self) -> Self {
         Self(format!("{}{}", self.0, other.0))
     }
 
     /// Append operator - self += other.
     #[angelscript_macros::function(operator = Operator::AddAssign)]
-    pub fn append(&mut self, other: Self) {
+    pub fn append(&mut self, #[param(const, in)] other: &Self) {
         self.0.push_str(&other.0);
     }
 
@@ -908,13 +908,13 @@ impl ScriptString {
 
     /// Equality comparison.
     #[angelscript_macros::function(operator = Operator::Equals, const)]
-    pub fn eq_op(&self, other: Self) -> bool {
+    pub fn eq_op(&self, #[param(const, in)] other: &Self) -> bool {
         self.0 == other.0
     }
 
     /// Comparison operator - returns <0, 0, or >0.
     #[angelscript_macros::function(operator = Operator::Cmp, const)]
-    pub fn cmp_op(&self, other: Self) -> i32 {
+    pub fn cmp_op(&self, #[param(const, in)] other: &Self) -> i32 {
         match self.0.cmp(&other.0) {
             std::cmp::Ordering::Less => -1,
             std::cmp::Ordering::Equal => 0,
@@ -1212,7 +1212,7 @@ mod tests {
     #[test]
     fn test_insert_and_erase() {
         let mut s = ScriptString::from("helo");
-        s.insert(3, "l".into());
+        s.insert(3, &"l".into());
         assert_eq!(s.as_str(), "hello");
 
         s.erase(1, 3);
@@ -1237,17 +1237,17 @@ mod tests {
     #[test]
     fn test_predicates() {
         let s = ScriptString::from("hello world");
-        assert!(s.starts_with("hello".into()));
-        assert!(s.ends_with("world".into()));
-        assert!(s.contains("lo wo".into()));
+        assert!(s.starts_with(&"hello".into()));
+        assert!(s.ends_with(&"world".into()));
+        assert!(s.contains(&"lo wo".into()));
     }
 
     #[test]
     fn test_replace() {
         let s = ScriptString::from("hello hello");
-        assert_eq!(s.replace_all("hello".into(), "hi".into()).as_str(), "hi hi");
+        assert_eq!(s.replace_all(&"hello".into(), &"hi".into()).as_str(), "hi hi");
         assert_eq!(
-            s.replace_first("hello".into(), "hi".into()).as_str(),
+            s.replace_first(&"hello".into(), &"hi".into()).as_str(),
             "hi hello"
         );
     }
@@ -1256,13 +1256,13 @@ mod tests {
     fn test_concat() {
         let s1 = ScriptString::from("hello");
         let s2 = ScriptString::from(" world");
-        assert_eq!(s1.concat(s2).as_str(), "hello world");
+        assert_eq!(s1.concat(&s2).as_str(), "hello world");
     }
 
     #[test]
     fn test_append() {
         let mut s = ScriptString::from("hello");
-        s.append(" world".into());
+        s.append(&" world".into());
         assert_eq!(s.as_str(), "hello world");
     }
 
@@ -1271,9 +1271,9 @@ mod tests {
         let s1 = ScriptString::from("abc");
         let s2 = ScriptString::from("abd");
         let s3 = ScriptString::from("abc");
-        assert_eq!(s1.cmp_op(s2.clone()), -1);
-        assert_eq!(s2.cmp_op(s1.clone()), 1);
-        assert_eq!(s1.cmp_op(s3), 0);
+        assert_eq!(s1.cmp_op(&s2), -1);
+        assert_eq!(s2.cmp_op(&s1), 1);
+        assert_eq!(s1.cmp_op(&s3), 0);
     }
 
     #[test]
@@ -1293,8 +1293,8 @@ mod tests {
     #[test]
     fn test_count_occurrences() {
         let s = ScriptString::from("hello hello hello");
-        assert_eq!(s.count_occurrences("hello".into()), 3);
-        assert_eq!(s.count_occurrences("x".into()), 0);
+        assert_eq!(s.count_occurrences(&"hello".into()), 3);
+        assert_eq!(s.count_occurrences(&"x".into()), 0);
     }
 
     #[test]
