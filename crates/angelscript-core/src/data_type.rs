@@ -868,6 +868,7 @@ mod tests {
             ref_modifier: RefModifier::In,
             is_interface: false,
             is_mixin: false,
+            is_enum: false,
         };
 
         assert_ne!(plain.signature_hash(), const_ref_in.signature_hash());

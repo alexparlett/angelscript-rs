@@ -743,21 +743,21 @@ impl BytecodeEmitter {
     }
 
     // ==========================================================================
-    // Test Accessors (crate-visible for unit tests in other modules)
+    // Accessors
     // ==========================================================================
 
     /// Get a reference to the compiled functions.
-    pub(crate) fn compiled_functions(&self) -> &[CompiledFunctionEntry] {
+    pub fn compiled_functions(&self) -> &[CompiledFunctionEntry] {
         &self.compiled_functions
     }
 
     /// Get a reference to the constant pool.
-    pub(crate) fn constants(&self) -> &ConstantPool {
+    pub fn constants(&self) -> &ConstantPool {
         &self.constants
     }
 
     /// Get a reference to the global initializers.
-    pub(crate) fn global_inits(&self) -> &[GlobalInitEntry] {
+    pub fn global_inits(&self) -> &[GlobalInitEntry] {
         &self.global_inits
     }
 }

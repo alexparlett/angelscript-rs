@@ -708,7 +708,7 @@ impl<'reg, 'global> TypeCompletionPass<'reg, 'global> {
                     let new_entry = angelscript_core::FunctionEntry::new(
                         new_def,
                         func_entry.implementation.clone(),
-                        func_entry.source.clone(),
+                        func_entry.source,
                     );
                     cloned.push((name.clone(), new_entry));
                 }

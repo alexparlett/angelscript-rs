@@ -628,6 +628,7 @@ mod tests {
             mode: ReturnMode::Value,
             is_const: false,
             is_variable: false,
+            template_param: None,
         };
         assert_eq!(value_return.mode, ReturnMode::Value);
 
@@ -637,6 +638,7 @@ mod tests {
             mode: ReturnMode::Reference,
             is_const: true,
             is_variable: false,
+            template_param: None,
         };
         assert_eq!(const_ref_return.mode, ReturnMode::Reference);
         assert!(const_ref_return.is_const);
@@ -647,6 +649,7 @@ mod tests {
             mode: ReturnMode::Handle,
             is_const: false,
             is_variable: false,
+            template_param: None,
         };
         assert_eq!(handle_return.mode, ReturnMode::Handle);
     }
@@ -728,6 +731,7 @@ mod tests {
                 mode: ReturnMode::Value,
                 is_const: false,
                 is_variable: true,
+                template_param: None,
             },
             is_method: false,
             associated_type: None,
