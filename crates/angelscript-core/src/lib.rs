@@ -97,7 +97,6 @@ mod ids;
 mod operator;
 
 // Native function / VM runtime types (moved from angelscript-registry)
-pub mod any_type;
 pub mod list_buffer;
 pub mod native_error;
 pub mod native_fn;
@@ -158,9 +157,6 @@ pub use list_buffer::{ListBuffer, ListPattern, TupleListBuffer};
 
 // Template types
 pub use template::{TemplateInstanceInfo, TemplateValidation};
-
-// Any type support
-pub use any_type::{AnyRef, AnyRefMut};
 
 // Unit ID for script compilation units
 pub use ids::UnitId;

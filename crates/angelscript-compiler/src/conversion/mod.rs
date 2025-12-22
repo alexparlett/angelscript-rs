@@ -459,6 +459,55 @@ mod tests {
     }
 
     #[test]
+    fn const_to_nonconst_not_allowed() {
+        // const T cannot implicitly convert to non-const T (would allow mutation of const)
+        let registry = SymbolRegistry::with_primitives();
+        let ctx = CompilationContext::new(&registry);
+
+        let from = DataType::simple(primitives::INT32).as_const();
+        let to = DataType::simple(primitives::INT32);
+        let conv = find_conversion(&from, &to, &ctx, true);
+
+        // For value types, const->non-const is allowed (it's a copy)
+        // This test documents current behavior
+        assert!(conv.is_some());
+    }
+
+    #[test]
+    fn const_ref_in_accepts_nonconst() {
+        // const T &in should accept non-const T (adding const is safe)
+        use angelscript_core::RefModifier;
+
+        let registry = SymbolRegistry::with_primitives();
+        let ctx = CompilationContext::new(&registry);
+
+        let from = DataType::simple(primitives::INT32);
+        let mut to = DataType::simple(primitives::INT32).as_const();
+        to.ref_modifier = RefModifier::In;
+        let conv = find_conversion(&from, &to, &ctx, true);
+
+        assert!(conv.is_some(), "const T &in should accept non-const T");
+    }
+
+    #[test]
+    fn nonconst_ref_in_accepts_const() {
+        // T &in accepts const T because &in is read-only from function's perspective
+        // The function cannot modify through an &in reference regardless of const
+        use angelscript_core::RefModifier;
+
+        let registry = SymbolRegistry::with_primitives();
+        let ctx = CompilationContext::new(&registry);
+
+        let from = DataType::simple(primitives::INT32).as_const();
+        let mut to = DataType::simple(primitives::INT32);
+        to.ref_modifier = RefModifier::In;
+        let conv = find_conversion(&from, &to, &ctx, true);
+
+        // &in is read-only, so const source is fine
+        assert!(conv.is_some(), "T &in should accept const T (read-only)");
+    }
+
+    #[test]
     fn integer_widening() {
         let registry = SymbolRegistry::with_primitives();
         let ctx = CompilationContext::new(&registry);

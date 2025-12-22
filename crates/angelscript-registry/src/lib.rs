@@ -48,9 +48,6 @@ pub use registry::SymbolRegistry;
 
 // Re-export from core for backwards compatibility during transition
 pub use angelscript_core::{
-    // Any type support
-    AnyRef,
-    AnyRefMut,
     // Native function types
     CallContext,
     // Error types

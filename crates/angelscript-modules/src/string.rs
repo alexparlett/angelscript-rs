@@ -483,7 +483,7 @@ impl ScriptString {
 
     /// Find first occurrence of substring starting from `start`. Returns -1 if not found.
     #[angelscript_macros::function(instance, const, name = "findFirst")]
-    pub fn find_first(&self, needle: &Self, start: u32) -> i32 {
+    pub fn find_first(&self, #[param(const, in)] needle: &Self, start: u32) -> i32 {
         let start = start as usize;
         if start >= self.0.len() {
             return -1;

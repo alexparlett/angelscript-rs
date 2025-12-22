@@ -292,10 +292,23 @@ impl Context {
                 .iter()
                 .filter(|p| !p.is_variadic)
                 .map(|p| {
+                    // Create DataType with appropriate ref_modifier from metadata
+                    let mut data_type = match p.ref_mode {
+                        angelscript_core::RefModifier::None => DataType::simple(p.type_hash),
+                        angelscript_core::RefModifier::In => DataType::with_ref_in(p.type_hash),
+                        angelscript_core::RefModifier::Out => DataType::with_ref_out(p.type_hash),
+                        angelscript_core::RefModifier::InOut => {
+                            DataType::with_ref_inout(p.type_hash)
+                        }
+                    };
+                    // Apply const if specified
+                    if p.is_const {
+                        data_type = data_type.as_const();
+                    }
                     let param = if p.default_value.is_some() {
-                        Param::with_default("", DataType::simple(p.type_hash))
+                        Param::with_default("", data_type)
                     } else {
-                        Param::new("", DataType::simple(p.type_hash))
+                        Param::new("", data_type)
                     };
                     if p.if_handle_then_const {
                         param.with_if_handle_then_const(true)
@@ -319,10 +332,21 @@ impl Context {
                 .iter()
                 .map(|p| {
                     let type_hash = resolve_template_param(p.template_param, p.type_hash);
+                    // Create DataType with appropriate ref_modifier from metadata
+                    let mut data_type = match p.ref_mode {
+                        angelscript_core::RefModifier::None => DataType::simple(type_hash),
+                        angelscript_core::RefModifier::In => DataType::with_ref_in(type_hash),
+                        angelscript_core::RefModifier::Out => DataType::with_ref_out(type_hash),
+                        angelscript_core::RefModifier::InOut => DataType::with_ref_inout(type_hash),
+                    };
+                    // Apply const if specified (e.g., Rust &T becomes const T &in)
+                    if p.is_const {
+                        data_type = data_type.as_const();
+                    }
                     let param = if p.default_value.is_some() {
-                        Param::with_default(p.name, DataType::simple(type_hash))
+                        Param::with_default(p.name, data_type)
                     } else {
-                        Param::new(p.name, DataType::simple(type_hash))
+                        Param::new(p.name, data_type)
                     };
                     if p.if_handle_then_const {
                         param.with_if_handle_then_const(true)
@@ -1149,6 +1173,7 @@ mod tests {
                 is_variadic: false,
                 default_value: None,
                 if_handle_then_const: false,
+                is_const: false,
             }],
             return_meta: ReturnMeta::default(),
             is_method: false,
@@ -1197,6 +1222,7 @@ mod tests {
                     is_variadic: false,
                     default_value: None,
                     if_handle_then_const: false,
+                    is_const: false,
                 },
                 GenericParamMeta {
                     type_hash: primitives::VARIABLE_PARAM,
@@ -1204,6 +1230,7 @@ mod tests {
                     is_variadic: true,
                     default_value: None,
                     if_handle_then_const: false,
+                    is_const: false,
                 },
             ],
             return_meta: ReturnMeta::default(),
@@ -1257,6 +1284,7 @@ mod tests {
                     is_variadic: false,
                     default_value: None,
                     if_handle_then_const: false,
+                    is_const: false,
                 },
                 GenericParamMeta {
                     type_hash: primitives::INT32,
@@ -1264,6 +1292,7 @@ mod tests {
                     is_variadic: false,
                     default_value: None,
                     if_handle_then_const: false,
+                    is_const: false,
                 },
                 GenericParamMeta {
                     type_hash: primitives::VARIABLE_PARAM,
@@ -1271,6 +1300,7 @@ mod tests {
                     is_variadic: true,
                     default_value: None,
                     if_handle_then_const: false,
+                    is_const: false,
                 },
             ],
             return_meta: ReturnMeta::default(),

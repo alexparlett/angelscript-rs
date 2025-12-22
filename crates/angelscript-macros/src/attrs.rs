@@ -418,6 +418,7 @@ pub enum RefModeAttr {
 /// - `type = T` - Specific type (Rust type that impls Any)
 /// - `template = "T"` - Template parameter placeholder
 /// - `in` / `out` / `inout` - Reference mode
+/// - `const` - Parameter is const (immutable)
 /// - `default = "expr"` - Default value expression
 /// - `if_handle_then_const` - When T is handle type, pointed-to object is also const
 #[derive(Debug, Default)]
@@ -432,6 +433,8 @@ pub struct ParamAttrs {
     pub template_param: Option<String>,
     /// Reference mode
     pub ref_mode: RefModeAttr,
+    /// Is the parameter const (immutable)?
+    pub is_const: bool,
     /// Default value expression (e.g., "-1", "\"\"")
     pub default: Option<String>,
     /// If true and this is a template param instantiated with a handle type,
@@ -455,6 +458,8 @@ impl ParamAttrs {
                 result.ref_mode = RefModeAttr::Out;
             } else if meta.path.is_ident("inout") {
                 result.ref_mode = RefModeAttr::InOut;
+            } else if meta.path.is_ident("const") {
+                result.is_const = true;
             } else if meta.path.is_ident("type") {
                 let value = meta.value()?;
                 let ty: syn::Type = value.parse()?;
@@ -472,7 +477,7 @@ impl ParamAttrs {
             } else {
                 return Err(meta.error(format!(
                     "unknown param attribute '{}'. Valid attributes are: \
-                     variable, variadic, in, out, inout, type, template, default, if_handle_then_const",
+                     variable, variadic, in, out, inout, const, type, template, default, if_handle_then_const",
                     meta.path
                         .get_ident()
                         .map(|i| i.to_string())
