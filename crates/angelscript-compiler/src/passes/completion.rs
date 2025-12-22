@@ -624,7 +624,7 @@ impl<'reg, 'global> TypeCompletionPass<'reg, 'global> {
     /// Apply mixin members to an including class.
     ///
     /// Mixin semantics:
-    /// - Methods: Copied to including class; OVERRIDE methods from base class
+    /// - Methods: Cloned with object_type set to including class, then registered
     /// - Properties: Copied only if NOT already inherited from base class
     /// - Interfaces: Added to including class
     fn apply_mixin(
@@ -633,8 +633,8 @@ impl<'reg, 'global> TypeCompletionPass<'reg, 'global> {
         mixin_hash: TypeHash,
         output: &mut CompletionOutput,
     ) -> Result<(), CompilationError> {
-        // Phase 1: Collect mixin members (immutable borrows)
-        let mixin_members = {
+        // Phase 1: Collect mixin members and clone methods (immutable borrows)
+        let (mixin_members, cloned_methods) = {
             let mixin = self
                 .registry
                 .get(mixin_hash)
@@ -653,10 +653,49 @@ impl<'reg, 'global> TypeCompletionPass<'reg, 'global> {
                     span: Span::default(),
                 })?;
 
-            self.collect_mixin_members(mixin, class)
+            let members = self.collect_mixin_members(mixin, class);
+
+            // Clone method entries with updated object_type
+            let mut cloned: Vec<(String, angelscript_core::FunctionEntry)> = Vec::new();
+            for (name, method_hash) in &members.methods {
+                if let Some(func_entry) = self.registry.get_function(*method_hash) {
+                    // Clone the function entry and update object_type
+                    let mut new_def = func_entry.def.clone();
+                    new_def.object_type = Some(class_hash);
+
+                    // Recompute func_hash with new owner
+                    let param_hashes: Vec<TypeHash> = new_def
+                        .params
+                        .iter()
+                        .map(|p| p.data_type.type_hash)
+                        .collect();
+                    new_def.func_hash =
+                        TypeHash::from_method(class_hash, &new_def.name, &param_hashes);
+
+                    let new_entry = angelscript_core::FunctionEntry::new(
+                        new_def,
+                        func_entry.implementation.clone(),
+                        func_entry.source.clone(),
+                    );
+                    cloned.push((name.clone(), new_entry));
+                }
+            }
+
+            (members, cloned)
         }; // immutable borrows end here
 
-        // Phase 2: Apply mixin members to including class (mutable borrow)
+        // Phase 2: Register cloned methods and collect their new hashes
+        let mut new_method_hashes: Vec<(String, TypeHash)> = Vec::new();
+        for (name, entry) in cloned_methods {
+            let hash = entry.def.func_hash;
+            // Registration shouldn't fail for cloned methods, but if it does
+            // we skip adding this method rather than failing the whole pass
+            if self.registry.register_function(entry).is_ok() {
+                new_method_hashes.push((name, hash));
+            }
+        }
+
+        // Phase 3: Apply mixin members to including class (mutable borrow)
         let class =
             self.registry
                 .get_class_mut(class_hash)
@@ -665,11 +704,8 @@ impl<'reg, 'global> TypeCompletionPass<'reg, 'global> {
                     span: Span::default(),
                 })?;
 
-        // Copy methods from mixin (these override base class methods)
-        for (name, method_hash) in mixin_members.methods {
-            // Mixin methods override base class methods with the same name
-            // We add them even if a method with this name exists from base class
-            // (the mixin version takes precedence)
+        // Add cloned methods to class
+        for (name, method_hash) in new_method_hashes {
             class.add_method(name, method_hash);
             output.methods_inherited += 1;
         }
@@ -1791,10 +1827,40 @@ mod tests {
         assert_eq!(output.classes_completed, 1);
         assert_eq!(output.methods_inherited, 1);
 
-        // Verify Sprite has render() method from mixin
+        // Verify Sprite has render() method from mixin (cloned with new hash)
         let sprite = registry.get(sprite_hash).unwrap().as_class().unwrap();
-        assert!(sprite.find_methods("render").contains(&render_hash));
+        let render_methods = sprite.find_methods("render");
+        assert_eq!(
+            render_methods.len(),
+            1,
+            "Sprite should have one render method"
+        );
+
+        // The cloned method should have object_type == Sprite, not mixin
+        let cloned_render_hash = render_methods[0];
+        let cloned_render = registry.get_function(cloned_render_hash).unwrap();
+        assert_eq!(
+            cloned_render.def.object_type,
+            Some(sprite_hash),
+            "Cloned mixin method should have object_type set to including class"
+        );
+
         assert!(sprite.find_methods("update").contains(&update_hash));
+
+        // Verify mixin method is in the vtable (critical for polymorphic dispatch)
+        assert_eq!(sprite.vtable.len(), 2, "Vtable should have 2 methods");
+        assert!(
+            sprite.vtable.slots.contains(&cloned_render_hash),
+            "Vtable should contain cloned mixin method"
+        );
+        assert!(
+            sprite.vtable.slots.contains(&update_hash),
+            "Vtable should contain own method"
+        );
+        // Verify find_callable_methods uses vtable and finds mixin method
+        let callable = sprite.find_callable_methods("render");
+        assert_eq!(callable.len(), 1);
+        assert_eq!(callable[0], cloned_render_hash);
     }
 
     #[test]
@@ -2056,11 +2122,18 @@ mod tests {
                 .find_methods("base_method")
                 .contains(&base_method_hash)
         );
-        assert!(
-            derived
-                .find_methods("mixin_method")
-                .contains(&mixin_method_hash)
+
+        // mixin_method is cloned with new hash - check it exists by name
+        let mixin_methods = derived.find_methods("mixin_method");
+        assert_eq!(mixin_methods.len(), 1, "Derived should have mixin_method");
+        // The cloned method should have object_type == Derived
+        let cloned_mixin_method = registry.get_function(mixin_methods[0]).unwrap();
+        assert_eq!(
+            cloned_mixin_method.def.object_type,
+            Some(derived_hash),
+            "Cloned mixin method should belong to Derived"
         );
+
         assert!(
             derived
                 .find_methods("own_method")
@@ -2148,26 +2221,40 @@ mod tests {
         assert_eq!(output.errors.len(), 0, "Expected no errors");
 
         // Verify Derived has both method hashes under "shared_method"
-        // (mixin method added after base, so both exist as potential overloads)
+        // (mixin method is cloned and added after base, so both exist as potential overloads)
         let derived = registry.get(derived_hash).unwrap().as_class().unwrap();
         let shared_methods = derived.find_methods("shared_method");
 
-        // Both base and mixin versions are stored (mixin added last takes precedence in dispatch)
+        // Both base and mixin versions are stored
+        assert_eq!(
+            shared_methods.len(),
+            2,
+            "Should have 2 shared_method entries"
+        );
         assert!(
             shared_methods.contains(&base_method_hash),
             "Should have base method"
         );
-        assert!(
-            shared_methods.contains(&mixin_method_hash),
-            "Should have mixin method"
-        );
 
-        // Mixin method should be added last (this is the override semantic -
-        // during method resolution, the mixin version takes precedence)
-        assert_eq!(shared_methods.len(), 2);
+        // Mixin method is cloned with new hash - find it by object_type
+        let cloned_mixin_hash = shared_methods
+            .iter()
+            .find(|&&h| {
+                registry
+                    .get_function(h)
+                    .map(|f| f.def.object_type == Some(derived_hash) && f.def.name == "shared_method")
+                    .unwrap_or(false)
+                    // Exclude the base method (which also has name shared_method)
+                    && h != base_method_hash
+            })
+            .expect("Should have cloned mixin method");
+
+        // Verify the cloned method has object_type == Derived
+        let cloned_mixin = registry.get_function(*cloned_mixin_hash).unwrap();
         assert_eq!(
-            shared_methods[1], mixin_method_hash,
-            "Mixin method should be last (higher precedence)"
+            cloned_mixin.def.object_type,
+            Some(derived_hash),
+            "Cloned mixin method should belong to Derived"
         );
     }
 
