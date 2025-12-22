@@ -708,7 +708,15 @@ fn compile_lambda_method_call(
     let method_hash = candidates[0];
 
     // Get method info
-    let (param_types, required_count, method_name, is_const_method, return_type, is_virtual, is_final) =
+    let (
+        param_types,
+        required_count,
+        method_name,
+        is_const_method,
+        return_type,
+        is_virtual,
+        is_final,
+    ) =
         {
             let func = compiler.ctx().get_function(method_hash).ok_or_else(|| {
                 CompilationError::Internal {
@@ -763,12 +771,11 @@ fn compile_lambda_method_call(
     if is_interface {
         // Compute signature hash from resolved method's parameters
         let sig_hash = {
-            let func = compiler
-                .ctx()
-                .get_function(method_hash)
-                .ok_or_else(|| CompilationError::Internal {
+            let func = compiler.ctx().get_function(method_hash).ok_or_else(|| {
+                CompilationError::Internal {
                     message: format!("Method not found: {:?}", method_hash),
-                })?;
+                }
+            })?;
             let param_sig_hashes: Vec<_> = func
                 .def
                 .params
@@ -811,12 +818,11 @@ fn compile_lambda_method_call(
         if needs_virtual_dispatch {
             // Compute signature hash from resolved method's parameters
             let sig_hash = {
-                let func = compiler
-                    .ctx()
-                    .get_function(method_hash)
-                    .ok_or_else(|| CompilationError::Internal {
+                let func = compiler.ctx().get_function(method_hash).ok_or_else(|| {
+                    CompilationError::Internal {
                         message: format!("Method not found: {:?}", method_hash),
-                    })?;
+                    }
+                })?;
                 let param_sig_hashes: Vec<_> = func
                     .def
                     .params

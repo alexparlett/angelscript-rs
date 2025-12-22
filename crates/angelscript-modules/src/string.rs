@@ -208,7 +208,11 @@ pub fn format_int_opts(val: i64, #[param(const, in)] options: &ScriptString) -> 
 
 /// Format i64 to string with options and width.
 #[angelscript_macros::function(name = "formatInt")]
-pub fn format_int_opts_width(val: i64, #[param(const, in)] options: &ScriptString, width: u32) -> ScriptString {
+pub fn format_int_opts_width(
+    val: i64,
+    #[param(const, in)] options: &ScriptString,
+    width: u32,
+) -> ScriptString {
     ScriptString(format_int_impl(val, &options.0, width))
 }
 
@@ -226,7 +230,11 @@ pub fn format_uint_opts(val: u64, #[param(const, in)] options: &ScriptString) ->
 
 /// Format u64 to string with options and width.
 #[angelscript_macros::function(name = "formatUInt")]
-pub fn format_uint_opts_width(val: u64, #[param(const, in)] options: &ScriptString, width: u32) -> ScriptString {
+pub fn format_uint_opts_width(
+    val: u64,
+    #[param(const, in)] options: &ScriptString,
+    width: u32,
+) -> ScriptString {
     ScriptString(format_uint_impl(val, &options.0, width))
 }
 
@@ -244,7 +252,11 @@ pub fn format_float_opts(val: f64, #[param(const, in)] options: &ScriptString) -
 
 /// Format f64 to string with options and width.
 #[angelscript_macros::function(name = "formatFloat")]
-pub fn format_float_opts_width(val: f64, #[param(const, in)] options: &ScriptString, width: u32) -> ScriptString {
+pub fn format_float_opts_width(
+    val: f64,
+    #[param(const, in)] options: &ScriptString,
+    width: u32,
+) -> ScriptString {
     ScriptString(format_float_impl(val, &options.0, width, 6))
 }
 
@@ -761,13 +773,21 @@ impl ScriptString {
 
     /// Replace all occurrences of `from` with `to`.
     #[angelscript_macros::function(instance, const, name = "replaceAll")]
-    pub fn replace_all(&self, #[param(const, in)] from: &Self, #[param(const, in)] to: &Self) -> Self {
+    pub fn replace_all(
+        &self,
+        #[param(const, in)] from: &Self,
+        #[param(const, in)] to: &Self,
+    ) -> Self {
         Self(self.0.replace(&from.0, &to.0))
     }
 
     /// Replace first occurrence of `from` with `to`.
     #[angelscript_macros::function(instance, const, name = "replaceFirst")]
-    pub fn replace_first(&self, #[param(const, in)] from: &Self, #[param(const, in)] to: &Self) -> Self {
+    pub fn replace_first(
+        &self,
+        #[param(const, in)] from: &Self,
+        #[param(const, in)] to: &Self,
+    ) -> Self {
         Self(self.0.replacen(&from.0, &to.0, 1))
     }
 
@@ -1245,7 +1265,10 @@ mod tests {
     #[test]
     fn test_replace() {
         let s = ScriptString::from("hello hello");
-        assert_eq!(s.replace_all(&"hello".into(), &"hi".into()).as_str(), "hi hi");
+        assert_eq!(
+            s.replace_all(&"hello".into(), &"hi".into()).as_str(),
+            "hi hi"
+        );
         assert_eq!(
             s.replace_first(&"hello".into(), &"hi".into()).as_str(),
             "hi hello"

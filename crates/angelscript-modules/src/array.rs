@@ -215,7 +215,11 @@ impl ScriptArray {
 
     /// Find first occurrence of value by reference starting from `start`.
     #[angelscript_macros::function(instance, const, name = "findByRef")]
-    pub fn find_by_ref_from(&self, start: u32, #[param(template = "T", const, in)] value: Dynamic) -> i32 {
+    pub fn find_by_ref_from(
+        &self,
+        start: u32,
+        #[param(template = "T", const, in)] value: Dynamic,
+    ) -> i32 {
         let _ = (start, value);
         todo!()
     }

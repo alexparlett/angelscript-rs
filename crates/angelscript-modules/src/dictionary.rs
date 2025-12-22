@@ -85,7 +85,11 @@ impl ScriptDict {
 
     /// Insert or update an entry.
     #[angelscript_macros::function(instance, name = "set")]
-    pub fn set(&mut self, #[param(template = "K", const, in)] key: Dynamic, #[param(template = "V", const, in)] value: Dynamic) {
+    pub fn set(
+        &mut self,
+        #[param(template = "K", const, in)] key: Dynamic,
+        #[param(template = "V", const, in)] value: Dynamic,
+    ) {
         let _ = (key, value);
         todo!()
     }
@@ -99,7 +103,11 @@ impl ScriptDict {
 
     /// Get value by key (returns bool indicating success, value via out param).
     #[angelscript_macros::function(instance, const)]
-    pub fn get(&self, #[param(template = "K", const, in)] key: Dynamic, #[param(template = "V")] out_value: Dynamic) -> bool {
+    pub fn get(
+        &self,
+        #[param(template = "K", const, in)] key: Dynamic,
+        #[param(template = "V")] out_value: Dynamic,
+    ) -> bool {
         let _ = (key, out_value);
         todo!()
     }
