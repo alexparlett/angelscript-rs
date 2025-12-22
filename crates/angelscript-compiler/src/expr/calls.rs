@@ -708,7 +708,7 @@ fn compile_lambda_method_call(
     let method_hash = candidates[0];
 
     // Get method info
-    let (param_types, required_count, method_name, is_const_method, return_type) =
+    let (param_types, required_count, method_name, is_const_method, return_type, is_virtual, is_final) =
         {
             let func = compiler.ctx().get_function(method_hash).ok_or_else(|| {
                 CompilationError::Internal {
@@ -725,6 +725,8 @@ fn compile_lambda_method_call(
                 func.def.name.clone(),
                 func.def.is_const(),
                 func.def.return_type,
+                func.def.is_virtual(),
+                func.def.is_final(),
             )
         };
 
@@ -761,11 +763,12 @@ fn compile_lambda_method_call(
     if is_interface {
         // Compute signature hash from resolved method's parameters
         let sig_hash = {
-            let func = compiler.ctx().get_function(method_hash).ok_or_else(|| {
-                CompilationError::Internal {
+            let func = compiler
+                .ctx()
+                .get_function(method_hash)
+                .ok_or_else(|| CompilationError::Internal {
                     message: format!("Method not found: {:?}", method_hash),
-                }
-            })?;
+                })?;
             let param_sig_hashes: Vec<_> = func
                 .def
                 .params
@@ -792,9 +795,57 @@ fn compile_lambda_method_call(
             .emitter()
             .emit_call_interface(obj_type.type_hash, slot, arg_count as u8);
     } else {
-        compiler
-            .emitter()
-            .emit_call_method(method_hash, arg_count as u8);
+        // For class methods, check if we need virtual dispatch
+        // Use virtual dispatch if:
+        // 1. Method is virtual (not final)
+        // 2. Class could have derived types (not final)
+        let needs_virtual_dispatch = is_virtual && !is_final && {
+            compiler
+                .ctx()
+                .get_type(obj_type.type_hash)
+                .and_then(|e| e.as_class())
+                .map(|class| !class.is_final)
+                .unwrap_or(false)
+        };
+
+        if needs_virtual_dispatch {
+            // Compute signature hash from resolved method's parameters
+            let sig_hash = {
+                let func = compiler
+                    .ctx()
+                    .get_function(method_hash)
+                    .ok_or_else(|| CompilationError::Internal {
+                        message: format!("Method not found: {:?}", method_hash),
+                    })?;
+                let param_sig_hashes: Vec<_> = func
+                    .def
+                    .params
+                    .iter()
+                    .map(|p| p.data_type.signature_hash())
+                    .collect();
+                TypeHash::from_signature(&method_name, &param_sig_hashes, is_const_method).0
+            };
+
+            // Get vtable slot by signature hash
+            let slot = compiler
+                .ctx()
+                .get_type(obj_type.type_hash)
+                .and_then(|e| e.as_class())
+                .and_then(|class| class.vtable_slot(sig_hash))
+                .ok_or_else(|| CompilationError::Internal {
+                    message: format!(
+                        "VTable slot not found for '{}' on {:?}",
+                        method_name, obj_type.type_hash
+                    ),
+                })?;
+
+            compiler.emitter().emit_call_virtual(slot, arg_count as u8);
+        } else {
+            // Direct call for non-virtual or final methods
+            compiler
+                .emitter()
+                .emit_call_method(method_hash, arg_count as u8);
+        }
     }
 
     Ok(ExprInfo::rvalue(return_type))
