@@ -86,9 +86,11 @@ mod data_type;
 mod error;
 mod function_def;
 pub mod ops;
+mod qualified_name;
 mod span;
 mod type_def;
 pub mod type_hash;
+mod unresolved;
 
 // New types for unified type registry
 mod any;
@@ -113,6 +115,12 @@ mod string_factory;
 
 // TypeHash and related
 pub use type_hash::{TypeHash, hash_constants, primitives};
+
+// QualifiedName for deferred type resolution
+pub use qualified_name::QualifiedName;
+
+// Unresolved types for registration pass
+pub use unresolved::{UnresolvedParam, UnresolvedSignature, UnresolvedType};
 
 // Operators
 pub use ops::{BinaryOp, UnaryOp};
