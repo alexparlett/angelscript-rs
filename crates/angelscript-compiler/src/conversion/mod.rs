@@ -234,14 +234,19 @@ pub fn find_conversion(
     }
 
     // 2. Same base type - check modifier conversions
-    if source.type_hash == target.type_hash {
+    // Reference modifiers (&in, &out, &inout) are VM hints, not type constraints
+    if source.type_hash == target.type_hash && !source.is_handle && !target.is_handle {
         // Const relaxation: non-const to const is free
-        if !source.is_const && target.is_const && !source.is_handle && !target.is_handle {
+        if !source.is_const && target.is_const {
             return Some(Conversion {
                 kind: ConversionKind::Identity,
                 cost: Conversion::COST_CONST_ADDITION,
                 is_implicit: true,
             });
+        }
+        // Same base type with same or different ref modifier - identity
+        if source.is_const == target.is_const {
+            return Some(Conversion::identity());
         }
     }
 
