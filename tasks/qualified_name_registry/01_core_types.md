@@ -2,7 +2,7 @@
 
 ## Overview
 
-Add foundational types to `angelscript-core` that enable deferred type resolution.
+Add foundational types to `angelscript-core` that enable deferred type resolution. These types form the intermediate representation produced by Pass 1.
 
 **Files:**
 - `crates/angelscript-core/src/qualified_name.rs` (new)
@@ -13,7 +13,7 @@ Add foundational types to `angelscript-core` that enable deferred type resolutio
 
 ## QualifiedName
 
-The primary identifier for types and functions during compilation.
+The primary identifier for types and functions during compilation. Used for name-based lookup before TypeHash is computed.
 
 ```rust
 // crates/angelscript-core/src/qualified_name.rs
@@ -22,7 +22,7 @@ use std::fmt;
 
 /// Qualified name for type/function identity during compilation.
 ///
-/// Used as primary key in registry. TypeHash computed lazily for bytecode.
+/// Used as primary key for name resolution. TypeHash computed later for bytecode.
 ///
 /// # Examples
 ///
@@ -91,8 +91,13 @@ impl QualifiedName {
     }
 
     /// Get the namespace path.
-    pub fn namespace(&self) -> &[String] {
+    pub fn namespace_path(&self) -> &[String] {
         &self.namespace
+    }
+
+    /// Get the namespace as a joined string.
+    pub fn namespace_string(&self) -> String {
+        self.namespace.join("::")
     }
 
     /// Compute TypeHash from this qualified name.
@@ -223,7 +228,7 @@ mod tests {
 
 ## UnresolvedType
 
-Captures a type reference as written in source, to be resolved later.
+Captures a type reference as written in source, to be resolved later in Pass 2.
 
 ```rust
 // crates/angelscript-core/src/unresolved.rs
@@ -249,7 +254,7 @@ use crate::RefModifier;
 ///     ref_modifier: RefModifier::In,
 /// }
 /// ```
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct UnresolvedType {
     /// The type name as written (e.g., "Player", "Game::Entity", "array<int>")
     pub name: String,
@@ -268,7 +273,7 @@ pub struct UnresolvedType {
     /// Handle (`@`) modifier.
     pub is_handle: bool,
 
-    /// Handle-to-const (`@ const`) modifier.
+    /// Handle-to-const (`const@` or `@const`) modifier.
     pub is_handle_to_const: bool,
 
     /// Reference modifier for parameters (`&in`, `&out`, `&inout`).
@@ -276,16 +281,11 @@ pub struct UnresolvedType {
 }
 
 impl UnresolvedType {
-    /// Create a simple unresolved type (no modifiers).
+    /// Create a simple unresolved type (no modifiers, global context).
     pub fn simple(name: impl Into<String>) -> Self {
         Self {
             name: name.into(),
-            context_namespace: Vec::new(),
-            imports: Vec::new(),
-            is_const: false,
-            is_handle: false,
-            is_handle_to_const: false,
-            ref_modifier: RefModifier::None,
+            ..Default::default()
         }
     }
 
@@ -299,10 +299,7 @@ impl UnresolvedType {
             name: name.into(),
             context_namespace,
             imports,
-            is_const: false,
-            is_handle: false,
-            is_handle_to_const: false,
-            ref_modifier: RefModifier::None,
+            ..Default::default()
         }
     }
 
@@ -339,11 +336,10 @@ impl UnresolvedType {
     pub fn is_qualified(&self) -> bool {
         self.name.contains("::")
     }
-}
 
-impl Default for UnresolvedType {
-    fn default() -> Self {
-        Self::simple("void")
+    /// Check if this is a template type (contains `<`).
+    pub fn is_template(&self) -> bool {
+        self.name.contains('<')
     }
 }
 
@@ -371,7 +367,7 @@ impl UnresolvedParam {
         }
     }
 
-    /// Create with default value flag.
+    /// Mark as having a default value.
     pub fn with_default(mut self) -> Self {
         self.has_default = true;
         self
@@ -450,6 +446,13 @@ mod tests {
     }
 
     #[test]
+    fn template_unresolved_type() {
+        let ty = UnresolvedType::simple("array<int>");
+        assert!(ty.is_template());
+        assert!(!ty.is_qualified());
+    }
+
+    #[test]
     fn unresolved_param() {
         let param = UnresolvedParam::new(
             "target",
@@ -459,6 +462,12 @@ mod tests {
         assert_eq!(param.name, "target");
         assert!(param.param_type.is_handle);
         assert!(!param.has_default);
+    }
+
+    #[test]
+    fn unresolved_param_with_default() {
+        let param = UnresolvedParam::new("count", UnresolvedType::simple("int")).with_default();
+        assert!(param.has_default);
     }
 
     #[test]
@@ -476,6 +485,7 @@ mod tests {
         assert_eq!(sig.name, "attack");
         assert_eq!(sig.params.len(), 1);
         assert!(sig.return_type.is_void());
+        assert!(!sig.is_const);
     }
 }
 ```
@@ -505,3 +515,9 @@ These types have minimal dependencies:
 - `UnresolvedType` only depends on `RefModifier`
 
 This makes them safe to add without circular dependency issues.
+
+---
+
+## What's Next
+
+Phase 2 will define `UnresolvedClass`, `UnresolvedInterface`, etc. that use these core types to represent complete type declarations from Pass 1.

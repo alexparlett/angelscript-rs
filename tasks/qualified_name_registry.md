@@ -22,12 +22,13 @@ The root cause: We compute `TypeHash` during registration, which requires type l
 
 ## Solution Overview
 
-Follow the C++ AngelScript approach:
+Follow the C++ AngelScript approach with a **clean separation** between passes:
 
-1. **Registry indexed by `QualifiedName`** instead of `TypeHash`
-2. **TypeHash computed lazily** when needed for bytecode/overloads
-3. **Forward references stored as `UnresolvedType`** - no resolution during registration
-4. **Resolution deferred to Completion pass** when all types exist
+1. **Pass 1 (Registration)** returns `RegistrationResult` - pure data, no registry mutation
+2. **Pass 2 (Completion)** transforms `RegistrationResult` into resolved entries, populates registry
+3. **Pass 3 (Compilation)** uses fully-resolved registry for bytecode generation
+
+Key insight: **The registry only ever contains resolved types.** Unresolved data is an intermediate representation that never enters the registry.
 
 ---
 
@@ -40,28 +41,39 @@ Follow the C++ AngelScript approach:
 │                                                                         │
 │  PASS 1: REGISTRATION (Single AST Walk)                                 │
 │  ┌─────────────────────────────────────────────────────────────────┐   │
-│  │ - Register types by QualifiedName                               │   │
-│  │ - Store inheritance as UnresolvedType (no resolution)           │   │
-│  │ - Store signatures with UnresolvedType (no resolution)          │   │
-│  │ - NO type lookups, NO TypeHash computation                      │   │
+│  │ Input:  AST                                                     │   │
+│  │ Output: RegistrationResult (Vec<UnresolvedClass>, etc.)         │   │
+│  │                                                                 │   │
+│  │ - Collect type declarations as UnresolvedClass, etc.            │   │
+│  │ - Store inheritance/signatures as UnresolvedType                │   │
+│  │ - NO type lookups, NO TypeHash computation, NO registry access  │   │
 │  └─────────────────────────────────────────────────────────────────┘   │
 │                              │                                          │
 │                              v                                          │
 │  PASS 2: COMPLETION (No AST)                                            │
 │  ┌─────────────────────────────────────────────────────────────────┐   │
-│  │ Phase 1: Resolve all UnresolvedType -> QualifiedName            │   │
-│  │ Phase 2: Resolve inheritance (base classes, interfaces)         │   │
-│  │ Phase 3: Copy inherited members, apply mixins                   │   │
-│  │ Phase 4: Validate interface compliance                          │   │
-│  │ Phase 5: Build VTables and ITables                              │   │
-│  │ Phase 6: Compute TypeHashes, build hash index                   │   │
+│  │ Input:  RegistrationResult + Global Registry (for FFI types)    │   │
+│  │ Output: Populated SymbolRegistry                                │   │
+│  │                                                                 │   │
+│  │ Phase 1: Build name index (QualifiedName → UnresolvedEntry)     │   │
+│  │ Phase 2: Resolve all UnresolvedType → QualifiedName             │   │
+│  │ Phase 3: Transform Unresolved* → resolved entries               │   │
+│  │ Phase 4: Register resolved entries into SymbolRegistry          │   │
+│  │ Phase 5: Resolve inheritance (base classes, interfaces)         │   │
+│  │ Phase 6: Copy inherited members, apply mixins                   │   │
+│  │ Phase 7: Validate interface compliance                          │   │
+│  │ Phase 8: Build VTables and ITables                              │   │
+│  │ Phase 9: Build TypeHash indexes for bytecode                    │   │
 │  └─────────────────────────────────────────────────────────────────┘   │
 │                              │                                          │
 │                              v                                          │
 │  PASS 3: COMPILATION (AST Walk)                                         │
 │  ┌─────────────────────────────────────────────────────────────────┐   │
+│  │ Input:  AST + Fully resolved SymbolRegistry                     │   │
+│  │ Output: Bytecode                                                │   │
+│  │                                                                 │   │
 │  │ - Type check function bodies                                    │   │
-│  │ - Generate bytecode (uses TypeHashes from Completion)           │   │
+│  │ - Generate bytecode (uses TypeHashes from registry)             │   │
 │  └─────────────────────────────────────────────────────────────────┘   │
 │                                                                         │
 └─────────────────────────────────────────────────────────────────────────┘
@@ -71,49 +83,55 @@ Follow the C++ AngelScript approach:
 
 ## Implementation Phases
 
-Each phase has detailed design in the `54_qualified_name_registry/` subfolder.
+Each phase has detailed design in the `qualified_name_registry/` subfolder.
 
 ### Phase 1: Core Types (angelscript-core)
-**Design:** [01_core_types.md](54_qualified_name_registry/01_core_types.md)
+**Design:** [01_core_types.md](qualified_name_registry/01_core_types.md)
 
 - Add `QualifiedName` struct
-- Add `UnresolvedType` and `UnresolvedParam` structs
-- These are the foundation everything else builds on
+- Add `UnresolvedType`, `UnresolvedParam`, `UnresolvedSignature`
+- These form the intermediate representation for Pass 1 output
 
-### Phase 2: Entry Type Updates (angelscript-core)
-**Design:** [02_entry_types.md](54_qualified_name_registry/02_entry_types.md)
+### Phase 2: Unresolved Entry Types (angelscript-core)
+**Design:** [02_unresolved_entries.md](qualified_name_registry/02_unresolved_entries.md)
 
-- Update `ClassEntry`, `InterfaceEntry`, `FuncdefEntry`
-- Add `OnceCell<TypeHash>` for lazy hash computation
-- Change inheritance fields to use `UnresolvedType`
-- Add unresolved signature support to `FunctionDef`
+- Add `UnresolvedClass`, `UnresolvedInterface`, `UnresolvedFuncdef`
+- Add `UnresolvedFunction`, `UnresolvedGlobal`, `UnresolvedEnum`
+- These are Pass 1 output types, distinct from resolved registry entries
 
-### Phase 3: Registry Rewrite (angelscript-registry)
-**Design:** [03_registry.md](54_qualified_name_registry/03_registry.md)
+### Phase 3: Registration Result (angelscript-compiler)
+**Design:** [03_registration_result.md](qualified_name_registry/03_registration_result.md)
 
-- Primary key: `QualifiedName` instead of `TypeHash`
-- Add `hash_to_name` reverse index
-- Update all lookup and registration methods
+- Add `RegistrationResult` struct containing all unresolved entries
+- Pass 1 returns this instead of mutating registry
 
-### Phase 4: Registration Pass (angelscript-compiler)
-**Design:** [04_registration.md](54_qualified_name_registry/04_registration.md)
+### Phase 4: Registry Updates (angelscript-registry)
+**Design:** [04_registry.md](qualified_name_registry/04_registry.md)
 
-- Remove `TypeResolver` usage during registration
-- Store `UnresolvedType` instead of resolved `DataType`
-- Single AST walk, no type resolution
+- Add `QualifiedName`-based lookup alongside `TypeHash`
+- Add `hash_to_name` reverse index (built in completion)
+- Registry only stores resolved entries
 
-### Phase 5: Completion Pass (angelscript-compiler)
-**Design:** [05_completion.md](54_qualified_name_registry/05_completion.md)
+### Phase 5: Registration Pass Rewrite (angelscript-compiler)
+**Design:** [05_registration.md](qualified_name_registry/05_registration.md)
 
-- Add type resolution phase
-- Integrate with existing inheritance completion
-- Build hash index after all types resolved
+- Remove all `TypeResolver` usage
+- Remove all registry mutations
+- Return `RegistrationResult` with unresolved entries
 
-### Phase 6: Compilation Pass (angelscript-compiler)
-**Design:** [06_compilation.md](54_qualified_name_registry/06_compilation.md)
+### Phase 6: Completion Pass Rewrite (angelscript-compiler)
+**Design:** [06_completion.md](qualified_name_registry/06_completion.md)
 
-- Update lookups to use resolved types
-- TypeResolver moves here for expression type checking
+- Take `RegistrationResult` as input
+- Transform unresolved entries → resolved entries
+- Populate registry
+- Build inheritance, vtables, hash indexes
+
+### Phase 7: Compilation Pass Updates (angelscript-compiler)
+**Design:** [07_compilation.md](qualified_name_registry/07_compilation.md)
+
+- Use fully-resolved registry
+- No changes to core logic, just use new lookup APIs
 
 ---
 
@@ -121,11 +139,59 @@ Each phase has detailed design in the `54_qualified_name_registry/` subfolder.
 
 | Benefit | Description |
 |---------|-------------|
+| Type-safe phases | Can't use unresolved data in compilation |
+| Registry always valid | No intermediate/partial state |
 | Single AST walk | No two-phase hack in registration |
-| Forward refs natural | Just store names as strings |
+| Forward refs natural | Just store names as strings, resolve later |
 | C++ alignment | Matches AngelScript C++ approach |
-| Clean separation | Registration gathers, Completion resolves |
-| TypeHash for bytecode only | Not used for internal indexing |
+| Clean separation | Registration collects, Completion resolves |
+| Easier testing | Pass 1 is pure function, easy to unit test |
+
+---
+
+## Data Flow
+
+```
+AST
+ │
+ ▼
+┌──────────────────────────────────────┐
+│ Pass 1: Registration                 │
+│ (Pure function - no side effects)    │
+└──────────────────────────────────────┘
+ │
+ ▼
+RegistrationResult {
+    classes: Vec<UnresolvedClass>,
+    interfaces: Vec<UnresolvedInterface>,
+    funcdefs: Vec<UnresolvedFuncdef>,
+    functions: Vec<UnresolvedFunction>,
+    globals: Vec<UnresolvedGlobal>,
+    enums: Vec<UnresolvedEnum>,
+}
+ │
+ ▼
+┌──────────────────────────────────────┐
+│ Pass 2: Completion                   │
+│ (Transforms + populates registry)    │
+└──────────────────────────────────────┘
+ │
+ ▼
+SymbolRegistry {
+    types: HashMap<QualifiedName, TypeEntry>,     // All resolved
+    functions: HashMap<QualifiedName, Vec<FunctionEntry>>,
+    hash_to_name: HashMap<TypeHash, QualifiedName>,
+}
+ │
+ ▼
+┌──────────────────────────────────────┐
+│ Pass 3: Compilation                  │
+│ (Uses resolved registry)             │
+└──────────────────────────────────────┘
+ │
+ ▼
+Bytecode
+```
 
 ---
 
@@ -172,13 +238,11 @@ namespace Game::Entities {
 | Crate | Files | Change Type |
 |-------|-------|-------------|
 | angelscript-core | `qualified_name.rs` (new) | New struct |
-| angelscript-core | `unresolved.rs` (new) | New structs |
-| angelscript-core | `entries/class.rs` | Update inheritance types |
-| angelscript-core | `entries/interface.rs` | Update base_interfaces type |
-| angelscript-core | `entries/funcdef.rs` | Add unresolved signature |
-| angelscript-core | `function_def.rs` | Add unresolved fields |
-| angelscript-registry | `registry.rs` | Complete rewrite |
-| angelscript-compiler | `passes/registration.rs` | Remove type resolution |
-| angelscript-compiler | `passes/completion.rs` | Add type resolution phase |
-| angelscript-compiler | `passes/compilation.rs` | Update lookups |
-| angelscript-compiler | `type_resolver.rs` | Move to Completion/Compilation |
+| angelscript-core | `unresolved.rs` (new) | Unresolved types |
+| angelscript-core | `unresolved_entries.rs` (new) | Unresolved entry types |
+| angelscript-core | `entries/*.rs` | Minor updates for QualifiedName |
+| angelscript-registry | `registry.rs` | Add QualifiedName lookup |
+| angelscript-compiler | `passes/registration.rs` | Complete rewrite |
+| angelscript-compiler | `passes/completion.rs` | Complete rewrite |
+| angelscript-compiler | `passes/mod.rs` | Add RegistrationResult |
+| angelscript-compiler | `type_resolver.rs` | Move to completion only |
